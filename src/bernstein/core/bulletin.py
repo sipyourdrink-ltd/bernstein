@@ -684,3 +684,344 @@ class BulletinBoard:
         """
         with self._lock:
             return dict(self._activity_summaries)
+
+
+# ---------------------------------------------------------------------------
+# Agent-to-agent direct communication channel
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ChannelQuery:
+    """A structured query from one agent to another.
+
+    Attributes:
+        id: Unique query identifier.
+        sender_agent: ID of the agent asking the question.
+        topic: Short topic tag for grouping related queries.
+        content: The question text.
+        target_agent: Specific agent ID this query is directed at (optional).
+        target_role: Role this query is directed at (optional).
+        timestamp: Unix seconds when the query was posted.
+        expires_at: Unix seconds when the query expires.
+        resolved: Whether a response has been posted.
+    """
+
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    sender_agent: str = ""
+    topic: str = ""
+    content: str = ""
+    target_agent: str | None = None
+    target_role: str | None = None
+    timestamp: float = field(default_factory=time.time)
+    expires_at: float = 0.0
+    resolved: bool = False
+
+    def is_expired(self) -> bool:
+        """Check if the query has passed its expiry time."""
+        return self.expires_at > 0 and time.time() > self.expires_at
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialise to a JSON-safe dict."""
+        return {
+            "id": self.id,
+            "sender_agent": self.sender_agent,
+            "topic": self.topic,
+            "content": self.content,
+            "target_agent": self.target_agent,
+            "target_role": self.target_role,
+            "timestamp": self.timestamp,
+            "expires_at": self.expires_at,
+            "resolved": self.resolved,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, object]) -> ChannelQuery:
+        """Deserialise from a dict."""
+        return cls(
+            id=str(d.get("id", uuid.uuid4().hex[:12])),
+            sender_agent=str(d.get("sender_agent", "")),
+            topic=str(d.get("topic", "")),
+            content=str(d.get("content", "")),
+            target_agent=cast("str | None", d.get("target_agent")),
+            target_role=cast("str | None", d.get("target_role")),
+            timestamp=float(d.get("timestamp", 0.0) or 0.0),
+            expires_at=float(d.get("expires_at", 0.0) or 0.0),
+            resolved=bool(d.get("resolved", False)),
+        )
+
+
+@dataclass
+class ChannelResponse:
+    """A response to a ChannelQuery.
+
+    Attributes:
+        id: Unique response identifier.
+        query_id: ID of the query being answered.
+        responder_agent: ID of the agent providing the answer.
+        content: The answer text.
+        timestamp: Unix seconds when the response was posted.
+    """
+
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    query_id: str = ""
+    responder_agent: str = ""
+    content: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialise to a JSON-safe dict."""
+        return {
+            "id": self.id,
+            "query_id": self.query_id,
+            "responder_agent": self.responder_agent,
+            "content": self.content,
+            "timestamp": self.timestamp,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, object]) -> ChannelResponse:
+        """Deserialise from a dict."""
+        return cls(
+            id=str(d.get("id", uuid.uuid4().hex[:12])),
+            query_id=str(d.get("query_id", "")),
+            responder_agent=str(d.get("responder_agent", "")),
+            content=str(d.get("content", "")),
+            timestamp=float(d.get("timestamp", 0.0) or 0.0),
+        )
+
+
+class DirectChannel:
+    """Lightweight query/response channel for agent-to-agent coordination.
+
+    Agents post structured questions targeted at a specific agent or role,
+    and other agents can respond. Unlike delegation, this is for information
+    exchange (e.g. "What schema did you use?"), not work assignment.
+
+    Thread-safe. Expired queries are cleaned up on access.
+    """
+
+    def __init__(self) -> None:
+        self._queries: dict[str, ChannelQuery] = {}
+        self._responses: dict[str, list[ChannelResponse]] = {}  # query_id -> responses
+        self._lock = threading.Lock()
+
+    def post_query(
+        self,
+        sender_agent: str,
+        topic: str,
+        content: str,
+        target_agent: str | None = None,
+        target_role: str | None = None,
+        ttl_seconds: float = 300,
+    ) -> ChannelQuery:
+        """Post a coordination query targeted at an agent or role.
+
+        Args:
+            sender_agent: ID of the agent asking.
+            topic: Short topic tag for grouping.
+            content: The question text.
+            target_agent: Specific agent ID to target (optional).
+            target_role: Role to target (optional).
+            ttl_seconds: Seconds until the query expires.
+
+        Returns:
+            The created ChannelQuery.
+        """
+        now = time.time()
+        q = ChannelQuery(
+            sender_agent=sender_agent,
+            topic=topic,
+            content=content,
+            target_agent=target_agent,
+            target_role=target_role,
+            timestamp=now,
+            expires_at=now + ttl_seconds,
+        )
+        with self._lock:
+            self._queries[q.id] = q
+            self._responses[q.id] = []
+        return q
+
+    def post_response(
+        self,
+        query_id: str,
+        responder_agent: str,
+        content: str,
+    ) -> ChannelResponse | None:
+        """Post a response to an existing query.
+
+        Marks the query as resolved on first response.
+
+        Args:
+            query_id: ID of the query being answered.
+            responder_agent: ID of the responding agent.
+            content: The answer text.
+
+        Returns:
+            The created ChannelResponse, or None if the query was not found.
+        """
+        with self._lock:
+            q = self._queries.get(query_id)
+            if q is None:
+                return None
+            r = ChannelResponse(
+                query_id=query_id,
+                responder_agent=responder_agent,
+                content=content,
+            )
+            self._responses.setdefault(query_id, []).append(r)
+            q.resolved = True
+            return r
+
+    def get_pending_queries(
+        self,
+        agent_id: str | None = None,
+        role: str | None = None,
+    ) -> list[ChannelQuery]:
+        """Find unresolved, non-expired queries relevant to an agent or role.
+
+        A query matches if it targets the given agent_id, the given role,
+        or has no specific target (broadcast).
+
+        Args:
+            agent_id: Filter for queries targeting this agent.
+            role: Filter for queries targeting this role.
+
+        Returns:
+            List of matching pending queries.
+        """
+        self.cleanup_expired()
+        with self._lock:
+            results: list[ChannelQuery] = []
+            for q in self._queries.values():
+                if q.resolved or q.is_expired():
+                    continue
+                if agent_id and q.target_agent == agent_id:
+                    results.append(q)
+                elif role and q.target_role == role:
+                    results.append(q)
+                elif q.target_agent is None and q.target_role is None:
+                    results.append(q)
+            return results
+
+    def get_responses(self, query_id: str) -> list[ChannelResponse]:
+        """Get all responses for a query.
+
+        Args:
+            query_id: The query to look up responses for.
+
+        Returns:
+            List of responses, in posting order.
+        """
+        with self._lock:
+            return list(self._responses.get(query_id, []))
+
+    def get_conversation(self, topic: str) -> list[ChannelQuery]:
+        """Find all queries on a given topic.
+
+        Args:
+            topic: The topic tag to search for.
+
+        Returns:
+            List of queries with this topic, in posting order.
+        """
+        with self._lock:
+            return [q for q in self._queries.values() if q.topic == topic]
+
+    def cleanup_expired(self) -> int:
+        """Remove expired, unresolved queries and their responses.
+
+        Returns:
+            Number of queries removed.
+        """
+        removed = 0
+        with self._lock:
+            expired_ids = [
+                qid for qid, q in self._queries.items() if q.is_expired() and not q.resolved
+            ]
+            for qid in expired_ids:
+                del self._queries[qid]
+                self._responses.pop(qid, None)
+                removed += 1
+        return removed
+
+    def flush_to_disk(self, path: Path) -> int:
+        """Append all queries and responses to a JSONL file.
+
+        Args:
+            path: JSONL file path to write to.
+
+        Returns:
+            Number of records written (queries + responses).
+        """
+        with self._lock:
+            queries = list(self._queries.values())
+            responses = [r for rs in self._responses.values() for r in rs]
+
+        if not queries and not responses:
+            return 0
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        count = 0
+        with path.open("a", encoding="utf-8") as f:
+            for q in queries:
+                record = {"_type": "query", **q.to_dict()}
+                f.write(json.dumps(record, default=str) + "\n")
+                count += 1
+            for r in responses:
+                record = {"_type": "response", **r.to_dict()}
+                f.write(json.dumps(record, default=str) + "\n")
+                count += 1
+        return count
+
+    def load_from_disk(self, path: Path) -> int:
+        """Load queries and responses from a JSONL file.
+
+        Args:
+            path: JSONL file to read from.
+
+        Returns:
+            Number of new records loaded.
+        """
+        if not path.exists():
+            return 0
+
+        loaded = 0
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                data: dict[str, object] = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            record_type = str(data.pop("_type", ""))
+            if record_type == "query":
+                qid = str(data.get("id", ""))
+                with self._lock:
+                    if qid in self._queries:
+                        continue
+                q = ChannelQuery.from_dict(data)
+                with self._lock:
+                    self._queries[q.id] = q
+                    self._responses.setdefault(q.id, [])
+                loaded += 1
+            elif record_type == "response":
+                rid = str(data.get("id", ""))
+                qid = str(data.get("query_id", ""))
+                with self._lock:
+                    existing = self._responses.get(qid, [])
+                    if any(r.id == rid for r in existing):
+                        continue
+                r = ChannelResponse.from_dict(data)
+                with self._lock:
+                    self._responses.setdefault(qid, []).append(r)
+                loaded += 1
+        return loaded
+
+    @property
+    def count(self) -> int:
+        """Total number of queries on the channel."""
+        with self._lock:
+            return len(self._queries)

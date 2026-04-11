@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
-from bernstein.core.bulletin import BulletinBoard, BulletinMessage
+from bernstein.core.bulletin import BulletinBoard, BulletinMessage, DirectChannel
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
 from bernstein.core.eu_ai_act import (
     TaskRiskAssessment,
@@ -45,6 +45,10 @@ from bernstein.core.server import (
     BatchCreateResponse,
     BulletinMessageResponse,
     BulletinPostRequest,
+    ChannelQueryRequest,
+    ChannelQueryResponse,
+    ChannelResponseRequest,
+    ChannelResponseResponse,
     ClusterStatusResponse,
     HeartbeatRequest,
     HeartbeatResponse,
@@ -105,6 +109,10 @@ def _get_sse_bus(request: Request) -> SSEBus:
 
 def _get_bulletin(request: Request) -> BulletinBoard:
     return request.app.state.bulletin  # type: ignore[no-any-return]
+
+
+def _get_direct_channel(request: Request) -> DirectChannel:
+    return request.app.state.direct_channel  # type: ignore[no-any-return]
 
 
 def _get_a2a_handler(request: Request) -> A2AHandler:
@@ -1302,6 +1310,106 @@ def get_bulletin(request: Request, since: float = 0.0) -> list[BulletinMessageRe
             cell_id=m.cell_id,
         )
         for m in messages
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Direct channel (agent-to-agent queries)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/channel/query", status_code=201, response_model=ChannelQueryResponse)
+def post_channel_query(body: ChannelQueryRequest, request: Request) -> ChannelQueryResponse:
+    """Post a coordination query targeted at an agent or role."""
+    channel = _get_direct_channel(request)
+    q = channel.post_query(
+        sender_agent=body.sender_agent,
+        topic=body.topic,
+        content=body.content,
+        target_agent=body.target_agent,
+        target_role=body.target_role,
+        ttl_seconds=body.ttl_seconds,
+    )
+    return ChannelQueryResponse(
+        id=q.id,
+        sender_agent=q.sender_agent,
+        topic=q.topic,
+        content=q.content,
+        target_agent=q.target_agent,
+        target_role=q.target_role,
+        timestamp=q.timestamp,
+        expires_at=q.expires_at,
+        resolved=q.resolved,
+    )
+
+
+@router.post(
+    "/channel/{query_id}/respond",
+    status_code=201,
+    response_model=ChannelResponseResponse,
+    responses={404: {"description": "Query not found"}},
+)
+def post_channel_response(
+    query_id: str, body: ChannelResponseRequest, request: Request
+) -> ChannelResponseResponse:
+    """Respond to a channel query."""
+    channel = _get_direct_channel(request)
+    r = channel.post_response(
+        query_id=query_id,
+        responder_agent=body.responder_agent,
+        content=body.content,
+    )
+    if r is None:
+        raise HTTPException(status_code=404, detail=f"Query '{query_id}' not found")
+    return ChannelResponseResponse(
+        id=r.id,
+        query_id=r.query_id,
+        responder_agent=r.responder_agent,
+        content=r.content,
+        timestamp=r.timestamp,
+    )
+
+
+@router.get("/channel/queries", response_model=list[ChannelQueryResponse])
+def get_channel_queries(
+    request: Request, agent_id: str | None = None, role: str | None = None
+) -> list[ChannelQueryResponse]:
+    """Get pending queries, optionally filtered by agent_id or role."""
+    channel = _get_direct_channel(request)
+    queries = channel.get_pending_queries(agent_id=agent_id, role=role)
+    return [
+        ChannelQueryResponse(
+            id=q.id,
+            sender_agent=q.sender_agent,
+            topic=q.topic,
+            content=q.content,
+            target_agent=q.target_agent,
+            target_role=q.target_role,
+            timestamp=q.timestamp,
+            expires_at=q.expires_at,
+            resolved=q.resolved,
+        )
+        for q in queries
+    ]
+
+
+@router.get(
+    "/channel/{query_id}/responses",
+    response_model=list[ChannelResponseResponse],
+)
+def get_channel_responses(query_id: str, request: Request) -> list[ChannelResponseResponse]:
+    """Get all responses for a channel query."""
+    channel = _get_direct_channel(request)
+    responses = channel.get_responses(query_id)
+    return [
+        ChannelResponseResponse(
+            id=r.id,
+            query_id=r.query_id,
+            responder_agent=r.responder_agent,
+            content=r.content,
+            timestamp=r.timestamp,
+        )
+        for r in responses
     ]
 
 
