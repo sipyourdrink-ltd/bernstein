@@ -16,7 +16,6 @@ will not be re-escalated to the same tier.
 from __future__ import annotations
 
 import logging
-import os
 import signal
 import time
 from dataclasses import dataclass, field
@@ -323,7 +322,9 @@ class HeartbeatEscalationLadder:
             return False
 
         try:
-            os.kill(state.pid, sig)
+            from bernstein.core.platform_compat import kill_process_group
+
+            kill_process_group(state.pid, sig)
             logger.warning(
                 "Sent %s to agent %s (PID %d): heartbeat stale for %.0fs",
                 sig_name,

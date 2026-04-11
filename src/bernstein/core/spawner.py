@@ -808,6 +808,8 @@ class AgentSpawner:
         self._warm_pool_entries: dict[str, PoolSlot] = {}
         # Per-repo lock to serialize pushes and prevent non-fast-forward races
         self._push_locks: dict[Path, threading.Lock] = {}
+        # Per-repo lock to serialize merges and prevent concurrent index corruption
+        self._merge_locks: dict[Path, threading.Lock] = {}
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")
         self._runtime_bridge = runtime_bridge
@@ -836,6 +838,8 @@ class AgentSpawner:
         self._identity_store_instance: Any = None
         # Map session_id → token file path for cleanup on reap.
         self._agent_token_files: dict[str, Path] = {}
+        # Rate-limit tracker is optionally injected by the orchestrator.
+        self._rate_limit_tracker: Any = None
 
     @property
     def _identity_store(self) -> Any:
@@ -1415,7 +1419,8 @@ class AgentSpawner:
         try:
             hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
             hb_dir.mkdir(parents=True, exist_ok=True)
-            (hb_dir / session_id).touch()
+            hb_file = hb_dir / f"{session_id}.json"
+            hb_file.write_text(json.dumps({"timestamp": time.time(), "status": "starting"}))
         except OSError:
             pass
 
@@ -1775,7 +1780,8 @@ class AgentSpawner:
         try:
             hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
             hb_dir.mkdir(parents=True, exist_ok=True)
-            (hb_dir / session_id).touch()
+            hb_file = hb_dir / f"{session_id}.json"
+            hb_file.write_text(json.dumps({"timestamp": time.time(), "status": "starting"}))
         except OSError:
             pass
 
@@ -2238,31 +2244,28 @@ class AgentSpawner:
 
         if worktree_path is not None and worktree_mgr is not None:
             if not skip_merge:
-                merge_start = time.perf_counter()
-                merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
-                merge_duration.observe(time.perf_counter() - merge_start)
+                # Serialize the entire merge+push sequence per-repo to prevent
+                # concurrent merges from corrupting the git index.
+                merge_lock = self._merge_locks.setdefault(worktree_root, threading.Lock())
+                with merge_lock:
+                    merge_start = time.perf_counter()
+                    merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
+                    merge_duration.observe(time.perf_counter() - merge_start)
 
-                from bernstein.core.metric_collector import get_collector
+                    from bernstein.core.metric_collector import get_collector
 
-                merge_ok = merge_result is not None and merge_result.success
-                for task_id in session.task_ids:
-                    get_collector().record_merge_result(task_id, success=merge_ok)
+                    merge_ok = merge_result is not None and merge_result.success
+                    for task_id in session.task_ids:
+                        get_collector().record_merge_result(task_id, success=merge_ok)
 
-                if merge_result and merge_result.success:
-                    from bernstein.core.git_ops import safe_push
+                    if merge_result and merge_result.success:
+                        from bernstein.core.git_ops import safe_push
 
-                    # Serialize pushes per-repo to prevent concurrent
-                    # non-fast-forward races (BUG-09).  safe_push already
-                    # retries with rebase, but concurrent callers can
-                    # still collide; the lock ensures only one push is
-                    # in-flight per repository at a time.
-                    push_lock = self._push_locks.setdefault(worktree_root, threading.Lock())
-                    with push_lock:
                         push_result = safe_push(worktree_root, "main")
-                    if push_result.ok:
-                        logger.info("Pushed merged work from %s to origin/main", session.id)
-                    else:
-                        logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
+                        if push_result.ok:
+                            logger.info("Pushed merged work from %s to origin/main", session.id)
+                        else:
+                            logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
             # If the session used a warm pool entry, clean it up via the pool
             # (branch/path naming differs from normal worktrees).
             warm_entry = self._warm_pool_entries.pop(session.id, None)
