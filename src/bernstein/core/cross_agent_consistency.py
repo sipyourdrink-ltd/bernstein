@@ -92,9 +92,9 @@ class ApiContract:
 
     endpoint: str
     method: str
-    request_fields: dict[str, str] = field(default_factory=dict)
-    response_fields: dict[str, str] = field(default_factory=dict)
-    error_codes: list[int] = field(default_factory=list)
+    request_fields: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    response_fields: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    error_codes: list[int] = field(default_factory=lambda: list[int]())
     role: str = ""
 
     def __post_init__(self) -> None:
@@ -113,7 +113,7 @@ class AgentImplementation:
 
     agent_id: str
     role: str
-    contracts: list[ApiContract] = field(default_factory=list)
+    contracts: list[ApiContract] = field(default_factory=lambda: list[ApiContract]())
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,7 @@ class ConsistencyIssue:
     endpoint: str
     method: str
     description: str
-    agents_involved: list[str] = field(default_factory=list)
+    agents_involved: list[str] = field(default_factory=lambda: list[str]())
 
 
 @dataclass
@@ -145,7 +145,7 @@ class ConsistencyReport:
         checked_endpoints: Number of distinct endpoint+method pairs examined.
     """
 
-    issues: list[ConsistencyIssue] = field(default_factory=list)
+    issues: list[ConsistencyIssue] = field(default_factory=lambda: list[ConsistencyIssue]())
     checked_endpoints: int = 0
 
     @property
@@ -168,11 +168,6 @@ class ConsistencyReport:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _contract_key(contract: ApiContract) -> tuple[str, str]:
-    """Return the (endpoint, method) key for a contract."""
-    return (contract.endpoint, contract.method.upper())
 
 
 def _check_schema_compatibility(

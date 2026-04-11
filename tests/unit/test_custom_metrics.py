@@ -51,7 +51,7 @@ class TestEvaluateFormula:
 
     def test_unary_negation(self) -> None:
         vars = {"a": 5.0}
-        assert evaluate_formula("-a", vars) == pytest.approx() - 5.0
+        assert evaluate_formula("-a", vars) == pytest.approx(-5.0)
 
     def test_unary_pos(self) -> None:
         vars = {"a": 5.0}

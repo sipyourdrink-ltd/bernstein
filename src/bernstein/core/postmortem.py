@@ -17,6 +17,7 @@ Data sources (read-only):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -581,7 +582,7 @@ class PostMortemGenerator:
                 tmp.write(html_content)
                 tmp_path = tmp.name
 
-            result = subprocess.run(  # noqa: S603
+            result = subprocess.run(
                 ["wkhtmltopdf", "--quiet", tmp_path, str(path)],
                 capture_output=True,
                 timeout=60,
@@ -594,10 +595,8 @@ class PostMortemGenerator:
             pass
         finally:
             import os as _os
-            try:
+            with contextlib.suppress(Exception):
                 _os.unlink(tmp_path)
-            except Exception:
-                pass
 
         # Fallback: save HTML and inform user.
         html_path = _Path(str(path).replace(".pdf", ".html"))

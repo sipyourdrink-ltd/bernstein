@@ -81,12 +81,12 @@ from bernstein.cli.merge_cmd import merge_cmd
 from bernstein.cli.plan_validate_cmd import validate_plan
 from bernstein.cli.policy_cmd import policy_group
 from bernstein.cli.postmortem_cmd import postmortem_cmd
-from bernstein.cli.slo_cmd import slo_cmd
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
 from bernstein.cli.report_cmd import report_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd
+from bernstein.cli.slo_cmd import slo_cmd
 from bernstein.cli.task_cmd import (
     add_task,
     approve,

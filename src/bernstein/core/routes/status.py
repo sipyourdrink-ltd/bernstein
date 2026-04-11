@@ -165,11 +165,29 @@ _RUNTIME_CACHE_TTL: float = 10.0  # Cache expensive ops for 10s
 _STATUS_CONFIG_KEYS: tuple[str, ...] = ("cli", "model", "effort", "budget", "max_agents")
 
 
+def _safe_call(label: str, fn: Any, default: Any) -> Any:
+    """Invoke ``fn`` and return ``default`` on any exception.
+
+    The status endpoint must never 500 because of one slow/broken metric:
+    if it does, the watchdog assumes the server is dead and enters a restart
+    loop that kills live agents (incident 2026-04-11).
+    """
+    try:
+        return fn()
+    except Exception as exc:
+        logger.warning("status field %r failed: %s: %s", label, type(exc).__name__, exc)
+        return default
+
+
 def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     """Build runtime operational metadata for status and TUI consumers.
 
     Expensive ops (disk scan, git subprocess) are cached for 10 seconds
     to prevent them from blocking every 1s dashboard poll.
+
+    Every field is wrapped in ``_safe_call`` so a single broken metric cannot
+    take the whole endpoint down. Failing fields fall back to neutral defaults
+    and are logged at WARNING.
     """
     import time as _time
 
@@ -179,45 +197,58 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     # Fast path: return cached result if fresh
     if _runtime_cache and (now - _runtime_cache_ts) < _RUNTIME_CACHE_TTL:
         # Update only the cheap fields
-        _runtime_cache["last_completed"] = _last_completion(store)
+        _runtime_cache["last_completed"] = _safe_call(
+            "last_completed", lambda: _last_completion(store), None
+        )
         return _runtime_cache
 
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     workdir = _get_workdir(request)
     restart_count = 0
+    disk_usage_bytes = 0
+    config_state: dict[str, Any] | None = None
     if isinstance(sdd_dir, Path):
-        snapshot = read_supervisor_state(sdd_dir)
+        snapshot = _safe_call("supervisor_state", lambda: read_supervisor_state(sdd_dir), None)
         if snapshot is not None:
-            restart_count = snapshot.restart_count
-        disk_usage_bytes = directory_size_bytes(sdd_dir)
-        config_state = read_config_state(sdd_dir)
-    else:
-        disk_usage_bytes = 0
-        config_state = None
+            restart_count = getattr(snapshot, "restart_count", 0)
+        disk_usage_bytes = _safe_call(
+            "disk_usage_bytes", lambda: directory_size_bytes(sdd_dir), 0
+        )
+        config_state = _safe_call("config_state", lambda: read_config_state(sdd_dir), None)
 
     _runtime_cache = {
-        "git_branch": current_git_branch(workdir),
+        "git_branch": _safe_call("git_branch", lambda: current_git_branch(workdir), ""),
         "restart_count": restart_count,
-        "memory_mb": memory_usage_mb(),
-        "active_worktrees": _active_worktree_count(request),
+        "memory_mb": _safe_call("memory_mb", memory_usage_mb, 0.0),
+        "active_worktrees": _safe_call(
+            "active_worktrees", lambda: _active_worktree_count(request), 0
+        ),
         "disk_usage_mb": round(disk_usage_bytes / (1024 * 1024), 2),
-        "last_completed": _last_completion(store),
+        "last_completed": _safe_call(
+            "last_completed", lambda: _last_completion(store), None
+        ),
         "config_reloaded_at": float(config_state["reloaded_at"])
         if config_state and config_state.get("reloaded_at")
         else 0.0,
         "config_hash": str(config_state.get("config_hash", "")) if config_state else "",
         "config_last_diff": config_state.get("last_diff") if config_state else None,
-        "config_provenance": resolve_config_bundle(
-            home=BernsteinHome.default(),
-            project_dir=workdir,
-            keys=_STATUS_CONFIG_KEYS,
+        "config_provenance": _safe_call(
+            "config_provenance",
+            lambda: resolve_config_bundle(
+                home=BernsteinHome.default(),
+                project_dir=workdir,
+                keys=_STATUS_CONFIG_KEYS,
+            ),
+            {},
         ),
     }
 
     # Expose config watcher file-level source chain if available
     config_watcher = getattr(request.app.state, "config_watcher", None)
     if config_watcher is not None:
-        _runtime_cache["config_source_chain"] = config_watcher.source_chain()
+        _runtime_cache["config_source_chain"] = _safe_call(
+            "config_source_chain", config_watcher.source_chain, []
+        )
 
     _runtime_cache_ts = now
     return _runtime_cache

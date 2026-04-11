@@ -527,6 +527,14 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
 
     This blocks forever and should be run as a background daemon.
 
+    The restart counter for each subprocess resets to 0 once the process has
+    been observed alive continuously for ``RESTART_RESET_AFTER_S``. This
+    prevents a single bad day (e.g. one buggy ``/status`` field flapping the
+    server) from permanently disabling the watchdog: a healthy day earns the
+    process its restart budget back. Without this, the watchdog gives up
+    forever after 5 transient failures across the entire run (incident
+    2026-04-11).
+
     Args:
         workdir: Project root directory.
         port: Task server port.
@@ -535,17 +543,43 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
     server_pid_path = workdir / ".sdd" / "runtime" / "server.pid"
     spawner_pid_path = workdir / ".sdd" / "runtime" / "spawner.pid"
     max_restarts = 5
+    restart_reset_after_s = 120.0  # reset counter after this much continuous uptime
     server_restarts = 0
     spawner_restarts = 0
+    server_alive_since: float | None = None
+    spawner_alive_since: float | None = None
+    server_give_up_logged = False
+    spawner_give_up_logged = False
 
     while True:
         time.sleep(poll_s)
+        now = time.monotonic()
 
         # Check server
         server_pid = _read_pid(server_pid_path)
-        if server_pid is None or not _is_alive(server_pid):
+        if server_pid is not None and _is_alive(server_pid):
+            if server_alive_since is None:
+                server_alive_since = now
+            elif (
+                server_restarts > 0
+                and (now - server_alive_since) >= restart_reset_after_s
+            ):
+                logger.info(
+                    "Server has been healthy for %.0fs — resetting restart counter",
+                    now - server_alive_since,
+                )
+                server_restarts = 0
+                server_give_up_logged = False
+        else:
+            server_alive_since = None
             if server_restarts >= max_restarts:
-                logger.error("Server exceeded max restarts (%d), giving up", max_restarts)
+                if not server_give_up_logged:
+                    logger.error(
+                        "Server exceeded max restarts (%d), giving up; "
+                        "will resume monitoring once the process recovers",
+                        max_restarts,
+                    )
+                    server_give_up_logged = True
                 continue
             logger.warning("Server (PID %s) is dead, restarting...", server_pid)
             try:
@@ -562,9 +596,29 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
 
         # Check orchestrator/spawner
         spawner_pid = _read_pid(spawner_pid_path)
-        if spawner_pid is None or not _is_alive(spawner_pid):
+        if spawner_pid is not None and _is_alive(spawner_pid):
+            if spawner_alive_since is None:
+                spawner_alive_since = now
+            elif (
+                spawner_restarts > 0
+                and (now - spawner_alive_since) >= restart_reset_after_s
+            ):
+                logger.info(
+                    "Orchestrator has been healthy for %.0fs — resetting restart counter",
+                    now - spawner_alive_since,
+                )
+                spawner_restarts = 0
+                spawner_give_up_logged = False
+        else:
+            spawner_alive_since = None
             if spawner_restarts >= max_restarts:
-                logger.error("Orchestrator exceeded max restarts (%d), giving up", max_restarts)
+                if not spawner_give_up_logged:
+                    logger.error(
+                        "Orchestrator exceeded max restarts (%d), giving up; "
+                        "will resume monitoring once the process recovers",
+                        max_restarts,
+                    )
+                    spawner_give_up_logged = True
                 continue
             # Only restart orchestrator if server is alive
             cur_server_pid = _read_pid(server_pid_path)

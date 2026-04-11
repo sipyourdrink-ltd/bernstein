@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -102,9 +102,10 @@ def _load_offline(workdir: str) -> dict[str, Any] | None:
         raw: Any = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             # slos.json has the full dashboard; extract error_budget for burn-down
-            eb = raw.get("error_budget", {})
-            total = int(eb.get("total_tasks", 0))
-            failed = int(eb.get("failed_tasks", 0))
+            typed_raw = cast("dict[str, Any]", raw)
+            eb: dict[str, Any] = typed_raw.get("error_budget", {})
+            total: int = int(eb.get("total_tasks", 0))
+            failed: int = int(eb.get("failed_tasks", 0))
             success_rate = (total - failed) / total if total > 0 else 1.0
             slo_target = 0.90
             from bernstein.core.slo import ErrorBudget
