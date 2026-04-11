@@ -287,13 +287,13 @@ class TestGeminiSpawnMissingBinary:
 
 
 class TestGeminiWarnings:
-    def test_warns_when_no_api_key_present(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def test_logs_debug_when_no_api_key_present(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         adapter = GeminiAdapter()
         proc_mock = _make_popen_mock(pid=301)
         with (
             patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock),
             patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
-            caplog.at_level("WARNING"),
+            caplog.at_level("DEBUG"),
         ):
             adapter.spawn(
                 prompt="hello",
@@ -301,7 +301,7 @@ class TestGeminiWarnings:
                 model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="warn-missing-key",
             )
-        assert "neither GOOGLE_API_KEY nor GEMINI_API_KEY is set — spawn will fail" in caplog.text
+        assert "no GOOGLE_API_KEY/GEMINI_API_KEY set" in caplog.text
 
     def test_populates_gemini_api_key_from_google_key(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
