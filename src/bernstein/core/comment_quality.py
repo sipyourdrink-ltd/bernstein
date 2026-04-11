@@ -98,8 +98,7 @@ class CommentQualityReport:
         """Return a one-line summary suitable for a gate detail field."""
         if not self.issues:
             return (
-                f"All docstrings OK across {self.checked_functions} function(s) "
-                f"in {len(self.checked_files)} file(s)."
+                f"All docstrings OK across {self.checked_functions} function(s) in {len(self.checked_files)} file(s)."
             )
         counts: dict[str, int] = {}
         for issue in self.issues:
@@ -375,10 +374,7 @@ def _check_style(
                 symbol=qualified_name,
                 file=rel_path,
                 line=lineno,
-                detail=(
-                    f"Expected {expected_style!r} docstring style but found "
-                    f"{detected_style!r} style."
-                ),
+                detail=(f"Expected {expected_style!r} docstring style but found {detected_style!r} style."),
             )
         ]
     return []
@@ -425,15 +421,11 @@ def _analyse_node(
     style = _detect_style(raw_doc) if docstyle == "auto" else docstyle
 
     # Accuracy
-    report.issues.extend(
-        _check_param_accuracy(node, raw_doc, style, rel_path, qualified_name)
-    )
+    report.issues.extend(_check_param_accuracy(node, raw_doc, style, rel_path, qualified_name))
 
     # Completeness (only for public functions/methods)
     if _is_public(node.name):
-        report.issues.extend(
-            _check_completeness(node, raw_doc, style, rel_path, qualified_name)
-        )
+        report.issues.extend(_check_completeness(node, raw_doc, style, rel_path, qualified_name))
 
     # Redundancy (warn only)
     if _is_redundant(node.name, raw_doc):
@@ -452,9 +444,7 @@ def _analyse_node(
 
     # Style compliance
     detected = _detect_style(raw_doc)
-    report.issues.extend(
-        _check_style(raw_doc, detected, docstyle, rel_path, qualified_name, node.lineno)
-    )
+    report.issues.extend(_check_style(raw_doc, detected, docstyle, rel_path, qualified_name, node.lineno))
 
 
 def analyse_file(

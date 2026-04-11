@@ -88,9 +88,7 @@ def _node_to_proto(node: Any) -> dict[str, Any]:
             "gpu_available": cap.gpu_available,
             "supported_models": list(cap.supported_models),
         },
-        "status": _NODE_STATUS_MAP.get(
-            node.status.value if hasattr(node.status, "value") else str(node.status), 0
-        ),
+        "status": _NODE_STATUS_MAP.get(node.status.value if hasattr(node.status, "value") else str(node.status), 0),
         "labels": dict(node.labels) if node.labels else {},
         "cell_ids": list(node.cell_ids) if node.cell_ids else [],
     }
@@ -102,9 +100,7 @@ class TaskServiceImpl:
     def __init__(self, task_store: Any) -> None:
         self._store = task_store
 
-    async def CreateTask(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def CreateTask(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.create(
@@ -119,9 +115,7 @@ class TaskServiceImpl:
         self._fill_task_proto(resp.task, task)
         return resp
 
-    async def ClaimTask(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def ClaimTask(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -137,9 +131,7 @@ class TaskServiceImpl:
         self._fill_task_proto(resp.task, task)
         return resp
 
-    async def CompleteTask(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def CompleteTask(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -154,9 +146,7 @@ class TaskServiceImpl:
         self._fill_task_proto(resp.task, task)
         return resp
 
-    async def FailTask(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def FailTask(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -168,9 +158,7 @@ class TaskServiceImpl:
         self._fill_task_proto(resp.task, task)
         return resp
 
-    async def ReportProgress(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def ReportProgress(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -179,9 +167,7 @@ class TaskServiceImpl:
         resp = tasks_pb2.ProgressResponse(acknowledged=True)
         return resp
 
-    async def ListTasks(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def ListTasks(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         status_name = None
@@ -201,9 +187,7 @@ class TaskServiceImpl:
             self._fill_task_proto(task_msg, t)
         return resp
 
-    async def GetTask(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def GetTask(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -234,9 +218,7 @@ class ClusterServiceImpl:
     def __init__(self, node_registry: NodeRegistry) -> None:
         self._registry = node_registry
 
-    async def RegisterNode(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def RegisterNode(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
         from bernstein.core.models import NodeCapacity
 
@@ -258,9 +240,7 @@ class ClusterServiceImpl:
         self._fill_node_proto(resp.node, node)
         return resp
 
-    async def Heartbeat(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def Heartbeat(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         node = self._registry.get(request.node_id)
@@ -284,9 +264,7 @@ class ClusterServiceImpl:
             self._fill_node_proto(resp.node, node)
         return resp
 
-    async def StreamHeartbeats(
-        self, request_iterator: Any, context: Any
-    ) -> Any:
+    async def StreamHeartbeats(self, request_iterator: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         async for request in request_iterator:
@@ -296,17 +274,13 @@ class ClusterServiceImpl:
                 self._fill_node_proto(resp.node, node)
             yield resp
 
-    async def UnregisterNode(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def UnregisterNode(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         removed = self._registry.unregister(request.node_id)
         return cluster_pb2.UnregisterNodeResponse(removed=removed)
 
-    async def CordonNode(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def CordonNode(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         node = self._registry.get(request.node_id)
@@ -314,12 +288,11 @@ class ClusterServiceImpl:
             await context.abort(grpc.StatusCode.NOT_FOUND, "node not found")
         self._registry.cordon(request.node_id)
         return cluster_pb2.NodeStatusResponse(
-            node_id=request.node_id, status=4  # CORDONED
+            node_id=request.node_id,
+            status=4,  # CORDONED
         )
 
-    async def UncordonNode(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def UncordonNode(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         node = self._registry.get(request.node_id)
@@ -327,12 +300,11 @@ class ClusterServiceImpl:
             await context.abort(grpc.StatusCode.NOT_FOUND, "node not found")
         self._registry.uncordon(request.node_id)
         return cluster_pb2.NodeStatusResponse(
-            node_id=request.node_id, status=1  # ONLINE
+            node_id=request.node_id,
+            status=1,  # ONLINE
         )
 
-    async def DrainNode(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def DrainNode(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         node = self._registry.get(request.node_id)
@@ -340,12 +312,11 @@ class ClusterServiceImpl:
             await context.abort(grpc.StatusCode.NOT_FOUND, "node not found")
         self._registry.start_drain(request.node_id)
         return cluster_pb2.NodeStatusResponse(
-            node_id=request.node_id, status=5  # DRAINING
+            node_id=request.node_id,
+            status=5,  # DRAINING
         )
 
-    async def ListNodes(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def ListNodes(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         nodes = self._registry.list_nodes()
@@ -354,8 +325,7 @@ class ClusterServiceImpl:
             filter_name = reverse_map.get(request.status_filter)
             if filter_name:
                 nodes = [
-                    n for n in nodes
-                    if (n.status.value if hasattr(n.status, "value") else str(n.status)) == filter_name
+                    n for n in nodes if (n.status.value if hasattr(n.status, "value") else str(n.status)) == filter_name
                 ]
         resp = cluster_pb2.ListNodesResponse()
         for n in nodes:
@@ -363,9 +333,7 @@ class ClusterServiceImpl:
             self._fill_node_proto(node_msg, n)
         return resp
 
-    async def GetClusterStatus(
-        self, request: Any, context: Any
-    ) -> Any:
+    async def GetClusterStatus(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         summary = self._registry.cluster_summary()
@@ -393,9 +361,7 @@ class ClusterServiceImpl:
         proto.capacity.active_agents = cap.active_agents
         proto.capacity.gpu_available = cap.gpu_available
         proto.capacity.supported_models[:] = list(cap.supported_models)
-        proto.status = _NODE_STATUS_MAP.get(
-            node.status.value if hasattr(node.status, "value") else str(node.status), 0
-        )
+        proto.status = _NODE_STATUS_MAP.get(node.status.value if hasattr(node.status, "value") else str(node.status), 0)
         if node.labels:
             for k, v in node.labels.items():
                 proto.labels[k] = v
@@ -431,16 +397,12 @@ class BernsteinGrpcServer:
             ],
         )
 
-        tasks_pb2_grpc.add_TaskServiceServicer_to_server(
-            TaskServiceImpl(task_store), server
-        )
+        tasks_pb2_grpc.add_TaskServiceServicer_to_server(TaskServiceImpl(task_store), server)
 
         if node_registry is not None:
             from bernstein.core.grpc_gen import cluster_pb2_grpc
 
-            cluster_pb2_grpc.add_ClusterServiceServicer_to_server(
-                ClusterServiceImpl(node_registry), server
-            )
+            cluster_pb2_grpc.add_ClusterServiceServicer_to_server(ClusterServiceImpl(node_registry), server)
 
         if self.config.enable_reflection:
             try:
@@ -452,16 +414,8 @@ class BernsteinGrpcServer:
                     tasks_pb2.DESCRIPTOR.services_by_name["TaskService"].full_name,
                 ]
                 if node_registry is not None:
-                    service_names.append(
-                        cluster_pb2.DESCRIPTOR.services_by_name[
-                            "ClusterService"
-                        ].full_name
-                    )
-                    service_names.append(
-                        cluster_pb2.DESCRIPTOR.services_by_name[
-                            "BulletinService"
-                        ].full_name
-                    )
+                    service_names.append(cluster_pb2.DESCRIPTOR.services_by_name["ClusterService"].full_name)
+                    service_names.append(cluster_pb2.DESCRIPTOR.services_by_name["BulletinService"].full_name)
                 service_names.append(reflection.SERVICE_NAME)
                 reflection.enable_server_reflection(service_names, server)
             except ImportError:

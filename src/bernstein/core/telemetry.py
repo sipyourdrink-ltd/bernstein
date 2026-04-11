@@ -149,10 +149,7 @@ BUILTIN_PRESETS: dict[str, ExporterPreset] = {
         protocol=_HTTP_PROTOBUF,
         headers={},
         insecure=False,
-        description=(
-            "New Relic OTLP ingest (EU datacenter). "
-            "Set NEW_RELIC_LICENSE_KEY in the environment."
-        ),
+        description=("New Relic OTLP ingest (EU datacenter). Set NEW_RELIC_LICENSE_KEY in the environment."),
     ),
 }
 

@@ -382,8 +382,7 @@ class ArchModuleEntry(BaseModel):
     allowed_imports: list[str] = Field(
         default_factory=list,
         description=(
-            "Module prefixes that files in this module may import. "
-            "When non-empty, any unlisted import is a violation."
+            "Module prefixes that files in this module may import. When non-empty, any unlisted import is a violation."
         ),
     )
     forbidden_imports: list[str] = Field(

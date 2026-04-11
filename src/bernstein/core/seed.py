@@ -477,26 +477,20 @@ def _parse_metrics(raw: object) -> dict[str, MetricSchema]:
 
         description_raw = entry_dict.get("description", "")
         if not isinstance(description_raw, str):
-            raise SeedError(
-                f"metrics.{name}.description must be a string, got: {type(description_raw).__name__}"
-            )
+            raise SeedError(f"metrics.{name}.description must be a string, got: {type(description_raw).__name__}")
 
         alert_above: float | None = None
         alert_above_raw = entry_dict.get("alert_above")
         if alert_above_raw is not None:
             if not isinstance(alert_above_raw, (int, float)):
-                raise SeedError(
-                    f"metrics.{name}.alert_above must be a number, got: {type(alert_above_raw).__name__}"
-                )
+                raise SeedError(f"metrics.{name}.alert_above must be a number, got: {type(alert_above_raw).__name__}")
             alert_above = float(alert_above_raw)
 
         alert_below: float | None = None
         alert_below_raw = entry_dict.get("alert_below")
         if alert_below_raw is not None:
             if not isinstance(alert_below_raw, (int, float)):
-                raise SeedError(
-                    f"metrics.{name}.alert_below must be a number, got: {type(alert_below_raw).__name__}"
-                )
+                raise SeedError(f"metrics.{name}.alert_below must be a number, got: {type(alert_below_raw).__name__}")
             alert_below = float(alert_below_raw)
 
         result[name] = MetricSchema(

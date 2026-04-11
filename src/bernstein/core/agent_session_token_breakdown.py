@@ -124,10 +124,7 @@ class AgentSessionTokenBreakdown:
             f"{'Assistant output':<35} {self.output_tokens:>8,} {pct['output']:>5.1f}%",
         ]
         if self.cache_read_tokens or self.cache_write_tokens:
-            lines.append(
-                f"\nCache: read {self.cache_read_tokens:,} tokens, "
-                f"write {self.cache_write_tokens:,} tokens"
-            )
+            lines.append(f"\nCache: read {self.cache_read_tokens:,} tokens, write {self.cache_write_tokens:,} tokens")
         if self.optimization_notes:
             lines += ["", "Optimization notes:"]
             for note in self.optimization_notes:
@@ -248,8 +245,7 @@ def load_session_breakdown(
         context_pct = context_tokens / actual_input_tokens * 100
         if context_pct > 55:
             notes.append(
-                f"Context sections are {context_pct:.0f}% of input tokens. "
-                "Consider trimming unused context files."
+                f"Context sections are {context_pct:.0f}% of input tokens. Consider trimming unused context files."
             )
 
     return AgentSessionTokenBreakdown(

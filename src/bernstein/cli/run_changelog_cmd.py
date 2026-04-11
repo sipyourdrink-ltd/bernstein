@@ -28,8 +28,7 @@ from bernstein.core.run_changelog import (
     "since_ref",
     default=None,
     metavar="REF",
-    help="Git ref (tag or SHA) marking the start of the run window. "
-    "Only commits after this ref are included.",
+    help="Git ref (tag or SHA) marking the start of the run window. Only commits after this ref are included.",
 )
 @click.option(
     "--hours",
@@ -37,8 +36,7 @@ from bernstein.core.run_changelog import (
     default=None,
     type=float,
     metavar="N",
-    help="Limit to tasks completed in the last N hours (default: 24). "
-    "Ignored when --since is provided.",
+    help="Limit to tasks completed in the last N hours (default: 24). Ignored when --since is provided.",
 )
 @click.option(
     "--format",
@@ -66,8 +64,7 @@ from bernstein.core.run_changelog import (
     "--include-no-commits",
     is_flag=True,
     default=False,
-    help="Include tasks that have no matching git commits "
-    "(useful to surface tasks that completed without committing).",
+    help="Include tasks that have no matching git commits (useful to surface tasks that completed without committing).",
 )
 @click.option(
     "--server-url",
@@ -132,8 +129,7 @@ def run_changelog_cmd(
 
     if not cl.changes and not include_no_commits:
         console.print(
-            "[yellow]No agent-produced changes found. "
-            "Try --include-no-commits or a wider --hours window.[/yellow]"
+            "[yellow]No agent-produced changes found. Try --include-no-commits or a wider --hours window.[/yellow]"
         )
         return
 

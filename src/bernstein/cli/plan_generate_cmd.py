@@ -320,9 +320,7 @@ def plan_generate(
         console.print(f"[green]Plan saved to[/green] {saved_path}")
 
     console.print(
-        f"\n[bold]Summary:[/bold] {stage_count} stage(s), "
-        f"{step_count} step(s), "
-        f"estimated cost ~${estimated_usd:.2f}"
+        f"\n[bold]Summary:[/bold] {stage_count} stage(s), {step_count} step(s), estimated cost ~${estimated_usd:.2f}"
     )
     if not dry_run and saved_path is not None:
         console.print(f"[dim]Run with:[/dim] bernstein run {saved_path}")

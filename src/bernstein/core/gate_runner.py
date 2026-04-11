@@ -394,9 +394,7 @@ class GateRunner:
             return await asyncio.to_thread(self._run_auto_format_gate_sync, step, run_dir, changed_files)
 
         if step.name == "test_expansion":
-            return await asyncio.to_thread(
-                self._run_test_expansion_gate_sync, step, task, run_dir, changed_files
-            )
+            return await asyncio.to_thread(self._run_test_expansion_gate_sync, step, task, run_dir, changed_files)
 
         if step.name == "lint":
             command = self._lint_command(step, changed_files)
@@ -792,9 +790,7 @@ class GateRunner:
         # Combine vulture output and AST findings
         ast_details = ""
         if report.issues:
-            ast_details = "\n".join(
-                f"  [{i.kind}] {i.file}: {i.detail}" for i in report.issues
-            )
+            ast_details = "\n".join(f"  [{i.kind}] {i.file}: {i.detail}" for i in report.issues)
 
         vulture_ok = ok and vulture_detail == "(no output)"
         ast_ok = report.passed
@@ -893,10 +889,7 @@ class GateRunner:
                 },
             )
 
-        issue_lines = "\n".join(
-            f"  [{i.kind}] {i.file}:{i.line} {i.symbol}: {i.detail}"
-            for i in report.issues
-        )
+        issue_lines = "\n".join(f"  [{i.kind}] {i.file}:{i.line} {i.symbol}: {i.detail}" for i in report.issues)
         status: GateStatus = "fail" if not report.passed else "warn"
         return GateResult(
             name=step.name,
@@ -909,9 +902,7 @@ class GateRunner:
             metadata={
                 "checked_functions": report.checked_functions,
                 "issue_count": len(report.issues),
-                "blocking_issues": sum(
-                    1 for i in report.issues if i.kind in ("inaccurate", "incomplete")
-                ),
+                "blocking_issues": sum(1 for i in report.issues if i.kind in ("inaccurate", "incomplete")),
             },
         )
 
@@ -1876,9 +1867,7 @@ class GateRunner:
             "dead_code_check_unreachable": (
                 self._config.dead_code_check_unreachable if step.name == "dead_code" else None
             ),
-            "comment_quality_check": (
-                self._config.comment_quality_check if step.name == "comment_quality" else None
-            ),
+            "comment_quality_check": (self._config.comment_quality_check if step.name == "comment_quality" else None),
             "comment_quality_docstyle": (
                 self._config.comment_quality_docstyle if step.name == "comment_quality" else None
             ),

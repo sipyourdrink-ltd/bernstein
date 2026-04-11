@@ -364,10 +364,7 @@ class PredictiveCostModel:
         model._learning_rate = float(data.get("learning_rate", 0.001))
         model._residual_sum_sq = float(data.get("residual_sum_sq", 0.0))
         model._residual_count = int(data.get("residual_count", 0))
-        model._observations = [
-            TrainingObservation.from_dict(o)
-            for o in data.get("observations", [])
-        ]
+        model._observations = [TrainingObservation.from_dict(o) for o in data.get("observations", [])]
         return model
 
     def summary(self) -> dict[str, Any]:
@@ -483,9 +480,7 @@ class PredictiveCostModel:
         rmse = math.sqrt(self._residual_sum_sq / self._residual_count)
 
         # Compute mean target for normalisation
-        mean_target = sum(
-            o.actual_tokens for o in self._observations
-        ) / n
+        mean_target = sum(o.actual_tokens for o in self._observations) / n
         if mean_target > 0:
             # Normalised RMSE: lower is better
             nrmse = rmse / mean_target
@@ -523,10 +518,7 @@ class PredictiveCostModel:
         # Convert token residual to USD using a rough average cost
         n = len(self._observations)
         if n > 0:
-            avg_cost_per_token = sum(
-                o.actual_cost_usd / max(o.actual_tokens, 1)
-                for o in self._observations
-            ) / n
+            avg_cost_per_token = sum(o.actual_cost_usd / max(o.actual_tokens, 1) for o in self._observations) / n
         else:
             avg_cost_per_token = _DEFAULT_COST_PER_1K / 1000.0
 

@@ -309,10 +309,7 @@ def _check_unreachable_branches(source: str, rel_path: str) -> list[DeadCodeIssu
                         kind="unreachable_branch",
                         name="if True ... else",
                         file=rel_path,
-                        detail=(
-                            f"Line {node.lineno}: unreachable else-branch — "
-                            "condition is always True."
-                        ),
+                        detail=(f"Line {node.lineno}: unreachable else-branch — condition is always True."),
                     )
                 )
 

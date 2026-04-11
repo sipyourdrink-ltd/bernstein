@@ -519,9 +519,7 @@ class PredictiveAlertEngine:
         Returns:
             List of :class:`PredictiveAlert` (may be empty).
         """
-        forecast = forecast_run_duration(
-            tasks_done, tasks_remaining, run_start_timestamp, window_hours=window_hours
-        )
+        forecast = forecast_run_duration(tasks_done, tasks_remaining, run_start_timestamp, window_hours=window_hours)
         if forecast is None or not forecast.will_overrun:
             return []
 
@@ -594,11 +592,7 @@ class PredictiveAlertEngine:
             alerts.extend(self.evaluate_completion_rate(completion_timestamps))
 
         if run_start_timestamp > 0 and tasks_done > 0:
-            alerts.extend(
-                self.evaluate_run_duration(
-                    tasks_done, tasks_remaining, run_start_timestamp, window_hours
-                )
-            )
+            alerts.extend(self.evaluate_run_duration(tasks_done, tasks_remaining, run_start_timestamp, window_hours))
 
         return alerts
 

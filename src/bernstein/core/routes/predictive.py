@@ -114,9 +114,7 @@ def get_predictions(
 
     # Sort: critical first, then by minutes_until_impact ascending
     severity_order = {"critical": 0, "warning": 1, "info": 2}
-    alerts.sort(
-        key=lambda a: (severity_order.get(str(a.severity), 9), a.minutes_until_impact)
-    )
+    alerts.sort(key=lambda a: (severity_order.get(str(a.severity), 9), a.minutes_until_impact))
 
     return JSONResponse(
         {

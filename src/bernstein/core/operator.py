@@ -79,9 +79,7 @@ class PlanReconciler:
                 errors.append(f"stage[{i}] ({stage.get('name', '?')}) has no steps")
             for dep in stage.get("dependsOn", []):
                 if dep not in {s.get("name") for s in stages}:
-                    errors.append(
-                        f"stage[{i}] depends on unknown stage '{dep}'"
-                    )
+                    errors.append(f"stage[{i}] depends on unknown stage '{dep}'")
 
         total_steps = sum(len(s.get("steps", [])) for s in stages)
         phase = "Validated" if not errors else "Failed"
@@ -100,9 +98,7 @@ class PlanReconciler:
 
     def _patch_status(self, ns: str, name: str, status: dict[str, Any]) -> None:
         body = {"status": status}
-        self._api.patch_namespaced_custom_object_status(
-            CRD_GROUP, CRD_VERSION, ns, PLAN_PLURAL, name, body
-        )
+        self._api.patch_namespaced_custom_object_status(CRD_GROUP, CRD_VERSION, ns, PLAN_PLURAL, name, body)
 
 
 class RunReconciler:
@@ -134,16 +130,22 @@ class RunReconciler:
         plan_name = spec["planRef"]
         plan = self._get_plan(ns, plan_name)
         if plan is None:
-            self._patch_status(ns, name, {
-                "phase": "Failed",
-                "conditions": [{
-                    "type": "PlanResolved",
-                    "status": "False",
-                    "reason": "PlanNotFound",
-                    "message": f"BernsteinPlan '{plan_name}' not found",
-                    "lastTransitionTime": _now_iso(),
-                }],
-            })
+            self._patch_status(
+                ns,
+                name,
+                {
+                    "phase": "Failed",
+                    "conditions": [
+                        {
+                            "type": "PlanResolved",
+                            "status": "False",
+                            "reason": "PlanNotFound",
+                            "message": f"BernsteinPlan '{plan_name}' not found",
+                            "lastTransitionTime": _now_iso(),
+                        }
+                    ],
+                },
+            )
             return
 
         plan_status = plan.get("status", {})
@@ -161,37 +163,38 @@ class RunReconciler:
 
     def _get_plan(self, ns: str, name: str) -> dict[str, Any] | None:
         try:
-            return self._crd.get_namespaced_custom_object(
-                CRD_GROUP, CRD_VERSION, ns, PLAN_PLURAL, name
-            )
+            return self._crd.get_namespaced_custom_object(CRD_GROUP, CRD_VERSION, ns, PLAN_PLURAL, name)
         except Exception:
             return None
 
-    def _initialize_run(
-        self, ns: str, name: str, stages: list[dict[str, Any]]
-    ) -> None:
+    def _initialize_run(self, ns: str, name: str, stages: list[dict[str, Any]]) -> None:
         total_steps = sum(len(s.get("steps", [])) for s in stages)
         stage_statuses = []
         for stage in stages:
             step_statuses = [
-                {"goal": step["goal"], "phase": "Pending", "retries": 0}
-                for step in stage.get("steps", [])
+                {"goal": step["goal"], "phase": "Pending", "retries": 0} for step in stage.get("steps", [])
             ]
-            stage_statuses.append({
-                "name": stage["name"],
-                "phase": "Pending",
-                "steps": step_statuses,
-            })
+            stage_statuses.append(
+                {
+                    "name": stage["name"],
+                    "phase": "Pending",
+                    "steps": step_statuses,
+                }
+            )
 
-        self._patch_status(ns, name, {
-            "phase": "Running",
-            "startTime": _now_iso(),
-            "totalSteps": total_steps,
-            "completedSteps": 0,
-            "failedSteps": 0,
-            "activeJobs": 0,
-            "stages": stage_statuses,
-        })
+        self._patch_status(
+            ns,
+            name,
+            {
+                "phase": "Running",
+                "startTime": _now_iso(),
+                "totalSteps": total_steps,
+                "completedSteps": 0,
+                "failedSteps": 0,
+                "activeJobs": 0,
+                "stages": stage_statuses,
+            },
+        )
         logger.info("Run %s/%s initialized with %d steps", ns, name, total_steps)
 
     def _advance_run(
@@ -212,12 +215,8 @@ class RunReconciler:
         failed = 0
         all_done = True
 
-        for si, (plan_stage, stage_st) in enumerate(
-            zip(plan_stages, stages_status, strict=False)
-        ):
-            deps_met = self._deps_met(
-                plan_stage.get("dependsOn", []), stages_status
-            )
+        for si, (plan_stage, stage_st) in enumerate(zip(plan_stages, stages_status, strict=False)):
+            deps_met = self._deps_met(plan_stage.get("dependsOn", []), stages_status)
             if not deps_met:
                 if stage_st["phase"] == "Pending":
                     all_done = False
@@ -267,9 +266,7 @@ class RunReconciler:
                 if step_phase == "Pending":
                     plan_step = plan_stages[si]["steps"][ti]
                     job_name_str = _job_name(name, si, ti)
-                    self._create_agent_job(
-                        ns, name, job_name_str, plan_step, plan_spec, spec
-                    )
+                    self._create_agent_job(ns, name, job_name_str, plan_step, plan_spec, spec)
                     step_st["phase"] = "Running"
                     step_st["jobName"] = job_name_str
                     step_st["startTime"] = _now_iso()
@@ -289,11 +286,7 @@ class RunReconciler:
         if all_done and failed == 0:
             run_phase = "Completed"
         elif all_done or (failed > 0 and active_jobs == 0):
-            has_pending = any(
-                step.get("phase") == "Pending"
-                for ss in stages_status
-                for step in ss.get("steps", [])
-            )
+            has_pending = any(step.get("phase") == "Pending" for ss in stages_status for step in ss.get("steps", []))
             if not has_pending:
                 run_phase = "Failed" if failed > 0 else "Completed"
 
@@ -309,9 +302,7 @@ class RunReconciler:
 
         self._patch_status(ns, name, patch)
 
-    def _deps_met(
-        self, deps: list[str], stages_status: list[dict[str, Any]]
-    ) -> bool:
+    def _deps_met(self, deps: list[str], stages_status: list[dict[str, Any]]) -> bool:
         if not deps:
             return True
         name_to_status = {s["name"]: s.get("phase") for s in stages_status}
@@ -458,9 +449,7 @@ class RunReconciler:
 
     def _patch_status(self, ns: str, name: str, status: dict[str, Any]) -> None:
         body = {"status": status}
-        self._crd.patch_namespaced_custom_object_status(
-            CRD_GROUP, CRD_VERSION, ns, RUN_PLURAL, name, body
-        )
+        self._crd.patch_namespaced_custom_object_status(CRD_GROUP, CRD_VERSION, ns, RUN_PLURAL, name, body)
 
 
 class BernsteinOperator:
@@ -468,9 +457,7 @@ class BernsteinOperator:
 
     def __init__(self, cfg: OperatorConfig | None = None) -> None:
         if not K8S_AVAILABLE:
-            raise RuntimeError(
-                "kubernetes package not installed. Install with: pip install bernstein[k8s]"
-            )
+            raise RuntimeError("kubernetes package not installed. Install with: pip install bernstein[k8s]")
         self._cfg = cfg or OperatorConfig()
         self._running = False
 
@@ -498,9 +485,7 @@ class BernsteinOperator:
 
         while self._running:
             try:
-                plans = crd_api.list_namespaced_custom_object(
-                    CRD_GROUP, CRD_VERSION, ns, PLAN_PLURAL
-                )
+                plans = crd_api.list_namespaced_custom_object(CRD_GROUP, CRD_VERSION, ns, PLAN_PLURAL)
                 for plan in plans.get("items", []):
                     try:
                         plan_reconciler.reconcile(plan)
@@ -510,9 +495,7 @@ class BernsteinOperator:
                             plan["metadata"]["name"],
                         )
 
-                runs = crd_api.list_namespaced_custom_object(
-                    CRD_GROUP, CRD_VERSION, ns, RUN_PLURAL
-                )
+                runs = crd_api.list_namespaced_custom_object(CRD_GROUP, CRD_VERSION, ns, RUN_PLURAL)
                 for run_obj in runs.get("items", []):
                     try:
                         run_reconciler.reconcile(run_obj)
@@ -539,9 +522,7 @@ def main() -> None:
     )
     cfg = OperatorConfig(
         namespace=os.getenv("POD_NAMESPACE", ""),
-        server_url=os.getenv(
-            "BERNSTEIN_SERVER_URL", "http://bernstein-server:8052"
-        ),
+        server_url=os.getenv("BERNSTEIN_SERVER_URL", "http://bernstein-server:8052"),
         agent_image=os.getenv("BERNSTEIN_AGENT_IMAGE", "bernstein:latest"),
         auth_secret_name=os.getenv("BERNSTEIN_AUTH_SECRET", "bernstein-auth"),
         provider_keys_secret=os.getenv("BERNSTEIN_PROVIDER_KEYS_SECRET", ""),

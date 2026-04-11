@@ -147,10 +147,7 @@ def _import_violates_module(import_module: str, module: ArchModule) -> str | Non
     if module.allowed_imports:
         if not any(import_module.startswith(prefix) for prefix in module.allowed_imports):
             allowed_str = ", ".join(module.allowed_imports)
-            return (
-                f"'{import_module}' is not in the allowed list for module "
-                f"'{module.name}' (allowed: {allowed_str})"
-            )
+            return f"'{import_module}' is not in the allowed list for module '{module.name}' (allowed: {allowed_str})"
         return None
 
     # forbidden_imports: listed prefixes must not appear.

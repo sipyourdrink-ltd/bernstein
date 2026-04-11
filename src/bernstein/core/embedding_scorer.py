@@ -250,10 +250,7 @@ class EmbeddingScorer:
                 scored.append((path, sim))
 
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [
-            ScoredFile(path=path, score=score, method=self.backend_name)
-            for path, score in scored[:top_k]
-        ]
+        return [ScoredFile(path=path, score=score, method=self.backend_name) for path, score in scored[:top_k]]
 
     def score_for_tasks(
         self,

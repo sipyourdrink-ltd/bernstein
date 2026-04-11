@@ -57,13 +57,9 @@ class TaskClient:
             with open(self.config.tls_ca_cert_path, "rb") as f:
                 ca_cert = f.read()
             creds = grpc.ssl_channel_credentials(root_certificates=ca_cert)
-            self._channel = grpc_aio.secure_channel(
-                self.config.server_address, creds, options=opts
-            )
+            self._channel = grpc_aio.secure_channel(self.config.server_address, creds, options=opts)
         else:
-            self._channel = grpc_aio.insecure_channel(
-                self.config.server_address, options=opts
-            )
+            self._channel = grpc_aio.insecure_channel(self.config.server_address, options=opts)
         self._stub = tasks_pb2_grpc.TaskServiceStub(self._channel)
 
     async def close(self) -> None:
@@ -82,20 +78,14 @@ class TaskClient:
     ) -> dict[str, Any]:
         from bernstein.core.grpc_gen import tasks_pb2
 
-        req = tasks_pb2.CreateTaskRequest(
-            goal=goal, role=role, priority=priority, model=model, effort=effort
-        )
+        req = tasks_pb2.CreateTaskRequest(goal=goal, role=role, priority=priority, model=model, effort=effort)
         resp = await self._stub.CreateTask(req, timeout=self.config.timeout_s)
         return self._task_to_dict(resp.task)
 
-    async def claim_task(
-        self, task_id: str, agent_id: str, node_id: str = ""
-    ) -> dict[str, Any]:
+    async def claim_task(self, task_id: str, agent_id: str, node_id: str = "") -> dict[str, Any]:
         from bernstein.core.grpc_gen import tasks_pb2
 
-        req = tasks_pb2.ClaimTaskRequest(
-            task_id=task_id, agent_id=agent_id, node_id=node_id
-        )
+        req = tasks_pb2.ClaimTaskRequest(task_id=task_id, agent_id=agent_id, node_id=node_id)
         resp = await self._stub.ClaimTask(req, timeout=self.config.timeout_s)
         return self._task_to_dict(resp.task)
 
@@ -115,14 +105,10 @@ class TaskClient:
         resp = await self._stub.CompleteTask(req, timeout=self.config.timeout_s)
         return self._task_to_dict(resp.task)
 
-    async def fail_task(
-        self, task_id: str, error: str = "", retryable: bool = False
-    ) -> dict[str, Any]:
+    async def fail_task(self, task_id: str, error: str = "", retryable: bool = False) -> dict[str, Any]:
         from bernstein.core.grpc_gen import tasks_pb2
 
-        req = tasks_pb2.FailTaskRequest(
-            task_id=task_id, error=error, retryable=retryable
-        )
+        req = tasks_pb2.FailTaskRequest(task_id=task_id, error=error, retryable=retryable)
         resp = await self._stub.FailTask(req, timeout=self.config.timeout_s)
         return self._task_to_dict(resp.task)
 
@@ -135,8 +121,14 @@ class TaskClient:
         from bernstein.core.grpc_gen import tasks_pb2
 
         status_map = {
-            "open": 1, "claimed": 2, "in_progress": 3, "done": 4,
-            "failed": 5, "blocked": 6, "cancelled": 7, "orphaned": 8,
+            "open": 1,
+            "claimed": 2,
+            "in_progress": 3,
+            "done": 4,
+            "failed": 5,
+            "blocked": 6,
+            "cancelled": 7,
+            "orphaned": 8,
         }
         req = tasks_pb2.ListTasksRequest(
             status_filter=status_map.get(status or "", 0),
@@ -156,8 +148,15 @@ class TaskClient:
     @staticmethod
     def _task_to_dict(task: Any) -> dict[str, Any]:
         status_names = {
-            0: "unspecified", 1: "open", 2: "claimed", 3: "in_progress",
-            4: "done", 5: "failed", 6: "blocked", 7: "cancelled", 8: "orphaned",
+            0: "unspecified",
+            1: "open",
+            2: "claimed",
+            3: "in_progress",
+            4: "done",
+            5: "failed",
+            6: "blocked",
+            7: "cancelled",
+            8: "orphaned",
         }
         return {
             "id": task.id,
@@ -197,13 +196,9 @@ class ClusterClient:
             with open(self.config.tls_ca_cert_path, "rb") as f:
                 ca_cert = f.read()
             creds = grpc.ssl_channel_credentials(root_certificates=ca_cert)
-            self._channel = grpc_aio.secure_channel(
-                self.config.server_address, creds, options=opts
-            )
+            self._channel = grpc_aio.secure_channel(self.config.server_address, creds, options=opts)
         else:
-            self._channel = grpc_aio.insecure_channel(
-                self.config.server_address, options=opts
-            )
+            self._channel = grpc_aio.insecure_channel(self.config.server_address, options=opts)
         self._stub = cluster_pb2_grpc.ClusterServiceStub(self._channel)
 
     async def close(self) -> None:
@@ -228,7 +223,9 @@ class ClusterClient:
             supported_models=supported_models or [],
         )
         req = cluster_pb2.RegisterNodeRequest(
-            name=name, url=url, capacity=cap,
+            name=name,
+            url=url,
+            capacity=cap,
             labels=labels or {},
         )
         resp = await self._stub.RegisterNode(req, timeout=self.config.timeout_s)
@@ -281,9 +278,7 @@ class ClusterClient:
             "nodes": [self._node_to_dict(n) for n in resp.nodes],
         }
 
-    async def steal_tasks(
-        self, queue_depths: dict[str, int]
-    ) -> dict[str, Any]:
+    async def steal_tasks(self, queue_depths: dict[str, int]) -> dict[str, Any]:
         from bernstein.core.grpc_gen import cluster_pb2
 
         req = cluster_pb2.StealTasksRequest(queue_depths=queue_depths)
@@ -303,8 +298,13 @@ class ClusterClient:
     @staticmethod
     def _node_to_dict(node: Any) -> dict[str, Any]:
         status_names = {
-            0: "unspecified", 1: "online", 2: "ready", 3: "degraded",
-            4: "cordoned", 5: "draining", 6: "offline",
+            0: "unspecified",
+            1: "online",
+            2: "ready",
+            3: "degraded",
+            4: "cordoned",
+            5: "draining",
+            6: "offline",
         }
         return {
             "id": node.id,

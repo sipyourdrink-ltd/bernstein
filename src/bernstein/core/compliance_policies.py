@@ -1146,9 +1146,7 @@ allow {
 # Master policy registry
 # ---------------------------------------------------------------------------
 
-ALL_POLICIES: list[CompliancePolicy] = (
-    _SOC2_POLICIES + _ISO27001_POLICIES + _PCI_DSS_POLICIES + _NIST_800_53_POLICIES
-)
+ALL_POLICIES: list[CompliancePolicy] = _SOC2_POLICIES + _ISO27001_POLICIES + _PCI_DSS_POLICIES + _NIST_800_53_POLICIES
 
 _BY_FRAMEWORK: dict[ComplianceFramework, list[CompliancePolicy]] = {
     ComplianceFramework.SOC2: _SOC2_POLICIES,
