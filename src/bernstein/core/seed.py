@@ -34,7 +34,7 @@ from bernstein.core.models import (
     TaskStatus,
     TestAgentConfig,
 )
-from bernstein.core.quality_gates import QualityGatesConfig
+from bernstein.core.quality_gates import BenchmarkConfig, QualityGatesConfig
 from bernstein.core.sandbox import DockerSandbox, parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig
 from bernstein.core.tenanting import TenantConfig
@@ -1279,6 +1279,39 @@ def parse_seed(path: Path) -> SeedConfig:
             raise SeedError(f"quality_gates.pii_scan_paths must be a list, got: {type(pii_scan_paths_raw).__name__}")
         pii_scan_paths = [str(p) for p in pii_scan_paths_raw]
 
+        # Parse benchmark sub-config
+        benchmark_raw: object = qg_dict.get("benchmark")
+        benchmark_cfg = BenchmarkConfig()
+        if benchmark_raw is not None:
+            if not isinstance(benchmark_raw, dict):
+                raise SeedError(
+                    f"quality_gates.benchmark must be a mapping, got: {type(benchmark_raw).__name__}"
+                )
+            bm_dict: dict[str, object] = cast("dict[str, object]", benchmark_raw)
+            bm_enabled = bm_dict.get("enabled", False)
+            if not isinstance(bm_enabled, bool):
+                raise SeedError(
+                    f"quality_gates.benchmark.enabled must be a bool, got: {type(bm_enabled).__name__}"
+                )
+            bm_command = bm_dict.get(
+                "command",
+                "uv run pytest benchmarks/ --benchmark-json=.benchmark_results.json -q",
+            )
+            if not isinstance(bm_command, str):
+                raise SeedError(
+                    f"quality_gates.benchmark.command must be a string, got: {type(bm_command).__name__}"
+                )
+            bm_threshold = bm_dict.get("threshold", 0.10)
+            if not isinstance(bm_threshold, (int, float)):
+                raise SeedError(
+                    f"quality_gates.benchmark.threshold must be a number, got: {type(bm_threshold).__name__}"
+                )
+            benchmark_cfg = BenchmarkConfig(
+                enabled=bm_enabled,
+                command=bm_command,
+                threshold=float(bm_threshold),
+            )
+
         quality_gates = QualityGatesConfig(
             enabled=_qg_bool("enabled", True),
             lint=_qg_bool("lint", True),
@@ -1324,6 +1357,7 @@ def parse_seed(path: Path) -> SeedConfig:
             auto_format_python_command=_qg_str("auto_format_python_command", "ruff format"),
             auto_format_js_command=_qg_str("auto_format_js_command", "prettier --write"),
             auto_format_rust_command=_qg_str("auto_format_rust_command", "rustfmt"),
+            benchmark=benchmark_cfg,
         )
 
     formal_verification_raw: object = data.get("formal_verification")
