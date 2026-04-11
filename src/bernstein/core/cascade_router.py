@@ -251,6 +251,10 @@ class CascadeRouter:
     with ``EpsilonGreedyBandit`` to learn which model is cheapest-while-meeting-
     quality-thresholds for each (role, complexity) class over time.
 
+    Important: The cascade arms (haiku/sonnet/opus) are Claude-specific model
+    names.  Use ``router_applicable()`` to check whether this router should be
+    consulted for a given adapter before calling ``select()``.
+
     Usage::
 
         router = CascadeRouter(bandit_metrics_dir=workdir / ".sdd" / "metrics")
@@ -282,6 +286,26 @@ class CascadeRouter:
     """
 
     CHAIN_FILE = "cascade_chains.jsonl"
+
+    # Adapters whose model names match the cascade arms (haiku/sonnet/opus).
+    _CLAUDE_COMPATIBLE_ADAPTERS: frozenset[str] = frozenset({"claude", "claude code", "claude_code", "claude-code"})
+
+    @staticmethod
+    def router_applicable(adapter_name: str) -> bool:
+        """Return whether this router's arms are valid for the given adapter.
+
+        The cascade router's arms (haiku/sonnet/opus) are Claude-specific.
+        For non-Claude adapters the router cannot produce meaningful model
+        selections and should be skipped.
+
+        Args:
+            adapter_name: Name returned by ``adapter.name()`` or the ``cli``
+                value from ``role_model_policy``.
+
+        Returns:
+            ``True`` when the router can route for this adapter.
+        """
+        return adapter_name.lower().strip() in CascadeRouter._CLAUDE_COMPATIBLE_ADAPTERS
 
     def __init__(
         self,

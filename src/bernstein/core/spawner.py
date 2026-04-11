@@ -1092,9 +1092,22 @@ class AgentSpawner:
         if len(roles) > 1:
             raise ValueError(f"All tasks in a batch must share the same role, got: {roles}")
 
-        # Route based on highest-complexity task in batch; use TierAwareRouter if available.
-        # Effectiveness data is fed into the bandit as priors (via _select_batch_config →
-        # route_task) so both learning systems share data rather than competing.
+        # ---------------------------------------------------------------
+        # Model selection precedence (highest wins):
+        #
+        #   1. Operator config: role_model_policy has cli+model for this role
+        #      → use exactly that adapter and model.  The router's
+        #      arms (haiku/sonnet/opus) are Claude-specific and meaningless
+        #      for non-Claude adapters like qwen, gemini, codex, etc.
+        #
+        #   2. Router suggestion: bandit/cascade router picks a model from
+        #      its Claude-specific arm set.  Only consulted when the adapter
+        #      is Claude-compatible (i.e. the router's arms match the
+        #      adapter's model names).
+        #
+        #   3. Default heuristic: _select_batch_config picks model/effort
+        #      based on task complexity, scope, and role templates.
+        # ---------------------------------------------------------------
         metrics_dir = self._workdir / ".sdd" / "metrics"
         base_config = _select_batch_config(
             tasks,
@@ -1129,10 +1142,14 @@ class AgentSpawner:
                 is_batch=base_config.is_batch,
             )
 
-        # Skip router when role_model_policy explicitly sets model+cli —
-        # the operator's config takes precedence over bandit/cascade routing.
-        _policy_has_explicit_model = bool(role_policy.get("model") and role_policy.get("cli"))
-        if self._router is not None and self._router.state.providers and not _policy_has_explicit_model:
+        use_router = _should_use_router(
+            role_policy=role_policy,
+            adapter_name=self._adapter.name(),
+            has_router=self._router is not None and bool(self._router.state.providers),
+        )
+        routing_source = "heuristic"
+        if use_router:
+            assert self._router is not None  # guaranteed by _should_use_router
             try:
                 decision = self._router.select_provider_for_task(
                     tasks[0],
@@ -1141,6 +1158,7 @@ class AgentSpawner:
                 )
                 model_config = decision.model_config
                 provider_name = decision.provider
+                routing_source = "router"
             except RouterError as exc:
                 if preferred_provider:
                     logger.warning(
@@ -1153,12 +1171,33 @@ class AgentSpawner:
                         decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
                         model_config = decision.model_config
                         provider_name = decision.provider
+                        routing_source = "router-fallback"
                     except RouterError as fallback_exc:
                         logger.warning("Router failed to select provider, using fallback: %s", fallback_exc)
                 else:
                     logger.warning("Router failed to select provider, using fallback: %s", exc)
-        elif preferred_provider:
-            provider_name = preferred_provider
+        else:
+            # Router skipped — operator config or non-Claude adapter.
+            if preferred_provider:
+                provider_name = preferred_provider
+            routing_source = "operator-config" if role_policy.get("model") else "heuristic"
+            logger.info(
+                "Router skipped for role=%s (adapter=%s): using %s/%s (source=%s)",
+                tasks[0].role,
+                role_policy.get("cli", self._adapter.name()),
+                model_config.model,
+                model_config.effort,
+                routing_source,
+            )
+
+        logger.info(
+            "Model selection for role=%s: model=%s effort=%s provider=%s source=%s",
+            tasks[0].role,
+            model_config.model,
+            model_config.effort,
+            provider_name or self._adapter.name(),
+            routing_source,
+        )
 
         provider_for_rate_limit = provider_name or self._adapter.name()
         try:
@@ -2683,6 +2722,52 @@ class AgentSpawner:
         except Exception as exc:
             logger.warning("Merge failed for %s: %s", session_id, exc)
             return MergeResult(success=False, conflicting_files=[], error=str(exc))
+
+
+def _should_use_router(
+    role_policy: dict[str, str],
+    adapter_name: str,
+    has_router: bool,
+) -> bool:
+    """Decide whether the tier-aware router should select the model.
+
+    The router's internal model arms (haiku/sonnet/opus) and the cascade/bandit
+    systems are Claude-specific.  When the operator has configured an explicit
+    ``cli`` + ``model`` in ``role_model_policy``, or the active adapter is not
+    Claude-compatible, the router cannot produce a meaningful selection and must
+    be bypassed.
+
+    Precedence logic:
+        1. No router registered or no providers → skip (nothing to route with).
+        2. Operator pinned both ``cli`` and ``model`` → skip (explicit config
+           takes absolute priority; the operator knows best).
+        3. Active adapter is not Claude-compatible → skip (router arms are
+           meaningless for qwen, gemini, codex, etc.).
+        4. Otherwise → use the router.
+
+    Args:
+        role_policy: The ``role_model_policy`` entry for the current role
+            (may be empty dict).
+        adapter_name: The adapter name from ``adapter.name()``.
+        has_router: Whether a TierAwareRouter is configured with providers.
+
+    Returns:
+        ``True`` when the router should be consulted.
+    """
+    if not has_router:
+        return False
+
+    # Operator explicitly pinned adapter + model → router must not override.
+    # The seed parser maps ``cli`` → ``provider``, so check both keys.
+    pinned_adapter = role_policy.get("cli") or role_policy.get("provider")
+    if pinned_adapter and role_policy.get("model"):
+        return False
+
+    # The router's arms are Claude-specific; non-Claude adapters get nonsense.
+    from bernstein.core.bandit_router import BanditRouter
+
+    effective_adapter = pinned_adapter or adapter_name
+    return BanditRouter.router_applicable(effective_adapter)
 
 
 def _load_role_config(role: str, templates_dir: Path) -> ModelConfig | None:

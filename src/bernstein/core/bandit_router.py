@@ -68,6 +68,11 @@ _DEFAULT_WARMUP_MIN: int = 50
 _EXPLORATION_HISTORY_LIMIT: int = 100
 _POLICY_FORMAT_VERSION: int = 2
 
+# Adapters whose model names match the default bandit arms (haiku/sonnet/opus).
+# The bandit router only produces meaningful selections for these adapters;
+# for anything else the operator's explicit model config should be used directly.
+_CLAUDE_COMPATIBLE_ADAPTERS: frozenset[str] = frozenset({"claude", "claude code", "claude_code", "claude-code"})
+
 # High-stakes roles never start at haiku (mirrors cascade_router logic)
 _HIGH_STAKES_ROLES: frozenset[str] = frozenset({"manager", "architect", "security"})
 _LANGUAGE_BY_SUFFIX: dict[str, str] = {
@@ -725,6 +730,23 @@ class BanditRouter:
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def router_applicable(adapter_name: str) -> bool:
+        """Return whether this router's arms are valid for the given adapter.
+
+        The bandit router's arms (haiku/sonnet/opus) are Claude-specific model
+        names.  For non-Claude adapters (qwen, gemini, codex, etc.) the router
+        cannot produce a meaningful model selection and should be skipped.
+
+        Args:
+            adapter_name: Name returned by ``adapter.name()`` or the ``cli``
+                value from ``role_model_policy``.
+
+        Returns:
+            ``True`` when the router can route for this adapter.
+        """
+        return adapter_name.lower().strip() in _CLAUDE_COMPATIBLE_ADAPTERS
 
     @property
     def total_completions(self) -> int:

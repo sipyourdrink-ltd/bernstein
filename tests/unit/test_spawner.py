@@ -336,6 +336,7 @@ def _make_router() -> TierAwareRouter:
 class TestSpawnerWithRouter:
     def test_spawner_uses_router_when_configured(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=300)
+        adapter.name.return_value = "claude"  # Router arms are Claude-specific
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         router = _make_router()
@@ -346,6 +347,27 @@ class TestSpawnerWithRouter:
 
         assert session.provider == "test_provider"
         assert session.pid == 300
+
+    def test_router_skipped_for_non_claude_adapter(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        """Router is skipped when adapter is not Claude-compatible (e.g. qwen, gemini).
+
+        The router's arms (haiku/sonnet/opus) are Claude-specific and meaningless
+        for non-Claude adapters.  The spawner should bypass the router and use the
+        heuristic model config directly.
+        """
+        adapter = mock_adapter_factory(pid=301)
+        adapter.name.return_value = "qwen"  # Non-Claude adapter
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        router = _make_router()
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+
+        task = make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
+        session = spawner.spawn_for_tasks([task])
+
+        # Router was not consulted — provider falls back to adapter name
+        assert session.provider != "test_provider"
+        assert session.pid == 301
 
     def test_spawner_falls_back_without_router(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=400)
@@ -414,8 +436,10 @@ class TestSpawnerWithRouter:
         backup_adapter = mock_adapter_factory(pid=901)
         backup_adapter.name.return_value = "gemini"
 
+        primary_adapter = mock_adapter_factory(pid=123)
+        primary_adapter.name.return_value = "claude"  # Router arms are Claude-specific
         spawner = AgentSpawner(
-            mock_adapter_factory(pid=123),
+            primary_adapter,
             templates_dir,
             tmp_path,
             router=router,
