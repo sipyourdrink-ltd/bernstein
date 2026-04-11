@@ -369,6 +369,57 @@ class ModelFallbackSchema(BaseModel):
     )
 
 
+class ArchModuleEntry(BaseModel):
+    """Boundary definition for one logical module in the architecture conformance config."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, description="Human-readable module name.")
+    paths: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns (relative to repo root) for files in this module.",
+    )
+    allowed_imports: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Module prefixes that files in this module may import. "
+            "When non-empty, any unlisted import is a violation."
+        ),
+    )
+    forbidden_imports: list[str] = Field(
+        default_factory=list,
+        description="Module prefixes that files in this module must not import.",
+    )
+
+
+class ArchConformanceSchema(BaseModel):
+    """Architecture conformance checking against declared module boundaries (ROAD-171).
+
+    Example bernstein.yaml::
+
+        guardrails:
+          arch_conformance:
+            enabled: true
+            block_on_violation: true
+            modules:
+              - name: core
+                paths: ["src/bernstein/core/**"]
+                forbidden_imports: ["bernstein.cli", "bernstein.adapters"]
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="Master switch for boundary checking.")
+    modules: list[ArchModuleEntry] = Field(
+        default_factory=list,
+        description="Module boundary definitions.",
+    )
+    block_on_violation: bool = Field(
+        default=True,
+        description="Hard-block merge on violation (DENY). False → ASK (flag only).",
+    )
+
+
 class BernsteinConfig(BaseModel):
     """Top-level Pydantic model for bernstein.yaml.
 
@@ -439,6 +490,7 @@ class BernsteinConfig(BaseModel):
     smtp: SmtpSchema | None = None
     mcp_servers: dict[str, Any] | None = None
     model_fallback: ModelFallbackSchema | None = None
+    arch_conformance: ArchConformanceSchema | None = None
     metrics: dict[str, CustomMetricSchema] | None = Field(
         default=None,
         description=(
