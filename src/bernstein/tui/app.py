@@ -56,8 +56,7 @@ def _build_app_bindings() -> list[BindingType]:
     are applied automatically.
     """
     bindings = [
-        Binding(e.key, e.action, e.description, show=e.show, priority=e.priority)
-        for e in _resolve_all_bindings()
+        Binding(e.key, e.action, e.description, show=e.show, priority=e.priority) for e in _resolve_all_bindings()
     ]
     bindings.append(Binding("/", "focus_task_search", "Search", show=True))
     bindings.append(Binding("1", "layout_focus", "Focus layout", show=False))
