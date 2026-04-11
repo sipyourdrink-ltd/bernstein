@@ -128,6 +128,26 @@ _DEFAULT_MODEL_BY_COMPLEXITY: dict[str, str] = {
     "high": "opus",
 }
 
+# Populated at plan creation time from the seed's role_model_policy.
+_ROLE_MODEL_OVERRIDES: dict[str, str] = {}
+_ROLE_CLI_OVERRIDES: dict[str, str] = {}
+
+
+def configure_plan_models(role_model_policy: dict[str, dict[str, str]] | None) -> None:
+    """Set per-role model/CLI overrides from the seed config.
+
+    Called once at startup so _estimate_task_cost uses the correct
+    adapter and model names instead of hardcoded Claude defaults.
+    """
+    _ROLE_MODEL_OVERRIDES.clear()
+    _ROLE_CLI_OVERRIDES.clear()
+    if role_model_policy:
+        for role, policy in role_model_policy.items():
+            if "model" in policy:
+                _ROLE_MODEL_OVERRIDES[role] = policy["model"]
+            if "cli" in policy:
+                _ROLE_CLI_OVERRIDES[role] = policy["cli"]
+
 
 def _estimate_task_cost(task: Task) -> TaskCostEstimate:
     """Estimate the cost of executing a single task.
@@ -135,19 +155,30 @@ def _estimate_task_cost(task: Task) -> TaskCostEstimate:
     Uses scope for token estimation and complexity for model selection,
     then applies the per-1k-token pricing from the cost module.
     """
-    # Determine model
-    model = task.model or _DEFAULT_MODEL_BY_COMPLEXITY.get(task.complexity.value, "sonnet")
+    # Determine model — prefer role-specific override, then task.model, then complexity default
+    model = (
+        _ROLE_MODEL_OVERRIDES.get(task.role)
+        or task.model
+        or _DEFAULT_MODEL_BY_COMPLEXITY.get(task.complexity.value, "sonnet")
+    )
+    cli = _ROLE_CLI_OVERRIDES.get(task.role)
+    if cli:
+        model = f"{cli}/{model}"
 
     # Estimate tokens
     estimated_tokens = _TOKENS_BY_SCOPE.get(task.scope.value, 80_000)
 
-    # Look up cost rate
-    rate: float = 0.005  # fallback
-    model_lower = model.lower()
-    for key, cost in _MODEL_COST_USD_PER_1K.items():
-        if key in model_lower:
-            rate = cost
-            break
+    # Look up cost rate — free-tier adapters cost $0
+    _FREE_ADAPTERS = ("qwen", "gemini", "ollama", "tabby")
+    if cli and cli.lower() in _FREE_ADAPTERS:
+        rate: float = 0.0
+    else:
+        rate = 0.005  # fallback
+        model_lower = model.lower()
+        for key, cost in _MODEL_COST_USD_PER_1K.items():
+            if key in model_lower:
+                rate = cost
+                break
 
     estimated_cost = (estimated_tokens / 1000.0) * rate
 
