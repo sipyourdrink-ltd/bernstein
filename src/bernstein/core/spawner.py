@@ -2276,6 +2276,96 @@ class AgentSpawner:
 
         return merge_result
 
+    # -- Pending push retry queue ---------------------------------------------
+
+    def _pending_pushes_path(self) -> Path:
+        """Return the path to the pending-pushes JSONL file."""
+        return self._workdir / ".sdd" / "runtime" / "pending_pushes.jsonl"
+
+    def _record_pending_push(
+        self,
+        session_id: str,
+        branch: str,
+        repo_root: Path,
+    ) -> None:
+        """Append a failed push to the retry queue on disk."""
+        path = self._pending_pushes_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "session_id": session_id,
+            "branch": branch,
+            "repo_root": str(repo_root),
+            "ts": time.time(),
+        }
+        try:
+            with path.open("a") as fh:
+                fh.write(json.dumps(entry) + "\n")
+            logger.info("Queued pending push for %s (%s)", session_id, repo_root)
+        except OSError as exc:
+            logger.error("Failed to write pending push for %s: %s", session_id, exc)
+
+    def retry_pending_pushes(self) -> int:
+        """Retry any pushes recorded in the pending-pushes file.
+
+        Successfully pushed entries are removed from the file.  Entries
+        that still fail are kept for the next tick.
+
+        Returns:
+            Number of pushes successfully retried.
+        """
+        path = self._pending_pushes_path()
+        if not path.exists():
+            return 0
+
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            return 0
+
+        if not lines:
+            return 0
+
+        from bernstein.core.git_ops import safe_push
+
+        remaining: list[str] = []
+        retried = 0
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            repo_root = Path(entry["repo_root"])
+            branch = entry.get("branch", "main")
+            session_id = entry.get("session_id", "unknown")
+
+            push_result = safe_push(repo_root, branch)
+            if push_result.ok:
+                logger.info("Retry push succeeded for %s (%s)", session_id, repo_root)
+                retried += 1
+            else:
+                logger.warning(
+                    "Retry push still failing for %s: %s",
+                    session_id,
+                    push_result.stderr,
+                )
+                remaining.append(line)
+
+        # Rewrite file with only the entries that still failed
+        try:
+            if remaining:
+                path.write_text("\n".join(remaining) + "\n")
+            else:
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to update pending pushes file: %s", exc)
+
+        return retried
+
     def _finalize_trace(self, session: AgentSession) -> None:
         """Write the finalized trace for a reaped session."""
         trace = self._traces.pop(session.id, None)
