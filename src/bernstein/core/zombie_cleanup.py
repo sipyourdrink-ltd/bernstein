@@ -15,7 +15,7 @@ import re
 import signal
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.platform_compat import IS_WINDOWS, kill_process, process_alive
 
@@ -71,6 +71,7 @@ class CleanupResult:
         orphans_found: Number of orphaned (still alive) processes found.
         orphans_killed: Number of orphaned processes successfully terminated.
         stale_removed: Number of stale PID files removed (process already dead).
+        task_count: Total number of tasks associated with scanned agent sessions.
         errors: List of error messages for any failed cleanup attempts.
     """
 
@@ -78,10 +79,24 @@ class CleanupResult:
     orphans_found: int = 0
     orphans_killed: int = 0
     stale_removed: int = 0
+    task_count: int = 0
     errors: list[str] = field(default_factory=list[str])
 
+    def summary(self) -> str:
+        """Return a human-readable one-line summary of the cleanup results."""
+        parts = [
+            f"scanned={self.scanned}",
+            f"tasks={self.task_count}",
+            f"orphans={self.orphans_found}",
+            f"killed={self.orphans_killed}",
+            f"stale={self.stale_removed}",
+        ]
+        if self.errors:
+            parts.append(f"errors={len(self.errors)}")
+        return " ".join(parts)
 
-def _read_pid_file(pid_file: Path) -> dict[str, int | str]:
+
+def _read_pid_file(pid_file: Path) -> dict[str, Any]:
     """Read and parse a PID metadata file.
 
     PID files are JSON with at minimum a ``pid`` or ``worker_pid`` key.
@@ -96,7 +111,7 @@ def _read_pid_file(pid_file: Path) -> dict[str, int | str]:
     try:
         data = json.loads(pid_file.read_text(encoding="utf-8"))
         if isinstance(data, dict):
-            return data  # type: ignore[return-value]
+            return data
     except (OSError, json.JSONDecodeError, ValueError):
         pass
     return {}
@@ -185,6 +200,13 @@ def scan_and_cleanup_zombies(
             except OSError:
                 pass
             continue
+
+        # Count tasks associated with this session
+        task_ids_raw = data.get("task_ids")
+        if isinstance(task_ids_raw, list):
+            result.task_count += len(task_ids_raw)
+        else:
+            result.task_count += 1
 
         # Check file age — very old PID files are just stale metadata
         try:
