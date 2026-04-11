@@ -37,6 +37,8 @@ Last updated: 2026-04-11
 | Ephemeral VM environments — Firecracker/gVisor (road-115) | `WORKFLOW-ephemeral-vm-environments.md` | Draft | VM-level agent isolation via Firecracker (<125ms boot) or standalone gVisor. Parallel to existing Docker/Podman ContainerManager. Requires new VMManager, IsolationMode.VM enum value. 8 RC findings. |
 | Team adoption dashboard (road-007) | `WORKFLOW-team-adoption-dashboard.md` | Draft | Aggregate org-level usage: runs, tasks, cost, quality, merges. 3 Critical gaps: cost key mismatch (always 0), quality source mismatch (always 0), missing merge writer (always 0). 8 RC findings. |
 | Multi-modal agent support (road-184) | `WORKFLOW-multi-modal-agent-support.md` | Draft | End-to-end attachment pipeline: plan YAML / API → Task → SpawnPrompt → Adapter → Agent. No multi-modal path exists today — Task, adapter, and prompt renderer all text-only. 7 RC findings. |
+| Plugin marketplace (road-089) | `WORKFLOW-plugin-marketplace.md` | Draft | Community plugin marketplace: search, install, update, uninstall, publish. Versioned, signed (Ed25519), reviewed. 6 sub-workflows, 10 RC findings (3 Critical: manifest not wired, trust not wired, signature is presence-only). |
+| WAL replication for HA (road-109) | `WORKFLOW-wal-replication-ha.md` | Draft | Single-region HA via WAL replication to standby. Pull-based, hash-chain verified, fencing-token failover. 5 sub-workflows, 12 RC findings (5 Critical: WALReplicationManager unwired, no HTTP routes, no standby mode). |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
