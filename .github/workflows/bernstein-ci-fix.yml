@@ -22,13 +22,24 @@ jobs:
     name: Auto-fix with Bernstein
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Only run if CI failed AND the ANTHROPIC_API_KEY secret is available.
-    # Skip if only lint failed — the autofix job in ci.yml handles that.
+    # Only run if CI failed on the canonical repo (not a fork) AND the
+    # autofix feature flag is set. The prior check on ``github.actor``
+    # to suppress bot-loops was flagged by Sonar S8232 — ``github.actor``
+    # is forgeable on workflow_run events. Instead, break the loop via
+    # two non-forgeable signals:
+    #   1. ``head_repository.full_name`` must match the canonical repo
+    #      (discards forks, which are the only way an attacker can
+    #      influence actor).
+    #   2. ``head_commit.author.name`` must NOT be one of the bernstein
+    #      bot identities — ``head_commit`` comes from the upstream
+    #      workflow_run payload and is the actual committer name, not
+    #      a request header.
     if: >
       github.event.workflow_run.conclusion == 'failure' &&
       vars.BERNSTEIN_CI_FIX_ENABLED == 'true' &&
-      github.actor != 'bernstein[bot]' &&
-      github.actor != 'bernstein-orchestrator[bot]'
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_commit.author.name != 'bernstein[bot]' &&
+      github.event.workflow_run.head_commit.author.name != 'bernstein-orchestrator[bot]'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
