@@ -264,7 +264,9 @@ def _empty_server_transport() -> httpx.MockTransport:
             "GET /tasks?status=claimed": httpx.Response(200, json=[]),
             "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
             "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks?status=closed": httpx.Response(200, json=[]),
             "GET /tasks?status=failed": httpx.Response(200, json=[]),
+            "GET /tasks?status=cancelled": httpx.Response(200, json=[]),
         }
     )
 
@@ -294,8 +296,10 @@ def _server_with_done_task(title: str) -> httpx.MockTransport:
             "GET /tasks?status=open": httpx.Response(200, json=[]),
             "GET /tasks?status=claimed": httpx.Response(200, json=[]),
             "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[closed_task]),
             "GET /tasks?status=closed": httpx.Response(200, json=[closed_task]),
             "GET /tasks?status=failed": httpx.Response(200, json=[]),
+            "GET /tasks?status=cancelled": httpx.Response(200, json=[]),
         }
     )
 
@@ -313,7 +317,9 @@ def _server_with_existing_task(title: str) -> httpx.MockTransport:
             "GET /tasks?status=claimed": httpx.Response(200, json=[]),
             "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
             "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks?status=closed": httpx.Response(200, json=[]),
             "GET /tasks?status=failed": httpx.Response(200, json=[]),
+            "GET /tasks?status=cancelled": httpx.Response(200, json=[]),
         }
     )
 
