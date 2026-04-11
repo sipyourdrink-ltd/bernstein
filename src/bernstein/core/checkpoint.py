@@ -116,7 +116,7 @@ def save_checkpoint(checkpoint: Checkpoint, output_dir: Path) -> Path:
     data = json.dumps(payload, indent=2, sort_keys=True)
 
     tmp.write_text(data, encoding="utf-8")
-    tmp.rename(target)
+    tmp.replace(target)  # replace() works on Windows; rename() fails if target exists
 
     logger.info(
         "Saved checkpoint %s (%d/%d tasks) to %s",
