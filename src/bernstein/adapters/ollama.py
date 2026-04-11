@@ -81,6 +81,8 @@ class OllamaAdapter(CLIAdapter):
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
