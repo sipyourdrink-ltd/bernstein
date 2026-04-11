@@ -34,6 +34,8 @@ Last updated: 2026-04-11
 | Disaster recovery with cross-region replication (ENT-010) | `WORKFLOW-disaster-recovery-cross-region.md` | Draft | backup_sdd/restore_sdd local-only. WALReplicationManager has no transport layer. No periodic scheduling, no remote upload, no failover detection, no runbook generation. 10 RC findings. |
 | Embeddable PR status widget (road-006) | `WORKFLOW-pr-status-widget.md` | Draft | Embed status widget in PR body: quality grade, cost, agents, duration. Extends approval.py _pr_body with data from quality_gates, quality_score, cost_tracker. 5 RC findings. |
 | Ephemeral VM environments — Firecracker/gVisor (road-115) | `WORKFLOW-ephemeral-vm-environments.md` | Draft | VM-level agent isolation via Firecracker (<125ms boot) or standalone gVisor. Parallel to existing Docker/Podman ContainerManager. Requires new VMManager, IsolationMode.VM enum value. 8 RC findings. |
+| Team adoption dashboard (road-007) | `WORKFLOW-team-adoption-dashboard.md` | Draft | Aggregate org-level usage: runs, tasks, cost, quality, merges. 3 Critical gaps: cost key mismatch (always 0), quality source mismatch (always 0), missing merge writer (always 0). 8 RC findings. |
+| Multi-modal agent support (road-184) | `WORKFLOW-multi-modal-agent-support.md` | Draft | End-to-end attachment pipeline: plan YAML / API → Task → SpawnPrompt → Adapter → Agent. No multi-modal path exists today — Task, adapter, and prompt renderer all text-only. 7 RC findings. |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
