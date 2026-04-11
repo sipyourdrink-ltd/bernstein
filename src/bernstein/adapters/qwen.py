@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
@@ -62,18 +62,35 @@ class QwenAdapter(CLIAdapter):
         # default / openai
         return settings.openai_api_key or "", settings.openai_base_url or ""
 
+    # Model name mapping: Bernstein abstract names → Qwen model IDs.
+    # "coder-model" is the qwen settings.json alias, not a valid API model ID.
+    # When the model is "coder-model" or "default", omit --model entirely
+    # and let qwen use its configured default from ~/.qwen/settings.json.
+    _MODEL_MAP: ClassVar[dict[str, str]] = {
+        "opus": "qwen3.6-plus",
+        "sonnet": "qwen3.6-plus",
+        "haiku": "qwen3-coder-plus",
+    }
+    _SKIP_MODEL_FLAG: ClassVar[frozenset[str]] = frozenset(
+        {
+            "coder-model",
+            "default",
+            "auto",
+        }
+    )
+
     def _build_command(self, model_name: str, provider: str, settings: LLMSettings) -> list[str]:
         """Build the qwen CLI command list (without the final prompt argument)."""
         cmd: list[str] = ["qwen", "-y"]
 
-        # Always map abstract model names (opus/sonnet/haiku) to native Qwen
-        # models — these are Bernstein-internal names, not valid Qwen model IDs.
-        if model_name in ("opus", "sonnet"):
-            model_name = "qwen3.6-plus"
-        elif model_name == "haiku":
-            model_name = "qwen3-coder-plus"
-
-        cmd.extend(["--model", model_name])
+        # Map abstract names to real Qwen model IDs
+        mapped = self._MODEL_MAP.get(model_name)
+        if mapped:
+            cmd.extend(["--model", mapped])
+        elif model_name.lower() not in self._SKIP_MODEL_FLAG:
+            # Pass through user-specified model names (e.g., "qwen3.6-plus")
+            cmd.extend(["--model", model_name])
+        # else: omit --model, let qwen use its configured default
 
         if provider != "default":
             cmd.extend(["--auth-type", "openai"])
