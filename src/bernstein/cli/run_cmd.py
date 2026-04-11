@@ -1305,6 +1305,10 @@ def run(
                     _seed = _parse_seed(_peek_path)
                     effective_goal_for_confirm = _seed.goal
                     team_for_confirm = list(_seed.team) if _seed.team != "auto" else None
+                    # Configure plan model display from seed config
+                    from bernstein.core.plan_approval import configure_plan_models
+
+                    configure_plan_models(_seed.role_model_policy)
                 except Exception:
                     pass
 
