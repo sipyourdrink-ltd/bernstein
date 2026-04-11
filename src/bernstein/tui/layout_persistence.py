@@ -12,13 +12,23 @@ logger = logging.getLogger(__name__)
 
 _LAYOUT_PATH = Path.home() / ".bernstein" / "tui_layout.yaml"
 _REQUIRED_PANELS: frozenset[str] = frozenset({"task-list", "task-search"})
-_DEFAULT_PANELS: frozenset[str] = frozenset({"task-list", "task-search", "task-context", "runtime-health", "agent-log"})
+_DEFAULT_PANELS: frozenset[str] = frozenset(
+    {"task-list", "task-search", "task-context", "runtime-health", "notification-center", "agent-log"}
+)
 _VALID_PRESETS: frozenset[str] = frozenset({"focus", "balanced", "observability"})
 
 _PRESET_PANELS: dict[str, frozenset[str]] = {
     "focus": frozenset({"task-list", "task-search", "task-context", "runtime-health", "agent-log"}),
     "balanced": frozenset(
-        {"task-list", "task-search", "task-context", "runtime-health", "agent-log", "task-timeline"}
+        {
+            "task-list",
+            "task-search",
+            "task-context",
+            "runtime-health",
+            "notification-center",
+            "agent-log",
+            "task-timeline",
+        }
     ),
     "observability": frozenset(
         {
@@ -26,6 +36,7 @@ _PRESET_PANELS: dict[str, frozenset[str]] = {
             "task-search",
             "task-context",
             "runtime-health",
+            "notification-center",
             "agent-log",
             "task-timeline",
             "waterfall-view",

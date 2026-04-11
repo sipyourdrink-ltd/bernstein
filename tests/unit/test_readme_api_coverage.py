@@ -109,6 +109,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "man-pages",
         "profile",
         "report",
+        "run-changelog",
         # Utilities
         "aliases",
         "completions",

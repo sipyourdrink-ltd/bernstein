@@ -11,6 +11,10 @@ from __future__ import annotations
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from datetime import datetime
+
+from rich.text import Text
+from textual.widgets import Static
 
 
 class BadgeTracker:
@@ -225,3 +229,83 @@ class NotificationHistory:
     def size(self) -> int:
         """Total number of records in history."""
         return len(self._records)
+
+
+def render_notification_center(
+    records: list[NotificationRecord],
+    *,
+    unread_count: int = 0,
+    limit: int = 5,
+) -> Text:
+    """Render notification history as compact Rich text.
+
+    Args:
+        records: Notification records in newest-first order.
+        unread_count: Number of unread notifications.
+        limit: Maximum number of entries to display.
+
+    Returns:
+        Rich ``Text`` payload suitable for a compact review panel.
+    """
+    text = Text.from_markup(
+        "[bold]Notifications[/bold]"
+        f" [dim]({unread_count} unread, N marks read)[/dim]"
+    )
+    entries = records[:limit]
+    if not entries:
+        text.append("\n")
+        text.append("No notifications yet.", style="dim")
+        return text
+
+    level_styles: dict[str, str] = {
+        "info": "cyan",
+        "success": "green",
+        "warning": "yellow",
+        "error": "red",
+    }
+    for record in entries:
+        label = record.level.upper()[:4].ljust(4)
+        stamp = datetime.fromtimestamp(record.timestamp).strftime("%H:%M:%S")
+        unread_marker = "new " if not record.read else "    "
+        text.append("\n")
+        text.append(stamp, style="dim")
+        text.append(" ")
+        text.append(unread_marker, style="bold" if not record.read else "dim")
+        text.append(label, style=level_styles.get(record.level, "white"))
+        text.append(" ")
+        text.append(record.message)
+    return text
+
+
+class NotificationCenterPanel(Static):
+    """Compact review panel for recent notifications and unread state."""
+
+    DEFAULT_CSS = """
+    NotificationCenterPanel {
+        height: auto;
+        max-height: 10;
+        border-top: solid #333;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        """Initialise with an empty notification snapshot."""
+        super().__init__(**kwargs)
+        self._records: list[NotificationRecord] = []
+        self._unread_count = 0
+
+    def set_history(self, records: list[NotificationRecord], unread_count: int) -> None:
+        """Replace the displayed notification snapshot and refresh.
+
+        Args:
+            records: Notification records in newest-first order.
+            unread_count: Number of unread notifications.
+        """
+        self._records = records
+        self._unread_count = unread_count
+        self.refresh()
+
+    def render(self) -> Text:
+        """Render recent notification history."""
+        return render_notification_center(self._records, unread_count=self._unread_count)

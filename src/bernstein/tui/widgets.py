@@ -554,6 +554,7 @@ class ShortcutsFooter(Static):
         "Enter detail",
         "x cancel",
         "p prioritize",
+        "n notifications",
         "t retry",
         "k kill",
         "s spawn",
