@@ -81,6 +81,7 @@ from bernstein.cli.merge_cmd import merge_cmd
 from bernstein.cli.plan_validate_cmd import validate_plan
 from bernstein.cli.policy_cmd import policy_group
 from bernstein.cli.postmortem_cmd import postmortem_cmd
+from bernstein.cli.slo_cmd import slo_cmd
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
@@ -737,6 +738,7 @@ cli.add_command(ci_group, "ci")
 cli.add_command(gateway_group, "gateway")
 cli.add_command(report_cmd, "report")
 cli.add_command(postmortem_cmd, "postmortem")
+cli.add_command(slo_cmd, "slo")
 cli.add_command(man_pages_cmd, "man-pages")
 cli.add_command(workflow_group, "workflow")
 cli.add_command(quickstart_cmd, "quickstart")

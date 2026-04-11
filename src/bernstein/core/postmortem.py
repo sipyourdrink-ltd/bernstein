@@ -343,7 +343,10 @@ class PostMortemGenerator:
         return "\n".join(lines)
 
     def to_html(self, report: PostMortemReport) -> str:
-        """Render a :class:`PostMortemReport` as an HTML document.
+        """Render a :class:`PostMortemReport` as a styled HTML document.
+
+        Generates a fully self-contained HTML page with embedded CSS, proper
+        tables for the timeline, contributing factors, and recommended actions.
 
         Args:
             report: The report to render.
@@ -351,32 +354,267 @@ class PostMortemGenerator:
         Returns:
             Complete HTML string with embedded styling.
         """
-        md = self.to_markdown(report)
-        # Minimal HTML wrapper — avoids heavyweight markdown-to-HTML dependency.
-        escaped = md.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>\n")
-        title = f"Post-Mortem: {report.run_id}"
+        import datetime
+        import html
+
+        ts = datetime.datetime.fromtimestamp(report.generated_at).strftime("%Y-%m-%d %H:%M:%S")
+        title = html.escape(f"Post-Mortem: {report.run_id}")
+
+        _badge_css = "padding:2px 6px;border-radius:3px;font-size:0.8em"
+
+        def _status_badge(kind: str) -> str:
+            colors = {
+                "task_start": "#2196F3",
+                "task_complete": "#4CAF50",
+                "task_fail": "#F44336",
+                "error": "#FF9800",
+            }
+            color = colors.get(kind, "#9E9E9E")
+            label = html.escape(kind)
+            return f'<span style="background:{color};color:#fff;{_badge_css}">{label}</span>'
+
+        def _priority_badge(priority: str) -> str:
+            colors = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}
+            color = colors.get(priority, "#9E9E9E")
+            label = html.escape(priority.upper())
+            return f'<span style="background:{color};color:#fff;{_badge_css}">{label}</span>'
+
+        # --- Timeline rows ---
+        if report.timeline:
+            import datetime as _dt
+
+            def _ev_time(ev: PostMortemEvent) -> str:
+                return _dt.datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S") if ev.timestamp > 0 else "—"
+
+            timeline_rows = "\n".join(
+                f"<tr><td>{_ev_time(ev)}</td>"
+                f"<td>{html.escape(ev.label)}</td>"
+                f"<td>{_status_badge(ev.kind)}</td>"
+                f"<td>{html.escape(ev.task_id) if ev.task_id else '—'}</td></tr>"
+                for ev in report.timeline
+            )
+            timeline_section = f"""
+<table>
+  <thead><tr><th>Time</th><th>Event</th><th>Kind</th><th>Task</th></tr></thead>
+  <tbody>{timeline_rows}</tbody>
+</table>"""
+        else:
+            timeline_section = "<p class='muted'>No timeline data available.</p>"
+
+        # --- Root cause section ---
+        if report.contributing_factors:
+            dominant = max(report.contributing_factors, key=lambda f: f.count)
+            factor_rows = "\n".join(
+                f"<tr><td><strong>{html.escape(f.category)}</strong></td><td>{f.count}</td><td>{html.escape(f.description)}</td></tr>"
+                for f in sorted(report.contributing_factors, key=lambda f: f.count, reverse=True)
+            )
+            rca_section = f"""
+<div class='callout'>
+  <strong>Primary cause:</strong> {html.escape(dominant.category)} ({dominant.count} occurrence(s))<br>
+  <em>{html.escape(dominant.description)}</em>
+</div>
+<table>
+  <thead><tr><th>Category</th><th>Count</th><th>Description</th></tr></thead>
+  <tbody>{factor_rows}</tbody>
+</table>"""
+        else:
+            rca_section = "<p class='muted'>No dominant failure pattern detected. Review agent logs manually.</p>"
+
+        # --- Failed task traces ---
+        trace_sections = []
+        for trace in report.failed_task_traces:
+            snippets_html = ""
+            if trace.error_snippets:
+                snippet_text = "\n".join(html.escape(s[:200]) for s in trace.error_snippets[:3])
+                snippets_html = f"<pre class='error-box'>{snippet_text}</pre>"
+            files_html = (
+                ", ".join(f"<code>{html.escape(f)}</code>" for f in trace.files_touched[:5])
+                if trace.files_touched
+                else "—"
+            )
+            trace_sections.append(
+                f"""<div class='trace-card'>
+  <h3>Task <code>{html.escape(trace.task_id)}</code></h3>
+  <table class='compact'>
+    <tr><th>Role</th><td>{html.escape(trace.role) or '—'}</td></tr>
+    <tr><th>Model</th><td>{html.escape(trace.model) or '—'}</td></tr>
+    <tr><th>Session</th><td><code>{html.escape(trace.session_id) or '—'}</code></td></tr>
+    <tr><th>Dominant failure</th><td><code>{html.escape(trace.dominant_failure) or 'unknown'}</code></td></tr>
+    <tr><th>Files touched</th><td>{files_html}</td></tr>
+  </table>
+  {snippets_html}
+  {f'<p><strong>Retry context:</strong> {html.escape(trace.retry_context)}</p>' if trace.retry_context else ''}
+</div>"""
+            )
+
+        traces_section = "\n".join(trace_sections) if trace_sections else "<p class='muted'>No failed task traces.</p>"
+
+        # --- Recommended actions ---
+        if report.recommended_actions:
+            action_rows = "\n".join(
+                f"<tr><td>{_priority_badge(a.priority)}</td><td>{html.escape(a.action)}</td><td><em>{html.escape(a.rationale)}</em></td></tr>"
+                for a in sorted(
+                    report.recommended_actions,
+                    key=lambda a: {"high": 0, "medium": 1, "low": 2}.get(a.priority, 3),
+                )
+            )
+            actions_section = f"""
+<table>
+  <thead><tr><th>Priority</th><th>Action</th><th>Rationale</th></tr></thead>
+  <tbody>{action_rows}</tbody>
+</table>"""
+        else:
+            actions_section = "<p class='muted'>No specific actions recommended.</p>"
+
+        if report.success_rate_pct >= 80:
+            success_color = "#4CAF50"
+        elif report.success_rate_pct >= 50:
+            success_color = "#FF9800"
+        else:
+            success_color = "#F44336"
+
         return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title}</title>
   <style>
-    body {{ font-family: monospace; max-width: 900px; margin: 2em auto; padding: 0 1em; }}
-    pre {{ background: #f4f4f4; padding: 1em; border-radius: 4px; overflow-x: auto; }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+            max-width: 960px; margin: 2em auto; padding: 0 1.5em;
+            color: #212121; line-height: 1.6; }}
+    h1 {{ border-bottom: 3px solid #1565C0; padding-bottom: .3em; color: #1565C0; }}
+    h2 {{ color: #283593; border-bottom: 1px solid #e0e0e0;
+          padding-bottom: .2em; margin-top: 2em; }}
+    h3 {{ color: #37474F; margin-top: 1em; }}
+    .meta {{ display: flex; gap: 2em; flex-wrap: wrap; background: #f5f5f5;
+             padding: .8em 1.2em; border-radius: 6px; margin: 1em 0; }}
+    .meta span {{ font-size: .9em; }}
+    .meta strong {{ color: #1565C0; }}
+    table {{ width: 100%; border-collapse: collapse; margin: .8em 0; font-size: .9em; }}
+    th {{ background: #E3F2FD; text-align: left; padding: .5em .8em; border-bottom: 2px solid #90CAF9; }}
+    td {{ padding: .4em .8em; border-bottom: 1px solid #e0e0e0; vertical-align: top; }}
+    tr:nth-child(even) {{ background: #FAFAFA; }}
+    table.compact th {{ width: 140px; }}
+    pre {{ background: #263238; color: #ECEFF1; padding: 1em; border-radius: 4px; overflow-x: auto; font-size: .85em; }}
+    pre.error-box {{ background: #3E2723; color: #FFCCBC; margin: .5em 0; }}
+    code {{ background: #e8eaf6; padding: 1px 4px; border-radius: 3px; font-size: .9em; }}
+    .muted {{ color: #757575; font-style: italic; }}
+    .callout {{ background: #FFF8E1; border-left: 4px solid #FFC107;
+               padding: .8em 1.2em; border-radius: 0 6px 6px 0; margin: .8em 0; }}
+    .trace-card {{ border: 1px solid #e0e0e0; border-radius: 6px; padding: 1em; margin: 1em 0; background: #FAFAFA; }}
+    .stat {{ font-size: 1.5em; font-weight: bold; color: {success_color}; }}
+    @media print {{ .trace-card {{ page-break-inside: avoid; }} }}
   </style>
 </head>
 <body>
-<pre>{escaped}</pre>
+<h1>Post-Mortem Report</h1>
+<div class="meta">
+  <span><strong>Run ID:</strong> <code>{html.escape(report.run_id)}</code></span>
+  <span><strong>Generated:</strong> {ts}</span>
+  {f'<span><strong>Goal:</strong> {html.escape(report.goal)}</span>' if report.goal else ''}
+  <span><strong>Tasks:</strong> {report.total_tasks} total, {report.failed_tasks} failed</span>
+  {f'<span><strong>Success rate:</strong> <span class="stat">{report.success_rate_pct:.0f}%'
+   f'</span></span>' if report.total_tasks else ''}
+</div>
+
+<h2>Event Timeline</h2>
+{timeline_section}
+
+<h2>Root Cause Analysis</h2>
+{rca_section}
+
+<h2>Agent Decision Traces (Failed Tasks)</h2>
+{traces_section}
+
+<h2>Recommended Actions</h2>
+{actions_section}
 </body>
 </html>
 """
+
+    def to_pdf(self, report: PostMortemReport, path: Path | None = None) -> Path:
+        """Render a :class:`PostMortemReport` as a PDF file.
+
+        Uses ``weasyprint`` if installed; falls back to saving an HTML file
+        with a message directing the user to print from their browser.
+
+        Args:
+            report: The report to render.
+            path: Explicit output path.  Defaults to
+                ``.sdd/reports/postmortem_{run_id}.pdf``.
+
+        Returns:
+            Path where the PDF (or fallback HTML) was written.
+
+        Raises:
+            RuntimeError: If path cannot be resolved.
+        """
+        from pathlib import Path as _Path
+
+        if path is None:
+            reports_dir = self._sdd / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            path = reports_dir / f"postmortem_{report.run_id}.pdf"
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+        html_content = self.to_html(report)
+
+        # Try weasyprint (optional dependency).
+        try:
+            import weasyprint  # type: ignore[import-untyped]
+
+            weasyprint.HTML(string=html_content).write_pdf(str(path))
+            logger.info("Post-mortem PDF written to %s (weasyprint)", path)
+            return _Path(path)
+        except ImportError:
+            pass
+
+        # Try wkhtmltopdf via subprocess (common system tool).
+        import subprocess
+        import tempfile
+
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as tmp:
+                tmp.write(html_content)
+                tmp_path = tmp.name
+
+            result = subprocess.run(  # noqa: S603
+                ["wkhtmltopdf", "--quiet", tmp_path, str(path)],
+                capture_output=True,
+                timeout=60,
+            )
+            _Path(tmp_path).unlink(missing_ok=True)
+            if result.returncode == 0:
+                logger.info("Post-mortem PDF written to %s (wkhtmltopdf)", path)
+                return _Path(path)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        finally:
+            import os as _os
+            try:
+                _os.unlink(tmp_path)
+            except Exception:
+                pass
+
+        # Fallback: save HTML and inform user.
+        html_path = _Path(str(path).replace(".pdf", ".html"))
+        html_path.write_text(html_content, encoding="utf-8")
+        logger.warning(
+            "PDF export requires weasyprint or wkhtmltopdf. "
+            "HTML saved to %s — open in browser and use File → Print → Save as PDF.",
+            html_path,
+        )
+        return html_path
 
     def save(self, report: PostMortemReport, fmt: str = "markdown", path: Path | None = None) -> Path:
         """Write the post-mortem report to disk.
 
         Args:
             report: The report to save.
-            fmt: ``"markdown"`` or ``"html"``.
+            fmt: ``"markdown"``, ``"html"``, or ``"pdf"``.
             path: Explicit output path.  Defaults to
                 ``.sdd/reports/postmortem_{run_id}.{ext}``.
 
@@ -384,6 +622,9 @@ class PostMortemGenerator:
             Path where the report was written.
         """
         from pathlib import Path as _Path
+
+        if fmt == "pdf":
+            return self.to_pdf(report, path)
 
         ext = "html" if fmt == "html" else "md"
         if path is None:

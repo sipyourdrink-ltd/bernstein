@@ -20,10 +20,10 @@ from bernstein.cli.helpers import console
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["markdown", "html"]),
+    type=click.Choice(["markdown", "html", "pdf"]),
     default="markdown",
     show_default=True,
-    help="Output format.",
+    help="Output format (pdf requires weasyprint or wkhtmltopdf).",
 )
 @click.option(
     "--output",
@@ -60,6 +60,7 @@ def postmortem_cmd(
       bernstein postmortem                        # latest run, markdown to stdout
       bernstein postmortem abc123                 # specific run
       bernstein postmortem --format html --save   # HTML, also saved to .sdd/reports/
+      bernstein postmortem --format pdf -o r.pdf  # PDF (requires weasyprint or wkhtmltopdf)
       bernstein postmortem -o report.md           # write markdown to file
     """
     from bernstein.core.postmortem import PostMortemGenerator
@@ -74,6 +75,15 @@ def postmortem_cmd(
 
     if report.failed_tasks == 0:
         console.print(f"[green]Run `{report.run_id}` had no failed tasks.[/green] Post-mortem not required.")
+        return
+
+    if fmt == "pdf":
+        # PDF always writes to a file — print path and return.
+        out_path = Path(output) if output else None
+        saved = generator.to_pdf(report, path=out_path)
+        console.print(f"[green]PDF report saved to {saved}[/green]")
+        if save and saved != out_path:
+            pass  # already saved by to_pdf
         return
 
     content = generator.to_html(report) if fmt == "html" else generator.to_markdown(report)
