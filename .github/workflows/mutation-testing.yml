@@ -1,0 +1,201 @@
+name: Mutation Testing
+
+on:
+  schedule:
+    # Run weekly on Monday at 03:00 UTC (off-peak, avoids prime CI hours)
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      paths:
+        description: "Comma-separated paths to mutate (leave blank for all targets)"
+        required: false
+        default: ""
+      threshold:
+        description: "Minimum mutation score (0-100)"
+        required: false
+        default: "80"
+  push:
+    paths:
+      # Re-run when the critical modules themselves change
+      - "src/bernstein/core/lifecycle.py"
+      - "src/bernstein/core/spawner.py"
+      - "src/bernstein/core/guardrails.py"
+      - "mutmut_config.py"
+      - "tests/unit/test_mutation_setup.py"
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutation-test:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install dependencies (including mutmut)
+        run: uv sync --group dev
+
+      - name: Run mutation testing on critical modules
+        id: mutmut
+        run: |
+          # Determine which paths to mutate
+          PATHS="${{ github.event.inputs.paths }}"
+          if [ -z "$PATHS" ]; then
+            PATHS="src/bernstein/core/lifecycle.py,src/bernstein/core/spawner.py,src/bernstein/core/guardrails.py"
+          fi
+
+          echo "Mutating paths: $PATHS"
+          echo "paths=$PATHS" >> "$GITHUB_OUTPUT"
+
+          # Run mutmut — exit code 0=all killed, 1=survivors/timeouts
+          uv run mutmut run \
+            --paths-to-mutate "$PATHS" \
+            --runner "python -m pytest tests/unit/ -x -q --no-header --override-ini=addopts=" \
+            --no-progress \
+            || true
+
+          # Capture results
+          uv run mutmut results > mutmut_results.txt 2>&1 || true
+          cat mutmut_results.txt
+
+      - name: Compute mutation score and check threshold
+        id: score
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold }}"
+          THRESHOLD="${THRESHOLD:-80}"
+
+          # Parse mutmut results
+          KILLED=$(uv run mutmut results 2>/dev/null | grep -c "^Killed" || echo 0)
+          SURVIVED=$(uv run mutmut results 2>/dev/null | grep -c "^Survived" || echo 0)
+          TIMEOUT=$(uv run mutmut results 2>/dev/null | grep -c "^Timeout" || echo 0)
+
+          # Use junitxml export if available (mutmut >= 2.0 supports it)
+          uv run mutmut junitxml > mutmut_junit.xml 2>/dev/null || true
+
+          # Compute score from mutmut summary
+          SUMMARY=$(uv run mutmut run --no-progress 2>&1 | tail -5 || true)
+
+          # Parse "X/Y mutants killed" from the summary output
+          TOTAL_LINE=$(uv run mutmut results 2>/dev/null | grep -E "^[0-9]" | head -1 || true)
+
+          # Alternative: use mutmut show for detailed summary
+          MUTMUT_OUTPUT=$(uv run mutmut results 2>&1 || true)
+          KILLED_COUNT=$(echo "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Killed" || echo 0)
+          SURVIVED_COUNT=$(echo "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Survived\|^[0-9].*Suspicious" || echo 0)
+          TIMEOUT_COUNT=$(echo "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Timeout" || echo 0)
+
+          TOTAL=$((KILLED_COUNT + SURVIVED_COUNT + TIMEOUT_COUNT))
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::warning::No mutations were generated or mutmut output could not be parsed"
+            echo "score=0" >> "$GITHUB_OUTPUT"
+            echo "killed=0" >> "$GITHUB_OUTPUT"
+            echo "total=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Score = killed / (killed + survived + timeout) * 100
+          SCORE=$(( KILLED_COUNT * 100 / TOTAL ))
+
+          echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+          echo "killed=$KILLED_COUNT" >> "$GITHUB_OUTPUT"
+          echo "survived=$SURVIVED_COUNT" >> "$GITHUB_OUTPUT"
+          echo "timeout=$TIMEOUT_COUNT" >> "$GITHUB_OUTPUT"
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "threshold=$THRESHOLD" >> "$GITHUB_OUTPUT"
+
+          echo "Mutation score: $SCORE% ($KILLED_COUNT/$TOTAL killed)"
+          echo "Threshold: $THRESHOLD%"
+
+          if [ "$SCORE" -lt "$THRESHOLD" ]; then
+            echo "::error::Mutation score $SCORE% is below threshold $THRESHOLD% ($SURVIVED_COUNT mutants survived)"
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write workflow summary
+        if: always()
+        run: |
+          SCORE="${{ steps.score.outputs.score }}"
+          KILLED="${{ steps.score.outputs.killed }}"
+          SURVIVED="${{ steps.score.outputs.survived }}"
+          TIMEOUT="${{ steps.score.outputs.timeout }}"
+          TOTAL="${{ steps.score.outputs.total }}"
+          THRESHOLD="${{ steps.score.outputs.threshold }}"
+          PASSED="${{ steps.score.outputs.passed }}"
+          PATHS="${{ steps.mutmut.outputs.paths }}"
+
+          if [ "$PASSED" = "true" ]; then
+            STATUS="✅ PASS"
+          else
+            STATUS="❌ FAIL"
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Mutation Testing Results $STATUS
+
+          | Metric | Value |
+          |--------|-------|
+          | **Mutation Score** | ${SCORE}% |
+          | **Threshold** | ${THRESHOLD}% |
+          | **Mutants Killed** | ${KILLED} |
+          | **Mutants Survived** | ${SURVIVED} |
+          | **Mutants Timed Out** | ${TIMEOUT} |
+          | **Total Mutants** | ${TOTAL} |
+
+          ### Targets
+          \`\`\`
+          ${PATHS}
+          \`\`\`
+
+          ### How to investigate survivors
+
+          \`\`\`bash
+          # Install mutmut
+          uv sync --group dev
+
+          # View surviving mutants
+          uv run mutmut results
+
+          # Show diff for a specific survivor (e.g., mutant #42)
+          uv run mutmut show 42
+
+          # Apply a mutant to investigate manually
+          uv run mutmut apply 42
+          # ... run tests to see why they don't catch it ...
+          uv run mutmut unapply
+          \`\`\`
+
+          A low mutation score means tests don't exercise all code paths.
+          Add tests for uncaught survivors to improve test effectiveness.
+          EOF
+
+      - name: Upload mutmut results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mutmut-results
+          path: |
+            mutmut_results.txt
+            mutmut_junit.xml
+            .mutmut-cache
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Fail if below threshold
+        if: steps.score.outputs.passed == 'false'
+        run: |
+          echo "Mutation score ${{ steps.score.outputs.score }}% < threshold ${{ steps.score.outputs.threshold }}%"
+          exit 1

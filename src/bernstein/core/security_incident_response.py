@@ -41,15 +41,53 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path  # noqa: TC003 — used at runtime in dataclass fields and method bodies
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+_SAFE_FILENAME_RE = re.compile(r"[^\w\-.]")
+_MAX_ID_LENGTH = 256
+
+
+def _safe_filename(value: str) -> str:
+    """Sanitise an untrusted identifier for use as a filename component.
+
+    Strips directory separators (preventing path traversal via both absolute
+    paths and ``..`` sequences), removes null bytes and other control
+    characters, and truncates to a safe maximum length.
+
+    Args:
+        value: Raw identifier string (session_id, task_id, …).
+
+    Returns:
+        A sanitised string safe to use as a single filename component.
+
+    Raises:
+        ValueError: If the sanitised result is empty.
+    """
+    # Remove null bytes and control characters first
+    cleaned = value.replace("\x00", "").strip()
+    # Take only the last component — strips absolute paths and all ../.. traversal
+    cleaned = Path(cleaned).name
+    # Replace any remaining non-safe characters with underscores
+    cleaned = _SAFE_FILENAME_RE.sub("_", cleaned)
+    # Truncate to a safe length
+    cleaned = cleaned[:_MAX_ID_LENGTH]
+    if not cleaned:
+        raise ValueError(f"Identifier {value!r} produced an empty filename after sanitisation")
+    return cleaned
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -311,6 +349,7 @@ class SecurityIncidentResponder:
         runtime_dir = self.workdir / ".sdd" / "runtime"
         runtime_dir.mkdir(parents=True, exist_ok=True)
 
+        safe_session_id = _safe_filename(session_id)
         kill_payload: dict[str, Any] = {
             "ts": time.time(),
             "reason": "security_incident",
@@ -319,7 +358,10 @@ class SecurityIncidentResponder:
             "detail": detail,
             "requester": "security_incident_responder",
         }
-        kill_file = runtime_dir / f"{session_id}.kill"
+        kill_file = runtime_dir / f"{safe_session_id}.kill"
+        # Paranoid containment check — reject writes outside the runtime dir
+        if not str(kill_file.resolve()).startswith(str(runtime_dir.resolve())):
+            raise ValueError(f"Kill signal path escaped runtime dir: {kill_file}")
         kill_file.write_text(json.dumps(kill_payload), encoding="utf-8")
         logger.warning(
             "Kill signal written for agent %s (incident=%s, event=%s)",
@@ -369,7 +411,10 @@ class SecurityIncidentResponder:
         if git_info:
             metadata.update(git_info)
 
-        out_path = quarantine_dir / f"{session_id}.json"
+        safe_session_id = _safe_filename(session_id)
+        out_path = quarantine_dir / f"{safe_session_id}.json"
+        if not str(out_path.resolve()).startswith(str(quarantine_dir.resolve())):
+            raise ValueError(f"Quarantine path escaped quarantine dir: {out_path}")
         out_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         logger.info(
             "Quarantine metadata written for agent %s (incident=%s, branch=%s)",
@@ -556,7 +601,10 @@ class SecurityIncidentResponder:
             ),
         }
 
-        block_file = blocks_dir / f"{task_id}.block"
+        safe_task_id = _safe_filename(task_id)
+        block_file = blocks_dir / f"{safe_task_id}.block"
+        if not str(block_file.resolve()).startswith(str(blocks_dir.resolve())):
+            raise ValueError(f"Block file path escaped task_blocks dir: {block_file}")
         block_file.write_text(json.dumps(block_payload, indent=2), encoding="utf-8")
         logger.warning(
             "Task %s blocked from retry (incident=%s, event=%s)",
@@ -686,7 +734,12 @@ def is_task_blocked(workdir: Path, task_id: str) -> bool:
     Returns:
         True if the task has an unresolved security block.
     """
-    block_file = workdir / ".sdd" / "runtime" / "task_blocks" / f"{task_id}.block"
+    try:
+        safe_task_id = _safe_filename(task_id)
+    except ValueError:
+        return False
+    blocks_dir = workdir / ".sdd" / "runtime" / "task_blocks"
+    block_file = blocks_dir / f"{safe_task_id}.block"
     return block_file.exists()
 
 
@@ -700,7 +753,11 @@ def load_block_metadata(workdir: Path, task_id: str) -> dict[str, Any] | None:
     Returns:
         Deserialized block payload, or None if the block file does not exist.
     """
-    block_file = workdir / ".sdd" / "runtime" / "task_blocks" / f"{task_id}.block"
+    try:
+        safe_task_id = _safe_filename(task_id)
+    except ValueError:
+        return None
+    block_file = workdir / ".sdd" / "runtime" / "task_blocks" / f"{safe_task_id}.block"
     if not block_file.exists():
         return None
     try:
