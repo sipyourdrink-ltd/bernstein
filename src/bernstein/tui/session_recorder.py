@@ -166,9 +166,7 @@ def list_recordings(recordings_dir: Path, limit: int = 5) -> list[RecordingSumma
     if not recordings_dir.exists():
         return []
     summaries = [
-        summary
-        for path in recordings_dir.glob("*.jsonl")
-        if (summary := summarize_recording(path)) is not None
+        summary for path in recordings_dir.glob("*.jsonl") if (summary := summarize_recording(path)) is not None
     ]
     summaries.sort(key=lambda summary: summary.modified_ts, reverse=True)
     return summaries[:limit]
