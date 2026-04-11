@@ -513,6 +513,78 @@ class TestImpactAnalyzer:
                     worklist.add(module)
         return affected
 
+    def _module_to_source_path(self, module: str) -> str | None:
+        """Convert a dotted module name back to its relative source file path.
+
+        Args:
+            module: Dotted module name, e.g. ``"bernstein.core.foo"``.
+
+        Returns:
+            Relative posix path if the file exists on disk, else ``None``.
+        """
+        parts = module.split(".")
+        if not parts:
+            return None
+        # Try regular module file first: bernstein.core.foo -> src/bernstein/core/foo.py
+        module_file = self._src_root.joinpath(*parts[:-1], f"{parts[-1]}.py")
+        # Try package init: bernstein.core -> src/bernstein/core/__init__.py
+        init_file = self._src_root.joinpath(*parts, "__init__.py")
+        for candidate in (module_file, init_file):
+            if candidate.exists():
+                try:
+                    return candidate.relative_to(self._root).as_posix()
+                except ValueError:
+                    pass
+        return None
+
+    def get_dependent_source_files(self, changed_files: list[str]) -> list[str]:
+        """Return source files that transitively depend on the changed files.
+
+        Given a list of changed source file paths, returns the file paths of
+        all source files that import (directly or transitively) any of those
+        files, plus the original changed files themselves.  Use this to expand
+        the type-check scope so that callers of modified modules are validated.
+
+        Args:
+            changed_files: Relative posix paths of changed source files.
+
+        Returns:
+            Sorted, deduplicated list of relative paths including changed
+            files and all transitive importers found in the source index.
+            Falls back to returning just the original changed files when no
+            dependency information is available.
+        """
+        self.build_index()
+        if not self._source_imports:
+            return sorted(changed_files)
+
+        changed_modules: set[str] = set()
+        for rel_path in changed_files:
+            if not rel_path.endswith(".py"):
+                continue
+            file_path = self._root / rel_path
+            try:
+                if not file_path.is_relative_to(self._src_root):
+                    continue
+            except ValueError:
+                continue
+            module = _path_to_module(file_path, self._src_root)
+            if module:
+                changed_modules.add(module)
+
+        if not changed_modules:
+            return sorted(changed_files)
+
+        all_affected = self._expand_impacted_modules(changed_modules)
+
+        result: set[str] = set(changed_files)
+        for module in all_affected:
+            path = self._module_to_source_path(module)
+            if path is not None:
+                result.add(path)
+
+        return sorted(result)
+
     def _tests_for_package(self, package_prefix: str) -> set[str]:
         """Return tests mapped to any module inside a package prefix."""
         tests: set[str] = set()

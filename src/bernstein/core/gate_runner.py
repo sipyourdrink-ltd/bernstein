@@ -1558,8 +1558,37 @@ class GateRunner:
         if self._changed_files_resolved:
             if not python_files:
                 return None
-            return f"pyright {self._quote_paths(python_files)}"
+            expanded = self._expand_type_check_files(python_files)
+            return f"pyright {self._quote_paths(expanded)}"
         return self._config.type_check_command
+
+    def _expand_type_check_files(self, python_files: list[str]) -> list[str]:
+        """Expand changed Python files to include transitive importers.
+
+        Uses the source dependency graph to find all modules that directly or
+        transitively import the changed files.  This ensures that a signature
+        change in one module triggers type-checking of all impacted callers.
+
+        Falls back to the original changed-file list when the dependency index
+        is unavailable or the graph is empty.
+
+        Args:
+            python_files: Relative paths of changed ``.py`` files.
+
+        Returns:
+            Sorted list of Python file paths covering changed files plus
+            all discovered dependents.
+        """
+        from bernstein.core.test_impact import TestImpactAnalyzer
+
+        try:
+            analyzer = TestImpactAnalyzer(self._workdir)
+            expanded = analyzer.get_dependent_source_files(python_files)
+            # Only keep .py files in the expanded set.
+            return [f for f in expanded if f.endswith(".py")]
+        except Exception:
+            logger.debug("Dependency expansion for type-check failed; using changed files only", exc_info=True)
+            return python_files
 
     def _tests_command(self, step: GatePipelineStep, run_dir: Path, changed_files: list[str]) -> str | None:
         from bernstein.core.flaky_detector import FlakyDetector
