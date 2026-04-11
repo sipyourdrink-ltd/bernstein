@@ -20,6 +20,7 @@ from bernstein.core.always_allow import (
     AlwaysAllowMatch,
     check_always_allow,
 )
+from bernstein.core.arch_conformance import ArchConformanceConfig, check_arch_conformance
 from bernstein.core.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
 from bernstein.core.permissions import AgentPermissions, check_file_permissions
@@ -158,6 +159,7 @@ class GuardrailsConfig:
     review_checklist: list[str] = field(default_factory=_default_review_checklist)
     sandbox_relax: bool = True
     readme_reminder: bool = True
+    arch_conformance: ArchConformanceConfig | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -856,6 +858,9 @@ def run_guardrails(
 
     if config.readme_reminder:
         decisions["readme_reminder"] = check_readme_reminder(diff)
+
+    if config.arch_conformance is not None and config.arch_conformance.enabled:
+        decisions["arch_conformance"] = check_arch_conformance(diff, config.arch_conformance)
 
     # Populate graph and build results
     results: list[GuardrailResult] = []

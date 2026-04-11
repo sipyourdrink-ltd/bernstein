@@ -241,6 +241,9 @@ class QualityGatesConfig:
     auto_format_js_command: str = "prettier --write"
     auto_format_rust_command: str = "rustfmt"
     test_expansion: bool = False
+    agent_test_mutation: bool = False
+    agent_test_mutation_threshold: float = 0.70
+    agent_test_mutation_timeout_s: int = 300
 
 
 @dataclass
@@ -574,6 +577,141 @@ def _run_mutation_gate(config: QualityGatesConfig, run_dir: Path) -> tuple[bool,
 def run_mutation_gate_sync(config: QualityGatesConfig, run_dir: Path) -> tuple[bool, str, float | None]:
     """Public sync wrapper used by the async gate runner."""
     return _run_mutation_gate(config, run_dir)
+
+
+# ---------------------------------------------------------------------------
+# Agent-written test mutation verification (ROAD-170)
+# ---------------------------------------------------------------------------
+
+_TEST_FILE_PATTERN = re.compile(r"^\+\+\+ b/(tests?/.*test_\w+\.py|\w+/tests?/test_\w+\.py)", re.MULTILINE)
+_SOURCE_FROM_TEST = re.compile(r"test_(\w+)\.py$")
+
+
+def _extract_agent_test_files(diff: str) -> list[str]:
+    """Return relative paths of test files added or modified in the diff.
+
+    Args:
+        diff: Raw git diff output.
+
+    Returns:
+        List of test file paths (relative to repo root).
+    """
+    return [m.group(1) for m in _TEST_FILE_PATTERN.finditer(diff)]
+
+
+def _infer_source_files(test_files: list[str], run_dir: Path) -> list[str]:
+    """Guess the production source file for each test file.
+
+    Converts ``tests/unit/test_foo.py`` → ``src/bernstein/core/foo.py`` by
+    searching the source tree for a matching filename.
+
+    Args:
+        test_files: Test file paths relative to repo root.
+        run_dir: Repo root directory used for filesystem searches.
+
+    Returns:
+        De-duplicated list of inferred source file paths that actually exist.
+    """
+    import glob
+    from pathlib import Path as _Path
+
+    source_files: list[str] = []
+    run_dir_path = _Path(run_dir)
+    for test_path in test_files:
+        m = _SOURCE_FROM_TEST.search(test_path)
+        if not m:
+            continue
+        module_stem = m.group(1)
+        # Search for src/**/<module_stem>.py
+        pattern = str(run_dir_path / "src" / "**" / f"{module_stem}.py")
+        matches = glob.glob(pattern, recursive=True)
+        for match in matches:
+            rel = str(_Path(match).relative_to(run_dir_path))
+            if rel not in source_files:
+                source_files.append(rel)
+    return source_files
+
+
+def _build_agent_mutation_command(source_files: list[str], test_files: list[str]) -> str:
+    """Build a targeted mutmut command for specific source+test files.
+
+    Args:
+        source_files: Source files to mutate.
+        test_files: Test files to run against mutants.
+
+    Returns:
+        Shell command string suitable for passing to ``_run_command()``.
+    """
+    paths = " ".join(source_files)
+    tests = " ".join(test_files)
+    return (
+        f"uv run mutmut run --paths-to-mutate {paths} "
+        f"--test-command 'python -m pytest {tests} -x -q --no-header --override-ini=addopts='"
+    )
+
+
+def run_agent_test_mutation_gate_sync(
+    config: QualityGatesConfig,
+    task: Task,
+    run_dir: Path,
+) -> tuple[bool, str, float | None]:
+    """Verify that agent-written tests actually catch bugs via targeted mutation testing.
+
+    Extracts test files from the agent's git diff, infers the corresponding
+    source files, and runs mutmut targeted at just those files.  Returns a
+    failure result if the mutation score falls below
+    ``config.agent_test_mutation_threshold``.
+
+    Different from the general ``mutation_testing`` gate (TEST-015 / ROAD-018),
+    which runs full mutation testing on Bernstein's own test suite.  This gate
+    runs *per agent task*, focused only on the tests the agent produced.
+
+    Args:
+        config: Quality gates configuration.
+        task: The completed agent task (used to get owned files for diff).
+        run_dir: Repository root for running commands.
+
+    Returns:
+        Tuple of (passed, detail_message, score_or_None).
+    """
+    diff = _get_intent_diff(run_dir, task.owned_files or [])
+    test_files = _extract_agent_test_files(diff)
+    if not test_files:
+        return True, "No agent-written test files detected in diff — skipping agent mutation gate.", None
+
+    source_files = _infer_source_files(test_files, run_dir)
+    if not source_files:
+        return (
+            True,
+            f"Could not infer source files for tests: {test_files} — skipping agent mutation gate.",
+            None,
+        )
+
+    command = _build_agent_mutation_command(source_files, test_files)
+    _ok, output = _run_command(command, run_dir, config.agent_test_mutation_timeout_s)
+
+    score = _parse_mutation_score(output)
+    threshold = config.agent_test_mutation_threshold
+
+    if score is not None:
+        passed = score >= threshold
+        status = "\u2265" if passed else "<"
+        detail = (
+            f"Agent test mutation score: {score:.1%} ({status} threshold {threshold:.1%})\n"
+            f"Test files: {', '.join(test_files)}\n"
+            f"Source files: {', '.join(source_files)}\n{output}"
+        )
+        return passed, detail, score
+
+    # Could not parse — fall back to exit code
+    passed = _ok
+    detail = (
+        f"Could not parse agent mutation score (threshold {threshold:.1%}). "
+        f"Exit: {'0' if _ok else 'non-zero'}\n"
+        f"Test files: {', '.join(test_files)}\n"
+        f"Source files: {', '.join(source_files)}\n{output}"
+    )
+    return passed, detail, None
 
 
 # ---------------------------------------------------------------------------
