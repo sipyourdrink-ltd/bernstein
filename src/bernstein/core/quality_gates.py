@@ -161,6 +161,17 @@ class QualityGatesConfig:
             (applied to changed .js/.ts/.jsx/.tsx files; default: ``prettier --write``).
         auto_format_rust_command: Shell command for Rust formatting
             (applied to changed .rs files; default: ``rustfmt``).
+        dead_code_check_lost_callers: When True, the dead-code gate also scans
+            the entire codebase for callers of names removed in the diff.
+        dead_code_check_unused_imports: When True, check for unused imports
+            via AST analysis (in addition to vulture).
+        dead_code_check_unreachable: When True, detect unreachable branches
+            via AST pattern matching.
+        comment_quality_check: Run comment quality gate on changed Python files.
+            Checks docstring accuracy, completeness, redundancy, and style.
+        comment_quality_docstyle: Expected docstring style for the comment-quality
+            gate. One of ``"google"``, ``"numpy"``, ``"rest"``, or ``"auto"``
+            (auto-detect per docstring).
     """
 
     enabled: bool = True
@@ -196,6 +207,11 @@ class QualityGatesConfig:
     dead_code_check: bool = False
     dead_code_command: str = "vulture"
     dead_code_min_confidence: int = 80
+    dead_code_check_lost_callers: bool = True
+    dead_code_check_unused_imports: bool = True
+    dead_code_check_unreachable: bool = True
+    comment_quality_check: bool = False
+    comment_quality_docstyle: str = "auto"
     import_cycle_check: bool = False
     import_cycle_command: str | None = None
     merge_conflict_check: bool = False
