@@ -16,30 +16,30 @@ from bernstein.core.custom_metrics import (
 class TestEvaluateFormula:
     def test_basic_arithmetic(self) -> None:
         vars = {"a": 10.0, "b": 4.0}
-        assert evaluate_formula("a + b", vars) == 14.0
-        assert evaluate_formula("a - b", vars) == 6.0
-        assert evaluate_formula("a * b", vars) == 40.0
-        assert evaluate_formula("a / b", vars) == 2.5
+        assert evaluate_formula("a + b", vars) == pytest.approx(14.0)
+        assert evaluate_formula("a - b", vars) == pytest.approx(6.0)
+        assert evaluate_formula("a * b", vars) == pytest.approx(40.0)
+        assert evaluate_formula("a / b", vars) == pytest.approx(2.5)
 
     def test_integer_constants(self) -> None:
         vars: dict[str, float] = {}
-        assert evaluate_formula("3 + 4", vars) == 7.0
+        assert evaluate_formula("3 + 4", vars) == pytest.approx(7.0)
 
     def test_float_constants(self) -> None:
         vars: dict[str, float] = {}
-        assert evaluate_formula("1.5 * 2.0", vars) == 3.0
+        assert evaluate_formula("1.5 * 2.0", vars) == pytest.approx(3.0)
 
     def test_nested_parentheses(self) -> None:
         vars = {"x": 10.0, "y": 2.0}
-        assert evaluate_formula("(x + y) * (x - y)", vars) == 96.0
+        assert evaluate_formula("(x + y) * (x - y)", vars) == pytest.approx(96.0)
 
     def test_division_by_zero_returns_zero(self) -> None:
         vars = {"a": 5.0, "b": 0.0}
-        assert evaluate_formula("a / b", vars) == 0.0
+        assert evaluate_formula("a / b", vars) == pytest.approx(0.0)
 
     def test_floor_div_by_zero_returns_zero(self) -> None:
         vars = {"a": 5.0, "b": 0.0}
-        assert evaluate_formula("a // b", vars) == 0.0
+        assert evaluate_formula("a // b", vars) == pytest.approx(0.0)
 
     def test_modulo(self) -> None:
         vars = {"a": 10.0, "b": 3.0}
@@ -47,15 +47,15 @@ class TestEvaluateFormula:
 
     def test_power(self) -> None:
         vars = {"a": 2.0, "b": 8.0}
-        assert evaluate_formula("a ** b", vars) == 256.0
+        assert evaluate_formula("a ** b", vars) == pytest.approx(256.0)
 
     def test_unary_negation(self) -> None:
         vars = {"a": 5.0}
-        assert evaluate_formula("-a", vars) == -5.0
+        assert evaluate_formula("-a", vars) == pytest.approx() - 5.0
 
     def test_unary_pos(self) -> None:
         vars = {"a": 5.0}
-        assert evaluate_formula("+a", vars) == 5.0
+        assert evaluate_formula("+a", vars) == pytest.approx(5.0)
 
     def test_unknown_variable_raises(self) -> None:
         with pytest.raises(FormulaError, match="Unknown variable"):

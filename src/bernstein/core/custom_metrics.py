@@ -84,9 +84,9 @@ def _eval_node(node: ast.AST, variables: dict[str, float]) -> float:
             raise FormulaError(f"Unsupported operator {op_type.__name__}")
         left = _eval_node(node.left, variables)
         right = _eval_node(node.right, variables)
-        if op_type is ast.Div and right == 0.0:
+        if op_type is ast.Div and abs(right) < 1e-15:
             return 0.0  # Avoid ZeroDivisionError; return 0 for undefined ratios
-        if op_type is ast.FloorDiv and right == 0.0:
+        if op_type is ast.FloorDiv and abs(right) < 1e-15:
             return 0.0
         return float(_BINOP_MAP[op_type](left, right))
 

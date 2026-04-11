@@ -405,7 +405,7 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
     from rich.table import Table
 
     table = Table(title="Bernstein Cost Report", header_style="bold cyan", show_lines=False)
-    table.add_column("Model", min_width=20)
+    table.add_column("Model", min_width=20, no_wrap=True)
     table.add_column("Tasks", justify="right", min_width=6)
     table.add_column("Tokens In", justify="right", min_width=10)
     table.add_column("Tokens Out", justify="right", min_width=10)
