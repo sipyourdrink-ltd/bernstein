@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+from textual.app import App
+
 from bernstein.tui.command_palette import (
     DEFAULT_PALETTE_COMMANDS,
     CommandPalette,
+    CommandPaletteScreen,
     PaletteCommand,
     fuzzy_match,
     render_palette,
@@ -194,3 +198,15 @@ class TestRenderPalette:
         palette = CommandPalette(commands=list(DEFAULT_PALETTE_COMMANDS))
         text = render_palette(palette, max_visible=3)
         assert "more" in text.plain
+
+
+class TestCommandPaletteScreen:
+    @pytest.mark.asyncio
+    async def test_mounts_with_input_and_results(self) -> None:
+        app = App()
+        async with app.run_test() as pilot:
+            screen = CommandPaletteScreen()
+            await app.push_screen(screen)
+            await pilot.pause()
+            assert screen.query_one("#command-palette-input") is not None
+            assert screen.query_one("#command-palette-results") is not None

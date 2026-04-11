@@ -1,28 +1,22 @@
-"""TUI-012: Command palette with fuzzy search for TUI actions.
-
-Provides a searchable command palette (opened with Ctrl+P) that lets
-users fuzzy-search and execute any available TUI action. Similar to
-VS Code's command palette.
-"""
+"""Command palette with fuzzy search for TUI actions."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.text import Text
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Input, Static
+
+if TYPE_CHECKING:
+    from textual.app import ComposeResult
 
 
 @dataclass(frozen=True)
 class PaletteCommand:
-    """A single command registered in the palette.
-
-    Attributes:
-        name: Display name (e.g. "Toggle Split Pane").
-        action: Action identifier (e.g. "toggle_split_pane").
-        description: Brief description of what the command does.
-        keybinding: Optional display string for the keybinding.
-        category: Command category for grouping.
-    """
+    """A single command registered in the palette."""
 
     name: str
     action: str
@@ -32,126 +26,72 @@ class PaletteCommand:
 
 
 def fuzzy_match(query: str, text: str) -> tuple[bool, int]:
-    """Fuzzy match a query against text.
-
-    Returns whether the query matches and a score (lower is better).
-    Characters must appear in order but can be non-contiguous.
-
-    Args:
-        query: Search query (case-insensitive).
-        text: Text to match against (case-insensitive).
-
-    Returns:
-        Tuple of (matches, score). Score is 0 for exact matches,
-        higher for fuzzier matches.
-    """
+    """Fuzzy match a query against text."""
     q = query.lower()
     t = text.lower()
-
     if not q:
         return True, 0
-
-    # Exact substring match is highest priority
     if q in t:
         return True, 0
-
-    # Prefix match
     if t.startswith(q):
         return True, 1
 
-    # Fuzzy: all chars must appear in order
     qi = 0
     score = 0
     last_match_pos = -1
-    for ti, char in enumerate(t):
+    for index, char in enumerate(t):
         if qi < len(q) and char == q[qi]:
-            # Penalize gaps
             if last_match_pos >= 0:
-                gap = ti - last_match_pos - 1
-                score += gap
-            last_match_pos = ti
+                score += index - last_match_pos - 1
+            last_match_pos = index
             qi += 1
 
     if qi == len(q):
-        return True, score + 10  # Base penalty for fuzzy vs exact
+        return True, score + 10
     return False, 999
 
 
 @dataclass
 class CommandPalette:
-    """The command palette state and search logic.
-
-    Maintains a registry of available commands and provides fuzzy
-    search functionality.
-    """
+    """Palette registry and fuzzy-search state."""
 
     commands: list[PaletteCommand] = field(default_factory=list[PaletteCommand])
     query: str = ""
     selected_index: int = 0
 
     def register(self, command: PaletteCommand) -> None:
-        """Register a command in the palette.
-
-        Args:
-            command: PaletteCommand to register.
-        """
         self.commands.append(command)
 
     def register_many(self, commands: list[PaletteCommand]) -> None:
-        """Register multiple commands at once.
-
-        Args:
-            commands: List of PaletteCommand to register.
-        """
         self.commands.extend(commands)
 
     def search(self, query: str | None = None) -> list[PaletteCommand]:
-        """Search commands by fuzzy matching.
-
-        Args:
-            query: Search query. If None, uses the current query state.
-
-        Returns:
-            List of matching commands sorted by relevance.
-        """
         if query is not None:
             self.query = query
         q = self.query.strip()
-
         if not q:
             return list(self.commands)
 
         scored: list[tuple[int, PaletteCommand]] = []
-        for cmd in self.commands:
-            # Match against name, action, description, and category
+        for command in self.commands:
             best_match = False
             best_score = 999
-            for text in (cmd.name, cmd.action, cmd.description, cmd.category):
+            for text in (command.name, command.action, command.description, command.category):
                 match, score = fuzzy_match(q, text)
                 if match and score < best_score:
                     best_match = True
                     best_score = score
             if best_match:
-                scored.append((best_score, cmd))
+                scored.append((best_score, command))
 
-        scored.sort(key=lambda x: x[0])
-        return [cmd for _, cmd in scored]
+        scored.sort(key=lambda item: item[0])
+        return [command for _, command in scored]
 
     def set_query(self, query: str) -> None:
-        """Update the search query and reset selection.
-
-        Args:
-            query: New search query.
-        """
         self.query = query
         self.selected_index = 0
 
     def move_selection(self, delta: int) -> None:
-        """Move the selection cursor by delta.
-
-        Args:
-            delta: Number of positions to move (positive=down, negative=up).
-        """
         results = self.search()
         if not results:
             self.selected_index = 0
@@ -159,23 +99,16 @@ class CommandPalette:
         self.selected_index = max(0, min(len(results) - 1, self.selected_index + delta))
 
     def get_selected(self) -> PaletteCommand | None:
-        """Get the currently selected command.
-
-        Returns:
-            Selected PaletteCommand, or None if nothing matches.
-        """
         results = self.search()
         if not results or self.selected_index >= len(results):
             return None
         return results[self.selected_index]
 
     def clear(self) -> None:
-        """Clear the search query and reset selection."""
         self.query = ""
         self.selected_index = 0
 
 
-# Default commands for the Bernstein TUI
 DEFAULT_PALETTE_COMMANDS: list[PaletteCommand] = [
     PaletteCommand("Quit", "quit", "Exit the TUI", "q", "navigation"),
     PaletteCommand("Refresh", "refresh", "Refresh task data", "r", "navigation"),
@@ -200,34 +133,22 @@ DEFAULT_PALETTE_COMMANDS: list[PaletteCommand] = [
 
 
 def render_palette_item(
-    cmd: PaletteCommand,
+    command: PaletteCommand,
     *,
     selected: bool = False,
     query: str = "",
 ) -> Text:
-    """Render a single palette item as Rich Text.
-
-    Args:
-        cmd: The command to render.
-        selected: Whether this item is currently selected.
-        query: Current search query for highlighting matches.
-
-    Returns:
-        Rich Text with the rendered item.
-    """
+    """Render a single palette item as Rich Text."""
     text = Text()
     style = "reverse" if selected else ""
-
-    # Category badge
-    text.append(f" {cmd.category[:4]:4s} ", style=f"dim {style}")
+    text.append(f" {command.category[:4]:4s} ", style=f"dim {style}")
     text.append(" ")
 
-    # Command name with match highlighting
-    name = cmd.name
+    name = command.name
     if query:
-        q_lower = query.lower()
-        n_lower = name.lower()
-        pos = n_lower.find(q_lower)
+        query_lower = query.lower()
+        name_lower = name.lower()
+        pos = name_lower.find(query_lower)
         if pos >= 0:
             text.append(name[:pos], style=f"bold {style}")
             text.append(name[pos : pos + len(query)], style=f"bold underline {style}")
@@ -237,14 +158,10 @@ def render_palette_item(
     else:
         text.append(name, style=f"bold {style}")
 
-    # Description
-    if cmd.description:
-        text.append(f"  {cmd.description}", style=f"dim {style}")
-
-    # Keybinding
-    if cmd.keybinding:
-        text.append(f"  [{cmd.keybinding}]", style=f"cyan {style}")
-
+    if command.description:
+        text.append(f"  {command.description}", style=f"dim {style}")
+    if command.keybinding:
+        text.append(f"  [{command.keybinding}]", style=f"cyan {style}")
     return text
 
 
@@ -253,17 +170,8 @@ def render_palette(
     *,
     max_visible: int = 10,
 ) -> Text:
-    """Render the full command palette as Rich Text.
-
-    Args:
-        palette: CommandPalette state.
-        max_visible: Maximum number of results to show.
-
-    Returns:
-        Rich Text with the complete palette display.
-    """
+    """Render the full command palette as Rich Text."""
     text = Text()
-    # Header
     text.append("> ", style="cyan bold")
     text.append(palette.query or "", style="bold")
     text.append("\n")
@@ -272,23 +180,86 @@ def render_palette(
 
     results = palette.search()
     visible = results[:max_visible]
-
-    for i, cmd in enumerate(visible):
-        item = render_palette_item(
-            cmd,
-            selected=(i == palette.selected_index),
-            query=palette.query,
-        )
-        text.append_text(item)
+    for index, command in enumerate(visible):
+        text.append_text(render_palette_item(command, selected=index == palette.selected_index, query=palette.query))
         text.append("\n")
 
     if len(results) > max_visible:
-        remaining = len(results) - max_visible
-        text.append(f"  ... and {remaining} more", style="dim")
-        text.append("\n")
-
+        text.append(f"  ... and {len(results) - max_visible} more\n", style="dim")
     if not results:
-        text.append("  No matching commands", style="dim")
-        text.append("\n")
-
+        text.append("  No matching commands\n", style="dim")
     return text
+
+
+class CommandPaletteScreen(ModalScreen[str | None]):
+    """Modal command palette with fuzzy search and keyboard execution."""
+
+    DEFAULT_CSS = """
+    CommandPaletteScreen {
+        align: center top;
+        padding-top: 2;
+    }
+
+    #command-palette-shell {
+        width: 88;
+        max-width: 92%;
+        height: auto;
+        border: round $primary 40%;
+        background: $surface;
+        padding: 1;
+    }
+
+    #command-palette-input {
+        width: 100%;
+        margin-bottom: 1;
+    }
+
+    #command-palette-results {
+        min-height: 8;
+        max-height: 18;
+    }
+    """
+
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("escape", "cancel", "Close"),
+        ("down", "move_down", "Next"),
+        ("up", "move_up", "Previous"),
+        ("enter", "execute_selected", "Run"),
+    ]
+
+    def __init__(self, palette: CommandPalette | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._palette = palette or CommandPalette(commands=list(DEFAULT_PALETTE_COMMANDS))
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-palette-shell"):
+            yield Input(placeholder="Search commands or jump to a task...", id="command-palette-input")
+            yield Static(id="command-palette-results")
+
+    def on_mount(self) -> None:
+        self.query_one("#command-palette-input", Input).focus()
+        self._refresh_results()
+
+    def _refresh_results(self) -> None:
+        self.query_one("#command-palette-results", Static).update(render_palette(self._palette, max_visible=12))
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "command-palette-input":
+            return
+        self._palette.set_query(event.value)
+        self._refresh_results()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_move_down(self) -> None:
+        self._palette.move_selection(1)
+        self._refresh_results()
+
+    def action_move_up(self) -> None:
+        self._palette.move_selection(-1)
+        self._refresh_results()
+
+    def action_execute_selected(self) -> None:
+        selected = self._palette.get_selected()
+        self.dismiss(selected.action if selected is not None else None)

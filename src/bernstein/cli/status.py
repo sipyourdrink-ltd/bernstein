@@ -33,6 +33,32 @@ from bernstein.core.view_mode import ViewConfig, ViewMode, get_view_config
 # ---------------------------------------------------------------------------
 
 
+def _task_sort_key(task: dict[str, Any]) -> tuple[int, int, str]:
+    """Sort tasks with urgent/problematic items first."""
+    status = str(task.get("status", "open"))
+    status_rank = {
+        "failed": 0,
+        "blocked": 1,
+        "in_progress": 2,
+        "claimed": 2,
+        "open": 3,
+        "done": 4,
+    }.get(status, 5)
+    priority = int(task.get("priority", 2) or 2)
+    return (status_rank, priority, str(task.get("title", "")))
+
+
+def _select_urgent_tasks(tasks: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
+    """Return the highest-signal tasks for compact status rendering."""
+    ranked = sorted(tasks, key=_task_sort_key)
+    urgent = [
+        task
+        for task in ranked
+        if int(task.get("priority", 2) or 2) == 1 or str(task.get("status", "")) in {"failed", "blocked"}
+    ]
+    return urgent[:limit] if urgent else ranked[:limit]
+
+
 def _build_task_table(tasks: list[dict[str, Any]]) -> Table:
     """Build a Rich table of individual tasks with colour-coded statuses.
 
@@ -54,7 +80,7 @@ def _build_task_table(tasks: list[dict[str, Any]]) -> Table:
     table.add_column("Priority", justify="right")
     table.add_column("Agent", min_width=12)
 
-    for t in tasks:
+    for t in sorted(tasks, key=_task_sort_key):
         raw_status = str(t.get("status", "open"))
         color = STATUS_COLORS.get(raw_status, "white")
         table.add_row(
@@ -66,6 +92,23 @@ def _build_task_table(tasks: list[dict[str, Any]]) -> Table:
             str(t.get("assigned_agent") or "[dim]\u2014[/dim]"),
         )
     return table
+
+
+def _build_alert_lines(alerts: list[dict[str, Any]]) -> Text | None:
+    """Render compact alert lines for the CLI status command."""
+    if not alerts:
+        return None
+    text = Text()
+    for alert in alerts[:4]:
+        level = str(alert.get("level", "info"))
+        color = {"error": "red", "warning": "yellow"}.get(level, "cyan")
+        text.append(f"{level.upper():7s} ", style=f"bold {color}")
+        text.append(str(alert.get("message", "")), style=color)
+        detail = str(alert.get("detail", "") or "")
+        if detail:
+            text.append(f" — {detail}", style="dim")
+        text.append("\n")
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +211,31 @@ def _format_dependency_scan_line(scan: dict[str, Any]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _dict_items_list(payload: object, key: str = "items") -> list[dict[str, Any]]:
+    """Normalize either a list of dicts or a section dict containing ``items``."""
+    if isinstance(payload, list):
+        raw_items = cast("list[object]", payload)
+    elif isinstance(payload, dict):
+        section = cast("dict[str, Any]", payload)
+        nested = section.get(key, [])
+        raw_items = cast("list[object]", nested) if isinstance(nested, list) else []
+    else:
+        raw_items = []
+    return [cast("dict[str, Any]", item) for item in raw_items if isinstance(item, dict)]
+
+
+def _extract_spent_cost(data: dict[str, Any]) -> float:
+    """Return total spend from either legacy or normalized status payloads."""
+    total_cost = float(data.get("total_cost_usd", 0.0) or 0.0)
+    if total_cost > 0:
+        return total_cost
+    costs_obj = data.get("costs", {})
+    if isinstance(costs_obj, dict):
+        costs = cast("dict[str, Any]", costs_obj)
+        return float(costs.get("spent_usd", 0.0) or 0.0)
+    return 0.0
+
+
 def _extract_run_stats(
     data: dict[str, Any],
 ) -> tuple[
@@ -182,10 +250,12 @@ def _extract_run_stats(
 
     Returns (tasks, agents, stats, per_role, provider_status, dependency_scan).
     """
-    tasks: list[dict[str, Any]] = data.get("tasks", [])
-    agents_raw: list[dict[str, Any]] = data.get("agents", [])
-    summary_raw: dict[str, Any] = data.get("summary", {})
-    per_role: list[dict[str, Any]] = data.get("per_role", [])
+    tasks = _dict_items_list(data.get("tasks", []))
+    agents_raw = _dict_items_list(data.get("agents", []))
+    summary_obj = data.get("summary", {})
+    summary_raw = cast("dict[str, Any]", summary_obj) if isinstance(summary_obj, dict) else {}
+    per_role_obj = data.get("per_role", [])
+    per_role = _dict_items_list(per_role_obj, key="unused")
     provider_status_obj = data.get("provider_status", {})
     provider_status = cast("dict[str, Any]", provider_status_obj) if isinstance(provider_status_obj, dict) else {}
     dependency_scan_obj = data.get("dependency_scan", {})
@@ -205,7 +275,7 @@ def _extract_run_stats(
     )
     agents = [AgentInfo.from_dict(a) for a in agents_raw]
     elapsed = float(data.get("elapsed_seconds", 0))
-    total_cost = float(data.get("total_cost_usd", 0.0))
+    total_cost = _extract_spent_cost(data)
 
     stats = RunStats(
         summary=summary,
@@ -268,21 +338,13 @@ def render_status(
     summary = stats.summary
     elapsed = stats.elapsed_seconds
     total_cost = stats.total_cost_usd
+    alerts_raw = data.get("alerts", [])
+    alerts = _dict_items_list(alerts_raw, key="unused")
 
     if not con.is_terminal:
         con.print(create_summary_plain(stats))
         return
 
-    if tasks:
-        con.print(_build_task_table(tasks))
-
-    if agents:
-        agent_table = AgentStatusTable()
-        con.print(agent_table.render(agents))
-    else:
-        con.print("[dim]No active agents.[/dim]")
-
-    con.print()
     status_line = Text()
     status_line.append("Tasks: ", style="bold")
     status_line.append(f"{summary.total} total  ", style="bold")
@@ -293,6 +355,29 @@ def render_status(
 
     if elapsed > 0:
         con.print(Text.assemble(("Elapsed: ", "bold"), (format_duration(elapsed), "dim")))
+
+    alert_lines = _build_alert_lines(alerts)
+    if alert_lines is not None:
+        con.print()
+        con.print(alert_lines)
+
+    if tasks:
+        con.print()
+        urgent_tasks = _select_urgent_tasks(tasks)
+        urgent_table = _build_task_table(urgent_tasks)
+        urgent_table.title = "Urgent Tasks"
+        con.print(urgent_table)
+        if vc.mode is ViewMode.EXPERT and len(tasks) > len(urgent_tasks):
+            con.print()
+            con.print(_build_task_table(tasks))
+
+    if agents:
+        con.print()
+        agent_table = AgentStatusTable()
+        con.print(agent_table.render(agents))
+    else:
+        con.print()
+        con.print("[dim]No active agents.[/dim]")
 
     if total_cost > 0 or per_role:
         con.print(
@@ -337,9 +422,10 @@ def render_status_plain(data: dict[str, Any]) -> str:
     Returns:
         A multi-line plain string.
     """
-    tasks: list[dict[str, Any]] = data.get("tasks", [])
-    summary_raw: dict[str, Any] = data.get("summary", {})
-    agents_raw: list[dict[str, Any]] = data.get("agents", [])
+    tasks = _dict_items_list(data.get("tasks", []))
+    summary_obj = data.get("summary", {})
+    summary_raw = cast("dict[str, Any]", summary_obj) if isinstance(summary_obj, dict) else {}
+    agents_raw = _dict_items_list(data.get("agents", []))
 
     summary = TaskSummary.from_dict(
         {
@@ -351,7 +437,7 @@ def render_status_plain(data: dict[str, Any]) -> str:
     )
     agents = [AgentInfo.from_dict(a) for a in agents_raw]
     elapsed = float(data.get("elapsed_seconds", 0))
-    total_cost = float(data.get("total_cost_usd", 0.0))
+    total_cost = _extract_spent_cost(data)
     dependency_scan_obj = data.get("dependency_scan", {})
     dependency_scan = cast("dict[str, Any]", dependency_scan_obj) if isinstance(dependency_scan_obj, dict) else {}
 

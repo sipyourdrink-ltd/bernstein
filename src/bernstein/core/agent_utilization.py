@@ -219,7 +219,7 @@ def format_utilization_table(
         show_header=True,
         header_style="bold magenta",
     )
-    table.add_column("Agent", style="cyan")
+    table.add_column("Agent", style="cyan", no_wrap=True)
     table.add_column("Role", style="dim")
     table.add_column("Model", style="dim")
     table.add_column("Active (s)", justify="right")

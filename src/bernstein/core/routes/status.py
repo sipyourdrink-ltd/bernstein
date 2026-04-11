@@ -244,6 +244,143 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     return _runtime_cache
 
 
+def _format_elapsed(created_at: float | None, now: float) -> str:
+    """Render elapsed task age for compact UI consumers."""
+    if not created_at or created_at <= 0:
+        return "—"
+    elapsed = max(0, int(now - created_at))
+    hours, remainder = divmod(elapsed, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def _blocked_reason(task: Task) -> str:
+    """Return the most useful blocking/explanation string for the UI."""
+    if task.status.value == "blocked" and task.depends_on:
+        return f"Waiting on {len(task.depends_on)} dependency"
+    if task.depends_on and task.status.value in {"open", "claimed", "in_progress"}:
+        return f"{len(task.depends_on)} dependency pending"
+    if task.terminal_reason:
+        return task.terminal_reason
+    return ""
+
+
+def _status_task_items(tasks: list[Task], now: float) -> list[dict[str, Any]]:
+    """Build normalized task rows for TUI, CLI, and dashboard consumers."""
+    items: list[dict[str, Any]] = []
+    for task in tasks:
+        blocked_reason = _blocked_reason(task)
+        items.append(
+            {
+                "id": task.id,
+                "title": task.title,
+                "role": task.role,
+                "status": task.status.value,
+                "priority": task.priority,
+                "assigned_agent": task.assigned_agent,
+                "created_at": task.created_at,
+                "elapsed": _format_elapsed(task.created_at, now),
+                "retry_count": task.retry_count,
+                "blocked_reason": blocked_reason,
+                "model": task.model or "",
+                "progress": _task_progress_pct(task),
+                "depends_on_count": len(task.depends_on),
+                "verification_count": task.verification_count,
+                "flagged_unverified": task.flagged_unverified,
+                "estimated_cost_usd": float(task.metadata.get("estimated_cost_usd", 0.0) or 0.0),
+                "owned_files_count": len(task.owned_files),
+            }
+        )
+    return items
+
+
+def _status_agent_items(
+    store: TaskStore,
+    agent_snapshots: dict[str, dict[str, Any]],
+    total_cost_by_role: dict[str, float],
+    now: float,
+) -> list[dict[str, Any]]:
+    """Build normalized agent rows for shared operational surfaces."""
+    items: list[dict[str, Any]] = []
+    live_agents = list(store.agents.values())
+    for agent in live_agents:
+        snapshot = agent_snapshots.get(agent.id, {})
+        model_name = agent.model_config.model if hasattr(agent.model_config, "model") else "sonnet"
+        role_alive_count = max(1, len([candidate for candidate in live_agents if candidate.role == agent.role]))
+        estimated_cost = total_cost_by_role.get(agent.role, 0.0) / role_alive_count
+        items.append(
+            {
+                "id": agent.id,
+                "role": agent.role,
+                "status": str(agent.status),
+                "model": model_name,
+                "provider": getattr(agent, "provider", None) or snapshot.get("provider"),
+                "task_ids": list(agent.task_ids),
+                "runtime_s": max(0, int(now - agent.spawn_ts)),
+                "tokens_used": int(getattr(agent, "tokens_used", 0) or snapshot.get("tokens_used", 0) or 0),
+                "context_utilization_pct": float(
+                    getattr(agent, "context_utilization_pct", 0.0)
+                    or snapshot.get("context_utilization_pct", 0.0)
+                    or 0.0
+                ),
+                "cost_usd": round(estimated_cost, 4),
+            }
+        )
+
+    if items:
+        return items
+
+    for snapshot in agent_snapshots.values():
+        items.append(
+            {
+                "id": str(snapshot.get("id", "")),
+                "role": str(snapshot.get("role", "")),
+                "status": str(snapshot.get("status", "dead")),
+                "model": str(snapshot.get("model", "")),
+                "provider": snapshot.get("provider"),
+                "task_ids": list(snapshot.get("task_ids") or []),
+                "runtime_s": int(snapshot.get("runtime_s", 0) or 0),
+                "tokens_used": int(snapshot.get("tokens_used", 0) or 0),
+                "context_utilization_pct": float(snapshot.get("context_utilization_pct", 0.0) or 0.0),
+                "cost_usd": float(snapshot.get("cost_usd", 0.0) or 0.0),
+            }
+        )
+    return items
+
+
+def _bandit_state_payload(store: TaskStore) -> dict[str, Any]:
+    """Load contextual routing state for shared UI endpoints."""
+    import json as _json
+
+    routing_dir = store.jsonl_path.parent.parent / "routing"
+    state_path = routing_dir / "bandit_state.json"
+    policy_path = routing_dir / "policy.json"
+
+    if not state_path.exists():
+        return {"mode": "static", "active": False}
+
+    state = _json.loads(state_path.read_text())
+    total_updates = 0
+    if policy_path.exists():
+        policy = _json.loads(policy_path.read_text())
+        total_updates = int(policy.get("total_updates", 0))
+    return {
+        "mode": state.get("mode", "bandit"),
+        "active": True,
+        "total_completions": state.get("total_completions", 0),
+        "warmup_min": state.get("warmup_min", 0),
+        "exploration_rate": state.get("exploration_rate", 0.0),
+        "total_policy_updates": total_updates,
+        "selection_frequency": state.get("selection_counts", {}),
+        "exploration_stats": state.get("exploration_stats", {}),
+        "shadow_stats": state.get("shadow_stats", {}),
+    }
+
+
 def _read_pid(path: Path) -> int | None:
     """Read an integer PID from a PID file."""
     if not path.exists():
@@ -336,7 +473,16 @@ def status_dashboard(request: Request) -> JSONResponse:
 
     store = _get_store(request)
     payload = store.status_summary()
-    payload["runtime"] = _runtime_summary(request, store)
+    runtime = _runtime_summary(request, store)
+    payload["runtime"] = runtime
+    now = time.time()
+    tasks = store.list_tasks()
+    live_costs = _load_live_costs(request)
+    sdd_dir = getattr(request.app.state, "sdd_dir", None)
+    agent_snapshots = _read_agents_snapshot(sdd_dir if isinstance(sdd_dir, Path) else None)
+    total_cost_by_role = store.cost_by_role()
+    live_agents = [agent for agent in store.agents.values() if str(agent.status) != "dead"]
+    total_spent = float(live_costs.get("spent_usd") or sum(total_cost_by_role.values()))
 
     # Recently completed tasks still within grace period (visible in panels)
     recent = store.recently_completed()
@@ -379,6 +525,32 @@ def status_dashboard(request: Request) -> JSONResponse:
     transition_reasons = get_transition_reason_histogram()
     if transition_reasons["agent"] or transition_reasons["task"]:
         payload["transition_reasons"] = transition_reasons
+
+    payload["summary"] = {
+        "total": payload["total"],
+        "open": payload["open"],
+        "claimed": payload["claimed"],
+        "done": payload["done"],
+        "failed": payload["failed"],
+        "agents": len(live_agents),
+        "cost_usd": round(total_spent, 4),
+        "max_agents": runtime.get("config_provenance", {}).get("max_agents", {}).get("value", 6),
+    }
+    payload["tasks"] = {
+        "count": len(tasks),
+        "items": _status_task_items(tasks, now),
+    }
+    payload["agents"] = {
+        "count": len(live_agents) if live_agents else len(agent_snapshots),
+        "items": _status_agent_items(store, agent_snapshots, total_cost_by_role, now),
+    }
+    payload["costs"] = live_costs
+    payload["alerts"] = build_alerts(store, live_agents, total_spent, now, agent_snapshots)
+    try:
+        payload["bandit"] = _bandit_state_payload(store)
+    except Exception as exc:
+        logger.warning("status bandit payload failed: %s: %s", type(exc).__name__, exc)
+        payload["bandit"] = {"mode": "bandit", "active": True, "error": "unavailable"}
 
     return JSONResponse(content=payload)
 
@@ -473,35 +645,9 @@ def bandit_routing_stats(request: Request) -> JSONResponse:
     Reads persisted state from ``.sdd/routing/``.  Returns an empty dict
     when bandit routing has not been activated (``--routing bandit`` not passed).
     """
-    import json as _json
-
     store = _get_store(request)
-    routing_dir = store.jsonl_path.parent.parent / "routing"
-    state_path = routing_dir / "bandit_state.json"
-    policy_path = routing_dir / "policy.json"
-
-    if not state_path.exists():
-        return JSONResponse(content={"mode": "static", "active": False})
-
     try:
-        state = _json.loads(state_path.read_text())
-        total_updates = 0
-        if policy_path.exists():
-            policy = _json.loads(policy_path.read_text())
-            total_updates = int(policy.get("total_updates", 0))
-        return JSONResponse(
-            content={
-                "mode": state.get("mode", "bandit"),
-                "active": True,
-                "total_completions": state.get("total_completions", 0),
-                "warmup_min": state.get("warmup_min", 0),
-                "exploration_rate": state.get("exploration_rate", 0.0),
-                "total_policy_updates": total_updates,
-                "selection_frequency": state.get("selection_counts", {}),
-                "exploration_stats": state.get("exploration_stats", {}),
-                "shadow_stats": state.get("shadow_stats", {}),
-            }
-        )
+        return JSONResponse(content=_bandit_state_payload(store))
     except Exception as exc:
         return _internal_error_response(
             "Failed to read routing bandit state",

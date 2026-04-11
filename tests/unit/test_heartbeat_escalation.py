@@ -95,7 +95,7 @@ class TestBasicEscalation:
         assert result.tier == EscalationTier.WARN
         assert result.action_taken is True
 
-    @patch("bernstein.core.heartbeat_escalation.os.kill")
+    @patch("bernstein.core.platform_compat.kill_process_group")
     def test_sigusr1_at_threshold(self, mock_kill: MagicMock) -> None:
         ladder = HeartbeatEscalationLadder()
         ladder.register_agent("agent-1", pid=1234)
@@ -107,7 +107,7 @@ class TestBasicEscalation:
         assert result.action_taken is True
         mock_kill.assert_called_once_with(1234, signal.SIGUSR1)
 
-    @patch("bernstein.core.heartbeat_escalation.os.kill")
+    @patch("bernstein.core.platform_compat.kill_process_group")
     def test_sigterm_at_threshold(self, mock_kill: MagicMock) -> None:
         ladder = HeartbeatEscalationLadder()
         ladder.register_agent("agent-1", pid=1234)
@@ -119,7 +119,7 @@ class TestBasicEscalation:
         mock_kill.assert_called_with(1234, signal.SIGTERM)
 
     @pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL not available on Windows")
-    @patch("bernstein.core.heartbeat_escalation.os.kill")
+    @patch("bernstein.core.platform_compat.kill_process_group")
     def test_sigkill_at_threshold(self, mock_kill: MagicMock) -> None:
         ladder = HeartbeatEscalationLadder()
         ladder.register_agent("agent-1", pid=1234)
@@ -158,7 +158,7 @@ class TestIdempotency:
         r2 = ladder.check_and_escalate("agent-1", heartbeat_age_s=70.0)
         assert r2 is None
         # Jump to sigkill age directly — should escalate through skipped tiers
-        with patch("bernstein.core.heartbeat_escalation.os.kill"):
+        with patch("bernstein.core.platform_compat.kill_process_group"):
             r3 = ladder.check_and_escalate("agent-1", heartbeat_age_s=150.0)
         assert r3 is not None and r3.tier == EscalationTier.SIGKILL
 
@@ -210,7 +210,7 @@ class TestCustomThresholds:
 class TestSignalErrors:
     """Tests for signal delivery failure handling."""
 
-    @patch("bernstein.core.heartbeat_escalation.os.kill", side_effect=ProcessLookupError)
+    @patch("bernstein.core.platform_compat.kill_process_group", side_effect=ProcessLookupError)
     def test_process_already_exited(self, mock_kill: MagicMock) -> None:
         ladder = HeartbeatEscalationLadder()
         ladder.register_agent("agent-1", pid=1234)

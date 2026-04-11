@@ -9,9 +9,11 @@ import yaml
 
 from bernstein.tui.layout_persistence import (
     _DEFAULT_PANELS,
+    _PRESET_PANELS,
     _REQUIRED_PANELS,
     LayoutConfig,
     load_layout,
+    preset_layout,
     save_layout,
 )
 
@@ -19,11 +21,11 @@ from bernstein.tui.layout_persistence import (
 class TestLayoutConfigDefaults:
     def test_default_split_ratio(self) -> None:
         cfg = LayoutConfig()
-        assert cfg.split_ratio == pytest.approx(0.5)
+        assert cfg.split_ratio == pytest.approx(0.64)
 
     def test_default_split_disabled(self) -> None:
         cfg = LayoutConfig()
-        assert cfg.split_enabled is False
+        assert cfg.split_enabled is True
 
     def test_default_orientation(self) -> None:
         cfg = LayoutConfig()
@@ -32,6 +34,10 @@ class TestLayoutConfigDefaults:
     def test_default_visible_panels(self) -> None:
         cfg = LayoutConfig()
         assert cfg.visible_panels == _DEFAULT_PANELS
+
+    def test_default_preset(self) -> None:
+        cfg = LayoutConfig()
+        assert cfg.preset == "balanced"
 
     def test_frozen(self) -> None:
         """LayoutConfig must be immutable."""
@@ -69,6 +75,11 @@ class TestTogglePanel:
         toggled = cfg.toggle_panel("agent-log").toggle_panel("agent-log")
         assert toggled.visible_panels == cfg.visible_panels
 
+    def test_apply_preset(self) -> None:
+        cfg = LayoutConfig().apply_preset("focus")
+        assert cfg.preset == "focus"
+        assert cfg.visible_panels == _PRESET_PANELS["focus"] | _REQUIRED_PANELS
+
 
 class TestSaveLoadRoundtrip:
     def test_roundtrip_defaults(self, tmp_path: Path) -> None:
@@ -94,7 +105,8 @@ class TestSaveLoadRoundtrip:
         assert loaded.split_ratio == pytest.approx(0.7)
         assert loaded.split_enabled is True
         assert loaded.orientation == "vertical"
-        assert loaded.visible_panels == frozenset({"task-list", "timeline"})
+        assert loaded.visible_panels == frozenset({"task-list", "task-search", "timeline"})
+        assert loaded.preset == "balanced"
 
     def test_save_creates_parent_dirs(self, tmp_path: Path) -> None:
         path = tmp_path / "nested" / "dir" / "layout.yaml"
@@ -106,19 +118,19 @@ class TestLoadCorruptFile:
     def test_missing_file_returns_default(self, tmp_path: Path) -> None:
         path = tmp_path / "nonexistent.yaml"
         cfg = load_layout(config_path=path)
-        assert cfg == LayoutConfig()
+        assert cfg == preset_layout("balanced")
 
     def test_invalid_yaml_returns_default(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
         path.write_text("{[invalid yaml !!!!", encoding="utf-8")
         cfg = load_layout(config_path=path)
-        assert cfg == LayoutConfig()
+        assert cfg == preset_layout("balanced")
 
     def test_non_dict_yaml_returns_default(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
         path.write_text("- just\n- a\n- list\n", encoding="utf-8")
         cfg = load_layout(config_path=path)
-        assert cfg == LayoutConfig()
+        assert cfg == preset_layout("balanced")
 
     def test_bad_ratio_clamped(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
@@ -136,7 +148,7 @@ class TestLoadCorruptFile:
         path = tmp_path / "layout.yaml"
         path.write_text(yaml.safe_dump({"split_ratio": "not-a-number"}), encoding="utf-8")
         cfg = load_layout(config_path=path)
-        assert cfg.split_ratio == pytest.approx(0.5)
+        assert cfg.split_ratio == pytest.approx(0.64)
 
     def test_bad_orientation_uses_default(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
@@ -148,7 +160,7 @@ class TestLoadCorruptFile:
         path = tmp_path / "layout.yaml"
         path.write_text(yaml.safe_dump({"visible_panels": "not-a-list"}), encoding="utf-8")
         cfg = load_layout(config_path=path)
-        assert cfg.visible_panels == _DEFAULT_PANELS
+        assert cfg.visible_panels == _PRESET_PANELS["balanced"] | _REQUIRED_PANELS
 
 
 class TestRequiredPanels:

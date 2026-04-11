@@ -24,12 +24,19 @@ Screen {
 #left-pane {
     width: 1fr;
     height: 1fr;
+    padding: 0 1;
 }
 
 #right-pane {
     width: 50%;
     height: 1fr;
     border-left: solid #333;
+    padding: 0 1;
+}
+
+#task-search {
+    height: 3;
+    margin: 1 0 0 0;
 }
 
 #task-list {
@@ -37,6 +44,7 @@ Screen {
     min-height: 6;
     border: none;
     scrollbar-size: 1 1;
+    margin: 0 0 1 0;
 }
 
 /* Slim cursor and row styling */
@@ -64,6 +72,14 @@ Screen {
     border-top: solid #333;
     padding: 0 1;
     scrollbar-size: 1 1;
+}
+
+#task-context {
+    margin: 1 0;
+}
+
+#runtime-health {
+    margin: 0 0 1 0;
 }
 
 /* Shortcuts footer — docked at the bottom */

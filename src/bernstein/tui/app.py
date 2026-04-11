@@ -19,9 +19,13 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
 from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
+from bernstein.tui.command_palette import DEFAULT_PALETTE_COMMANDS, CommandPalette, CommandPaletteScreen, PaletteCommand
 from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
+from bernstein.tui.layout_persistence import LayoutConfig, load_layout, save_layout
 from bernstein.tui.progress_bar import TaskProgress
 from bernstein.tui.split_pane import SplitPaneState
+from bernstein.tui.task_context import TaskContextPanel, TaskContextSummary
+from bernstein.tui.task_search import TaskSearchInput, matches_task_search, parse_task_search
 from bernstein.tui.themes import ThemeMode, cycle_theme, load_theme_config, save_theme_config
 from bernstein.tui.timeline import TaskTimeline, TimelineEntry
 from bernstein.tui.toast import ToastManager, render_toast_stack
@@ -41,6 +45,7 @@ from bernstein.tui.widgets import (
     WaterfallWidget,
     classify_role,
 )
+from bernstein.tui.worktree_status import RuntimeHealthPanel
 
 
 def _build_app_bindings() -> list[BindingType]:
@@ -50,7 +55,15 @@ def _build_app_bindings() -> list[BindingType]:
     User overrides from ~/.bernstein/keybindings.yaml and keybindings.json
     are applied automatically.
     """
-    return [Binding(e.key, e.action, e.description, show=e.show, priority=e.priority) for e in _resolve_all_bindings()]
+    bindings = [
+        Binding(e.key, e.action, e.description, show=e.show, priority=e.priority)
+        for e in _resolve_all_bindings()
+    ]
+    bindings.append(Binding("/", "focus_task_search", "Search", show=True))
+    bindings.append(Binding("1", "layout_focus", "Focus layout", show=False))
+    bindings.append(Binding("2", "layout_balanced", "Balanced layout", show=False))
+    bindings.append(Binding("3", "layout_observability", "Observability layout", show=False))
+    return cast("list[BindingType]", bindings)
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +204,14 @@ class BernsteinApp(App[None]):
         self._poll_interval = poll_interval
         self._start_ts = time.time()
         self._action_bar_visible = False
+        self._layout = load_layout()
         self._current_rows: list[TaskRow] = []
+        self._all_rows: list[TaskRow] = []
+        self._task_lookup: dict[str, TaskRow] = {}
+        self._selected_task_id: str | None = None
+        self._search_query = ""
+        self._palette_action_labels: dict[str, str] = {}
+        self._recent_palette_actions: list[str] = []
         self._log_offsets: dict[str, int] = {}  # session_id → last-read byte offset
         self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
         # TUI-013: detect accessibility mode from environment
@@ -215,6 +235,7 @@ class BernsteinApp(App[None]):
         # TUI-008: Horizontal container to support split-pane layout
         with Horizontal(id="main-body"):
             with Vertical(id="left-pane"):
+                yield TaskSearchInput(id="task-search")
                 yield TaskListWidget(id="task-list")
                 yield TaskTimeline(id="task-timeline")
                 yield WaterfallWidget(id="waterfall-view")
@@ -224,6 +245,8 @@ class BernsteinApp(App[None]):
                 yield ToolObserverWidget(id="tool-observer")
                 yield ActionBar(id="action-bar")
             with Vertical(id="right-pane"):
+                yield TaskContextPanel(id="task-context")
+                yield RuntimeHealthPanel(id="runtime-health")
                 yield AgentLogWidget(id="agent-log")
         # TUI-009: toast overlay widget
         yield _ToastOverlay(self._toasts, id="toast-overlay")
@@ -233,15 +256,22 @@ class BernsteinApp(App[None]):
         """Start the periodic poll timer after mounting."""
         # Hide action bar, timeline, scratchpad, waterfall, and others initially.
         self.query_one("#action-bar", ActionBar).display = False
-        self.query_one("#task-timeline", TaskTimeline).display = False
-        self.query_one(_WATERFALL_VIEW_SELECTOR, WaterfallWidget).display = False
-        self.query_one("#scratchpad-viewer", ScratchpadViewer).display = False
-        self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = False
-        self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel).display = False
-        self.query_one("#tool-observer", ToolObserverWidget).display = False
-
-        # TUI-008: right pane hidden until split is toggled on
-        self.query_one("#right-pane").display = False
+        self.query_one("#task-timeline", TaskTimeline).display = "task-timeline" in self._layout.visible_panels
+        self.query_one(_WATERFALL_VIEW_SELECTOR, WaterfallWidget).display = (
+            "waterfall-view" in self._layout.visible_panels
+        )
+        self.query_one("#scratchpad-viewer", ScratchpadViewer).display = (
+            "scratchpad-viewer" in self._layout.visible_panels
+        )
+        self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = (
+            "coordinator-dashboard" in self._layout.visible_panels
+        )
+        self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel).display = (
+            "approval-panel" in self._layout.visible_panels
+        )
+        self.query_one("#tool-observer", ToolObserverWidget).display = "tool-observer" in self._layout.visible_panels
+        self.query_one("#task-context", TaskContextPanel).display = "task-context" in self._layout.visible_panels
+        self.query_one("#runtime-health", RuntimeHealthPanel).display = "runtime-health" in self._layout.visible_panels
 
         # TUI-013: apply accessibility CSS class when enabled
         if self.accessibility.no_animations:
@@ -252,10 +282,39 @@ class BernsteinApp(App[None]):
         # TUI-011: apply initial theme
         self._apply_theme()
 
+        self._split.set_ratio(self._layout.split_ratio)
+        if self._layout.split_enabled and not self._split.enabled:
+            self._split.toggle()
+        self._apply_split_layout()
+
         self._load_historical_logs()
         self.set_interval(self._poll_interval, self.action_refresh)
         # TUI-009: prune expired toasts and refresh toast overlay every second
         self.set_interval(1.0, self._tick_toasts)
+
+    def _apply_split_layout(self) -> None:
+        """Apply the current split-pane state to the live layout."""
+        left = self.query_one("#left-pane")
+        right = self.query_one("#right-pane")
+        if self._split.enabled:
+            ratio = self._split.ratio
+            left.styles.width = f"{int(ratio * 100)}%"
+            right.styles.width = f"{int((1 - ratio) * 100)}%"
+            right.display = True
+        else:
+            left.styles.width = "1fr"
+            right.display = False
+
+    def _persist_layout(self) -> None:
+        """Persist the current layout state to disk."""
+        self._layout = LayoutConfig(
+            split_ratio=self._split.ratio,
+            split_enabled=self._split.enabled,
+            visible_panels=self._layout.visible_panels,
+            orientation=self._layout.orientation,
+            preset=self._layout.preset,
+        )
+        save_layout(self._layout)
 
     def on_resize(self, event: object) -> None:
         """Debounce terminal resize events to avoid layout crashes (TUI-001).
@@ -337,27 +396,44 @@ class BernsteinApp(App[None]):
             transition_reasons = cast("dict[str, dict[str, float]]", transition_reasons_raw)
         # TUI-010: compute aggregate run-level progress percentage
         run_pct: float | None = None
-        if tasks_total := int(data.get("total", 0)):
-            tasks_done_count = int(data.get("completed", 0))
+        summary = cast("dict[str, Any]", data.get("summary", {})) if isinstance(data.get("summary"), dict) else {}
+        if tasks_total := int(summary.get("total", data.get("total", 0))):
+            tasks_done_count = int(summary.get("done", data.get("completed", 0)))
             run_pct = (tasks_done_count / tasks_total) * 100.0
 
         self.query_one(StatusBar).set_summary(
-            agents_active=int(data.get("active_agents", 0)),
-            tasks_done=int(data.get("completed", 0)),
-            tasks_total=int(data.get("total", 0)),
-            tasks_failed=int(data.get("failed", 0)),
+            agents_active=int(summary.get("active_agents", data.get("active_agents", 0))),
+            tasks_done=int(summary.get("done", data.get("completed", 0))),
+            tasks_total=int(summary.get("total", data.get("total", 0))),
+            tasks_failed=int(summary.get("failed", data.get("failed", 0))),
             server_online=True,
             transition_reasons=transition_reasons,
             run_progress_pct=run_pct,
         )
 
-        tasks_data: list[Any] = data.get("per_role", [])
-        rows: list[TaskRow] = []
-        for t in tasks_data:
-            if isinstance(t, dict):
-                rows.append(TaskRow.from_api(cast("dict[str, Any]", t)))
-        self.query_one(TaskListWidget).refresh_tasks(rows)
-        self._current_rows = rows
+        task_dicts: list[dict[str, Any]]
+        tasks_section = data.get("tasks")
+        if isinstance(tasks_section, dict):
+            tasks_payload = cast("dict[str, Any]", tasks_section)
+            items = tasks_payload.get("items")
+            if isinstance(items, list):
+                items_list = cast("list[object]", items)
+                task_dicts = [cast("dict[str, Any]", item) for item in items_list if isinstance(item, dict)]
+            else:
+                task_dicts = []
+        else:
+            fallback = _get("/tasks")
+            fallback_items = fallback if isinstance(fallback, list) else []
+            task_dicts = [cast("dict[str, Any]", item) for item in fallback_items if isinstance(item, dict)]
+        rows = [TaskRow.from_api(item) for item in task_dicts]
+        self._all_rows = rows
+        self._task_lookup = {row.task_id: row for row in rows}
+        self._apply_task_filter()
+        runtime_snapshot = data.get("runtime")
+        if isinstance(runtime_snapshot, dict):
+            runtime = cast("dict[str, Any]", runtime_snapshot)
+            self.query_one("#task-context", TaskContextPanel).set_runtime_snapshot(runtime)
+            self.query_one("#runtime-health", RuntimeHealthPanel).set_snapshot(runtime)
 
         # TUI-010: update aggregate progress for run-level bar
         self._task_progresses = [
@@ -379,6 +455,46 @@ class BernsteinApp(App[None]):
         # Update timeline if visible
         if self.query_one("#task-timeline", TaskTimeline).display:
             self.run_worker(self._refresh_timeline())
+
+    def _apply_task_filter(self) -> None:
+        """Apply the current structured task filter to the cached task rows."""
+        parsed = parse_task_search(self._search_query)
+        visible_rows = [row for row in self._all_rows if matches_task_search(row, parsed)]
+        self._current_rows = visible_rows
+        self.query_one(TaskListWidget).refresh_tasks(visible_rows)
+        self._sync_task_context()
+
+    def _sync_task_context(self) -> None:
+        """Update the task context pane from the current selection."""
+        current: TaskRow | None = None
+        if self._selected_task_id:
+            current = self._task_lookup.get(self._selected_task_id)
+        if current is None and self._current_rows:
+            current = self._current_rows[0]
+            self._selected_task_id = current.task_id
+        summary = (
+            TaskContextSummary(
+                task_id=current.task_id,
+                title=current.title,
+                status=current.status,
+                role=current.role,
+                priority=current.priority,
+                model=current.model,
+                assigned_agent=current.assigned_agent,
+                age_display=current.age_display,
+                elapsed=current.elapsed,
+                retry_count=current.retry_count,
+                blocked_reason=current.blocked_reason,
+                depends_on_count=current.depends_on_count,
+                owned_files_count=current.owned_files_count,
+                estimated_cost_usd=current.estimated_cost_usd,
+                verification_count=current.verification_count,
+                flagged_unverified=current.flagged_unverified,
+            )
+            if current is not None
+            else None
+        )
+        self.query_one("#task-context", TaskContextPanel).set_task(summary)
 
     # -- TUI-011: theme cycling -----------------------------------------------
 
@@ -425,18 +541,42 @@ class BernsteinApp(App[None]):
 
     def action_toggle_split_pane(self) -> None:
         """Toggle split-pane layout (task list left, agent log right)."""
-        enabled = self._split.toggle()
-        left = self.query_one("#left-pane")
-        right = self.query_one("#right-pane")
-        if enabled:
-            ratio = self._split.ratio
-            left.styles.width = f"{int(ratio * 100)}%"
-            right.styles.width = f"{int((1 - ratio) * 100)}%"
-            right.display = True
-            left.focus()
-        else:
-            left.styles.width = "1fr"
-            right.display = False
+        self._split.toggle()
+        self._apply_split_layout()
+        self._persist_layout()
+        self.query_one("#left-pane").focus()
+
+    def _apply_layout_preset(self, preset: str) -> None:
+        """Apply a named layout preset and persist it."""
+        self._layout = self._layout.apply_preset(preset)
+        self._split.set_ratio(self._layout.split_ratio)
+        if not self._split.enabled:
+            self._split.toggle()
+        for panel_id in (
+            "task-timeline",
+            "waterfall-view",
+            "scratchpad-viewer",
+            "coordinator-dashboard",
+            "approval-panel",
+            "tool-observer",
+            "task-context",
+            "runtime-health",
+        ):
+            self.query_one(f"#{panel_id}").display = panel_id in self._layout.visible_panels
+        self._apply_split_layout()
+        self._persist_layout()
+
+    def action_layout_focus(self) -> None:
+        """Apply the compact focus layout preset."""
+        self._apply_layout_preset("focus")
+
+    def action_layout_balanced(self) -> None:
+        """Apply the balanced layout preset."""
+        self._apply_layout_preset("balanced")
+
+    def action_layout_observability(self) -> None:
+        """Apply the observability-heavy layout preset."""
+        self._apply_layout_preset("observability")
 
     # -- TUI-009: toast ticker ------------------------------------------------
 
@@ -469,6 +609,11 @@ class BernsteinApp(App[None]):
                     start_time=e["start_time"],
                     end_time=e["end_time"],
                     status=e["status"],
+                    lane=(
+                        f"{self._task_lookup[e['task_id']].role}:{e['task_id'][:4]}"
+                        if e["task_id"] in self._task_lookup
+                        else e["task_id"][:8]
+                    ),
                 )
                 for e in data.get("entries", [])
             ]
@@ -546,6 +691,29 @@ class BernsteinApp(App[None]):
             event.input.remove()
             scratchpad.focus()
 
+    def on_input_changed(self, event: Any) -> None:
+        """Handle live task-search updates."""
+        from textual.widgets import Input
+
+        if isinstance(event, Input.Changed) and event.input.id == "task-search":
+            self._search_query = event.value.strip()
+            self._apply_task_filter()
+
+    def action_focus_task_search(self) -> None:
+        """Focus the task search input."""
+        self.query_one("#task-search", TaskSearchInput).focus()
+
+    def on_data_table_row_selected(self, event: Any) -> None:
+        """Sync the selected task into the side context pane."""
+        if getattr(event.data_table, "id", "") != "task-list":
+            return
+        row_key = str(getattr(event, "row_key", "") or "")
+        if not row_key and getattr(event, "cursor_row", None) is not None:
+            row_key = str(getattr(event.cursor_row, "key", "") or "")
+        if row_key:
+            self._selected_task_id = row_key
+            self._sync_task_context()
+
     def action_toggle_coordinator(self) -> None:
         """Show/hide the coordinator mode dashboard."""
         dashboard = self.query_one("#coordinator-dashboard", CoordinatorDashboard)
@@ -616,7 +784,96 @@ class BernsteinApp(App[None]):
         """Show help overlay."""
         from bernstein.tui.help_screen import HelpScreen
 
-        self.push_screen(HelpScreen())
+        self.push_screen(
+            HelpScreen(
+                recent_actions=self._recent_palette_actions,
+                visible_panels=sorted(self._layout.visible_panels),
+            )
+        )
+
+    def action_command_palette(self) -> None:
+        """Open the command palette with dynamic jump/filter actions."""
+        palette = CommandPalette(commands=list(DEFAULT_PALETTE_COMMANDS))
+        palette.register_many(
+            [
+                PaletteCommand(
+                    "Filter blocked tasks",
+                    "set_search_query:status:blocked",
+                    "Show only blocked tasks",
+                    category="filter",
+                ),
+                PaletteCommand(
+                    "Filter failed tasks",
+                    "set_search_query:status:failed",
+                    "Show only failed tasks",
+                    category="filter",
+                ),
+                PaletteCommand(
+                    "Filter critical tasks",
+                    "set_search_query:priority:1",
+                    "Show only priority 1 tasks",
+                    category="filter",
+                ),
+                PaletteCommand(
+                    "Clear task filter",
+                    "set_search_query:",
+                    "Reset the task filter",
+                    category="filter",
+                ),
+                PaletteCommand(
+                    "Focus layout preset",
+                    "layout_focus",
+                    "Compact task-first layout",
+                    category="layout",
+                ),
+                PaletteCommand(
+                    "Balanced layout preset",
+                    "layout_balanced",
+                    "Task list plus context",
+                    category="layout",
+                ),
+                PaletteCommand(
+                    "Observability layout preset",
+                    "layout_observability",
+                    "Surface timeline, approvals, and tool observer",
+                    category="layout",
+                ),
+            ]
+        )
+        for row in self._all_rows[:40]:
+            palette.register(
+                PaletteCommand(
+                    name=f"Jump to {row.task_id} {row.title[:36]}",
+                    action=f"select_task:{row.task_id}",
+                    description=f"{row.status} · {row.role}",
+                    category="jump",
+                )
+            )
+        self._palette_action_labels = {command.action: command.name for command in palette.commands}
+        self.push_screen(CommandPaletteScreen(palette), callback=self._handle_palette_result)
+
+    def _handle_palette_result(self, result: str | None) -> None:
+        """Execute a command palette result."""
+        if not result:
+            return
+        label = self._palette_action_labels.get(result)
+        if label:
+            self._recent_palette_actions = [*self._recent_palette_actions[-4:], label]
+        if result.startswith("set_search_query:"):
+            query = result.split(":", 1)[1]
+            self._search_query = query
+            search = self.query_one("#task-search", TaskSearchInput)
+            search.value = query
+            self._apply_task_filter()
+            return
+        if result.startswith("select_task:"):
+            task_id = result.split(":", 1)[1]
+            self._selected_task_id = task_id
+            self._sync_task_context()
+            return
+        action = getattr(self, f"action_{result}", None)
+        if callable(action):
+            action()
 
     @staticmethod
     def _count_active_agents() -> int:

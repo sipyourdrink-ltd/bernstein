@@ -54,6 +54,26 @@ class TestHelpScreen:
             assert table.row_count > 0
 
     @pytest.mark.asyncio
+    async def test_help_screen_shows_recent_actions_and_panel_hints(self) -> None:
+        """Help screen includes discoverability hints and recent palette actions."""
+        app = App()
+        async with app.run_test() as pilot:
+            screen = HelpScreen(
+                recent_actions=["Filter blocked tasks", "Observability layout preset"],
+                visible_panels=["task-list", "task-context", "runtime-health"],
+            )
+            await app.push_screen(screen)
+            await pilot.pause()
+
+            hints = screen.query_one("#help-hints")
+            recent = screen.query_one("#help-recent")
+            hints_text = str(hints.render())
+            recent_text = str(recent.render())
+            assert "Ctrl+P" in hints_text
+            assert "runtime-health" in hints_text
+            assert "Filter blocked tasks" in recent_text
+
+    @pytest.mark.asyncio
     async def test_help_screen_dismiss(self) -> None:
         """Test help screen can be dismissed."""
         app = App()

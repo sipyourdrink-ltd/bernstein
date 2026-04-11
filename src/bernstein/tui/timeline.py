@@ -31,6 +31,7 @@ class TimelineEntry:
     end_time: float | None
     status: str
     kind: str = "task"
+    lane: str = ""
 
 
 class TaskTimeline(Static):
@@ -67,18 +68,27 @@ class TaskTimeline(Static):
             return Text("No task timing data available.", style="dim")
 
         text = Text()
-        width = self.size.width - 20  # Reserve space for labels
-        if width < 10:
+        width = self.size.width - 24  # Reserve space for lane labels
+        if width < 12:
             return Text("Window too narrow.")
 
         duration = self._end_ts - self._start_ts
         if duration <= 0:
             duration = 1.0
 
+        now_ts = min(max(time.time(), self._start_ts), self._end_ts)
+        now_off = min(width - 1, max(0, int(((now_ts - self._start_ts) / duration) * width)))
+        ruler = ["─"] * width
+        ruler[now_off] = "▲"
+        text.append("Now".ljust(12), style="bold cyan")
+        text.append(" ")
+        text.append("".join(ruler), style="dim cyan")
+        text.append("\n")
+
         for entry in self._entries:
+            lane_label = (entry.lane or entry.task_id[:8] or "task")[:12]
             # Label
-            label = f"{entry.task_id[:8]:<9} "
-            text.append(label, style="cyan")
+            text.append(f"{lane_label:<12} ", style="cyan")
 
             # Entry kind: compaction events render as distinct markers
             if entry.kind == "compaction":
@@ -86,7 +96,7 @@ class TaskTimeline(Static):
                 start_off = max(0, start_off)
                 text.append(" " * start_off)
                 text.append("⚡", style="magenta")
-                text.append(f" {entry.title}", style="magenta dim")
+                text.append(f" {entry.title[:32]}", style="magenta dim")
                 text.append("\n")
                 continue
 
@@ -99,9 +109,12 @@ class TaskTimeline(Static):
             # Draw bar
             color = STATUS_COLORS.get(entry.status, "white")
             text.append(" " * start_off)
-            text.append("█" * bar_width, style=color)
+            bar_char = "░" if entry.status == "blocked" else "█"
+            text.append(bar_char * bar_width, style=color)
 
             # Status tag
+            text.append(" ", style="dim")
+            text.append(entry.title[:20], style="dim")
             if entry.end_time:
                 dur_s = int(entry.end_time - entry.start_time)
                 text.append(f" {dur_s}s", style="dim")

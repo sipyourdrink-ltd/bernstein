@@ -292,9 +292,19 @@ class TaskRow:
     status: str
     role: str
     title: str
+    priority: int
     model: str
     elapsed: str
     session_id: str
+    assigned_agent: str = ""
+    created_at: float = 0.0
+    retry_count: int = 0
+    depends_on_count: int = 0
+    blocked_reason: str = ""
+    estimated_cost_usd: float = 0.0
+    verification_count: int = 0
+    flagged_unverified: bool = False
+    owned_files_count: int = 0
     tokens_used: int = 0
     tokens_budget: int = 0
     progress_pct: float | None = None
@@ -330,13 +340,35 @@ class TaskRow:
             status=str(raw.get("status", "open")),
             role=str(raw.get("role", "")),
             title=str(raw.get("title", "")),
+            priority=int(raw.get("priority", 2) or 2),
             model=model,
             elapsed=elapsed,
             session_id=str(raw.get("session_id", "")),
+            assigned_agent=str(raw.get("assigned_agent", "") or ""),
+            created_at=float(raw.get("created_at", 0.0) or 0.0),
+            retry_count=int(raw.get("retry_count", 0) or 0),
+            depends_on_count=len(raw.get("depends_on", []) or []),
+            blocked_reason=str(raw.get("blocked_reason", "") or raw.get("terminal_reason", "") or ""),
+            estimated_cost_usd=float(raw.get("cost_usd", 0.0) or raw.get("estimated_cost_usd", 0.0) or 0.0),
+            verification_count=int(raw.get("verification_count", 0) or 0),
+            flagged_unverified=bool(raw.get("flagged_unverified", False)),
+            owned_files_count=len(raw.get("owned_files", []) or []),
             tokens_used=int(raw.get("tokens_used", 0) or 0),
             tokens_budget=int(raw.get("token_budget", 0) or 0),
             progress_pct=progress_pct,
         )
+
+    @property
+    def age_display(self) -> str:
+        """Human-readable age since creation."""
+        if self.created_at <= 0:
+            return "—"
+        age_s = max(0, int(time.time() - self.created_at))
+        if age_s < 60:
+            return f"{age_s}s"
+        if age_s < 3600:
+            return f"{age_s // 60}m"
+        return f"{age_s // 3600}h"
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +381,7 @@ class TaskListWidget(DataTable[Text]):
 
     def on_mount(self) -> None:
         """Set up columns when the widget is mounted."""
-        self.add_columns("ID", "Status", "Role", "Title", "Model", "Time", "Progress")
+        self.add_columns("ID", "Status", "P", "Role", "Title", "Agent", "Age", "Retry", "Blocker", "Model", "Progress")
         self.cursor_type = "row"
         self.zebra_stripes = True
 
@@ -378,12 +410,15 @@ class TaskListWidget(DataTable[Text]):
             pass
 
         # Update existing rows in-place, add new ones
-        columns = ("ID", "Status", "Role", "Title", "Model", "Time", "Progress")
+        columns = ("ID", "Status", "P", "Role", "Title", "Agent", "Age", "Retry", "Blocker", "Model", "Progress")
         for row in rows:
             colour = status_color(row.status)
             dot = status_dot(row.status)
             status_text = accessible_status_label(row.status, accessibility)
             prefix = replace_unicode(f"{dot} ", accessibility)
+            priority_style = "magenta" if row.priority == 1 else "yellow" if row.priority == 2 else "dim"
+            blocker_text = row.blocked_reason[:24] if row.blocked_reason else "—"
+            blocker_style = "red" if row.blocked_reason else "dim"
             # TUI-010: render compact progress bar for in-progress tasks
             if row.progress_pct is not None:
                 progress_cell = render_progress_bar_text(row.progress_pct, width=10, show_pct=True)
@@ -392,10 +427,14 @@ class TaskListWidget(DataTable[Text]):
             cells = (
                 Text(row.task_id, style="bold"),
                 Text(f"{prefix}{status_text}", style=colour),
+                Text(f"P{row.priority}", style=priority_style),
                 Text(row.role, style="cyan"),
                 Text(row.title),
+                Text(row.assigned_agent[:12] if row.assigned_agent else "—", style="dim"),
+                Text(row.age_display, style="dim"),
+                Text(str(row.retry_count), style="yellow" if row.retry_count > 0 else "dim"),
+                Text(blocker_text, style=blocker_style),
                 Text(row.model, style="dim"),
-                Text(row.elapsed, style="dim"),
                 progress_cell,
             )
             if row.task_id in existing_keys:

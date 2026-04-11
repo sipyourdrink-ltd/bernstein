@@ -36,6 +36,7 @@ def test_timeline_update_data() -> None:
         mock_size.return_value = MagicMock(width=100, height=10)
         text = widget.render()
         assert isinstance(text, Text)
+        assert "Now" in text.plain
         assert "t1" in text.plain
         assert "t2" in text.plain
 
@@ -70,3 +71,26 @@ def test_timeline_kind_defaults_to_task() -> None:
     """TimelineEntry defaults to 'task' kind for backward compatibility."""
     entry = TimelineEntry(task_id="t1", title="T1", start_time=0.0, end_time=1.0, status="done")
     assert entry.kind == "task"
+
+
+def test_timeline_prefers_lane_label_when_present() -> None:
+    """Lane labels make the timeline easier to scan than raw task IDs alone."""
+    widget = TaskTimeline()
+    now = time.time()
+    widget.update_data(
+        [
+            TimelineEntry(
+                task_id="task-12345678",
+                title="Implement runtime health",
+                start_time=now - 60,
+                end_time=now - 10,
+                status="done",
+                lane="backend:t123",
+            )
+        ]
+    )
+
+    with patch("bernstein.tui.timeline.TaskTimeline.size", new_callable=PropertyMock) as mock_size:
+        mock_size.return_value = MagicMock(width=100, height=10)
+        text = widget.render()
+        assert "backend:t123"[:12] in text.plain

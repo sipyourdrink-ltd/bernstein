@@ -1,102 +1,62 @@
-"""Worktree branch/status display for TUI agent panel."""
+"""Compact runtime and worktree health pane for the Bernstein TUI."""
 
 from __future__ import annotations
 
-import subprocess
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Any
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from rich.text import Text
+from textual.widgets import Static
 
 
-@dataclass(frozen=True)
-class WorktreeStatus:
-    """Worktree branch and dirty status."""
+def render_runtime_health(snapshot: dict[str, Any] | None) -> Text:
+    """Render a compact runtime-health summary for the side pane."""
+    text = Text()
+    if not snapshot:
+        text.append("Runtime health unavailable.", style="dim")
+        return text
 
-    branch: str
-    is_dirty: bool
-    ahead: int = 0
-    behind: int = 0
+    branch = str(snapshot.get("git_branch", "") or "unknown")
+    worktrees = int(snapshot.get("active_worktrees", 0) or 0)
+    restarts = int(snapshot.get("restart_count", 0) or 0)
+    memory_mb = float(snapshot.get("memory_mb", 0.0) or 0.0)
+    disk_usage_mb = float(snapshot.get("disk_usage_mb", 0.0) or 0.0)
+    config_hash = str(snapshot.get("config_hash", "") or "")
+
+    text.append("Runtime Health\n", style="bold")
+    text.append("Branch: ", style="dim")
+    text.append(branch + "\n")
+    text.append("Worktrees / Restarts: ", style="dim")
+    text.append(f"{worktrees} / {restarts}\n")
+    text.append("Memory / Disk: ", style="dim")
+    text.append(f"{memory_mb:.1f} MB / {disk_usage_mb:.1f} MB\n")
+    if config_hash:
+        text.append("Config: ", style="dim")
+        text.append(config_hash[:12], style="cyan")
+    return text
 
 
-def get_worktree_status(worktree_path: Path) -> WorktreeStatus | None:
-    """Get worktree branch and dirty status.
+class RuntimeHealthPanel(Static):
+    """Panel that shows compact runtime and worktree health."""
 
-    Args:
-        worktree_path: Path to worktree directory.
-
-    Returns:
-        WorktreeStatus or None if git command fails.
+    DEFAULT_CSS = """
+    RuntimeHealthPanel {
+        height: auto;
+        min-height: 7;
+        border: round $accent 20%;
+        padding: 1 1;
+        background: $surface-darken-1;
+    }
     """
-    try:
-        # Get current branch
-        branch_result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
 
-        if branch_result.returncode != 0:
-            return None
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._snapshot: dict[str, Any] | None = None
 
-        branch = branch_result.stdout.strip()
+    def set_snapshot(self, snapshot: dict[str, Any] | None) -> None:
+        """Update the runtime snapshot rendered by the panel."""
+        self._snapshot = snapshot
+        self.refresh()
 
-        # Check for uncommitted changes
-        status_result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-
-        is_dirty = bool(status_result.stdout.strip())
-
-        # Get ahead/behind count
-        ahead = 0
-        behind = 0
-        if branch != "HEAD":
-            count_result = subprocess.run(
-                ["git", "rev-list", "--left-right", "--count", f"origin/{branch}...HEAD"],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if count_result.returncode == 0 and count_result.stdout.strip():
-                parts = count_result.stdout.strip().split()
-                if len(parts) == 2:
-                    behind, ahead = map(int, parts)
-
-        return WorktreeStatus(
-            branch=branch,
-            is_dirty=is_dirty,
-            ahead=ahead,
-            behind=behind,
-        )
-
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-
-
-def format_worktree_display(status: WorktreeStatus) -> str:
-    """Format worktree status for display.
-
-    Args:
-        status: WorktreeStatus instance.
-
-    Returns:
-        Formatted string like "feat/task-abc123 [dirty]" or "main [clean]".
-    """
-    dirty_marker = "[dirty]" if status.is_dirty else "[clean]"
-
-    if status.ahead > 0 or status.behind > 0:
-        return f"{status.branch} {dirty_marker} ({status.ahead}↑ {status.behind}↓)"
-    else:
-        return f"{status.branch} {dirty_marker}"
+    def render(self) -> Text:
+        """Render the current runtime snapshot."""
+        return render_runtime_health(self._snapshot)
