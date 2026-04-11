@@ -97,11 +97,12 @@ class TestSpawnCommandArgs:
     @pytest.mark.parametrize(
         "effort, expected_turns, expected_effort_flag",
         [
-            ("max", "100", "max"),
-            ("high", "50", "high"),
-            ("medium", "30", "medium"),
-            ("normal", "25", "medium"),
-            ("low", "15", "low"),
+            # Default task_scope="medium" applies 1.5x multiplier to base turns
+            ("max", str(int(100 * 1.5)), "max"),
+            ("high", str(int(50 * 1.5)), "high"),
+            ("medium", str(int(30 * 1.5)), "medium"),
+            ("normal", str(int(25 * 1.5)), "medium"),
+            ("low", str(int(15 * 1.5)), "low"),
         ],
     )
     def test_effort_and_max_turns(
@@ -113,6 +114,31 @@ class TestSpawnCommandArgs:
         assert cmd[cmd.index("--effort") + 1] == expected_effort_flag
 
         assert "--max-turns" in cmd
+        assert cmd[cmd.index("--max-turns") + 1] == expected_turns
+
+    @pytest.mark.parametrize(
+        "effort, scope, expected_turns",
+        [
+            # small scope = 1.0x base turns
+            ("high", "small", str(int(50 * 1.0))),
+            ("medium", "small", str(int(30 * 1.0))),
+            # medium scope = 1.5x base turns
+            ("high", "medium", str(int(50 * 1.5))),
+            # large scope = 2.0x base turns
+            ("high", "large", str(int(50 * 2.0))),
+            ("max", "large", str(int(100 * 2.0))),
+            ("low", "large", str(int(15 * 2.0))),
+        ],
+    )
+    def test_scope_scales_max_turns(self, tmp_path: Path, effort: str, scope: str, expected_turns: str) -> None:
+        """Task scope multiplies base turns: small=1.0x, medium=1.5x, large=2.0x."""
+        adapter = ClaudeCodeAdapter()
+        cmd = adapter._build_command(
+            ModelConfig(model="sonnet", effort=effort),
+            None,
+            "do something",
+            task_scope=scope,
+        )
         assert cmd[cmd.index("--max-turns") + 1] == expected_turns
 
     def test_fixed_flags_always_present(self, tmp_path: Path) -> None:
