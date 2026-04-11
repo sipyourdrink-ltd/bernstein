@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from rich.console import Console
 
 from bernstein.cli.status import _extract_run_stats, _select_urgent_tasks, render_status, render_status_plain
@@ -40,7 +41,7 @@ def test_extract_run_stats_accepts_normalized_status_sections() -> None:
     assert len(tasks) == 2
     assert len(agents) == 1
     assert stats.summary.total == 2
-    assert stats.total_cost_usd == 1.25
+    assert stats.total_cost_usd == pytest.approx(1.25)
     assert per_role == []
     assert provider_status == {}
     assert dependency_scan == {}
