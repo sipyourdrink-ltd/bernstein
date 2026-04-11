@@ -142,6 +142,39 @@ def _get_gate_report_path(request: Request, task_id: str) -> Path:
     return _get_runtime_dir(request) / "gates" / f"{task_id}.json"
 
 
+def _persist_lines_changed(request: Request, agent_id: str, lines_changed: int) -> None:
+    """Persist (accumulate) lines_changed for an agent session.
+
+    Written to ``{runtime_dir}/lines_changed/{agent_id}.json`` so the
+    ``GET /costs/efficiency`` endpoint can compute cost-per-line metrics.
+
+    Args:
+        request: FastAPI request (used to resolve runtime_dir).
+        agent_id: Agent session identifier.
+        lines_changed: Number of lines changed to add to the running total.
+    """
+    import logging as _logging
+
+    runtime_dir = _get_runtime_dir(request)
+    lc_dir = runtime_dir / "lines_changed"
+    try:
+        lc_dir.mkdir(parents=True, exist_ok=True)
+        path = lc_dir / f"{agent_id}.json"
+        current = 0
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                current = int(data.get("lines_changed", 0))
+            except (json.JSONDecodeError, ValueError):
+                current = 0
+        path.write_text(
+            json.dumps({"agent_id": agent_id, "lines_changed": current + lines_changed}),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        _logging.getLogger(__name__).debug("Failed to persist lines_changed for %s: %s", agent_id, exc)
+
+
 def _get_tenant_registry(request: Request) -> TenantRegistry | None:
     registry = getattr(request.app.state, "tenant_registry", None)
     return registry if registry is not None else None
@@ -839,6 +872,12 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
             errors=body.errors if body.errors is not None else 0,
             last_file=body.last_file,
         )
+
+    # Persist lines_changed for the cost-efficiency metric endpoint
+    if body.lines_changed is not None and body.lines_changed > 0:
+        agent_id = task.claimed_by_session or ""
+        if agent_id:
+            _persist_lines_changed(request, agent_id, body.lines_changed)
 
     # Real-time behavior anomaly detection — checks file access, commands,
     # network endpoints, output size, and file-change velocity against learned

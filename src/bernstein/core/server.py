@@ -418,6 +418,7 @@ class TaskProgressRequest(BaseModel):
     percent: int = 0
     # Structured snapshot fields for stall detection (optional)
     files_changed: int | None = None
+    lines_changed: int | None = None
     tests_passing: int | None = None
     errors: int | None = None
     last_file: str = ""
