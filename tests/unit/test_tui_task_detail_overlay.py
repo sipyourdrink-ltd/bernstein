@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bernstein.tui.task_detail_overlay import TaskDetail, format_task_detail
+from bernstein.tui.task_detail_overlay import DetailTab, TaskDetail, format_task_detail
 
 
 class TestTaskDetail:
@@ -37,13 +37,17 @@ class TestTaskDetail:
             diff_preview="+new line",
             quality_results={"lint": "pass"},
         )
+        # Summary tab (default) shows header + description
         text = format_task_detail(detail)
         assert "task-001" in text
         assert "Fix bug" in text
         assert "backend" in text
         assert "$0.12" in text
-        assert "Tests passed" in text
-        assert "+new line" in text
+        # Logs and diff are on separate tabs
+        logs_text = format_task_detail(detail, tab=DetailTab.LOGS)
+        assert "Tests passed" in logs_text
+        diff_text = format_task_detail(detail, tab=DetailTab.DIFF)
+        assert "+new line" in diff_text
 
     def test_format_handles_missing_optional_fields(self) -> None:
         detail = TaskDetail(
@@ -67,6 +71,6 @@ class TestTaskDetail:
             role="qa",
             log_tail=long_log,
         )
-        text = format_task_detail(detail)
-        # Should contain truncation indicator
+        text = format_task_detail(detail, tab=DetailTab.LOGS)
+        # Should contain last line (truncated to _MAX_LOG_LINES)
         assert "line 199" in text
