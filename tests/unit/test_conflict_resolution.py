@@ -92,16 +92,20 @@ class TestParseConflictFiles:
 
 
 class TestMergeWithConflictDetection:
+    # ``merge_with_conflict_detection`` now goes straight to
+    # ``git merge --no-commit --no-ff`` (no rebase-first fallback); its
+    # clean-merge path issues 4 git calls: merge, syntax-check diff,
+    # commit, diff --stat. These tests used to mock a 7-call sequence
+    # from the old rebase-first implementation, so the stdout for
+    # ``diff --stat`` landed at index 6 and was never reached.
+
     @patch("bernstein.core.git_pr.run_git")
     def test_clean_merge(self, mock: MagicMock) -> None:
         mock.side_effect = [
-            GitResult(0, "abc123\n", ""),  # rev-parse HEAD
-            GitResult(1, "", "rebase conflict"),  # rebase (fail → fallback)
-            GitResult(0, "", ""),  # rebase --abort
-            GitResult(0, "", ""),  # merge --no-commit
-            GitResult(0, "", ""),  # syntax check: diff --cached --name-only
-            GitResult(0, "", ""),  # commit
-            GitResult(0, "1 file changed\n", ""),  # diff --stat
+            GitResult(0, "", ""),  # merge --no-commit --no-ff
+            GitResult(0, "", ""),  # _check_python_syntax: diff --cached --name-only
+            GitResult(0, "", ""),  # commit -m <msg>
+            GitResult(0, "1 file changed\n", ""),  # diff HEAD~1 --stat
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success
@@ -111,27 +115,21 @@ class TestMergeWithConflictDetection:
     @patch("bernstein.core.git_pr.run_git")
     def test_clean_merge_custom_message(self, mock: MagicMock) -> None:
         mock.side_effect = [
-            GitResult(0, "abc123\n", ""),  # rev-parse HEAD
-            GitResult(1, "", "rebase conflict"),  # rebase (fail → fallback)
-            GitResult(0, "", ""),  # rebase --abort
-            GitResult(0, "", ""),  # merge --no-commit
-            GitResult(0, "", ""),  # syntax check: diff --cached --name-only
+            GitResult(0, "", ""),  # merge --no-commit --no-ff
+            GitResult(0, "", ""),  # _check_python_syntax
             GitResult(0, "", ""),  # commit
             GitResult(0, "", ""),  # diff --stat
         ]
         merge_with_conflict_detection(REPO, "feature/x", message="Custom merge msg")
-        # Verify the commit used the custom message (index 5 after rebase + syntax calls)
-        commit_call = mock.call_args_list[5]
+        # Verify the commit used the custom message (index 2: merge, syntax, commit)
+        commit_call = mock.call_args_list[2]
         assert "Custom merge msg" in commit_call[0][0]
 
     @patch("bernstein.core.git_pr.run_git")
     def test_conflict_detected(self, mock: MagicMock) -> None:
         mock.side_effect = [
-            GitResult(0, "abc123\n", ""),  # rev-parse HEAD
-            GitResult(1, "", "rebase conflict"),  # rebase (fail → fallback)
-            GitResult(0, "", ""),  # rebase --abort
             GitResult(1, "", "CONFLICT (content): Merge conflict in src/a.py"),  # merge fails
-            GitResult(0, "UU src/a.py\nUU src/b.py\n", ""),  # status
+            GitResult(0, "UU src/a.py\nUU src/b.py\n", ""),  # status (conflicts)
             GitResult(0, "", ""),  # merge --abort
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
@@ -144,9 +142,6 @@ class TestMergeWithConflictDetection:
     @patch("bernstein.core.git_pr.run_git")
     def test_non_conflict_failure(self, mock: MagicMock) -> None:
         mock.side_effect = [
-            GitResult(0, "abc123\n", ""),  # rev-parse HEAD
-            GitResult(1, "", "rebase conflict"),  # rebase (fail → fallback)
-            GitResult(0, "", ""),  # rebase --abort
             GitResult(128, "", "fatal: 'agent/bad' is not a commit"),  # merge fails
             GitResult(0, "", ""),  # status (no conflicts)
             GitResult(0, "", ""),  # merge --abort
@@ -160,13 +155,10 @@ class TestMergeWithConflictDetection:
     def test_nothing_to_commit_after_merge(self, mock: MagicMock) -> None:
         """Branches are identical — merge succeeds but nothing to commit."""
         mock.side_effect = [
-            GitResult(0, "abc123\n", ""),  # rev-parse HEAD
-            GitResult(1, "", "rebase conflict"),  # rebase (fail → fallback)
-            GitResult(0, "", ""),  # rebase --abort
-            GitResult(0, "", ""),  # merge --no-commit
-            GitResult(0, "", ""),  # syntax check: diff --cached --name-only
+            GitResult(0, "", ""),  # merge --no-commit --no-ff
+            GitResult(0, "", ""),  # _check_python_syntax
             GitResult(1, "", "nothing to commit"),  # commit fails
-            GitResult(0, "", ""),  # merge --abort
+            GitResult(0, "", ""),  # merge --abort (fallback)
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success

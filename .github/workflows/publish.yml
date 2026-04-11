@@ -5,8 +5,10 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: read
+# Permissions are declared per-job so that each job gets only what it
+# needs (Sonar S8264). The default permission for any job that does not
+# declare ``permissions:`` is an empty set.
+permissions: {}
 
 jobs:
   # Protocol compatibility gate — blocks release if breaking changes found
@@ -14,6 +16,8 @@ jobs:
     name: Protocol Compatibility Gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
@@ -86,6 +90,8 @@ jobs:
     name: Verify tests pass
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
@@ -100,6 +106,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, protocol-gate]
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
@@ -117,6 +125,7 @@ jobs:
     needs: build
     timeout-minutes: 15
     permissions:
+      contents: read
       id-token: write
       attestations: write
     environment:
@@ -159,6 +168,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
@@ -183,6 +194,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     timeout-minutes: 10
+    permissions: {}
     steps:
       - name: Trigger COPR build
         run: |
