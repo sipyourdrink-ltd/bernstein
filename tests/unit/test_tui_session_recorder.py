@@ -9,11 +9,11 @@ import pytest
 
 from bernstein.tui.session_recorder import (
     RecordingFrame,
+    SessionPlayer,
+    SessionRecorder,
     list_recordings,
     render_session_recorder_panel,
     summarize_recording,
-    SessionPlayer,
-    SessionRecorder,
 )
 
 

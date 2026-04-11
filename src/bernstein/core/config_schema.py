@@ -139,6 +139,7 @@ class RoleModelPolicyEntry(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    cli: str | None = None
     provider: str | None = None
     model: str | None = None
     effort: str | None = None

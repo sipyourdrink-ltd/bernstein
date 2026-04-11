@@ -148,7 +148,11 @@ async def sandbox_dashboard(session_id: str, request: Request) -> HTMLResponse:
     session = mgr.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return HTMLResponse(_render_sandbox_page(session_id))
+    # html.escape at the call site so CodeQL's taint tracker sees the
+    # sanitizer on the same data-flow edge as the HTMLResponse sink
+    # (it does not look inside _render_sandbox_page for internal escaping).
+    safe_id = html.escape(session_id)
+    return HTMLResponse(_render_sandbox_page(safe_id))
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
