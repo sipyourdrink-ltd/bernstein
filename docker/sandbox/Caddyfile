@@ -1,0 +1,3 @@
+{$DOMAIN:localhost} {
+    reverse_proxy bernstein-server:8052
+}

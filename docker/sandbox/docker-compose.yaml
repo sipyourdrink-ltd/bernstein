@@ -1,0 +1,64 @@
+# Bernstein Sandbox — cloud-hosted free evaluation
+#
+# Runs a sandboxed Bernstein instance where prospects can paste a GitHub URL,
+# select a solution pack, and watch up to 3 agents work within a $2 budget.
+#
+# Start:
+#   docker compose -f docker/sandbox/docker-compose.yaml up -d
+#
+# Public access via Caddy reverse proxy with automatic HTTPS.
+# Set BERNSTEIN_DOMAIN in .env or override on the command line.
+
+services:
+  # ── Bernstein task server + sandbox API ──
+  bernstein-server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: >
+      python -m bernstein.cli server
+        --host 0.0.0.0
+        --port 8052
+        --sandbox
+    environment:
+      - BERNSTEIN_SANDBOX=1
+      - BERNSTEIN_SANDBOX_MAX_SESSIONS=20
+      - BERNSTEIN_SANDBOX_BUDGET=2.0
+      - BERNSTEIN_SANDBOX_MAX_AGENTS=3
+      - BERNSTEIN_SANDBOX_TIMEOUT=1800
+    volumes:
+      - sandbox-workspaces:/app/workspaces
+    networks:
+      - internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+
+  # ── Caddy HTTPS reverse proxy ──
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - DOMAIN=${BERNSTEIN_DOMAIN:-localhost}
+    networks:
+      - internal
+    depends_on:
+      - bernstein-server
+    restart: unless-stopped
+
+volumes:
+  sandbox-workspaces:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
