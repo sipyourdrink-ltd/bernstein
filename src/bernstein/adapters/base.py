@@ -150,6 +150,7 @@ class CLIAdapter(ABC):
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         task_scope: str = "medium",
         budget_multiplier: float = 1.0,
+        system_addendum: str = "",
     ) -> SpawnResult:
         """Launch an agent process with the given prompt.
 
@@ -164,6 +165,12 @@ class CLIAdapter(ABC):
                 adapters that support per-task budget caps.
             budget_multiplier: Multiplier applied to the scope-based budget
                 (e.g. 2.0 on retry after hitting the budget cap).
+            system_addendum: Protocol-critical instructions (completion
+                curl commands, heartbeat, signal-check) to inject via a
+                system-prompt channel that survives prompt truncation.
+                Adapters that support a separate system prompt (e.g. Claude
+                Code's ``--append-system-prompt``) should use it; others
+                may append to the user prompt as a fallback.
         """
         ...
 

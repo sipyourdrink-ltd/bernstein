@@ -550,6 +550,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         task_scope: str = "medium",
         budget_multiplier: float = 1.0,
+        system_addendum: str = "",
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -592,6 +593,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             role=role,
             workdir=workdir,
             agents_json=agents_json,
+            system_addendum=system_addendum,
             batch_mode=batch_mode,
             task_scope=task_scope,
             budget_multiplier=budget_multiplier,
