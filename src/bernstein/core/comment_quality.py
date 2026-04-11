@@ -130,8 +130,16 @@ def _detect_style(docstring: str) -> DocstyleKind:
 
 def _extract_documented_params_google(docstring: str) -> set[str]:
     """Extract parameter names from a Google-style docstring."""
-    # Find the Args section
-    args_match = re.search(r"Args:\s*\n(.*?)(?:\n\s*\w.*?:|$)", docstring, re.DOTALL)
+    # Find the Args section.  It is terminated by either the end of the
+    # docstring or a sibling section header (an unindented or
+    # minimally-indented capitalised word followed by ``:``, e.g.
+    # ``Returns:`` / ``Raises:``).  We must NOT terminate on the param
+    # lines themselves which are typically indented by 4+ spaces.
+    args_match = re.search(
+        r"Args:\s*\n(.*?)(?:\n[ \t]{0,3}[A-Z]\w*:|\Z)",
+        docstring,
+        re.DOTALL,
+    )
     if not args_match:
         return set()
     args_block = args_match.group(1)
