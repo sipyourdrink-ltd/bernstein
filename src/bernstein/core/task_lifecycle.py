@@ -1902,7 +1902,14 @@ def process_completed_tasks(
                         task.id,
                     )
                     _skip_merge = False
-            _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(session, skip_merge=_skip_merge)
+            # Reap the agent process and merge the worktree branch, but
+            # defer worktree cleanup so the approval gate, PR creation,
+            # and merge-result check can still access the worktree
+            # directory.  cleanup_worktree is called explicitly below
+            # after all post-merge checks complete (BUG-4 fix).
+            _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(
+                session, skip_merge=_skip_merge, defer_cleanup=True
+            )
             if session.status != "dead":
                 transition_agent(session, "dead", actor="task_lifecycle", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
