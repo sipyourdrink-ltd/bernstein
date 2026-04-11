@@ -1494,12 +1494,17 @@ class AgentSpawner:
                                 adapter=target_adapter,
                             )
                         else:
+                            # Extract budget_multiplier from task metadata
+                            # (set by retry logic when previous attempt hit budget cap).
+                            _budget_mult = max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks)
                             result = target_adapter.spawn(
                                 prompt=prompt,
                                 workdir=spawn_cwd,
                                 model_config=model_config,
                                 session_id=session_id,
                                 mcp_config=effective_mcp,
+                                task_scope=max_scope,
+                                budget_multiplier=_budget_mult,
                             )
                         spawn_duration = time.perf_counter() - spawn_start
                         agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)

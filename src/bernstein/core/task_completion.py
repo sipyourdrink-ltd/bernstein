@@ -326,6 +326,15 @@ def retry_or_fail_task(
         # Progressive timeout: each retry multiplies estimated_minutes by (retry_count + 2)
         # so retry 1 doubles the time, retry 2 triples it, giving agents more runway.
         progressive_minutes = task.estimated_minutes * (retry_count + 2)
+
+        # Budget escalation: when the agent hit the per-task budget cap,
+        # double the budget_multiplier so the retry gets more runway.
+        prev_multiplier = float(task.metadata.get("budget_multiplier", 1.0))
+        is_budget_fail = "max_budget" in reason.lower() or "budget" in reason.lower()
+        budget_multiplier = prev_multiplier * 2.0 if is_budget_fail else prev_multiplier
+        retry_metadata = dict(task.metadata)
+        retry_metadata["budget_multiplier"] = budget_multiplier
+
         task_body: dict[str, Any] = {
             "title": f"[RETRY {retry_count + 1}] {task.title}",
             "description": new_description,
@@ -339,6 +348,7 @@ def retry_or_fail_task(
             "task_type": task.task_type.value,
             "model": retry_model,
             "effort": retry_effort,
+            "metadata": retry_metadata,
         }
         # Preserve completion signals on retry
         if task.completion_signals:

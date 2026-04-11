@@ -40,6 +40,7 @@ class MockTask:
         self.max_output_tokens = None
         self.meta_messages = []
         self.completion_signals = []
+        self.metadata = {}
 
 
 @pytest.mark.parametrize("retry_func", [retry_lifecycle, retry_completion])

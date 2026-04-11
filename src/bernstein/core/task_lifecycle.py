@@ -462,6 +462,14 @@ def maybe_retry_task(
 
     progressive_minutes = task.estimated_minutes * (retry_count + 2)
 
+    # When the previous attempt hit the per-task budget cap, double the
+    # budget for the retry so the agent has enough runway to finish.
+    prev_multiplier = float(task.metadata.get("budget_multiplier", 1.0))
+    budget_multiplier = prev_multiplier * 2.0 if task.terminal_reason == "error_max_budget_usd" else prev_multiplier
+
+    retry_metadata = dict(task.metadata)
+    retry_metadata["budget_multiplier"] = budget_multiplier
+
     payload: dict[str, Any] = {
         "title": new_title,
         "description": new_description,
@@ -478,6 +486,7 @@ def maybe_retry_task(
         "created_at": time.time() + backoff_delay,
         "retry_delay_s": base_delay,
         "terminal_reason": None,
+        "metadata": retry_metadata,
     }
 
     try:
@@ -486,12 +495,13 @@ def maybe_retry_task(
         new_task_id = resp.json().get("id", "?")
         retried_task_ids.add(task.id)
         logger.info(
-            "Retry %d queued for failed task %s -> %s (model=%s effort=%s)",
+            "Retry %d queued for failed task %s -> %s (model=%s effort=%s budget_mult=%.1fx)",
             next_retry,
             task.id,
             new_task_id,
             new_model,
             new_effort,
+            budget_multiplier,
         )
         return True
     except Exception as exc:
@@ -639,6 +649,17 @@ def retry_or_fail_task(
         # Progressive timeout: each retry multiplies estimated_minutes by (retry_count + 2)
         # so retry 1 doubles the time, retry 2 triples it, giving agents more runway.
         progressive_minutes = task.estimated_minutes * (retry_count + 2)
+
+        # Budget escalation: when the agent hit the per-task budget cap,
+        # double the budget_multiplier so the retry gets more runway.
+        prev_multiplier = float(task.metadata.get("budget_multiplier", 1.0))
+        if "max_budget" in reason.lower() or "budget" in reason.lower():
+            budget_multiplier = prev_multiplier * 2.0
+        else:
+            budget_multiplier = prev_multiplier
+        retry_metadata = dict(task.metadata)
+        retry_metadata["budget_multiplier"] = budget_multiplier
+
         task_body: dict[str, Any] = {
             "title": f"[RETRY {retry_count + 1}] {task.title}",
             "description": new_description,
@@ -654,6 +675,7 @@ def retry_or_fail_task(
             "effort": retry_effort,
             "max_output_tokens": new_max_output_tokens,
             "meta_messages": new_meta_messages,
+            "metadata": retry_metadata,
         }
         # Preserve completion signals on retry
         if task.completion_signals:

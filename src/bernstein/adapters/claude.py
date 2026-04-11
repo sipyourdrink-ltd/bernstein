@@ -179,6 +179,14 @@ class ClaudeCodeAdapter(CLIAdapter):
     # decompose + spawn workers + track completion.
     BATCH_MAX_TURNS: int = 200
 
+    # Scope → base budget mapping.  Opus tasks get a 2x multiplier because
+    # opus input/output tokens cost roughly twice as much as sonnet.
+    _SCOPE_BUDGET_USD: ClassVar[dict[str, float]] = {
+        "small": 2.0,
+        "medium": 5.0,
+        "large": 15.0,
+    }
+
     def _build_command(
         self,
         model_config: ModelConfig,
@@ -190,6 +198,8 @@ class ClaudeCodeAdapter(CLIAdapter):
         agents_json: dict[str, Any] | None = None,
         system_addendum: str = "",
         batch_mode: bool = False,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
     ) -> list[str]:
         """Build the claude CLI command with effort mapping.
 
@@ -215,6 +225,12 @@ class ClaudeCodeAdapter(CLIAdapter):
                 :attr:`BATCH_MAX_TURNS` (200) so the agent has enough turns
                 to research, decompose, spawn workers, and track their
                 completion via the ``/batch`` skill.
+            task_scope: Task scope ("small", "medium", "large") used to
+                compute a per-task budget cap.  Opus models get a 2x
+                multiplier because their token costs are roughly double.
+            budget_multiplier: Additional multiplier applied on top of the
+                scope-based budget (e.g. 2.0 when retrying after hitting the
+                budget cap in a previous attempt).
         """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
@@ -271,8 +287,13 @@ class ClaudeCodeAdapter(CLIAdapter):
         if agents_json:
             cmd.extend(["--agents", json.dumps(agents_json)])
 
-        # Per-task budget cap — prevents runaway token spend
-        cmd.extend(["--max-budget-usd", "5.00"])
+        # Per-task budget cap — scope-aware to avoid killing large tasks mid-work.
+        # Opus models get a 2x multiplier because their tokens cost ~2x more.
+        # Retry budget_multiplier (e.g. 2.0 after budget-cap failure) stacks on top.
+        base_budget = self._SCOPE_BUDGET_USD.get(task_scope, 5.0)
+        is_opus = "opus" in model_id.lower()
+        budget_usd = base_budget * (2.0 if is_opus else 1.0) * budget_multiplier
+        cmd.extend(["--max-budget-usd", f"{budget_usd:.2f}"])
 
         # Enforce structured output so the orchestrator can always parse results
         cmd.extend(["--json-schema", _RESULT_SCHEMA])
@@ -527,6 +548,8 @@ class ClaudeCodeAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -570,6 +593,8 @@ class ClaudeCodeAdapter(CLIAdapter):
             workdir=workdir,
             agents_json=agents_json,
             batch_mode=batch_mode,
+            task_scope=task_scope,
+            budget_multiplier=budget_multiplier,
         )
 
         # Wrap with bernstein-worker for process visibility

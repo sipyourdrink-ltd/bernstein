@@ -148,8 +148,23 @@ class CLIAdapter(ABC):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
     ) -> SpawnResult:
-        """Launch an agent process with the given prompt."""
+        """Launch an agent process with the given prompt.
+
+        Args:
+            prompt: The task prompt for the agent.
+            workdir: Working directory for the agent process.
+            model_config: Model and effort configuration.
+            session_id: Unique session identifier.
+            mcp_config: Optional MCP server definitions.
+            timeout_seconds: Process timeout in seconds.
+            task_scope: Task scope ("small", "medium", "large") used by
+                adapters that support per-task budget caps.
+            budget_multiplier: Multiplier applied to the scope-based budget
+                (e.g. 2.0 on retry after hitting the budget cap).
+        """
         ...
 
     def _start_timeout_watchdog(
