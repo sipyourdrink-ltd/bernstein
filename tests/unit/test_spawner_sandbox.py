@@ -31,8 +31,11 @@ class FakeAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, object] | None = None,
         timeout_seconds: int = 1800,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
     ) -> SpawnResult:
-        del model_config, session_id, mcp_config, timeout_seconds
+        del model_config, session_id, mcp_config, timeout_seconds, task_scope, budget_multiplier, system_addendum
         self.spawn_calls.append((prompt, workdir))
         return SpawnResult(pid=42, log_path=workdir / ".sdd" / "logs" / "fallback.log")
 
