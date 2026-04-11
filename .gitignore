@@ -83,4 +83,8 @@ marketing/*
 .hypothesis/
 .mcpregistry_github_token
 .mcpregistry_registry_token
-*token*docs/openapi.json
+*token*
+docs/openapi.json
+
+# pytest-benchmark output
+.benchmarks/
