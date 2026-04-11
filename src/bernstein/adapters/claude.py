@@ -322,7 +322,8 @@ class ClaudeCodeAdapter(CLIAdapter):
                 "            import time as _t\n"
                 f"            _rec = json.dumps({{'ts': _t.time(), 'in': inp_tok, 'out': out_tok}})\n"
                 f"            try:\n"
-                f"                open({tokens_path!r}, 'a').write(_rec + '\\n')\n"
+                f"                with open({tokens_path!r}, 'a') as _tf:\n"
+                f"                    _tf.write(_rec + '\\n')\n"
                 f"            except OSError:\n"
                 f"                pass\n"
             )
@@ -336,7 +337,8 @@ class ClaudeCodeAdapter(CLIAdapter):
                 "    try:\n"
                 "        _hb = {'timestamp': __import__('time').time(), 'phase': 'implementing',"
                 " 'progress_pct': 0, 'current_file': '', 'message': 'working', 'status': 'working'}\n"
-                f"        open({heartbeat_path!r}, 'w').write(__import__('json').dumps(_hb))\n"
+                f"        with open({heartbeat_path!r}, 'w') as _hf:\n"
+                f"            _hf.write(__import__('json').dumps(_hb))\n"
                 "    except OSError:\n"
                 "        pass\n"
             )
@@ -350,7 +352,8 @@ class ClaudeCodeAdapter(CLIAdapter):
                 "            import json as _json\n"
                 "            _marker = _json.dumps({'result': txt or '', 'subtype': _subtype,"
                 " 'cost_usd': _cost, 'turns': _turns, 'duration_ms': _dur})\n"
-                f"            open({completion_path!r}, 'w').write(_marker)\n"
+                f"            with open({completion_path!r}, 'w') as _cf:\n"
+                f"                _cf.write(_marker)\n"
                 "        except OSError:\n"
                 "            pass\n"
             )
@@ -399,8 +402,9 @@ class ClaudeCodeAdapter(CLIAdapter):
     ) -> tuple[subprocess.Popen[bytes], subprocess.Popen[bytes]]:
         """Launch claude piped through wrapper, writing output to log_path.
 
-        Uses try/finally to guarantee log_file is closed even if the wrapper
-        Popen fails after claude has already started.
+        The parent closes its copies of the log/stderr file handles after
+        the subprocesses have inherited them.  On failure the handles are
+        closed in the ``except`` path so they are never leaked.
 
         Args:
             cmd: The CLI command to execute (wrapped by bernstein-worker).
@@ -444,9 +448,18 @@ class ClaudeCodeAdapter(CLIAdapter):
             except Exception:
                 claude_proc.kill()
                 raise
-        finally:
+        except Exception:
+            # Subprocesses never started (or only partially); close handles
+            # so they don't leak.
             log_file.close()
             stderr_file.close()
+            raise
+
+        # Both subprocesses are running and own the inherited FDs.
+        # Close the parent's copies so the FDs aren't kept alive
+        # longer than necessary, but the children can still write.
+        log_file.close()
+        stderr_file.close()
 
         # Allow claude_proc to receive SIGPIPE if wrapper dies
         if claude_proc.stdout:
