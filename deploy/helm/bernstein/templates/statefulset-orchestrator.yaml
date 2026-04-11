@@ -1,11 +1,12 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "bernstein.fullname" . }}-orchestrator
   labels:
     {{- include "bernstein.labels" . | nindent 4 }}
     app.kubernetes.io/component: orchestrator
 spec:
+  serviceName: {{ include "bernstein.fullname" . }}-orchestrator
   replicas: {{ .Values.orchestrator.replicaCount }}
   selector:
     matchLabels:
@@ -66,6 +67,14 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+          volumeMounts:
+            - name: orchestrator-state
+              mountPath: /workspace/.sdd/orchestrator
+      {{- if not .Values.orchestrator.persistence.enabled }}
+      volumes:
+        - name: orchestrator-state
+          emptyDir: {}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -78,3 +87,17 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+  {{- if .Values.orchestrator.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: orchestrator-state
+      spec:
+        accessModes:
+          - {{ .Values.orchestrator.persistence.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.orchestrator.persistence.size }}
+        {{- if .Values.orchestrator.persistence.storageClass }}
+        storageClassName: {{ .Values.orchestrator.persistence.storageClass }}
+        {{- end }}
+  {{- end }}
