@@ -1,0 +1,22 @@
+# Bernstein Security Contact — RFC 9116
+# https://securitytxt.org/
+
+Contact: mailto:security@bernstein.dev
+Contact: https://hackerone.com/bernstein
+
+Encryption: https://bernstein.dev/.well-known/security-pgp.asc
+
+Acknowledgments: https://github.com/chernistry/bernstein/blob/main/docs/security-acknowledgments.md
+
+Policy: https://github.com/chernistry/bernstein/blob/main/SECURITY.md
+
+Hiring: https://bernstein.dev/careers
+
+Preferred-Languages: en
+
+Canonical: https://bernstein.dev/.well-known/security.txt
+
+# Reports older than 90 days without a fix should be disclosed responsibly.
+# We commit to responding within 72 hours and resolving criticals within 7 days.
+
+Expires: 2027-01-01T00:00:00.000Z
