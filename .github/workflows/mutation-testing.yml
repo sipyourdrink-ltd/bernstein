@@ -75,10 +75,18 @@ jobs:
           THRESHOLD="${{ github.event.inputs.threshold }}"
           THRESHOLD="${THRESHOLD:-80}"
 
-          # Parse mutmut results
-          KILLED=$(uv run mutmut results 2>/dev/null | grep -c "^Killed" || echo 0)
-          SURVIVED=$(uv run mutmut results 2>/dev/null | grep -c "^Survived" || echo 0)
-          TIMEOUT=$(uv run mutmut results 2>/dev/null | grep -c "^Timeout" || echo 0)
+          # Parse mutmut results.
+          # NOTE: ``grep -c`` always emits a single number to stdout.
+          # The previous form ``$(... | grep -c PAT || echo 0)`` was
+          # broken: when grep finds zero matches it prints "0" AND
+          # exits 1, so the ``|| echo 0`` appends a second "0" line.
+          # The captured shell variable then becomes "0\n0", which
+          # makes ``$(( ... ))`` fail with "syntax error in expression"
+          # — see CI logs for the previous run.
+          # We just use ``|| true`` to swallow grep's exit status.
+          KILLED=$(uv run mutmut results 2>/dev/null | grep -c "^Killed" || true)
+          SURVIVED=$(uv run mutmut results 2>/dev/null | grep -c "^Survived" || true)
+          TIMEOUT=$(uv run mutmut results 2>/dev/null | grep -c "^Timeout" || true)
 
           # Use junitxml export if available (mutmut >= 2.0 supports it)
           uv run mutmut junitxml > mutmut_junit.xml 2>/dev/null || true
@@ -91,9 +99,14 @@ jobs:
 
           # Alternative: use mutmut show for detailed summary
           MUTMUT_OUTPUT=$(uv run mutmut results 2>&1 || true)
-          KILLED_COUNT=$(echo "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Killed" || echo 0)
-          SURVIVED_COUNT=$(echo "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Survived\|^[0-9].*Suspicious" || echo 0)
-          TIMEOUT_COUNT=$(echo "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Timeout" || echo 0)
+          KILLED_COUNT=$(printf '%s\n' "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Killed" || true)
+          SURVIVED_COUNT=$(printf '%s\n' "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Survived\|^[0-9].*Suspicious" || true)
+          TIMEOUT_COUNT=$(printf '%s\n' "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Timeout" || true)
+
+          # Default empty values to 0 so arithmetic does not blow up
+          KILLED_COUNT=${KILLED_COUNT:-0}
+          SURVIVED_COUNT=${SURVIVED_COUNT:-0}
+          TIMEOUT_COUNT=${TIMEOUT_COUNT:-0}
 
           TOTAL=$((KILLED_COUNT + SURVIVED_COUNT + TIMEOUT_COUNT))
 
