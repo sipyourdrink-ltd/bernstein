@@ -1,0 +1,177 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: bernsteinruns.bernstein.io
+  labels:
+    app.kubernetes.io/name: bernstein
+    app.kubernetes.io/part-of: bernstein
+spec:
+  group: bernstein.io
+  names:
+    kind: BernsteinRun
+    listKind: BernsteinRunList
+    plural: bernsteinruns
+    singular: bernsteinrun
+    shortNames:
+      - brun
+    categories:
+      - bernstein
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Plan
+          type: string
+          jsonPath: .spec.planRef
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Active
+          type: integer
+          jsonPath: .status.activeJobs
+        - name: Done
+          type: integer
+          jsonPath: .status.completedSteps
+        - name: Failed
+          type: integer
+          jsonPath: .status.failedSteps
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - planRef
+              properties:
+                planRef:
+                  type: string
+                  description: Name of the BernsteinPlan to execute.
+                maxRetries:
+                  type: integer
+                  description: Max retries per failed step before marking the run failed.
+                  minimum: 0
+                  default: 2
+                timeout:
+                  type: string
+                  description: Overall run timeout (e.g. "2h", "30m").
+                  default: "2h"
+                serverUrl:
+                  type: string
+                  description: Override task server URL (auto-detected if omitted).
+                image:
+                  type: string
+                  description: Container image for agent Jobs.
+                nodeSelector:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Node selector for agent Jobs.
+                resources:
+                  type: object
+                  description: Resource requests/limits for agent Jobs.
+                  properties:
+                    requests:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                        memory:
+                          type: string
+                    limits:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                        memory:
+                          type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Pending, Running, Completed, Failed, Cancelled]
+                  default: Pending
+                startTime:
+                  type: string
+                  format: date-time
+                completionTime:
+                  type: string
+                  format: date-time
+                totalSteps:
+                  type: integer
+                completedSteps:
+                  type: integer
+                failedSteps:
+                  type: integer
+                activeJobs:
+                  type: integer
+                currentStage:
+                  type: string
+                stages:
+                  type: array
+                  description: Per-stage execution status.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      phase:
+                        type: string
+                        enum: [Pending, Running, Completed, Failed, Skipped]
+                      startTime:
+                        type: string
+                        format: date-time
+                      completionTime:
+                        type: string
+                        format: date-time
+                      steps:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            goal:
+                              type: string
+                            phase:
+                              type: string
+                              enum: [Pending, Running, Completed, Failed]
+                            jobName:
+                              type: string
+                            taskId:
+                              type: string
+                            retries:
+                              type: integer
+                            startTime:
+                              type: string
+                              format: date-time
+                            completionTime:
+                              type: string
+                              format: date-time
+                            error:
+                              type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time

@@ -1,0 +1,19 @@
+{{- if .Values.grpc.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bernstein.fullname" . }}-grpc
+  labels:
+    {{- include "bernstein.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.grpc.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "bernstein.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+{{- end }}

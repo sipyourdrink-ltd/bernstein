@@ -44,6 +44,11 @@ spec:
             - name: http
               containerPort: 8052
               protocol: TCP
+            {{- if .Values.grpc.enabled }}
+            - name: grpc
+              containerPort: {{ .Values.grpc.port }}
+              protocol: TCP
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "bernstein.fullname" . }}-config

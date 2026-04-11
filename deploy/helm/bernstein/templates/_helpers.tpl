@@ -89,6 +89,13 @@ Name of the secret holding the auth token.
 {{- end }}
 
 {{/*
+gRPC server URL used by workers and orchestrator for internal comms.
+*/}}
+{{- define "bernstein.grpcURL" -}}
+{{ include "bernstein.fullname" . }}-grpc:{{ .Values.grpc.port }}
+{{- end }}
+
+{{/*
 Name of the secret holding LLM provider API keys.
 */}}
 {{- define "bernstein.providerKeysSecretName" -}}
