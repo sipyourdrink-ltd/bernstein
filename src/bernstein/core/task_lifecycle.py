@@ -1895,7 +1895,14 @@ def process_completed_tasks(
                             "Approval gate PR mode: no worktree for agent %s -- cannot create PR",
                             session.id,
                         )
-            _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(session, skip_merge=_skip_merge)
+            # Reap the agent process and merge the worktree branch, but
+            # defer worktree cleanup so the approval gate, PR creation,
+            # and merge-result check can still access the worktree
+            # directory.  cleanup_worktree is called explicitly below
+            # after all post-merge checks complete (BUG-4 fix).
+            _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(
+                session, skip_merge=_skip_merge, defer_cleanup=True
+            )
             if session.status != "dead":
                 transition_agent(session, "dead", actor="task_lifecycle", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
@@ -1986,6 +1993,12 @@ def process_completed_tasks(
                         logger.info("Closed GitHub issue #%s for task %s", _issue_number, task.id)
                     except Exception as exc:
                         logger.warning("Failed to close GitHub issue #%s: %s", _issue_number, exc)
+
+            # Now that the approval gate, PR creation, merge check, and
+            # task close are all done, clean up the worktree.  This was
+            # deferred during reap_completed_agent so the worktree
+            # remained available throughout the post-merge flow (BUG-4 fix).
+            orch._spawner.cleanup_worktree(session.id)
 
         # Record task completion in the operational metrics collector so
         # run summaries and evolution analysis see real duration/success data.

@@ -2403,6 +2403,7 @@ class AgentSpawner:
         self,
         session: AgentSession,
         skip_merge: bool = False,
+        defer_cleanup: bool = False,
     ) -> MergeResult | None:
         """Terminate and wait on the subprocess for a completed agent.
 
@@ -2423,6 +2424,11 @@ class AgentSpawner:
             skip_merge: When True, skip the worktree merge but still clean up
                 the process and worktree.  Used by the approval gate when the
                 user rejects a task or when a PR is created instead.
+            defer_cleanup: When True, merge the worktree branch but keep the
+                worktree directory alive so the caller can inspect the merge
+                result and clean up later via ``cleanup_worktree``.  This
+                prevents work loss when a PR or merge check needs the
+                worktree to still exist (BUG-4 fix).
 
         Returns:
             MergeResult when worktrees are enabled and skip_merge is False
@@ -2442,13 +2448,13 @@ class AgentSpawner:
                 self._worktree_roots.pop(session.id, None)
             else:
                 self._reap_subprocess(session)
-                merge_result = self._merge_and_cleanup_worktree(session, skip_merge)
+                merge_result = self._merge_and_cleanup_worktree(session, skip_merge, defer_cleanup=defer_cleanup)
                 outcome = "completed" if session.status != "dead" else "timed_out"
                 get_plugin_manager().fire_agent_reaped(session_id=session.id, role=session.role, outcome=outcome)
                 return merge_result
 
         self._finalize_trace(session)
-        merge_result = self._merge_and_cleanup_worktree(session, skip_merge)
+        merge_result = self._merge_and_cleanup_worktree(session, skip_merge, defer_cleanup=defer_cleanup)
         outcome = "completed" if session.status != "dead" else "timed_out"
         get_plugin_manager().fire_agent_reaped(session_id=session.id, role=session.role, outcome=outcome)
         return merge_result
