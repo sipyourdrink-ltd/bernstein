@@ -23,6 +23,12 @@ from typing import Literal
 import yaml
 
 # ---------------------------------------------------------------------------
+# Model constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_CLAUDE_SONNET = "anthropic/claude-sonnet-4-20250514"
+
+# ---------------------------------------------------------------------------
 # Spec dataclasses
 # ---------------------------------------------------------------------------
 
@@ -97,19 +103,19 @@ BUILTIN_PACKS: dict[str, VerticalPack] = {
         roles=[
             RoleSpec(
                 name="pci-auditor",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="high",
                 description="Audits code changes for PCI-DSS compliance violations.",
             ),
             RoleSpec(
                 name="sox-compliance",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="high",
                 description="Enforces SOX change-management controls and audit trails.",
             ),
             RoleSpec(
                 name="fraud-detection-reviewer",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="medium",
                 description="Reviews transaction-processing code for fraud-detection gaps.",
             ),
@@ -144,19 +150,19 @@ BUILTIN_PACKS: dict[str, VerticalPack] = {
         roles=[
             RoleSpec(
                 name="hipaa-auditor",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="high",
                 description="Audits code for HIPAA compliance and PHI handling violations.",
             ),
             RoleSpec(
                 name="phi-detector",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="high",
                 description="Scans outputs and diffs for Protected Health Information leakage.",
             ),
             RoleSpec(
                 name="ehr-integration-reviewer",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="medium",
                 description="Reviews EHR/EMR integration code for data-integrity issues.",
             ),
@@ -191,19 +197,19 @@ BUILTIN_PACKS: dict[str, VerticalPack] = {
         roles=[
             RoleSpec(
                 name="fedramp-auditor",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="high",
                 description="Audits infrastructure and application code for FedRAMP compliance.",
             ),
             RoleSpec(
                 name="stig-reviewer",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="high",
                 description="Reviews system configurations against DISA STIG benchmarks.",
             ),
             RoleSpec(
                 name="supply-chain-auditor",
-                model="anthropic/claude-sonnet-4-20250514",
+                model=DEFAULT_CLAUDE_SONNET,
                 effort="medium",
                 description="Validates software supply-chain integrity and SBOM completeness.",
             ),
