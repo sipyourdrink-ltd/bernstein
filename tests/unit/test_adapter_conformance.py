@@ -267,6 +267,9 @@ class _BrokenSpawnAdapter(CLIAdapter):
         session_id: str,
         mcp_config: Any = None,
         timeout_seconds: int = 1800,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
     ) -> SpawnResult:
         raise RuntimeError("broken adapter")
 
@@ -286,6 +289,9 @@ class _WrongExceptionAdapter(CLIAdapter):
         session_id: str,
         mcp_config: Any = None,
         timeout_seconds: int = 1800,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
     ) -> SpawnResult:
         raise ValueError("wrong type")
 

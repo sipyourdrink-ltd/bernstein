@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -289,7 +290,7 @@ class TestSerialization:
         assert deserialize_restart_state(json.dumps(obj)) is None
 
     def test_deserialize_none_input(self) -> None:
-        assert deserialize_restart_state(None) is None  # type: ignore[arg-type]
+        assert deserialize_restart_state(cast(Any, None)) is None
 
     def test_all_phases_round_trip(self) -> None:
         for phase in RestartPhase:

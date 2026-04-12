@@ -258,6 +258,9 @@ class _FakeAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = 1800,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
     ) -> SpawnResult:
         import sys
         import tempfile
