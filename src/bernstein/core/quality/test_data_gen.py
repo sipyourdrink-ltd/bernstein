@@ -20,6 +20,10 @@ from dataclasses import dataclass
 from datetime import UTC
 from typing import Any
 
+# Module-level seeded RNG — deterministic test data, not used for security.
+# NOSONAR: all random usage below is for test-fixture variety, not crypto.
+_rng = random.Random(42)
+
 __all__ = [
     "GeneratedTask",
     "TaskTemplate",
@@ -173,24 +177,24 @@ class GeneratedTask:
 
 def _generate_scope(template: TaskTemplate) -> list[str]:
     """Generate a realistic file-scope list for a task."""
-    count = random.randint(*template.file_count_range)
-    modules = random.sample(_TASK_NOUNS, k=min(count, len(_TASK_NOUNS)))
+    count = _rng.randint(*template.file_count_range)
+    modules = _rng.sample(_TASK_NOUNS, k=min(count, len(_TASK_NOUNS)))
     scope = []
     for mod in modules:
         scope.append(f"src/bernstein/core/{mod}.py")
-        if random.random() > 0.5:
+        if _rng.random() > 0.5:
             scope.append(f"tests/unit/test_{mod}.py")
     return scope
 
 
 def _generate_title() -> str:
     """Generate a plausible task title."""
-    prefix = random.choice(_TASK_PREFIXES)
-    noun = random.choice(_TASK_NOUNS)
-    modifier = random.choice(_TASK_MODIFIERS)
+    prefix = _rng.choice(_TASK_PREFIXES)
+    noun = _rng.choice(_TASK_NOUNS)
+    modifier = _rng.choice(_TASK_MODIFIERS)
     # Avoid awkward repetitions
     if noun in modifier:
-        modifier = random.choice(_TASK_MODIFIERS)
+        modifier = _rng.choice(_TASK_MODIFIERS)
     return f"{prefix} {noun} {modifier}"
 
 
@@ -220,21 +224,21 @@ def generate_task(template: TaskTemplate | None = None) -> GeneratedTask:
         A fully-populated GeneratedTask instance.
     """
     if template is None:
-        complexity = random.choice(["low", "medium", "high"])
-        role = random.choice(_ROLES)
+        complexity = _rng.choice(["low", "medium", "high"])
+        role = _rng.choice(_ROLES)
         file_counts = _COMPLEXITY_FILE_COUNTS[complexity]
         _COMPLEXITY_DEPENDENCY_COUNTS[complexity]
         gate_counts = _COMPLEXITY_GATE_COUNTS[complexity]
         _COMPLEXITY_PRIORITIES[complexity]
 
-        num_gates = random.randint(*gate_counts)
-        gates = sorted(random.sample(_QUALITY_GATES_ALL, k=num_gates))
+        num_gates = _rng.randint(*gate_counts)
+        gates = sorted(_rng.sample(_QUALITY_GATES_ALL, k=num_gates))
 
         template = TaskTemplate(
             role=role,
             complexity=complexity,
             file_count_range=file_counts,
-            has_dependencies=random.choice([True, False]),
+            has_dependencies=_rng.choice([True, False]),
             quality_gates=tuple(gates),
         )
 
@@ -242,7 +246,7 @@ def generate_task(template: TaskTemplate | None = None) -> GeneratedTask:
     scope = _generate_scope(template)
     goal = _generate_goal(title, scope)
 
-    random.randint(*_COMPLEXITY_DEPENDENCY_COUNTS[template.complexity])
+    _rng.randint(*_COMPLEXITY_DEPENDENCY_COUNTS[template.complexity])
 
     return GeneratedTask(
         task_id=uuid.uuid4().hex[:8],
@@ -252,7 +256,7 @@ def generate_task(template: TaskTemplate | None = None) -> GeneratedTask:
         scope=scope,
         dependencies=[],  # populated by caller or generate_plan
         quality_gates=list(template.quality_gates),
-        priority=random.randint(*_COMPLEXITY_PRIORITIES[template.complexity]),
+        priority=_rng.randint(*_COMPLEXITY_PRIORITIES[template.complexity]),
         complexity=template.complexity,
     )
 
@@ -278,20 +282,20 @@ def generate_task_batch(
     seen_ids: set[str] = set()
 
     for _ in range(count):
-        role = random.choice(roles) if roles else random.choice(_ROLES)
-        cmp = complexity or random.choice(["low", "medium", "high"])
+        role = _rng.choice(roles) if roles else _rng.choice(_ROLES)
+        cmp = complexity or _rng.choice(["low", "medium", "high"])
         file_counts = _COMPLEXITY_FILE_COUNTS[cmp]
         gate_counts = _COMPLEXITY_GATE_COUNTS[cmp]
         _COMPLEXITY_PRIORITIES[cmp]
 
-        num_gates = random.randint(*gate_counts)
-        gates = sorted(random.sample(_QUALITY_GATES_ALL, k=num_gates))
+        num_gates = _rng.randint(*gate_counts)
+        gates = sorted(_rng.sample(_QUALITY_GATES_ALL, k=num_gates))
 
         template = TaskTemplate(
             role=role,
             complexity=cmp,
             file_count_range=file_counts,
-            has_dependencies=random.random() > 0.4,
+            has_dependencies=_rng.random() > 0.4,
             quality_gates=tuple(gates),
         )
 
@@ -335,8 +339,8 @@ def generate_plan(
         # Wire inter-stage dependencies
         wired_tasks: list[GeneratedTask] = []
         for task in stage_tasks:
-            num_deps = min(len(prev_ids), random.randint(0, 2)) if prev_ids else 0
-            deps = random.sample(prev_ids, k=num_deps) if num_deps else []
+            num_deps = min(len(prev_ids), _rng.randint(0, 2)) if prev_ids else 0
+            deps = _rng.sample(prev_ids, k=num_deps) if num_deps else []
             wired_tasks.append(
                 GeneratedTask(
                     task_id=task.task_id,
@@ -401,13 +405,13 @@ def generate_completion_signal(task: GeneratedTask) -> dict[str, Any]:
     from datetime import datetime
 
     gate_results = {
-        gate: random.random() > 0.1  # ~90% pass rate per gate
+        gate: _rng.random() > 0.1  # ~90% pass rate per gate
         for gate in task.quality_gates
     }
 
     # Bias tests_pass based on overall gate health
     all_pass = all(gate_results.values())
-    tests_pass = all_pass or random.random() > 0.3
+    tests_pass = all_pass or _rng.random() > 0.3
 
     # Derive files_changed from scope length
     files_changed = len(task.scope)
@@ -417,6 +421,6 @@ def generate_completion_signal(task: GeneratedTask) -> dict[str, Any]:
         "files_changed": files_changed,
         "tests_pass": tests_pass,
         "quality_gates_pass": gate_results,
-        "duration_seconds": random.randint(60, 7200),
+        "duration_seconds": _rng.randint(60, 7200),
         "completed_at": datetime.now(UTC).isoformat(),
     }
