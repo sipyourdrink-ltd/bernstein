@@ -478,6 +478,131 @@ class PostMortemGenerator:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _html_timeline_section(report: PostMortemReport) -> str:
+        """Render the timeline section of the HTML report."""
+        import datetime
+        import html
+
+        _badge_css = "padding:2px 6px;border-radius:3px;font-size:0.8em"
+
+        def _status_badge(kind: str) -> str:
+            colors = {
+                "task_start": "#2196F3",
+                "task_complete": "#4CAF50",
+                "task_fail": "#F44336",
+                "error": "#FF9800",
+            }
+            color = colors.get(kind, "#9E9E9E")
+            label = html.escape(kind)
+            return f'<span style="background:{color};color:#fff;{_badge_css}">{label}</span>'
+
+        if not report.timeline:
+            return "<p class='muted'>No timeline data available.</p>"
+
+        def _ev_time(ev: PostMortemEvent) -> str:
+            return datetime.datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S") if ev.timestamp > 0 else "—"
+
+        timeline_rows = "\n".join(
+            f"<tr><td>{_ev_time(ev)}</td>"
+            f"<td>{html.escape(ev.label)}</td>"
+            f"<td>{_status_badge(ev.kind)}</td>"
+            f"<td>{html.escape(ev.task_id) if ev.task_id else '—'}</td></tr>"
+            for ev in report.timeline
+        )
+        return f"""
+<table>
+  <thead><tr><th>Time</th><th>Event</th><th>Kind</th><th>Task</th></tr></thead>
+  <tbody>{timeline_rows}</tbody>
+</table>"""
+
+    @staticmethod
+    def _html_rca_section(report: PostMortemReport) -> str:
+        """Render the root cause analysis section of the HTML report."""
+        import html
+
+        if not report.contributing_factors:
+            return "<p class='muted'>No dominant failure pattern detected. Review agent logs manually.</p>"
+
+        dominant = max(report.contributing_factors, key=lambda f: f.count)
+        factor_rows = "\n".join(
+            f"<tr><td><strong>{html.escape(f.category)}</strong></td><td>{f.count}</td><td>{html.escape(f.description)}</td></tr>"
+            for f in sorted(report.contributing_factors, key=lambda f: f.count, reverse=True)
+        )
+        return f"""
+<div class='callout'>
+  <strong>Primary cause:</strong> {html.escape(dominant.category)} ({dominant.count} occurrence(s))<br>
+  <em>{html.escape(dominant.description)}</em>
+</div>
+<table>
+  <thead><tr><th>Category</th><th>Count</th><th>Description</th></tr></thead>
+  <tbody>{factor_rows}</tbody>
+</table>"""
+
+    @staticmethod
+    def _html_traces_section(report: PostMortemReport) -> str:
+        """Render the failed task traces section of the HTML report."""
+        import html
+
+        if not report.failed_task_traces:
+            return "<p class='muted'>No failed task traces.</p>"
+
+        trace_parts: list[str] = []
+        for trace in report.failed_task_traces:
+            snippets_html = ""
+            if trace.error_snippets:
+                snippet_text = "\n".join(html.escape(s[:200]) for s in trace.error_snippets[:3])
+                snippets_html = f"<pre class='error-box'>{snippet_text}</pre>"
+            files_html = (
+                ", ".join(f"<code>{html.escape(f)}</code>" for f in trace.files_touched[:5])
+                if trace.files_touched
+                else "—"
+            )
+            trace_parts.append(
+                f"""<div class='trace-card'>
+  <h3>Task <code>{html.escape(trace.task_id)}</code></h3>
+  <table class='compact'>
+    <tr><th>Role</th><td>{html.escape(trace.role) or "—"}</td></tr>
+    <tr><th>Model</th><td>{html.escape(trace.model) or "—"}</td></tr>
+    <tr><th>Session</th><td><code>{html.escape(trace.session_id) or "—"}</code></td></tr>
+    <tr><th>Dominant failure</th><td><code>{html.escape(trace.dominant_failure) or "unknown"}</code></td></tr>
+    <tr><th>Files touched</th><td>{files_html}</td></tr>
+  </table>
+  {snippets_html}
+  {f"<p><strong>Retry context:</strong> {html.escape(trace.retry_context)}</p>" if trace.retry_context else ""}
+</div>"""
+            )
+        return "\n".join(trace_parts)
+
+    @staticmethod
+    def _html_actions_section(report: PostMortemReport) -> str:
+        """Render the recommended actions section of the HTML report."""
+        import html
+
+        _badge_css = "padding:2px 6px;border-radius:3px;font-size:0.8em"
+
+        def _priority_badge(priority: str) -> str:
+            colors = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}
+            color = colors.get(priority, "#9E9E9E")
+            label = html.escape(priority.upper())
+            return f'<span style="background:{color};color:#fff;{_badge_css}">{label}</span>'
+
+        if not report.recommended_actions:
+            return "<p class='muted'>No specific actions recommended.</p>"
+
+        action_rows = "\n".join(
+            f"<tr><td>{_priority_badge(a.priority)}</td><td>{html.escape(a.action)}</td><td><em>{html.escape(a.rationale)}</em></td></tr>"
+            for a in sorted(
+                report.recommended_actions,
+                key=lambda a: {"high": 0, "medium": 1, "low": 2}.get(a.priority, 3),
+            )
+        )
+        return f"""
+<table>
+  <thead><tr><th>Priority</th><th>Action</th><th>Rationale</th></tr></thead>
+  <tbody>{action_rows}</tbody>
+</table>"""
+
     def to_html(self, report: PostMortemReport) -> str:
         """Render a :class:`PostMortemReport` as a styled HTML document.
 

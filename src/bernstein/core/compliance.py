@@ -633,6 +633,46 @@ def _build_merkle_attestation(merkle_dir: Path | None) -> dict[str, Any] | None:
     }
 
 
+def _evidence_integrity_section(verification: dict[str, Any]) -> list[str]:
+    """Render the integrity verification section for the evidence summary."""
+    lines = ["## Integrity Verification", ""]
+    hmac_info = verification.get("hmac_chain")
+    if not hmac_info:
+        lines.append("HMAC chain verification: *not performed*")
+        return lines
+
+    valid_str = "PASSED" if hmac_info.get("valid") else "FAILED"
+    lines.append(f"**HMAC Chain**: {valid_str}")
+    if hmac_info.get("errors"):
+        lines.append("")
+        for err in hmac_info["errors"]:
+            lines.append(f"- {err}")
+    verified_at = hmac_info.get("verified_at", "")
+    if verified_at:
+        lines.append("")
+        lines.append(f"Verified at: {verified_at}")
+    return lines
+
+
+def _evidence_merkle_section(merkle_attestation: dict[str, Any] | None) -> list[str]:
+    """Render the Merkle attestation section for the evidence summary."""
+    lines = ["## Merkle Root Attestation", ""]
+    if not merkle_attestation:
+        lines.append("*No Merkle seals found for this period.*")
+        return lines
+
+    lines.append(f"**Latest root hash**: `{merkle_attestation['latest_root_hash']}`")
+    lines.append(f"**Sealed at**: {merkle_attestation['latest_sealed_at']}")
+    lines.append(f"**Total seals**: {merkle_attestation['total_seals']}")
+    lines.append("")
+    lines.append("| Seal File | Root Hash | Sealed At |")
+    lines.append("|-----------|-----------|-----------|")
+    for s in merkle_attestation["seals"]:
+        root_short = s["root_hash"][:16] + "..." if len(s["root_hash"]) > 16 else s["root_hash"]
+        lines.append(f"| {s['file']} | `{root_short}` | {s['sealed_at']} |")
+    return lines
+
+
 def _build_evidence_summary(
     period: str,
     start_date: str,
@@ -704,40 +744,9 @@ def _build_evidence_summary(
         lines.append(f"| {m['control_id']} | {m['title']} | {status} | {present} | {missing} |")
     lines.append("")
 
-    # Integrity verification
-    lines.append("## Integrity Verification")
+    lines.extend(_evidence_integrity_section(verification))
     lines.append("")
-    hmac_info = verification.get("hmac_chain")
-    if hmac_info:
-        valid_str = "PASSED" if hmac_info.get("valid") else "FAILED"
-        lines.append(f"**HMAC Chain**: {valid_str}")
-        if hmac_info.get("errors"):
-            lines.append("")
-            for err in hmac_info["errors"]:
-                lines.append(f"- {err}")
-        verified_at = hmac_info.get("verified_at", "")
-        if verified_at:
-            lines.append("")
-            lines.append(f"Verified at: {verified_at}")
-    else:
-        lines.append("HMAC chain verification: *not performed*")
-    lines.append("")
-
-    # Merkle attestation
-    lines.append("## Merkle Root Attestation")
-    lines.append("")
-    if merkle_attestation:
-        lines.append(f"**Latest root hash**: `{merkle_attestation['latest_root_hash']}`")
-        lines.append(f"**Sealed at**: {merkle_attestation['latest_sealed_at']}")
-        lines.append(f"**Total seals**: {merkle_attestation['total_seals']}")
-        lines.append("")
-        lines.append("| Seal File | Root Hash | Sealed At |")
-        lines.append("|-----------|-----------|-----------|")
-        for s in merkle_attestation["seals"]:
-            root_short = s["root_hash"][:16] + "..." if len(s["root_hash"]) > 16 else s["root_hash"]
-            lines.append(f"| {s['file']} | `{root_short}` | {s['sealed_at']} |")
-    else:
-        lines.append("*No Merkle seals found for this period.*")
+    lines.extend(_evidence_merkle_section(merkle_attestation))
     lines.append("")
 
     # Footer

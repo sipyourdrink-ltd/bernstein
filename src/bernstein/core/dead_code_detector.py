@@ -230,6 +230,32 @@ def _count_py_files(workdir: Path) -> int:
         return 0
 
 
+def _collect_imported_names(tree: ast.Module) -> dict[str, int]:
+    """Collect all imported names and their line numbers from an AST."""
+    imported: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                imported[bound] = node.lineno
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != "*":
+                    imported[alias.asname or alias.name] = node.lineno
+    return imported
+
+
+def _collect_used_names(tree: ast.Module) -> set[str]:
+    """Collect all referenced names from an AST."""
+    used: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            used.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            used.add(node.value.id)
+    return used
+
+
 def _check_unused_imports(source: str, rel_path: str) -> list[DeadCodeIssue]:
     """Detect unused imports in *source* via AST analysis.
 
@@ -241,39 +267,19 @@ def _check_unused_imports(source: str, rel_path: str) -> list[DeadCodeIssue]:
     except SyntaxError:
         return []
 
-    imported_names: dict[str, int] = {}  # name -> lineno
+    imported_names = _collect_imported_names(tree)
+    used_names = _collect_used_names(tree)
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                bound = alias.asname or alias.name.split(".")[0]
-                imported_names[bound] = node.lineno
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name == "*":
-                    continue
-                bound = alias.asname or alias.name
-                imported_names[bound] = node.lineno
-
-    used_names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            used_names.add(node.id)
-        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            used_names.add(node.value.id)
-
-    issues: list[DeadCodeIssue] = []
-    for name, lineno in imported_names.items():
-        if name not in used_names and not name.startswith("_"):
-            issues.append(
-                DeadCodeIssue(
-                    kind="unused_import",
-                    name=name,
-                    file=rel_path,
-                    detail=f"Imported name {name!r} at line {lineno} is never used.",
-                )
-            )
-    return issues
+    return [
+        DeadCodeIssue(
+            kind="unused_import",
+            name=name,
+            file=rel_path,
+            detail=f"Imported name {name!r} at line {lineno} is never used.",
+        )
+        for name, lineno in imported_names.items()
+        if name not in used_names and not name.startswith("_")
+    ]
 
 
 def _check_unreachable_branches(source: str, rel_path: str) -> list[DeadCodeIssue]:

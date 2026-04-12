@@ -41,6 +41,38 @@ def _read_trunc(path: Path, max_bytes: int = 800) -> str:
         return ""
 
 
+def _find_first_file(workdir: Path, names: tuple[str, ...], max_bytes: int) -> str | None:
+    """Return the truncated content of the first existing file from *names*, or None."""
+    for name in names:
+        p = workdir / name
+        if p.exists():
+            return f"=== {name} ===\n{_read_trunc(p, max_bytes)}"
+    return None
+
+
+def _build_directory_tree(workdir: Path) -> list[str]:
+    """Build a 2-level directory tree listing, skipping hidden/noise dirs."""
+    _SKIP_DIRS = {"__pycache__", "node_modules"}
+    tree_lines: list[str] = []
+    try:
+        for entry in sorted(workdir.iterdir()):
+            if entry.name.startswith(".") or entry.name in _SKIP_DIRS:
+                continue
+            if entry.is_dir():
+                tree_lines.append(f"  {entry.name}/")
+                try:
+                    for child in sorted(entry.iterdir())[:6]:
+                        if not child.name.startswith("."):
+                            tree_lines.append(f"    {child.name}{'/' if child.is_dir() else ''}")
+                except PermissionError:
+                    pass
+            else:
+                tree_lines.append(f"  {entry.name}")
+    except PermissionError:
+        pass
+    return tree_lines
+
+
 def _gather_repo_context(workdir: Path) -> str:
     """Collect lightweight repo context for the LLM prompt.
 
@@ -56,39 +88,15 @@ def _gather_repo_context(workdir: Path) -> str:
     """
     parts: list[str] = []
 
-    # Project instructions
-    for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md"):
-        p = workdir / name
-        if p.exists():
-            parts.append(f"=== {name} ===\n{_read_trunc(p, 600)}")
-            break
+    instructions = _find_first_file(workdir, ("CLAUDE.md", "AGENTS.md", "GEMINI.md"), 600)
+    if instructions:
+        parts.append(instructions)
 
-    # Stack fingerprint
-    for name in ("pyproject.toml", "package.json", "Cargo.toml", "go.mod"):
-        p = workdir / name
-        if p.exists():
-            parts.append(f"=== {name} ===\n{_read_trunc(p, 400)}")
-            break
+    stack = _find_first_file(workdir, ("pyproject.toml", "package.json", "Cargo.toml", "go.mod"), 400)
+    if stack:
+        parts.append(stack)
 
-    # Top-level directory tree (2 levels)
-    tree_lines: list[str] = []
-    try:
-        for entry in sorted(workdir.iterdir()):
-            if entry.name.startswith(".") or entry.name in ("__pycache__", "node_modules"):
-                continue
-            if entry.is_dir():
-                tree_lines.append(f"  {entry.name}/")
-                try:
-                    for child in sorted(entry.iterdir())[:6]:
-                        if not child.name.startswith("."):
-                            tree_lines.append(f"    {child.name}{'/' if child.is_dir() else ''}")
-                except PermissionError:
-                    pass
-            else:
-                tree_lines.append(f"  {entry.name}")
-    except PermissionError:
-        pass
-
+    tree_lines = _build_directory_tree(workdir)
     if tree_lines:
         parts.append("=== Directory tree (2 levels) ===\n" + "\n".join(tree_lines))
 

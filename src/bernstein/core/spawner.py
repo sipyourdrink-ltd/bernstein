@@ -2398,6 +2398,55 @@ class AgentSpawner:
         except OSError as exc:
             logger.error("Failed to write pending push for %s: %s", session_id, exc)
 
+    def _validate_pending_push_entry(
+        self,
+        line: str,
+        safe_base: Path,
+    ) -> tuple[Path, str, str] | None:
+        """Parse and validate a single pending-push entry line.
+
+        Returns:
+            ``(repo_root, branch, session_id)`` on success, or ``None``
+            if the entry is invalid or should be skipped.
+        """
+        line = line.strip()
+        if not line:
+            return None
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(entry, dict):
+            return None
+
+        raw_repo_root = entry.get("repo_root")
+        if not isinstance(raw_repo_root, str):
+            return None
+        try:
+            candidate_root = Path(raw_repo_root).resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
+        try:
+            relative_root = candidate_root.relative_to(safe_base)
+        except ValueError:
+            logger.warning(
+                "Skipping pending push entry: repo_root %r escapes workspace",
+                _sanitise_for_log(raw_repo_root),
+            )
+            return None
+
+        repo_root = (safe_base / relative_root).resolve()
+        if not (repo_root / ".git").exists():
+            return None
+
+        branch = entry.get("branch", "main")
+        if not isinstance(branch, str):
+            branch = "main"
+        session_id = entry.get("session_id", "unknown")
+        if not isinstance(session_id, str):
+            session_id = "unknown"
+        return repo_root, branch, session_id
+
     def retry_pending_pushes(self) -> int:
         """Retry any pushes recorded in the pending-pushes file.
 
@@ -2424,68 +2473,14 @@ class AgentSpawner:
         remaining: list[str] = []
         retried = 0
 
-        # ``_pending_pushes_path`` is the only filesystem location this
-        # routine writes to; the file contents are untrusted (could be
-        # tampered with by anyone who can write to .sdd/runtime/) so
-        # every field read out of a line must be validated before it is
-        # used in a path expression or a log message.
         safe_base = self._pending_pushes_path().resolve().parent.parent.parent
         for line in lines:
-            line = line.strip()
-            if not line:
+            validated = self._validate_pending_push_entry(line, safe_base)
+            if validated is None:
                 continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(entry, dict):
-                continue
+            repo_root, branch, session_id = validated
 
-            raw_repo_root = entry.get("repo_root")
-            if not isinstance(raw_repo_root, str):
-                continue
-            try:
-                candidate_root = Path(raw_repo_root).resolve(strict=True)
-            except (OSError, RuntimeError):
-                # Stale or pruned path — drop the entry, do not keep
-                # retrying into a non-existent directory.
-                continue
-            # Reject paths that escape the workspace (.sdd/.. parent).
-            # This blocks the S2083 path-traversal vector: a malicious
-            # entry cannot steer ``safe_push`` at ``/etc`` or similar.
-            try:
-                relative_root = candidate_root.relative_to(safe_base)
-            except ValueError:
-                logger.warning(
-                    "Skipping pending push entry: repo_root %r escapes workspace",
-                    _sanitise_for_log(raw_repo_root),
-                )
-                continue
-            # Reconstruct the path from the trusted base + the validated
-            # relative segment.  This breaks Sonar's taint flow: the
-            # value handed to ``safe_push`` no longer literally is the
-            # untrusted ``raw_repo_root`` string, even though it points
-            # at the same on-disk location.
-            repo_root = (safe_base / relative_root).resolve()
-            if not (repo_root / ".git").exists():
-                # Not actually a git worktree — nothing we can push.
-                continue
-            branch = entry.get("branch", "main")
-            if not isinstance(branch, str):
-                branch = "main"
-            session_id = entry.get("session_id", "unknown")
-            if not isinstance(session_id, str):
-                session_id = "unknown"
-
-            # Strip CR/LF from the user-controlled fields before logging
-            # (CodeQL/Sonar py/log-injection S5145).
             safe_session_id = _sanitise_for_log(session_id)
-
-            # repo_root is already validated to live under ``safe_base``
-            # via ``relative_to`` above, so the path itself cannot escape.
-            # Still pass it through ``_sanitise_for_log`` to keep Sonar's
-            # taint analysis happy (S5145) — the call is cheap and the
-            # value originates from an untrusted on-disk file.
             safe_repo_root = _sanitise_for_log(str(repo_root))
             push_result = safe_push(repo_root, branch)
             if push_result.ok:

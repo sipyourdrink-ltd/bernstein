@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.mcp_registry import load_catalog_entries
 
@@ -157,6 +157,40 @@ def write_tool_inventory_snapshot(
     return path
 
 
+def _build_server_summary(
+    server_name: str,
+    top_tools: tuple[MCPToolUsageSummary, ...],
+    tool_inventory: dict[str, Any],
+    installed_servers: tuple[str, ...],
+) -> MCPServerUsageSummary:
+    """Build a usage summary for a single MCP server."""
+    server_tools = [tool for tool in top_tools if tool.server_name == server_name]
+    used_tools = sorted(tool.tool_name for tool in server_tools)
+    inventory = tool_inventory.get(server_name)
+    known_tools = sorted(inventory.tool_names) if inventory is not None else []
+    total_calls = sum(tool.total_calls for tool in server_tools)
+    error_count = sum(tool.error_count for tool in server_tools)
+    avg_latency_ms = 0.0
+    if total_calls > 0:
+        avg_latency_ms = sum(tool.avg_latency_ms * tool.total_calls for tool in server_tools) / total_calls
+    last_used_candidates = [tool.last_used_at for tool in server_tools if tool.last_used_at]
+    last_used_at = max(last_used_candidates) if last_used_candidates else None
+    unused_tools = tuple(tool for tool in known_tools if tool not in set(used_tools))
+
+    return MCPServerUsageSummary(
+        server_name=server_name,
+        installed=server_name in installed_servers,
+        total_calls=total_calls,
+        distinct_tools_used=len(used_tools),
+        error_count=error_count,
+        avg_latency_ms=avg_latency_ms,
+        last_used_at=last_used_at,
+        known_tools=tuple(known_tools),
+        used_tools=tuple(used_tools),
+        unused_tools=unused_tools,
+    )
+
+
 def analyze_mcp_usage(
     sdd_dir: Path,
     *,
@@ -207,37 +241,13 @@ def analyze_mcp_usage(
     }
     server_summaries: list[MCPServerUsageSummary] = []
     for server_name in sorted(all_server_names):
-        used_tools = sorted(tool.tool_name for tool in top_tools if tool.server_name == server_name)
-        inventory = tool_inventory.get(server_name)
-        known_tools = sorted(inventory.tool_names) if inventory is not None else []
-        total_calls = sum(tool.total_calls for tool in top_tools if tool.server_name == server_name)
-        error_count = sum(tool.error_count for tool in top_tools if tool.server_name == server_name)
-        avg_latency_ms = 0.0
-        if total_calls > 0:
-            avg_latency_ms = (
-                sum(tool.avg_latency_ms * tool.total_calls for tool in top_tools if tool.server_name == server_name)
-                / total_calls
-            )
-        last_used_candidates = [
-            tool.last_used_at for tool in top_tools if tool.server_name == server_name and tool.last_used_at
-        ]
-        last_used_at = max(last_used_candidates) if last_used_candidates else None
-        unused_tools = tuple(tool for tool in known_tools if tool not in set(used_tools))
-
-        server_summaries.append(
-            MCPServerUsageSummary(
-                server_name=server_name,
-                installed=server_name in installed_servers,
-                total_calls=total_calls,
-                distinct_tools_used=len(used_tools),
-                error_count=error_count,
-                avg_latency_ms=avg_latency_ms,
-                last_used_at=last_used_at,
-                known_tools=tuple(known_tools),
-                used_tools=tuple(used_tools),
-                unused_tools=unused_tools,
-            )
+        summary = _build_server_summary(
+            server_name,
+            top_tools,
+            tool_inventory,
+            installed_servers,
         )
+        server_summaries.append(summary)
 
     recommendations: list[MCPUsageRecommendation] = []
     for server in server_summaries:

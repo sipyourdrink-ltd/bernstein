@@ -432,6 +432,52 @@ def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
     raise SeedError(f"{field_name} must be a list of strings, got: {raw!r}")
 
 
+def _parse_metric_entry(name: str, entry: object) -> MetricSchema:
+    """Parse a single metric entry from the ``metrics`` section.
+
+    Args:
+        name: Metric name (used in error messages).
+        entry: Raw YAML value for the metric.
+
+    Returns:
+        Parsed ``MetricSchema``.
+
+    Raises:
+        SeedError: If the entry is invalid.
+    """
+    if not isinstance(entry, dict):
+        raise SeedError(f"metrics.{name} must be a mapping, got: {type(entry).__name__}")
+    entry_dict: dict[str, object] = cast("dict[str, object]", entry)
+
+    formula = entry_dict.get("formula")
+    if not isinstance(formula, str) or not formula.strip():
+        raise SeedError(f"metrics.{name}.formula must be a non-empty string")
+
+    unit_raw = entry_dict.get("unit", "")
+    if not isinstance(unit_raw, str):
+        raise SeedError(f"metrics.{name}.unit must be a string, got: {type(unit_raw).__name__}")
+
+    description_raw = entry_dict.get("description", "")
+    if not isinstance(description_raw, str):
+        raise SeedError(f"metrics.{name}.description must be a string, got: {type(description_raw).__name__}")
+
+    def _parse_alert_threshold(field: str) -> float | None:
+        raw_val = entry_dict.get(field)
+        if raw_val is None:
+            return None
+        if not isinstance(raw_val, (int, float)):
+            raise SeedError(f"metrics.{name}.{field} must be a number, got: {type(raw_val).__name__}")
+        return float(raw_val)
+
+    return MetricSchema(
+        formula=formula.strip(),
+        unit=unit_raw,
+        description=description_raw,
+        alert_above=_parse_alert_threshold("alert_above"),
+        alert_below=_parse_alert_threshold("alert_below"),
+    )
+
+
 def _parse_metrics(raw: object) -> dict[str, MetricSchema]:
     """Parse the optional ``metrics`` section from ``bernstein.yaml``.
 
@@ -466,43 +512,7 @@ def _parse_metrics(raw: object) -> dict[str, MetricSchema]:
     for name, entry in metrics_dict.items():
         if not isinstance(name, str) or not name.strip():
             raise SeedError(f"metrics keys must be non-empty strings, got: {name!r}")
-        if not isinstance(entry, dict):
-            raise SeedError(f"metrics.{name} must be a mapping, got: {type(entry).__name__}")
-        entry_dict: dict[str, object] = cast("_StrObjDict", entry)
-
-        formula = entry_dict.get("formula")
-        if not isinstance(formula, str) or not formula.strip():
-            raise SeedError(f"metrics.{name}.formula must be a non-empty string")
-
-        unit_raw = entry_dict.get("unit", "")
-        if not isinstance(unit_raw, str):
-            raise SeedError(f"metrics.{name}.unit must be a string, got: {type(unit_raw).__name__}")
-
-        description_raw = entry_dict.get("description", "")
-        if not isinstance(description_raw, str):
-            raise SeedError(f"metrics.{name}.description must be a string, got: {type(description_raw).__name__}")
-
-        alert_above: float | None = None
-        alert_above_raw = entry_dict.get("alert_above")
-        if alert_above_raw is not None:
-            if not isinstance(alert_above_raw, (int, float)):
-                raise SeedError(f"metrics.{name}.alert_above must be a number, got: {type(alert_above_raw).__name__}")
-            alert_above = float(alert_above_raw)
-
-        alert_below: float | None = None
-        alert_below_raw = entry_dict.get("alert_below")
-        if alert_below_raw is not None:
-            if not isinstance(alert_below_raw, (int, float)):
-                raise SeedError(f"metrics.{name}.alert_below must be a number, got: {type(alert_below_raw).__name__}")
-            alert_below = float(alert_below_raw)
-
-        result[name] = MetricSchema(
-            formula=formula.strip(),
-            unit=unit_raw,
-            description=description_raw,
-            alert_above=alert_above,
-            alert_below=alert_below,
-        )
+        result[name] = _parse_metric_entry(name, entry)
 
     return result
 
