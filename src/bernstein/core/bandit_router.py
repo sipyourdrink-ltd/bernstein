@@ -432,14 +432,19 @@ def _schema_version_matches(raw_data: dict[str, object], path: Path) -> bool:
     if stored_schema_version != FEATURE_SCHEMA_VERSION or stored_feature_dim != FEATURE_DIM:
         logger.info(
             "BanditPolicy: resetting %s because feature schema changed (stored=%s/%s current=%s/%s)",
-            path, stored_schema_version, stored_feature_dim, FEATURE_SCHEMA_VERSION, FEATURE_DIM,
+            path,
+            stored_schema_version,
+            stored_feature_dim,
+            FEATURE_SCHEMA_VERSION,
+            FEATURE_DIM,
         )
         return False
     return True
 
 
 def _validate_raw_matrices(
-    raw_data: dict[str, object], path: Path,
+    raw_data: dict[str, object],
+    path: Path,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]] | None:
     """Validate and extract raw matrix dicts from policy data.
 

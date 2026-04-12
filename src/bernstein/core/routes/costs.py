@@ -1120,7 +1120,8 @@ def get_cost_efficiency(request: Request) -> JSONResponse:
     lines_dir = sdd_dir / "runtime" / "lines_changed"
     current_tracker = CostTracker.load(sdd_dir, cost_files[0].stem)
     run_cost, run_lines, _current_cost, current_lines, current_cost_per_line = _compute_current_run_efficiency(
-        current_tracker, lines_dir,
+        current_tracker,
+        lines_dir,
     )
     run_cost_per_line = round(run_cost / run_lines, 6) if run_lines > 0 else None
 

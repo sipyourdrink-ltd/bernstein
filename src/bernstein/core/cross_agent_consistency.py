@@ -343,9 +343,7 @@ def _check_endpoint_consistency(
                 issue_type=ConsistencyIssueType.METHOD_MISMATCH,
                 endpoint=endpoint,
                 method=", ".join(sorted(methods)),
-                description=(
-                    f"Endpoint '{endpoint}' has conflicting HTTP methods across agents: {sorted(methods)}"
-                ),
+                description=(f"Endpoint '{endpoint}' has conflicting HTTP methods across agents: {sorted(methods)}"),
                 agents_involved=agent_ids,
             )
         )
@@ -359,12 +357,22 @@ def _check_endpoint_consistency(
             continue
         all_issues.extend(
             _check_schema_compatibility(
-                endpoint, method, producer_contract, consumer_contract, producer_id, consumer_id,
+                endpoint,
+                method,
+                producer_contract,
+                consumer_contract,
+                producer_id,
+                consumer_id,
             )
         )
         all_issues.extend(
             _check_error_codes(
-                endpoint, method, producer_contract, consumer_contract, producer_id, consumer_id,
+                endpoint,
+                method,
+                producer_contract,
+                consumer_contract,
+                producer_id,
+                consumer_id,
             )
         )
 

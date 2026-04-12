@@ -32,15 +32,21 @@ def _get_sdd_dir(request: Request) -> Any:
 @router.get("/metrics/predictions")
 def get_predictions(
     request: Request,
-    budget_cap: Annotated[float, Query(
-        ge=0.0,
-        description="Budget ceiling in USD (0 = skip budget forecast)",
-    )] = 0.0,
-    window_hours: Annotated[float, Query(
-        ge=0.1,
-        le=72.0,
-        description="Configured run window in hours (default 4)",
-    )] = 4.0,
+    budget_cap: Annotated[
+        float,
+        Query(
+            ge=0.0,
+            description="Budget ceiling in USD (0 = skip budget forecast)",
+        ),
+    ] = 0.0,
+    window_hours: Annotated[
+        float,
+        Query(
+            ge=0.1,
+            le=72.0,
+            description="Configured run window in hours (default 4)",
+        ),
+    ] = 4.0,
 ) -> JSONResponse:
     """Evaluate all predictive forecasts and return active alerts.
 
