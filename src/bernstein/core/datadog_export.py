@@ -1,15 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.datadog_export."""
 
-from bernstein.core.observability.datadog_export import (
-    DogStatsDConfig,
-    DogStatsDExporter,
-    export_to_datadog,
-    logger,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "DogStatsDConfig",
-    "DogStatsDExporter",
-    "export_to_datadog",
-    "logger",
-]
+install_shim(__name__, "bernstein.core.observability.datadog_export")

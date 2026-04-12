@@ -1,4 +1,5 @@
 """Backward-compat shim -- real module moved to bernstein.core.tasks.models."""
 
-from bernstein.core.tasks.models import *  # noqa: F403
-from bernstein.core.tasks.models import __doc__ as _doc  # noqa: F401
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.tasks.models")

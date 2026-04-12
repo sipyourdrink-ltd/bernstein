@@ -1,11 +1,5 @@
 """Backward-compatibility shim — moved to bernstein.core.security.secrets."""
 
-import importlib as _importlib
+from bernstein.core._shim import install_shim
 
-from bernstein.core.security.secrets import *  # noqa: F403
-
-_real = _importlib.import_module("bernstein.core.security.secrets")
-
-
-def __getattr__(name: str):
-    return getattr(_real, name)
+install_shim(__name__, "bernstein.core.security.secrets")

@@ -1,17 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.incident_timeline."""
 
-from bernstein.core.observability.incident_timeline import (
-    TimelineEvent,
-    build_incident_timeline,
-    cast_to_dict,
-    list_incidents,
-    logger,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "TimelineEvent",
-    "build_incident_timeline",
-    "cast_to_dict",
-    "list_incidents",
-    "logger",
-]
+install_shim(__name__, "bernstein.core.observability.incident_timeline")

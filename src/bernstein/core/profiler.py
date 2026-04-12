@@ -1,17 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.profiler."""
 
-from bernstein.core.observability.profiler import (
-    OrchestratorProfiler,
-    ProfileResult,
-    ProfilerSession,
-    logger,
-    resolve_profile_output_dir,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "OrchestratorProfiler",
-    "ProfileResult",
-    "ProfilerSession",
-    "logger",
-    "resolve_profile_output_dir",
-]
+install_shim(__name__, "bernstein.core.observability.profiler")

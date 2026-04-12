@@ -1,3 +1,5 @@
 """Backward-compat shim: re-exports from bernstein.core.security.vault_injector."""
 
-from bernstein.core.security.vault_injector import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.security.vault_injector")

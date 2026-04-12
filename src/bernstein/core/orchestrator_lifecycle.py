@@ -1,3 +1,5 @@
 """Backward-compatibility shim — moved to bernstein.core.orchestration.orchestrator_lifecycle."""
 
-from bernstein.core.orchestration.orchestrator_lifecycle import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.orchestration.orchestrator_lifecycle")

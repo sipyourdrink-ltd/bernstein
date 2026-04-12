@@ -1,3 +1,5 @@
 """Backward-compat shim: module moved to bernstein.core.quality.duplicate_detector."""
 
-from bernstein.core.quality.duplicate_detector import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.quality.duplicate_detector")

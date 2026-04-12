@@ -1,4 +1,5 @@
 """Backward-compat shim: module moved to bernstein.core.quality.janitor."""
 
-from bernstein.core.quality.janitor import *  # noqa: F403
-from bernstein.core.quality.janitor import _JUDGE_RETRY_RE, _JUDGE_TEMPLATE_PATH  # noqa: F401
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.quality.janitor")

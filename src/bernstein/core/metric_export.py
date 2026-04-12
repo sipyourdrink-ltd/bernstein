@@ -1,9 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.metric_export."""
 
-from bernstein.core.observability.metric_export import (
-    export_metrics,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "export_metrics",
-]
+install_shim(__name__, "bernstein.core.observability.metric_export")

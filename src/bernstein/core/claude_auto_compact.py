@@ -1,6 +1,5 @@
-"""Backward-compatibility shim — module moved to bernstein.core.tokens.claude_auto_compact.
+"""Backward-compat shim for bernstein.core.tokens.claude_auto_compact."""
 
-All public names are re-exported so existing imports continue to work.
-"""
+from bernstein.core._shim import install_shim
 
-from bernstein.core.tokens.claude_auto_compact import *  # noqa: F403
+install_shim(__name__, "bernstein.core.tokens.claude_auto_compact")

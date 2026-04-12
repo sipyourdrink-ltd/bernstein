@@ -1,7 +1,5 @@
 """Backward-compat shim: module moved to bernstein.core.quality.test_expansion."""
 
-from bernstein.core.quality.test_expansion import *  # noqa: F403
-from bernstein.core.quality.test_expansion import (  # noqa: F401
-    _SKIP_NAMES,
-    _TEST_DIR_NAMES,
-)
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.quality.test_expansion")

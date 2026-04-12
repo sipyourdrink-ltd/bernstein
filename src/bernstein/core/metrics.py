@@ -1,29 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.metrics."""
 
-from bernstein.core.observability.metrics import (
-    AgentMetrics,
-    MetricPoint,
-    MetricsCollector,
-    MetricType,
-    PercentileTracker,
-    ProviderHealth,
-    ProviderStatus,
-    TaskMetrics,
-    UsageQuota,
-    export_metrics,
-    get_collector,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "AgentMetrics",
-    "MetricPoint",
-    "MetricType",
-    "MetricsCollector",
-    "PercentileTracker",
-    "ProviderHealth",
-    "ProviderStatus",
-    "TaskMetrics",
-    "UsageQuota",
-    "export_metrics",
-    "get_collector",
-]
+install_shim(__name__, "bernstein.core.observability.metrics")

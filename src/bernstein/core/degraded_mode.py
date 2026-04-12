@@ -1,17 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.degraded_mode."""
 
-from bernstein.core.observability.degraded_mode import (
-    DegradedModeConfig,
-    DegradedModeManager,
-    DegradedModeState,
-    logger,
-    probe_server_health,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "DegradedModeConfig",
-    "DegradedModeManager",
-    "DegradedModeState",
-    "logger",
-    "probe_server_health",
-]
+install_shim(__name__, "bernstein.core.observability.degraded_mode")

@@ -1,3 +1,5 @@
 """Backward-compatibility shim — moved to bernstein.core.cost.cost_root_cause."""
 
-from bernstein.core.cost.cost_root_cause import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.cost.cost_root_cause")

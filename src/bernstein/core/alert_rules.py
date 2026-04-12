@@ -1,21 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.alert_rules."""
 
-from bernstein.core.observability.alert_rules import (
-    AlertChannel,
-    AlertConfig,
-    AlertManager,
-    AlertMetric,
-    AlertRule,
-    load_alert_config,
-    logger,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "AlertChannel",
-    "AlertConfig",
-    "AlertManager",
-    "AlertMetric",
-    "AlertRule",
-    "load_alert_config",
-    "logger",
-]
+install_shim(__name__, "bernstein.core.observability.alert_rules")

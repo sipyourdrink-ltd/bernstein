@@ -1,23 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.trace_correlation."""
 
-from bernstein.core.observability.trace_correlation import (
-    CorrelationRecord,
-    TraceContext,
-    build_correlation_env,
-    create_correlation_record,
-    format_traceparent,
-    generate_trace_context,
-    parse_traceparent,
-    save_correlation,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "CorrelationRecord",
-    "TraceContext",
-    "build_correlation_env",
-    "create_correlation_record",
-    "format_traceparent",
-    "generate_trace_context",
-    "parse_traceparent",
-    "save_correlation",
-]
+install_shim(__name__, "bernstein.core.observability.trace_correlation")

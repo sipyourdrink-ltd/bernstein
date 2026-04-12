@@ -1,3 +1,5 @@
 """Backward-compat shim: re-exports from bernstein.core.security.always_allow."""
 
-from bernstein.core.security.always_allow import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.security.always_allow")

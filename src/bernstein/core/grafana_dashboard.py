@@ -1,11 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.grafana_dashboard."""
 
-from bernstein.core.observability.grafana_dashboard import (
-    generate_grafana_dashboard,
-    save_dashboard,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "generate_grafana_dashboard",
-    "save_dashboard",
-]
+install_shim(__name__, "bernstein.core.observability.grafana_dashboard")

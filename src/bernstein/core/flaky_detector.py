@@ -1,7 +1,5 @@
 """Backward-compat shim: module moved to bernstein.core.quality.flaky_detector."""
 
-from bernstein.core.quality.flaky_detector import *  # noqa: F403
-from bernstein.core.quality.flaky_detector import (  # noqa: F401
-    _PYTEST_RESULT_RE,
-    _WRITE_LOCK,
-)
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.quality.flaky_detector")

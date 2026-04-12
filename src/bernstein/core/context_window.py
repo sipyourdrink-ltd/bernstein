@@ -1,6 +1,5 @@
-"""Backward-compatibility shim — module moved to bernstein.core.tokens.context_window.
+"""Backward-compat shim for bernstein.core.tokens.context_window."""
 
-All public names are re-exported so existing imports continue to work.
-"""
+from bernstein.core._shim import install_shim
 
-from bernstein.core.tokens.context_window import *  # noqa: F403
+install_shim(__name__, "bernstein.core.tokens.context_window")
