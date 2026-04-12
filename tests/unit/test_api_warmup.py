@@ -87,7 +87,7 @@ class TestGetProviderBaseUrl:
         from bernstein.core.llm import LLMSettings
 
         settings = LLMSettings(_env_file=None, openrouter_api_key_paid="pk-123")  # type: ignore[call-arg]
-        assert bernstein.api_warmup._get_provider_base_url("openrouter", settings) == "https://openrouter.ai/api/v1"
+        assert bernstein.cli.api_warmup._get_provider_base_url("openrouter", settings) == "https://openrouter.ai/api/v1"
 
     def test_unknown_provider_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from bernstein.core.llm import LLMSettings
@@ -102,7 +102,7 @@ class TestGetProviderBaseUrl:
         ):
             monkeypatch.delenv(var, raising=False)
         settings = LLMSettings(_env_file=None)  # type: ignore[call-arg]
-        assert bernstein.api_warmup._get_provider_base_url("bogus", settings) == ""
+        assert bernstein.cli.api_warmup._get_provider_base_url("bogus", settings) == ""
 
 
 # -- _is_provider_configured --
@@ -113,7 +113,7 @@ class TestIsProviderConfigured:
         from bernstein.core.llm import LLMSettings
 
         settings = LLMSettings(_env_file=None, openrouter_api_key_paid="pk-123")  # type: ignore[call-arg]
-        assert bernstein.api_warmup._is_provider_configured("openrouter", settings) is True
+        assert bernstein.cli.api_warmup._is_provider_configured("openrouter", settings) is True
 
     def test_openrouter_without_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for var in ("OPENROUTER_API_KEY_PAID", "OPENROUTER_API_KEY_FREE"):
@@ -121,20 +121,20 @@ class TestIsProviderConfigured:
         from bernstein.core.llm import LLMSettings
 
         settings = LLMSettings(_env_file=None)  # type: ignore[call-arg]
-        assert bernstein.api_warmup._is_provider_configured("openrouter", settings) is False
+        assert bernstein.cli.api_warmup._is_provider_configured("openrouter", settings) is False
 
     def test_openai_no_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         from bernstein.core.llm import LLMSettings
 
         settings = LLMSettings(_env_file=None)  # type: ignore[call-arg]
-        assert bernstein.api_warmup._is_provider_configured("openai", settings) is False
+        assert bernstein.cli.api_warmup._is_provider_configured("openai", settings) is False
 
     def test_oxen_with_key(self) -> None:
         from bernstein.core.llm import LLMSettings
 
         settings = LLMSettings(_env_file=None, oxen_api_key="oxen-123")  # type: ignore[call-arg]
-        assert bernstein.api_warmup._is_provider_configured("oxen", settings) is True
+        assert bernstein.cli.api_warmup._is_provider_configured("oxen", settings) is True
 
 
 # -- warmup_provider --
@@ -275,12 +275,12 @@ class TestCanSkipWarmup:
 
     def test_freshly_warmed_provider(self) -> None:
         result = WarmupResult(provider="openrouter", latency_ms=10.0, success=True)
-        bernstein.api_warmup._cache["openrouter"] = (result, __import__("time").monotonic())
+        bernstein.cli.api_warmup._cache["openrouter"] = (result, __import__("time").monotonic())
         assert can_skip_warmup("openrouter") is True
 
     def test_expired_warmup(self) -> None:
         result = WarmupResult(provider="openrouter", latency_ms=10.0, success=True)
-        bernstein.api_warmup._cache["openrouter"] = (
+        bernstein.cli.api_warmup._cache["openrouter"] = (
             result,
             __import__("time").monotonic() - _WARMUP_TTL_SECONDS - 5,
         )
@@ -296,7 +296,7 @@ class TestCheckWarmupStatus:
 
     def test_single_provider(self) -> None:
         result = WarmupResult(provider="together", latency_ms=50.0, success=True)
-        bernstein.api_warmup._cache["together"] = (result, __import__("time").monotonic())
+        bernstein.cli.api_warmup._cache["together"] = (result, __import__("time").monotonic())
         status = check_warmup_status()
         assert "together" in status
         entry = status["together"]
@@ -307,7 +307,7 @@ class TestCheckWarmupStatus:
 
     def test_expired_entry_shown_as_stale(self) -> None:
         result = WarmupResult(provider="g4f", latency_ms=99.0, success=False)
-        bernstein.api_warmup._cache["g4f"] = (
+        bernstein.cli.api_warmup._cache["g4f"] = (
             result,
             __import__("time").monotonic() - _WARMUP_TTL_SECONDS - 10,
         )
@@ -317,11 +317,11 @@ class TestCheckWarmupStatus:
 
     def test_multiple_providers(self) -> None:
         now = __import__("time").monotonic()
-        bernstein.api_warmup._cache["openrouter"] = (
+        bernstein.cli.api_warmup._cache["openrouter"] = (
             WarmupResult(provider="openrouter", latency_ms=12.0, success=True),
             now,
         )
-        bernstein.api_warmup._cache["oxen"] = (
+        bernstein.cli.api_warmup._cache["oxen"] = (
             WarmupResult(provider="oxen", latency_ms=5.0, success=True),
             now - 10,
         )
@@ -337,7 +337,7 @@ class TestCheckWarmupStatus:
 class TestClearCache:
     def test_clear_removes_all_entries(self) -> None:
         result = WarmupResult(provider="oxen", latency_ms=5.0, success=True)
-        bernstein.api_warmup._cache["oxen"] = (result, __import__("time").monotonic())
+        bernstein.cli.api_warmup._cache["oxen"] = (result, __import__("time").monotonic())
         clear_cache()
         assert check_warmup_status() == {}
         assert can_skip_warmup("oxen") is False

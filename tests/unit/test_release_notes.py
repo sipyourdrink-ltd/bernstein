@@ -72,17 +72,17 @@ class TestFindLocalChangelog:
 
 class TestFetchReleaseNotes:
     def test_remote_success(self) -> None:
-        with patch("bernstein.release_notes._fetch_remote", return_value="# Remote"):
+        with patch("bernstein.cli.release_notes._fetch_remote", return_value="# Remote"):
             result = fetch_release_notes()
         assert "# Remote" in result
 
     def test_falls_back_to_local(self, project_with_changelog: Path) -> None:
-        with patch("bernstein.release_notes._fetch_remote", return_value=None):
+        with patch("bernstein.cli.release_notes._fetch_remote", return_value=None):
             result = fetch_release_notes(workdir=project_with_changelog)
         assert "# Changelog" in result
 
     def test_error_message_when_all_fail(self, tmp_path: Path) -> None:
-        with patch("bernstein.release_notes._fetch_remote", return_value=None):
+        with patch("bernstein.cli.release_notes._fetch_remote", return_value=None):
             result = fetch_release_notes(workdir=tmp_path)
         assert "not available" in result or "release notes" in result.lower()
 

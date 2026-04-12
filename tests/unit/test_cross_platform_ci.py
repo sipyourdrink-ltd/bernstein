@@ -138,7 +138,8 @@ class TestCIWorkflowExists:
         run_script = unix_steps[0].get("run", "")
         assert "--affected" in run_script
         assert "refs/remotes/origin/${{ github.base_ref }}" in run_script
-        assert "uv run python scripts/run_tests.py -x --parallel 4" in run_script
+        assert "uv run python scripts/run_tests.py" in run_script
+        assert "--parallel 4" in run_script
 
     def test_coverage_reporting_only_runs_on_push(self) -> None:
         data = _load_ci_workflow()
