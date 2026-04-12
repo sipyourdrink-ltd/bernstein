@@ -175,6 +175,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "datadog_export": "bernstein.core.observability.datadog_export",
     "dead_code_detector": "bernstein.core.quality.dead_code_detector",
     "dead_letter_queue": "bernstein.core.tasks.dead_letter_queue",
+    "decomposition_scorer": "bernstein.core.quality.decomposition_scorer",
     "decomposition_validator": "bernstein.core.quality.decomposition_validator",
     "degraded_mode": "bernstein.core.observability.degraded_mode",
     "denial_tracker": "bernstein.core.security.denial_tracker",
