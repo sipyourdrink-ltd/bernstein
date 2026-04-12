@@ -86,7 +86,7 @@ async def test_access_log_preserves_request_id_and_actor(client: AsyncClient, tm
 @pytest.mark.anyio
 async def test_access_log_rotation_called(client: AsyncClient, tmp_path: Path) -> None:
     """Middleware should call rotate_log_file before each append."""
-    with patch("bernstein.core.access_log.rotate_log_file") as mock_rotate:
+    with patch("bernstein.core.server.access_log.rotate_log_file") as mock_rotate:
         await client.get("/health")
         mock_rotate.assert_called_once()
         # The argument should be the access.jsonl path
