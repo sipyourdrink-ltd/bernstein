@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any, cast
 
 import pytest
 
@@ -143,7 +144,7 @@ class TestSLOTrackerBurndown:
 
         tracker = SLOTracker()
         assert tracker.get_burndown_dashboard()["history_size"] == 0
-        tracker.update_from_collector(_FakeCollector())  # type: ignore[arg-type]
+        tracker.update_from_collector(cast(Any, _FakeCollector()))
         assert tracker.get_burndown_dashboard()["history_size"] == 1
 
 

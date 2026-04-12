@@ -41,6 +41,9 @@ class ExampleAgentAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict | None = None,
         timeout_seconds: int = 1800,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
     ) -> SpawnResult:
         """Launch example-agent with the given prompt and work directory."""
         log_path = workdir / f".bernstein-{session_id}.log"
