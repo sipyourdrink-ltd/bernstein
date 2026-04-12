@@ -21,7 +21,7 @@ from bernstein.tui.session_tags import (
 @pytest.fixture()
 def fresh_tags(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reset the global session tag container before each test."""
-    from bernstein import session_tags as st
+    from bernstein.tui import session_tags as st
 
     st._session_tags = SessionTags()
 
