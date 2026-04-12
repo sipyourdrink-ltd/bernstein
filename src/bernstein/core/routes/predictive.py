@@ -6,7 +6,7 @@ GET /metrics/predictions — evaluate all forecasts and return any active alerts
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -32,17 +32,15 @@ def _get_sdd_dir(request: Request) -> Any:
 @router.get("/metrics/predictions")
 def get_predictions(
     request: Request,
-    budget_cap: float = Query(
-        default=0.0,
+    budget_cap: Annotated[float, Query(
         ge=0.0,
         description="Budget ceiling in USD (0 = skip budget forecast)",
-    ),
-    window_hours: float = Query(
-        default=4.0,
+    )] = 0.0,
+    window_hours: Annotated[float, Query(
         ge=0.1,
         le=72.0,
         description="Configured run window in hours (default 4)",
-    ),
+    )] = 4.0,
 ) -> JSONResponse:
     """Evaluate all predictive forecasts and return active alerts.
 
