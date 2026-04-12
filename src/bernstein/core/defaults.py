@@ -20,21 +20,21 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Orchestrator defaults
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class OrchestratorDefaults:
     """Run loop, tick scheduling, drain, and convergence."""
 
     tick_interval_s: float = 3.0
-    normal_tick_phase: int = 6          # run normal ops every N ticks
-    slow_tick_phase: int = 30           # run slow ops every N ticks
+    normal_tick_phase: int = 6  # run normal ops every N ticks
+    slow_tick_phase: int = 30  # run slow ops every N ticks
 
     max_consecutive_failures: int = 10  # tick failures before abort
-    max_spawn_failures: int = 3         # consecutive spawn failures → mark failed
+    max_spawn_failures: int = 3  # consecutive spawn failures → mark failed
     spawn_backoff_base_s: float = 30.0
     spawn_backoff_max_s: float = 300.0
 
@@ -42,7 +42,7 @@ class OrchestratorDefaults:
     server_failure_threshold: int = 12  # ticks of server unreachability → stop
     server_failure_warn: int = 3
 
-    stale_claim_timeout_s: float = 900.0   # 15 min
+    stale_claim_timeout_s: float = 900.0  # 15 min
     deadline_warning_window_s: float = 300.0  # 5 min warning before deadline
 
     max_dead_agents_kept: int = 20
@@ -55,12 +55,13 @@ class OrchestratorDefaults:
     replenish_max_tasks: int = 5
     max_ingest_per_tick: int = 50
 
-    evolve_backoff_max: int = 8         # max 8x backoff for empty evolve cycles
+    evolve_backoff_max: int = 8  # max 8x backoff for empty evolve cycles
 
 
 # ---------------------------------------------------------------------------
 # Spawn / Agent defaults
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SpawnDefaults:
@@ -77,7 +78,7 @@ class SpawnDefaults:
 class AgentDefaults:
     """Heartbeat, idle detection, escalation tiers."""
 
-    heartbeat_stale_s: float = 120.0    # 2 min
+    heartbeat_stale_s: float = 120.0  # 2 min
     idle_log_age_threshold_s: float = 180.0  # 3 min
 
     # Escalation tiers (seconds of heartbeat silence)
@@ -98,16 +99,19 @@ class AgentDefaults:
 # Task defaults
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TaskDefaults:
     """Timeouts, retry, priority, batch sizing."""
 
-    scope_timeout_s: dict[str, float] = field(default_factory=lambda: {
-        "small": 15 * 60,    # 900s  (15 min)
-        "medium": 30 * 60,   # 1800s (30 min)
-        "large": 60 * 60,    # 3600s (60 min)
-    })
-    xl_timeout_s: float = 120 * 60      # 7200s (2 hours)
+    scope_timeout_s: dict[str, float] = field(
+        default_factory=lambda: {
+            "small": 15 * 60,  # 900s  (15 min)
+            "medium": 30 * 60,  # 1800s (30 min)
+            "large": 60 * 60,  # 3600s (60 min)
+        }
+    )
+    xl_timeout_s: float = 120 * 60  # 7200s (2 hours)
 
     priority_decay_threshold_hours: float = 24.0
     min_priority: int = 3
@@ -117,7 +121,7 @@ class TaskDefaults:
     transient_max_retries: int = 3
     fatal_max_retries: int = 0
 
-    subtask_wait_timeout_s: float = 30 * 60   # 30 min
+    subtask_wait_timeout_s: float = 30 * 60  # 30 min
     max_combined_estimated_minutes: int = 60
     max_tasks_per_compacted_batch: int = 5
     min_batch_size: int = 3
@@ -128,6 +132,7 @@ class TaskDefaults:
 # ---------------------------------------------------------------------------
 # Token / Context defaults
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class TokenDefaults:
@@ -164,27 +169,34 @@ class TokenDefaults:
 # Cost defaults
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CostDefaults:
     """Budget caps, scope budgets, effort→turns mapping."""
 
-    scope_budget_usd: dict[str, float] = field(default_factory=lambda: {
-        "small": 2.0,
-        "medium": 5.0,
-        "large": 15.0,
-    })
-    scope_multipliers: dict[str, float] = field(default_factory=lambda: {
-        "small": 1.0,
-        "medium": 1.5,
-        "large": 2.0,
-    })
-    effort_base_turns: dict[str, int] = field(default_factory=lambda: {
-        "max": 100,
-        "high": 50,
-        "medium": 30,
-        "normal": 25,
-        "low": 15,
-    })
+    scope_budget_usd: dict[str, float] = field(
+        default_factory=lambda: {
+            "small": 2.0,
+            "medium": 5.0,
+            "large": 15.0,
+        }
+    )
+    scope_multipliers: dict[str, float] = field(
+        default_factory=lambda: {
+            "small": 1.0,
+            "medium": 1.5,
+            "large": 2.0,
+        }
+    )
+    effort_base_turns: dict[str, int] = field(
+        default_factory=lambda: {
+            "max": 100,
+            "high": 50,
+            "medium": 30,
+            "normal": 25,
+            "low": 15,
+        }
+    )
     opus_budget_multiplier: float = 2.0
     batch_max_turns: int = 200
     rate_limit_cooldown_s: float = 300.0  # 5 min
@@ -196,6 +208,7 @@ class CostDefaults:
 # ---------------------------------------------------------------------------
 # Quality gate defaults
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class GateDefaults:
@@ -213,32 +226,35 @@ class GateDefaults:
 # Adaptive parallelism defaults
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ParallelismDefaults:
     """CPU-aware spawn throttling and error-rate windows."""
 
-    error_rate_high: float = 0.20       # 20%
-    error_rate_low: float = 0.05        # 5%
+    error_rate_high: float = 0.20  # 20%
+    error_rate_low: float = 0.05  # 5%
     low_error_sustain_s: float = 120.0  # 2 min
     cpu_pause_threshold: float = 300.0  # 3 cores pinned
-    window_s: float = 600.0             # 10 min
+    window_s: float = 600.0  # 10 min
 
 
 # ---------------------------------------------------------------------------
 # Approval defaults
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ApprovalDefaults:
     """Human-in-the-loop approval gate."""
 
     poll_interval_s: float = 5.0
-    max_wait_s: float = 3600.0   # 1 hour
+    max_wait_s: float = 3600.0  # 1 hour
 
 
 # ---------------------------------------------------------------------------
 # Protocol defaults
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ProtocolDefaults:
@@ -268,26 +284,32 @@ class ProtocolDefaults:
 # Plan / Risk defaults
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PlanDefaults:
     """Planning, risk assessment, cost estimation."""
 
-    tokens_by_scope: dict[str, int] = field(default_factory=lambda: {
-        "small": 30_000,
-        "medium": 80_000,
-        "large": 200_000,
-    })
-    model_by_complexity: dict[str, str] = field(default_factory=lambda: {
-        "low": "haiku",
-        "medium": "sonnet",
-        "high": "opus",
-    })
+    tokens_by_scope: dict[str, int] = field(
+        default_factory=lambda: {
+            "small": 30_000,
+            "medium": 80_000,
+            "large": 200_000,
+        }
+    )
+    model_by_complexity: dict[str, str] = field(
+        default_factory=lambda: {
+            "low": "haiku",
+            "medium": "sonnet",
+            "high": "opus",
+        }
+    )
     free_adapters: tuple[str, ...] = ("qwen", "gemini", "ollama", "tabby")
 
 
 # ---------------------------------------------------------------------------
 # Trigger defaults
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class TriggerDefaults:
@@ -376,9 +398,19 @@ def reset() -> None:
     PROTOCOL = ProtocolDefaults()
     PLAN = PlanDefaults()
     TRIGGER = TriggerDefaults()
-    _SECTION_MAP.update({
-        "orchestrator": ORCHESTRATOR, "spawn": SPAWN, "agent": AGENT,
-        "task": TASK, "token": TOKEN, "cost": COST, "gate": GATE,
-        "parallelism": PARALLELISM, "approval": APPROVAL,
-        "protocol": PROTOCOL, "plan": PLAN, "trigger": TRIGGER,
-    })
+    _SECTION_MAP.update(
+        {
+            "orchestrator": ORCHESTRATOR,
+            "spawn": SPAWN,
+            "agent": AGENT,
+            "task": TASK,
+            "token": TOKEN,
+            "cost": COST,
+            "gate": GATE,
+            "parallelism": PARALLELISM,
+            "approval": APPROVAL,
+            "protocol": PROTOCOL,
+            "plan": PLAN,
+            "trigger": TRIGGER,
+        }
+    )
