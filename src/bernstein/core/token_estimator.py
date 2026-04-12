@@ -1,7 +1,0 @@
-"""Backward-compatibility shim — moved to bernstein.core.tokens.token_estimator."""
-from bernstein.core.tokens.token_estimator import *  # noqa: F401,F403
-
-import importlib as _importlib
-_real = _importlib.import_module("bernstein.core.tokens.token_estimator")
-def __getattr__(name: str):
-    return getattr(_real, name)
