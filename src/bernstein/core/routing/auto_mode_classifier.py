@@ -109,15 +109,15 @@ _SAFE_WRITE_ACTIONS: frozenset[str] = frozenset(
 )
 
 _DESTRUCTIVE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\brm\s+(-[^\s]*\s+)*-r", re.IGNORECASE),
-    re.compile(r"\bgit\s+push\s+.*--force", re.IGNORECASE),
+    re.compile(r"\brm\s+(-[^\s]*\s+){0,10}-r", re.IGNORECASE),
+    re.compile(r"\bgit\s+push\s+\S{0,200}\s+--force", re.IGNORECASE),
     re.compile(r"\bgit\s+reset\s+--hard", re.IGNORECASE),
     re.compile(r"\bDROP\s+(TABLE|DATABASE|INDEX)", re.IGNORECASE),
     re.compile(r"\bTRUNCATE\s+TABLE", re.IGNORECASE),
     re.compile(r"\bchmod\s+777", re.IGNORECASE),
-    re.compile(r"\bcurl\s+.*\|\s*(bash|sh)", re.IGNORECASE),
+    re.compile(r"\bcurl\s+[^\n]{0,500}\|\s{0,10}(bash|sh)", re.IGNORECASE),
     re.compile(r"\bsudo\s+", re.IGNORECASE),
-    re.compile(r"\bformat\b.*disk", re.IGNORECASE),
+    re.compile(r"\bformat\b[^\n]{0,200}disk", re.IGNORECASE),
     re.compile(r"\bmkfs\b", re.IGNORECASE),
 )
 

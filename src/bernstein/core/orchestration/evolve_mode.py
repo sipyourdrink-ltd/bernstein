@@ -324,10 +324,10 @@ class EvolveMixin:
 
         output = stdout + stderr
         info["summary"] = output.strip().splitlines()[-1] if output.strip() else ""
-        match = re.search(r"(\d+) passed", output)
+        match = re.search(r"(\d+) passed\b", output)
         if match:
             info["passed"] = int(match.group(1))
-        match = re.search(r"(\d+) failed", output)
+        match = re.search(r"(\d+) failed\b", output)
         if match:
             info["failed"] = int(match.group(1))
         return info

@@ -103,7 +103,7 @@ _PII_RULES: list[tuple[str, re.Pattern[str], float]] = [
     (
         "national_id",
         # Generic patterns: "ID: 123456789" or "passport: AB123456"
-        re.compile(r"(?i)\b(?:national[\s_]?id|passport[\s_]?(?:no|number|#))\s*[:\-]?\s*[A-Z0-9]{6,12}\b"),
+        re.compile(r"(?i)\b(?:national[\s_]?id|passport[\s_]?(?:no|number|#))\s{0,5}[:\-]?\s{0,5}[A-Z0-9]{6,12}\b"),
         0.40,
     ),
 ]

@@ -179,7 +179,7 @@ class ReplayTaskRequest:
 
 # Regex patterns for log lines emitted by the Claude Code wrapper script.
 # Format: [ToolName] input_truncated...
-_TOOL_RE = re.compile(r"^\[(?P<tool>[A-Za-z]+)\]\s*(?P<args>[^\n]*)$")
+_TOOL_RE = re.compile(r"^\[(?P<tool>[A-Za-z]+)\][ \t]*(?P<args>[^\n]*)$")
 
 # File-reading tools → orient steps
 _ORIENT_TOOLS = {"Read", "Glob", "Grep"}

@@ -28,7 +28,7 @@ from typing import Any
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("bernstein-worker")
 
-_BASH_ERROR_RE = re.compile(r"\[(Bash|shell)\]\s+.*exited\s+with\s+code\s+([1-9]\d*)")
+_BASH_ERROR_RE = re.compile(r"\[(Bash|shell)\][ \t]+[^\n]{0,500}exited[ \t]+with[ \t]+code[ \t]+([1-9]\d*)")
 
 # Session IDs must be safe for use as filenames (no path separators or traversal).
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
