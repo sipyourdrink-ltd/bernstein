@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bernstein.core.defaults import TOKEN
 from bernstein.core.rate_limit_tracker import RateLimitTracker
 
 if TYPE_CHECKING:
@@ -46,14 +47,14 @@ class CompactionResult:
 
 
 # ---------------------------------------------------------------------------
-# Individual compaction strategies
+# Individual compaction strategies — sourced from bernstein.core.defaults.TOKEN
 # ---------------------------------------------------------------------------
 
 #: Maximum lines in a fenced code block before it is truncated.
-_CODE_BLOCK_MAX_LINES: int = 100
+_CODE_BLOCK_MAX_LINES: int = TOKEN.code_block_max_lines
 
 #: Maximum file listing entries to keep.
-_FILE_LISTING_MAX_ENTRIES: int = 50
+_FILE_LISTING_MAX_ENTRIES: int = TOKEN.file_listing_max_entries
 
 #: Regex for fenced code blocks (``` ... ```).
 _FENCED_CODE_RE = re.compile(

@@ -22,13 +22,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from bernstein.core.defaults import TOKEN
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Thresholds
+# Thresholds — sourced from bernstein.core.defaults.TOKEN
 # ---------------------------------------------------------------------------
 
 #: Minimum token burst (in a single interval) that counts as a "retry spike".
@@ -38,10 +40,10 @@ _RETRY_SPIKE_TOKENS: int = 5_000
 _LOOP_GROWTH_RATIO: float = 1.8
 
 #: Token delta in a single interval to flag as an oversized-context event.
-_OVERSIZED_INTERVAL_TOKENS: int = 20_000
+_OVERSIZED_INTERVAL_TOKENS: int = TOKEN.oversized_interval_tokens
 
 #: Minimum number of samples required to check for loops.
-_MIN_LOOP_SAMPLES: int = 3
+_MIN_LOOP_SAMPLES: int = TOKEN.min_loop_samples
 
 
 # ---------------------------------------------------------------------------

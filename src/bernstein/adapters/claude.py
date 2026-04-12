@@ -16,6 +16,7 @@ from typing import Any, ClassVar, cast
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.claude_agents import build_agents_json
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.core.defaults import COST
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 from bernstein.core.platform_compat import kill_process_group, process_alive
 
@@ -102,10 +103,10 @@ def _resolve_env_vars(obj: Any) -> Any:
 _logger = logging.getLogger(__name__)
 
 # How long a cached rate-limit probe result stays valid (seconds).
-_RATE_LIMIT_CACHE_TTL: float = 180.0  # 3 min — probe costs a real API call
+_RATE_LIMIT_CACHE_TTL: float = COST.rate_limit_cache_ttl_s
 
 # Cooldown applied when rate-limiting is detected (seconds).
-_RATE_LIMIT_COOLDOWN: float = 300.0
+_RATE_LIMIT_COOLDOWN: float = COST.rate_limit_cooldown_s
 
 
 class ClaudeCodeAdapter(CLIAdapter):
@@ -156,7 +157,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                 ["claude", "--print", "--max-turns", "1", "--output-format", "text", "-p", "say ok"],
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=COST.rate_limit_probe_timeout_s,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             _logger.debug("Rate-limit probe failed: %s", exc)
@@ -177,23 +178,15 @@ class ClaudeCodeAdapter(CLIAdapter):
 
     # Max turns used for batch-mode agents, which must cover research +
     # decompose + spawn workers + track completion.
-    BATCH_MAX_TURNS: int = 200
+    BATCH_MAX_TURNS: int = COST.batch_max_turns
 
     # Scope → base budget mapping.  Opus tasks get a 2x multiplier because
     # opus input/output tokens cost roughly twice as much as sonnet.
-    _SCOPE_BUDGET_USD: ClassVar[dict[str, float]] = {
-        "small": 2.0,
-        "medium": 5.0,
-        "large": 15.0,
-    }
+    _SCOPE_BUDGET_USD: ClassVar[dict[str, float]] = COST.scope_budget_usd
 
     # Scope multipliers: large tasks get proportionally more turns so they
     # don't die prematurely.
-    _SCOPE_MULTIPLIERS: ClassVar[dict[str, float]] = {
-        "small": 1.0,
-        "medium": 1.5,
-        "large": 2.0,
-    }
+    _SCOPE_MULTIPLIERS: ClassVar[dict[str, float]] = COST.scope_multipliers
 
     def _build_command(
         self,
@@ -242,7 +235,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
-        base_turns = {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
+        base_turns = COST.effort_base_turns.get(effort, 50)
         scope_multiplier = self._SCOPE_MULTIPLIERS.get(task_scope, 1.5)
         max_turns = self.BATCH_MAX_TURNS if batch_mode else int(base_turns * scope_multiplier)
         effort_map = {"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}
@@ -298,7 +291,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         # Retry budget_multiplier (e.g. 2.0 after budget-cap failure) stacks on top.
         base_budget = self._SCOPE_BUDGET_USD.get(task_scope, 5.0)
         is_opus = "opus" in model_id.lower()
-        budget_usd = base_budget * (2.0 if is_opus else 1.0) * budget_multiplier
+        budget_usd = base_budget * (COST.opus_budget_multiplier if is_opus else 1.0) * budget_multiplier
         cmd.extend(["--max-budget-usd", f"{budget_usd:.2f}"])
 
         # Enforce structured output so the orchestrator can always parse results

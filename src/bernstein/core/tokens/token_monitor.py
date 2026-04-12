@@ -38,6 +38,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.context_window import compute_context_window_utilization
+from bernstein.core.defaults import TOKEN
 from bernstein.core.lifecycle import transition_agent
 
 if TYPE_CHECKING:
@@ -48,29 +49,16 @@ from bernstein.core.token_estimation import estimate_tokens_for_file
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Thresholds
+# Thresholds — sourced from bernstein.core.defaults.TOKEN
 # ---------------------------------------------------------------------------
 
-#: Auto-kill an agent whose token count exceeds this with zero file changes.
-_KILL_THRESHOLD: int = 50_000
-
-#: Minimum number of history samples required before quadratic check fires.
-_MIN_SAMPLES_FOR_GROWTH_CHECK: int = 3
-
-#: Alert if per-window token delta doubles across consecutive windows.
-_QUADRATIC_RATIO: float = 2.0
-
-#: Only update history when at least this many seconds have passed since last sample.
-_SAMPLE_INTERVAL_S: float = 30.0
-
-#: Context-window utilization percentage that triggers auto-compaction.
-_COMPACT_THRESHOLD: float = 90.0
-
-#: Maximum consecutive compaction failures before the circuit breaker opens.
-_COMPACT_MAX_FAILURES: int = 3
-
-#: Seconds to wait before retrying compaction after circuit breaker opens.
-_COMPACT_COOLDOWN_S: float = 120.0
+_KILL_THRESHOLD: int = TOKEN.kill_threshold
+_MIN_SAMPLES_FOR_GROWTH_CHECK: int = TOKEN.min_samples_for_growth_check
+_QUADRATIC_RATIO: float = TOKEN.quadratic_ratio
+_SAMPLE_INTERVAL_S: float = TOKEN.sample_interval_s
+_COMPACT_THRESHOLD: float = TOKEN.compact_threshold_pct
+_COMPACT_MAX_FAILURES: int = TOKEN.compact_max_failures
+_COMPACT_COOLDOWN_S: float = TOKEN.compact_cooldown_s
 
 
 # ---------------------------------------------------------------------------

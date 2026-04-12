@@ -26,16 +26,18 @@ import logging
 from dataclasses import dataclass
 from enum import StrEnum
 
+from bernstein.core.defaults import TOKEN
+
 logger = logging.getLogger(__name__)
 
 #: Default characters per token for estimation.
 DEFAULT_CHARS_PER_TOKEN: float = 4.0
 
 #: Fraction of context window at which we recommend truncation.
-TRUNCATION_THRESHOLD: float = 0.80
+TRUNCATION_THRESHOLD: float = TOKEN.truncation_threshold_pct / 100
 
 #: Fraction of context window at which we reject the spawn.
-REJECTION_THRESHOLD: float = 0.95
+REJECTION_THRESHOLD: float = TOKEN.rejection_threshold_pct / 100
 
 #: Default model context limits (tokens) by model name prefix.
 #: Used when the caller does not supply an explicit limit.
