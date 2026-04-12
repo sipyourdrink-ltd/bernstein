@@ -20,11 +20,11 @@ import pytest
 MUTMUT_CONFIG = {
     "paths_to_mutate": [
         "src/bernstein/core/tasks/lifecycle.py",
-        "src/bernstein/core/agents/spawner.py",
-        "src/bernstein/core/guardrails.py",
-        "src/bernstein/core/models.py",
-        "src/bernstein/core/task_store.py",
-        "src/bernstein/core/config_schema.py",
+        "src/bernstein/core/agents/spawner_core.py",
+        "src/bernstein/core/security/guardrails.py",
+        "src/bernstein/core/tasks/models.py",
+        "src/bernstein/core/tasks/task_store_core.py",
+        "src/bernstein/core/config/config_schema.py",
         "src/bernstein/adapters/base.py",
     ],
     "tests_dir": "tests/unit/",
