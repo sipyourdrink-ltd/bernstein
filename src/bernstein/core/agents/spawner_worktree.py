@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import threading
+    from pathlib import Path
 
     from bernstein.core.warm_pool import PoolSlot, WarmPool
     from bernstein.core.worktree import WorktreeManager, WorktreeSetupConfig

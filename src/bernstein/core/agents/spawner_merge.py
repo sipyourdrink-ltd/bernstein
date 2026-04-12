@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -21,6 +20,8 @@ from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace
 from bernstein.plugins.manager import get_plugin_manager
 
 if TYPE_CHECKING:
+    import subprocess
+
     from bernstein.core.container import ContainerManager
     from bernstein.core.in_process_agent import InProcessAgent
     from bernstein.core.warm_pool import PoolSlot, WarmPool
