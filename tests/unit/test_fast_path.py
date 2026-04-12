@@ -188,7 +188,7 @@ class TestClassifyTask:
 class TestExecuteFastPath:
     """Tests for execute_fast_path() deterministic executors."""
 
-    @patch("bernstein.core.fast_path.subprocess.run")
+    @patch("bernstein.core.quality.fast_path.subprocess.run")
     def test_ruff_format_success(self, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -204,7 +204,7 @@ class TestExecuteFastPath:
         assert result.action == FastPathAction.RUFF_FORMAT
         assert result.duration_s >= 0
 
-    @patch("bernstein.core.fast_path.subprocess.run")
+    @patch("bernstein.core.quality.fast_path.subprocess.run")
     def test_ruff_fix_success(self, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -219,7 +219,7 @@ class TestExecuteFastPath:
         assert result.success is True
         assert result.action == FastPathAction.RUFF_FIX
 
-    @patch("bernstein.core.fast_path.subprocess.run")
+    @patch("bernstein.core.quality.fast_path.subprocess.run")
     def test_sort_imports_success(self, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -234,7 +234,7 @@ class TestExecuteFastPath:
         assert result.success is True
         assert result.action == FastPathAction.SORT_IMPORTS
 
-    @patch("bernstein.core.fast_path.subprocess.run")
+    @patch("bernstein.core.quality.fast_path.subprocess.run")
     def test_ruff_format_failure(self, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(
             returncode=2,
@@ -249,7 +249,7 @@ class TestExecuteFastPath:
         assert result.success is False
         assert result.error is not None
 
-    @patch("bernstein.core.fast_path.subprocess.run")
+    @patch("bernstein.core.quality.fast_path.subprocess.run")
     def test_ruff_not_found(self, mock_run: MagicMock) -> None:
         mock_run.side_effect = FileNotFoundError("ruff not found")
         result = execute_fast_path(
@@ -417,8 +417,8 @@ class TestTryFastPathBatch:
         )
         assert result is False
 
-    @patch("bernstein.core.fast_path.execute_fast_path")
-    @patch("bernstein.core.fast_path.get_collector")
+    @patch("bernstein.core.quality.fast_path.execute_fast_path")
+    @patch("bernstein.core.quality.fast_path.get_collector")
     def test_l0_task_handled(self, mock_collector: MagicMock, mock_exec: MagicMock) -> None:
         """L0 formatting task is handled and marked complete."""
         mock_exec.return_value = FastPathResult(

@@ -15,7 +15,7 @@ def test_complete_task_writes_metrics_and_updates_provider_health(tmp_path: Path
     collector = MetricsCollector(metrics_dir=tmp_path / "metrics")
     collector.start_task("T-1", role="backend", model="sonnet", provider="openai")
 
-    with patch("bernstein.core.metric_collector.time.time", return_value=10.0):
+    with patch("bernstein.core.observability.metric_collector.time.time", return_value=10.0):
         metrics = collector.complete_task("T-1", success=True, tokens_used=123, cost_usd=1.25, janitor_passed=True)
 
     assert metrics is not None
@@ -42,9 +42,9 @@ def test_is_quota_available_respects_reset_time(tmp_path: Path) -> None:
     collector = MetricsCollector(metrics_dir=tmp_path / "metrics")
     collector.set_usage_quota("google", "gemini", "tokens_per_month", limit=100, used=100, reset_time=50.0)
 
-    with patch("bernstein.core.metric_collector.time.time", return_value=40.0):
+    with patch("bernstein.core.observability.metric_collector.time.time", return_value=40.0):
         assert collector.is_quota_available("google", "gemini") is False
-    with patch("bernstein.core.metric_collector.time.time", return_value=60.0):
+    with patch("bernstein.core.observability.metric_collector.time.time", return_value=60.0):
         assert collector.is_quota_available("google", "gemini") is True
 
 

@@ -241,7 +241,7 @@ class TestKeyRotationManagerRotation:
         mock_provider = MagicMock()
         mock_provider.fetch.return_value = {"MY_KEY": "new-value-rotated"}
 
-        with patch("bernstein.core.key_rotation._create_provider", return_value=mock_provider):
+        with patch("bernstein.core.security.key_rotation._create_provider", return_value=mock_provider):
             new_key = mgr.rotate_key(key)
 
         assert new_key.state == KeyState.ACTIVE
@@ -267,7 +267,7 @@ class TestKeyRotationManagerRotation:
         mock_provider.fetch.side_effect = Exception("connection refused")
 
         with (
-            patch("bernstein.core.key_rotation._create_provider", return_value=mock_provider),
+            patch("bernstein.core.security.key_rotation._create_provider", return_value=mock_provider),
             pytest.raises(SecretsError, match="Rotation fetch failed"),
         ):
             mgr.rotate_key(key)
@@ -285,7 +285,7 @@ class TestKeyRotationManagerRotation:
         mock_provider.fetch.return_value = {"OTHER_KEY": "other-val"}
 
         with (
-            patch("bernstein.core.key_rotation._create_provider", return_value=mock_provider),
+            patch("bernstein.core.security.key_rotation._create_provider", return_value=mock_provider),
             pytest.raises(SecretsError, match="not found"),
         ):
             mgr.rotate_key(key)
@@ -303,7 +303,7 @@ class TestKeyRotationManagerRotation:
         mock_provider = MagicMock()
         mock_provider.fetch.return_value = {"api_key": "new-val-mapped"}
 
-        with patch("bernstein.core.key_rotation._create_provider", return_value=mock_provider):
+        with patch("bernstein.core.security.key_rotation._create_provider", return_value=mock_provider):
             new_key = mgr.rotate_key(key)
 
         assert new_key.state == KeyState.ACTIVE

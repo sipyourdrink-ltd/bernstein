@@ -178,7 +178,7 @@ def test_try_submit_persists_job_for_auto_detected_batch_task(tmp_path: Path, ma
     orch = _make_orch(tmp_path, router)
     task = make_task(id="T-docs", title="Update docs", description="Refresh the API docs.")
 
-    with patch("bernstein.core.batch_api.get_collector", return_value=collector):
+    with patch("bernstein.core.tasks.batch_api.get_collector", return_value=collector):
         result = manager.try_submit(orch, task)
 
     assert result.handled is True
@@ -215,19 +215,19 @@ def test_poll_applies_diff_and_records_discounted_cost(tmp_path: Path, make_task
     orch = _make_orch(tmp_path, router)
     task = make_task(id="T-batch-ok", title="Update docs", description="Refresh API docs.")
 
-    with patch("bernstein.core.batch_api.get_collector", return_value=collector):
+    with patch("bernstein.core.tasks.batch_api.get_collector", return_value=collector):
         submit_result = manager.try_submit(orch, task)
 
     assert submit_result.submitted is True
 
     with (
-        patch("bernstein.core.batch_api.get_collector", return_value=collector),
-        patch("bernstein.core.batch_api.apply_diff", return_value=GitResult(0, "", "")),
-        patch("bernstein.core.batch_api._changed_files", return_value=["README.md"]),
-        patch("bernstein.core.batch_api.stage_task_files", return_value=["README.md"]),
-        patch("bernstein.core.batch_api.commit", return_value=GitResult(0, "", "")),
-        patch("bernstein.core.batch_api.verify_task", return_value=(True, [])),
-        patch("bernstein.core.batch_api.complete_task") as mock_complete_task,
+        patch("bernstein.core.tasks.batch_api.get_collector", return_value=collector),
+        patch("bernstein.core.tasks.batch_api.apply_diff", return_value=GitResult(0, "", "")),
+        patch("bernstein.core.tasks.batch_api._changed_files", return_value=["README.md"]),
+        patch("bernstein.core.tasks.batch_api.stage_task_files", return_value=["README.md"]),
+        patch("bernstein.core.tasks.batch_api.commit", return_value=GitResult(0, "", "")),
+        patch("bernstein.core.tasks.batch_api.verify_task", return_value=(True, [])),
+        patch("bernstein.core.tasks.batch_api.complete_task") as mock_complete_task,
     ):
         manager.poll(orch)
 
@@ -266,14 +266,14 @@ def test_poll_failure_marks_task_for_realtime_fallback(tmp_path: Path, make_task
     orch = _make_orch(tmp_path, router)
     task = make_task(id="T-batch-fallback", title="Update docs", description="Refresh API docs.")
 
-    with patch("bernstein.core.batch_api.get_collector", return_value=collector):
+    with patch("bernstein.core.tasks.batch_api.get_collector", return_value=collector):
         submit_result = manager.try_submit(orch, task)
 
     assert submit_result.submitted is True
 
     with (
-        patch("bernstein.core.batch_api.get_collector", return_value=collector),
-        patch("bernstein.core.batch_api.apply_diff", return_value=GitResult(1, "", "bad patch")),
+        patch("bernstein.core.tasks.batch_api.get_collector", return_value=collector),
+        patch("bernstein.core.tasks.batch_api.apply_diff", return_value=GitResult(1, "", "bad patch")),
     ):
         manager.poll(orch)
 
@@ -304,7 +304,7 @@ def test_try_submit_uses_anthropic_provider_for_claude_batch_task(tmp_path: Path
     orch = _make_orch(tmp_path, router)
     task = make_task(id="T-claude-batch", title="Update docs", description="Refresh Claude docs.")
 
-    with patch("bernstein.core.batch_api.get_collector", return_value=collector):
+    with patch("bernstein.core.tasks.batch_api.get_collector", return_value=collector):
         result = manager.try_submit(orch, task)
 
     assert result.handled is True

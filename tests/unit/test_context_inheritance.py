@@ -23,7 +23,7 @@ def test_child_task_inherits_parent_context(tmp_path: Path) -> None:
     store.get_task.return_value = parent
 
     # We mock ContextCompressor to avoid real compression logic
-    with patch("bernstein.core.context_compression.ContextCompressor.compress") as mock_compress:
+    with patch("bernstein.core.tokens.context_compression.ContextCompressor.compress") as mock_compress:
         mock_compress.side_effect = Exception("Fallback to uncompressed")
 
         # We need to mock task_context because it calls file_context which checks filesystem

@@ -88,7 +88,7 @@ class TestSingleRun:
         task = _make_task()
         config = QualityGatesConfig(enabled=False)
 
-        with patch("bernstein.core.quality_gate_coalescer.run_quality_gates", return_value=_pass_result()) as mock_rqg:
+        with patch("bernstein.core.quality.quality_gate_coalescer.run_quality_gates", return_value=_pass_result()) as mock_rqg:
             coalescer.run(task, tmp_path, tmp_path, config)
 
         mock_rqg.assert_called_once()
@@ -150,7 +150,7 @@ class TestCoalescence:
             first_run_released.wait(timeout=5)  # wait: coalesced tasks queued
             return _pass_result(task.id)
 
-        with patch("bernstein.core.quality_gate_coalescer.run_quality_gates", side_effect=slow_run_qg):
+        with patch("bernstein.core.quality.quality_gate_coalescer.run_quality_gates", side_effect=slow_run_qg):
             coalescer_thread_result: list[QualityGatesResult] = []
 
             def run_first() -> None:
@@ -195,7 +195,7 @@ class TestCoalescence:
                 released.wait(timeout=5)
             return _pass_result(task.id)
 
-        with patch("bernstein.core.quality_gate_coalescer.run_quality_gates", side_effect=slow_run):
+        with patch("bernstein.core.quality.quality_gate_coalescer.run_quality_gates", side_effect=slow_run):
             t = threading.Thread(
                 target=coalescer.run, args=(_make_task("T-first"), tmp_path, tmp_path, config), daemon=True
             )

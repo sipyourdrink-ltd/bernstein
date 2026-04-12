@@ -272,9 +272,9 @@ def test_render_prompt_drops_specialists_for_backend(tmp_path: Path, make_task: 
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", side_effect=TemplateError("missing")),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend", "qa"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", side_effect=TemplateError("missing")),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend", "qa"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -295,9 +295,9 @@ def test_render_prompt_drops_team_sections_for_docs(tmp_path: Path, make_task: A
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", side_effect=TemplateError("missing")),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value="## Lessons\nSome lesson."),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["docs"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", side_effect=TemplateError("missing")),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value="## Lessons\nSome lesson."),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["docs"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -324,9 +324,9 @@ def test_render_prompt_drops_heartbeat_for_small_scope(tmp_path: Path, make_task
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -348,9 +348,9 @@ def test_render_prompt_keeps_heartbeat_for_large_scope(tmp_path: Path, make_task
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -382,12 +382,12 @@ def test_render_prompt_backend_context_activates_for_src_files(tmp_path: Path, m
     project_md.write_text("Project context for backend.", encoding="utf-8")
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
         patch(
             "bernstein.core.spawn_prompt.gather_lessons_for_context",
             return_value="## Lessons\nUse strict typing.",
         ),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],

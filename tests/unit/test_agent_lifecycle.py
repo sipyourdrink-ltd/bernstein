@@ -74,7 +74,7 @@ def test_handle_orphaned_task_force_claims_rate_limited_task_with_fallback(tmp_p
         ),
     )
 
-    with patch("bernstein.core.agent_reaping.retry_or_fail_task") as retry_or_fail_task:
+    with patch("bernstein.core.agents.agent_reaping.retry_or_fail_task") as retry_or_fail_task:
         handle_orphaned_task(orch, task.id, session, {"open": [task], "claimed": [], "in_progress": [], "done": []})
 
     orch._client.patch.assert_called_once_with(
@@ -100,7 +100,7 @@ def test_handle_orphaned_task_force_claims_rate_limited_task_without_fallback(tm
         CascadeExhausted(excluded_providers=frozenset({"claude"}), reason="all alternates throttled"),
     )
 
-    with patch("bernstein.core.agent_reaping.retry_or_fail_task") as retry_or_fail_task:
+    with patch("bernstein.core.agents.agent_reaping.retry_or_fail_task") as retry_or_fail_task:
         handle_orphaned_task(orch, task.id, session, {"open": [task], "claimed": [], "in_progress": [], "done": []})
 
     orch._client.patch.assert_not_called()
@@ -141,7 +141,7 @@ def _make_orch_no_ratelimit(tmp_path: Path) -> SimpleNamespace:  # type: ignore[
 
 def test_has_git_commits_on_branch_returns_true_when_commits_exist(tmp_path: Path) -> None:
     """_has_git_commits_on_branch returns True when subprocess reports commits."""
-    with patch("bernstein.core.agent_reaping.subprocess") as mock_subprocess:
+    with patch("bernstein.core.agents.agent_reaping.subprocess") as mock_subprocess:
         mock_result = MagicMock()
         mock_result.stdout = "abc1234 Add feature\ndef5678 Fix tests\n"
         mock_subprocess.run.return_value = mock_result
@@ -160,7 +160,7 @@ def test_has_git_commits_on_branch_returns_true_when_commits_exist(tmp_path: Pat
 
 def test_has_git_commits_on_branch_returns_false_when_no_commits(tmp_path: Path) -> None:
     """_has_git_commits_on_branch returns False when stdout is empty."""
-    with patch("bernstein.core.agent_reaping.subprocess") as mock_subprocess:
+    with patch("bernstein.core.agents.agent_reaping.subprocess") as mock_subprocess:
         mock_result = MagicMock()
         mock_result.stdout = ""
         mock_subprocess.run.return_value = mock_result
@@ -172,7 +172,7 @@ def test_has_git_commits_on_branch_returns_false_when_no_commits(tmp_path: Path)
 
 def test_has_git_commits_on_branch_returns_false_on_error(tmp_path: Path) -> None:
     """_has_git_commits_on_branch returns False when git command fails."""
-    with patch("bernstein.core.agent_reaping.subprocess") as mock_subprocess:
+    with patch("bernstein.core.agents.agent_reaping.subprocess") as mock_subprocess:
         mock_subprocess.run.side_effect = OSError("git not found")
         mock_subprocess.TimeoutExpired = TimeoutError
         mock_subprocess.SubprocessError = Exception
@@ -201,10 +201,10 @@ def test_orphaned_task_completes_on_git_commits(tmp_path: Path) -> None:
     orch._spawner.get_worktree_path.return_value = tmp_path / "worktree"
 
     with (
-        patch("bernstein.core.agent_reaping.collect_completion_data", return_value={"files_modified": []}),
-        patch("bernstein.core.agent_reaping._has_git_commits_on_branch", return_value=True),
-        patch("bernstein.core.agent_reaping.complete_task") as mock_complete,
-        patch("bernstein.core.agent_reaping.retry_or_fail_task") as mock_retry,
+        patch("bernstein.core.agents.agent_reaping.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_reaping._has_git_commits_on_branch", return_value=True),
+        patch("bernstein.core.agents.agent_reaping.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_reaping.retry_or_fail_task") as mock_retry,
     ):
         handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
 
@@ -237,10 +237,10 @@ def test_orphaned_task_completes_on_clean_exit(tmp_path: Path) -> None:
     orch = _make_orch_no_ratelimit(tmp_path)
 
     with (
-        patch("bernstein.core.agent_reaping.collect_completion_data", return_value={"files_modified": []}),
-        patch("bernstein.core.agent_reaping._has_git_commits_on_branch", return_value=False),
-        patch("bernstein.core.agent_reaping.complete_task") as mock_complete,
-        patch("bernstein.core.agent_reaping.retry_or_fail_task") as mock_retry,
+        patch("bernstein.core.agents.agent_reaping.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_reaping._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_reaping.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_reaping.retry_or_fail_task") as mock_retry,
     ):
         handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
 
@@ -274,10 +274,10 @@ def test_orphaned_task_fails_when_no_signals_no_files_no_commits_nonzero_exit(tm
     orch = _make_orch_no_ratelimit(tmp_path)
 
     with (
-        patch("bernstein.core.agent_reaping.collect_completion_data", return_value={"files_modified": []}),
-        patch("bernstein.core.agent_reaping._has_git_commits_on_branch", return_value=False),
-        patch("bernstein.core.agent_reaping.complete_task") as mock_complete,
-        patch("bernstein.core.agent_reaping.retry_or_fail_task") as mock_retry,
+        patch("bernstein.core.agents.agent_reaping.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_reaping._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_reaping.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_reaping.retry_or_fail_task") as mock_retry,
     ):
         handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
 
@@ -307,12 +307,12 @@ def test_orphaned_task_files_modified_takes_priority(tmp_path: Path) -> None:
 
     with (
         patch(
-            "bernstein.core.agent_reaping.collect_completion_data",
+            "bernstein.core.agents.agent_reaping.collect_completion_data",
             return_value={"files_modified": ["src/foo.py"]},
         ),
-        patch("bernstein.core.agent_reaping._has_git_commits_on_branch", return_value=True),
-        patch("bernstein.core.agent_reaping.complete_task") as mock_complete,
-        patch("bernstein.core.agent_reaping.retry_or_fail_task") as mock_retry,
+        patch("bernstein.core.agents.agent_reaping._has_git_commits_on_branch", return_value=True),
+        patch("bernstein.core.agents.agent_reaping.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_reaping.retry_or_fail_task") as mock_retry,
     ):
         handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
 

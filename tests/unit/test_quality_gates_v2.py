@@ -79,7 +79,7 @@ def test_run_quality_gates_preserves_warn_status_and_records_quality_score(tmp_p
         cache_hits=0,
     )
 
-    with patch("bernstein.core.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)):
+    with patch("bernstein.core.quality.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)):
         result = run_quality_gates(_task(), tmp_path, tmp_path, config)
 
     assert result.passed is True
@@ -117,7 +117,7 @@ def test_warn_timeout_and_bypassed_map_to_legacy_flagged_metrics(tmp_path: Path)
         cache_hits=0,
     )
 
-    with patch("bernstein.core.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)):
+    with patch("bernstein.core.quality.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)):
         run_quality_gates(_task(), tmp_path, tmp_path, config)
 
     metrics_path = tmp_path / ".sdd" / "metrics" / "quality_gates.jsonl"
@@ -142,7 +142,7 @@ def test_skipped_status_maps_to_pass_metric(tmp_path: Path) -> None:
         cache_hits=0,
     )
 
-    with patch("bernstein.core.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)):
+    with patch("bernstein.core.quality.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)):
         result = run_quality_gates(_task(), tmp_path, tmp_path, config)
 
     assert result.gate_results[0].status == "skipped"
@@ -165,7 +165,7 @@ def test_blocked_gate_maps_to_blocked_metric(tmp_path: Path) -> None:
         cache_hits=0,
     )
 
-    with patch("bernstein.core.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)):
+    with patch("bernstein.core.quality.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)):
         result = run_quality_gates(_task(), tmp_path, tmp_path, config)
 
     assert result.passed is False
@@ -189,8 +189,8 @@ def test_quality_score_failure_is_best_effort(tmp_path: Path) -> None:
     )
 
     with (
-        patch("bernstein.core.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)),
-        patch("bernstein.core.quality_score.QualityScorer.score", side_effect=RuntimeError("boom")),
+        patch("bernstein.core.quality.gate_runner.GateRunner.run_all", new=AsyncMock(return_value=report)),
+        patch("bernstein.core.quality.quality_score.QualityScorer.score", side_effect=RuntimeError("boom")),
     ):
         result = run_quality_gates(_task(), tmp_path, tmp_path, config)
 

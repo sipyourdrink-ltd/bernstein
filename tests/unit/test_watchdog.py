@@ -67,7 +67,7 @@ def test_collect_watchdog_findings_prioritizes_progress_stall(tmp_path: Path) ->
     _write_heartbeat(workdir, session.id, 90.0)
     _write_log(workdir, session.id, 5)
 
-    with patch("bernstein.core.watchdog.time.time", return_value=200.0):
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=200.0):
         findings = collect_watchdog_findings(orch)
 
     assert len(findings) == 1
@@ -82,7 +82,7 @@ def test_collect_watchdog_findings_detects_stale_log_growth(tmp_path: Path) -> N
     _write_heartbeat(workdir, session.id, 195.0)
     _write_log(workdir, session.id, 4)
 
-    with patch("bernstein.core.watchdog.time.time", return_value=200.0):
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=200.0):
         findings = collect_watchdog_findings(orch)
 
     assert len(findings) == 1
@@ -96,7 +96,7 @@ def test_collect_watchdog_findings_detects_silent_agent(tmp_path: Path) -> None:
     session = _session("task-1", spawn_ts=0.0)
     orch = _orch(workdir, session=session)
 
-    with patch("bernstein.core.watchdog.time.time", return_value=200.0):
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=200.0):
         findings = collect_watchdog_findings(orch)
 
     assert len(findings) == 1
@@ -118,7 +118,7 @@ def test_watchdog_manager_creates_one_triage_task_for_active_incident(tmp_path: 
         detail="Three identical snapshots.",
     )
 
-    with patch("bernstein.core.watchdog.time.time", return_value=100.0):
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=100.0):
         manager.sync([finding])
         manager.sync([finding])
 
@@ -153,7 +153,7 @@ def test_watchdog_manager_escalates_repeated_high_severity_incident(tmp_path: Pa
         detail="Heartbeat age exceeded the wakeup threshold.",
     )
 
-    with patch("bernstein.core.watchdog.time.time", return_value=200.0):
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=200.0):
         manager.sync([finding])
         manager.sync([finding])
 

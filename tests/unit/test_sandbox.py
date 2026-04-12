@@ -49,7 +49,7 @@ def test_spawn_in_sandbox_uses_adapter_specific_image(tmp_path: Path) -> None:
     )
     fake_handle = ContainerHandle(container_id="sandbox-1", session_id="S-1", pid=321)
 
-    with patch("bernstein.core.sandbox.ContainerManager") as manager_cls:
+    with patch("bernstein.core.security.sandbox.ContainerManager") as manager_cls:
         manager = manager_cls.return_value
         manager.spawn_in_container.return_value = fake_handle
 
@@ -76,7 +76,7 @@ def test_spawn_in_sandbox_applies_network_override(tmp_path: Path) -> None:
     sandbox = DockerSandbox(enabled=True, runtime="podman")
     fake_handle = ContainerHandle(container_id="sandbox-2", session_id="S-2", pid=654)
 
-    with patch("bernstein.core.sandbox.ContainerManager") as manager_cls:
+    with patch("bernstein.core.security.sandbox.ContainerManager") as manager_cls:
         manager = manager_cls.return_value
         manager.spawn_in_container.return_value = fake_handle
 

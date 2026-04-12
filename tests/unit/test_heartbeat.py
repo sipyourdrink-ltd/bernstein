@@ -30,7 +30,7 @@ def test_check_stale_agents_writes_wakeup_after_sixty_seconds() -> None:
     )
     orch._signal_mgr.read_heartbeat.return_value = SimpleNamespace(timestamp=130.0)
 
-    with patch("bernstein.core.heartbeat.time.time", return_value=200.0):
+    with patch("bernstein.core.agents.heartbeat.time.time", return_value=200.0):
         check_stale_agents(orch)
 
     orch._signal_mgr.write_wakeup.assert_called_once()
@@ -46,7 +46,7 @@ def test_check_stale_agents_writes_shutdown_after_one_hundred_twenty_seconds() -
     )
     orch._signal_mgr.read_heartbeat.return_value = SimpleNamespace(timestamp=70.0)
 
-    with patch("bernstein.core.heartbeat.time.time", return_value=200.0):
+    with patch("bernstein.core.agents.heartbeat.time.time", return_value=200.0):
         check_stale_agents(orch)
 
     orch._signal_mgr.write_shutdown.assert_called_once()
@@ -71,7 +71,7 @@ def test_check_stalled_tasks_writes_wakeup_after_three_identical_snapshots() -> 
     orch._client.get.return_value.json.return_value = [snapshot]
     orch._client.get.return_value.raise_for_status.return_value = None
 
-    with patch("bernstein.core.heartbeat.time.time", return_value=220.0):
+    with patch("bernstein.core.agents.heartbeat.time.time", return_value=220.0):
         check_stalled_tasks(orch)
 
     orch._signal_mgr.write_wakeup.assert_called_once()
@@ -96,7 +96,7 @@ def test_check_stalled_tasks_kills_agent_after_seven_identical_snapshots() -> No
     orch._client.get.return_value.json.return_value = [snapshot]
     orch._client.get.return_value.raise_for_status.return_value = None
 
-    with patch("bernstein.core.heartbeat.time.time", return_value=220.0):
+    with patch("bernstein.core.agents.heartbeat.time.time", return_value=220.0):
         check_stalled_tasks(orch)
 
     orch._spawner.kill.assert_called_once_with(session)

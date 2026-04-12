@@ -15,7 +15,7 @@ from bernstein.core.adapter_autodetect import (
 
 class TestScanForAdapters:
     def test_scan_finds_nothing_when_path_empty(self) -> None:
-        with patch("bernstein.core.adapter_autodetect.shutil.which", return_value=None):
+        with patch("bernstein.core.agents.adapter_autodetect.shutil.which", return_value=None):
             result = scan_for_adapters()
         assert len(result.found) == 0
         assert len(result.missing) == len(_KNOWN_BINARIES)
@@ -26,7 +26,7 @@ class TestScanForAdapters:
                 return "/usr/bin/claude"
             return None
 
-        with patch("bernstein.core.adapter_autodetect.shutil.which", side_effect=mock_which):
+        with patch("bernstein.core.agents.adapter_autodetect.shutil.which", side_effect=mock_which):
             result = scan_for_adapters()
         found_names = [d.adapter_name for d in result.found]
         assert "claude" in found_names
@@ -39,7 +39,7 @@ class TestScanForAdapters:
                 return "/usr/local/bin/my-agent"
             return None
 
-        with patch("bernstein.core.adapter_autodetect.shutil.which", side_effect=mock_which):
+        with patch("bernstein.core.agents.adapter_autodetect.shutil.which", side_effect=mock_which):
             result = scan_for_adapters(extra_binaries={"my-agent": "myagent"})
         found_names = [d.adapter_name for d in result.found]
         assert "myagent" in found_names
@@ -63,7 +63,7 @@ class TestDetectedAdapter:
 
 class TestAutoRegisterAdapters:
     def test_auto_register_no_crash(self) -> None:
-        with patch("bernstein.core.adapter_autodetect.shutil.which", return_value=None):
+        with patch("bernstein.core.agents.adapter_autodetect.shutil.which", return_value=None):
             result = auto_register_adapters()
         assert isinstance(result, ScanResult)
 

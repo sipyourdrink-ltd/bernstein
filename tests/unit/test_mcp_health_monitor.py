@@ -30,7 +30,7 @@ def _make_manager_with_mock(
     mock_proc = MagicMock()
     mock_proc.pid = 100
     mock_proc.poll.return_value = None
-    with patch("bernstein.core.mcp_manager.subprocess.Popen", return_value=mock_proc):
+    with patch("bernstein.core.protocols.mcp_manager.subprocess.Popen", return_value=mock_proc):
         mgr.start_all()
     return mgr, mock_proc
 
@@ -93,7 +93,7 @@ class TestProbeOnce:
         new_proc = MagicMock()
         new_proc.pid = 200
         new_proc.poll.return_value = None
-        with patch("bernstein.core.mcp_manager.subprocess.Popen", return_value=new_proc):
+        with patch("bernstein.core.protocols.mcp_manager.subprocess.Popen", return_value=new_proc):
             results = monitor.probe_once()
 
         assert len(results) == 1
@@ -117,7 +117,7 @@ class TestProbeOnce:
         mock_proc = MagicMock()
         mock_proc.pid = 100
         mock_proc.poll.return_value = None
-        with patch("bernstein.core.mcp_manager.subprocess.Popen", return_value=mock_proc):
+        with patch("bernstein.core.protocols.mcp_manager.subprocess.Popen", return_value=mock_proc):
             mgr.start_all()
 
         monitor = McpHealthMonitor(mgr)

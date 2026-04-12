@@ -113,7 +113,7 @@ class TestDepAuditGateRunner:
         runner = GateRunner(config, tmp_path)
         task = _make_task(owned_files=["pyproject.toml"])
 
-        with patch("bernstein.core.quality_gates._run_command", return_value=(True, "No vulnerabilities found")):
+        with patch("bernstein.core.quality.quality_gates._run_command", return_value=(True, "No vulnerabilities found")):
             report = asyncio.run(runner.run_all(task, tmp_path))
 
         assert report.overall_pass
@@ -155,7 +155,7 @@ class TestDepAuditGateRunner:
         runner = GateRunner(config, tmp_path)
         task = _make_task(owned_files=["src/app.py"])
 
-        with patch("bernstein.core.quality_gates._run_command", return_value=(True, "ok")) as mock_cmd:
+        with patch("bernstein.core.quality.quality_gates._run_command", return_value=(True, "ok")) as mock_cmd:
             report = asyncio.run(runner.run_all(task, tmp_path))
 
         result = next(r for r in report.results if r.name == "dep_audit")
@@ -180,7 +180,7 @@ class TestDepAuditGateRunner:
             captured_command = command
             return True, "ok"
 
-        with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+        with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
             asyncio.run(runner.run_all(task, tmp_path))
 
         assert captured_command == "pip-audit --strict"
@@ -209,7 +209,7 @@ class TestDepAuditGateRunner:
             captured_command = command
             return True, "ok"
 
-        with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+        with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
             asyncio.run(runner.run_all(task, tmp_path))
 
         assert captured_command == "safety check"

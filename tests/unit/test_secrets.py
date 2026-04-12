@@ -314,7 +314,7 @@ class TestLoadSecrets:
         mock_provider = MagicMock()
         mock_provider.fetch.return_value = {"KEY": "val"}
 
-        with patch("bernstein.core.secrets._create_provider", return_value=mock_provider):
+        with patch("bernstein.core.security.secrets._create_provider", return_value=mock_provider):
             r1 = load_secrets(cfg)
             r2 = load_secrets(cfg)
 
@@ -329,7 +329,7 @@ class TestLoadSecrets:
         mock_provider = MagicMock()
         mock_provider.fetch.return_value = {"KEY": "val"}
 
-        with patch("bernstein.core.secrets._create_provider", return_value=mock_provider):
+        with patch("bernstein.core.security.secrets._create_provider", return_value=mock_provider):
             load_secrets(cfg)
             # Manually expire cache
             _cache["vault:secret/test"].fetched_at = time.monotonic() - 10
@@ -348,7 +348,7 @@ class TestLoadSecrets:
         mock_provider.fetch.side_effect = SecretsError("unreachable")
 
         with (
-            patch("bernstein.core.secrets._create_provider", return_value=mock_provider),
+            patch("bernstein.core.security.secrets._create_provider", return_value=mock_provider),
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-fallback"}, clear=False),
         ):
             result = load_secrets(cfg)
@@ -365,7 +365,7 @@ class TestLoadSecrets:
         mock_provider = MagicMock()
         mock_provider.fetch.return_value = {"api_key": "sk-mapped"}
 
-        with patch("bernstein.core.secrets._create_provider", return_value=mock_provider):
+        with patch("bernstein.core.security.secrets._create_provider", return_value=mock_provider):
             result = load_secrets(cfg)
 
         assert result == {"ANTHROPIC_API_KEY": "sk-mapped"}
@@ -385,7 +385,7 @@ class TestInvalidateCache:
         mock_provider = MagicMock()
         mock_provider.fetch.return_value = {"K": "V"}
 
-        with patch("bernstein.core.secrets._create_provider", return_value=mock_provider):
+        with patch("bernstein.core.security.secrets._create_provider", return_value=mock_provider):
             load_secrets(cfg)
 
         assert len(_cache) == 1
@@ -399,7 +399,7 @@ class TestInvalidateCache:
         mock_provider = MagicMock()
         mock_provider.fetch.return_value = {"K": "V"}
 
-        with patch("bernstein.core.secrets._create_provider", return_value=mock_provider):
+        with patch("bernstein.core.security.secrets._create_provider", return_value=mock_provider):
             load_secrets(cfg1)
             load_secrets(cfg2)
 
@@ -420,7 +420,7 @@ class TestCheckProviderConnectivity:
         mock_provider = MagicMock()
         mock_provider.check_connectivity.return_value = (True, "OK")
 
-        with patch("bernstein.core.secrets._create_provider", return_value=mock_provider):
+        with patch("bernstein.core.security.secrets._create_provider", return_value=mock_provider):
             ok, detail = check_provider_connectivity(cfg)
 
         assert ok is True
@@ -442,7 +442,7 @@ class TestBuildFilteredEnvWithSecrets:
 
         with (
             patch("bernstein.adapters.env_isolation.os.environ", fake_env),
-            patch("bernstein.core.secrets.load_secrets", return_value={"ANTHROPIC_API_KEY": "sk-from-vault"}),
+            patch("bernstein.core.security.secrets.load_secrets", return_value={"ANTHROPIC_API_KEY": "sk-from-vault"}),
         ):
             result = build_filtered_env(secrets_config=cfg)
 
@@ -461,7 +461,7 @@ class TestBuildFilteredEnvWithSecrets:
 
         with (
             patch("bernstein.adapters.env_isolation.os.environ", fake_env),
-            patch("bernstein.core.secrets.load_secrets", return_value={"ANTHROPIC_API_KEY": "sk-from-vault"}),
+            patch("bernstein.core.security.secrets.load_secrets", return_value={"ANTHROPIC_API_KEY": "sk-from-vault"}),
         ):
             result = build_filtered_env(["ANTHROPIC_API_KEY"], secrets_config=cfg)
 

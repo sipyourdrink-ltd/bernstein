@@ -20,7 +20,7 @@ from bernstein.core.tick_pipeline import (
 
 def test_parse_backlog_file_uses_safe_defaults_when_parser_returns_none() -> None:
     """parse_backlog_file falls back to filename-derived defaults when markdown parsing fails."""
-    with patch("bernstein.core.tick_pipeline.parse_backlog_text", return_value=None):
+    with patch("bernstein.core.orchestration.tick_pipeline.parse_backlog_text", return_value=None):
         payload = parse_backlog_file("123-fix-auth.md", "Body text")
 
     assert payload["title"] == "123 fix auth"
@@ -74,7 +74,7 @@ def test_compute_total_spent_uses_cache_and_updates_when_file_changes(tmp_path: 
     )
 
     first = compute_total_spent(tmp_path)
-    with patch("bernstein.core.tick_pipeline._parse_file_total") as mock_parse:
+    with patch("bernstein.core.orchestration.tick_pipeline._parse_file_total") as mock_parse:
         second = compute_total_spent(tmp_path)
     cost_file.write_text(json.dumps({"value": 2.0, "labels": {"task_id": "T-2"}}) + "\n", encoding="utf-8")
     third = compute_total_spent(tmp_path)

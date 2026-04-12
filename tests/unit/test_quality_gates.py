@@ -88,7 +88,7 @@ class TestRunQualityGatesDisabled:
     def test_disabled_no_commands_run(self, tmp_path: Path) -> None:
         config = QualityGatesConfig(enabled=False, lint=True)
         task = _make_task()
-        with patch("bernstein.core.quality_gates._run_command") as mock_run:
+        with patch("bernstein.core.quality.quality_gates._run_command") as mock_run:
             run_quality_gates(task, tmp_path, tmp_path, config)
             mock_run.assert_not_called()
 
@@ -145,7 +145,7 @@ class TestLintGate:
             enabled=True, lint=False, type_check=False, tests=False, pii_scan=False, dlp_scan=False
         )
         task = _make_task()
-        with patch("bernstein.core.quality_gates._run_command") as mock_run:
+        with patch("bernstein.core.quality.quality_gates._run_command") as mock_run:
             result = run_quality_gates(task, tmp_path, tmp_path, config)
             mock_run.assert_not_called()
         assert result.passed
@@ -375,7 +375,7 @@ class TestMetricsRecording:
         fake_ctx.__enter__.return_value = fake_span
         fake_ctx.__exit__.return_value = None
 
-        with patch("bernstein.core.gate_runner.start_span", return_value=fake_ctx) as mock_start_span:
+        with patch("bernstein.core.quality.gate_runner.start_span", return_value=fake_ctx) as mock_start_span:
             result = run_quality_gates(task, tmp_path, tmp_path, config)
 
         assert result.passed
@@ -588,7 +588,7 @@ class TestIntentVerificationGate:
         """Intent verification gate is off by default — no LLM calls made."""
         config = QualityGatesConfig(enabled=True, lint=False, type_check=False, tests=False)
         task = self._make_task_with_summary()
-        with patch("bernstein.core.quality_gates._run_intent_gate") as mock_gate:
+        with patch("bernstein.core.quality.quality_gates._run_intent_gate") as mock_gate:
             run_quality_gates(task, tmp_path, tmp_path, config)
             mock_gate.assert_not_called()
 
@@ -598,7 +598,7 @@ class TestIntentVerificationGate:
         config = QualityGatesConfig(enabled=True, lint=False, type_check=False, tests=False, intent_verification=iv_cfg)
         task = self._make_task_with_summary()
         mock_verdict = IntentVerdict(verdict="yes", reason="Matches.", model="test-model")
-        with patch("bernstein.core.quality_gates._run_intent_gate", return_value=(mock_verdict, False)):
+        with patch("bernstein.core.quality.quality_gates._run_intent_gate", return_value=(mock_verdict, False)):
             result = run_quality_gates(task, tmp_path, tmp_path, config)
         assert result.passed
         iv_result = next(r for r in result.gate_results if r.gate == "intent_verification")
@@ -611,7 +611,7 @@ class TestIntentVerificationGate:
         config = QualityGatesConfig(enabled=True, lint=False, type_check=False, tests=False, intent_verification=iv_cfg)
         task = self._make_task_with_summary()
         mock_verdict = IntentVerdict(verdict="no", reason="Wrong thing.", model="test-model")
-        with patch("bernstein.core.quality_gates._run_intent_gate", return_value=(mock_verdict, True)):
+        with patch("bernstein.core.quality.quality_gates._run_intent_gate", return_value=(mock_verdict, True)):
             result = run_quality_gates(task, tmp_path, tmp_path, config)
         assert not result.passed
         iv_result = next(r for r in result.gate_results if r.gate == "intent_verification")
@@ -623,7 +623,7 @@ class TestIntentVerificationGate:
         config = QualityGatesConfig(enabled=True, lint=False, type_check=False, tests=False, intent_verification=iv_cfg)
         task = self._make_task_with_summary()
         mock_verdict = IntentVerdict(verdict="partially", reason="Missing one part.", model="test-model")
-        with patch("bernstein.core.quality_gates._run_intent_gate", return_value=(mock_verdict, False)):
+        with patch("bernstein.core.quality.quality_gates._run_intent_gate", return_value=(mock_verdict, False)):
             result = run_quality_gates(task, tmp_path, tmp_path, config)
         assert result.passed
         iv_result = next(r for r in result.gate_results if r.gate == "intent_verification")
@@ -636,7 +636,7 @@ class TestIntentVerificationGate:
         config = QualityGatesConfig(enabled=True, lint=False, type_check=False, tests=False, intent_verification=iv_cfg)
         task = self._make_task_with_summary()
         mock_verdict = IntentVerdict(verdict="partially", reason="Missing one part.", model="test-model")
-        with patch("bernstein.core.quality_gates._run_intent_gate", return_value=(mock_verdict, True)):
+        with patch("bernstein.core.quality.quality_gates._run_intent_gate", return_value=(mock_verdict, True)):
             result = run_quality_gates(task, tmp_path, tmp_path, config)
         assert not result.passed
 
@@ -646,7 +646,7 @@ class TestIntentVerificationGate:
         config = QualityGatesConfig(enabled=True, lint=False, type_check=False, tests=False, intent_verification=iv_cfg)
         task = self._make_task_with_summary()
         mock_verdict = IntentVerdict(verdict="yes", reason="Good.", model="test-model")
-        with patch("bernstein.core.quality_gates._run_intent_gate", return_value=(mock_verdict, False)):
+        with patch("bernstein.core.quality.quality_gates._run_intent_gate", return_value=(mock_verdict, False)):
             run_quality_gates(task, tmp_path, tmp_path, config)
         metrics_file = tmp_path / ".sdd" / "metrics" / "quality_gates.jsonl"
         assert metrics_file.exists()
@@ -662,7 +662,7 @@ class TestIntentVerificationGate:
         config = QualityGatesConfig(enabled=True, lint=False, type_check=False, tests=False, intent_verification=iv_cfg)
         task = self._make_task_with_summary()
         mock_verdict = IntentVerdict(verdict="no", reason="Completely wrong.", model="m")
-        with patch("bernstein.core.quality_gates._run_intent_gate", return_value=(mock_verdict, True)):
+        with patch("bernstein.core.quality.quality_gates._run_intent_gate", return_value=(mock_verdict, True)):
             result = run_quality_gates(task, tmp_path, tmp_path, config)
         iv_result = next(r for r in result.gate_results if r.gate == "intent_verification")
         assert "no" in iv_result.detail

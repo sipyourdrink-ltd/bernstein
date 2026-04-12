@@ -31,12 +31,12 @@ class TestCheckCommandExists:
         assert err is not None
         assert err.check == "command_missing"
 
-    @patch("bernstein.core.mcp_config_validator.shutil.which", return_value="/usr/bin/npx")
+    @patch("bernstein.core.protocols.mcp_config_validator.shutil.which", return_value="/usr/bin/npx")
     def test_command_found(self, _mock_which: object) -> None:
         cfg = MCPServerConfig(name="github", command=["npx", "-y", "gh-mcp"])
         assert check_command_exists(cfg) is None
 
-    @patch("bernstein.core.mcp_config_validator.shutil.which", return_value=None)
+    @patch("bernstein.core.protocols.mcp_config_validator.shutil.which", return_value=None)
     def test_command_not_found(self, _mock_which: object) -> None:
         cfg = MCPServerConfig(name="missing", command=["nonexistent-bin"])
         err = check_command_exists(cfg)
@@ -149,7 +149,7 @@ class TestCheckUrlReachable:
 class TestValidateMcpConfigs:
     """Tests for the aggregate validation function."""
 
-    @patch("bernstein.core.mcp_config_validator.shutil.which", return_value="/usr/bin/echo")
+    @patch("bernstein.core.protocols.mcp_config_validator.shutil.which", return_value="/usr/bin/echo")
     def test_all_valid(self, _mock_which: object) -> None:
         configs = [
             MCPServerConfig(name="test", command=["echo", "hello"]),
@@ -157,7 +157,7 @@ class TestValidateMcpConfigs:
         errors = validate_mcp_configs(configs, check_urls=False)
         assert errors == []
 
-    @patch("bernstein.core.mcp_config_validator.shutil.which", return_value=None)
+    @patch("bernstein.core.protocols.mcp_config_validator.shutil.which", return_value=None)
     def test_collects_multiple_errors(self, _mock_which: object) -> None:
         configs = [
             MCPServerConfig(name="bad1", command=["missing1"]),
@@ -172,7 +172,7 @@ class TestValidateMcpConfigs:
         errors = validate_mcp_configs([])
         assert errors == []
 
-    @patch("bernstein.core.mcp_config_validator.shutil.which", return_value="/usr/bin/npx")
+    @patch("bernstein.core.protocols.mcp_config_validator.shutil.which", return_value="/usr/bin/npx")
     def test_skip_url_check(self, _mock_which: object) -> None:
         configs = [
             MCPServerConfig(name="stdio", command=["npx"]),

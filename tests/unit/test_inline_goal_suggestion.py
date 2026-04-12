@@ -14,7 +14,7 @@ def test_bootstrap_from_goal_prints_single_agent_suggestion(capsys: pytest.Captu
     def _stop_after_preflight(cli: str, port: int) -> None:
         raise RuntimeError("stop-after-suggestion")
 
-    with patch("bernstein.core.bootstrap.preflight_checks", side_effect=_stop_after_preflight):
+    with patch("bernstein.core.orchestration.bootstrap.preflight_checks", side_effect=_stop_after_preflight):
         with pytest.raises(RuntimeError, match="stop-after-suggestion"):
             bootstrap_from_goal(goal="fix typo in README", workdir=tmp_path)
 

@@ -80,7 +80,7 @@ def test_cook_execution_prints_live_progress(tmp_path: Path) -> None:
 
     runner = CliRunner()
     with (
-        patch("bernstein.core.bootstrap.bootstrap_from_goal"),
+        patch("bernstein.core.orchestration.bootstrap.bootstrap_from_goal"),
         patch("bernstein.cli.run_confirm.server_get", side_effect=_fake_server_get),
         patch("bernstein.cli.run_confirm.time.sleep", return_value=None),
     ):

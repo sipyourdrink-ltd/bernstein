@@ -141,7 +141,7 @@ class TestCheckScopeViolations:
         # Patch _lookup_tasks to return a task with owned_files
         task = MagicMock()
         task.owned_files = ["src/"]
-        with patch("bernstein.core.circuit_breaker._lookup_tasks", return_value=[task]):
+        with patch("bernstein.core.observability.circuit_breaker._lookup_tasks", return_value=[task]):
             result = _make_result()
             check_scope_violations(orch, result)
         # No worktree → nothing killed
@@ -168,12 +168,12 @@ class TestCheckScopeViolations:
         task.owned_files = ["src/"]
 
         with (
-            patch("bernstein.core.circuit_breaker._lookup_tasks", return_value=[task]),
+            patch("bernstein.core.observability.circuit_breaker._lookup_tasks", return_value=[task]),
             patch(
                 "bernstein.core.circuit_breaker._get_worktree_changed_files",
                 return_value=["outside/file.py"],
             ),
-            patch("bernstein.core.circuit_breaker._get_worktree_branch", return_value=None),
+            patch("bernstein.core.observability.circuit_breaker._get_worktree_branch", return_value=None),
         ):
             result = _make_result()
             check_scope_violations(orch, result)
@@ -220,7 +220,7 @@ class TestCheckBudgetViolations:
         session = _make_session("b3", tokens_used=60_001, token_budget=30_000)
         orch = _make_orch(tmp_path, [session])
         result = _make_result()
-        with patch("bernstein.core.circuit_breaker._get_worktree_branch", return_value=None):
+        with patch("bernstein.core.observability.circuit_breaker._get_worktree_branch", return_value=None):
             check_budget_violations(orch, result)
         assert "b3" in result.reaped
         assert session.status == "dead"
@@ -242,7 +242,7 @@ class TestCheckBudgetViolations:
         session = _make_session("b5", tokens_used=100_001, token_budget=50_000)
         orch = _make_orch(tmp_path, [session])
         result = _make_result()
-        with patch("bernstein.core.circuit_breaker._get_worktree_branch", return_value=None):
+        with patch("bernstein.core.observability.circuit_breaker._get_worktree_branch", return_value=None):
             check_budget_violations(orch, result)
         q = tmp_path / ".sdd" / "quarantine" / "b5.json"
         assert q.exists()
@@ -254,7 +254,7 @@ class TestCheckBudgetViolations:
         session = _make_session("b6", tokens_used=20_001, token_budget=10_000)
         orch = _make_orch(tmp_path, [session])
         result = _make_result()
-        with patch("bernstein.core.circuit_breaker._get_worktree_branch", return_value=None):
+        with patch("bernstein.core.observability.circuit_breaker._get_worktree_branch", return_value=None):
             check_budget_violations(orch, result)
         kill_file = tmp_path / ".sdd" / "runtime" / "b6.kill"
         payload = json.loads(kill_file.read_text())
@@ -303,8 +303,8 @@ class TestCheckGuardrailViolations:
         # Embed a fake AWS access key in the diff
         dirty_diff = "diff --git a/config.py b/config.py\n+AWS_KEY = 'AKIAIOSFODNN7EXAMPLE123'\n"
         with (
-            patch("bernstein.core.circuit_breaker._get_worktree_diff", return_value=dirty_diff),
-            patch("bernstein.core.circuit_breaker._get_worktree_branch", return_value="agent/g3"),
+            patch("bernstein.core.observability.circuit_breaker._get_worktree_diff", return_value=dirty_diff),
+            patch("bernstein.core.observability.circuit_breaker._get_worktree_branch", return_value="agent/g3"),
         ):
             result = _make_result()
             check_guardrail_violations(orch, result)
@@ -341,7 +341,7 @@ class TestCheckGuardrailViolations:
         orch = _make_orch(tmp_path, [session])
         orch._spawner.get_worktree_path.return_value = str(wt_path)
 
-        with patch("bernstein.core.circuit_breaker._get_worktree_diff", return_value=""):
+        with patch("bernstein.core.observability.circuit_breaker._get_worktree_diff", return_value=""):
             result = _make_result()
             check_guardrail_violations(orch, result)
         assert result.reaped == []

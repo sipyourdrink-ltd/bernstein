@@ -547,8 +547,8 @@ def test_orchestrator_make_evolution_loop_passes_governor(tmp_path: Path) -> Non
     spawner.workdir = tmp_path
 
     with (
-        patch("bernstein.core.orchestrator.build_manifest", return_value=MagicMock()),
-        patch("bernstein.core.orchestrator.save_manifest"),
+        patch("bernstein.core.orchestration.orchestrator.build_manifest", return_value=MagicMock()),
+        patch("bernstein.core.orchestration.orchestrator.save_manifest"),
     ):
         orch = Orchestrator(
             config=config,

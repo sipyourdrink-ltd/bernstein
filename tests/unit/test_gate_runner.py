@@ -59,7 +59,7 @@ def test_parallel_execution_preserves_pipeline_order(tmp_path: Path) -> None:
             active -= 1
         return True, "ok"
 
-    with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
         report = asyncio.run(runner.run_all(task, tmp_path))
 
     assert max_active >= 2
@@ -78,7 +78,7 @@ def test_changed_file_resolution_prefers_owned_files(tmp_path: Path) -> None:
     runner = GateRunner(config, tmp_path)
     task = _make_task(owned_files=["src/owned.py", "missing.py"])
 
-    with patch("bernstein.core.quality_gates._run_command", return_value=(True, "ok")):
+    with patch("bernstein.core.quality.quality_gates._run_command", return_value=(True, "ok")):
         report = asyncio.run(runner.run_all(task, tmp_path))
 
     assert report.changed_files == ["src/owned.py"]
@@ -97,7 +97,7 @@ def test_changed_file_resolution_uses_git_diff_fallback(tmp_path: Path) -> None:
 
     with (
         patch.object(GateRunner, "_git_diff_changed_files", return_value=["src/fallback.py"]),
-        patch("bernstein.core.quality_gates._run_command", return_value=(True, "ok")),
+        patch("bernstein.core.quality.quality_gates._run_command", return_value=(True, "ok")),
     ):
         report = asyncio.run(runner.run_all(task, tmp_path))
 
@@ -112,7 +112,7 @@ def test_timeout_blocks_required_gate(tmp_path: Path) -> None:
     runner = GateRunner(config, tmp_path)
     task = _make_task()
 
-    with patch("bernstein.core.quality_gates._run_command", return_value=(False, "Timed out after 30s")):
+    with patch("bernstein.core.quality.quality_gates._run_command", return_value=(False, "Timed out after 30s")):
         report = asyncio.run(runner.run_all(task, tmp_path))
 
     assert not report.overall_pass
@@ -128,7 +128,7 @@ def test_timeout_does_not_block_optional_gate(tmp_path: Path) -> None:
     runner = GateRunner(config, tmp_path)
     task = _make_task()
 
-    with patch("bernstein.core.quality_gates._run_command", return_value=(False, "Timed out after 30s")):
+    with patch("bernstein.core.quality.quality_gates._run_command", return_value=(False, "Timed out after 30s")):
         report = asyncio.run(runner.run_all(task, tmp_path))
 
     assert report.overall_pass
@@ -144,7 +144,7 @@ def test_non_required_fail_does_not_block(tmp_path: Path) -> None:
     runner = GateRunner(config, tmp_path)
     task = _make_task()
 
-    with patch("bernstein.core.quality_gates._run_command", return_value=(False, "lint failed")):
+    with patch("bernstein.core.quality.quality_gates._run_command", return_value=(False, "lint failed")):
         report = asyncio.run(runner.run_all(task, tmp_path))
 
     assert report.overall_pass
@@ -170,7 +170,7 @@ def test_cache_hit_and_invalidation_by_content_hash(tmp_path: Path) -> None:
         run_count += 1
         return True, "ok"
 
-    with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
         report_one = asyncio.run(GateRunner(config, tmp_path).run_all(task, tmp_path))
         report_two = asyncio.run(GateRunner(config, tmp_path).run_all(task, tmp_path))
         target.write_text("print('two')\n", encoding="utf-8")
@@ -201,7 +201,7 @@ def test_timeout_and_bypass_are_not_cached(tmp_path: Path) -> None:
         timeout_count += 1
         return False, "Timed out after 5s"
 
-    with patch("bernstein.core.quality_gates._run_command", side_effect=fake_timeout):
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_timeout):
         asyncio.run(GateRunner(config, tmp_path).run_all(task, tmp_path))
         asyncio.run(GateRunner(config, tmp_path).run_all(task, tmp_path))
 
@@ -214,7 +214,7 @@ def test_timeout_and_bypass_are_not_cached(tmp_path: Path) -> None:
         command_count += 1
         return True, "ok"
 
-    with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
         asyncio.run(GateRunner(config, tmp_path).run_all(task, tmp_path, skip_gates=["lint"], bypass_reason="manual"))
         report = asyncio.run(GateRunner(config, tmp_path).run_all(task, tmp_path))
 
@@ -358,7 +358,7 @@ def test_type_check_command_includes_transitive_importers(tmp_path: Path) -> Non
         captured_commands.append(command)
         return True, "ok"
 
-    with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
         asyncio.run(runner.run_all(task, tmp_path))
 
     assert len(captured_commands) == 1
@@ -389,8 +389,8 @@ def test_type_check_command_falls_back_when_dependency_info_unavailable(tmp_path
         return True, "ok"
 
     with (
-        patch("bernstein.core.test_impact.TestImpactAnalyzer") as mock_analyzer_cls,
-        patch("bernstein.core.quality_gates._run_command", side_effect=fake_run),
+        patch("bernstein.core.quality.test_impact.TestImpactAnalyzer") as mock_analyzer_cls,
+        patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run),
     ):
         mock_analyzer_cls.side_effect = RuntimeError("index unavailable")
         asyncio.run(runner.run_all(task, tmp_path))
@@ -421,7 +421,7 @@ def test_type_check_command_no_extra_files_when_no_importers(tmp_path: Path) -> 
         captured_commands.append(command)
         return True, "ok"
 
-    with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
         asyncio.run(runner.run_all(task, tmp_path))
 
     assert len(captured_commands) == 1

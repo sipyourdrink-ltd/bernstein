@@ -466,9 +466,9 @@ def test_process_completed_tasks_moves_ticket_and_caches_verified_result(tmp_pat
     collector = _collector_for(task.id, session.id)
 
     with (
-        patch("bernstein.core.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.task_completion._get_git_diff_line_count_in_worktree", return_value=12),
-        patch("bernstein.core.task_completion.append_decision"),
+        patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
+        patch("bernstein.core.tasks.task_completion._get_git_diff_line_count_in_worktree", return_value=12),
+        patch("bernstein.core.tasks.task_completion.append_decision"),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)
@@ -519,8 +519,8 @@ def test_process_completed_tasks_records_quality_gate_failure_without_closing_ti
     orch._gate_coalescer.run.return_value = gate_result
 
     with (
-        patch("bernstein.core.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.task_completion.append_decision"),
+        patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
+        patch("bernstein.core.tasks.task_completion.append_decision"),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)

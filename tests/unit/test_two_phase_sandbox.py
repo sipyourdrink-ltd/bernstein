@@ -132,7 +132,7 @@ def _make_manager(tmp_path: Path, two_phase: TwoPhaseSandboxConfig | None = None
         image="bernstein-agent:test",
         two_phase_sandbox=two_phase,
     )
-    with patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"):
+    with patch("bernstein.core.agents.container._resolve_runtime_cmd", return_value="docker"):
         mgr = ContainerManager(cfg, tmp_path)
     return mgr
 

@@ -200,7 +200,7 @@ class TestLlmReview:
             stdout="PASS: All error handling looks good\n",
             stderr="",
         )
-        with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result):
+        with patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_result):
             signal = CompletionSignal(type="llm_review", value="Check error handling")
             passed, detail = evaluate_signal(signal, tmp_path)
         assert passed is True
@@ -213,7 +213,7 @@ class TestLlmReview:
             stdout="FAIL: Missing input validation on POST endpoint\n",
             stderr="",
         )
-        with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result):
+        with patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_result):
             signal = CompletionSignal(type="llm_review", value="Check input validation")
             passed, detail = evaluate_signal(signal, tmp_path)
         assert passed is False
@@ -226,7 +226,7 @@ class TestLlmReview:
             stdout="",
             stderr="",
         )
-        with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result):
+        with patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_result):
             signal = CompletionSignal(type="llm_review", value="Check something")
             passed, detail = evaluate_signal(signal, tmp_path)
         assert passed is False
@@ -239,7 +239,7 @@ class TestLlmReview:
             stdout="I think it looks okay maybe\n",
             stderr="",
         )
-        with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result):
+        with patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_result):
             signal = CompletionSignal(type="llm_review", value="Check something")
             passed, detail = evaluate_signal(signal, tmp_path)
         assert passed is False
@@ -273,7 +273,7 @@ class TestLlmReview:
             stdout="PASS: looks good\n",
             stderr="",
         )
-        with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result) as mock_run:
+        with patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_result) as mock_run:
             signal = CompletionSignal(type="llm_review", value="Check error handling")
             evaluate_signal(signal, tmp_path)
 
@@ -599,8 +599,8 @@ class TestJudgeTask:
             return '{"verdict": "accept", "confidence": 0.95, "feedback": "All good."}'
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
-            patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
         ):
             verdict = await judge_task(task, tmp_path, "Check correctness")
 
@@ -626,8 +626,8 @@ class TestJudgeTask:
             return '{"verdict": "retry", "confidence": 0.8, "feedback": "Missing unit tests."}'
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
-            patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
         ):
             verdict = await judge_task(task, tmp_path, "Check tests")
 
@@ -649,8 +649,8 @@ class TestJudgeTask:
             return '{"verdict": "accept", "confidence": 0.4, "feedback": "Not sure."}'
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
-            patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
         ):
             verdict = await judge_task(task, tmp_path, "Check something")
 
@@ -670,7 +670,7 @@ class TestJudgeTask:
         )
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
             patch(
                 "bernstein.core.janitor.call_llm",
                 side_effect=RuntimeError("API error"),
@@ -698,8 +698,8 @@ class TestJudgeTask:
             return ""
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
-            patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
         ):
             verdict = await judge_task(task, tmp_path, "Check something")
 
@@ -734,8 +734,8 @@ class TestRunJanitorWithJudge:
             return '{"verdict": "accept", "confidence": 0.9, "feedback": "Good."}'
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
-            patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
         ):
             results = await run_janitor([task], tmp_path)
 
@@ -778,8 +778,8 @@ class TestRunJanitorWithJudge:
             )
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
-            patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
             patch.object(httpx.AsyncClient, "post", mock_post),
         ):
             results = await run_janitor(
@@ -843,8 +843,8 @@ class TestRunJanitorWithJudge:
             return '{"verdict": "retry", "confidence": 0.8, "feedback": "Still broken."}'
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
-            patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
         ):
             results = await run_janitor(
                 [task],
@@ -879,8 +879,8 @@ class TestRunJanitorWithJudge:
             return '{"verdict": "accept", "confidence": 0.5, "feedback": "Looks OK-ish."}'
 
         with (
-            patch("bernstein.core.janitor.subprocess.run", return_value=mock_diff),
-            patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
         ):
             results = await run_janitor([task], tmp_path)
 

@@ -74,7 +74,7 @@ class TestMCPRunAllowlist:
 
 
 class TestBuildMCPConfigWithAllowlist:
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_strict_allowlist_filters_servers(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -98,7 +98,7 @@ class TestBuildMCPConfigWithAllowlist:
         assert "filesystem" in servers
         assert "tavily" not in servers
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_permissive_allowlist_allows_all(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -128,7 +128,7 @@ class TestBuildMCPConfigWithAllowlist:
         assert result is not None
         assert "remote" in result["mcpServers"]
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_allowlist_all_blocked_returns_none(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -152,7 +152,7 @@ class TestBuildMCPConfigWithAllowlist:
 class TestAllowlistCleanupPath:
     """Test that blocked servers are not started when the manager respects the allowlist."""
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_start_all_then_filter_via_allowlist(self, mock_popen: MagicMock) -> None:
         """Servers can be started but then filtered during config build."""
         mock_proc = MagicMock()

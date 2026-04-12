@@ -27,7 +27,7 @@ def agent() -> AgentSession:
 
 def test_transition_task_success(task: Task) -> None:
     """Test a legal task status transition."""
-    with patch("bernstein.core.telemetry.start_span"):
+    with patch("bernstein.core.observability.telemetry.start_span"):
         event = transition_task(task, TaskStatus.CLAIMED, actor="test-actor", reason="testing")
         assert task.status == TaskStatus.CLAIMED
         assert event.entity_type == "task"
@@ -51,7 +51,7 @@ def test_transition_task_illegal(task: Task) -> None:
 
 def test_transition_agent_success(agent: AgentSession) -> None:
     """Test a legal agent status transition."""
-    with patch("bernstein.core.telemetry.start_span"):
+    with patch("bernstein.core.observability.telemetry.start_span"):
         event = transition_agent(agent, "working", actor="orchestrator", transition_reason=TransitionReason.COMPLETED)
         assert agent.status == "working"
         assert agent.transition_reason is TransitionReason.COMPLETED
@@ -64,7 +64,7 @@ def test_transition_agent_success(agent: AgentSession) -> None:
 
 def test_transition_agent_records_abort_metadata(agent: AgentSession) -> None:
     """Structured abort metadata should be persisted on the session and event."""
-    with patch("bernstein.core.telemetry.start_span"):
+    with patch("bernstein.core.observability.telemetry.start_span"):
         event = transition_agent(
             agent,
             "dead",
@@ -99,7 +99,7 @@ def test_lifecycle_listeners(task: Task) -> None:
     listener = MagicMock()
     add_listener(listener)
     try:
-        with patch("bernstein.core.telemetry.start_span"):
+        with patch("bernstein.core.observability.telemetry.start_span"):
             transition_task(task, TaskStatus.CLAIMED)
             assert listener.called
             event = listener.call_args[0][0]
@@ -114,7 +114,7 @@ def test_audit_log_integration(task: Task) -> None:
     mock_audit = MagicMock()
     set_audit_log(mock_audit)
     try:
-        with patch("bernstein.core.telemetry.start_span"):
+        with patch("bernstein.core.observability.telemetry.start_span"):
             transition_task(task, TaskStatus.CLAIMED, actor="auditor", reason="audit-test")
 
             assert mock_audit.log.called
@@ -134,7 +134,7 @@ def test_audit_log_integration(task: Task) -> None:
 def test_transition_task_terminal_statuses() -> None:
     """Test transitions to terminal statuses."""
     task = Task(id="t-term", title="T", description="D", role="b", status=TaskStatus.IN_PROGRESS)
-    with patch("bernstein.core.telemetry.start_span"):
+    with patch("bernstein.core.observability.telemetry.start_span"):
         # IN_PROGRESS -> DONE (Terminal)
         transition_task(task, TaskStatus.DONE)
         assert task.status == TaskStatus.DONE

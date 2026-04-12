@@ -81,7 +81,7 @@ class TestStdioTransport:
         with pytest.raises(TransportError, match="non-empty command"):
             transport.connect(TransportConfig(command=[]))
 
-    @patch("bernstein.core.mcp_transport.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_transport.subprocess.Popen")
     def test_connect_spawns_process(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 42
@@ -95,7 +95,7 @@ class TestStdioTransport:
         assert transport.process is not None
         mock_popen.assert_called_once()
 
-    @patch("bernstein.core.mcp_transport.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_transport.subprocess.Popen")
     def test_health_check_alive(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 42
@@ -106,7 +106,7 @@ class TestStdioTransport:
         transport.connect(TransportConfig(command=["echo"]))
         assert transport.health_check() is True
 
-    @patch("bernstein.core.mcp_transport.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_transport.subprocess.Popen")
     def test_health_check_dead(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 42
@@ -117,7 +117,7 @@ class TestStdioTransport:
         transport.connect(TransportConfig(command=["echo"]))
         assert transport.health_check() is False
 
-    @patch("bernstein.core.mcp_transport.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_transport.subprocess.Popen")
     def test_disconnect_terminates(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 42
@@ -136,7 +136,7 @@ class TestStdioTransport:
         transport = StdioTransport()
         transport.disconnect()  # no-op, no error
 
-    @patch("bernstein.core.mcp_transport.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_transport.subprocess.Popen")
     def test_connect_with_env(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 42
@@ -150,7 +150,7 @@ class TestStdioTransport:
         assert call_kwargs["env"] is not None
         assert call_kwargs["env"]["MY_VAR"] == "val"
 
-    @patch("bernstein.core.mcp_transport.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_transport.subprocess.Popen")
     def test_connect_failure_raises_transport_error(self, mock_popen: MagicMock) -> None:
         mock_popen.side_effect = FileNotFoundError("not found")
 

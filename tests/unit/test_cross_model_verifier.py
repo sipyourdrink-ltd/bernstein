@@ -248,7 +248,7 @@ class TestVerifyWithCrossModel:
 
         with (
             patch("subprocess.run", return_value=diff_response),
-            patch("bernstein.core.cross_model_verifier.call_llm", new=fake_llm),
+            patch("bernstein.core.quality.cross_model_verifier.call_llm", new=fake_llm),
         ):
             await verify_with_cross_model(task, tmp_path, "claude-sonnet", config)
 

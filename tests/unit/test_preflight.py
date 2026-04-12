@@ -73,7 +73,7 @@ def test_preflight_checks_auto_mode_fails_when_no_agents_are_installed() -> None
 
     with (
         patch("bernstein.core.preflight._check_port_free"),
-        patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+        patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
         pytest.raises(SystemExit),
     ):
         preflight_checks("auto", 8052)

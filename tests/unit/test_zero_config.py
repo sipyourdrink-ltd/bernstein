@@ -86,7 +86,7 @@ class TestSeedConfigDefault:
 
 class TestPreflightChecksAutoMode:
     @patch("bernstein.core.preflight._check_port_free")
-    @patch("bernstein.core.agent_discovery.discover_agents_cached")
+    @patch("bernstein.core.agents.agent_discovery.discover_agents_cached")
     def test_auto_mode_prints_found_agents(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
 
@@ -100,7 +100,7 @@ class TestPreflightChecksAutoMode:
         # Should not raise; port check is mocked
 
     @patch("bernstein.core.preflight._check_port_free")
-    @patch("bernstein.core.agent_discovery.discover_agents_cached")
+    @patch("bernstein.core.agents.agent_discovery.discover_agents_cached")
     def test_auto_mode_no_agents_exits(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
 
@@ -110,7 +110,7 @@ class TestPreflightChecksAutoMode:
             preflight_checks("auto", 8052)
 
     @patch("bernstein.core.preflight._check_port_free")
-    @patch("bernstein.core.agent_discovery.discover_agents_cached")
+    @patch("bernstein.core.agents.agent_discovery.discover_agents_cached")
     def test_auto_mode_multiple_agents(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
 
@@ -126,7 +126,7 @@ class TestPreflightChecksAutoMode:
         preflight_checks("auto", 8052)
 
     @patch("bernstein.core.preflight._check_port_free")
-    @patch("bernstein.core.agent_discovery.discover_agents_cached")
+    @patch("bernstein.core.agents.agent_discovery.discover_agents_cached")
     def test_auto_mode_unauthenticated_agents_shown_as_warning(
         self, mock_discover: MagicMock, mock_port: MagicMock
     ) -> None:
@@ -147,7 +147,7 @@ class TestPreflightChecksAutoMode:
 
 
 class TestAutoWriteBernsteinYaml:
-    @patch("bernstein.core.agent_discovery.generate_auto_routing_yaml")
+    @patch("bernstein.core.agents.agent_discovery.generate_auto_routing_yaml")
     def test_creates_file_with_auto_cli(self, mock_routing: MagicMock, tmp_path: Path) -> None:
         from bernstein.core.bootstrap import auto_write_bernstein_yaml
 
@@ -160,7 +160,7 @@ class TestAutoWriteBernsteinYaml:
         assert "cli: auto" in content
         assert "goal" in content  # has a commented goal hint
 
-    @patch("bernstein.core.agent_discovery.generate_auto_routing_yaml")
+    @patch("bernstein.core.agents.agent_discovery.generate_auto_routing_yaml")
     def test_creates_file_when_routing_empty(self, mock_routing: MagicMock, tmp_path: Path) -> None:
         from bernstein.core.bootstrap import auto_write_bernstein_yaml
 
@@ -372,7 +372,7 @@ class TestConstraintsForProjectType:
 
 
 class TestAutoWriteWithProjectType:
-    @patch("bernstein.core.agent_discovery.generate_auto_routing_yaml")
+    @patch("bernstein.core.agents.agent_discovery.generate_auto_routing_yaml")
     def test_python_project_includes_constraints(self, mock_routing: MagicMock, tmp_path: Path) -> None:
         from bernstein.core.server_launch import auto_write_bernstein_yaml
 
@@ -385,7 +385,7 @@ class TestAutoWriteWithProjectType:
         assert "pytest" in content
         assert "ruff" in content
 
-    @patch("bernstein.core.agent_discovery.generate_auto_routing_yaml")
+    @patch("bernstein.core.agents.agent_discovery.generate_auto_routing_yaml")
     def test_node_project_includes_constraints(self, mock_routing: MagicMock, tmp_path: Path) -> None:
         from bernstein.core.server_launch import auto_write_bernstein_yaml
 
@@ -397,7 +397,7 @@ class TestAutoWriteWithProjectType:
         assert "constraints:" in content
         assert "Node" in content
 
-    @patch("bernstein.core.agent_discovery.generate_auto_routing_yaml")
+    @patch("bernstein.core.agents.agent_discovery.generate_auto_routing_yaml")
     def test_generic_project_no_constraints_block(self, mock_routing: MagicMock, tmp_path: Path) -> None:
         from bernstein.core.server_launch import auto_write_bernstein_yaml
 
@@ -408,7 +408,7 @@ class TestAutoWriteWithProjectType:
         # Generic projects should not have a constraints block
         assert "constraints:" not in content
 
-    @patch("bernstein.core.agent_discovery.generate_auto_routing_yaml")
+    @patch("bernstein.core.agents.agent_discovery.generate_auto_routing_yaml")
     def test_always_has_cli_auto_and_goal_hint(self, mock_routing: MagicMock, tmp_path: Path) -> None:
         from bernstein.core.server_launch import auto_write_bernstein_yaml
 

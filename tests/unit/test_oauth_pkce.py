@@ -221,7 +221,7 @@ class TestPKCEFlowAutomaticMode:
         respx.post(TOKEN_ENDPOINT).mock(return_value=httpx.Response(200, json=TOKEN_RESPONSE))
         flow = _make_flow()
 
-        with patch("bernstein.core.oauth_pkce._wait_for_callback", return_value="auto-code-000"):
+        with patch("bernstein.core.security.oauth_pkce._wait_for_callback", return_value="auto-code-000"):
             tokens = await flow.run_automatic(open_browser=False)
 
         assert tokens.access_token == "acc-tok-xyz"
@@ -230,7 +230,7 @@ class TestPKCEFlowAutomaticMode:
     async def test_run_automatic_raises_on_no_code(self) -> None:
         flow = _make_flow()
 
-        with patch("bernstein.core.oauth_pkce._wait_for_callback", return_value=None):
+        with patch("bernstein.core.security.oauth_pkce._wait_for_callback", return_value=None):
             with pytest.raises(OAuthError, match="No authorization code received"):
                 await flow.run_automatic(open_browser=False)
 

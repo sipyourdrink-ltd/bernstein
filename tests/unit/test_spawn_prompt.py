@@ -105,11 +105,11 @@ def test_render_prompt_falls_back_and_includes_context_sections(tmp_path: Path, 
     graph = cast(Any, SimpleNamespace(predecessor_context=_predecessor_context))
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", side_effect=TemplateError("missing")),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", side_effect=TemplateError("missing")),
         patch(
             "bernstein.core.spawn_prompt.gather_lessons_for_context", return_value="## Lessons\nPrefer exact parsing."
         ),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend", "qa"]),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend", "qa"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -136,9 +136,9 @@ def test_render_prompt_includes_git_safety_protocol(tmp_path: Path, make_task: A
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -187,9 +187,9 @@ def test_lesson_cache_reuses_result_within_ttl(tmp_path: Path, make_task: Any) -
         return original_text
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", side_effect=_counting_gather),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", side_effect=_counting_gather),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt1 = _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
         prompt2 = _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
@@ -214,9 +214,9 @@ def test_lesson_cache_expires_after_ttl(tmp_path: Path, make_task: Any) -> None:
         return f"## Lessons\nVersion {call_count}."
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a qa specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", side_effect=_counting_gather),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["qa"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a qa specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", side_effect=_counting_gather),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["qa"]),
     ):
         # First call: cache miss
         _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
@@ -240,9 +240,9 @@ def test_empty_sections_are_stripped(tmp_path: Path, make_task: Any) -> None:
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -265,9 +265,9 @@ def test_whitespace_bulletin_is_skipped(tmp_path: Path, make_task: Any) -> None:
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -287,9 +287,9 @@ def test_prompt_stats_are_logged(tmp_path: Path, make_task: Any, caplog: Any) ->
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
         caplog.at_level(logging.INFO, logger="bernstein.core.spawn_prompt"),
     ):
         _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path, session_id="A-1")
@@ -316,9 +316,9 @@ def test_team_coordination_section_included_with_session_id(tmp_path: Path, make
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -341,9 +341,9 @@ def test_team_coordination_section_absent_without_session_id(tmp_path: Path, mak
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -369,9 +369,9 @@ def test_file_ownership_warnings_show_other_agents_files(tmp_path: Path, make_ta
     }
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -398,9 +398,9 @@ def test_file_ownership_empty_when_all_owned_by_self(tmp_path: Path, make_task: 
     ownership = {"src/main.py": "backend-me001"}
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -421,9 +421,9 @@ def test_file_ownership_none_produces_no_section(tmp_path: Path, make_task: Any)
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt(
             [task],
@@ -454,9 +454,9 @@ def test_render_prompt_includes_parent_context_when_set(tmp_path: Path, make_tas
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
 
@@ -474,9 +474,9 @@ def test_render_prompt_omits_parent_context_when_not_set(tmp_path: Path, make_ta
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
 
@@ -494,9 +494,9 @@ def test_render_prompt_merges_parent_context_from_multiple_tasks(tmp_path: Path,
     templates_dir.mkdir()
 
     with (
-        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
-        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
     ):
         prompt = _render_prompt([task_a, task_b], templates_dir=templates_dir, workdir=tmp_path)
 

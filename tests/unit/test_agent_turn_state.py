@@ -318,7 +318,7 @@ class TestHooks:
     def test_hook_exception_does_not_propagate(self) -> None:
         mock_hook = MagicMock(side_effect=RuntimeError("hook crash"))
         sm = AgentTurnStateMachine(entry_hook=mock_hook, exit_hook=mock_hook)
-        with patch("bernstein.core.agent_turn_state.logger"):
+        with patch("bernstein.core.agents.agent_turn_state.logger"):
             result = sm.transition(AgentTurnState.IDLE, AgentTurnEvent.TASK_CLAIMED)
         assert result is AgentTurnState.CLAIMING
         assert mock_hook.call_count == 2

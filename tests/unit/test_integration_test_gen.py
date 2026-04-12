@@ -168,7 +168,7 @@ class TestGenerateAndRun:
         config = IntegTestGenConfig(enabled=True)
         (tmp_path / "tests" / "integration").mkdir(parents=True)
 
-        with patch("bernstein.core.integration_test_gen._get_diff", return_value=""):
+        with patch("bernstein.core.quality.integration_test_gen._get_diff", return_value=""):
             result = asyncio.run(generate_and_run(task, tmp_path, config))
 
         assert result.passed

@@ -268,8 +268,8 @@ def _make_orchestrator(tmp_path: Path) -> Orchestrator:
     client = MagicMock(spec=__import__("httpx").Client)
     # Patch manifest to avoid JSON-serializing mock adapter
     with (
-        patch("bernstein.core.orchestrator.build_manifest", return_value=MagicMock()),
-        patch("bernstein.core.orchestrator.save_manifest"),
+        patch("bernstein.core.orchestration.orchestrator.build_manifest", return_value=MagicMock()),
+        patch("bernstein.core.orchestration.orchestrator.save_manifest"),
     ):
         orch = Orchestrator(config=config, spawner=spawner, workdir=tmp_path, client=client)
     return orch

@@ -62,7 +62,7 @@ class TestStalePidFiles:
     def test_dead_process_cleaned(self, workdir: Path, pid_dir: Path) -> None:
         _write_pid_file(pid_dir, "backend-abc", worker_pid=99999)
 
-        with patch("bernstein.core.zombie_cleanup.process_alive", return_value=False):
+        with patch("bernstein.core.agents.zombie_cleanup.process_alive", return_value=False):
             result = scan_and_cleanup_zombies(workdir)
 
         assert result.scanned == 1
@@ -105,8 +105,8 @@ class TestOrphanedProcesses:
             return True
 
         with (
-            patch("bernstein.core.zombie_cleanup.process_alive", side_effect=fake_process_alive),
-            patch("bernstein.core.zombie_cleanup.kill_process", side_effect=fake_kill),
+            patch("bernstein.core.agents.zombie_cleanup.process_alive", side_effect=fake_process_alive),
+            patch("bernstein.core.agents.zombie_cleanup.kill_process", side_effect=fake_kill),
         ):
             result = scan_and_cleanup_zombies(workdir, grace_seconds=0)
 
@@ -117,7 +117,7 @@ class TestOrphanedProcesses:
     def test_dry_run_no_kill(self, workdir: Path, pid_dir: Path) -> None:
         _write_pid_file(pid_dir, "backend-alive", worker_pid=12345)
 
-        with patch("bernstein.core.zombie_cleanup.process_alive", return_value=True):
+        with patch("bernstein.core.agents.zombie_cleanup.process_alive", return_value=True):
             result = scan_and_cleanup_zombies(workdir, dry_run=True)
 
         assert result.orphans_found == 1
@@ -140,8 +140,8 @@ class TestOrphanedProcesses:
             return True
 
         with (
-            patch("bernstein.core.zombie_cleanup.process_alive", side_effect=fake_alive),
-            patch("bernstein.core.zombie_cleanup.kill_process", side_effect=fake_kill),
+            patch("bernstein.core.agents.zombie_cleanup.process_alive", side_effect=fake_alive),
+            patch("bernstein.core.agents.zombie_cleanup.kill_process", side_effect=fake_kill),
         ):
             result = scan_and_cleanup_zombies(workdir, grace_seconds=0)
 

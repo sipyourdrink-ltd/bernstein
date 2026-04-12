@@ -272,8 +272,8 @@ def _make_orchestrator(
     adapter = _mock_adapter()
     spawner = _make_spawner(tmp_path, adapter)
     with (
-        patch("bernstein.core.orchestrator.build_manifest", return_value=MagicMock()),
-        patch("bernstein.core.orchestrator.save_manifest"),
+        patch("bernstein.core.orchestration.orchestrator.build_manifest", return_value=MagicMock()),
+        patch("bernstein.core.orchestration.orchestrator.save_manifest"),
     ):
         orch = Orchestrator(config=config, spawner=spawner, workdir=tmp_path, client=client)
     return orch, task_store

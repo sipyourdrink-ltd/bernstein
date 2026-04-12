@@ -85,8 +85,8 @@ class TestToolTimingRecorder:
         recorder = ToolTimingRecorder(metrics_dir=tmp_path / "metrics")
 
         with (
-            patch("bernstein.core.tool_timing.time.monotonic", side_effect=[100.0, 100.5]),
-            patch("bernstein.core.tool_timing.time.time", side_effect=[1000.0, 1000.6]),
+            patch("bernstein.core.observability.tool_timing.time.monotonic", side_effect=[100.0, 100.5]),
+            patch("bernstein.core.observability.tool_timing.time.time", side_effect=[1000.0, 1000.6]),
         ):
             with recorder.record("search", "session-1"):
                 pass
@@ -102,8 +102,8 @@ class TestToolTimingRecorder:
         recorder = ToolTimingRecorder(metrics_dir=tmp_path / "metrics")
 
         with (
-            patch("bernstein.core.tool_timing.time.monotonic", side_effect=[100.0, 100.2]),
-            patch("bernstein.core.tool_timing.time.time", side_effect=[1000.0, 1000.25]),
+            patch("bernstein.core.observability.tool_timing.time.monotonic", side_effect=[100.0, 100.2]),
+            patch("bernstein.core.observability.tool_timing.time.time", side_effect=[1000.0, 1000.25]),
         ):
             queue_start: float = 999.0  # 1000.0 wall_start - 999.0 = 1000ms queue wait
             with recorder.record("search", "session-1", queue_start=queue_start):
@@ -118,8 +118,8 @@ class TestToolTimingRecorder:
         recorder = ToolTimingRecorder(metrics_dir=tmp_path / "metrics")
 
         with (
-            patch("bernstein.core.tool_timing.time.monotonic", side_effect=[0.0, 0.1]),
-            patch("bernstein.core.tool_timing.time.time", side_effect=[0.0, 0.1]),
+            patch("bernstein.core.observability.tool_timing.time.monotonic", side_effect=[0.0, 0.1]),
+            patch("bernstein.core.observability.tool_timing.time.time", side_effect=[0.0, 0.1]),
         ):
             with recorder.record("search", "session-1"):
                 pass
@@ -131,8 +131,8 @@ class TestToolTimingRecorder:
         recorder = ToolTimingRecorder(metrics_dir=tmp_path / "metrics")
 
         with (
-            patch("bernstein.core.tool_timing.time.monotonic", side_effect=[0.0, 0.1]),
-            patch("bernstein.core.tool_timing.time.time", side_effect=[0.0, 0.1]),
+            patch("bernstein.core.observability.tool_timing.time.monotonic", side_effect=[0.0, 0.1]),
+            patch("bernstein.core.observability.tool_timing.time.time", side_effect=[0.0, 0.1]),
         ):
             try:
                 with recorder.record("search", "session-1"):

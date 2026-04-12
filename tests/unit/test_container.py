@@ -12,14 +12,14 @@ from bernstein.core.container import ContainerConfig, ContainerError, ContainerM
 
 
 def test_manager_init_fails_when_runtime_binary_missing(tmp_path: Path) -> None:
-    with patch("bernstein.core.container.shutil.which", return_value=None):
+    with patch("bernstein.core.agents.container.shutil.which", return_value=None):
         with pytest.raises(ContainerError, match="not found on PATH"):
             ContainerManager(ContainerConfig(), tmp_path)
 
 
 def test_create_invokes_runtime_with_workspace_and_env(tmp_path: Path) -> None:
     with (
-        patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"),
+        patch("bernstein.core.agents.container._resolve_runtime_cmd", return_value="docker"),
         patch(
             "bernstein.core.container.subprocess.run",
             return_value=SimpleNamespace(returncode=0, stdout="container-id\n", stderr=""),
@@ -38,7 +38,7 @@ def test_create_invokes_runtime_with_workspace_and_env(tmp_path: Path) -> None:
 
 def test_create_raises_on_nonzero_exit(tmp_path: Path) -> None:
     with (
-        patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"),
+        patch("bernstein.core.agents.container._resolve_runtime_cmd", return_value="docker"),
         patch(
             "bernstein.core.container.subprocess.run",
             return_value=SimpleNamespace(returncode=1, stdout="", stderr="boom"),
@@ -51,7 +51,7 @@ def test_create_raises_on_nonzero_exit(tmp_path: Path) -> None:
 
 def test_destroy_untracks_handle(tmp_path: Path) -> None:
     with (
-        patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"),
+        patch("bernstein.core.agents.container._resolve_runtime_cmd", return_value="docker"),
         patch(
             "bernstein.core.container.subprocess.run",
             return_value=SimpleNamespace(returncode=0, stdout="container-id\n", stderr="", strip=lambda: ""),

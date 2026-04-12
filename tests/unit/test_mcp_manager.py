@@ -189,7 +189,7 @@ class TestMCPManagerLifecycle:
         assert len(mgr.configs) == 1
         assert mgr.server_names == ["new"]
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_start_all_stdio(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -223,7 +223,7 @@ class TestMCPManagerLifecycle:
         mgr.start_all()
         assert mgr.is_alive("bad") is False
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_stop_all_terminates_processes(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -240,7 +240,7 @@ class TestMCPManagerLifecycle:
         mock_proc.wait.assert_called()
         assert mgr.is_alive("test") is False
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_stop_all_kills_on_timeout(self, mock_popen: MagicMock) -> None:
         import subprocess as sp
 
@@ -271,7 +271,7 @@ class TestMCPManagerLifecycle:
         # Second call should not raise
         mgr.stop_all()
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_start_all_skips_already_started(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -286,7 +286,7 @@ class TestMCPManagerLifecycle:
         # Popen should only be called once
         assert mock_popen.call_count == 1
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_start_all_handles_popen_failure(self, mock_popen: MagicMock) -> None:
         mock_popen.side_effect = FileNotFoundError("npx not found")
 
@@ -315,7 +315,7 @@ class TestMCPManagerHealthChecks:
         mgr = MCPManager()
         assert mgr.is_alive("nonexistent") is False
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_detects_dead_process(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -329,7 +329,7 @@ class TestMCPManagerHealthChecks:
         # poll() returns non-None -> dead
         assert mgr.is_alive("dying") is False
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_detects_alive_process(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -371,7 +371,7 @@ class TestMCPManagerGetServerInfo:
 class TestMCPManagerBuildConfig:
     """Tests for MCPManager.build_mcp_config()."""
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_builds_config_for_all_alive(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -398,7 +398,7 @@ class TestMCPManagerBuildConfig:
         result = mgr.build_mcp_config()
         assert result is None
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_builds_config_for_subset(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -417,7 +417,7 @@ class TestMCPManagerBuildConfig:
         assert "github" in result["mcpServers"]
         assert "filesystem" not in result["mcpServers"]
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_excludes_dead_servers(self, mock_popen: MagicMock) -> None:
         alive_proc = MagicMock()
         alive_proc.pid = 100
@@ -450,7 +450,7 @@ class TestMCPManagerBuildConfig:
 class TestBuildMCPConfigForTask:
     """Tests for MCPManager.build_mcp_config_for_task()."""
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_merges_task_with_base(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -487,7 +487,7 @@ class TestBuildMCPConfigForTask:
         )
         assert result == base
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_returns_task_when_no_base(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -505,7 +505,7 @@ class TestBuildMCPConfigForTask:
         assert result is not None
         assert "github" in result["mcpServers"]
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_task_overrides_base_on_conflict(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -534,7 +534,7 @@ class TestBuildMCPConfigForTask:
 class TestEnvMerge:
     """Tests for environment variable merging in server startup."""
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_merges_env_with_current(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -555,7 +555,7 @@ class TestEnvMerge:
         # Should also have inherited env vars (PATH at minimum)
         assert "PATH" in call_kwargs["env"]
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     def test_no_extra_env_passes_none(self, mock_popen: MagicMock) -> None:
         mock_proc = MagicMock()
         mock_proc.pid = 100
@@ -578,7 +578,7 @@ class TestEnvMerge:
 class TestSpawnerMCPManagerIntegration:
     """Tests that MCPManager integrates correctly with AgentSpawner."""
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     @pytest.mark.skip(reason="subprocess unpacking issue")
     def test_spawner_uses_mcp_manager_for_task_servers(
         self,
@@ -616,7 +616,7 @@ class TestSpawnerMCPManagerIntegration:
         assert call_kwargs["mcp_config"] is not None
         assert "github" in call_kwargs["mcp_config"]["mcpServers"]
 
-    @patch("bernstein.core.mcp_manager.subprocess.Popen")
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
     @pytest.mark.skip(reason="subprocess unpacking issue")
     def test_spawner_all_servers_when_task_has_none(
         self,

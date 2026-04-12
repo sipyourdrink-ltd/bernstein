@@ -60,7 +60,7 @@ def test_broadcast_message_uses_pipe_first_and_file_fallback(tmp_path: Path) -> 
     pipe = MagicMock()
     register_stdin_pipe("A-1", pipe)
 
-    with patch("bernstein.core.agent_signals.AgentSignalManager") as mock_mgr:
+    with patch("bernstein.core.agents.agent_signals.AgentSignalManager") as mock_mgr:
         mock_mgr.return_value.write_command_signal.return_value = True
         result = broadcast_message("wake up", workdir=tmp_path)
 

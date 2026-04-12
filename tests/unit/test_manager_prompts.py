@@ -39,7 +39,7 @@ def test_load_template_prefers_versioned_prompt_when_available(tmp_path: Path) -
             del stem, version
             return _Version()
 
-    with patch("bernstein.core.prompt_versioning.PromptRegistry", _Registry):
+    with patch("bernstein.core.tokens.prompt_versioning.PromptRegistry", _Registry):
         content = _load_template(templates_dir, "plan.md", sdd_dir=tmp_path / ".sdd", task_id="T-1")
 
     assert content == "Versioned prompt"

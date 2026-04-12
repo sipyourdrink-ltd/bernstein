@@ -111,7 +111,7 @@ class TestIdempotencyTokens:
     def test_transition_task_accepts_unique_transition_id(self) -> None:
         task = _make_task()
         tid = uuid.uuid4().hex
-        with patch("bernstein.core.telemetry.start_span"):
+        with patch("bernstein.core.observability.telemetry.start_span"):
             event = transition_task(task, TaskStatus.CLAIMED, actor="test", transition_id=tid)
         assert task.status == TaskStatus.CLAIMED
         assert event.to_status == "claimed"
@@ -120,7 +120,7 @@ class TestIdempotencyTokens:
         task1 = _make_task(task_id="t-1")
         task2 = _make_task(task_id="t-2")
         tid = uuid.uuid4().hex
-        with patch("bernstein.core.telemetry.start_span"):
+        with patch("bernstein.core.observability.telemetry.start_span"):
             transition_task(task1, TaskStatus.CLAIMED, actor="test", transition_id=tid)
         with pytest.raises(DuplicateTransitionError, match=tid):
             transition_task(task2, TaskStatus.CLAIMED, actor="test", transition_id=tid)
@@ -130,14 +130,14 @@ class TestIdempotencyTokens:
     def test_transition_task_without_id_is_not_checked(self) -> None:
         """Transitions without a transition_id bypass idempotency checks."""
         task = _make_task()
-        with patch("bernstein.core.telemetry.start_span"):
+        with patch("bernstein.core.observability.telemetry.start_span"):
             transition_task(task, TaskStatus.CLAIMED, actor="test")
         assert task.status == TaskStatus.CLAIMED
 
     def test_transition_agent_accepts_unique_transition_id(self) -> None:
         agent = AgentSession(id="a-1", role="backend", status="starting")
         tid = uuid.uuid4().hex
-        with patch("bernstein.core.telemetry.start_span"):
+        with patch("bernstein.core.observability.telemetry.start_span"):
             event = transition_agent(agent, "working", actor="test", transition_id=tid)
         assert agent.status == "working"
         assert event.to_status == "working"
@@ -146,7 +146,7 @@ class TestIdempotencyTokens:
         agent1 = AgentSession(id="a-1", role="backend", status="starting")
         agent2 = AgentSession(id="a-2", role="backend", status="starting")
         tid = uuid.uuid4().hex
-        with patch("bernstein.core.telemetry.start_span"):
+        with patch("bernstein.core.observability.telemetry.start_span"):
             transition_agent(agent1, "working", actor="test", transition_id=tid)
         with pytest.raises(DuplicateTransitionError, match=tid):
             transition_agent(agent2, "working", actor="test", transition_id=tid)
