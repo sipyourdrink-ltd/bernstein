@@ -3,10 +3,9 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from bernstein.core.task_completion import retry_or_fail_task as retry_completion
-
-# We can reuse the same test for task_completion since the code is identical
+# Both imports point to the same function: task_lifecycle re-exports from task_retry
 from bernstein.core.task_lifecycle import retry_or_fail_task as retry_lifecycle
+from bernstein.core.task_retry import retry_or_fail_task as retry_completion
 
 
 # Mock Task class just enough to pass the function
