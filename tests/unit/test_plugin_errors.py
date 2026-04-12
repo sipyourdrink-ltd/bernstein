@@ -17,7 +17,7 @@ from bernstein.plugins.plugin_errors import (
 @pytest.fixture()
 def fresh_registry(monkeypatch: pytest.MonkeyPatch) -> PluginErrorRegistry:
     """Reset the global plugin error registry."""
-    from bernstein import plugin_errors as pe
+    from bernstein.plugins import plugin_errors as pe
 
     pe._registry = PluginErrorRegistry()
     return pe._registry

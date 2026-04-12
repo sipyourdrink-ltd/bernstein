@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.git_basic import GitResult
 from bernstein.core.worktree import WorktreeManager, WorktreeSetupConfig, setup_worktree_env
 
@@ -110,7 +109,7 @@ class TestWorktreeSymlinksHappyPath:
         existing.mkdir()  # Real directory already present
         config = WorktreeSetupConfig(symlink_dirs=("node_modules",))
 
-        with caplog.at_level("DEBUG", logger="bernstein.core.worktree"):
+        with caplog.at_level("DEBUG", logger="bernstein.core.git.worktree"):
             setup_worktree_env(repo_root, worktree_path, config)
 
         assert existing.exists()
@@ -154,7 +153,7 @@ class TestWorktreeSymlinksFailures:
         """Missing source directory produces debug log, no crash."""
         config = WorktreeSetupConfig(symlink_dirs=("node_modules",))
 
-        with caplog.at_level("DEBUG", logger="bernstein.core.worktree"):
+        with caplog.at_level("DEBUG", logger="bernstein.core.git.worktree"):
             setup_worktree_env(repo_root, worktree_path, config)
 
         assert not (worktree_path / "node_modules").exists()
