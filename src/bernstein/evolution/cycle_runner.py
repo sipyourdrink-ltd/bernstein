@@ -1069,6 +1069,5 @@ class EvolutionLoop:
         return (time.time() - self._start_time) < window_seconds
 
 
-
 # Keep module-level alias for backward compatibility with any dynamic references.
 # The actual implementation is in bernstein.evolution._shared.to_types_proposal.
