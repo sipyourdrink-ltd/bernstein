@@ -1,4 +1,4 @@
-"""Unit tests for bernstein.evolution.benchmark."""
+"""Unit tests for bernstein.benchmark."""
 
 from __future__ import annotations
 

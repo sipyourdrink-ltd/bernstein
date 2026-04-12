@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from bernstein.evolution.benchmark.head_to_head import (
+
+from bernstein.benchmark.head_to_head import (
     BERNSTEIN_MIXED_METRICS,
     BERNSTEIN_PROFILE,
     BERNSTEIN_SONNET_METRICS,

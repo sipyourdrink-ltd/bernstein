@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
-from bernstein.evolution.benchmark.swe_bench import (
+
+from bernstein.benchmark.swe_bench import (
     InstanceResult,
     SWEBenchRunner,
     SWEInstance,

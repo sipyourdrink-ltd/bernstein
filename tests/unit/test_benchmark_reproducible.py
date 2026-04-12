@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from bernstein.evolution.benchmark.comparative import BenchmarkTask
-from bernstein.evolution.benchmark.reproducible import (
+
+from bernstein.benchmark.comparative import BenchmarkTask
+from bernstein.benchmark.reproducible import (
     COST_REGRESSION_THRESHOLD,
     QUALITY_REGRESSION_THRESHOLD_PP,
     THROUGHPUT_REGRESSION_THRESHOLD,
