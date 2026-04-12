@@ -968,6 +968,22 @@ def get_token_breakdown(request: Request, session_id: str | None = None) -> JSON
         }
     )
 
+@router.get("/costs/efficiency")
+async def cost_efficiency(request: Request) -> dict:
+    """Get cost-per-line efficiency metrics."""
+    store = request.app.state.store
+    archive = store.read_archive(limit=100)
+    
+    tasks = [
+        {"lines_changed": r.get("lines_changed", 0), "cost_usd": r.get("cost_usd", 0)}
+        for r in archive
+    ]
+    tracker = request.app.state.cost_tracker
+    total = sum(u.cost_usd for u in tracker.usages)
+    
+    from bernstein.core.cost_per_line import compute_efficiency
+    result = compute_efficiency(tasks, total)
+    return dataclasses.asdict(result)
 
 @router.get("/costs/efficiency")
 def get_cost_efficiency(request: Request) -> JSONResponse:
