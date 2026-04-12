@@ -24,11 +24,11 @@ from pathlib import Path
 DEFAULT_THRESHOLD: int = 80
 
 MODULE_THRESHOLDS: dict[str, int] = {
-    "bernstein.core.lifecycle": 80,
-    "bernstein.core.models": 60,
-    "bernstein.core.config_schema": 70,
+    "bernstein.core.tasks.lifecycle": 80,
+    "bernstein.core.tasks.models": 60,
+    "bernstein.core.config.config_schema": 70,
     "bernstein.adapters.base": 60,
-    "bernstein.core.task_store": 60,
+    "bernstein.core.tasks.task_store": 60,
 }
 
 

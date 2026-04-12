@@ -11,7 +11,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
-
 from bernstein.core.convergence_guard import ConvergenceGuard
 from bernstein.core.graph import TaskGraph
 from bernstein.core.models import AgentSession, Complexity, ConvergenceGuardConfig, ModelConfig, Scope, TaskStatus
@@ -210,8 +209,8 @@ def test_claim_and_spawn_batches_auto_decomposes_large_task_before_claim(tmp_pat
     result = TickResult()
 
     with (
-        patch("bernstein.core.tasks.task_claim.should_auto_decompose", return_value=True),
-        patch("bernstein.core.tasks.task_claim.auto_decompose_task") as mock_decompose,
+        patch("bernstein.core.tasks.task_lifecycle.should_auto_decompose", return_value=True),
+        patch("bernstein.core.tasks.task_lifecycle.auto_decompose_task") as mock_decompose,
     ):
         claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
@@ -282,7 +281,7 @@ def test_claim_and_spawn_batches_sets_large_timeout_bucket(tmp_path: Path, make_
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    with patch("bernstein.core.tasks.task_claim.should_auto_decompose", return_value=False):
+    with patch("bernstein.core.tasks.task_lifecycle.should_auto_decompose", return_value=False):
         claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 60 * 60
@@ -302,7 +301,7 @@ def test_claim_and_spawn_batches_sets_xl_timeout_bucket_for_high_risk_batch(tmp_
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    with patch("bernstein.core.tasks.task_claim.should_auto_decompose", return_value=False):
+    with patch("bernstein.core.tasks.task_lifecycle.should_auto_decompose", return_value=False):
         claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 120 * 60
@@ -467,8 +466,8 @@ def test_process_completed_tasks_moves_ticket_and_caches_verified_result(tmp_pat
 
     with (
         patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.tasks.task_completion._get_git_diff_line_count_in_worktree", return_value=12),
-        patch("bernstein.core.tasks.task_completion.append_decision"),
+        patch("bernstein.core.tasks.task_lifecycle._get_git_diff_line_count_in_worktree", return_value=12),
+        patch("bernstein.core.tasks.task_lifecycle.append_decision"),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)
@@ -520,7 +519,7 @@ def test_process_completed_tasks_records_quality_gate_failure_without_closing_ti
 
     with (
         patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.tasks.task_completion.append_decision"),
+        patch("bernstein.core.tasks.task_lifecycle.append_decision"),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)

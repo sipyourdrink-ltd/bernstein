@@ -1,4 +1,4 @@
-"""Tests for bernstein.api_warmup - warmup, cache, TTL, and local/proxy skip logic."""
+"""Tests for bernstein.cli.api_warmup - warmup, cache, TTL, and local/proxy skip logic."""
 
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ class TestIsProviderConfigured:
 class TestWarmupProvider:
     @pytest.mark.asyncio
     async def test_unconfigured_provider_returns_failure(self) -> None:
-        with patch.object(bernstein.api_warmup, "_is_provider_configured", return_value=False):
+        with patch.object(bernstein.cli.api_warmup, "_is_provider_configured", return_value=False):
             result = await warmup_provider("openrouter")
             assert result.success is False
             assert result.provider == "openrouter"
@@ -153,10 +153,10 @@ class TestWarmupProvider:
     async def test_local_endpoint_skips_network(self) -> None:
         """Provider whose base_url is localhost should succeed without a real HTTP call."""
         with (
-            patch.object(bernstein.api_warmup, "_is_local_or_proxy", return_value=True),
-            patch.object(bernstein.api_warmup, "_is_provider_configured", return_value=True),
+            patch.object(bernstein.cli.api_warmup, "_is_local_or_proxy", return_value=True),
+            patch.object(bernstein.cli.api_warmup, "_is_provider_configured", return_value=True),
             patch.object(
-                bernstein.api_warmup,
+                bernstein.cli.api_warmup,
                 "_get_provider_base_url",
                 return_value="http://127.0.0.1:11434",
             ),
@@ -186,10 +186,10 @@ class TestWarmupProvider:
                 return FakeResponse()
 
         with (
-            patch.object(bernstein.api_warmup, "_is_local_or_proxy", return_value=False),
-            patch.object(bernstein.api_warmup, "_is_provider_configured", return_value=True),
+            patch.object(bernstein.cli.api_warmup, "_is_local_or_proxy", return_value=False),
+            patch.object(bernstein.cli.api_warmup, "_is_provider_configured", return_value=True),
             patch.object(
-                bernstein.api_warmup,
+                bernstein.cli.api_warmup,
                 "_get_provider_base_url",
                 return_value="https://api.openai.com/v1",
             ),
@@ -215,10 +215,10 @@ class TestWarmupProvider:
                 return False
 
         with (
-            patch.object(bernstein.api_warmup, "_is_local_or_proxy", return_value=False),
-            patch.object(bernstein.api_warmup, "_is_provider_configured", return_value=True),
+            patch.object(bernstein.cli.api_warmup, "_is_local_or_proxy", return_value=False),
+            patch.object(bernstein.cli.api_warmup, "_is_provider_configured", return_value=True),
             patch.object(
-                bernstein.api_warmup,
+                bernstein.cli.api_warmup,
                 "_get_provider_base_url",
                 return_value="https://api.openai.com/v1",
             ),
@@ -251,10 +251,10 @@ class TestWarmupProvider:
                 return resp
 
         with (
-            patch.object(bernstein.api_warmup, "_is_local_or_proxy", return_value=False),
-            patch.object(bernstein.api_warmup, "_is_provider_configured", return_value=True),
+            patch.object(bernstein.cli.api_warmup, "_is_local_or_proxy", return_value=False),
+            patch.object(bernstein.cli.api_warmup, "_is_provider_configured", return_value=True),
             patch.object(
-                bernstein.api_warmup,
+                bernstein.cli.api_warmup,
                 "_get_provider_base_url",
                 return_value="https://api.openai.com/v1",
             ),

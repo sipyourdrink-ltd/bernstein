@@ -73,7 +73,7 @@ def test_retry_logs_failure_category(tmp_path: Path, make_task: Any) -> None:
     client.post.return_value = response
     collector = MagicMock()
 
-    with patch("bernstein.core.tasks.task_retry.get_collector", return_value=collector):
+    with patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector):
         maybe_retry_task(
             task,
             retried_task_ids=set(),

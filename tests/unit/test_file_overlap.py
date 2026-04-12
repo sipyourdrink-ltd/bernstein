@@ -143,7 +143,7 @@ class TestGetActiveAgentFiles:
         )
 
         with patch(
-            "bernstein.core.tasks.task_claim._get_changed_files_in_worktree",
+            "bernstein.core.tasks.task_lifecycle._get_changed_files_in_worktree",
             return_value=["src/bernstein/core/models.py", "src/bernstein/core/spawner.py"],
         ):
             files = _get_active_agent_files(orch)
