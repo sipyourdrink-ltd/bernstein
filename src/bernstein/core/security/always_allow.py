@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
-from bernstein.core.policy_engine import DecisionType, PermissionDecision
+from bernstein.core.security.policy_engine import DecisionType, PermissionDecision
 
 if TYPE_CHECKING:
     from pathlib import Path

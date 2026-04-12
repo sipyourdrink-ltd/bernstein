@@ -7,13 +7,13 @@ per time window and emits a summary when the message reappears.
 
 Usage::
 
-    from bernstein.core.rate_limited_logger import install_rate_limited_filter
+    from bernstein.core.observability.rate_limited_logger import install_rate_limited_filter
 
     install_rate_limited_filter("bernstein.core.spawner")
 
 Or with custom parameters::
 
-    from bernstein.core.rate_limited_logger import (
+    from bernstein.core.observability.rate_limited_logger import (
         LogDeduplicator,
         RateLimitedLogFilter,
     )

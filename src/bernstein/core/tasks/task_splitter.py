@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from bernstein.core.models import Scope, Task
+from bernstein.core.tasks.models import Scope, Task
 
 if TYPE_CHECKING:
     import httpx

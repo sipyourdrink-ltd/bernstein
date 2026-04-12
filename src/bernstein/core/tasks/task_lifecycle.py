@@ -34,9 +34,9 @@ from bernstein.core.fast_path import (
     try_fast_path_batch,
 )
 from bernstein.core.janitor import verify_task
-from bernstein.core.lifecycle import transition_agent
+from bernstein.core.tasks.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
-from bernstein.core.models import (
+from bernstein.core.tasks.models import (
     AgentSession,
     Task,
     TaskStatus,
@@ -333,7 +333,7 @@ def _choose_retry_escalation(
 
     Returns (new_model, new_effort).
     """
-    from bernstein.core.models import Scope as _Scope
+    from bernstein.core.tasks.models import Scope as _Scope
 
     terminal_reason = task.terminal_reason
 
@@ -611,7 +611,7 @@ def retry_or_fail_task(
         new_description = f"[retry:{retry_count + 1}] {base_description}{failure_note}"
         # Escalate model on retry: large/architect/security always opus/max;
         # other roles: sonnet->opus on 2nd retry, effort->high on 1st retry.
-        from bernstein.core.models import Scope as _Scope
+        from bernstein.core.tasks.models import Scope as _Scope
 
         _high_stakes_roles = ("architect", "security")
         if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:
@@ -738,7 +738,7 @@ def should_auto_decompose(
     # Extract retry count from title prefix like "[RETRY 2]"
     import re
 
-    from bernstein.core.models import Scope as _Scope
+    from bernstein.core.tasks.models import Scope as _Scope
 
     retry_match = re.match(r"^\[RETRY\s+(\d+)\]", task.title)
     retry_count = int(retry_match.group(1)) if retry_match else 0
@@ -841,7 +841,7 @@ def auto_decompose_task(
             from bernstein import get_templates_dir
             from bernstein.core.manager import ManagerAgent
             from bernstein.core.seed import parse_seed
-            from bernstein.core.task_splitter import TaskSplitter
+            from bernstein.core.tasks.task_splitter import TaskSplitter
 
             # Read internal LLM provider/model from seed config
             _provider = "openrouter_free"
@@ -2459,7 +2459,7 @@ def deprioritize_old_unclaimed_tasks(
     Returns:
         Count of tasks deprioritized.
     """
-    from bernstein.core.models import TaskStatus
+    from bernstein.core.tasks.models import TaskStatus
 
     if threshold_hours is None:
         threshold_hours = int(TASK.priority_decay_threshold_hours)

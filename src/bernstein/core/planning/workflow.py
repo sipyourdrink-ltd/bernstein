@@ -482,7 +482,7 @@ def load_workflow(name: str) -> WorkflowDefinition | None:
 
     # Try loading from DSL file.
     try:
-        from bernstein.core.workflow_dsl import load_workflow_dsl
+        from bernstein.core.planning.workflow_dsl import load_workflow_dsl
 
         dag = load_workflow_dsl(name)
         if dag is not None:
@@ -510,7 +510,7 @@ def load_workflow_dag(name: str) -> Any:
         return None  # Built-in, no DAG structure.
 
     try:
-        from bernstein.core.workflow_dsl import load_workflow_dsl
+        from bernstein.core.planning.workflow_dsl import load_workflow_dsl
 
         return load_workflow_dsl(name)
     except Exception:

@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bernstein.core.models import Task
+    from bernstein.core.tasks.models import Task
 
 # Discount factor for provider batch APIs (Anthropic Batch API offers 50% off)
 BATCH_DISCOUNT_FACTOR: float = 0.50
@@ -79,7 +79,7 @@ def classify_batch_mode(task: Task) -> BatchClassification:
     Returns:
         BatchClassification with mode, reason, and discount factor.
     """
-    from bernstein.core.models import Complexity, Scope, TaskType
+    from bernstein.core.tasks.models import Complexity, Scope, TaskType
 
     # Hard REALTIME gates
     if task.role in _REALTIME_ROLES:

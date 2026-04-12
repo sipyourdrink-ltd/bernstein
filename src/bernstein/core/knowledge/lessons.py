@@ -22,11 +22,11 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.memory_integrity import (
+from bernstein.core.knowledge.memory_integrity import (
     build_entry_integrity,
     detect_memory_poisoning,
 )
-from bernstein.core.memory_lock_protocol import MemoryFileGuard, guarded_memory_write
+from bernstein.core.knowledge.memory_lock_protocol import MemoryFileGuard, guarded_memory_write
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -580,7 +580,7 @@ def _get_last_chain_hash_from_content(content: str | None) -> str:
     Returns:
         The chain_hash of the last entry, or ``GENESIS_HASH`` for the first entry.
     """
-    from bernstein.core.memory_integrity import GENESIS_HASH
+    from bernstein.core.knowledge.memory_integrity import GENESIS_HASH
 
     if not content:
         return GENESIS_HASH

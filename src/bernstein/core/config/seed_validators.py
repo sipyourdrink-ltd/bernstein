@@ -19,7 +19,7 @@ from bernstein.core.models import (
     Task,
     TaskStatus,
 )
-from bernstein.core.seed_config import SeedConfig, SeedError
+from bernstein.core.config.seed_config import SeedConfig, SeedError
 
 if TYPE_CHECKING:
     from pathlib import Path

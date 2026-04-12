@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core import heartbeat as heartbeat_protocol
-from bernstein.core.agent_reaping import (
+from bernstein.core.agents.agent_reaping import (
     _propagate_abort_to_children,
     _save_partial_work,
 )

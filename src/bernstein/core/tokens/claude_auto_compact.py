@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from bernstein.core.auto_compact import AutoCompactConfig, AutoCompactTrigger
+from bernstein.core.tokens.auto_compact import AutoCompactConfig, AutoCompactTrigger
 
 logger = logging.getLogger(__name__)
 

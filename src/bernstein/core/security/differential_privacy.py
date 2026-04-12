@@ -6,7 +6,7 @@ patterns from aggregate metrics.
 
 Usage::
 
-    from bernstein.core.differential_privacy import DPConfig, apply_dp_to_export
+    from bernstein.core.security.differential_privacy import DPConfig, apply_dp_to_export
 
     cfg = DPConfig(epsilon=1.0, delta=1e-5)
     safe_data = apply_dp_to_export(raw_export_dict, cfg)

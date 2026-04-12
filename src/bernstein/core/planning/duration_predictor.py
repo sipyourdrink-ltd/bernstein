@@ -6,7 +6,7 @@ lookup table until at least 50 completions are available (cold start).
 
 Prediction API::
 
-    from bernstein.core.duration_predictor import get_predictor, DurationEstimate
+    from bernstein.core.planning.duration_predictor import get_predictor, DurationEstimate
 
     predictor = get_predictor(workdir / ".sdd" / "models")
     estimate: DurationEstimate = predictor.predict(task)

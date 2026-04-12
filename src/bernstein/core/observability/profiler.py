@@ -12,7 +12,7 @@ Provides two APIs:
 Usage (context manager)::
 
     if os.environ.get("BERNSTEIN_PROFILE"):
-        from bernstein.core.profiler import ProfilerSession
+        from bernstein.core.observability.profiler import ProfilerSession
         output_dir = workdir / ".sdd" / "runtime" / "profiles"
         with ProfilerSession(output_dir):
             orchestrator.run()

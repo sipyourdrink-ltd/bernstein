@@ -22,7 +22,7 @@ import re
 import httpx
 
 from bernstein.core.llm import call_llm
-from bernstein.core.token_estimation import estimate_tokens_for_text
+from bernstein.core.tokens.token_estimation import estimate_tokens_for_text
 
 log = logging.getLogger(__name__)
 

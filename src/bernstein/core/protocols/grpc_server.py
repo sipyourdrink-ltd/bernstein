@@ -22,7 +22,7 @@ except ImportError:
     GRPC_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from bernstein.core.cluster import NodeRegistry
+    from bernstein.core.protocols.cluster import NodeRegistry
 
 logger = logging.getLogger(__name__)
 

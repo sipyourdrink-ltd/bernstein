@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bernstein.core.cost_tracker import CostTracker
+    from bernstein.core.cost.cost_tracker import CostTracker
     from bernstein.core.models import AgentSession, CostAnomalyConfig
 
 log = logging.getLogger(__name__)

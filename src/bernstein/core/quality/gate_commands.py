@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.core.gate_pipeline import (
+from bernstein.core.quality.gate_pipeline import (
     NO_PYTHON_FILES,
     TIMED_OUT_PREFIX,
     GateResult,
@@ -20,8 +20,8 @@ from bernstein.core.gate_pipeline import (
 )
 
 if TYPE_CHECKING:
-    from bernstein.core.comment_quality import DocstyleKind
-    from bernstein.core.gate_pipeline import GatePipelineStep
+    from bernstein.core.quality.comment_quality import DocstyleKind
+    from bernstein.core.quality.gate_pipeline import GatePipelineStep
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ class GateRunnerCommandsMixin:
     ) -> GateResult:
         """Run the tests gate, optionally recording flaky-test telemetry."""
         from bernstein.core import quality_gates as qg
-        from bernstein.core.flaky_detector import FlakyDetector, parse_pytest_output
+        from bernstein.core.quality.flaky_detector import FlakyDetector, parse_pytest_output
 
         command = self._tests_command(step, run_dir, changed_files)
         if command is None:
@@ -425,7 +425,7 @@ class GateRunnerCommandsMixin:
         changed_files: list[str],
     ) -> GateResult:
         """Run the coverage-delta gate."""
-        from bernstein.core.coverage_gate import CoverageGate
+        from bernstein.core.quality.coverage_gate import CoverageGate
 
         python_files = self._python_files(changed_files)
         if not python_files:
@@ -483,7 +483,7 @@ class GateRunnerCommandsMixin:
         run_dir: Path,
     ) -> GateResult:
         """Run the benchmark regression gate."""
-        from bernstein.core.benchmark_gate import BenchmarkGate
+        from bernstein.core.quality.benchmark_gate import BenchmarkGate
 
         cfg = self._config.benchmark
         command = step.command_override or cfg.command
@@ -813,7 +813,7 @@ class GateRunnerCommandsMixin:
         run_dir: Path,
     ) -> GateResult:
         """Run the integration test generation gate."""
-        from bernstein.core.integration_test_gen import IntegTestGenConfig, generate_and_run
+        from bernstein.core.quality.integration_test_gen import IntegTestGenConfig, generate_and_run
 
         cfg = IntegTestGenConfig(
             enabled=True,
@@ -845,7 +845,7 @@ class GateRunnerCommandsMixin:
         run_dir: Path,
     ) -> GateResult:
         """Run the multi-dimensional code review rubric gate."""
-        from bernstein.core.review_rubric import ReviewRubricConfig, RubricHistoryWriter, score_diff
+        from bernstein.core.quality.review_rubric import ReviewRubricConfig, RubricHistoryWriter, score_diff
 
         cfg = ReviewRubricConfig(
             enabled=True,

@@ -43,7 +43,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bernstein.core.git_basic import run_git
+from bernstein.core.git.git_basic import run_git
 
 if TYPE_CHECKING:
     from pathlib import Path

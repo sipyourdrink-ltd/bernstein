@@ -45,7 +45,7 @@ from bernstein.core.task_lifecycle import (
     process_completed_tasks,
     should_auto_decompose,
 )
-from bernstein.core.tick_pipeline import (
+from bernstein.core.orchestration.tick_pipeline import (
     fail_task,
     fetch_all_tasks,
     group_by_role,
@@ -91,7 +91,7 @@ def _tick_internal(orch: Any) -> Any:
     Returns:
         A TickResult summarizing the tick.
     """
-    from bernstein.core.orchestrator import TickResult
+    from bernstein.core.orchestration.orchestrator import TickResult
 
     result = TickResult()
     orch._tick_count += 1
@@ -598,7 +598,7 @@ def _tick_internal(orch: Any) -> Any:
     # 6. Run evolution analysis cycle every N ticks
     # Gated behind _run_slow — evolution analysis is heavyweight.
     if _run_slow and orch._evolution is not None and orch._tick_count % orch._config.evolution_tick_interval == 0:
-        from bernstein.core.orchestrator_evolve import run_evolution_cycle
+        from bernstein.core.orchestration.orchestrator_evolve import run_evolution_cycle
 
         run_evolution_cycle(orch, result)
 
@@ -611,7 +611,7 @@ def _tick_internal(orch: Any) -> Any:
             logger.warning("Knowledge base refresh failed: %s", exc)
 
     # 7. Check evolve mode: if all tasks done and no agents alive, trigger new cycle
-    from bernstein.core.orchestrator_evolve import check_evolve, replenish_backlog
+    from bernstein.core.orchestration.orchestrator_evolve import check_evolve, replenish_backlog
 
     check_evolve(orch, result, tasks_by_status)
 
@@ -625,7 +625,7 @@ def _tick_internal(orch: Any) -> Any:
         and result.active_agents == 0
         and not orch._summary_written
     ):
-        from bernstein.core.orchestrator_summary import generate_run_summary
+        from bernstein.core.orchestration.orchestrator_summary import generate_run_summary
 
         generate_run_summary(orch, tasks_by_status["done"], tasks_by_status["failed"])
 
@@ -1083,7 +1083,7 @@ def _kill_agent_for_cost_cap(orch: Any, session: AgentSession) -> None:
     # Import from orchestrator module (not task_lifecycle directly) so that
     # test patches on ``bernstein.core.orchestrator.retry_or_fail_task`` are
     # intercepted correctly.
-    from bernstein.core.orchestrator import retry_or_fail_task as _retry_or_fail
+    from bernstein.core.orchestration.orchestrator import retry_or_fail_task as _retry_or_fail
 
     for task_id in list(session.task_ids):
         with contextlib.suppress(Exception):
@@ -1196,7 +1196,7 @@ def _run_manager_queue_review(orch: Any) -> None:
         orch: The orchestrator instance.
     """
     from bernstein import get_templates_dir
-    from bernstein.core.manager import ManagerAgent
+    from bernstein.core.orchestration.manager import ManagerAgent
     from bernstein.core.seed import parse_seed
 
     _BERNSTEIN_YAML = "bernstein.yaml"

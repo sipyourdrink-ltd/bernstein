@@ -6,7 +6,7 @@ detection, permission-escalation probing, and sandbox escape attempts.
 
 Usage::
 
-    from bernstein.core.security_correlation import (
+    from bernstein.core.security.security_correlation import (
         SecurityEvent,
         CorrelationPattern,
         correlate_events,

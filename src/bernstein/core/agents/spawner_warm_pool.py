@@ -70,7 +70,7 @@ def _load_role_config(role: str, templates_dir: Path) -> ModelConfig | None:
     Returns:
         ModelConfig from config.yaml, or None if not found / unreadable.
     """
-    from bernstein.core.spawner_core import _read_cached
+    from bernstein.core.agents.spawner_core import _read_cached
 
     config_path = templates_dir / role / "config.yaml"
     if not config_path.exists():

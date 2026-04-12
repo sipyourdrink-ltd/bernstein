@@ -17,13 +17,13 @@ from bernstein.adapters.registry import get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
-from bernstein.core.adapter_health import AdapterHealthMonitor
-from bernstein.core.container import ContainerConfig, ContainerError, ContainerManager
+from bernstein.core.agents.adapter_health import AdapterHealthMonitor
+from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.defaults import SPAWN
-from bernstein.core.heartbeat import HeartbeatMonitor
-from bernstein.core.in_process_agent import InProcessAgent
+from bernstein.core.agents.heartbeat import HeartbeatMonitor
+from bernstein.core.agents.in_process_agent import InProcessAgent
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import (
@@ -39,11 +39,11 @@ from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.prometheus import agent_spawn_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
-from bernstein.core.spawn_errors import RetryStrategy, classify_spawn_error
-from bernstein.core.spawn_rate_limiter import SpawnRateLimiter, SpawnRateLimitExceeded
+from bernstein.core.agents.spawn_errors import RetryStrategy, classify_spawn_error
+from bernstein.core.agents.spawn_rate_limiter import SpawnRateLimiter, SpawnRateLimitExceeded
 
 # Import sub-module functions
-from bernstein.core.spawner_merge import (
+from bernstein.core.agents.spawner_merge import (
     finalize_agent_trace,
     merge_and_cleanup_worktree,
     merge_worktree_branch,
@@ -52,20 +52,20 @@ from bernstein.core.spawner_merge import (
     reap_openclaw,
     reap_subprocess,
 )
-from bernstein.core.spawner_merge import (
+from bernstein.core.agents.spawner_merge import (
     reap_completed_agent as _reap_completed_agent,
 )
-from bernstein.core.spawner_merge import (
+from bernstein.core.agents.spawner_merge import (
     update_trace_outcome as _update_trace_outcome,
 )
-from bernstein.core.spawner_warm_pool import _select_batch_config, _should_use_router
-from bernstein.core.spawner_worktree import (
+from bernstein.core.agents.spawner_warm_pool import _select_batch_config, _should_use_router
+from bernstein.core.agents.spawner_worktree import (
     cleanup_worktree as _cleanup_worktree,
 )
-from bernstein.core.spawner_worktree import (
+from bernstein.core.agents.spawner_worktree import (
     prune_orphan_worktrees as _prune_orphan_worktrees,
 )
-from bernstein.core.spawner_worktree import (
+from bernstein.core.agents.spawner_worktree import (
     release_warm_pool_slot,
     worktree_manager_for_repo,
 )
@@ -88,7 +88,7 @@ if TYPE_CHECKING:
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.resource_limits import ResourceLimits
-    from bernstein.core.warm_pool import PoolSlot, WarmPool
+    from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
     from bernstein.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------
@@ -886,7 +886,7 @@ class AgentSpawner:
     def _identity_store(self) -> Any:
         """Return the AgentIdentityStore, creating it on first access."""
         if self._identity_store_instance is None:
-            from bernstein.core.agent_identity import AgentIdentityStore
+            from bernstein.core.agents.agent_identity import AgentIdentityStore
 
             auth_dir = self._workdir / ".sdd" / "auth"
             self._identity_store_instance = AgentIdentityStore(auth_dir)
@@ -1021,25 +1021,25 @@ class AgentSpawner:
 
     def _pending_pushes_path(self) -> Path:
         """Return the path to the pending-pushes JSONL file."""
-        from bernstein.core.spawner_merge import pending_pushes_path
+        from bernstein.core.agents.spawner_merge import pending_pushes_path
 
         return pending_pushes_path(self._workdir)
 
     def _record_pending_push(self, session_id: str, branch: str, repo_root: Path) -> None:
         """Append a failed push to the retry queue on disk."""
-        from bernstein.core.spawner_merge import record_pending_push
+        from bernstein.core.agents.spawner_merge import record_pending_push
 
         record_pending_push(self._workdir, session_id, branch, repo_root)
 
     def _validate_pending_push_entry(self, line: str, safe_base: Path) -> tuple[Path, str, str] | None:
         """Parse and validate a single pending-push entry line."""
-        from bernstein.core.spawner_merge import validate_pending_push_entry
+        from bernstein.core.agents.spawner_merge import validate_pending_push_entry
 
         return validate_pending_push_entry(line, safe_base)
 
     def retry_pending_pushes(self) -> int:
         """Retry any pushes recorded in the pending-pushes file."""
-        from bernstein.core.spawner_merge import retry_pending_pushes
+        from bernstein.core.agents.spawner_merge import retry_pending_pushes
 
         return retry_pending_pushes(self._workdir)
 
@@ -1888,7 +1888,7 @@ class AgentSpawner:
             # Register stdin pipe for real-time IPC (if available)
             proc_stdin = getattr(result.proc, "stdin", None)
             if proc_stdin is not None:
-                from bernstein.core.agent_ipc import register_stdin_pipe
+                from bernstein.core.agents.agent_ipc import register_stdin_pipe
 
                 register_stdin_pipe(session_id, proc_stdin)
 
@@ -2087,7 +2087,7 @@ class AgentSpawner:
         # --- Two-phase sandbox (Codex-style) ---
         # Phase 1: run dependency installation with network access.
         # Phase 2: run the agent with network disabled.
-        from bernstein.core.container import NetworkMode, _detect_setup_commands
+        from bernstein.core.agents.container import NetworkMode, _detect_setup_commands
 
         two_phase_cfg = self._container_mgr.config.two_phase_sandbox
         phase2_network_override: NetworkMode | None = None

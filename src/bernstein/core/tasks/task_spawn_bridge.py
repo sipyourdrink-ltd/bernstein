@@ -14,7 +14,7 @@ import httpx
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.models import Task
+    from bernstein.core.tasks.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def should_auto_decompose(
     # Extract retry count from title prefix like "[RETRY 2]"
     import re
 
-    from bernstein.core.models import Scope as _Scope
+    from bernstein.core.tasks.models import Scope as _Scope
 
     retry_match = re.match(r"^\[RETRY\s+(\d+)\]", task.title)
     retry_count = int(retry_match.group(1)) if retry_match else 0
@@ -159,7 +159,7 @@ def auto_decompose_task(
             from bernstein import get_templates_dir
             from bernstein.core.manager import ManagerAgent
             from bernstein.core.seed import parse_seed
-            from bernstein.core.task_splitter import TaskSplitter
+            from bernstein.core.tasks.task_splitter import TaskSplitter
 
             # Read internal LLM provider/model from seed config
             _provider = "openrouter_free"

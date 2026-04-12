@@ -7,7 +7,7 @@ filesystem restrictions.
 
 Usage::
 
-    from bernstein.core.container import ContainerManager, ContainerConfig
+    from bernstein.core.agents.container import ContainerManager, ContainerConfig
 
     config = ContainerConfig(runtime="docker", image="bernstein-agent:latest")
     mgr = ContainerManager(config, workdir=Path("."))

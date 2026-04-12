@@ -33,7 +33,7 @@ Usage
 -----
 ::
 
-    from bernstein.core.memory_integrity import (
+    from bernstein.core.knowledge.memory_integrity import (
         build_entry_integrity,
         detect_memory_poisoning,
         verify_chain,

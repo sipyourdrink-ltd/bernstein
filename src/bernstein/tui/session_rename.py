@@ -10,7 +10,7 @@ compatible (they just see ``goal`` instead).
 
 Usage::
 
-    from bernstein.session_rename import rename_session, validate_session_name
+    from bernstein.tui.session_rename import rename_session, validate_session_name
 
     errors = validate_session_name("my-great-session-123")
     if not errors:

@@ -24,10 +24,10 @@ _TIMED_OUT_PREFIX = "Timed out after "
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from bernstein.core.comment_quality import DocstyleKind
-    from bernstein.core.gate_plugins import GatePluginRegistry
+    from bernstein.core.quality.comment_quality import DocstyleKind
+    from bernstein.core.quality.gate_plugins import GatePluginRegistry
     from bernstein.core.models import Task
-    from bernstein.core.quality_gates import QualityGatesConfig
+    from bernstein.core.quality.quality_gates import QualityGatesConfig
 
 logger = logging.getLogger(__name__)
 
@@ -661,7 +661,7 @@ class GateRunner:
     ) -> GateResult:
         """Run the tests gate, optionally recording flaky-test telemetry."""
         from bernstein.core import quality_gates as qg
-        from bernstein.core.flaky_detector import FlakyDetector, parse_pytest_output
+        from bernstein.core.quality.flaky_detector import FlakyDetector, parse_pytest_output
 
         command = self._tests_command(step, run_dir, changed_files)
         if command is None:
@@ -972,7 +972,7 @@ class GateRunner:
         changed_files: list[str],
     ) -> GateResult:
         """Run the coverage-delta gate."""
-        from bernstein.core.coverage_gate import CoverageGate
+        from bernstein.core.quality.coverage_gate import CoverageGate
 
         python_files = self._python_files(changed_files)
         if not python_files:
@@ -1028,7 +1028,7 @@ class GateRunner:
         run_dir: Path,
     ) -> GateResult:
         """Run the benchmark regression gate."""
-        from bernstein.core.benchmark_gate import BenchmarkGate
+        from bernstein.core.quality.benchmark_gate import BenchmarkGate
 
         cfg = self._config.benchmark
         command = step.command_override or cfg.command
@@ -1348,7 +1348,7 @@ class GateRunner:
         run_dir: Path,
     ) -> GateResult:
         """Run the integration test generation gate."""
-        from bernstein.core.integration_test_gen import IntegTestGenConfig, generate_and_run
+        from bernstein.core.quality.integration_test_gen import IntegTestGenConfig, generate_and_run
 
         cfg = IntegTestGenConfig(
             enabled=True,
@@ -1378,7 +1378,7 @@ class GateRunner:
         run_dir: Path,
     ) -> GateResult:
         """Run the multi-dimensional code review rubric gate."""
-        from bernstein.core.review_rubric import ReviewRubricConfig, RubricHistoryWriter, score_diff
+        from bernstein.core.quality.review_rubric import ReviewRubricConfig, RubricHistoryWriter, score_diff
 
         cfg = ReviewRubricConfig(
             enabled=True,
@@ -1634,7 +1634,7 @@ class GateRunner:
 
     def _plugin_registry(self) -> GatePluginRegistry:
         """Return a cached quality-gate plugin registry."""
-        from bernstein.core.gate_plugins import GatePluginRegistry
+        from bernstein.core.quality.gate_plugins import GatePluginRegistry
 
         if self._gate_plugin_registry is None:
             registry = GatePluginRegistry(self._workdir, built_in_names=VALID_GATE_NAMES)
@@ -1711,7 +1711,7 @@ class GateRunner:
             Sorted list of Python file paths covering changed files plus
             all discovered dependents.
         """
-        from bernstein.core.test_impact import TestImpactAnalyzer
+        from bernstein.core.quality.test_impact import TestImpactAnalyzer
 
         try:
             analyzer = TestImpactAnalyzer(self._workdir)
@@ -1723,8 +1723,8 @@ class GateRunner:
             return python_files
 
     def _tests_command(self, step: GatePipelineStep, run_dir: Path, changed_files: list[str]) -> str | None:
-        from bernstein.core.flaky_detector import FlakyDetector
-        from bernstein.core.test_impact import TestImpactAnalyzer
+        from bernstein.core.quality.flaky_detector import FlakyDetector
+        from bernstein.core.quality.test_impact import TestImpactAnalyzer
 
         if step.command_override is not None:
             command = step.command_override

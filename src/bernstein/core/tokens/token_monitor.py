@@ -37,14 +37,14 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.context_window import compute_context_window_utilization
+from bernstein.core.tokens.context_window import compute_context_window_utilization
 from bernstein.core.defaults import TOKEN
 from bernstein.core.lifecycle import transition_agent
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-from bernstein.core.token_estimation import estimate_tokens_for_file
+from bernstein.core.tokens.token_estimation import estimate_tokens_for_file
 
 logger = logging.getLogger(__name__)
 

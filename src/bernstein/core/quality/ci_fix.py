@@ -26,8 +26,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.ci_log_parser import CILogParser
-    from bernstein.core.ci_monitor import FailureContext
+    from bernstein.core.quality.ci_log_parser import CILogParser
+    from bernstein.core.quality.ci_monitor import FailureContext
 
 logger = logging.getLogger(__name__)
 
@@ -667,8 +667,8 @@ class CIAutofixPipeline:
 
     Usage::
 
-        from bernstein.core.ci_monitor import FailureContext
-        from bernstein.core.ci_fix import CIAutofixPipeline
+        from bernstein.core.quality.ci_monitor import FailureContext
+        from bernstein.core.quality.ci_fix import CIAutofixPipeline
 
         pipeline = CIAutofixPipeline(server_url="http://127.0.0.1:8052")
         task_id = pipeline.create_fix_task(failure_ctx)

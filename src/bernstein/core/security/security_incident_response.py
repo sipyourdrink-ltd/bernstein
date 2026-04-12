@@ -22,7 +22,7 @@ This module is deliberately distinct from :mod:`bernstein.core.security_correlat
 Usage::
 
     from pathlib import Path
-    from bernstein.core.security_incident_response import SecurityIncidentResponder
+    from bernstein.core.security.security_incident_response import SecurityIncidentResponder
 
     responder = SecurityIncidentResponder(workdir=Path("."))
     result = responder.contain(

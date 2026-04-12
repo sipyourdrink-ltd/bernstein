@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from starlette.responses import Response as StarletteResponse
 
     from bernstein.core.agent_identity import AgentIdentityStore
-    from bernstein.core.auth import AuthService
+    from bernstein.core.security.auth import AuthService
 
 logger = logging.getLogger(__name__)
 

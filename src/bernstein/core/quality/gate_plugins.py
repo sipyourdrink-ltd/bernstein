@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.gate_runner import GateResult
+    from bernstein.core.quality.gate_runner import GateResult
 
 logger = logging.getLogger(__name__)
 

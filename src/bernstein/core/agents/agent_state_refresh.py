@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from bernstein.core.agent_reaping import (
+from bernstein.core.agents.agent_reaping import (
     _maybe_preserve_worktree,
     _propagate_abort_to_children,
     _release_file_ownership,

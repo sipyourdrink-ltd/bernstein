@@ -12,7 +12,7 @@ blocks the release with a structured error report.
 Typical usage::
 
     from pathlib import Path
-    from bernstein.core.release_train import ReleaseTrain, ReleaseTrainOrchestrator
+    from bernstein.core.quality.release_train import ReleaseTrain, ReleaseTrainOrchestrator
 
     train = ReleaseTrain(
         name="v2.0.0",

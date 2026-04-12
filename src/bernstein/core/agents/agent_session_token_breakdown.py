@@ -12,7 +12,7 @@ where context budget was spent:
 
 Usage::
 
-    from bernstein.core.agent_session_token_breakdown import load_session_breakdown
+    from bernstein.core.agents.agent_session_token_breakdown import load_session_breakdown
 
     breakdown = load_session_breakdown(sdd_dir, session_id="abc123")
     if breakdown:

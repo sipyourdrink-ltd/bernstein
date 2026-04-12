@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.metric_collector import MetricsCollector
+    from bernstein.core.observability.metric_collector import MetricsCollector
 
 logger = logging.getLogger(__name__)
 

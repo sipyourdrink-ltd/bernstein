@@ -18,13 +18,13 @@ from bernstein.adapters.registry import get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
-from bernstein.core.adapter_health import AdapterHealthMonitor
-from bernstein.core.container import ContainerConfig, ContainerError, ContainerManager
+from bernstein.core.agents.adapter_health import AdapterHealthMonitor
+from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
-from bernstein.core.heartbeat import HeartbeatMonitor
-from bernstein.core.in_process_agent import InProcessAgent
+from bernstein.core.agents.heartbeat import HeartbeatMonitor
+from bernstein.core.agents.in_process_agent import InProcessAgent
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import (
@@ -40,8 +40,8 @@ from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
-from bernstein.core.spawn_errors import RetryStrategy, classify_spawn_error
-from bernstein.core.spawn_rate_limiter import SpawnRateLimiter, SpawnRateLimitExceeded
+from bernstein.core.agents.spawn_errors import RetryStrategy, classify_spawn_error
+from bernstein.core.agents.spawn_rate_limiter import SpawnRateLimiter, SpawnRateLimitExceeded
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.resource_limits import ResourceLimits
-    from bernstein.core.warm_pool import PoolSlot, WarmPool
+    from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
     from bernstein.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------
@@ -857,7 +857,7 @@ class AgentSpawner:
     def _identity_store(self) -> Any:
         """Return the AgentIdentityStore, creating it on first access."""
         if self._identity_store_instance is None:
-            from bernstein.core.agent_identity import AgentIdentityStore
+            from bernstein.core.agents.agent_identity import AgentIdentityStore
 
             auth_dir = self._workdir / ".sdd" / "auth"
             self._identity_store_instance = AgentIdentityStore(auth_dir)
@@ -1722,7 +1722,7 @@ class AgentSpawner:
             # Register stdin pipe for real-time IPC (if available)
             proc_stdin = getattr(result.proc, "stdin", None)
             if proc_stdin is not None:
-                from bernstein.core.agent_ipc import register_stdin_pipe
+                from bernstein.core.agents.agent_ipc import register_stdin_pipe
 
                 register_stdin_pipe(session_id, proc_stdin)
 
@@ -1921,7 +1921,7 @@ class AgentSpawner:
         # --- Two-phase sandbox (Codex-style) ---
         # Phase 1: run dependency installation with network access.
         # Phase 2: run the agent with network disabled.
-        from bernstein.core.container import NetworkMode, _detect_setup_commands
+        from bernstein.core.agents.container import NetworkMode, _detect_setup_commands
 
         two_phase_cfg = self._container_mgr.config.two_phase_sandbox
         phase2_network_override: NetworkMode | None = None
@@ -2555,7 +2555,7 @@ class AgentSpawner:
             MergeResult when worktrees are enabled and skip_merge is False
             (None otherwise, or if no proc was stored).
         """
-        from bernstein.core.agent_ipc import unregister_stdin_pipe
+        from bernstein.core.agents.agent_ipc import unregister_stdin_pipe
 
         unregister_stdin_pipe(session.id)
 

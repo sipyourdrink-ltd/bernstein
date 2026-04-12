@@ -6,7 +6,7 @@ sensitive patterns.
 
 Usage::
 
-    from bernstein.core.sensitive_file_detector import (
+    from bernstein.core.security.sensitive_file_detector import (
         SensitiveFileDetector,
         SensitiveFileConfig,
         DetectionResult,

@@ -7,7 +7,7 @@ configuration.
 
 Usage::
 
-    from bernstein.core.compliance_policies import (
+    from bernstein.core.security.compliance_policies import (
         ComplianceFramework,
         CompliancePolicyLibrary,
         PolicyInput,

@@ -6,7 +6,7 @@ controls how permission layers behave.
 
 Usage::
 
-    from bernstein.core.auto_mode_classifier import AutoModeClassifier, OperationContext
+    from bernstein.core.routing.auto_mode_classifier import AutoModeClassifier, OperationContext
 
     classifier = AutoModeClassifier()
     level = classifier.classify(OperationContext(action="bash", command="rm -rf /"))

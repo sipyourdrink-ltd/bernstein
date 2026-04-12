@@ -5,7 +5,7 @@ keys, issuing new tokens, and updating running agents without restart.
 
 Usage::
 
-    from bernstein.core.key_rotation_support import (
+    from bernstein.core.security.key_rotation_support import (
         KeyExpiryDetector,
         AgentKeyUpdater,
         RotationOrchestrator,
@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 
-from bernstein.core.key_rotation import (
+from bernstein.core.security.key_rotation import (
     KeyRotationManager,
     KeyState,
     ManagedKey,

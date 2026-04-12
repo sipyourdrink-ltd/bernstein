@@ -25,7 +25,7 @@ from bernstein.core.models import (
     Task,
     TaskStatus,
 )
-from bernstein.core.orchestrator import TickResult, group_by_role
+from bernstein.core.orchestration.orchestrator import TickResult, group_by_role
 
 if TYPE_CHECKING:
     from pathlib import Path

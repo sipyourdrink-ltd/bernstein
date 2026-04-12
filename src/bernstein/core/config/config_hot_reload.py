@@ -17,12 +17,12 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from bernstein.core.config_diff import (
+from bernstein.core.config.config_diff import (
     ConfigDiffSummary,
     diff_config_snapshots,
     load_redacted_config,
 )
-from bernstein.core.config_watcher import ConfigWatcher, DriftReport
+from bernstein.core.config.config_watcher import ConfigWatcher, DriftReport
 
 if TYPE_CHECKING:
     from pathlib import Path

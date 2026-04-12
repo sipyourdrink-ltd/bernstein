@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bernstein.core.seed import SeedConfig
+    from bernstein.core.config.seed import SeedConfig
 
 logger = logging.getLogger(__name__)
 

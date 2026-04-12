@@ -25,19 +25,19 @@ import httpx
 from bernstein import get_templates_dir
 from bernstein.core.context import available_roles, gather_project_context
 from bernstein.core.llm import call_llm
-from bernstein.core.manager_models import (
+from bernstein.core.orchestration.manager_models import (
     QueueCorrection,
     QueueReviewResult,
     ReviewResult,
 )
-from bernstein.core.manager_parsing import (
+from bernstein.core.orchestration.manager_parsing import (
     _parse_upgrade_details,
     parse_queue_review_response,
     parse_review_response,
     parse_tasks_response,
     raw_dicts_to_tasks,
 )
-from bernstein.core.manager_prompts import (
+from bernstein.core.orchestration.manager_prompts import (
     render_plan_prompt,
     render_queue_review_prompt,
     render_review_prompt,
@@ -311,7 +311,7 @@ class ManagerAgent:
                 raise RuntimeError("LLM planning call failed to produce a response.")
 
             # 6. Parse response
-            from bernstein.core.manager_parsing import _resolve_depends_on
+            from bernstein.core.orchestration.manager_parsing import _resolve_depends_on
 
             raw_tasks = parse_tasks_response(raw_response)
             tasks = raw_dicts_to_tasks(raw_tasks)

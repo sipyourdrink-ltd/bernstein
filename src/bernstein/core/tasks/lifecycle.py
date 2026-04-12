@@ -15,7 +15,7 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Literal
 
-from bernstein.core.models import AbortReason, AgentSession, LifecycleEvent, Task, TaskStatus, TransitionReason
+from bernstein.core.tasks.models import AbortReason, AgentSession, LifecycleEvent, Task, TaskStatus, TransitionReason
 
 if TYPE_CHECKING:
     from collections.abc import Callable

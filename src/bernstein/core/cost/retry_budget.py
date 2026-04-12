@@ -5,7 +5,7 @@ and global (per-run) retry budgets.
 
 Usage::
 
-    from bernstein.core.retry_budget import RetryBudget, RetryBudgetConfig
+    from bernstein.core.cost.retry_budget import RetryBudget, RetryBudgetConfig
 
     config = RetryBudgetConfig(max_retries_per_task=3, max_retries_per_run=20)
     budget = RetryBudget(config)

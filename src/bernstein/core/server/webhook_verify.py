@@ -10,7 +10,7 @@ import logging
 
 from fastapi import HTTPException, Request
 
-from bernstein.core.webhook_signatures import verify_hmac_sha256
+from bernstein.core.server.webhook_signatures import verify_hmac_sha256
 
 logger = logging.getLogger(__name__)
 

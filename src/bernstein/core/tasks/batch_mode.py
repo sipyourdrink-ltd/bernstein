@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 
 if TYPE_CHECKING:
-    from bernstein.core.models import Task
+    from bernstein.core.tasks.models import Task
 
 
 @dataclass

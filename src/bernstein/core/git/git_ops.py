@@ -9,7 +9,7 @@ This module acts as a facade, re-exporting functionality from:
 - git_pr: Pull requests, branching, and worktree management
 """
 
-from bernstein.core.git_basic import (
+from bernstein.core.git.git_basic import (
     GitResult,
     checkout_discard,
     commit,
@@ -35,7 +35,7 @@ from bernstein.core.git_basic import (
     unstage_paths,
     version_from_commits,
 )
-from bernstein.core.git_pr import (
+from bernstein.core.git.git_pr import (
     MergeResult,
     PullRequestResult,
     _parse_conflict_files,

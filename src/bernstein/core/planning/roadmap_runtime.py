@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 import yaml
 
-from bernstein.core.scenario_library import ScenarioLibrary, ScenarioRecipe, load_scenario_library
+from bernstein.core.planning.scenario_library import ScenarioLibrary, ScenarioRecipe, load_scenario_library
 
 if TYPE_CHECKING:
     from pathlib import Path

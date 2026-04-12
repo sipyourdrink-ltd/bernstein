@@ -26,8 +26,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.server import TaskStore
-    from bernstein.core.store import BaseTaskStore
-    from bernstein.core.store_postgres import PostgresTaskStore
+    from bernstein.core.persistence.store import BaseTaskStore
+    from bernstein.core.persistence.store_postgres import PostgresTaskStore
 
 _VALID_BACKENDS = frozenset({"memory", "postgres", "redis"})
 
@@ -135,7 +135,7 @@ def _create_postgres_store(dsn: str) -> PostgresTaskStore:
     Returns:
         Configured PostgresTaskStore (call ``startup()`` before use).
     """
-    from bernstein.core.store_postgres import PostgresTaskStore
+    from bernstein.core.persistence.store_postgres import PostgresTaskStore
 
     return PostgresTaskStore(dsn=dsn)
 
@@ -150,8 +150,8 @@ def _create_redis_store(dsn: str, redis_url: str) -> PostgresTaskStore:
     Returns:
         Configured PostgresTaskStore with RedisCoordinator attached.
     """
-    from bernstein.core.store_postgres import PostgresTaskStore
-    from bernstein.core.store_redis import RedisCoordinator
+    from bernstein.core.persistence.store_postgres import PostgresTaskStore
+    from bernstein.core.persistence.store_redis import RedisCoordinator
 
     coordinator = RedisCoordinator(redis_url=redis_url)
     return PostgresTaskStore(dsn=dsn, redis_coordinator=coordinator)

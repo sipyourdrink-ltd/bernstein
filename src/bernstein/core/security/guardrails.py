@@ -15,19 +15,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.always_allow import (
+from bernstein.core.security.always_allow import (
     AlwaysAllowEngine,
     AlwaysAllowMatch,
     check_always_allow,
 )
 from bernstein.core.arch_conformance import ArchConformanceConfig, check_arch_conformance
-from bernstein.core.license_scanner import check_license_obligations
+from bernstein.core.security.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
-from bernstein.core.permissions import AgentPermissions, check_file_permissions
-from bernstein.core.policy_engine import DecisionGraph, DecisionType, PermissionDecision
+from bernstein.core.security.permissions import AgentPermissions, check_file_permissions
+from bernstein.core.security.policy_engine import DecisionGraph, DecisionType, PermissionDecision
 
 if TYPE_CHECKING:
-    from bernstein.core.permission_rules import PermissionRuleEngine
+    from bernstein.core.security.permission_rules import PermissionRuleEngine
 
 logger = logging.getLogger(__name__)
 
@@ -423,7 +423,7 @@ def check_immune_paths(diff: str) -> list[PermissionDecision]:
     Returns:
         List containing one PermissionDecision for the "immune_path_enforcement" check.
     """
-    from bernstein.core.permissions import path_matches_any
+    from bernstein.core.security.permissions import path_matches_any
 
     changed_files = _parse_diff_files(diff)
     violations = [f for f in changed_files if path_matches_any(f, _IMMUNE_CRITICAL_PATHS)]

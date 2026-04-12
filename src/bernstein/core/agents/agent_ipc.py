@@ -79,7 +79,7 @@ def broadcast_message(message: str, workdir: Any = None) -> dict[str, str]:
     Returns:
         Dict mapping session_id to delivery method ("pipe" or "file" or "failed").
     """
-    from bernstein.core.agent_signals import AgentSignalManager
+    from bernstein.core.agents.agent_signals import AgentSignalManager
 
     results: dict[str, str] = {}
 

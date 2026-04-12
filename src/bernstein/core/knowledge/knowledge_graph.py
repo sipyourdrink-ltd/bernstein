@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from bernstein.core.git_context import ls_files as _git_ls_files
-from bernstein.core.semantic_graph import build_semantic_graph, parse_file_symbols
+from bernstein.core.knowledge.semantic_graph import build_semantic_graph, parse_file_symbols
 
 logger = logging.getLogger(__name__)
 

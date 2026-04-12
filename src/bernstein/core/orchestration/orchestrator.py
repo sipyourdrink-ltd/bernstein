@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 
-from bernstein.core.adaptive_parallelism import AdaptiveParallelism
+from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelism
 from bernstein.core.agent_lifecycle import (
     check_kill_signals,
     check_loops_and_deadlocks,
@@ -53,7 +53,7 @@ from bernstein.core.dependency_scan import (
     DependencyVulnerabilityFinding,
     DependencyVulnerabilityScanner,
 )
-from bernstein.core.evolution import EvolutionCoordinator, UpgradeStatus
+from bernstein.core.orchestration.evolution import EvolutionCoordinator, UpgradeStatus
 from bernstein.core.fast_path import (
     FastPathStats,
     load_fast_path_config,
@@ -110,7 +110,7 @@ from bernstein.core.task_lifecycle import (
     retry_or_fail_task,
     should_auto_decompose,
 )
-from bernstein.core.tick_pipeline import (
+from bernstein.core.orchestration.tick_pipeline import (
     CompletionData,
     RuffViolation,
     TestResults,
@@ -121,10 +121,10 @@ from bernstein.core.tick_pipeline import (
     group_by_role,
     parse_backlog_file,
 )
-from bernstein.core.tick_pipeline import (
+from bernstein.core.orchestration.tick_pipeline import (
     compute_total_spent as compute_total_spent,
 )
-from bernstein.core.tick_pipeline import (
+from bernstein.core.orchestration.tick_pipeline import (
     total_spent_cache as total_spent_cache,
 )
 from bernstein.core.token_monitor import check_token_growth
@@ -212,7 +212,7 @@ def _build_container_config(iso: ContainerIsolationConfig) -> ContainerConfig | 
 
 # ---------------------------------------------------------------------------
 # Backward-compatible aliases so external code that does
-#   from bernstein.core.orchestrator import _fail_task, _complete_task, ...
+#   from bernstein.core.orchestration.orchestrator import _fail_task, _complete_task, ...
 # continues to work.
 # ---------------------------------------------------------------------------
 _task_from_dict: Callable[[dict[str, Any]], Task] = lambda raw: Task.from_dict(raw)  # noqa: E731
@@ -527,7 +527,7 @@ class Orchestrator:
 
         # Convergence guard: blocks spawn waves when merge queue, active
         # agent count, error rate, or spawn rate exceed safe thresholds.
-        from bernstein.core.convergence_guard import ConvergenceGuard
+        from bernstein.core.orchestration.convergence_guard import ConvergenceGuard
 
         self._convergence_guard = ConvergenceGuard(config.convergence)
 
@@ -2176,7 +2176,7 @@ class Orchestrator:
         deterministic orchestrator remains in full control.
         """
         from bernstein import get_templates_dir
-        from bernstein.core.manager import ManagerAgent
+        from bernstein.core.orchestration.manager import ManagerAgent
         from bernstein.core.seed import parse_seed
 
         try:
@@ -3763,7 +3763,7 @@ if __name__ == "__main__":
     _replay_run_id = os.environ.get("BERNSTEIN_REPLAY_RUN_ID", "").strip()
     _sdd_dir = workdir / ".sdd"
     if _replay_run_id:
-        from bernstein.core.deterministic import DeterministicStore, set_active_store
+        from bernstein.core.orchestration.deterministic import DeterministicStore, set_active_store
 
         _det_store = DeterministicStore(
             _sdd_dir / "runs" / _replay_run_id,
@@ -4105,7 +4105,7 @@ if __name__ == "__main__":
 
         if args.cells > 1:
             from bernstein.core.models import Cell
-            from bernstein.core.multi_cell import MultiCellOrchestrator
+            from bernstein.core.orchestration.multi_cell import MultiCellOrchestrator
 
             multi_orchestrator = MultiCellOrchestrator(
                 config=config,
@@ -4158,7 +4158,7 @@ if __name__ == "__main__":
 
             # Activate recording store once we know the orchestrator's run_id.
             if _deterministic_seed_env and not _replay_run_id:
-                from bernstein.core.deterministic import DeterministicStore, set_active_store
+                from bernstein.core.orchestration.deterministic import DeterministicStore, set_active_store
 
                 _rec_store = DeterministicStore(
                     _sdd_dir / "runs" / orchestrator._run_id,
@@ -4190,10 +4190,10 @@ if __name__ == "__main__":
 # Meta-messages for orchestrator nudges (T567)
 # Re-exported from nudge_manager.py for backward compatibility (ORCH-009).
 # ---------------------------------------------------------------------------
-from bernstein.core.nudge_manager import OrchestratorNudge as OrchestratorNudge  # noqa: E402
-from bernstein.core.nudge_manager import OrchestratorNudgeManager as OrchestratorNudgeManager  # noqa: E402
-from bernstein.core.nudge_manager import get_orchestrator_nudges as get_orchestrator_nudges  # noqa: E402
-from bernstein.core.nudge_manager import nudge_manager as nudge_manager  # noqa: E402
-from bernstein.core.nudge_manager import nudge_orchestrator as nudge_orchestrator  # noqa: E402
+from bernstein.core.orchestration.nudge_manager import OrchestratorNudge as OrchestratorNudge  # noqa: E402
+from bernstein.core.orchestration.nudge_manager import OrchestratorNudgeManager as OrchestratorNudgeManager  # noqa: E402
+from bernstein.core.orchestration.nudge_manager import get_orchestrator_nudges as get_orchestrator_nudges  # noqa: E402
+from bernstein.core.orchestration.nudge_manager import nudge_manager as nudge_manager  # noqa: E402
+from bernstein.core.orchestration.nudge_manager import nudge_orchestrator as nudge_orchestrator  # noqa: E402
 
 _nudge_manager = nudge_manager  # backward-compat alias

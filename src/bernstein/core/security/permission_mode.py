@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from enum import StrEnum
 
-from bernstein.core.permission_rules import RuleAction, RuleSeverity
+from bernstein.core.security.permission_rules import RuleAction, RuleSeverity
 
 logger = logging.getLogger(__name__)
 

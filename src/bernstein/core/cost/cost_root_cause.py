@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from bernstein.core.cost_tracker import CostTracker, TokenUsage
+    from bernstein.core.cost.cost_tracker import CostTracker, TokenUsage
 
 logger = logging.getLogger(__name__)
 

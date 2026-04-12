@@ -22,12 +22,12 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import FastAPI
 
 from bernstein.core.a2a import A2AHandler
-from bernstein.core.access_log import StructuredAccessLogMiddleware
+from bernstein.core.server.access_log import StructuredAccessLogMiddleware
 from bernstein.core.acp import ACPHandler
 from bernstein.core.auth_rate_limiter import RequestRateLimitMiddleware
 from bernstein.core.bulletin import BulletinBoard, DirectChannel, MessageBoard
 from bernstein.core.cluster import NodeRegistry
-from bernstein.core.json_logging import setup_json_logging
+from bernstein.core.server.json_logging import setup_json_logging
 from bernstein.core.models import (
     ClusterConfig,
     NodeInfo,
@@ -41,7 +41,7 @@ from bernstein.core.server.server_models import (
     NodeResponse,
     TaskResponse,
 )
-from bernstein.core.server_middleware import (
+from bernstein.core.server.server_middleware import (
     CrashGuardMiddleware,
     IPAllowlistMiddleware,
     ReadOnlyMiddleware,
@@ -528,7 +528,7 @@ def create_app(
     # Crash guard — outermost middleware, catches unhandled exceptions
     application.add_middleware(CrashGuardMiddleware)
 
-    from bernstein.core.frame_headers import FrameHeadersMiddleware, load_frame_embedding_policy
+    from bernstein.core.server.frame_headers import FrameHeadersMiddleware, load_frame_embedding_policy
 
     application.add_middleware(
         FrameHeadersMiddleware,
@@ -543,7 +543,7 @@ def create_app(
     )
 
     # WEB-010: Request/response logging middleware (method, path, status, duration)
-    from bernstein.core.request_logging import RequestLoggingMiddleware
+    from bernstein.core.server.request_logging import RequestLoggingMiddleware
 
     application.add_middleware(RequestLoggingMiddleware)
 

@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bernstein.core.git_basic import GitResult, run_git
+from bernstein.core.git.git_basic import GitResult, run_git
 from bernstein.core.telemetry import start_span
 
 if TYPE_CHECKING:

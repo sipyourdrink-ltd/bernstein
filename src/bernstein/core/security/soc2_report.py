@@ -331,7 +331,7 @@ def generate_soc2_report(
     hmac_valid: bool | None = None
     if audit_dir.is_dir():
         try:
-            from bernstein.core.audit import AuditLog
+            from bernstein.core.security.audit import AuditLog
 
             audit_log = AuditLog(audit_dir)
             valid, audit_errors = audit_log.verify()

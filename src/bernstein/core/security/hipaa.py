@@ -22,7 +22,7 @@ full agent lifecycle.
 
 Usage::
 
-    from bernstein.core.hipaa import HIPAAMode, PHIDetector
+    from bernstein.core.security.hipaa import HIPAAMode, PHIDetector
 
     detector = PHIDetector()
     result = detector.scan("Patient SSN: 123-45-6789")
@@ -532,7 +532,7 @@ def generate_hipaa_report(
     Returns:
         HIPAAComplianceReport instance.
     """
-    from bernstein.core.audit import AuditLog
+    from bernstein.core.security.audit import AuditLog
 
     generated_at = datetime.now(tz=UTC).strftime(ISO_DATETIME_FMT)
     events = phi_events_log or []

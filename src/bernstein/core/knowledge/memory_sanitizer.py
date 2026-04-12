@@ -13,7 +13,7 @@ Usage
 -----
 ::
 
-    from bernstein.core.memory_sanitizer import MemoryFirewall, TRUST_THRESHOLD
+    from bernstein.core.knowledge.memory_sanitizer import MemoryFirewall, TRUST_THRESHOLD
 
     fw = MemoryFirewall(sdd_dir=Path(".sdd"))
     result = fw.scan(
@@ -39,7 +39,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.memory_integrity import detect_memory_poisoning
+from bernstein.core.knowledge.memory_integrity import detect_memory_poisoning
 
 if TYPE_CHECKING:
     from pathlib import Path

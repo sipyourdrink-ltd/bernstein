@@ -17,7 +17,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from bernstein.core.policy_engine import DecisionType, PermissionDecision
+from bernstein.core.security.policy_engine import DecisionType, PermissionDecision
 
 logger = logging.getLogger(__name__)
 

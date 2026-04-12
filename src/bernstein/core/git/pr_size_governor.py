@@ -6,7 +6,7 @@ dependency ordering so each PR is independently reviewable.
 
 Usage::
 
-    from bernstein.core.pr_size_governor import split_pr_if_needed
+    from bernstein.core.git.pr_size_governor import split_pr_if_needed
 
     result = split_pr_if_needed(
         cwd,
@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from bernstein.core.git_ops import (
+from bernstein.core.git.git_ops import (
     create_github_pr,
     push_branch,
     run_git,

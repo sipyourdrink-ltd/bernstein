@@ -25,8 +25,8 @@ import httpx
 from bernstein.core.platform_compat import kill_process_group
 
 if TYPE_CHECKING:
-    from bernstein.core.tick_pipeline import RuffViolation, TestResults
-    from bernstein.core.tick_pipeline import TickResult as _TickResult
+    from bernstein.core.orchestration.tick_pipeline import RuffViolation, TestResults
+    from bernstein.core.orchestration.tick_pipeline import TickResult as _TickResult
 
 logger = logging.getLogger(__name__)
 

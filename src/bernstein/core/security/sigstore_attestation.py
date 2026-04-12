@@ -16,7 +16,7 @@ alongside the attestation record.  The ``fallback_used`` flag on
 
 Usage::
 
-    from bernstein.core.sigstore_attestation import attest_task_completion
+    from bernstein.core.security.sigstore_attestation import attest_task_completion
 
     record = await attest_task_completion(
         task_id="abc123",

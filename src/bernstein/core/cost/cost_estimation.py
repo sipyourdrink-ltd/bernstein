@@ -96,7 +96,7 @@ def estimate_spawn_cost(
     Returns:
         A :class:`PreSpawnEstimate` with the predicted cost and confidence.
     """
-    from bernstein.core.cost import (
+    from bernstein.core.cost.cost import (
         MIN_OBSERVATIONS,
         MODEL_COSTS_PER_1M_TOKENS,
         EpsilonGreedyBandit,

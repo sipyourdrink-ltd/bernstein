@@ -6,7 +6,7 @@ email addresses, phone numbers, SSNs, and credit card numbers with
 
 Usage::
 
-    from bernstein.core.log_redact import install_pii_filter
+    from bernstein.core.observability.log_redact import install_pii_filter
 
     install_pii_filter()          # attaches to root logger
     install_pii_filter(logger)    # attaches to a specific logger

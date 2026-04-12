@@ -22,7 +22,7 @@ Usage
 -----
 Typical call site (guardrails or post-merge hook)::
 
-    from bernstein.core.readme_reminder import detect_api_changes, remind_message
+    from bernstein.core.quality.readme_reminder import detect_api_changes, remind_message
 
     changes = detect_api_changes(diff)
     if changes:

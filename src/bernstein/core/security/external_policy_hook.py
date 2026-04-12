@@ -6,7 +6,7 @@ of Bernstein's configuration.
 
 Usage::
 
-    from bernstein.core.external_policy_hook import (
+    from bernstein.core.security.external_policy_hook import (
         ExternalPolicyHook,
         PolicyHookRegistry,
         HookRequest,

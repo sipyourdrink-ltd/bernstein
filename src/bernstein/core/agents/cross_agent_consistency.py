@@ -10,7 +10,7 @@ verifies that their contracts are compatible:
 
 Usage example::
 
-    from bernstein.core.cross_agent_consistency import (
+    from bernstein.core.agents.cross_agent_consistency import (
         AgentImplementation,
         ApiContract,
         check_consistency,

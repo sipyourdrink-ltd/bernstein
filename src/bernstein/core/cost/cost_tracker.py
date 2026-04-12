@@ -188,7 +188,7 @@ def estimate_cost(
     Returns:
         Estimated cost in USD.
     """
-    from bernstein.core.cost import MODEL_COSTS_PER_1M_TOKENS
+    from bernstein.core.cost.cost import MODEL_COSTS_PER_1M_TOKENS
 
     model_lower = model.lower()
     pricing = None

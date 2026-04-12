@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any, cast
 
-from bernstein.core.manager_models import (
+from bernstein.core.orchestration.manager_models import (
     _VALID_VERDICTS,
     QueueCorrection,
     QueueReviewResult,

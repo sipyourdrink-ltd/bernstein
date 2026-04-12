@@ -15,10 +15,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from bernstein.core.defaults import TASK
-from bernstein.core.models import Complexity, Scope
+from bernstein.core.tasks.models import Complexity, Scope
 
 if TYPE_CHECKING:
-    from bernstein.core.models import Task
+    from bernstein.core.tasks.models import Task
 
 logger = logging.getLogger(__name__)
 

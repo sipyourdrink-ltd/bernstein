@@ -40,11 +40,11 @@ from bernstein.core.models import (
     TaskType,
     UpgradeProposalDetails,
 )
-from bernstein.core.store import BaseTaskStore, RoleSummary, StatusSummary
+from bernstein.core.persistence.store import BaseTaskStore, RoleSummary, StatusSummary
 
 if TYPE_CHECKING:
     from bernstein.core.server import ArchiveRecord, TaskCreate
-    from bernstein.core.store_redis import RedisCoordinator
+    from bernstein.core.persistence.store_redis import RedisCoordinator
 
 logger = logging.getLogger(__name__)
 

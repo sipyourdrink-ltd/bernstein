@@ -13,7 +13,7 @@ through :func:`set_entry_hook` / :func:`set_exit_hook`.
 
 Example::
 
-    from bernstein.core.agent_turn_state import (
+    from bernstein.core.agents.agent_turn_state import (
         AgentTurnEvent,
         AgentTurnState,
         AgentTurnStateMachine,

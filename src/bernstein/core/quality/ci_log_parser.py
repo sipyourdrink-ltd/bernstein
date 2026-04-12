@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from bernstein.core.ci_fix import CIFailure
+    from bernstein.core.quality.ci_fix import CIFailure
 
 logger = logging.getLogger(__name__)
 

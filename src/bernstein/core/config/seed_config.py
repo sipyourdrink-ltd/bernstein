@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from bernstein.core.sandbox import DockerSandbox
     from bernstein.core.secrets import SecretsConfig
     from bernstein.core.tenanting import TenantConfig
-    from bernstein.core.visual_config import VisualConfig
+    from bernstein.core.config.visual_config import VisualConfig
     from bernstein.core.workspace import Workspace
     from bernstein.core.worktree import WorktreeSetupConfig
 

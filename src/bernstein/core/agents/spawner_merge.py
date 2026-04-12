@@ -22,9 +22,9 @@ from bernstein.plugins.manager import get_plugin_manager
 if TYPE_CHECKING:
     import subprocess
 
-    from bernstein.core.container import ContainerManager
-    from bernstein.core.in_process_agent import InProcessAgent
-    from bernstein.core.warm_pool import PoolSlot, WarmPool
+    from bernstein.core.agents.container import ContainerManager
+    from bernstein.core.agents.in_process_agent import InProcessAgent
+    from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
     from bernstein.core.worktree import WorktreeManager
 
 logger = logging.getLogger(__name__)
@@ -476,7 +476,7 @@ def reap_completed_agent(
         MergeResult when worktrees are enabled and skip_merge is False
         (None otherwise).
     """
-    from bernstein.core.agent_ipc import unregister_stdin_pipe
+    from bernstein.core.agents.agent_ipc import unregister_stdin_pipe
 
     unregister_stdin_pipe(session.id)
 

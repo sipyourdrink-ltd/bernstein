@@ -137,7 +137,7 @@ def forecast_plan_cost(
     Returns:
         A :class:`PlanCostForecast` with estimates and confidence.
     """
-    from bernstein.core.cost import (
+    from bernstein.core.cost.cost import (
         get_cascade_model,
         predict_task_cost,
     )

@@ -26,7 +26,7 @@ from bernstein.core.git_context import (
 from bernstein.core.git_context import (
     ls_files as _git_ls_files,
 )
-from bernstein.core.knowledge_base import _parse_python_file
+from bernstein.core.knowledge.knowledge_base import _parse_python_file
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     import threading
     from pathlib import Path
 
-    from bernstein.core.warm_pool import PoolSlot, WarmPool
+    from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
     from bernstein.core.worktree import WorktreeManager, WorktreeSetupConfig
 
 logger = logging.getLogger(__name__)

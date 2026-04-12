@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.agent_log_aggregator import AgentLogAggregator
+    from bernstein.core.agents.agent_log_aggregator import AgentLogAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ def integrate_idle_detection(orch: Any) -> dict[str, int] | None:
     Returns:
         Updated last_known_log_lines dict, or None if not configured.
     """
-    from bernstein.core.agent_log_aggregator import AgentLogAggregator
+    from bernstein.core.agents.agent_log_aggregator import AgentLogAggregator
 
     # Get idle timeout from config (default 180s)
     idle_timeout = getattr(orch._config, "idle_timeout_seconds", DEFAULT_IDLE_TIMEOUT_SECONDS)

@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 # Import from sub-modules (facade re-exports)
 from bernstein.core.config_path_validation import check_config_paths
 from bernstein.core.log_redact import install_pii_filter
-from bernstein.core.preflight import (
+from bernstein.core.orchestration.preflight import (
     _claude_has_oauth_session,
     _codex_has_auth,
     gemini_has_auth,

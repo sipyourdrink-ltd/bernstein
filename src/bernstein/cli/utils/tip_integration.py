@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from bernstein.contextual_tips import TipsCatalog
+from bernstein.tui.contextual_tips import TipsCatalog
 
 # ---------------------------------------------------------------------------
 # Cooldown

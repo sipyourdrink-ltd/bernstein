@@ -27,7 +27,7 @@ Implementation strategy:
 
 Usage::
 
-    from bernstein.core.commit_signing import CommitProvenance, sign_and_commit
+    from bernstein.core.security.commit_signing import CommitProvenance, sign_and_commit
 
     provenance = CommitProvenance(
         agent_id="claude-security-ec5bab8b",

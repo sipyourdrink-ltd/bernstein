@@ -179,7 +179,7 @@ def _count_tokens_bytes_estimate(text: str) -> int:
     Returns:
         Estimated token count (bytes / 4, rounded down).
     """
-    from bernstein.core.token_estimation import estimate_tokens_for_text
+    from bernstein.core.tokens.token_estimation import estimate_tokens_for_text
 
     count = estimate_tokens_for_text(text, assumed_type="code")
     logger.debug("cascading_token_counter: bytes-estimate tier returned %d tokens", count)

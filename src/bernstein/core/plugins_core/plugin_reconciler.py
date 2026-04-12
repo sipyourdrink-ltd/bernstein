@@ -10,7 +10,7 @@ that have been delisted from the marketplace.
 
 Usage::
 
-    from bernstein.core.plugin_reconciler import reconcile_plugins
+    from bernstein.core.plugins_core.plugin_reconciler import reconcile_plugins
 
     result = reconcile_plugins(
         plugins_dir=workdir / ".bernstein" / "plugins",

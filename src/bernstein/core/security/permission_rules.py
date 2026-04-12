@@ -40,9 +40,9 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.permission_mode import PermissionMode
+    from bernstein.core.security.permission_mode import PermissionMode
 
-from bernstein.core.policy_engine import DecisionType, PermissionDecision
+from bernstein.core.security.policy_engine import DecisionType, PermissionDecision
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ class PermissionRuleEngine:
             if self._matches(rule, tool_name, tool_input):
                 action = rule.action
                 if mode is not None:
-                    from bernstein.core.permission_mode import effective_action
+                    from bernstein.core.security.permission_mode import effective_action
 
                     action = effective_action(mode, action, rule.severity)
                 return RuleMatch(

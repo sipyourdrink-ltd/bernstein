@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from bernstein.core.models import (
         AgentSession,
     )
-    from bernstein.core.tick_pipeline import (
+    from bernstein.core.orchestration.tick_pipeline import (
         CompletionData,
     )
 
@@ -110,7 +110,7 @@ def run(orch: Any) -> None:
     consecutive_failures = 0
     max_consecutive_failures = 10
 
-    from bernstein.core.orchestrator import TickResult  # noqa: TC001
+    from bernstein.core.orchestration.orchestrator import TickResult  # noqa: TC001
 
     while orch._running or _has_active_agents(orch):
         tick_result: TickResult | None = None
@@ -215,7 +215,7 @@ def _run_scheduled_dependency_scan(orch: Any) -> None:
     Args:
         orch: The orchestrator instance.
     """
-    from bernstein.core.orchestrator_tick import _run_scheduled_dependency_scan as _impl
+    from bernstein.core.orchestration.orchestrator_tick import _run_scheduled_dependency_scan as _impl
 
     _impl(orch)
 
@@ -229,7 +229,7 @@ def _load_existing_dependency_scan_task_titles(orch: Any) -> set[str]:
     Returns:
         Set of existing task titles.
     """
-    from bernstein.core.orchestrator_tick import _load_existing_dependency_scan_task_titles as _impl
+    from bernstein.core.orchestration.orchestrator_tick import _load_existing_dependency_scan_task_titles as _impl
 
     return _impl(orch)
 
@@ -249,6 +249,6 @@ def _create_dependency_fix_task(
     Returns:
         The title of the created task, or None if skipped/failed.
     """
-    from bernstein.core.orchestrator_tick import _create_dependency_fix_task as _impl
+    from bernstein.core.orchestration.orchestrator_tick import _create_dependency_fix_task as _impl
 
     return _impl(orch, finding, existing_titles)

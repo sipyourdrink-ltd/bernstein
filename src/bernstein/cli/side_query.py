@@ -6,7 +6,7 @@ through the manager LLM or from a knowledge base — never blocking the
 orchestrator tick pipeline.
 
 Intended use:
-  from bernstein.side_query import SideQuery, post_side_query, get_side_answer
+  from bernstein.cli.side_query import SideQuery, post_side_query, get_side_answer
 
   # Agent posts a question
   post_side_query(agent_id, "What is the database migration strategy?")

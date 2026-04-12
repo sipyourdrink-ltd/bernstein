@@ -6,7 +6,7 @@ logic for privacy budget tracking and field-level sensitivity.
 
 Usage::
 
-    from bernstein.core.dp_telemetry import (
+    from bernstein.core.security.dp_telemetry import (
         DPTelemetryExporter,
         TelemetryPrivacyConfig,
         PrivacyBudgetTracker,
@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from bernstein.core.differential_privacy import DPConfig, GaussianMechanism
+from bernstein.core.security.differential_privacy import DPConfig, GaussianMechanism
 
 logger = logging.getLogger(__name__)
 
