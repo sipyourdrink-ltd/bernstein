@@ -277,6 +277,8 @@ def configure_datadog(cfg: DatadogConfig | None = None) -> bool:
 
         init_telemetry_from_preset(
             "datadog",
+            # HTTP is intentional: the Datadog Agent's OTLP/gRPC receiver
+            # runs on localhost and does not serve TLS by default.
             endpoint_override=f"http://{cfg.agent_host}:4317",
         )
         logger.info(

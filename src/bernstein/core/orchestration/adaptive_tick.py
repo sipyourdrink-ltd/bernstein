@@ -20,6 +20,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -73,7 +74,7 @@ class AdaptiveTicker:
 
     def __post_init__(self) -> None:
         """Initialize current interval to base."""
-        if self._current_interval_s == 0.0:
+        if math.isclose(self._current_interval_s, 0.0):
             self._current_interval_s = self.base_interval_s
 
     def record_activity(

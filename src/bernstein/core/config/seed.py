@@ -120,6 +120,8 @@ class CORSConfig:
         max_age: Seconds the browser may cache preflight responses.
     """
 
+    # HTTP is intentional: these are localhost CORS origin patterns, not
+    # remote URLs.  Browsers do not use HTTPS for localhost by default.
     allowed_origins: tuple[str, ...] = (
         "http://localhost:*",
         "http://127.0.0.1:*",
