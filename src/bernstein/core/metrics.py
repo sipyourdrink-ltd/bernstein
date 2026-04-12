@@ -1,23 +1,18 @@
-"""Performance metrics collection and storage (facade).
+"""Backward-compat shim — re-exports from bernstein.core.observability.metrics."""
 
-This module acts as a facade, re-exporting functionality from:
-- metric_collector: Collection and recording of metrics
-- metric_export: Export and reporting functionality
-"""
-
-from bernstein.core.metric_collector import (
+from bernstein.core.observability.metrics import (
     AgentMetrics,
     MetricPoint,
-    MetricsCollector,
     MetricType,
+    MetricsCollector,
     PercentileTracker,
     ProviderHealth,
     ProviderStatus,
     TaskMetrics,
     UsageQuota,
+    export_metrics,
     get_collector,
 )
-from bernstein.core.metric_export import export_metrics
 
 __all__ = [
     "AgentMetrics",
