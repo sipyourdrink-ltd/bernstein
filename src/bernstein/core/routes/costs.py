@@ -972,21 +972,31 @@ def get_token_breakdown(request: Request, session_id: str | None = None) -> JSON
     )
 
 @router.get("/costs/efficiency")
-async def cost_efficiency(request: Request) -> dict:
+async def cost_efficiency(request: Request) -> dict[str, object]:
     """Get cost-per-line efficiency metrics."""
+    import dataclasses
+
+    from bernstein.core.cost_per_line import CostLineTask, compute_efficiency
+
     store = request.app.state.store
     archive = store.read_archive(limit=100)
-    
-    tasks = [
-        {"lines_changed": r.get("lines_changed", 0), "cost_usd": r.get("cost_usd", 0)}
+
+    tasks: list[CostLineTask] = [
+        {
+            "lines_changed": _read_lines_for_agent(
+                request.app.state.sdd_dir / "runtime" / "lines",
+                r.get("claimed_by_session", "") or "",
+            ),
+            "cost_usd": r.get("cost_usd", 0) or 0,
+        }
         for r in archive
     ]
     tracker = request.app.state.cost_tracker
     total = sum(u.cost_usd for u in tracker.usages)
-    
-    from bernstein.core.cost_per_line import compute_efficiency
+
     result = compute_efficiency(tasks, total)
     return dataclasses.asdict(result)
+
 
 def _read_lines_for_agent(lines_dir: Any, agent_id: str) -> int:
     """Read persisted lines-changed count for an agent session."""
