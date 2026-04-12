@@ -252,11 +252,11 @@ class TestAgentIdentityStore:
         store.create_identity("backend-abc", "backend")
         store.create_identity("backend-def", "backend")
 
-        with caplog.at_level("INFO", logger="bernstein.core.agent_identity"):
+        with caplog.at_level("INFO", logger="bernstein.core.agents.agent_identity"):
             assert store.revoke("backend-abc", reason="line1\nline2")
             assert store.suspend("backend-def", reason="line3\rline4")
 
-        messages = [record.getMessage() for record in caplog.records if record.name == "bernstein.core.agent_identity"]
+        messages = [record.getMessage() for record in caplog.records if "agent_identity" in record.name]
         assert any("line1\\nline2" in message for message in messages)
         assert any("line3\\rline4" in message for message in messages)
         assert all("line1\nline2" not in message for message in messages)

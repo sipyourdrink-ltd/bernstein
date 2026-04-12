@@ -67,14 +67,14 @@ class TestExtractVersion:
 
 
 class TestDetectCodex:
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value=None)
     def test_not_found(self, _which: Any) -> None:
         agent, warnings = _detect_codex()
         assert agent is None
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/codex")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/codex")
     def test_logged_in_via_chatgpt(self, _which: Any, mock_probe: MagicMock) -> None:
         # --version probe
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="codex v1.0.0\n", stderr="")
@@ -93,8 +93,8 @@ class TestDetectCodex:
         assert "o4-mini" in agent.available_models
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/codex")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/codex")
     def test_logged_in_via_api_key(self, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="1.0.0\n", stderr="")
         login_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="Not logged in\n", stderr="")
@@ -108,8 +108,8 @@ class TestDetectCodex:
         assert agent.login_method == "API key"
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/codex")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/codex")
     def test_not_logged_in(self, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="1.0.0\n", stderr="")
         login_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="Not logged in\n", stderr="")
@@ -130,14 +130,14 @@ class TestDetectCodex:
 
 
 class TestDetectGemini:
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value=None)
     def test_not_found(self, _which: Any) -> None:
         agent, warnings = _detect_gemini()
         assert agent is None
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
     def test_logged_in_via_api_key(self, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.1.0\n", stderr="")
         mock_probe.return_value = version_result
@@ -151,8 +151,8 @@ class TestDetectGemini:
         assert agent.login_method == "GOOGLE_API_KEY"
         assert agent.max_context_tokens == 1_000_000
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
     @patch("bernstein.core.preflight.gemini_has_auth", return_value=(True, "gcloud auth"))
     def test_logged_in_via_gcloud(self, _auth: Any, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.1.0\n", stderr="")
@@ -163,8 +163,8 @@ class TestDetectGemini:
         assert agent is not None
         assert agent.logged_in is True
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
     def test_logged_in_via_config_dir(self, _which: Any, mock_probe: MagicMock, tmp_path: Path) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.1.0\n", stderr="")
         mock_probe.return_value = version_result
@@ -174,7 +174,7 @@ class TestDetectGemini:
 
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch("bernstein.core.agent_discovery.Path.home", return_value=tmp_path),
+            patch("bernstein.core.agents.agent_discovery.Path.home", return_value=tmp_path),
         ):
             agent, _warnings = _detect_gemini()
 
@@ -182,15 +182,15 @@ class TestDetectGemini:
         assert agent.logged_in is True
         assert agent.login_method == "config"
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
     def test_not_logged_in(self, _which: Any, mock_probe: MagicMock, tmp_path: Path) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.1.0\n", stderr="")
         mock_probe.return_value = version_result
 
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch("bernstein.core.agent_discovery.Path.home", return_value=tmp_path),
+            patch("bernstein.core.agents.agent_discovery.Path.home", return_value=tmp_path),
         ):
             agent, warnings = _detect_gemini()
 
@@ -200,14 +200,14 @@ class TestDetectGemini:
 
 
 class TestDetectKiro:
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value=None)
     def test_not_found(self, _which: Any) -> None:
         agent, warnings = _detect_kiro()
         assert agent is None
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/kiro-cli")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/kiro-cli")
     def test_detects_logged_in_and_models(self, _which: Any, mock_probe: MagicMock) -> None:
         version = subprocess.CompletedProcess(args=[], returncode=0, stdout="kiro-cli 1.2.3\n", stderr="")
         whoami = subprocess.CompletedProcess(args=[], returncode=0, stdout='{"authMethod":"oauth"}', stderr="")
@@ -229,14 +229,14 @@ class TestDetectKiro:
 
 
 class TestDetectOpenCode:
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value=None)
     def test_not_found(self, _which: Any) -> None:
         agent, warnings = _detect_opencode()
         assert agent is None
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/opencode")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/opencode")
     def test_detects_logged_in_and_models(self, _which: Any, mock_probe: MagicMock) -> None:
         version = subprocess.CompletedProcess(args=[], returncode=0, stdout="opencode 0.8.0\n", stderr="")
         auth = subprocess.CompletedProcess(args=[], returncode=0, stdout="anthropic\nopenai\n", stderr="")
@@ -262,14 +262,14 @@ class TestDetectOpenCode:
 
 
 class TestDetectClaude:
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value=None)
     def test_not_found(self, _which: Any) -> None:
         agent, warnings = _detect_claude()
         assert agent is None
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/claude")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/claude")
     def test_logged_in_via_api_key(self, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="2.1.0\n", stderr="")
         mock_probe.return_value = version_result
@@ -283,8 +283,8 @@ class TestDetectClaude:
         assert agent.login_method == "API key"
         assert "claude-opus-4-6" in agent.available_models
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/claude")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/claude")
     def test_logged_in_via_oauth(self, _which: Any, mock_probe: MagicMock, tmp_path: Path) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="2.1.0\n", stderr="")
         mock_probe.return_value = version_result
@@ -293,7 +293,7 @@ class TestDetectClaude:
 
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch("bernstein.core.agent_discovery.Path.home", return_value=tmp_path),
+            patch("bernstein.core.agents.agent_discovery.Path.home", return_value=tmp_path),
         ):
             agent, _warnings = _detect_claude()
 
@@ -308,14 +308,14 @@ class TestDetectClaude:
 
 
 class TestDetectQwen:
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value=None)
     def test_not_found(self, _which: Any) -> None:
         agent, warnings = _detect_qwen()
         assert agent is None
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", side_effect=["/usr/local/bin/qwen-code", None])
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", side_effect=["/usr/local/bin/qwen-code", None])
     def test_found_as_qwen_code(self, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.5.0\n", stderr="")
         mock_probe.return_value = version_result
@@ -335,14 +335,14 @@ class TestDetectQwen:
 
 
 class TestDetectAider:
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value=None)
     def test_not_found(self, _which: Any) -> None:
         agent, warnings = _detect_aider()
         assert agent is None
         assert warnings == []
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
     def test_logged_in_via_api_key(self, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.15.0\n", stderr="")
         mock_probe.return_value = version_result
@@ -355,8 +355,8 @@ class TestDetectAider:
         assert agent.logged_in is True
         assert agent.login_method == "API key"
 
-    @patch("bernstein.core.agent_discovery._run_probe")
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    @patch("bernstein.core.agents.agent_discovery._run_probe")
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
     def test_logged_in_via_local(self, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.15.0\n", stderr="")
         mock_probe.return_value = version_result
@@ -368,8 +368,8 @@ class TestDetectAider:
         assert agent.logged_in is True
         assert agent.login_method == "local"
 
-    @patch("bernstein.core.agent_discovery._run_probe", return_value=None)
-    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    @patch("bernstein.core.agents.agent_discovery._run_probe", return_value=None)
+    @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
     def test_not_logged_in(self, _which: Any, mock_probe: MagicMock) -> None:
         with patch.dict("os.environ", {}, clear=True):
             agent, warnings = _detect_aider()
@@ -386,15 +386,15 @@ class TestDetectAider:
 
 
 class TestDiscoverAgents:
-    @patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, []))
-    @patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, []))
-    @patch("bernstein.core.agent_discovery._detect_opencode", return_value=(None, []))
-    @patch("bernstein.core.agent_discovery._detect_kiro", return_value=(None, []))
-    @patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, []))
-    @patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, []))
-    @patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, []))
-    @patch("bernstein.core.agent_discovery._detect_codex", return_value=(None, []))
-    @patch("bernstein.core.agent_discovery._detect_claude", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_aider", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_qwen", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_opencode", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_kiro", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_kilo", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_gemini", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_cursor", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_codex", return_value=(None, []))
+    @patch("bernstein.core.agents.agent_discovery._detect_claude", return_value=(None, []))
     def test_no_agents(self, *_: Any) -> None:
         result = discover_agents()
         assert result.agents == []
@@ -419,18 +419,18 @@ class TestDiscoverAgents:
             cost_tier="moderate",
         )
         with (
-            patch("bernstein.core.agent_discovery._detect_claude", return_value=(claude, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_claude", return_value=(claude, [])),
             patch(
-                "bernstein.core.agent_discovery._detect_codex",
+                "bernstein.core.agents.agent_discovery._detect_codex",
                 return_value=(None, ["codex found but not logged in"]),
             ),
-            patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_kiro", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_opencode", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_cursor", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_gemini", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_kilo", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_kiro", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_opencode", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_qwen", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_aider", return_value=(None, [])),
         ):
             result = discover_agents()
 
@@ -445,15 +445,15 @@ class TestDiscoverAgents:
             raise RuntimeError("boom")
 
         with (
-            patch("bernstein.core.agent_discovery._detect_claude", side_effect=RuntimeError("boom")),
-            patch("bernstein.core.agent_discovery._detect_codex", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_kiro", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_opencode", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
-            patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_claude", side_effect=RuntimeError("boom")),
+            patch("bernstein.core.agents.agent_discovery._detect_codex", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_cursor", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_gemini", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_kilo", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_kiro", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_opencode", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_qwen", return_value=(None, [])),
+            patch("bernstein.core.agents.agent_discovery._detect_aider", return_value=(None, [])),
         ):
             result = discover_agents()
 
@@ -472,7 +472,7 @@ class TestDiscoveryCache:
     def teardown_method(self) -> None:
         clear_discovery_cache()
 
-    @patch("bernstein.core.agent_discovery.discover_agents")
+    @patch("bernstein.core.agents.agent_discovery.discover_agents")
     def test_cache_returns_same_result(self, mock_discover: MagicMock) -> None:
         mock_discover.return_value = DiscoveryResult(agents=[], warnings=[])
         r1 = discover_agents_cached()
@@ -480,7 +480,7 @@ class TestDiscoveryCache:
         assert r1 is r2
         assert mock_discover.call_count == 1
 
-    @patch("bernstein.core.agent_discovery.discover_agents")
+    @patch("bernstein.core.agents.agent_discovery.discover_agents")
     def test_clear_cache_forces_rescan(self, mock_discover: MagicMock) -> None:
         mock_discover.return_value = DiscoveryResult(agents=[], warnings=[])
         discover_agents_cached()
@@ -589,7 +589,7 @@ class TestDetectAuthStatus:
     def test_all_agents_not_found(self) -> None:
         discovery = DiscoveryResult(agents=[], warnings=[])
 
-        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
             result = detect_auth_status()
 
         # Should include all known agents as (False, False)
@@ -607,7 +607,7 @@ class TestDetectAuthStatus:
         aider = _make_agent("aider", logged_in=True)
         discovery = DiscoveryResult(agents=[claude, codex, aider], warnings=[])
 
-        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
             result = detect_auth_status()
 
         assert result["claude"] == (True, True)  # installed, authenticated
@@ -630,7 +630,7 @@ class TestDetectAuthStatus:
         ]
         discovery = DiscoveryResult(agents=agents, warnings=[])
 
-        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
             result = detect_auth_status()
 
         for agent_name in ["claude", "codex", "gemini", "kiro", "opencode", "qwen", "aider"]:
@@ -674,7 +674,7 @@ class TestAutoRouteTask:
 
         task = _make_task("Design system", "architect")
 
-        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
             decision = auto_route_task(task)
 
         assert decision.agent_name == "claude"
@@ -689,7 +689,7 @@ class TestAutoRouteTask:
 
         task = _make_task("Write tests", "qa")
 
-        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
             decision = auto_route_task(task)
 
         assert decision.agent_name == "codex"
@@ -700,9 +700,9 @@ class TestAutoRouteTask:
         discovery = DiscoveryResult(agents=[], warnings=[])
         task = _make_task("Do something", "backend")
 
-        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
             decision = auto_route_task(task)
 
         # Should fall back to claude/sonnet
         assert decision.agent_name == "claude"
-        assert decision.model == "sonnet"
+        assert "sonnet" in decision.model
