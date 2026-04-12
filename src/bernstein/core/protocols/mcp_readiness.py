@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import subprocess
 
-    from bernstein.core.mcp_manager import MCPManager
+    from bernstein.core.protocols.mcp_manager import MCPManager
 
 logger = logging.getLogger(__name__)
 

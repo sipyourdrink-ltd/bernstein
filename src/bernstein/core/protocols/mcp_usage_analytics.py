@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.core.mcp_registry import load_catalog_entries
+from bernstein.core.protocols.mcp_registry import load_catalog_entries
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

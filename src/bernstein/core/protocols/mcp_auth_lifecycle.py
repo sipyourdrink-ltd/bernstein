@@ -11,7 +11,7 @@ Handles:
 
 Usage::
 
-    from bernstein.core.mcp_auth_lifecycle import AuthSession, AuthLifecycleManager
+    from bernstein.core.protocols.mcp_auth_lifecycle import AuthSession, AuthLifecycleManager
 
     mgr = AuthLifecycleManager()
     mgr.register_session("github", AuthSession(

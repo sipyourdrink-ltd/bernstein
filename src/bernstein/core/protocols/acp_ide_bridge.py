@@ -12,7 +12,7 @@ Features:
 
 Usage::
 
-    from bernstein.core.acp_ide_bridge import ACPIdeBridge
+    from bernstein.core.protocols.acp_ide_bridge import ACPIdeBridge
 
     bridge = ACPIdeBridge(handler=acp_handler)
     session = bridge.connect_ide("jetbrains-air", editor_info={...})

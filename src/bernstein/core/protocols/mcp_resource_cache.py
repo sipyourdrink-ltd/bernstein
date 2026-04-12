@@ -10,7 +10,7 @@ via :meth:`ResourceCache.evict_expired`.
 
 Usage::
 
-    from bernstein.core.mcp_resource_cache import ResourceCache
+    from bernstein.core.protocols.mcp_resource_cache import ResourceCache
 
     cache = ResourceCache(max_size=256, default_ttl=120.0)
     cache.put("github", "repos/org/repo/issues", data, ttl=60.0)

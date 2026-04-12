@@ -6,7 +6,7 @@ JSON Schema draft-07 subset, and wraps all tool errors in a consistent
 
 Usage::
 
-    from bernstein.core.mcp_tool_normalization import (
+    from bernstein.core.protocols.mcp_tool_normalization import (
         normalize_tool_name,
         validate_tool_params,
         McpToolError,

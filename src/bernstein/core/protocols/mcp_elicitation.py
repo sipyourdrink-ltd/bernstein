@@ -14,7 +14,7 @@ a branch, or providing credentials.  This module:
 
 Usage::
 
-    from bernstein.core.mcp_elicitation import ElicitationHandler
+    from bernstein.core.protocols.mcp_elicitation import ElicitationHandler
 
     handler = ElicitationHandler()
     handler.add_auto_policy("confirm_delete", pattern="confirm.*delete", response="yes")

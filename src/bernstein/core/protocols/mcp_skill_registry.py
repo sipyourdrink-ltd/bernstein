@@ -7,7 +7,7 @@ double-loading modules.
 
 Usage (from an MCP server module)::
 
-    from bernstein.core.mcp_skill_registry import (
+    from bernstein.core.protocols.mcp_skill_registry import (
         build_mcp_skills_from_tools,
         register_mcp_skills,
     )
@@ -18,7 +18,7 @@ Usage (from an MCP server module)::
 
 Usage (from SkillResolver)::
 
-    from bernstein.core.mcp_skill_registry import get_mcp_skills
+    from bernstein.core.protocols.mcp_skill_registry import get_mcp_skills
 
     mcp_skills = get_mcp_skills()  # dict[str, SkillDefinition]
 """

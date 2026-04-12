@@ -17,7 +17,7 @@ from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.exceptions import McpError
 
-from bernstein.core.mcp_registry import MCPServerEntry, load_catalog_entries
+from bernstein.core.protocols.mcp_registry import MCPServerEntry, load_catalog_entries
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

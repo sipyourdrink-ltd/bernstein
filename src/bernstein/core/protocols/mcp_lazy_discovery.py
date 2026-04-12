@@ -11,7 +11,7 @@ Servers are tracked in three states:
 
 Usage::
 
-    from bernstein.core.mcp_lazy_discovery import LazyMCPDiscovery
+    from bernstein.core.protocols.mcp_lazy_discovery import LazyMCPDiscovery
 
     discovery = LazyMCPDiscovery()
     discovery.register(config)
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from bernstein.core.mcp_manager import MCPManager, MCPServerConfig
+from bernstein.core.protocols.mcp_manager import MCPManager, MCPServerConfig
 
 logger = logging.getLogger(__name__)
 

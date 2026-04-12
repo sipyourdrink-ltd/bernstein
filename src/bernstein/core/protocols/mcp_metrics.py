@@ -10,7 +10,7 @@ Each server has an ``MCPServerMetrics`` dataclass accumulating:
 
 Usage::
 
-    from bernstein.core.mcp_metrics import MCPMetricsCollector
+    from bernstein.core.protocols.mcp_metrics import MCPMetricsCollector
 
     collector = MCPMetricsCollector()
     collector.record_call("github", "create_issue", latency_ms=142.3)

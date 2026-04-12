@@ -11,7 +11,7 @@ Versioning follows semver: MAJOR.MINOR.PATCH
 
 Usage::
 
-    from bernstein.core.mcp_version_compat import VersionChecker
+    from bernstein.core.protocols.mcp_version_compat import VersionChecker
 
     checker = VersionChecker(required_version="2025-11-05")
     result = checker.check("github", "2025-11-05")

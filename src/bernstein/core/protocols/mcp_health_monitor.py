@@ -6,7 +6,7 @@ Gives up after 5 consecutive restart failures.
 
 Usage::
 
-    from bernstein.core.mcp_health_monitor import McpHealthMonitor
+    from bernstein.core.protocols.mcp_health_monitor import McpHealthMonitor
 
     monitor = McpHealthMonitor(manager)
     monitor.start()    # begins background health-check loop
@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from bernstein.core.mcp_manager import MCPManager
+    from bernstein.core.protocols.mcp_manager import MCPManager
 
 logger = logging.getLogger(__name__)
 

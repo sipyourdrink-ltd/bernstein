@@ -8,7 +8,7 @@ their output as ``SkillDefinition`` objects with
 
 Typical usage::
 
-    from bernstein.core.mcp_skill_bridge import (
+    from bernstein.core.protocols.mcp_skill_bridge import (
         register_skill_builder,
         collect_mcp_skills,
         build_skills_from_mcp_server,

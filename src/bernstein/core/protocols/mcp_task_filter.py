@@ -14,7 +14,7 @@ reducing prompt noise and improving security.
 
 Usage::
 
-    from bernstein.core.mcp_task_filter import TaskMCPFilter
+    from bernstein.core.protocols.mcp_task_filter import TaskMCPFilter
 
     filt = TaskMCPFilter()
     filt.add_role_rule("qa", ["test-runner", "coverage-reporter"])

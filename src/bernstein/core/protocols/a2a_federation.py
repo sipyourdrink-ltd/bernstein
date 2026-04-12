@@ -10,7 +10,7 @@ the existing :mod:`bernstein.core.a2a` module to add:
 
 Usage::
 
-    from bernstein.core.a2a_federation import A2AFederation
+    from bernstein.core.protocols.a2a_federation import A2AFederation
 
     fed = A2AFederation(local_handler=handler)
     fed.register_peer("design-team", "http://design.local:8052")

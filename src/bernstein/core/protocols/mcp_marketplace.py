@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bernstein.core.mcp_registry import MCPServerEntry
+from bernstein.core.protocols.mcp_registry import MCPServerEntry
 
 MARKETPLACE_ENTRIES: tuple[MCPServerEntry, ...] = (
     MCPServerEntry(

@@ -9,7 +9,7 @@ Each check produces a clear, actionable error message per failure.
 
 Usage::
 
-    from bernstein.core.mcp_config_validator import (
+    from bernstein.core.protocols.mcp_config_validator import (
         validate_mcp_configs,
         McpConfigError,
     )
@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bernstein.core.mcp_manager import MCPServerConfig
+    from bernstein.core.protocols.mcp_manager import MCPServerConfig
 
 logger = logging.getLogger(__name__)
 
