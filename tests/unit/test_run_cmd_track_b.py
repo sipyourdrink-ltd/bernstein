@@ -22,7 +22,7 @@ def test_estimate_run_preview_uses_plan_task_count(tmp_path: Path) -> None:
     plan_file = tmp_path / "plan.yaml"
     plan_file.write_text("name: Demo\n", encoding="utf-8")
 
-    with patch("bernstein.cli.run_cmd.load_plan_from_yaml", return_value=[object(), object(), object()]):
+    with patch("bernstein.cli.run_preflight.load_plan_from_yaml", return_value=[object(), object(), object()]):
         estimate = _estimate_run_preview(
             workdir=tmp_path,
             plan_file=plan_file,
@@ -72,9 +72,9 @@ def test_wait_for_run_completion_returns_quiescent_status() -> None:
         return clock["now"]
 
     with (
-        patch("bernstein.cli.run_cmd.server_get", side_effect=_fake_server_get),
-        patch("bernstein.cli.run_cmd.time.sleep", return_value=None),
-        patch("bernstein.cli.run_cmd.time.time", side_effect=_fake_time),
+        patch("bernstein.cli.run_bootstrap.server_get", side_effect=_fake_server_get),
+        patch("bernstein.cli.run_bootstrap.time.sleep", return_value=None),
+        patch("bernstein.cli.run_bootstrap.time.time", side_effect=_fake_time),
     ):
         result = _wait_for_run_completion(timeout_s=5.0)
 
@@ -83,8 +83,8 @@ def test_wait_for_run_completion_returns_quiescent_status() -> None:
 
 def test_finalize_run_output_quiet_uses_summary_only() -> None:
     with (
-        patch("bernstein.cli.run_cmd._wait_for_run_completion") as wait_for_completion,
-        patch("bernstein.cli.run_cmd._show_run_summary") as show_summary,
+        patch("bernstein.cli.run_bootstrap._wait_for_run_completion") as wait_for_completion,
+        patch("bernstein.cli.run_preflight._show_run_summary") as show_summary,
     ):
         _finalize_run_output(quiet=True)
 
