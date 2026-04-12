@@ -157,17 +157,17 @@ def detect_conflicts(plugins: list[PluginDependency]) -> tuple[str, ...]:
             )
 
     # Check each target package.
-    for pkg, requestors in constraints_map.items():
+    for pkg, requesters in constraints_map.items():
         # Missing dependency.
         if pkg not in by_name:
-            sources = ", ".join(r[0] for r in requestors)
+            sources = ", ".join(r[0] for r in requesters)
             conflicts.append(f"Missing dependency: '{pkg}' required by {sources}")
             continue
 
         provider_version = by_name[pkg].version
 
         # Each individual constraint must accept the provider version.
-        for source_name, constraint in requestors:
+        for source_name, constraint in requesters:
             if not satisfies_constraint(provider_version, constraint):
                 detail = _constraint_detail(constraint)
                 conflicts.append(
