@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from bernstein.core.policy_engine import DecisionType, PermissionDecision
+from bernstein.core.security.policy_engine import DecisionType, PermissionDecision
 
 # ---------------------------------------------------------------------------
 # Static license database

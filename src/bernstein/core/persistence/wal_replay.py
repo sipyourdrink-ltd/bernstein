@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-from bernstein.core.wal import WALEntry, WALRecovery, WALWriter
+from bernstein.core.persistence.wal import WALEntry, WALRecovery, WALWriter
 
 logger = logging.getLogger(__name__)
 

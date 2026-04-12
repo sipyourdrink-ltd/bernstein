@@ -5,7 +5,7 @@ Every decision is logged with a reason for full auditability.
 
 Usage::
 
-    from bernstein.core.permission_graph import PermissionGraph, PermissionLayer
+    from bernstein.core.security.permission_graph import PermissionGraph, PermissionLayer
 
     graph = PermissionGraph()
     graph.add_layer(deny_layer)

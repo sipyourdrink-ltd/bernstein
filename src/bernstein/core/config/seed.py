@@ -38,7 +38,7 @@ from bernstein.core.quality_gates import BenchmarkConfig, QualityGatesConfig
 from bernstein.core.sandbox import DockerSandbox, parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig
 from bernstein.core.tenanting import TenantConfig
-from bernstein.core.visual_config import VisualConfig, parse_visual_config
+from bernstein.core.config.visual_config import VisualConfig, parse_visual_config
 from bernstein.core.workspace import Workspace
 from bernstein.core.worktree import WorktreeSetupConfig
 

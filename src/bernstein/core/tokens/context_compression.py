@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from bernstein.core.compression_models import CompressionMetrics, CompressionResult
+from bernstein.core.tokens.compression_models import CompressionMetrics, CompressionResult
 
 if TYPE_CHECKING:
     from bernstein.core.embedding_scorer import EmbeddingScorer

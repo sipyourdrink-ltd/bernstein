@@ -6,7 +6,7 @@ enforcement functions.
 
 Usage::
 
-    from bernstein.core.command_allowlist import (
+    from bernstein.core.security.command_allowlist import (
         ScopeAllowlist,
         ScopeAllowlistConfig,
         check_command,

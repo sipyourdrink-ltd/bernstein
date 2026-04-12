@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.differential_privacy import DPConfig
-    from bernstein.core.metric_collector import MetricsCollector
+    from bernstein.core.observability.metric_collector import MetricsCollector
 
 
 def _serialize_residency_attestations(raw: object) -> list[dict[str, object]]:

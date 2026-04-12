@@ -676,7 +676,7 @@ def compute_total_spent(workdir: Path) -> float:
 
 def check_nudges_during_tick() -> None:
     """Check and process orchestrator nudges during tick (T567)."""
-    from bernstein.core.orchestrator import get_orchestrator_nudges
+    from bernstein.core.orchestration.orchestrator import get_orchestrator_nudges
 
     nudges = get_orchestrator_nudges(priority_threshold=2)  # Medium+ priority
 
@@ -698,7 +698,7 @@ def check_nudges_during_tick() -> None:
             # Implementation would adjust speed/quality tradeoff
 
         # Acknowledge the nudge
-        from bernstein.core.orchestrator import nudge_manager
+        from bernstein.core.orchestration.orchestrator import nudge_manager
 
         nudge_manager.acknowledge_nudge(nudge)
 

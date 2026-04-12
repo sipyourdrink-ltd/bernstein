@@ -17,7 +17,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.models import Complexity, ModelConfig, Scope, Task
-from bernstein.core.router_policies import ModelPolicy, PolicyFilter
+from bernstein.core.routing.router_policies import ModelPolicy, PolicyFilter
 
 if TYPE_CHECKING:
     from pathlib import Path

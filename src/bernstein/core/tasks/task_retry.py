@@ -24,7 +24,7 @@ from bernstein.core.tick_pipeline import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.models import Task
+    from bernstein.core.tasks.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ def _choose_retry_escalation(
 
     Returns (new_model, new_effort).
     """
-    from bernstein.core.models import Scope as _Scope
+    from bernstein.core.tasks.models import Scope as _Scope
 
     terminal_reason = task.terminal_reason
 
@@ -260,7 +260,7 @@ def retry_or_fail_task(
         tasks_snapshot: Optional pre-fetched tasks snapshot to avoid an
             extra HTTP round-trip when the task is already in cache.
     """
-    from bernstein.core.models import Task
+    from bernstein.core.tasks.models import Task
 
     base = server_url
 
@@ -341,7 +341,7 @@ def retry_or_fail_task(
         new_description = f"[retry:{retry_count + 1}] {base_description}{failure_note}"
         # Escalate model on retry: large/architect/security always opus/max;
         # other roles: sonnet->opus on 2nd retry, effort->high on 1st retry.
-        from bernstein.core.models import Scope as _Scope
+        from bernstein.core.tasks.models import Scope as _Scope
 
         _high_stakes_roles = ("architect", "security")
         if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:

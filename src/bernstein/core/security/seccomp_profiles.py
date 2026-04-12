@@ -24,7 +24,7 @@ Three built-in profiles are provided:
 
 Usage::
 
-    from bernstein.core.seccomp_profiles import AgentSeccompProfile, write_profile
+    from bernstein.core.security.seccomp_profiles import AgentSeccompProfile, write_profile
 
     # Write the profile to a temp file and get back its path.
     profile_path = write_profile(AgentSeccompProfile.HTTP_AGENT, dest_dir=Path("/tmp"))

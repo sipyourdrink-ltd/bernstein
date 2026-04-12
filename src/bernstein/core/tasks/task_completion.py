@@ -15,7 +15,7 @@ import httpx
 
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.metrics import get_collector
-from bernstein.core.models import (
+from bernstein.core.tasks.models import (
     AgentSession,
     Task,
 )
@@ -121,7 +121,7 @@ def maybe_retry_task(
     effort_ladder = ["low", "medium", "high", "max"]
     model_ladder = ["haiku", "sonnet", "opus"]
 
-    from bernstein.core.models import Scope as _Scope
+    from bernstein.core.tasks.models import Scope as _Scope
 
     # High-stakes roles/scopes always get opus/max on any retry
     _high_stakes_roles = ("architect", "security")
@@ -311,7 +311,7 @@ def retry_or_fail_task(
         new_description = f"[retry:{retry_count + 1}] {base_description}{failure_note}"
         # Escalate model on retry: large/architect/security always opus/max;
         # other roles: sonnet->opus on 2nd retry, effort->high on 1st retry.
-        from bernstein.core.models import Scope as _Scope
+        from bernstein.core.tasks.models import Scope as _Scope
 
         _high_stakes_roles = ("architect", "security")
         if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:

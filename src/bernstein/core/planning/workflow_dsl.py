@@ -79,7 +79,7 @@ import yaml
 
 from bernstein.core.graph import EdgeType
 from bernstein.core.models import Scope, Task, TaskStatus
-from bernstein.core.workflow import WorkflowDefinition, WorkflowPhase
+from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
 
 if TYPE_CHECKING:
     from pathlib import Path

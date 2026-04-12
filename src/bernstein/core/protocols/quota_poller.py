@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.quota_probe import QuotaSnapshot, probe_provider_quota
+from bernstein.core.protocols.quota_probe import QuotaSnapshot, probe_provider_quota
 from bernstein.core.router import ProviderHealthStatus, TierAwareRouter
 
 if TYPE_CHECKING:

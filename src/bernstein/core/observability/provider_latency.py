@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from bernstein.core.metric_collector import PercentileTracker
+from bernstein.core.observability.metric_collector import PercentileTracker
 
 logger = logging.getLogger(__name__)
 

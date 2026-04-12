@@ -823,7 +823,7 @@ def export_soc2_package(
     # --- 2. HMAC chain verification ----------------------------------------
     verification: dict[str, Any] = {"hmac_chain": None, "merkle": None}
     if audit_dir.is_dir():
-        from bernstein.core.audit import AuditLog
+        from bernstein.core.security.audit import AuditLog
 
         try:
             audit_log = AuditLog(audit_dir)

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from bernstein.core.gate_runner import GateReport
+    from bernstein.core.quality.gate_runner import GateReport
 
 
 @dataclass(frozen=True)

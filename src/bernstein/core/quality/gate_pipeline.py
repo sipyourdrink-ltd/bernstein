@@ -9,7 +9,7 @@ TIMED_OUT_PREFIX = "Timed out after "
 NO_PYTHON_FILES = "No Python files changed."
 
 if TYPE_CHECKING:
-    from bernstein.core.quality_gates import QualityGatesConfig
+    from bernstein.core.quality.quality_gates import QualityGatesConfig
 
 GateStatus = Literal["pass", "fail", "warn", "timeout", "skipped", "bypassed"]
 

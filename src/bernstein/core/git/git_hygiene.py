@@ -12,7 +12,7 @@ a dedicated "hygiene" task for that when needed.
 
 Usage::
 
-    from bernstein.core.git_hygiene import run_hygiene
+    from bernstein.core.git.git_hygiene import run_hygiene
 
     # On startup: clean stale state from prior crashed runs
     run_hygiene(workdir, full=True)
@@ -28,7 +28,7 @@ import logging
 import shutil
 from typing import TYPE_CHECKING
 
-from bernstein.core.git_basic import run_git
+from bernstein.core.git.git_basic import run_git
 
 if TYPE_CHECKING:
     from pathlib import Path

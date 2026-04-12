@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.tenanting import (
+from bernstein.core.security.tenanting import (
     DEFAULT_TENANT_ID,
     TenantRegistry,
     ensure_tenant_layout,

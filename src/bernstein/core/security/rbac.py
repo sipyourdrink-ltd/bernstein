@@ -11,7 +11,7 @@ Roles (highest to lowest privilege):
 
 Usage in FastAPI routes::
 
-    from bernstein.core.rbac import require_role, require_permission
+    from bernstein.core.security.rbac import require_role, require_permission
 
     @router.post("/tasks")
     async def create_task(
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Final
 from fastapi import HTTPException, Request
 
 if TYPE_CHECKING:
-    from bernstein.core.auth import AuthUser
+    from bernstein.core.security.auth import AuthUser
 
 logger = logging.getLogger(__name__)
 

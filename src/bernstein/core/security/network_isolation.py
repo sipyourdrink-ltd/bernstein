@@ -6,7 +6,7 @@ configured sandbox network mode.
 
 Usage::
 
-    from bernstein.core.network_isolation import (
+    from bernstein.core.security.network_isolation import (
         NetworkIsolationValidator,
         NetworkPolicy,
         IsolationCheckResult,

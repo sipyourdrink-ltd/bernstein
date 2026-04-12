@@ -8,7 +8,7 @@ See https://www.w3.org/TR/trace-context/ for the specification.
 
 Usage::
 
-    from bernstein.core.trace_correlation import (
+    from bernstein.core.observability.trace_correlation import (
         generate_trace_context,
         format_traceparent,
         build_correlation_env,

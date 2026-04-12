@@ -26,15 +26,15 @@ from bernstein.core.fast_path import (
     try_fast_path_batch,
 )
 from bernstein.core.metrics import get_collector
-from bernstein.core.models import (
+from bernstein.core.tasks.models import (
     AgentSession,
     Task,
     TaskStatus,
 )
 from bernstein.core.router import RouterError
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
-from bernstein.core.task_completion import _get_changed_files_in_worktree
-from bernstein.core.task_spawn_bridge import auto_decompose_task, should_auto_decompose
+from bernstein.core.tasks.task_completion import _get_changed_files_in_worktree
+from bernstein.core.tasks.task_spawn_bridge import auto_decompose_task, should_auto_decompose
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.tick_pipeline import (
     complete_task,
@@ -662,7 +662,7 @@ def claim_and_spawn_batches(
                     try:
                         complete_task(orch._client, base, _rc_task.id, _cached_entry.response)
                         # Move backlog file on cache hit
-                        from bernstein.core.task_completion import _move_backlog_ticket
+                        from bernstein.core.tasks.task_completion import _move_backlog_ticket
 
                         _move_backlog_ticket(orch._workdir, _rc_task)
 

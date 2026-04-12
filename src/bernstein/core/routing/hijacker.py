@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Protocol
 
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType, RateLimit
-from bernstein.core.router import ProviderConfig, Tier, TierAwareRouter
+from bernstein.core.routing.router import ProviderConfig, Tier, TierAwareRouter
 
 logger = logging.getLogger(__name__)
 
@@ -567,7 +567,7 @@ def get_default_hijacker(router: TierAwareRouter | None = None) -> TierHijacker:
     """Get or create the default hijacker instance."""
     global _default_hijacker
     if _default_hijacker is None:
-        from bernstein.core.router import get_default_router
+        from bernstein.core.routing.router import get_default_router
 
         _default_hijacker = TierHijacker(
             router=router or get_default_router(),

@@ -6,7 +6,7 @@ blocking hook does not respond in time the action is denied by default.
 
 Usage::
 
-    from bernstein.core.blocking_hooks import BlockingHookRunner
+    from bernstein.core.security.blocking_hooks import BlockingHookRunner
 
     runner = BlockingHookRunner()
     runner.register("pre_merge", my_hook_fn)

@@ -14,7 +14,7 @@ distinguish them from real tool output.
 
 Typical usage in crash recovery::
 
-    from bernstein.core.orphan_tool_result import repair_transcript
+    from bernstein.core.agents.orphan_tool_result import repair_transcript
 
     # Load the persisted conversation history
     messages = load_conversation_history(session_id)

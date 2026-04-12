@@ -5,7 +5,7 @@ occurred and optionally who or what triggered it.
 
 Usage::
 
-    from bernstein.core.task_status_history import StatusHistoryTracker
+    from bernstein.core.tasks.task_status_history import StatusHistoryTracker
 
     tracker = StatusHistoryTracker()
     tracker.record(task_id="t1", from_status=TaskStatus.OPEN, to_status=TaskStatus.CLAIMED)
@@ -21,7 +21,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bernstein.core.models import TaskStatus
+    from bernstein.core.tasks.models import TaskStatus
 
 logger = logging.getLogger(__name__)
 

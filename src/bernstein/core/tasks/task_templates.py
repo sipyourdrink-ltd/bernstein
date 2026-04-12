@@ -7,7 +7,7 @@ per-field basis.
 
 Usage::
 
-    from bernstein.core.task_templates import get_template, apply_template
+    from bernstein.core.tasks.task_templates import get_template, apply_template
 
     tpl = get_template("migration")
     task_dict = apply_template(tpl, {"scope": "medium"})

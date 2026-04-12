@@ -12,12 +12,12 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bernstein.core.models import TaskStatus
+from bernstein.core.tasks.models import TaskStatus
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bernstein.core.models import Task
+    from bernstein.core.tasks.models import Task
 
 logger = logging.getLogger(__name__)
 

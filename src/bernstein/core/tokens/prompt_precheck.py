@@ -11,7 +11,7 @@ chars/token) and compares against the model's context limit.  Two thresholds:
 
 Usage::
 
-    from bernstein.core.prompt_precheck import check_prompt_size, PromptAction
+    from bernstein.core.tokens.prompt_precheck import check_prompt_size, PromptAction
 
     result = check_prompt_size(prompt_text, context_limit=200_000)
     if result.action == PromptAction.REJECT:

@@ -7,7 +7,7 @@ event wiring before enabling it in production.
 
 Usage::
 
-    from bernstein.core.hook_dry_run import simulate_hook_event, format_dry_run_report
+    from bernstein.core.config.hook_dry_run import simulate_hook_event, format_dry_run_report
 
     report = simulate_hook_event("task.failed", {"task_id": "t-42", "error": "OOM"})
     print(format_dry_run_report(report))

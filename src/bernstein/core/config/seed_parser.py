@@ -33,7 +33,7 @@ from bernstein.core.models import (
 from bernstein.core.quality_gates import BenchmarkConfig, QualityGatesConfig
 from bernstein.core.sandbox import parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig
-from bernstein.core.seed_config import (
+from bernstein.core.config.seed_config import (
     CORSConfig,
     DashboardAuthConfig,
     MetricSchema,
@@ -49,7 +49,7 @@ from bernstein.core.seed_config import (
     WebhookConfig,
 )
 from bernstein.core.tenanting import TenantConfig
-from bernstein.core.visual_config import parse_visual_config
+from bernstein.core.config.visual_config import parse_visual_config
 from bernstein.core.workspace import Workspace
 from bernstein.core.worktree import WorktreeSetupConfig
 

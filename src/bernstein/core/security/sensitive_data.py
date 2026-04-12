@@ -4,7 +4,7 @@ Usage
 -----
 Wrap sensitive field values in ``SensitiveData`` to prevent accidental logging::
 
-    from bernstein.core.sensitive_data import SensitiveData, strip_sensitive_fields
+    from bernstein.core.security.sensitive_data import SensitiveData, strip_sensitive_fields
 
     @dataclass
     class UserEvent:

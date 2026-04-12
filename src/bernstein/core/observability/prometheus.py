@@ -6,7 +6,7 @@ counters/gauges so that a Prometheus scraper can pull them from the
 
 Usage::
 
-    from bernstein.core.prometheus import update_metrics_from_status, registry
+    from bernstein.core.observability.prometheus import update_metrics_from_status, registry
     from prometheus_client import generate_latest
 
     update_metrics_from_status(status_dict)

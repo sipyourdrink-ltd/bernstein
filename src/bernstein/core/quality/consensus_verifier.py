@@ -29,7 +29,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bernstein.core.cross_model_verifier import (
+from bernstein.core.quality.cross_model_verifier import (
     CrossModelVerdict,
     CrossModelVerifierConfig,
     verify_with_cross_model,

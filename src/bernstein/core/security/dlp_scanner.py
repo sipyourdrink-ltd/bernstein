@@ -16,7 +16,7 @@ that complements the existing ``pii_scan`` gate.
 
 Usage::
 
-    from bernstein.core.dlp_scanner import DLPScanner, DLPConfig
+    from bernstein.core.security.dlp_scanner import DLPScanner, DLPConfig
 
     config = DLPConfig()
     scanner = DLPScanner(config)

@@ -5,7 +5,7 @@ This module acts as a facade, re-exporting functionality from:
 - metric_export: Export and reporting functionality
 """
 
-from bernstein.core.metric_collector import (
+from bernstein.core.observability.metric_collector import (
     AgentMetrics,
     MetricPoint,
     MetricsCollector,
@@ -17,7 +17,7 @@ from bernstein.core.metric_collector import (
     UsageQuota,
     get_collector,
 )
-from bernstein.core.metric_export import export_metrics
+from bernstein.core.observability.metric_export import export_metrics
 
 __all__ = [
     "AgentMetrics",

@@ -26,7 +26,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from bernstein.core.secrets import (
+from bernstein.core.security.secrets import (
     SecretsConfig,
     SecretsError,
     _create_provider,

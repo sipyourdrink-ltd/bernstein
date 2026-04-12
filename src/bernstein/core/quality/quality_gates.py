@@ -25,9 +25,9 @@ from bernstein.core.telemetry import start_span
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.gate_runner import GatePipelineStep, GateReport
+    from bernstein.core.quality.gate_runner import GatePipelineStep, GateReport
     from bernstein.core.models import Task
-    from bernstein.core.quality_score import QualityScore
+    from bernstein.core.quality.quality_score import QualityScore
 
 logger = logging.getLogger(__name__)
 
@@ -1021,7 +1021,7 @@ def run_quality_gates(
     Returns:
         QualityGatesResult with per-gate outcomes and overall passed flag.
     """
-    from bernstein.core.gate_runner import GateRunner
+    from bernstein.core.quality.gate_runner import GateRunner
 
     if not config.enabled:
         return QualityGatesResult(task_id=task.id, passed=True)
@@ -1041,7 +1041,7 @@ def run_quality_gates(
         )
     quality_score = None
     try:
-        from bernstein.core.quality_score import QualityScorer
+        from bernstein.core.quality.quality_score import QualityScorer
 
         scorer = QualityScorer(workdir)
         quality_score = scorer.score(report)

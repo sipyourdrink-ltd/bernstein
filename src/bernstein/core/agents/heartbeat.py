@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from bernstein.core.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
-from bernstein.core.agent_signals import AgentSignalManager
+from bernstein.core.agents.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
+from bernstein.core.agents.agent_signals import AgentSignalManager
 from bernstein.core.defaults import AGENT
 from bernstein.core.models import AgentHeartbeat, ProgressSnapshot, Task
 

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.defaults import SPAWN
-from bernstein.core.heartbeat import HeartbeatMonitor
+from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.templates.renderer import TemplateError, render_role_prompt
 

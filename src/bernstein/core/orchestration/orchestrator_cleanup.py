@@ -20,7 +20,7 @@ from bernstein.core.agent_lifecycle import (
 from bernstein.core.task_lifecycle import (
     process_completed_tasks,
 )
-from bernstein.core.tick_pipeline import (
+from bernstein.core.orchestration.tick_pipeline import (
     fetch_all_tasks,
 )
 
@@ -78,7 +78,7 @@ def drain_before_cleanup(orch: Any, timeout_s: float | None = None) -> None:
         send_shutdown_signals(orch, reason="drain_before_cleanup")
 
     from bernstein.core.agent_lifecycle import reap_dead_agents
-    from bernstein.core.orchestrator import TickResult
+    from bernstein.core.orchestration.orchestrator import TickResult
 
     deadline = time.time() + timeout_s
     while time.time() < deadline:

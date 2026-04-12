@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from bernstein.keybindings import (
+from bernstein.cli.keybindings import (
     DEFAULT_BINDINGS,
     RESERVED_KEYS,
     KeyAction,
@@ -141,7 +141,7 @@ def resolve_all_bindings(
     Returns:
         List of KeyMapEntry with source tracking.
     """
-    from bernstein.keybindings import load_user_overrides
+    from bernstein.cli.keybindings import load_user_overrides
 
     # Start with defaults + extended
     all_defaults = DEFAULT_BINDINGS + EXTENDED_BINDINGS

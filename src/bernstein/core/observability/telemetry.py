@@ -9,7 +9,7 @@ Prometheus (push-gateway), and a console/stdout exporter for local debugging.
 
 Usage::
 
-    from bernstein.core.telemetry import init_telemetry_from_preset, start_span
+    from bernstein.core.observability.telemetry import init_telemetry_from_preset, start_span
 
     # Single-line setup for Jaeger running on localhost
     init_telemetry_from_preset("jaeger")

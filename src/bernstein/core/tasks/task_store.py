@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from fastapi import HTTPException
 from typing_extensions import TypedDict
 
-from bernstein.core.lifecycle import IllegalTransitionError, transition_agent, transition_task
-from bernstein.core.models import (
+from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_agent, transition_task
+from bernstein.core.tasks.models import (
     AgentSession,
     CompletionSignal,
     ProgressSnapshot,
@@ -686,7 +686,7 @@ class TaskStore:
         Raises:
             HTTPException: 422 if depends_on references a non-existent task or creates a cycle.
         """
-        from bernstein.core.models import Complexity, Scope
+        from bernstein.core.tasks.models import Complexity, Scope
 
         # Determine batch eligibility: use caller's flag, then auto-detect for non-critical tasks
         batch_eligible: bool = getattr(req, "batch_eligible", False)
@@ -772,7 +772,7 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
 
         # SOC 2 audit: log task creation (not a status transition, so lifecycle doesn't cover it)
-        from bernstein.core.lifecycle import _content_hash, get_audit_log
+        from bernstein.core.tasks.lifecycle import _content_hash, get_audit_log
 
         audit = get_audit_log()
         if audit is not None:
@@ -816,8 +816,8 @@ class TaskStore:
         Returns:
             A tuple of (created_tasks, skipped_titles).
         """
-        from bernstein.core.lifecycle import _content_hash, get_audit_log
-        from bernstein.core.models import Complexity, Scope
+        from bernstein.core.tasks.lifecycle import _content_hash, get_audit_log
+        from bernstein.core.tasks.models import Complexity, Scope
 
         created_tasks: list[Task] = []
         skipped_titles: list[str] = []

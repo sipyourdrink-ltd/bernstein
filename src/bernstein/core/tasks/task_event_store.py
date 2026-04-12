@@ -6,7 +6,7 @@ Events are immutable, append-only records of every lifecycle transition.
 Usage::
 
     from pathlib import Path
-    from bernstein.core.task_event_store import (
+    from bernstein.core.tasks.task_event_store import (
         TaskEventKind, TaskEventStore, record_transition,
     )
 

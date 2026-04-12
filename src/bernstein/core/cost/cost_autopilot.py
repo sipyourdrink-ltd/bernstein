@@ -14,10 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bernstein.core.budget_actions import suggest_downgrade
+from bernstein.core.cost.budget_actions import suggest_downgrade
 
 if TYPE_CHECKING:
-    from bernstein.core.cost_tracker import CostTracker
+    from bernstein.core.cost.cost_tracker import CostTracker
 
 
 @dataclass(frozen=True)

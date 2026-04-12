@@ -22,7 +22,7 @@ from bernstein.cli.helpers import (
 from bernstein.cli.status import render_status
 from bernstein.cli.ui import make_console
 from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult, discover_agents_cached
-from bernstein.worker_badges import format_worker_badge, get_badge_for_worker
+from bernstein.tui.worker_badges import format_worker_badge, get_badge_for_worker
 
 
 def _load_remote_agents_from_snapshot(runtime_dir: Path) -> list[dict[str, Any]]:
@@ -660,7 +660,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     )
 
     # 12. Context file warnings (CLAUDE.md, AGENTS.md, etc.)
-    from bernstein.context_files_doctor import check_context_files
+    from bernstein.tui.context_files_doctor import check_context_files
 
     context_warnings = check_context_files(workdir)
     for w in context_warnings:
@@ -672,7 +672,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         )
 
     # 13. MCP server reachability
-    from bernstein.context_files_doctor import check_mcp_servers
+    from bernstein.tui.context_files_doctor import check_mcp_servers
 
     mcp_warnings = check_mcp_servers(workdir)
     for w in mcp_warnings:
@@ -684,7 +684,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         )
 
     # 14. Permission rule health
-    from bernstein.context_files_doctor import check_permission_rules
+    from bernstein.tui.context_files_doctor import check_permission_rules
 
     perm_warnings = check_permission_rules(workdir)
     for w in perm_warnings:
@@ -696,7 +696,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         )
 
     # 15. Installation mismatches
-    from bernstein.install_check import check_installations
+    from bernstein.cli.install_check import check_installations
 
     for w in check_installations():
         _check(
@@ -707,7 +707,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         )
 
     # 16. Plugin loading errors
-    from bernstein.plugin_errors import get_plugin_errors
+    from bernstein.plugins.plugin_errors import get_plugin_errors
 
     plugin_errors = get_plugin_errors().get_errors()
     if plugin_errors:
@@ -727,7 +727,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         )
 
     # 17. Commit attribution (doctor check — shows agent contribution summary)
-    from bernstein.commit_stats import collect_commit_stats
+    from bernstein.cli.commit_stats import collect_commit_stats
 
     commit_result = collect_commit_stats(repo_dir=str(workdir))
     if commit_result.error:
@@ -876,7 +876,7 @@ def commit_stats_cmd(since: str | None, until: str | None, repo_dir: str, as_jso
       bernstein commit-stats --since 2025-01-01 # since a date
       bernstein commit-stats --json             # machine-readable output
     """
-    from bernstein.commit_stats import collect_commit_stats, render_commit_stats
+    from bernstein.cli.commit_stats import collect_commit_stats, render_commit_stats
 
     result = collect_commit_stats(repo_dir=repo_dir, since=since, until=until)
     if result.error:

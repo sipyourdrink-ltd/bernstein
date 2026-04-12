@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task
-    from bernstein.core.router_core import ProviderConfig
+    from bernstein.core.routing.router_core import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class ModelPolicy:
             return False
 
         if self.required_region and not self.allow_cross_region_fallback:
-            from bernstein.core.router_core import region_matches
+            from bernstein.core.routing.router_core import region_matches
 
             return region_matches(self.required_region, provider_region)
 
@@ -224,7 +224,7 @@ def get_free_tier_providers(providers: list[ProviderConfig]) -> list[ProviderCon
     Returns:
         List of free tier providers sorted by preference.
     """
-    from bernstein.core.router_core import Tier
+    from bernstein.core.routing.router_core import Tier
 
     free_tier_order = {"gemini": 0, "codex": 1, "qwen": 2}
 

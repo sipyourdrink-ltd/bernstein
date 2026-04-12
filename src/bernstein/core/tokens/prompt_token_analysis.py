@@ -18,7 +18,7 @@ trim.
 
 Usage::
 
-    from bernstein.core.prompt_token_analysis import analyse_prompt_sections
+    from bernstein.core.tokens.prompt_token_analysis import analyse_prompt_sections
 
     report = analyse_prompt_sections(named_sections, session_id="abc")
     print(report.summary())
@@ -31,7 +31,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
-from bernstein.core.token_estimation import estimate_tokens_for_text
+from bernstein.core.tokens.token_estimation import estimate_tokens_for_text
 
 if TYPE_CHECKING:
     from pathlib import Path

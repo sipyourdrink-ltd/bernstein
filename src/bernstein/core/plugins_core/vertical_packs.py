@@ -7,7 +7,7 @@ roles, automated quality gates, and tagging metadata so that a single
 
 Usage::
 
-    from bernstein.core.vertical_packs import get_pack, generate_pack_config
+    from bernstein.core.plugins_core.vertical_packs import get_pack, generate_pack_config
 
     pack = get_pack("fintech")
     if pack:

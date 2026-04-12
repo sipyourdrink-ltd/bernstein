@@ -6,7 +6,7 @@ programmatically.
 
 Usage::
 
-    from bernstein.core.task_tagging import TaskTagger
+    from bernstein.core.tasks.task_tagging import TaskTagger
 
     tagger = TaskTagger()
     tagger.add_tags("task-1", ["backend", "api"])
@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bernstein.core.models import Task
+    from bernstein.core.tasks.models import Task
 
 logger = logging.getLogger(__name__)
 

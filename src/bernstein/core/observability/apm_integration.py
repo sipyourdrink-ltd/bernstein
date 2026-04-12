@@ -12,7 +12,7 @@ available in :mod:`bernstein.core.telemetry`.  Use this module when you need:
 
 Quick start::
 
-    from bernstein.core.apm_integration import configure_datadog, configure_newrelic
+    from bernstein.core.observability.apm_integration import configure_datadog, configure_newrelic
 
     # Using ddtrace (requires DD_API_KEY env var and ddtrace package)
     configure_datadog()
@@ -21,7 +21,7 @@ Quick start::
     configure_newrelic()
 
     # Or let auto-configure pick up whatever is available
-    from bernstein.core.apm_integration import auto_configure_apm
+    from bernstein.core.observability.apm_integration import auto_configure_apm
     auto_configure_apm()
 
 Environment variables consumed:
@@ -273,7 +273,7 @@ def configure_datadog(cfg: DatadogConfig | None = None) -> bool:
 
     # --- Strategy 2: OTLP fallback (Datadog Agent receives on port 4317) ---
     try:
-        from bernstein.core.telemetry import init_telemetry_from_preset
+        from bernstein.core.observability.telemetry import init_telemetry_from_preset
 
         init_telemetry_from_preset(
             "datadog",
@@ -330,7 +330,7 @@ def configure_newrelic(cfg: NewRelicConfig | None = None) -> bool:
     # --- Strategy 1: OTLP export (preferred, no agent required) ---
     if cfg.use_otlp:
         try:
-            from bernstein.core.telemetry import _init_http_telemetry
+            from bernstein.core.observability.telemetry import _init_http_telemetry
 
             _init_http_telemetry(
                 endpoint=f"https://{cfg.otlp_endpoint.split(':')[0]}",

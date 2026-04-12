@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bernstein.adapters.base import RateLimitError, SpawnError
-from bernstein.core.container import ContainerError
+from bernstein.core.agents.container import ContainerError
 from bernstein.core.worktree import WorktreeError
 
 if TYPE_CHECKING:

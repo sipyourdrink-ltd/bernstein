@@ -5,7 +5,7 @@ Alerts on violations that indicate a container escape attempt.
 
 Usage::
 
-    from bernstein.core.sandbox_escape_detector import (
+    from bernstein.core.security.sandbox_escape_detector import (
         SandboxEscapeDetector,
         EscapeViolation,
         BoundaryConfig,

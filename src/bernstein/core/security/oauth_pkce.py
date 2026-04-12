@@ -10,7 +10,7 @@ Two authorization modes are supported:
 
 Usage example::
 
-    from bernstein.core.oauth_pkce import PKCEFlow
+    from bernstein.core.security.oauth_pkce import PKCEFlow
 
     flow = PKCEFlow(
         client_id="my-client",

@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-from bernstein.core.quality_gates import QualityGatesConfig, QualityGatesResult, run_quality_gates
+from bernstein.core.quality.quality_gates import QualityGatesConfig, QualityGatesResult, run_quality_gates
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task

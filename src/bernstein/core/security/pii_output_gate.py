@@ -13,7 +13,7 @@ Regex-only (no network calls, no LLM).  Patterns cover:
 
 Usage::
 
-    from bernstein.core.pii_output_gate import scan_diff, scan_text
+    from bernstein.core.security.pii_output_gate import scan_diff, scan_text
 
     findings = scan_diff(diff_text)
     if findings:

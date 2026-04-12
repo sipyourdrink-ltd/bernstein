@@ -12,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.core.gate_pipeline import (
+from bernstein.core.quality.gate_pipeline import (
     TIMED_OUT_PREFIX,
     VALID_GATE_NAMES,
     GatePipelineStep,
@@ -24,7 +24,7 @@ from bernstein.core.gate_pipeline import (
 )
 
 if TYPE_CHECKING:
-    from bernstein.core.gate_plugins import GatePluginRegistry
+    from bernstein.core.quality.gate_plugins import GatePluginRegistry
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ class GateRunnerCacheMixin:
             Sorted list of Python file paths covering changed files plus
             all discovered dependents.
         """
-        from bernstein.core.test_impact import TestImpactAnalyzer
+        from bernstein.core.quality.test_impact import TestImpactAnalyzer
 
         try:
             analyzer = TestImpactAnalyzer(self._workdir)
@@ -134,8 +134,8 @@ class GateRunnerCacheMixin:
             return python_files
 
     def _tests_command(self: Any, step: GatePipelineStep, run_dir: Path, changed_files: list[str]) -> str | None:
-        from bernstein.core.flaky_detector import FlakyDetector
-        from bernstein.core.test_impact import TestImpactAnalyzer
+        from bernstein.core.quality.flaky_detector import FlakyDetector
+        from bernstein.core.quality.test_impact import TestImpactAnalyzer
 
         if step.command_override is not None:
             command = step.command_override
@@ -437,7 +437,7 @@ class GateRunnerCacheMixin:
 
     def _plugin_registry(self: Any) -> GatePluginRegistry:
         """Return a cached quality-gate plugin registry."""
-        from bernstein.core.gate_plugins import GatePluginRegistry
+        from bernstein.core.quality.gate_plugins import GatePluginRegistry
 
         if self._gate_plugin_registry is None:
             registry = GatePluginRegistry(self._workdir, built_in_names=VALID_GATE_NAMES)

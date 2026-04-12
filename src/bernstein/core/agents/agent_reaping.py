@@ -176,7 +176,7 @@ def handle_orphaned_task(
         session: The dead agent's session.
         tasks_snapshot: Pre-fetched tasks bucketed by status from this tick.
     """
-    from bernstein.core.agent_state_refresh import _try_compact_and_retry
+    from bernstein.core.agents.agent_state_refresh import _try_compact_and_retry
 
     base = orch._config.server_url
     start_ts = session.heartbeat_ts if session.heartbeat_ts > 0 else time.time()
@@ -691,7 +691,7 @@ def reap_dead_agents(
         result: TickResult to record reaped agent IDs into.
         tasks_snapshot: Pre-fetched tasks bucketed by status from this tick.
     """
-    from bernstein.core.agent_recycling import _IDLE_HEARTBEAT_THRESHOLD_S, _is_process_alive
+    from bernstein.core.agents.agent_recycling import _IDLE_HEARTBEAT_THRESHOLD_S, _is_process_alive
 
     now = time.time()
     collector = get_collector()

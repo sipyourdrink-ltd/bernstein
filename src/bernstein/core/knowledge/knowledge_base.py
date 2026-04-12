@@ -31,7 +31,7 @@ from bernstein.core.git_context import (
 from bernstein.core.git_context import (
     recent_changes_multi as _recent_git_changes,
 )
-from bernstein.core.memory_lock_protocol import guarded_memory_write
+from bernstein.core.knowledge.memory_lock_protocol import guarded_memory_write
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +271,7 @@ class TaskContextBuilder:
             Formatted context string with compressed file summaries and RAG.
         """
         from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS, ContextCompressor
-        from bernstein.core.rag import CodebaseIndexer
+        from bernstein.core.knowledge.rag import CodebaseIndexer
 
         sections: list[str] = []
         file_budget = DEFAULT_CATEGORY_BUDGETS.get("files", 15_000)

@@ -7,7 +7,7 @@ overrides) before deploying them to a live orchestrator.
 
 Usage::
 
-    from bernstein.core.canary_mode import (
+    from bernstein.core.orchestration.canary_mode import (
         simulate_routing,
         compare_decisions,
         build_canary_report,
