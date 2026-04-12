@@ -20,11 +20,13 @@ from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
+from bernstein.core.agents.heartbeat import HeartbeatMonitor
+from bernstein.core.agents.in_process_agent import InProcessAgent
+from bernstein.core.agents.spawn_errors import RetryStrategy, classify_spawn_error
+from bernstein.core.agents.spawn_rate_limiter import SpawnRateLimiter, SpawnRateLimitExceeded
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
-from bernstein.core.agents.heartbeat import HeartbeatMonitor
-from bernstein.core.agents.in_process_agent import InProcessAgent
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import (
@@ -40,8 +42,6 @@ from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
-from bernstein.core.agents.spawn_errors import RetryStrategy, classify_spawn_error
-from bernstein.core.agents.spawn_rate_limiter import SpawnRateLimiter, SpawnRateLimitExceeded
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -54,12 +54,12 @@ if TYPE_CHECKING:
     from bernstein.adapters.base import CLIAdapter
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
     from bernstein.core.agency_loader import AgencyAgent
+    from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
     from bernstein.core.bulletin import BulletinBoard
     from bernstein.core.graph import TaskGraph
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.resource_limits import ResourceLimits
-    from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
     from bernstein.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------

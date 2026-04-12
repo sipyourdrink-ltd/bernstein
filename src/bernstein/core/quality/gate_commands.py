@@ -20,9 +20,9 @@ from bernstein.core.quality.gate_pipeline import (
 )
 
 if TYPE_CHECKING:
+    from bernstein.core.models import Task
     from bernstein.core.quality.comment_quality import DocstyleKind
     from bernstein.core.quality.gate_pipeline import GatePipelineStep
-    from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
 

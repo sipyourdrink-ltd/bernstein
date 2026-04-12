@@ -10,11 +10,6 @@ import json
 import logging
 from typing import Any, cast
 
-from bernstein.core.orchestration.manager_models import (
-    _VALID_VERDICTS,
-    QueueCorrection,
-    QueueReviewResult,
-)
 from bernstein.core.models import (
     CompletionSignal,
     Complexity,
@@ -25,6 +20,11 @@ from bernstein.core.models import (
     TaskStatus,
     TaskType,
     UpgradeProposalDetails,
+)
+from bernstein.core.orchestration.manager_models import (
+    _VALID_VERDICTS,
+    QueueCorrection,
+    QueueReviewResult,
 )
 
 logger = logging.getLogger(__name__)

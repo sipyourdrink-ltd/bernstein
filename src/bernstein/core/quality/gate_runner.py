@@ -24,9 +24,9 @@ _TIMED_OUT_PREFIX = "Timed out after "
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from bernstein.core.models import Task
     from bernstein.core.quality.comment_quality import DocstyleKind
     from bernstein.core.quality.gate_plugins import GatePluginRegistry
-    from bernstein.core.models import Task
     from bernstein.core.quality.quality_gates import QualityGatesConfig
 
 logger = logging.getLogger(__name__)

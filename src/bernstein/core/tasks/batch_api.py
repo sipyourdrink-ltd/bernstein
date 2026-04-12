@@ -15,16 +15,16 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 
-from bernstein.core.tasks.batch_router import BATCH_DISCOUNT_FACTOR, BatchMode, classify_batch_mode
 from bernstein.core.fast_path import TaskLevel, classify_task
 from bernstein.core.git_basic import commit, run_git, stage_files, stage_task_files
 from bernstein.core.git_pr import apply_diff
 from bernstein.core.janitor import verify_task
-from bernstein.core.tasks.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
-from bernstein.core.tasks.models import AgentSession, ModelConfig, Task
 from bernstein.core.quality_gates import run_quality_gates
 from bernstein.core.router import route_task
+from bernstein.core.tasks.batch_router import BATCH_DISCOUNT_FACTOR, BatchMode, classify_batch_mode
+from bernstein.core.tasks.lifecycle import transition_agent
+from bernstein.core.tasks.models import AgentSession, ModelConfig, Task
 from bernstein.core.tick_pipeline import complete_task
 from bernstein.core.traces import AgentTrace, TraceStep, TraceStore
 

@@ -26,13 +26,13 @@ from bernstein.core.fast_path import (
     try_fast_path_batch,
 )
 from bernstein.core.metrics import get_collector
+from bernstein.core.router import RouterError
+from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
 from bernstein.core.tasks.models import (
     AgentSession,
     Task,
     TaskStatus,
 )
-from bernstein.core.router import RouterError
-from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
 from bernstein.core.tasks.task_completion import _get_changed_files_in_worktree
 from bernstein.core.tasks.task_spawn_bridge import auto_decompose_task, should_auto_decompose
 from bernstein.core.team_state import TeamStateStore

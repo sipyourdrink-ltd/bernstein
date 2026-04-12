@@ -31,6 +31,11 @@ from bernstein.core.dependency_scan import (
 )
 from bernstein.core.graph import TaskGraph
 from bernstein.core.metrics import get_collector
+from bernstein.core.orchestration.tick_pipeline import (
+    fail_task,
+    fetch_all_tasks,
+    group_by_role,
+)
 from bernstein.core.runtime_state import (
     rotate_log_file,
 )
@@ -44,11 +49,6 @@ from bernstein.core.task_lifecycle import (
     prepare_speculative_warm_pool,
     process_completed_tasks,
     should_auto_decompose,
-)
-from bernstein.core.orchestration.tick_pipeline import (
-    fail_task,
-    fetch_all_tasks,
-    group_by_role,
 )
 from bernstein.core.token_monitor import check_token_growth
 from bernstein.core.watchdog import collect_watchdog_findings

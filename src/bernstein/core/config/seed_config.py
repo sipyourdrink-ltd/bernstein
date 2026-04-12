@@ -21,13 +21,13 @@ from bernstein.core.models import (
 if TYPE_CHECKING:
     from bernstein.agents.catalog import CatalogRegistry
     from bernstein.core.compliance import ComplianceConfig
+    from bernstein.core.config.visual_config import VisualConfig
     from bernstein.core.formal_verification import FormalVerificationConfig
     from bernstein.core.key_rotation import KeyRotationConfig
     from bernstein.core.quality_gates import QualityGatesConfig
     from bernstein.core.sandbox import DockerSandbox
     from bernstein.core.secrets import SecretsConfig
     from bernstein.core.tenanting import TenantConfig
-    from bernstein.core.config.visual_config import VisualConfig
     from bernstein.core.workspace import Workspace
     from bernstein.core.worktree import WorktreeSetupConfig
 

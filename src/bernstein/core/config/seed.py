@@ -18,6 +18,7 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+from bernstein.core.config.visual_config import VisualConfig, parse_visual_config
 from bernstein.core.formal_verification import FormalProperty, FormalVerificationConfig
 from bernstein.core.gate_runner import VALID_GATE_NAMES, GatePipelineStep, normalize_gate_condition
 from bernstein.core.key_rotation import KeyRotationConfig, _parse_interval
@@ -38,7 +39,6 @@ from bernstein.core.quality_gates import BenchmarkConfig, QualityGatesConfig
 from bernstein.core.sandbox import DockerSandbox, parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig
 from bernstein.core.tenanting import TenantConfig
-from bernstein.core.config.visual_config import VisualConfig, parse_visual_config
 from bernstein.core.workspace import Workspace
 from bernstein.core.worktree import WorktreeSetupConfig
 

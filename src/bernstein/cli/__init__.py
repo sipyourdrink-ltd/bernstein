@@ -11,7 +11,10 @@ import importlib
 import sys
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
-from types import ModuleType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 _CLI_REDIRECT_MAP: dict[str, str] = {
     "ab_test_cmd": "bernstein.cli.commands.ab_test_cmd",
@@ -126,11 +129,14 @@ class _CLIRedirectFinder(MetaPathFinder):
     _PREFIX = "bernstein.cli."
 
     def find_spec(
-        self, fullname: str, path: object = None, target: object = None,
+        self,
+        fullname: str,
+        path: object = None,
+        target: object = None,
     ) -> ModuleSpec | None:
         if not fullname.startswith(self._PREFIX):
             return None
-        short = fullname[len(self._PREFIX):]
+        short = fullname[len(self._PREFIX) :]
         if "." in short:
             return None
         if short not in _CLI_REDIRECT_MAP:
@@ -144,7 +150,7 @@ class _CLIRedirectLoader:
 
     def exec_module(self, module: ModuleType) -> None:
         fullname = module.__name__
-        short = fullname[len(_CLIRedirectFinder._PREFIX):]
+        short = fullname[len(_CLIRedirectFinder._PREFIX) :]
         target_name = _CLI_REDIRECT_MAP[short]
         real = importlib.import_module(target_name)
         module.__dict__.update(real.__dict__)

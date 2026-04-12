@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.server import TaskStore
     from bernstein.core.persistence.store import BaseTaskStore
     from bernstein.core.persistence.store_postgres import PostgresTaskStore
+    from bernstein.core.server import TaskStore
 
 _VALID_BACKENDS = frozenset({"memory", "postgres", "redis"})
 

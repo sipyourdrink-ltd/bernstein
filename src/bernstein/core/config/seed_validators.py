@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import yaml
 
+from bernstein.core.config.seed_config import SeedConfig, SeedError
 from bernstein.core.models import (
     Complexity,
     Scope,
     Task,
     TaskStatus,
 )
-from bernstein.core.config.seed_config import SeedConfig, SeedError
 
 if TYPE_CHECKING:
     from pathlib import Path

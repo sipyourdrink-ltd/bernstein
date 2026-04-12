@@ -22,16 +22,21 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import FastAPI
 
 from bernstein.core.a2a import A2AHandler
-from bernstein.core.server.access_log import StructuredAccessLogMiddleware
 from bernstein.core.acp import ACPHandler
 from bernstein.core.auth_rate_limiter import RequestRateLimitMiddleware
 from bernstein.core.bulletin import BulletinBoard, DirectChannel, MessageBoard
 from bernstein.core.cluster import NodeRegistry
-from bernstein.core.server.json_logging import setup_json_logging
 from bernstein.core.models import (
     ClusterConfig,
     NodeInfo,
     Task,
+)
+from bernstein.core.server.access_log import StructuredAccessLogMiddleware
+from bernstein.core.server.json_logging import setup_json_logging
+from bernstein.core.server.server_middleware import (
+    CrashGuardMiddleware,
+    IPAllowlistMiddleware,
+    ReadOnlyMiddleware,
 )
 from bernstein.core.server.server_models import (
     A2AArtifactResponse,
@@ -40,11 +45,6 @@ from bernstein.core.server.server_models import (
     NodeCapacitySchema,
     NodeResponse,
     TaskResponse,
-)
-from bernstein.core.server.server_middleware import (
-    CrashGuardMiddleware,
-    IPAllowlistMiddleware,
-    ReadOnlyMiddleware,
 )
 from bernstein.core.tasks.task_store import (
     ProgressEntry,

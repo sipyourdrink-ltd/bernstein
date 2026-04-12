@@ -26,8 +26,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
-from bernstein.core.platform_compat import process_alive
 from bernstein.core.git.worktree_isolation import validate_worktree_isolation
+from bernstein.core.platform_compat import process_alive
 
 if TYPE_CHECKING:
     import threading

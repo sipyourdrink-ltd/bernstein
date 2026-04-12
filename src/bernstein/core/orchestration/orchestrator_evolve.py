@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from bernstein.core.orchestration.evolution import UpgradeStatus
 from bernstein.core.models import TaskType
+from bernstein.core.orchestration.evolution import UpgradeStatus
 from bernstein.core.platform_compat import kill_process_group
 
 if TYPE_CHECKING:

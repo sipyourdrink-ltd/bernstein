@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.tui.activity_tracker import ActivitySession
     from bernstein.core.bulletin import BulletinBoard
+    from bernstein.tui.activity_tracker import ActivitySession
 
 from bernstein.core.bulletin import AgentActivitySummary
 

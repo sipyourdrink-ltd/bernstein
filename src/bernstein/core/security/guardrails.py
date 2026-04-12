@@ -15,14 +15,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.arch_conformance import ArchConformanceConfig, check_arch_conformance
+from bernstein.core.models import GuardrailResult, Task
 from bernstein.core.security.always_allow import (
     AlwaysAllowEngine,
     AlwaysAllowMatch,
     check_always_allow,
 )
-from bernstein.core.arch_conformance import ArchConformanceConfig, check_arch_conformance
 from bernstein.core.security.license_scanner import check_license_obligations
-from bernstein.core.models import GuardrailResult, Task
 from bernstein.core.security.permissions import AgentPermissions, check_file_permissions
 from bernstein.core.security.policy_engine import DecisionGraph, DecisionType, PermissionDecision
 

@@ -25,6 +25,14 @@ import httpx
 from bernstein import get_templates_dir
 from bernstein.core.context import available_roles, gather_project_context
 from bernstein.core.llm import call_llm
+from bernstein.core.metrics import get_collector
+from bernstein.core.models import (
+    Complexity,
+    Scope,
+    Task,
+    TaskStatus,
+    TaskType,
+)
 from bernstein.core.orchestration.manager_models import (
     QueueCorrection,
     QueueReviewResult,
@@ -41,14 +49,6 @@ from bernstein.core.orchestration.manager_prompts import (
     render_plan_prompt,
     render_queue_review_prompt,
     render_review_prompt,
-)
-from bernstein.core.metrics import get_collector
-from bernstein.core.models import (
-    Complexity,
-    Scope,
-    Task,
-    TaskStatus,
-    TaskType,
 )
 from bernstein.core.upgrade_executor import (
     FileChange,

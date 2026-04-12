@@ -43,8 +43,8 @@ from bernstein.core.models import (
 from bernstein.core.persistence.store import BaseTaskStore, RoleSummary, StatusSummary
 
 if TYPE_CHECKING:
-    from bernstein.core.server import ArchiveRecord, TaskCreate
     from bernstein.core.persistence.store_redis import RedisCoordinator
+    from bernstein.core.server import ArchiveRecord, TaskCreate
 
 logger = logging.getLogger(__name__)
 

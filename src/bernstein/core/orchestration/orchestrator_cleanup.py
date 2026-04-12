@@ -17,11 +17,11 @@ from typing import Any, cast
 from bernstein.core.agent_lifecycle import (
     send_shutdown_signals,
 )
-from bernstein.core.task_lifecycle import (
-    process_completed_tasks,
-)
 from bernstein.core.orchestration.tick_pipeline import (
     fetch_all_tasks,
+)
+from bernstein.core.task_lifecycle import (
+    process_completed_tasks,
 )
 
 logger = logging.getLogger(__name__)

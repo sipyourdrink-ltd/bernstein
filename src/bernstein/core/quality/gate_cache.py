@@ -24,8 +24,8 @@ from bernstein.core.quality.gate_pipeline import (
 )
 
 if TYPE_CHECKING:
-    from bernstein.core.quality.gate_plugins import GatePluginRegistry
     from bernstein.core.models import Task
+    from bernstein.core.quality.gate_plugins import GatePluginRegistry
 
 logger = logging.getLogger(__name__)
 

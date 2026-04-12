@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 
-from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelism
 from bernstein.core.agent_lifecycle import (
     check_kill_signals,
     check_loops_and_deadlocks,
@@ -53,7 +52,6 @@ from bernstein.core.dependency_scan import (
     DependencyVulnerabilityFinding,
     DependencyVulnerabilityScanner,
 )
-from bernstein.core.orchestration.evolution import EvolutionCoordinator, UpgradeStatus
 from bernstein.core.fast_path import (
     FastPathStats,
     load_fast_path_config,
@@ -79,6 +77,25 @@ from bernstein.core.models import (
     TestAgentConfig,
 )
 from bernstein.core.notifications import NotificationManager, NotificationPayload, NotificationTarget
+from bernstein.core.orchestration.adaptive_parallelism import AdaptiveParallelism
+from bernstein.core.orchestration.evolution import EvolutionCoordinator, UpgradeStatus
+from bernstein.core.orchestration.tick_pipeline import (
+    CompletionData,
+    RuffViolation,
+    TestResults,
+    block_task,
+    complete_task,
+    fail_task,
+    fetch_all_tasks,
+    group_by_role,
+    parse_backlog_file,
+)
+from bernstein.core.orchestration.tick_pipeline import (
+    compute_total_spent as compute_total_spent,
+)
+from bernstein.core.orchestration.tick_pipeline import (
+    total_spent_cache as total_spent_cache,
+)
 from bernstein.core.platform_compat import kill_process_group
 from bernstein.core.quality_gate_coalescer import QualityGateCoalescer
 from bernstein.core.quarantine import QuarantineStore
@@ -109,23 +126,6 @@ from bernstein.core.task_lifecycle import (
     process_completed_tasks,
     retry_or_fail_task,
     should_auto_decompose,
-)
-from bernstein.core.orchestration.tick_pipeline import (
-    CompletionData,
-    RuffViolation,
-    TestResults,
-    block_task,
-    complete_task,
-    fail_task,
-    fetch_all_tasks,
-    group_by_role,
-    parse_backlog_file,
-)
-from bernstein.core.orchestration.tick_pipeline import (
-    compute_total_spent as compute_total_spent,
-)
-from bernstein.core.orchestration.tick_pipeline import (
-    total_spent_cache as total_spent_cache,
 )
 from bernstein.core.token_monitor import check_token_growth
 from bernstein.core.wal import WALRecovery, WALWriter
@@ -4191,7 +4191,9 @@ if __name__ == "__main__":
 # Re-exported from nudge_manager.py for backward compatibility (ORCH-009).
 # ---------------------------------------------------------------------------
 from bernstein.core.orchestration.nudge_manager import OrchestratorNudge as OrchestratorNudge  # noqa: E402
-from bernstein.core.orchestration.nudge_manager import OrchestratorNudgeManager as OrchestratorNudgeManager  # noqa: E402
+from bernstein.core.orchestration.nudge_manager import (
+    OrchestratorNudgeManager as OrchestratorNudgeManager,
+)
 from bernstein.core.orchestration.nudge_manager import get_orchestrator_nudges as get_orchestrator_nudges  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import nudge_manager as nudge_manager  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import nudge_orchestrator as nudge_orchestrator  # noqa: E402

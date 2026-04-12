@@ -25,8 +25,8 @@ from bernstein.core.telemetry import start_span
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.quality.gate_runner import GatePipelineStep, GateReport
     from bernstein.core.models import Task
+    from bernstein.core.quality.gate_runner import GatePipelineStep, GateReport
     from bernstein.core.quality.quality_score import QualityScore
 
 logger = logging.getLogger(__name__)
