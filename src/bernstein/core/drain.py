@@ -1,3 +1,5 @@
 """Backward-compatibility shim — moved to bernstein.core.orchestration.drain."""
 
-from bernstein.core.orchestration.drain import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.orchestration.drain")

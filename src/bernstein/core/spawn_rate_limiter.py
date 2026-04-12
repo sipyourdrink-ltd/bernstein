@@ -1,3 +1,5 @@
 """Backward-compatibility shim — moved to bernstein.core.agents.spawn_rate_limiter."""
 
-from bernstein.core.agents.spawn_rate_limiter import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.agents.spawn_rate_limiter")

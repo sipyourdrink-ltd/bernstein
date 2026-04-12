@@ -1,13 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.rate_limited_logger."""
 
-from bernstein.core.observability.rate_limited_logger import (
-    LogDeduplicator,
-    RateLimitedLogFilter,
-    install_rate_limited_filter,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "LogDeduplicator",
-    "RateLimitedLogFilter",
-    "install_rate_limited_filter",
-]
+install_shim(__name__, "bernstein.core.observability.rate_limited_logger")

@@ -1,10 +1,5 @@
 """Backward-compat shim: module moved to bernstein.core.quality.dead_code_detector."""
 
-from bernstein.core.quality.dead_code_detector import *  # noqa: F403
-from bernstein.core.quality.dead_code_detector import (  # noqa: F401
-    _ADDED_CLASS_RE,
-    _ADDED_FUNC_RE,
-    _CLASS_DEF_RE,
-    _FUNC_DEF_RE,
-    _IGNORE_NAMES,
-)
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.quality.dead_code_detector")

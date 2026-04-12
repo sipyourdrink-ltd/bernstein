@@ -1,3 +1,5 @@
 """Backward-compatibility shim — moved to bernstein.core.config.visual_config."""
 
-from bernstein.core.config.visual_config import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.config.visual_config")

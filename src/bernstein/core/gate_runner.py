@@ -1,9 +1,5 @@
 """Backward-compat shim: module moved to bernstein.core.quality.gate_runner."""
 
-from bernstein.core.quality.gate_runner import *  # noqa: F403
-from bernstein.core.quality.gate_runner import (  # noqa: F401
-    _DEP_FILE_NAMES,
-    _DEP_FILE_PREFIXES,
-    _NO_PYTHON_FILES,
-    _TIMED_OUT_PREFIX,
-)
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.quality.gate_runner")

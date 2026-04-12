@@ -1,21 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.postmortem."""
 
-from bernstein.core.observability.postmortem import (
-    ContributingFactor,
-    FailedTaskTrace,
-    PostMortemEvent,
-    PostMortemGenerator,
-    PostMortemReport,
-    RecommendedAction,
-    logger,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "ContributingFactor",
-    "FailedTaskTrace",
-    "PostMortemEvent",
-    "PostMortemGenerator",
-    "PostMortemReport",
-    "RecommendedAction",
-    "logger",
-]
+install_shim(__name__, "bernstein.core.observability.postmortem")

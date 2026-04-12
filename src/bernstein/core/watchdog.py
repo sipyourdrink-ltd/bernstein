@@ -1,21 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.watchdog."""
 
-from bernstein.core.observability.watchdog import (
-    WatchdogFinding,
-    WatchdogIncident,
-    WatchdogManager,
-    WatchdogSeverity,
-    WatchdogSource,
-    collect_watchdog_findings,
-    logger,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "WatchdogFinding",
-    "WatchdogIncident",
-    "WatchdogManager",
-    "WatchdogSeverity",
-    "WatchdogSource",
-    "collect_watchdog_findings",
-    "logger",
-]
+install_shim(__name__, "bernstein.core.observability.watchdog")

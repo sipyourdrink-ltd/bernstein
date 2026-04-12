@@ -1,19 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.provider_circuit_breaker."""
 
-from bernstein.core.observability.provider_circuit_breaker import (
-    CircuitBreakerConfig,
-    CircuitBreakerSnapshot,
-    CircuitState,
-    ProviderCircuitBreaker,
-    ProviderCircuitBreakerRegistry,
-    logger,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "CircuitBreakerConfig",
-    "CircuitBreakerSnapshot",
-    "CircuitState",
-    "ProviderCircuitBreaker",
-    "ProviderCircuitBreakerRegistry",
-    "logger",
-]
+install_shim(__name__, "bernstein.core.observability.provider_circuit_breaker")

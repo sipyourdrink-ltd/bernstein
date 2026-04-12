@@ -1,21 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.self_healing."""
 
-from bernstein.core.observability.self_healing import (
-    FailureMode,
-    HealingAction,
-    RetryConfig,
-    diagnose_failure,
-    format_healing_plan,
-    logger,
-    plan_healing,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "FailureMode",
-    "HealingAction",
-    "RetryConfig",
-    "diagnose_failure",
-    "format_healing_plan",
-    "logger",
-    "plan_healing",
-]
+install_shim(__name__, "bernstein.core.observability.self_healing")

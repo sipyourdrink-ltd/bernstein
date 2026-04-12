@@ -1,17 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.tool_timing."""
 
-from bernstein.core.observability.tool_timing import (
-    ToolTimingRecord,
-    ToolTimingRecorder,
-    get_recorder,
-    logger,
-    reset_recorder,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "ToolTimingRecord",
-    "ToolTimingRecorder",
-    "get_recorder",
-    "logger",
-    "reset_recorder",
-]
+install_shim(__name__, "bernstein.core.observability.tool_timing")

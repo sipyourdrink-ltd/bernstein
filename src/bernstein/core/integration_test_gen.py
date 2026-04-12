@@ -1,11 +1,5 @@
 """Backward-compat shim: module moved to bernstein.core.quality.integration_test_gen."""
 
-from bernstein.core.quality.integration_test_gen import *  # noqa: F403
-from bernstein.core.quality.integration_test_gen import (  # noqa: F401
-    _DEFAULT_MODEL,
-    _DEFAULT_PROVIDER,
-    _MAX_DIFF_CHARS,
-    _MAX_TOKENS,
-    _PROMPT_TEMPLATE,
-    _TEST_TIMEOUT_S,
-)
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.quality.integration_test_gen")

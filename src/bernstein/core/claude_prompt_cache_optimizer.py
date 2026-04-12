@@ -1,6 +1,5 @@
-"""Backward-compatibility shim — module moved to bernstein.core.tokens.claude_prompt_cache_optimizer.
+"""Backward-compat shim for bernstein.core.tokens.claude_prompt_cache_optimizer."""
 
-All public names are re-exported so existing imports continue to work.
-"""
+from bernstein.core._shim import install_shim
 
-from bernstein.core.tokens.claude_prompt_cache_optimizer import *  # noqa: F403
+install_shim(__name__, "bernstein.core.tokens.claude_prompt_cache_optimizer")

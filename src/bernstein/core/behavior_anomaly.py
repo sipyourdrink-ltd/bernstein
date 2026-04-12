@@ -1,25 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.behavior_anomaly."""
 
-from bernstein.core.observability.behavior_anomaly import (
-    BehaviorAnomalyAction,
-    BehaviorAnomalyDetector,
-    BehaviorBaseline,
-    BehaviorBaselineMetric,
-    BehaviorMetrics,
-    MetricDeviation,
-    RealtimeBehaviorMonitor,
-    SessionAnomalyState,
-    logger,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "BehaviorAnomalyAction",
-    "BehaviorAnomalyDetector",
-    "BehaviorBaseline",
-    "BehaviorBaselineMetric",
-    "BehaviorMetrics",
-    "MetricDeviation",
-    "RealtimeBehaviorMonitor",
-    "SessionAnomalyState",
-    "logger",
-]
+install_shim(__name__, "bernstein.core.observability.behavior_anomaly")

@@ -1,3 +1,5 @@
 """Backward-compatibility shim."""
 
-from bernstein.core.protocols.acp_ide_bridge import *  # noqa: F403
+from bernstein.core._shim import install_shim
+
+install_shim(__name__, "bernstein.core.protocols.acp_ide_bridge")

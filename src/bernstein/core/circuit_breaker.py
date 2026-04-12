@@ -1,21 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.circuit_breaker."""
 
-from bernstein.core.observability.circuit_breaker import (
-    check_budget_violations,
-    check_guardrail_violations,
-    check_scope_violations,
-    enforce_kill_signal,
-    log_kill_event,
-    logger,
-    write_quarantine_metadata,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "check_budget_violations",
-    "check_guardrail_violations",
-    "check_scope_violations",
-    "enforce_kill_signal",
-    "log_kill_event",
-    "logger",
-    "write_quarantine_metadata",
-]
+install_shim(__name__, "bernstein.core.observability.circuit_breaker")

@@ -1,21 +1,5 @@
 """Backward-compat shim — re-exports from bernstein.core.observability.apm_integration."""
 
-from bernstein.core.observability.apm_integration import (
-    APMProvider,
-    DatadogConfig,
-    NewRelicConfig,
-    auto_configure_apm,
-    configure_datadog,
-    configure_newrelic,
-    logger,
-)
+from bernstein.core._shim import install_shim
 
-__all__ = [
-    "APMProvider",
-    "DatadogConfig",
-    "NewRelicConfig",
-    "auto_configure_apm",
-    "configure_datadog",
-    "configure_newrelic",
-    "logger",
-]
+install_shim(__name__, "bernstein.core.observability.apm_integration")
