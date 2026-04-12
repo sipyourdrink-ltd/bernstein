@@ -9,6 +9,9 @@ All public names are re-exported here so that existing
 # -- agent_reaping: death handling, orphaned tasks, metrics --
 from bernstein.core.agent_reaping import _has_git_commits_on_branch as _has_git_commits_on_branch
 from bernstein.core.agent_reaping import _maybe_preserve_worktree as _maybe_preserve_worktree
+from bernstein.core.agent_reaping import _propagate_abort_to_children as _propagate_abort_to_children
+from bernstein.core.agent_reaping import _release_file_ownership as _release_file_ownership
+from bernstein.core.agent_reaping import _release_task_to_session as _release_task_to_session
 from bernstein.core.agent_reaping import _requeue_rate_limited_task as _requeue_rate_limited_task
 from bernstein.core.agent_reaping import _save_partial_work as _save_partial_work
 from bernstein.core.agent_reaping import emit_orphan_metrics as emit_orphan_metrics
@@ -49,6 +52,9 @@ __all__ = [
     "_has_git_commits_on_branch",
     "_is_process_alive",
     "_maybe_preserve_worktree",
+    "_propagate_abort_to_children",
+    "_release_file_ownership",
+    "_release_task_to_session",
     "_patch_retry_with_compaction",
     "_requeue_rate_limited_task",
     "_save_partial_work",

@@ -10,7 +10,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import bernstein.core.routes.status as status_routes
+import bernstein.core.routes.status_dashboard as status_routes
 from bernstein.core.server import create_app
 
 
