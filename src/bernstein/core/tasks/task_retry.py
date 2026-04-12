@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
+from bernstein.core.defaults import TASK
 from bernstein.core.metrics import get_collector
 from bernstein.core.tick_pipeline import (
     fail_task,
@@ -30,12 +31,6 @@ logger = logging.getLogger(__name__)
 _EFFORT_LADDER = ["low", "medium", "high", "max"]
 _MODEL_LADDER = ["haiku", "sonnet", "opus"]
 
-_SCOPE_TIMEOUT_SECONDS = {
-    "small": 15 * 60,
-    "medium": 30 * 60,
-    "large": 60 * 60,
-}
-_XL_TIMEOUT_SECONDS = 120 * 60
 _XL_ROLES = frozenset({"architect", "security", "manager"})
 
 
@@ -166,8 +161,8 @@ def maybe_retry_task(
         return False
 
     next_retry = retry_count + 1
-    base_delay = task.retry_delay_s if task.retry_delay_s > 0 else 30.0
-    backoff_delay = min(base_delay * (2**retry_count), 300.0)
+    base_delay = task.retry_delay_s if task.retry_delay_s > 0 else TASK.retry_base_delay_s
+    backoff_delay = min(base_delay * (2**retry_count), TASK.retry_max_backoff_s)
 
     current_model = task.model or "sonnet"
     current_effort = task.effort or "high"
@@ -298,9 +293,9 @@ def retry_or_fail_task(
         "fatal",
     )
     if any(k in reason_lower for k in transient_markers):
-        max_retries = 3
+        max_retries = TASK.transient_max_retries
     elif any(k in reason_lower for k in fatal_markers):
-        max_retries = 0
+        max_retries = TASK.fatal_max_retries
     else:
         max_retries = max_task_retries
 

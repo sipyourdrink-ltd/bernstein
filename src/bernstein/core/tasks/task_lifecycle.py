@@ -25,6 +25,7 @@ from bernstein.core.cross_model_verifier import (
     CrossModelVerifierConfig,
     run_cross_model_verification_sync,
 )
+from bernstein.core.defaults import TASK
 from bernstein.core.effectiveness import EffectivenessScorer
 from bernstein.core.fast_path import (
     TaskLevel,
@@ -60,12 +61,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SCOPE_TIMEOUT_SECONDS = {
-    "small": 15 * 60,
-    "medium": 30 * 60,
-    "large": 60 * 60,
-}
-_XL_TIMEOUT_SECONDS = 120 * 60
 _XL_ROLES = frozenset({"architect", "security", "manager"})
 
 
@@ -295,11 +290,11 @@ def _batch_timeout_seconds(batch: list[Task]) -> int:
     about behavior without reconstructing adaptive multipliers:
     small=15m, medium=30m, large=60m, xl=120m.
     """
-    bucket_seconds = max(_SCOPE_TIMEOUT_SECONDS.get(task.scope.value, 30 * 60) for task in batch)
+    bucket_seconds = max(TASK.scope_timeout_s.get(task.scope.value, 30 * 60) for task in batch)
     xl_batch = any(task.role in _XL_ROLES for task in batch) or any(
         task.scope.value == "large" and task.complexity.value == "high" for task in batch
     )
-    return _XL_TIMEOUT_SECONDS if xl_batch else bucket_seconds
+    return TASK.xl_timeout_s if xl_batch else bucket_seconds
 
 
 # ---------------------------------------------------------------------------
@@ -2445,17 +2440,11 @@ def _move_backlog_ticket(workdir: Any, task: Any) -> None:
 # Priority decay for old unclaimed tasks
 # ---------------------------------------------------------------------------
 
-#: Hours before an open task is deprioritized.
-PRIORITY_DECAY_THRESHOLD_HOURS = 24
-
-#: Minimum priority (tasks won't go below this).
-MIN_PRIORITY = 3
-
 
 def deprioritize_old_unclaimed_tasks(
     orch: Any,
-    threshold_hours: int = PRIORITY_DECAY_THRESHOLD_HOURS,
-    min_priority: int = MIN_PRIORITY,
+    threshold_hours: int | None = None,
+    min_priority: int | None = None,
 ) -> int:
     """Deprioritize tasks that have been open for too long without being claimed.
 
@@ -2471,6 +2460,11 @@ def deprioritize_old_unclaimed_tasks(
         Count of tasks deprioritized.
     """
     from bernstein.core.models import TaskStatus
+
+    if threshold_hours is None:
+        threshold_hours = int(TASK.priority_decay_threshold_hours)
+    if min_priority is None:
+        min_priority = TASK.min_priority
 
     now = time.time()
     threshold_seconds = threshold_hours * 3600

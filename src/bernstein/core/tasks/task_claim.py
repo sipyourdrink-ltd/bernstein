@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 
 from bernstein.core.context_recommendations import RecommendationEngine
+from bernstein.core.defaults import TASK
 from bernstein.core.fast_path import (
     TaskLevel,
     classify_task,
@@ -45,12 +46,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SCOPE_TIMEOUT_SECONDS = {
-    "small": 15 * 60,
-    "medium": 30 * 60,
-    "large": 60 * 60,
-}
-_XL_TIMEOUT_SECONDS = 120 * 60
 _XL_ROLES = frozenset({"architect", "security", "manager"})
 
 
@@ -250,11 +245,11 @@ def _batch_timeout_seconds(batch: list[Task]) -> int:
     about behavior without reconstructing adaptive multipliers:
     small=15m, medium=30m, large=60m, xl=120m.
     """
-    bucket_seconds = max(_SCOPE_TIMEOUT_SECONDS.get(task.scope.value, 30 * 60) for task in batch)
+    bucket_seconds = max(TASK.scope_timeout_s.get(task.scope.value, 30 * 60) for task in batch)
     xl_batch = any(task.role in _XL_ROLES for task in batch) or any(
         task.scope.value == "large" and task.complexity.value == "high" for task in batch
     )
-    return _XL_TIMEOUT_SECONDS if xl_batch else bucket_seconds
+    return TASK.xl_timeout_s if xl_batch else bucket_seconds
 
 
 def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:

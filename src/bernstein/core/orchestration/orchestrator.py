@@ -46,6 +46,7 @@ from bernstein.core.cluster import NodeHeartbeatClient
 from bernstein.core.context import refresh_knowledge_base
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.cost_tracker import CostTracker
+from bernstein.core.defaults import ORCHESTRATOR
 from bernstein.core.dep_validator import DependencyValidator
 from bernstein.core.dependency_scan import (
     DependencyScanStatus,
@@ -241,14 +242,14 @@ class Orchestrator:
         client: httpx client for server communication (injectable for testing).
     """
 
-    _SPAWN_BACKOFF_BASE_S: float = 30.0  # base backoff; actual = base * 2^failures
-    _SPAWN_BACKOFF_MAX_S: float = 300.0  # ceiling for exponential backoff
-    _MAX_SPAWN_FAILURES: int = 3  # consecutive failures before marking tasks failed
-    _MAX_DEAD_AGENTS_KEPT: int = 20  # purge oldest dead agents beyond this
-    _MAX_PROCESSED_DONE: int = 500  # cap _processed_done_tasks set size
-    _MANAGER_REVIEW_COMPLETION_THRESHOLD: int = 7  # trigger review after this many completions
-    _MANAGER_REVIEW_STALL_S: float = 900.0  # trigger review after 15 min of no progress
-    _STALE_CLAIM_TIMEOUT_S: float = 900.0  # default fallback; prefer config.stale_claim_timeout_s
+    _SPAWN_BACKOFF_BASE_S: float = ORCHESTRATOR.spawn_backoff_base_s
+    _SPAWN_BACKOFF_MAX_S: float = ORCHESTRATOR.spawn_backoff_max_s
+    _MAX_SPAWN_FAILURES: int = ORCHESTRATOR.max_spawn_failures
+    _MAX_DEAD_AGENTS_KEPT: int = ORCHESTRATOR.max_dead_agents_kept
+    _MAX_PROCESSED_DONE: int = ORCHESTRATOR.max_processed_done
+    _MANAGER_REVIEW_COMPLETION_THRESHOLD: int = ORCHESTRATOR.manager_review_completion_threshold
+    _MANAGER_REVIEW_STALL_S: float = ORCHESTRATOR.manager_review_stall_s
+    _STALE_CLAIM_TIMEOUT_S: float = ORCHESTRATOR.stale_claim_timeout_s
 
     def __init__(
         self,
@@ -806,7 +807,7 @@ class Orchestrator:
             running_tasks: Tasks currently in claimed or in_progress state.
         """
         now = time.time()
-        warning_window = 300.0  # 5-minute warning
+        warning_window = ORCHESTRATOR.deadline_warning_window_s
 
         for task in running_tasks:
             if task.deadline is None:
@@ -893,8 +894,8 @@ class Orchestrator:
         # Phase scheduling: fast ops every tick, normal every 6, slow every 30.
         # This prevents heavy operations (SLO, evolution, watchdog) from
         # blocking the fast control loop (spawn, reap, heartbeat).
-        _run_normal = self._tick_count % 6 == 0
-        _run_slow = self._tick_count % 30 == 0
+        _run_normal = self._tick_count % ORCHESTRATOR.normal_tick_phase == 0
+        _run_slow = self._tick_count % ORCHESTRATOR.slow_tick_phase == 0
         logger.debug(
             "tick #%d phases: fast%s%s",
             self._tick_count,
@@ -954,13 +955,13 @@ class Orchestrator:
             self._consecutive_server_failures = 0  # Reset on success
         except httpx.HTTPError as exc:
             self._consecutive_server_failures = getattr(self, "_consecutive_server_failures", 0) + 1
-            if self._consecutive_server_failures >= 12:  # 12 ticks x ~30s = ~6 min
+            if self._consecutive_server_failures >= ORCHESTRATOR.server_failure_threshold:
                 logger.critical(
                     "Server unreachable for %d consecutive ticks — orchestrator stopping to prevent waste",
                     self._consecutive_server_failures,
                 )
                 self._running = False
-            elif self._consecutive_server_failures >= 3:
+            elif self._consecutive_server_failures >= ORCHESTRATOR.server_failure_warn:
                 logger.warning(
                     "Server unreachable for %d ticks (%s). Supervisor should restart it.",
                     self._consecutive_server_failures,
@@ -1529,7 +1530,7 @@ class Orchestrator:
         except Exception:
             logger.exception("Zombie cleanup failed (non-fatal) — continuing startup")
         consecutive_failures = 0
-        max_consecutive_failures = 10
+        max_consecutive_failures = ORCHESTRATOR.max_consecutive_failures
         while self._running or self._has_active_agents():
             tick_result: TickResult | None = None
             try:
@@ -2037,7 +2038,7 @@ class Orchestrator:
             return True
         except (httpx.HTTPError, httpx.TimeoutException):
             self._consecutive_server_failures += 1
-            if self._consecutive_server_failures >= 3:
+            if self._consecutive_server_failures >= ORCHESTRATOR.server_failure_warn:
                 logger.critical(
                     "Task server health check failed %d consecutive times — "
                     "server may have crashed (watchdog should restart it)",

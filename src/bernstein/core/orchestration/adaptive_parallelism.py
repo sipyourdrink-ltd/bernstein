@@ -19,14 +19,16 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from bernstein.core.defaults import PARALLELISM
+
 logger = logging.getLogger(__name__)
 
-# Thresholds
-_ERROR_RATE_HIGH: float = 0.20
-_ERROR_RATE_LOW: float = 0.05
-_LOW_ERROR_SUSTAIN_S: float = 120.0  # 2 minutes (was 10 — too slow for recovery)
-_CPU_PAUSE_THRESHOLD: float = 300.0  # per-core %; 300 = throttle only when 3+ cores pinned
-_WINDOW_S: float = 600.0  # sliding window for error rate calculation
+# Aliases kept for backward-compat (imported by tests)
+_ERROR_RATE_HIGH: float = PARALLELISM.error_rate_high
+_ERROR_RATE_LOW: float = PARALLELISM.error_rate_low
+_LOW_ERROR_SUSTAIN_S: float = PARALLELISM.low_error_sustain_s
+_CPU_PAUSE_THRESHOLD: float = PARALLELISM.cpu_pause_threshold
+_WINDOW_S: float = PARALLELISM.window_s
 
 
 @dataclass

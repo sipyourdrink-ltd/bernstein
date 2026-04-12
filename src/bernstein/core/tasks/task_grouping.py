@@ -14,18 +14,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from bernstein.core.defaults import TASK
 from bernstein.core.models import Complexity, Scope
 
 if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
-
-# Upper bound on combined estimated minutes before we stop merging.
-_MAX_COMBINED_ESTIMATED_MINUTES = 60
-
-# Maximum number of tasks a single compacted batch may contain.
-_MAX_TASKS_PER_COMPACTED_BATCH = 5
 
 
 def _is_small_task(task: Task) -> bool:
@@ -88,7 +83,7 @@ def _can_merge_batches(
         return False
     if len(batch) + len(candidate) > effective_max:
         return False
-    if _estimated_sum(batch) + _estimated_sum(candidate) > _MAX_COMBINED_ESTIMATED_MINUTES:
+    if _estimated_sum(batch) + _estimated_sum(candidate) > TASK.max_combined_estimated_minutes:
         return False
     return not _batch_files_conflict(batch, candidate)
 
@@ -104,7 +99,7 @@ def compact_small_tasks(
     2. Identify batches that contain only one small task.
     3. Merge single-small-task batches into same-role small batches when:
        - Total task count <= max_per_batch
-       - Combined estimated minutes <= _MAX_COMBINED_ESTIMATED_MINUTES
+       - Combined estimated minutes <= TASK.max_combined_estimated_minutes
        - No file conflicts between batches
     4. Preserve non-small batches as-is.
 
@@ -126,7 +121,7 @@ def compact_small_tasks(
     if not small_indices:
         return batches
 
-    effective_max = min(max_per_batch, _MAX_TASKS_PER_COMPACTED_BATCH)
+    effective_max = min(max_per_batch, TASK.max_tasks_per_compacted_batch)
     result = [list(batch) for batch in batches]
     merged_indices: set[int] = set()
 

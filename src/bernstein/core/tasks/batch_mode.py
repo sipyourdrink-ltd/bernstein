@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from bernstein.core.defaults import TASK as _TASK_DEFAULTS
+
 if TYPE_CHECKING:
     from bernstein.core.models import Task
 
@@ -51,14 +53,12 @@ class BatchTask:
 # Decision: should a set of tasks use batch mode?
 # ---------------------------------------------------------------------------
 
-_MIN_BATCH_SIZE: int = 3
-
 
 def should_use_batch(tasks: list[Task]) -> bool:
     """Decide whether a list of tasks should be combined into a single batch.
 
     Returns True when ALL of the following hold:
-    - More than ``_MIN_BATCH_SIZE`` tasks (3).
+    - More than ``TASK.min_batch_size`` tasks (default 3).
     - All tasks share the same role.
     - The combined scope would be "large" OR the tasks share many owned_files.
 
@@ -68,7 +68,7 @@ def should_use_batch(tasks: list[Task]) -> bool:
     Returns:
         True if batch mode is recommended for this set.
     """
-    if len(tasks) <= _MIN_BATCH_SIZE:
+    if len(tasks) <= _TASK_DEFAULTS.min_batch_size:
         return False
 
     roles = {t.role for t in tasks}

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from fastapi import HTTPException
 from typing_extensions import TypedDict
 
+from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.lifecycle import IllegalTransitionError, transition_agent, transition_task
 from bernstein.core.models import (
     AgentSession,
@@ -194,9 +195,6 @@ def _parse_upgrade_dict(raw: dict[str, Any] | None) -> UpgradeProposalDetails | 
     )
 
 
-_MAX_IO_RETRIES: int = 3
-
-
 async def _retry_io(fn: Any, *args: Any) -> Any:
     """Retry a sync file I/O function with exponential backoff.
 
@@ -206,24 +204,25 @@ async def _retry_io(fn: Any, *args: Any) -> Any:
     """
     import errno
 
+    max_retries = _TASK_DEFAULTS.max_io_retries
     non_transient = {errno.ENOSPC, errno.EROFS, errno.EACCES, errno.EPERM}
     last_exc: OSError | None = None
-    for attempt in range(_MAX_IO_RETRIES):
+    for attempt in range(max_retries):
         try:
             return await asyncio.to_thread(fn, *args)
         except OSError as exc:
             if exc.errno in non_transient:
                 raise
             last_exc = exc
-            if attempt < _MAX_IO_RETRIES - 1:
+            if attempt < max_retries - 1:
                 await asyncio.sleep(0.1 * (2**attempt))
                 logger.warning(
                     "Transient I/O error (attempt %d/%d): %s",
                     attempt + 1,
-                    _MAX_IO_RETRIES,
+                    max_retries,
                     exc,
                 )
-    raise TaskStoreUnavailable(f"File I/O failed after {_MAX_IO_RETRIES} retries: {last_exc}") from last_exc
+    raise TaskStoreUnavailable(f"File I/O failed after {max_retries} retries: {last_exc}") from last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -1291,8 +1290,7 @@ class TaskStore:
 
     # -- TASK-002: WAITING_FOR_SUBTASKS timeout with escalation ---------------
 
-    # Default timeout: 30 minutes
-    SUBTASK_WAIT_TIMEOUT_S: float = 30 * 60
+    SUBTASK_WAIT_TIMEOUT_S: float = _TASK_DEFAULTS.subtask_wait_timeout_s
 
     async def check_subtask_timeouts(
         self,
