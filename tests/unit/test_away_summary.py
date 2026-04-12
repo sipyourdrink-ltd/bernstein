@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.away_summary import (
+from bernstein.tui.away_summary import (
     AwaySummary,
     _collect_api_usage_since,
     _collect_error_records,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from bernstein.diff_render import render_word_diff, word_diff
+from bernstein.tui.diff_render import render_word_diff, word_diff
 
 
 class TestTokenize:
@@ -12,7 +12,7 @@ class TestTokenize:
 
     def test_word_tokenize_produces_tokens(self) -> None:
         """Sanity check: tokenize splits on word + non-word boundaries."""
-        from bernstein.diff_render import _tokenize
+        from bernstein.tui.diff_render import _tokenize
 
         tokens = _tokenize("hello world")
         assert tokens == ["hello", " ", "world"]

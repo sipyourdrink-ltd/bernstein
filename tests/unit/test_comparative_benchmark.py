@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from bernstein.benchmark.comparative import (
+from bernstein.evolution.benchmark.comparative import (
     BenchmarkResult,
     BenchmarkTask,
     ComparativeBenchmark,

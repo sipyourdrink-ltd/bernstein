@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from bernstein.benchmark.golden import GoldenEvalRunner, load_golden_suite
+from bernstein.evolution.benchmark.golden import GoldenEvalRunner, load_golden_suite
 
 
 def test_load_golden_suite() -> None:

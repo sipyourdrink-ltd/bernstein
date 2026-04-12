@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import bernstein.api_warmup
-from bernstein.api_warmup import (
+import bernstein.cli.api_warmup
+from bernstein.cli.api_warmup import (
     _WARMUP_TTL_SECONDS,
     WarmupResult,
     can_skip_warmup,
@@ -49,32 +49,32 @@ class TestWarmupResult:
 
 class TestIsLocalOrProxy:
     def test_localhost_string(self) -> None:
-        from bernstein.api_warmup import _is_local_or_proxy
+        from bernstein.cli.api_warmup import _is_local_or_proxy
 
         assert _is_local_or_proxy("http://localhost:8080/api") is True
 
     def test_127_address(self) -> None:
-        from bernstein.api_warmup import _is_local_or_proxy
+        from bernstein.cli.api_warmup import _is_local_or_proxy
 
         assert _is_local_or_proxy("http://127.0.0.1:3000/anything") is True
 
     def test_0_0_0_0(self) -> None:
-        from bernstein.api_warmup import _is_local_or_proxy
+        from bernstein.cli.api_warmup import _is_local_or_proxy
 
         assert _is_local_or_proxy("http://0.0.0.0:9000/v1") is True
 
     def test_unix_socket(self) -> None:
-        from bernstein.api_warmup import _is_local_or_proxy
+        from bernstein.cli.api_warmup import _is_local_or_proxy
 
         assert _is_local_or_proxy("unix:///var/run/api.sock") is True
 
     def test_remote_url(self) -> None:
-        from bernstein.api_warmup import _is_local_or_proxy
+        from bernstein.cli.api_warmup import _is_local_or_proxy
 
         assert _is_local_or_proxy("https://api.openai.com/v1") is False
 
     def test_hypothetical(self) -> None:
-        from bernstein.api_warmup import _is_local_or_proxy
+        from bernstein.cli.api_warmup import _is_local_or_proxy
 
         assert _is_local_or_proxy("https://api.example.com/v1") is False
 
@@ -193,7 +193,7 @@ class TestWarmupProvider:
                 "_get_provider_base_url",
                 return_value="https://api.openai.com/v1",
             ),
-            patch("bernstein.api_warmup.httpx.AsyncClient", FakeClient),
+            patch("bernstein.cli.api_warmup.httpx.AsyncClient", FakeClient),
         ):
             result = await warmup_provider("openai")
             assert result.success is True
@@ -222,7 +222,7 @@ class TestWarmupProvider:
                 "_get_provider_base_url",
                 return_value="https://api.openai.com/v1",
             ),
-            patch("bernstein.api_warmup.httpx.AsyncClient", FailingClient),
+            patch("bernstein.cli.api_warmup.httpx.AsyncClient", FailingClient),
         ):
             result = await warmup_provider("openai")
             assert result.success is False
@@ -258,7 +258,7 @@ class TestWarmupProvider:
                 "_get_provider_base_url",
                 return_value="https://api.openai.com/v1",
             ),
-            patch("bernstein.api_warmup.httpx.AsyncClient", FakeClient),
+            patch("bernstein.cli.api_warmup.httpx.AsyncClient", FakeClient),
         ):
             result = await warmup_provider("openai", model="gpt-4-mini")
             assert result.success is True

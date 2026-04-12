@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bernstein.color_mode import (
+from bernstein.tui.color_mode import (
     ColorMode,
     color_mode_supports_256,
     color_mode_supports_truecolor,

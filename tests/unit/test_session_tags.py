@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.session_tags import (
+from bernstein.tui.session_tags import (
     SessionTags,
     _normalise,
     add_tag,

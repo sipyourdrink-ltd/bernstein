@@ -286,9 +286,9 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ] && \
              git rev-parse --verify "refs/remotes/origin/${{ github.base_ref }}" >/dev/null 2>&1; then
-            uv run python scripts/run_tests.py -x --parallel 4 --affected "refs/remotes/origin/${{ github.base_ref }}"
+            uv run python scripts/run_tests.py --parallel 4 --affected "refs/remotes/origin/${{ github.base_ref }}"
           else
-            uv run python scripts/run_tests.py -x --parallel 4
+            uv run python scripts/run_tests.py --parallel 4
           fi
       - name: Run isolated test suite (Windows)
         if: runner.os == 'Windows'

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.notebook_traces import (
+from bernstein.cli.notebook_traces import (
     NotebookCell,
     NotebookEditEvent,
     NotebookSnapshot,

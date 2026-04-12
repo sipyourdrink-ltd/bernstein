@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from bernstein.install_check import (
+from bernstein.cli.install_check import (
     _find_all_binaries,
     _get_installed_version,
     check_installations,
@@ -72,7 +72,7 @@ class TestGetInstalledVersion:
     def test_returns_none_when_not_installed(self) -> None:
         from importlib.metadata import PackageNotFoundError
 
-        with patch("bernstein.install_check.importlib.metadata.version", side_effect=PackageNotFoundError("not found")):
+        with patch("bernstein.cli.install_check.importlib.metadata.version", side_effect=PackageNotFoundError("not found")):
             assert _get_installed_version() is None
 
 
@@ -84,7 +84,7 @@ class TestCheckInstallations:
         path_str = f"{fake_path_env}/env1/bin:{fake_path_env}/env2/bin"
         with (
             patch.dict("os.environ", {"PATH": path_str}),
-            patch("bernstein.install_check.importlib.metadata.version", return_value="1.0.0"),
+            patch("bernstein.cli.install_check.importlib.metadata.version", return_value="1.0.0"),
         ):
             results = check_installations()
             multi = [r for r in results if "installations" in r.name.lower()]
@@ -98,7 +98,7 @@ class TestCheckInstallations:
         path_str = str(bindir)
         with (
             patch.dict("os.environ", {"PATH": path_str}),
-            patch("bernstein.install_check.importlib.metadata.version", return_value="1.0.0"),
+            patch("bernstein.cli.install_check.importlib.metadata.version", return_value="1.0.0"),
         ):
             results = check_installations()
             singles = [r for r in results if "installations" in r.name.lower() and r.ok]
@@ -107,7 +107,7 @@ class TestCheckInstallations:
     def test_no_installation_warn(self) -> None:
         with (
             patch.dict("os.environ", {"PATH": "/nonexistent"}),
-            patch("bernstein.install_check.importlib.metadata.version", return_value="1.0.0"),
+            patch("bernstein.cli.install_check.importlib.metadata.version", return_value="1.0.0"),
         ):
             results = check_installations()
             not_found = [r for r in results if "installations" in r.name.lower() and not r.ok]

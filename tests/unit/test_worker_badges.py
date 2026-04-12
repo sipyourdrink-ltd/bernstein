@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bernstein.worker_badges import (
+from bernstein.tui.worker_badges import (
     STATUS_ICON_COLORS,
     STATUS_ICONS,
     TIER_COLORS,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bernstein.plugin_errors import (
+from bernstein.plugins.plugin_errors import (
     PluginError,
     PluginErrorRegistry,
     get_plugin_errors,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.side_query import (
+from bernstein.cli.side_query import (
     SideQuery,
     answer_side_query,
     get_open_queries,

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.session_analytics import (
+from bernstein.tui.session_analytics import (
     AnalyticsReport,
     _calculate_helpfulness,
     _extract_goal,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bernstein.tokens import AgentTokenTracker, AgentTokenUsage
+from bernstein.tui.tokens import AgentTokenTracker, AgentTokenUsage
 
 # --- Fixtures ---
 
@@ -83,7 +83,7 @@ class TestAgentTokenTracker:
         assert r.output_tokens == 42
 
     def test_global_tracker_is_singleton(self) -> None:
-        from bernstein.tokens import get_token_tracker
+        from bernstein.tui.tokens import get_token_tracker
 
         a = get_token_tracker()
         b = get_token_tracker()
