@@ -546,8 +546,8 @@ def _parse_mutation_score(output: str) -> float | None:
     #   "42 killed, 58 survived"      (number before keyword)
     # Use [ \t]+ (horizontal whitespace only) for the N-before-keyword form so
     # a newline between a digit and the next keyword on a new line is not matched.
-    killed_m = re.search(r"(?:[Kk]illed[:\s]+(\d+)|(\d+)[ \t]+[Kk]illed)", output)
-    survived_m = re.search(r"(?:[Ss]urvived[:\s]+(\d+)|(\d+)[ \t]+[Ss]urvived)", output)
+    killed_m = re.search(r"(?:[Kk]illed[: \t]+(\d+)|(\d+)[ \t]+[Kk]illed)", output)
+    survived_m = re.search(r"(?:[Ss]urvived[: \t]+(\d+)|(\d+)[ \t]+[Ss]urvived)", output)
     if killed_m and survived_m:
         killed = int(next(g for g in killed_m.groups() if g is not None))
         survived = int(next(g for g in survived_m.groups() if g is not None))
@@ -599,7 +599,7 @@ def run_mutation_gate_sync(config: QualityGatesConfig, run_dir: Path) -> tuple[b
 # Agent-written test mutation verification (ROAD-170)
 # ---------------------------------------------------------------------------
 
-_TEST_FILE_PATTERN = re.compile(r"^\+\+\+ b/(tests?/.*test_\w+\.py|\w+/tests?/test_\w+\.py)", re.MULTILINE)
+_TEST_FILE_PATTERN = re.compile(r"^\+\+\+ b/(tests?/\S*test_\w+\.py|\w+/tests?/test_\w+\.py)", re.MULTILINE)
 _SOURCE_FROM_TEST = re.compile(r"test_(\w+)\.py$")
 
 
