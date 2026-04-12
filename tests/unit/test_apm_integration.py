@@ -137,11 +137,7 @@ class TestConfigureDatadog:
 
         with (
             patch.dict("sys.modules", {"ddtrace": None}),
-            patch(
-                "bernstein.core.apm_integration.configure_datadog.__wrapped__"  # type: ignore[attr-defined]
-            )
-            if False
-            else patch("bernstein.core.telemetry.init_telemetry_from_preset") as mock_preset,
+            patch("bernstein.core.telemetry.init_telemetry_from_preset") as mock_preset,
         ):
             mock_preset.return_value = None
             result = configure_datadog(cfg)
