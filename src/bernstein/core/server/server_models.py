@@ -10,8 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from bernstein.core.bulletin import MessageType
-from bernstein.core.task_store import ProgressEntry
+from bernstein.core.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
+from bernstein.core.task_store import ProgressEntry  # noqa: TC001 - Pydantic needs at runtime
 
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas

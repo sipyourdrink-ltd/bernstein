@@ -116,7 +116,7 @@ def _canonical(lesson_dict: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 # Compiled patterns representing known prompt-injection / memory-poisoning
-# markers.  Each is assigned a severity weight (1–3).
+# markers.  Each is assigned a severity weight (1-3).
 _POISON_RULES: list[tuple[re.Pattern[str], int, str]] = [
     # --- Delimiter injection (model turn markers) ---
     (re.compile(r"<\|im_start\|>|<\|im_end\|>", re.IGNORECASE), 3, "model-turn delimiter injection"),

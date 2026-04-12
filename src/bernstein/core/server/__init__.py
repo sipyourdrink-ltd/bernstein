@@ -1,24 +1,29 @@
 """server sub-package — re-exports for backward compatibility.
 
-Delegates to the canonical parent-level modules (server_app, server_models,
-server_middleware) so that ``from bernstein.core.server import X`` resolves
-to the same objects as ``from bernstein.core.server_app import X``.
+Imports directly from subpackage modules (NOT parent-level shims)
+to avoid circular imports through parent-level shim modules.
 """
-
-from bernstein.core.server_app import *  # noqa: F403
-from bernstein.core.server_models import *  # noqa: F403
-from bernstein.core.server_middleware import *  # noqa: F403
-
-# Re-export TaskStore for backward compatibility
-from bernstein.core.task_store import TaskStore as TaskStore
 
 from typing import Any as _Any
 
+from bernstein.core.server.server_app import *  # noqa: F403
+from bernstein.core.server.server_middleware import *  # noqa: F403
+from bernstein.core.server.server_models import *  # noqa: F403
+
 
 def __getattr__(name: str) -> _Any:
-    """Lazy module-level attribute for ``app``."""
-    if name == "app":
-        from bernstein.core import server_app
+    """Lazy fallback for attributes not eagerly exported."""
+    import importlib
 
-        return server_app.__getattr__("app")
+    for mod_name in (
+        "bernstein.core.server.server_app",
+        "bernstein.core.server.server_models",
+        "bernstein.core.server.server_middleware",
+        "bernstein.core.server.server",
+    ):
+        mod = importlib.import_module(mod_name)
+        try:
+            return getattr(mod, name)
+        except AttributeError:
+            continue
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

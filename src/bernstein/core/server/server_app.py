@@ -33,12 +33,7 @@ from bernstein.core.models import (
     NodeInfo,
     Task,
 )
-from bernstein.core.server_middleware import (
-    CrashGuardMiddleware,
-    IPAllowlistMiddleware,
-    ReadOnlyMiddleware,
-)
-from bernstein.core.server_models import (
+from bernstein.core.server.server_models import (
     A2AArtifactResponse,
     A2AMessageResponse,
     A2ATaskResponse,
@@ -46,7 +41,12 @@ from bernstein.core.server_models import (
     NodeResponse,
     TaskResponse,
 )
-from bernstein.core.task_store import (
+from bernstein.core.server_middleware import (
+    CrashGuardMiddleware,
+    IPAllowlistMiddleware,
+    ReadOnlyMiddleware,
+)
+from bernstein.core.tasks.task_store import (
     ProgressEntry,
     TaskStore,
 )

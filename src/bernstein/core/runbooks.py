@@ -1,7 +1,8 @@
 """Backward-compatibility shim — moved to bernstein.core.observability.runbooks."""
-from bernstein.core.observability.runbooks import *  # noqa: F401,F403
-
 import importlib as _importlib
+
+from bernstein.core.observability.runbooks import *  # noqa: F403
+
 _real = _importlib.import_module("bernstein.core.observability.runbooks")
 def __getattr__(name: str):
     return getattr(_real, name)
