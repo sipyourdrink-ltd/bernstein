@@ -114,12 +114,12 @@ def _worker_tier(agent: AgentCapabilities | None) -> str:
     return "enterprise"
 
 
-def _decorate_agent_rows(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Attach worker badge and capability badges to ps output rows."""
+def _decorate_agent_rows(agents: list[dict[str, Any]]) -> None:
+    """Attach worker badge and capability badges to ps output rows (in-place)."""
     try:
         discovery = discover_agents_cached()
     except Exception:
-        return agents
+        return
 
     for agent in agents:
         matched = _match_discovered_agent(str(agent["command"]), str(agent["model"]), discovery)
@@ -131,7 +131,6 @@ def _decorate_agent_rows(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         agent["worker_badge"] = format_worker_badge(badge)
         agent["skill_badges"] = _skill_badges(matched)
-    return agents
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +247,7 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
         if str(remote["session"]) not in seen_sessions:
             agents.append(remote)
 
-    agents = _decorate_agent_rows(agents)
+    _decorate_agent_rows(agents)
 
     if as_json or is_json():
         print_json(agents)

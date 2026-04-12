@@ -7,7 +7,7 @@ GET /metrics/provider-latency/history  — raw samples for time-series charting
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -55,9 +55,9 @@ def provider_latency_current(request: Request) -> JSONResponse:
 @router.get("/metrics/provider-latency/history")
 def provider_latency_history(
     request: Request,
-    provider: str | None = Query(default=None, description="Filter by provider name"),
-    model: str | None = Query(default=None, description="Filter by model identifier"),
-    hours: int = Query(default=24, ge=1, le=168, description="Hours of history to return (1-168)"),
+    provider: Annotated[str | None, Query(description="Filter by provider name")] = None,
+    model: Annotated[str | None, Query(description="Filter by model identifier")] = None,
+    hours: Annotated[int, Query(ge=1, le=168, description="Hours of history to return (1-168)")] = 24,
 ) -> JSONResponse:
     """Return raw latency samples for time-series charting.
 
