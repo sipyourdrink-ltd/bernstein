@@ -83,9 +83,7 @@ class RegressionAlert:
 # ---------------------------------------------------------------------------
 # Metrics that *decrease* when quality improves ("lower is better").
 # ---------------------------------------------------------------------------
-_LOWER_IS_BETTER: frozenset[str] = frozenset(
-    {"lint_errors", "type_errors", "test_failures", "avg_complexity"}
-)
+_LOWER_IS_BETTER: frozenset[str] = frozenset({"lint_errors", "type_errors", "test_failures", "avg_complexity"})
 
 # Metrics tracked from snapshots.
 _TRACKED_METRICS: tuple[str, ...] = (
@@ -321,10 +319,7 @@ def generate_alerts(
         alerts.append(
             RegressionAlert(
                 metric_name=metric,
-                message=(
-                    f"{metric} {direction} by {abs(change):.1f}% "
-                    f"(from {baseline_val} to {recent_val})"
-                ),
+                message=(f"{metric} {direction} by {abs(change):.1f}% (from {baseline_val} to {recent_val})"),
                 severity=severity,
                 recent_value=recent_val,
                 baseline_value=baseline_val,
