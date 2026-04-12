@@ -177,7 +177,8 @@ def _build_license_violation_rules() -> list[_RuleEntry]:
             "license_violation",
             "copyright_header",
             re.compile(
-                r"(?i)Copyright\s+(?:\(c\)|©)?\s*\d{4}(?:\s*[-]\s*\d{4})?\s+(?!Bernstein|Sasha|Your Name|Author)",
+                r"(?i)Copyright[ \t]+(?:\(c\)|©)?[ \t]*\d{4}"
+                r"(?:[ \t]*-[ \t]*\d{4})?[ \t]+(?!Bernstein|Sasha|Your Name|Author)",
                 re.IGNORECASE,
             ),
             "high",
@@ -379,7 +380,7 @@ _COMMON_ALLOWLIST: list[re.Pattern[str]] = [
     re.compile(r"(?i)placeholder|changeme|your[-_]?api[-_]?key|xxxx"),
     re.compile(r"(?i)localhost|127\.0\.0\.1|0\.0\.0\.0"),
     re.compile(r"#.*copyright.*author"),  # doc templates
-    re.compile(r"(?i)bernstein.*copyright|copyright.*bernstein"),  # project's own header
+    re.compile(r"(?i)bernstein[^\n]*copyright|copyright[^\n]*bernstein"),  # project's own header
 ]
 
 

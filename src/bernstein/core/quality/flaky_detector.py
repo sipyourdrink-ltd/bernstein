@@ -15,7 +15,7 @@ from typing import cast
 logger = logging.getLogger(__name__)
 
 _PYTEST_RESULT_RE = re.compile(
-    r"^(?P<test_id>[^\s].*?::[^\s]+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b",
+    r"^(?P<test_id>[^\s:]+(?:::[^\s:]+)+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b",
     re.MULTILINE,
 )
 _WRITE_LOCK = threading.Lock()

@@ -33,11 +33,11 @@ _GOOGLE_SECTION_RE = re.compile(
     re.MULTILINE,
 )
 # Google param line: "    name: description"
-_GOOGLE_PARAM_RE = re.compile(r"^\s{4,}(\w+)\s*(?:\(.*?\))?\s*:", re.MULTILINE)
+_GOOGLE_PARAM_RE = re.compile(r"^\s{4,}(\w+)[ \t]*(?:\([^)]*\))?[ \t]*:", re.MULTILINE)
 
 # NumPy: "Parameters\n----------"
 _NUMPY_SECTION_RE = re.compile(
-    r"^\s*(Parameters|Returns?|Raises?|Yields?|Attributes?|Examples?|Notes?|See Also)\s*\n\s*[-=]+",
+    r"^\s*(Parameters|Returns?|Raises?|Yields?|Attributes?|Examples?|Notes?|See Also)[ \t]*\n[ \t]*[-=]+",
     re.MULTILINE,
 )
 # NumPy param line: "name : type"
@@ -152,7 +152,7 @@ def _extract_documented_params_google(docstring: str) -> set[str]:
 def _extract_documented_params_numpy(docstring: str) -> set[str]:
     """Extract parameter names from a NumPy-style docstring."""
     params_match = re.search(
-        r"Parameters\s*\n\s*[-=]+\s*\n(.*?)(?:\n\s*\w.*?\n\s*[-=]+|$)",
+        r"Parameters[ \t]*\n[ \t]*[-=]+[ \t]*\n(.*?)(?:\n[ \t]*\w[^\n]*\n[ \t]*[-=]+|$)",
         docstring,
         re.DOTALL,
     )
@@ -191,7 +191,7 @@ def _has_return_doc(docstring: str, style: DocstyleKind) -> bool:
     if style == "google":
         return bool(re.search(r"^\s*Returns?:", docstring, re.MULTILINE))
     if style == "numpy":
-        return bool(re.search(r"Returns?\s*\n\s*[-=]+", docstring))
+        return bool(re.search(r"Returns?[ \t]*\n[ \t]*[-=]+", docstring))
     return bool(_REST_RETURNS_RE.search(docstring))
 
 
@@ -200,7 +200,7 @@ def _has_raises_doc(docstring: str, style: DocstyleKind) -> bool:
     if style == "google":
         return bool(re.search(r"^\s*Raises?:", docstring, re.MULTILINE))
     if style == "numpy":
-        return bool(re.search(r"Raises?\s*\n\s*[-=]+", docstring))
+        return bool(re.search(r"Raises?[ \t]*\n[ \t]*[-=]+", docstring))
     return bool(_REST_RAISES_RE.search(docstring))
 
 
