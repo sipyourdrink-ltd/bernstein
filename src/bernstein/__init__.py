@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__version__ = "1.5.0"
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("bernstein")
+except Exception:  # pragma: no cover — editable installs / bare checkout
+    __version__ = "0.0.0"
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
