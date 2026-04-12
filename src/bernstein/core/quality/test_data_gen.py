@@ -6,6 +6,10 @@ work in the Bernstein orchestrator.
 
 Used by the test suite to generate realistic task graphs without
 hand-coding dozens of fixture objects.
+
+S311: All ``random`` usage in this module is for test data generation,
+not for security purposes.  The pseudo-random outputs drive fixture
+variety, not tokens, IDs, or cryptographic material.
 """
 
 from __future__ import annotations

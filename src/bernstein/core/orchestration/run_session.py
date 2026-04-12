@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import secrets
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -68,9 +69,9 @@ def _git_head_sha() -> str:
 
 
 def _generate_session_id() -> str:
-    """Generate a unique session ID based on timestamp + random hex suffix."""
+    """Generate a unique session ID based on timestamp + cryptographic hex suffix."""
     ts = time.strftime("%Y%m%d-%H%M%S")
-    suffix = f"{random.getrandbits(24):06x}"
+    suffix = secrets.token_hex(3)  # 6 hex chars
     return f"{ts}-{suffix}"
 
 
@@ -119,7 +120,7 @@ class RunSession:
         Returns:
             A new :class:`RunSession` with fields populated.
         """
-        seed = run_seed if run_seed is not None else random.randint(0, 2**31 - 1)
+        seed = run_seed if run_seed is not None else secrets.randbelow(2**31)
         version = _get_bernstein_version()
         return cls(
             session_id=_generate_session_id(),

@@ -253,6 +253,7 @@ class EpsilonGreedyBandit:
         models = candidate_models if candidate_models else list(CASCADE)
 
         # Exploration: random choice with probability epsilon
+        # S311: not security-sensitive — epsilon-greedy exploration for cost optimisation
         if random.random() < self.epsilon:
             chosen = random.choice(models)
             logger.debug("Bandit[%s]: explore → %s", role, chosen)
