@@ -8,6 +8,7 @@ backward compatibility.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -54,6 +55,8 @@ from bernstein.core.worktree import WorktreeSetupConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Type alias for the common cast target used when parsing untyped YAML dicts.
 type _StrObjDict = dict[str, object]
@@ -680,6 +683,23 @@ def _parse_model_fallback(raw: object) -> ModelFallbackSeedConfig | None:
         include_timeouts=include_timeouts_raw,
         trigger_codes=[int(c) for c in codes_raw],
     )
+
+
+def _parse_tuning(raw: dict[str, object]) -> None:
+    """Apply tuning overrides from bernstein.yaml to defaults."""
+    from bernstein.core.defaults import override
+
+    tuning = raw.get("tuning", {})
+    if not isinstance(tuning, dict):
+        return
+
+    for section_name, section_overrides in tuning.items():
+        if not isinstance(section_overrides, dict):
+            continue
+        try:
+            override(section_name, section_overrides)
+        except (KeyError, AttributeError) as exc:
+            logger.warning("tuning.%s: %s", section_name, exc)
 
 
 def parse_seed(path: Path) -> SeedConfig:
@@ -1335,6 +1355,9 @@ def parse_seed(path: Path) -> SeedConfig:
 
     # --- Custom metrics ---
     metrics = _parse_metrics(data.get("metrics"))
+
+    # --- Tuning overrides (apply to bernstein.core.defaults singletons) ---
+    _parse_tuning(data)
 
     return SeedConfig(
         goal=goal,
