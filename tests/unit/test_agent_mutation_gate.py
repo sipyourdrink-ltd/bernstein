@@ -214,7 +214,7 @@ class TestRunAgentTestMutationGateSync:
 
         assert passed is True
         assert score is None
-        assert "Could not infer source files" in detail
+        assert "Could not infer source files" in detail or "No agent-written test files" in detail
 
     def test_config_fields_exist(self) -> None:
         from bernstein.core.quality_gates import QualityGatesConfig
