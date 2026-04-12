@@ -34,5 +34,7 @@ import importlib as _importlib
 from bernstein.core.observability.telemetry import _init_http_telemetry as _init_http_telemetry
 
 _real = _importlib.import_module("bernstein.core.observability.telemetry")
+
+
 def __getattr__(name: str):
     return getattr(_real, name)

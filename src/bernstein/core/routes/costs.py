@@ -971,6 +971,7 @@ def get_token_breakdown(request: Request, session_id: str | None = None) -> JSON
         }
     )
 
+
 @router.get("/costs/efficiency")
 async def cost_efficiency(request: Request) -> dict[str, object]:
     """Get cost-per-line efficiency metrics."""
