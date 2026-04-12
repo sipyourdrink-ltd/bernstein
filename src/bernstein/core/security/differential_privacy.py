@@ -41,11 +41,11 @@ class DPConfig:
 class GaussianMechanism:
     """Gaussian mechanism for (ε, δ)-DP.
 
-    Adds noise drawn from N(0, σ²) where::
+    Adds noise drawn from N(0, sigma^2) where::
 
-        σ = sensitivity * sqrt(2 * ln(1.25 / δ)) / ε
+        sigma = sensitivity * sqrt(2 * ln(1.25 / delta)) / epsilon
 
-    This satisfies (ε, δ)-DP for a query with the given L2 sensitivity.
+    This satisfies (epsilon, delta)-DP for a query with the given L2 sensitivity.
 
     Args:
         sensitivity: Global L2 sensitivity of the numeric field.
