@@ -949,7 +949,6 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
 
 @router.post(
     "/tasks/{task_id}/partial-merge",
-    response_model=PartialMergeResponse,
     responses={
         404: {"description": "Task not found"},
         409: {"description": "Task not in progress or has no active session"},
@@ -1095,7 +1094,7 @@ def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEntry]:
     ]
 
 
-@router.get("/tasks", response_model=PaginatedTasksResponse | list[TaskResponse])
+@router.get("/tasks")
 def list_tasks(
     request: Request,
     status: str | None = None,
@@ -1243,7 +1242,7 @@ def get_task_gates(task_id: str, request: Request) -> JSONResponse:
     return JSONResponse(content=payload)
 
 
-@router.patch("/tasks/{task_id}", response_model=TaskResponse, responses={404: {"description": "Task not found"}})
+@router.patch("/tasks/{task_id}", responses={404: {"description": "Task not found"}})
 async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> TaskResponse:
     """Update mutable task fields (role, priority, model) — manager corrections.
 
@@ -1266,7 +1265,6 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
 
 @router.post(
     "/tasks/{task_id}/prioritize",
-    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}},
 )
 async def prioritize_task(task_id: str, request: Request) -> TaskResponse:
@@ -1287,7 +1285,6 @@ async def prioritize_task(task_id: str, request: Request) -> TaskResponse:
 
 @router.post(
     "/tasks/{task_id}/force-claim",
-    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Cannot force-claim terminal task"}},
 )
 async def force_claim_task(task_id: str, request: Request) -> TaskResponse:
@@ -1318,7 +1315,7 @@ async def force_claim_task(task_id: str, request: Request) -> TaskResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/agents/{agent_id}/heartbeat", response_model=HeartbeatResponse)
+@router.post("/agents/{agent_id}/heartbeat")
 def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Request) -> HeartbeatResponse:
     """Register an agent heartbeat."""
     store = _get_store(request)
@@ -1330,7 +1327,6 @@ def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Request) -> 
 
 @router.get(
     "/agents/{session_id}/logs",
-    response_model=AgentLogsResponse,
     responses={404: {"description": "No log file for session"}},
 )
 def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> AgentLogsResponse:
@@ -1350,7 +1346,7 @@ def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> AgentL
     return AgentLogsResponse(session_id=session_id, content=content, size=size)
 
 
-@router.post("/agents/{session_id}/kill", response_model=AgentKillResponse)
+@router.post("/agents/{session_id}/kill")
 def agent_kill(session_id: str, request: Request) -> AgentKillResponse:
     """Request that an agent session be killed.
 
@@ -1427,7 +1423,7 @@ def agent_stream(session_id: str, request: Request) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/bulletin", status_code=201, response_model=BulletinMessageResponse)
+@router.post("/bulletin", status_code=201)
 def post_bulletin(body: BulletinPostRequest, request: Request) -> BulletinMessageResponse:
     """Append a message to the bulletin board."""
     bulletin = _get_bulletin(request)
@@ -1463,7 +1459,7 @@ def post_bulletin(body: BulletinPostRequest, request: Request) -> BulletinMessag
     )
 
 
-@router.get("/bulletin", response_model=list[BulletinMessageResponse])
+@router.get("/bulletin")
 def get_bulletin(request: Request, since: float = 0.0) -> list[BulletinMessageResponse]:
     """Get bulletin messages since a given timestamp."""
     bulletin = _get_bulletin(request)
@@ -1485,7 +1481,7 @@ def get_bulletin(request: Request, since: float = 0.0) -> list[BulletinMessageRe
 # ---------------------------------------------------------------------------
 
 
-@router.post("/channel/query", status_code=201, response_model=ChannelQueryResponse)
+@router.post("/channel/query", status_code=201)
 def post_channel_query(body: ChannelQueryRequest, request: Request) -> ChannelQueryResponse:
     """Post a coordination query targeted at an agent or role."""
     channel = _get_direct_channel(request)
@@ -1513,7 +1509,6 @@ def post_channel_query(body: ChannelQueryRequest, request: Request) -> ChannelQu
 @router.post(
     "/channel/{query_id}/respond",
     status_code=201,
-    response_model=ChannelResponseResponse,
     responses={404: {"description": "Query not found"}},
 )
 def post_channel_response(query_id: str, body: ChannelResponseRequest, request: Request) -> ChannelResponseResponse:
@@ -1535,7 +1530,7 @@ def post_channel_response(query_id: str, body: ChannelResponseRequest, request: 
     )
 
 
-@router.get("/channel/queries", response_model=list[ChannelQueryResponse])
+@router.get("/channel/queries")
 def get_channel_queries(
     request: Request, agent_id: str | None = None, role: str | None = None
 ) -> list[ChannelQueryResponse]:
@@ -1560,7 +1555,6 @@ def get_channel_queries(
 
 @router.get(
     "/channel/{query_id}/responses",
-    response_model=list[ChannelResponseResponse],
 )
 def get_channel_responses(query_id: str, request: Request) -> list[ChannelResponseResponse]:
     """Get all responses for a channel query."""
@@ -1583,7 +1577,7 @@ def get_channel_responses(query_id: str, request: Request) -> list[ChannelRespon
 # ---------------------------------------------------------------------------
 
 
-@router.get("/.well-known/agent.json", response_model=A2AAgentCardResponse)
+@router.get("/.well-known/agent.json")
 def agent_card(request: Request) -> A2AAgentCardResponse:
     """Publish the Bernstein orchestrator Agent Card (A2A spec)."""
     a2a_handler = _get_a2a_handler(request)
@@ -1592,7 +1586,7 @@ def agent_card(request: Request) -> A2AAgentCardResponse:
     return A2AAgentCardResponse(**d)
 
 
-@router.get("/a2a/agents", response_model=A2AAgentCardResponse)
+@router.get("/a2a/agents")
 def list_a2a_agents(request: Request) -> A2AAgentCardResponse:
     """Return Bernstein's A2A agent card via the task API namespace."""
 
@@ -1602,7 +1596,6 @@ def list_a2a_agents(request: Request) -> A2AAgentCardResponse:
 @router.post(
     "/a2a/message",
     status_code=201,
-    response_model=A2AMessageResponse,
     responses={404: {"description": "Task not found"}},
 )
 async def a2a_message(body: A2AMessageRequest, request: Request) -> A2AMessageResponse:
@@ -1639,7 +1632,7 @@ async def a2a_message(body: A2AMessageRequest, request: Request) -> A2AMessageRe
     return a2a_message_to_response(message)
 
 
-@router.post("/a2a/tasks/send", status_code=201, response_model=A2ATaskResponse)
+@router.post("/a2a/tasks/send", status_code=201)
 async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskResponse:
     """Receive a task from an external A2A agent.
 
@@ -1669,7 +1662,6 @@ async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskRe
 
 @router.get(
     "/a2a/tasks/{a2a_task_id}",
-    response_model=A2ATaskResponse,
     responses={404: {"description": "A2A task not found"}},
 )
 def a2a_get_task(a2a_task_id: str, request: Request) -> A2ATaskResponse:
@@ -1690,7 +1682,6 @@ def a2a_get_task(a2a_task_id: str, request: Request) -> A2ATaskResponse:
 @router.post(
     "/a2a/tasks/{a2a_task_id}/artifacts",
     status_code=201,
-    response_model=A2AArtifactResponse,
     responses={404: {"description": "A2A task not found"}},
 )
 def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest, request: Request) -> A2AArtifactResponse:
@@ -1718,7 +1709,7 @@ def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest, request: Reques
 # ---------------------------------------------------------------------------
 
 
-@router.post("/cluster/nodes", status_code=201, response_model=NodeResponse)
+@router.post("/cluster/nodes", status_code=201)
 def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
     """Register a new node in the cluster."""
     from bernstein.core.cluster_auth import SCOPE_NODE_REGISTER
@@ -1745,7 +1736,6 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
 
 @router.post(
     "/cluster/nodes/{node_id}/heartbeat",
-    response_model=NodeResponse,
     responses={404: {"description": "Node not registered"}},
 )
 def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -> NodeResponse:
@@ -1822,7 +1812,6 @@ def drain_node(node_id: str, request: Request) -> dict[str, str]:
 
 @router.get(
     "/cluster/nodes",
-    response_model=list[NodeResponse],
     responses={400: {"description": "Invalid node status"}},
 )
 def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse]:
@@ -1854,7 +1843,7 @@ def cluster_status(request: Request) -> ClusterStatusResponse:
     )
 
 
-@router.post("/cluster/steal", response_model=TaskStealResponse)
+@router.post("/cluster/steal")
 async def steal_tasks(body: TaskStealRequest, request: Request) -> TaskStealResponse:
     """Evaluate task stealing policy and reassign claimed tasks between nodes.
 
