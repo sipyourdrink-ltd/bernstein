@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: release-drafter/release-drafter@a6acf82562eee06318b77ab8cb0b11ed81c677a7 # v7
+      - uses: release-drafter/release-drafter@139054aeaa9adc52ab36ddf67437541f039b88e2 # v7
         with:
           # On PRs, github.ref is refs/pull/N/merge which GitHub rejects
           # as a release target. Always point to main.
