@@ -164,6 +164,9 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "RUF"]
 "src/bernstein/core/differential_privacy.py" = ["RUF002"]
 "src/bernstein/core/license_scanner.py" = ["E501"]
 "src/bernstein/core/memory_integrity.py" = ["E501", "RUF003"]
+"src/bernstein/core/seed_config.py" = ["TC001"]
+"src/bernstein/core/server_models.py" = ["TC001"]
+"src/bernstein/core/server_middleware.py" = ["TC002"]
 "src/bernstein/core/server_supervisor.py" = ["TC003"]
 "src/bernstein/core/runtime_state.py" = ["TC003"]
 "src/bernstein/cli/frame_buffer.py" = ["TC003", "RUF002"]
@@ -254,6 +257,9 @@ exclude = [
     "src/bernstein/cli/worker_cmd.py",
     "src/bernstein/core/formal_verification.py",
     "src/bernstein/core/seed.py",
+    "src/bernstein/core/seed_config.py",
+    "src/bernstein/core/seed_parser.py",
+    "src/bernstein/core/seed_validators.py",
     "src/bernstein/cli/compare_screen.py",
     "src/bernstein/cli/merge_cmd.py",
     "src/bernstein/cli/prompts_cmd.py",
@@ -277,6 +283,9 @@ exclude = [
     "src/bernstein/core/mcp_server.py",
     "src/bernstein/core/quality_gates.py",
     "src/bernstein/core/server.py",
+    "src/bernstein/core/server_models.py",
+    "src/bernstein/core/server_middleware.py",
+    "src/bernstein/core/server_app.py",
     "src/bernstein/adapters/conformance.py",
     "src/bernstein/core/token_waste_report.py",
     "src/bernstein/core/workflow_importer.py",
