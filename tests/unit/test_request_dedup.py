@@ -105,7 +105,7 @@ class TestRequestDeduplicator:
 
     def test_ttl_expiry_on_check(self) -> None:
         dedup = RequestDeduplicator()
-        with patch("bernstein.core.request_dedup.time") as mock_time:
+        with patch("bernstein.core.server.request_dedup.time") as mock_time:
             mock_time.time.return_value = 1000.0
             dedup.store("req-1", 200, {}, ttl_s=60.0)
 
@@ -119,7 +119,7 @@ class TestRequestDeduplicator:
 
     def test_zero_ttl_never_expires(self) -> None:
         dedup = RequestDeduplicator()
-        with patch("bernstein.core.request_dedup.time") as mock_time:
+        with patch("bernstein.core.server.request_dedup.time") as mock_time:
             mock_time.time.return_value = 1000.0
             dedup.store("req-1", 200, {}, ttl_s=0)
 
@@ -128,7 +128,7 @@ class TestRequestDeduplicator:
 
     def test_evict_expired_removes_old_entries(self) -> None:
         dedup = RequestDeduplicator()
-        with patch("bernstein.core.request_dedup.time") as mock_time:
+        with patch("bernstein.core.server.request_dedup.time") as mock_time:
             mock_time.time.return_value = 1000.0
             dedup.store("a", 200, {}, ttl_s=10.0)
             dedup.store("b", 200, {}, ttl_s=100.0)
@@ -143,7 +143,7 @@ class TestRequestDeduplicator:
     def test_max_cache_size_evicts_oldest(self) -> None:
         cfg = DeduplicationConfig(max_cache_size=3, default_ttl_s=300.0)
         dedup = RequestDeduplicator(config=cfg)
-        with patch("bernstein.core.request_dedup.time") as mock_time:
+        with patch("bernstein.core.server.request_dedup.time") as mock_time:
             mock_time.time.return_value = 100.0
             dedup.store("a", 200, {})
             mock_time.time.return_value = 200.0

@@ -19,7 +19,7 @@ from bernstein.core.file_discovery import (
 def test_file_tree_uses_git_ls_files_and_caches_results(tmp_path: Path) -> None:
     """file_tree prefers git ls-files output and reuses the cached result within the TTL."""
     clear_caches()
-    with patch("bernstein.core.file_discovery._gc_ls_files", return_value=["src/a.py", "src/b.py"]) as mock_ls:
+    with patch("bernstein.core.knowledge.file_discovery._gc_ls_files", return_value=["src/a.py", "src/b.py"]) as mock_ls:
         first = file_tree(tmp_path)
         second = file_tree(tmp_path)
 
@@ -38,7 +38,7 @@ def test_file_tree_falls_back_to_walk_and_skips_ignored_paths(tmp_path: Path) ->
     (tmp_path / "__pycache__").mkdir()
     (tmp_path / "__pycache__" / "cache.pyc").write_text("", encoding="utf-8")
 
-    with patch("bernstein.core.file_discovery._gc_ls_files", return_value=[]):
+    with patch("bernstein.core.knowledge.file_discovery._gc_ls_files", return_value=[]):
         tree = file_tree(tmp_path)
 
     assert "src/main.py" in tree
@@ -53,7 +53,7 @@ def test_gather_project_context_includes_tree_readme_and_project_md(tmp_path: Pa
     project_md.parent.mkdir(parents=True)
     project_md.write_text("Project notes", encoding="utf-8")
 
-    with patch("bernstein.core.file_discovery.file_tree", return_value="src/main.py"):
+    with patch("bernstein.core.knowledge.file_discovery.file_tree", return_value="src/main.py"):
         context = gather_project_context(tmp_path)
 
     assert "## File tree" in context

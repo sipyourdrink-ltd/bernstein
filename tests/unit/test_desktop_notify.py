@@ -79,22 +79,22 @@ class TestDetectPlatform:
     """Platform detection based on sys.platform."""
 
     def test_macos(self) -> None:
-        with patch("bernstein.core.desktop_notify.sys") as mock_sys:
+        with patch("bernstein.core.communication.desktop_notify.sys") as mock_sys:
             mock_sys.platform = "darwin"
             assert detect_platform() == "macos"
 
     def test_linux(self) -> None:
-        with patch("bernstein.core.desktop_notify.sys") as mock_sys:
+        with patch("bernstein.core.communication.desktop_notify.sys") as mock_sys:
             mock_sys.platform = "linux"
             assert detect_platform() == "linux"
 
     def test_linux_variant(self) -> None:
-        with patch("bernstein.core.desktop_notify.sys") as mock_sys:
+        with patch("bernstein.core.communication.desktop_notify.sys") as mock_sys:
             mock_sys.platform = "linux2"
             assert detect_platform() == "linux"
 
     def test_unsupported(self) -> None:
-        with patch("bernstein.core.desktop_notify.sys") as mock_sys:
+        with patch("bernstein.core.communication.desktop_notify.sys") as mock_sys:
             mock_sys.platform = "win32"
             assert detect_platform() == "unsupported"
 

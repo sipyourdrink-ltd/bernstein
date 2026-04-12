@@ -128,7 +128,7 @@ class TestRunResearch:
 
     @pytest.mark.asyncio()
     async def test_runs_searches_and_caches(self, tmp_path: Path) -> None:
-        with patch("bernstein.core.llm.tavily_search", new_callable=AsyncMock) as mock_search:
+        with patch("bernstein.core.routing.llm.tavily_search", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = "Search result content"
             report = await run_research(tmp_path)
 
@@ -139,7 +139,7 @@ class TestRunResearch:
 
     @pytest.mark.asyncio()
     async def test_uses_cache_on_second_run(self, tmp_path: Path) -> None:
-        with patch("bernstein.core.llm.tavily_search", new_callable=AsyncMock) as mock_search:
+        with patch("bernstein.core.routing.llm.tavily_search", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = "Search result"
             await run_research(tmp_path)
 
@@ -150,7 +150,7 @@ class TestRunResearch:
 
     @pytest.mark.asyncio()
     async def test_handles_tavily_failure_gracefully(self, tmp_path: Path) -> None:
-        with patch("bernstein.core.llm.tavily_search", new_callable=AsyncMock) as mock_search:
+        with patch("bernstein.core.routing.llm.tavily_search", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = ""  # Tavily returns empty on failure
             report = await run_research(tmp_path)
 
@@ -167,7 +167,7 @@ class TestRunResearch:
             call_count += 1
             return f"Result for {query}"
 
-        with patch("bernstein.core.llm.tavily_search", side_effect=slow_search):
+        with patch("bernstein.core.routing.llm.tavily_search", side_effect=slow_search):
             report = await run_research(tmp_path)
 
         # Should not exceed MAX_SEARCHES_PER_CYCLE (10)

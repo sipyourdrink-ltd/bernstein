@@ -72,7 +72,7 @@ def test_fetch_jira_issues_returns_issues(
     monkeypatch.setenv("JIRA_TOKEN", "dXNlcjp0b2tlbg==")
 
     mock_resp = _mock_urlopen(SAMPLE_JIRA_RESPONSE)
-    with patch("bernstein.core.jira_sync.urlopen", return_value=mock_resp):
+    with patch("bernstein.core.git.jira_sync.urlopen", return_value=mock_resp):
         issues = fetch_jira_issues(jira_config)
 
     assert len(issues) == 2
@@ -97,7 +97,7 @@ def test_fetch_jira_issues_network_error(
 
     from urllib.error import URLError
 
-    with patch("bernstein.core.jira_sync.urlopen", side_effect=URLError("timeout")):
+    with patch("bernstein.core.git.jira_sync.urlopen", side_effect=URLError("timeout")):
         issues = fetch_jira_issues(jira_config)
 
     assert issues == []
@@ -117,7 +117,7 @@ def test_sync_creates_yaml_files(
     backlog_dir = tmp_path / "backlog" / "open"
 
     mock_resp = _mock_urlopen(SAMPLE_JIRA_RESPONSE)
-    with patch("bernstein.core.jira_sync.urlopen", return_value=mock_resp):
+    with patch("bernstein.core.git.jira_sync.urlopen", return_value=mock_resp):
         count = sync_jira_to_backlog(jira_config, backlog_dir)
 
     assert count == 2
@@ -145,7 +145,7 @@ def test_sync_deduplicates(
     (backlog_dir / "jira-BERN-1-add-rate-limiting.yaml").write_text("existing", encoding="utf-8")
 
     mock_resp = _mock_urlopen(SAMPLE_JIRA_RESPONSE)
-    with patch("bernstein.core.jira_sync.urlopen", return_value=mock_resp):
+    with patch("bernstein.core.git.jira_sync.urlopen", return_value=mock_resp):
         count = sync_jira_to_backlog(jira_config, backlog_dir)
 
     # Only BERN-2 should be created
@@ -161,7 +161,7 @@ def test_sync_empty_response(
     backlog_dir = tmp_path / "backlog" / "open"
 
     mock_resp = _mock_urlopen({"issues": []})
-    with patch("bernstein.core.jira_sync.urlopen", return_value=mock_resp):
+    with patch("bernstein.core.git.jira_sync.urlopen", return_value=mock_resp):
         count = sync_jira_to_backlog(jira_config, backlog_dir)
 
     assert count == 0

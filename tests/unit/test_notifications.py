@@ -55,9 +55,9 @@ def test_desktop_notification_uses_terminal_notifier_on_macos() -> None:
     manager = NotificationManager(targets=[target])
 
     with (
-        patch("bernstein.core.notifications.platform", "darwin"),
-        patch("bernstein.core.notifications.which", return_value="/usr/local/bin/terminal-notifier"),
-        patch("bernstein.core.notifications.subprocess.run") as mock_run,
+        patch("bernstein.core.communication.notifications.platform", "darwin"),
+        patch("bernstein.core.communication.notifications.which", return_value="/usr/local/bin/terminal-notifier"),
+        patch("bernstein.core.communication.notifications.subprocess.run") as mock_run,
     ):
         manager.notify("task.completed", payload)
 
@@ -83,9 +83,9 @@ def test_desktop_notification_uses_notify_send_on_linux() -> None:
     manager = NotificationManager(targets=[target])
 
     with (
-        patch("bernstein.core.notifications.platform", "linux"),
-        patch("bernstein.core.notifications.which", return_value="/usr/bin/notify-send"),
-        patch("bernstein.core.notifications.subprocess.run") as mock_run,
+        patch("bernstein.core.communication.notifications.platform", "linux"),
+        patch("bernstein.core.communication.notifications.which", return_value="/usr/bin/notify-send"),
+        patch("bernstein.core.communication.notifications.subprocess.run") as mock_run,
     ):
         manager.notify("task.failed", payload)
 
@@ -103,8 +103,8 @@ def test_desktop_notification_noops_when_notifier_missing() -> None:
     manager = NotificationManager(targets=[target])
 
     with (
-        patch("bernstein.core.notifications.which", return_value=None),
-        patch("bernstein.core.notifications.subprocess.run") as mock_run,
+        patch("bernstein.core.communication.notifications.which", return_value=None),
+        patch("bernstein.core.communication.notifications.subprocess.run") as mock_run,
     ):
         manager.notify("task.completed", payload)
 

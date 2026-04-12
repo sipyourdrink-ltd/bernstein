@@ -108,8 +108,8 @@ class TestGetClient:
     def test_openrouter_returns_client_with_correct_base_url(self) -> None:
         settings = _make_settings(openrouter_api_key_paid="paid-key")
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
-            patch("bernstein.core.llm.AsyncOpenAI") as mock_cls,
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.AsyncOpenAI") as mock_cls,
         ):
             mock_cls.return_value = MagicMock()
             get_client("openrouter")
@@ -120,7 +120,7 @@ class TestGetClient:
 
     def test_openrouter_raises_when_paid_key_missing(self) -> None:
         settings = _make_settings(openrouter_api_key_paid=None)
-        with patch("bernstein.core.llm.LLMSettings", return_value=settings):
+        with patch("bernstein.core.routing.llm.LLMSettings", return_value=settings):
             with pytest.raises(ValueError, match="OPENROUTER_API_KEY_PAID"):
                 get_client("openrouter")
 
@@ -132,8 +132,8 @@ class TestGetClient:
             openrouter_api_key_paid="paid-key",
         )
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
-            patch("bernstein.core.llm.AsyncOpenAI") as mock_cls,
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.AsyncOpenAI") as mock_cls,
         ):
             mock_cls.return_value = MagicMock()
             get_client("openrouter_free")
@@ -148,8 +148,8 @@ class TestGetClient:
             openrouter_api_key_paid="paid-key",
         )
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
-            patch("bernstein.core.llm.AsyncOpenAI") as mock_cls,
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.AsyncOpenAI") as mock_cls,
         ):
             mock_cls.return_value = MagicMock()
             get_client("openrouter_free")
@@ -163,7 +163,7 @@ class TestGetClient:
             openrouter_api_key_free=None,
             openrouter_api_key_paid=None,
         )
-        with patch("bernstein.core.llm.LLMSettings", return_value=settings):
+        with patch("bernstein.core.routing.llm.LLMSettings", return_value=settings):
             with pytest.raises(ValueError, match="OpenRouter API key"):
                 get_client("openrouter_free")
 
@@ -172,8 +172,8 @@ class TestGetClient:
     def test_oxen_returns_client_with_default_base_url(self) -> None:
         settings = _make_settings(oxen_api_key="oxen-secret")
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
-            patch("bernstein.core.llm.AsyncOpenAI") as mock_cls,
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.AsyncOpenAI") as mock_cls,
         ):
             mock_cls.return_value = MagicMock()
             get_client("oxen")
@@ -184,7 +184,7 @@ class TestGetClient:
 
     def test_oxen_raises_when_key_missing(self) -> None:
         settings = _make_settings(oxen_api_key=None)
-        with patch("bernstein.core.llm.LLMSettings", return_value=settings):
+        with patch("bernstein.core.routing.llm.LLMSettings", return_value=settings):
             with pytest.raises(ValueError, match="OXEN_API_KEY"):
                 get_client("oxen")
 
@@ -193,8 +193,8 @@ class TestGetClient:
     def test_together_returns_client_with_correct_base_url(self) -> None:
         settings = _make_settings(togetherai_user_key="together-secret")
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
-            patch("bernstein.core.llm.AsyncOpenAI") as mock_cls,
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.AsyncOpenAI") as mock_cls,
         ):
             mock_cls.return_value = MagicMock()
             get_client("together")
@@ -205,7 +205,7 @@ class TestGetClient:
 
     def test_together_raises_when_key_missing(self) -> None:
         settings = _make_settings(togetherai_user_key=None)
-        with patch("bernstein.core.llm.LLMSettings", return_value=settings):
+        with patch("bernstein.core.routing.llm.LLMSettings", return_value=settings):
             with pytest.raises(ValueError, match="TOGETHERAI_USER_KEY"):
                 get_client("together")
 
@@ -214,8 +214,8 @@ class TestGetClient:
     def test_g4f_returns_client_with_default_base_url(self) -> None:
         settings = _make_settings(g4f_api_key="g4f-secret")
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
-            patch("bernstein.core.llm.AsyncOpenAI") as mock_cls,
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.AsyncOpenAI") as mock_cls,
         ):
             mock_cls.return_value = MagicMock()
             get_client("g4f")
@@ -226,7 +226,7 @@ class TestGetClient:
 
     def test_g4f_raises_when_key_missing(self) -> None:
         settings = _make_settings(g4f_api_key=None)
-        with patch("bernstein.core.llm.LLMSettings", return_value=settings):
+        with patch("bernstein.core.routing.llm.LLMSettings", return_value=settings):
             with pytest.raises(ValueError, match="G4F_API_KEY"):
                 get_client("g4f")
 
@@ -235,8 +235,8 @@ class TestGetClient:
     def test_openai_default_fallback_when_unknown_provider(self) -> None:
         settings = _make_settings(openai_api_key="sk-test")
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
-            patch("bernstein.core.llm.AsyncOpenAI") as mock_cls,
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.AsyncOpenAI") as mock_cls,
         ):
             mock_cls.return_value = MagicMock()
             get_client("openai")
@@ -251,8 +251,8 @@ class TestGetClient:
             openai_base_url="https://my-proxy.example.com/v1",
         )
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
-            patch("bernstein.core.llm.AsyncOpenAI") as mock_cls,
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.AsyncOpenAI") as mock_cls,
         ):
             mock_cls.return_value = MagicMock()
             get_client("openai")
@@ -263,7 +263,7 @@ class TestGetClient:
 
     def test_raises_when_unknown_provider_and_no_openai_key(self) -> None:
         settings = _make_settings(openai_api_key=None)
-        with patch("bernstein.core.llm.LLMSettings", return_value=settings):
+        with patch("bernstein.core.routing.llm.LLMSettings", return_value=settings):
             with pytest.raises(ValueError, match="Unknown or unconfigured provider"):
                 get_client("nonexistent_provider")
 
@@ -273,7 +273,7 @@ class TestGetClient:
         from openai import AsyncOpenAI
 
         settings = _make_settings(openrouter_api_key_paid="paid-key")
-        with patch("bernstein.core.llm.LLMSettings", return_value=settings):
+        with patch("bernstein.core.routing.llm.LLMSettings", return_value=settings):
             client = get_client("openrouter")
         assert isinstance(client, AsyncOpenAI)
 
@@ -300,7 +300,7 @@ class TestCallLLM:
     async def test_successful_call_returns_content_string(self) -> None:
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=_make_completion_response("Hello, world!"))
-        with patch("bernstein.core.llm.get_client", return_value=mock_client):
+        with patch("bernstein.core.routing.llm.get_client", return_value=mock_client):
             result = await call_llm("test prompt", "gpt-4")
         assert result == "Hello, world!"
 
@@ -308,7 +308,7 @@ class TestCallLLM:
     async def test_empty_choices_returns_empty_string(self) -> None:
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=_make_completion_response(None, num_choices=0))
-        with patch("bernstein.core.llm.get_client", return_value=mock_client):
+        with patch("bernstein.core.routing.llm.get_client", return_value=mock_client):
             result = await call_llm("test prompt", "gpt-4")
         assert result == ""
 
@@ -316,7 +316,7 @@ class TestCallLLM:
     async def test_none_content_returns_empty_string(self) -> None:
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=_make_completion_response(None))
-        with patch("bernstein.core.llm.get_client", return_value=mock_client):
+        with patch("bernstein.core.routing.llm.get_client", return_value=mock_client):
             result = await call_llm("test prompt", "gpt-4")
         assert result == ""
 
@@ -325,7 +325,7 @@ class TestCallLLM:
         mock_client = MagicMock()
         original_error = ValueError("quota exceeded")
         mock_client.chat.completions.create = AsyncMock(side_effect=original_error)
-        with patch("bernstein.core.llm.get_client", return_value=mock_client):
+        with patch("bernstein.core.routing.llm.get_client", return_value=mock_client):
             with pytest.raises(RuntimeError, match="quota exceeded"):
                 await call_llm("test prompt", "gpt-4")
 
@@ -333,7 +333,7 @@ class TestCallLLM:
     async def test_provider_routing_calls_get_client_with_correct_provider(self) -> None:
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=_make_completion_response("response"))
-        with patch("bernstein.core.llm.get_client", return_value=mock_client) as mock_get_client:
+        with patch("bernstein.core.routing.llm.get_client", return_value=mock_client) as mock_get_client:
             await call_llm("test prompt", "gpt-4", provider="openrouter")
         mock_get_client.assert_called_once_with("openrouter")
 
@@ -348,7 +348,7 @@ class TestTavilySearch:
     async def test_missing_api_key_returns_empty_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         settings = _make_settings(tavily_api_key=None)
-        with patch("bernstein.core.llm.LLMSettings", return_value=settings):
+        with patch("bernstein.core.routing.llm.LLMSettings", return_value=settings):
             result = await tavily_search("test query")
         assert result == ""
 
@@ -370,7 +370,7 @@ class TestTavilySearch:
         mock_async_client.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
             patch("httpx.AsyncClient", return_value=mock_async_client),
         ):
             result = await tavily_search("test query")
@@ -393,7 +393,7 @@ class TestTavilySearch:
         mock_async_client.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
             patch("httpx.AsyncClient", return_value=mock_async_client),
         ):
             result = await tavily_search("obscure query")
@@ -417,7 +417,7 @@ class TestTavilySearch:
         mock_async_client.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
             patch("httpx.AsyncClient", return_value=mock_async_client),
         ):
             result = await tavily_search("test query")
@@ -437,7 +437,7 @@ class TestTavilySearch:
         mock_async_client.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("bernstein.core.llm.LLMSettings", return_value=settings),
+            patch("bernstein.core.routing.llm.LLMSettings", return_value=settings),
             patch("httpx.AsyncClient", return_value=mock_async_client),
         ):
             result = await tavily_search("test query")

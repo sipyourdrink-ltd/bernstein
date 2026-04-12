@@ -243,7 +243,7 @@ class TestWorktreeSymlinksIntegration:
         session_id = "session-abc"
         worktree_path = repo_root / ".sdd/worktrees" / session_id
 
-        with patch("bernstein.core.worktree.worktree_add") as mock_add:
+        with patch("bernstein.core.git.worktree.worktree_add") as mock_add:
 
             def _mkdir(_root: Path, path: Path, _branch: str) -> GitResult:
                 path.mkdir(parents=True)
@@ -264,7 +264,7 @@ class TestWorktreeSymlinksIntegration:
 
         (repo_root / "node_modules").mkdir()
 
-        with patch("bernstein.core.worktree.worktree_add") as mock_add:
+        with patch("bernstein.core.git.worktree.worktree_add") as mock_add:
 
             def _mkdir(_root: Path, path: Path, _branch: str) -> GitResult:
                 path.mkdir(parents=True)
@@ -285,9 +285,9 @@ class TestWorktreeSymlinksIntegration:
 
         session_id = "session-lifecycle"
         with (
-            patch("bernstein.core.worktree.worktree_add") as mock_add,
-            patch("bernstein.core.worktree.worktree_remove") as mock_rm,
-            patch("bernstein.core.worktree.branch_delete") as mock_bd,
+            patch("bernstein.core.git.worktree.worktree_add") as mock_add,
+            patch("bernstein.core.git.worktree.worktree_remove") as mock_rm,
+            patch("bernstein.core.git.worktree.branch_delete") as mock_bd,
         ):
             mock_add.return_value = GitResult(0, "", "")
             mock_rm.return_value = GitResult(0, "", "")
@@ -314,7 +314,7 @@ class TestWorktreeSymlinksIntegration:
         config = WorktreeSetupConfig(symlink_dirs=("build",))
         manager = WorktreeManager(repo_root=repo_root, setup_config=config)
 
-        with patch("bernstein.core.worktree.worktree_add") as mock_add:
+        with patch("bernstein.core.git.worktree.worktree_add") as mock_add:
 
             def _mkdir(_root: Path, path: Path, _branch: str) -> GitResult:
                 path.mkdir(parents=True)

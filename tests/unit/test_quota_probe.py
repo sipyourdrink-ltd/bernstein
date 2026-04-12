@@ -17,7 +17,7 @@ def test_probe_provider_quota_returns_snapshot() -> None:
         is_active=True,
     )
 
-    with patch("bernstein.core.quota_probe.get_adapter", return_value=adapter):
+    with patch("bernstein.core.protocols.quota_probe.get_adapter", return_value=adapter):
         snapshot = probe_provider_quota("codex", "gpt-5.4-mini")
 
     assert snapshot is not None
@@ -30,7 +30,7 @@ def test_probe_provider_quota_returns_none_when_adapter_has_no_data() -> None:
     adapter = MagicMock()
     adapter.detect_tier.return_value = None
 
-    with patch("bernstein.core.quota_probe.get_adapter", return_value=adapter):
+    with patch("bernstein.core.protocols.quota_probe.get_adapter", return_value=adapter):
         snapshot = probe_provider_quota("codex", "gpt-5.4-mini")
 
     assert snapshot is None

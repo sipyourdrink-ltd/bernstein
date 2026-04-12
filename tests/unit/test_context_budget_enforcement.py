@@ -89,7 +89,7 @@ def test_task_context_builder_enforces_budgets(caplog, tmp_path):
     tasks = [Task(id="T1", title="Task 1", role="backend", description="Fix budget enforcement")]
 
     with patch_module.patch("bernstein.core.tokens.context_compression.ContextCompressor", mock_compressor_cls):
-        with patch_module.patch("bernstein.core.rag.CodebaseIndexer", mock_indexer_cls):
+        with patch_module.patch("bernstein.core.knowledge.rag.CodebaseIndexer", mock_indexer_cls):
             _context = builder.build_context(tasks)
 
     # Should have included 2 files (12000 tokens) but not the 3rd (18000 tokens > 15000)

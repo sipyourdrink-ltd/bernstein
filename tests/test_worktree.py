@@ -366,7 +366,7 @@ class TestSetupWorktreeEnv:
 
         with (
             patch("subprocess.run", return_value=_ok()),
-            patch("bernstein.core.worktree.setup_worktree_env") as mock_setup,
+            patch("bernstein.core.git.worktree.setup_worktree_env") as mock_setup,
         ):
             mgr.create("sess-plain")
 

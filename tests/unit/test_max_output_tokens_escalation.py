@@ -63,7 +63,7 @@ def test_agent_lifecycle_detects_max_output_tokens_finish_reason():
     orch._client.get.return_value = mock_resp
     orch._client.post.return_value = MagicMock(status_code=200)
 
-    with patch("bernstein.core.agent_state_refresh.transition_agent") as mock_transition:
+    with patch("bernstein.core.agents.agent_state_refresh.transition_agent") as mock_transition:
         refresh_agent_states(orch, {})
 
         mock_transition.assert_called_once()

@@ -43,7 +43,7 @@ def test_cleanup_all_stale_skips_live_pid_worktree(tmp_path: Path) -> None:
 
     manager = WorktreeManager(tmp_path)
     with (
-        patch("bernstein.core.worktree.subprocess.run") as run,
+        patch("bernstein.core.git.worktree.subprocess.run") as run,
         patch.object(manager, "cleanup") as cleanup,
     ):
         cleaned = manager.cleanup_all_stale()

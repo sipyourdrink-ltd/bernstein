@@ -152,7 +152,7 @@ async def test_score_diff_llm_failure(tmp_path: Path) -> None:
 
     config = ReviewRubricConfig(enabled=True, block_below_threshold=True)
 
-    with patch("bernstein.core.llm.call_llm", side_effect=RuntimeError("timeout")):
+    with patch("bernstein.core.routing.llm.call_llm", side_effect=RuntimeError("timeout")):
         result = await score_diff(task, tmp_path, config, diff="--- a/x.py\n+++ b/x.py\n@@ def f(): pass")
 
     assert result.passed is False
@@ -174,7 +174,7 @@ async def test_score_diff_passing(tmp_path: Path) -> None:
 
     config = ReviewRubricConfig(enabled=True, composite_threshold=6.0)
 
-    with patch("bernstein.core.llm.call_llm", new_callable=AsyncMock, return_value=_valid_json()):
+    with patch("bernstein.core.routing.llm.call_llm", new_callable=AsyncMock, return_value=_valid_json()):
         result = await score_diff(task, tmp_path, config, diff="--- a/x.py\n+++ b/x.py\n@@ def f(): pass")
 
     assert result.passed is True
@@ -209,7 +209,7 @@ async def test_score_diff_below_threshold_blocks(tmp_path: Path) -> None:
         maintainability=3,
     )
 
-    with patch("bernstein.core.llm.call_llm", new_callable=AsyncMock, return_value=low_json):
+    with patch("bernstein.core.routing.llm.call_llm", new_callable=AsyncMock, return_value=low_json):
         result = await score_diff(task, tmp_path, config, diff="--- a/x.py\n+++ b/x.py\n@@ code")
 
     assert result.passed is False
@@ -231,7 +231,7 @@ async def test_rubric_history_writer_records(tmp_path: Path) -> None:
 
     config = ReviewRubricConfig(enabled=True)
 
-    with patch("bernstein.core.llm.call_llm", new_callable=AsyncMock, return_value=_valid_json()):
+    with patch("bernstein.core.routing.llm.call_llm", new_callable=AsyncMock, return_value=_valid_json()):
         result = await score_diff(task, tmp_path, config, diff="--- a/x.py")
 
     writer = RubricHistoryWriter(tmp_path)

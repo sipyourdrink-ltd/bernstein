@@ -215,7 +215,7 @@ class TestTryCompactAndRetry:
         ]
         orch._client.get.return_value = retry_task_resp
 
-        with patch("bernstein.core.agent_state_refresh.retry_or_fail_task") as mock_retry:
+        with patch("bernstein.core.agents.agent_state_refresh.retry_or_fail_task") as mock_retry:
             result = _try_compact_and_retry(
                 orch=orch,
                 task=task,
@@ -236,7 +236,7 @@ class TestTryCompactAndRetry:
         session = _make_session()
         orch = _make_orch(tmp_path)
 
-        with patch("bernstein.core.agent_state_refresh.retry_or_fail_task") as mock_retry:
+        with patch("bernstein.core.agents.agent_state_refresh.retry_or_fail_task") as mock_retry:
             result = _try_compact_and_retry(
                 orch=orch,
                 task=task,
@@ -261,7 +261,7 @@ class TestTryCompactAndRetry:
                 "bernstein.core.compaction_pipeline.CompactionPipeline.execute",
                 side_effect=RuntimeError("pipeline boom"),
             ),
-            patch("bernstein.core.agent_state_refresh.retry_or_fail_task") as mock_retry,
+            patch("bernstein.core.agents.agent_state_refresh.retry_or_fail_task") as mock_retry,
         ):
             result = _try_compact_and_retry(
                 orch=orch,
@@ -287,7 +287,7 @@ class TestTryCompactAndRetry:
         retry_task_resp.json.return_value = []
         orch._client.get.return_value = retry_task_resp
 
-        with patch("bernstein.core.agent_state_refresh.retry_or_fail_task"):
+        with patch("bernstein.core.agents.agent_state_refresh.retry_or_fail_task"):
             _try_compact_and_retry(
                 orch=orch,
                 task=task,
@@ -315,7 +315,7 @@ class TestTryCompactAndRetry:
         ]
         orch._client.get.return_value = retry_task_resp
 
-        with patch("bernstein.core.agent_state_refresh.retry_or_fail_task"):
+        with patch("bernstein.core.agents.agent_state_refresh.retry_or_fail_task"):
             _try_compact_and_retry(
                 orch=orch,
                 task=task,
@@ -354,8 +354,8 @@ class TestHandleOrphanedTaskContextOverflow:
         log_file.write_text("ERROR: 413 prompt is too long\n")
 
         with (
-            patch("bernstein.core.agent_state_refresh._try_compact_and_retry", return_value=True) as mock_compact,
-            patch("bernstein.core.agent_reaping.emit_orphan_metrics"),
+            patch("bernstein.core.agents.agent_state_refresh._try_compact_and_retry", return_value=True) as mock_compact,
+            patch("bernstein.core.agents.agent_reaping.emit_orphan_metrics"),
         ):
             handle_orphaned_task(orch, task.id, session, _snapshot(task))
 
@@ -372,8 +372,8 @@ class TestHandleOrphanedTaskContextOverflow:
         (sdd_runtime / f"{session.id}.log").write_text("ERROR: 413\n")
 
         with (
-            patch("bernstein.core.agent_state_refresh._try_compact_and_retry", return_value=False),
-            patch("bernstein.core.agent_reaping.emit_orphan_metrics") as mock_metrics,
+            patch("bernstein.core.agents.agent_state_refresh._try_compact_and_retry", return_value=False),
+            patch("bernstein.core.agents.agent_reaping.emit_orphan_metrics") as mock_metrics,
         ):
             handle_orphaned_task(orch, task.id, session, _snapshot(task))
 

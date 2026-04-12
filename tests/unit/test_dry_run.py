@@ -49,7 +49,7 @@ class TestDryRun:
             mock_response.raise_for_status.return_value = None
             mock_get.return_value = mock_response
 
-            with patch("bernstein.core.router.route_task") as mock_route:
+            with patch("bernstein.core.routing.router.route_task") as mock_route:
                 from bernstein.core.models import ModelConfig
 
                 mock_route.return_value = ModelConfig(model="sonnet", effort="high")

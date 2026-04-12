@@ -31,7 +31,7 @@ def _patch_asyncpg_available() -> Any:
     The guard prevents __init__ from running; patching it lets us test
     the factory's wiring without a real PostgreSQL connection.
     """
-    return patch("bernstein.core.store_postgres._ASYNCPG_AVAILABLE", True)
+    return patch("bernstein.core.persistence.store_postgres._ASYNCPG_AVAILABLE", True)
 
 
 def _patch_redis_available() -> Any:
@@ -39,7 +39,7 @@ def _patch_redis_available() -> Any:
 
     redis is an optional dependency not present in the test venv.
     """
-    return patch("bernstein.core.store_redis._redis_available", True)
+    return patch("bernstein.core.persistence.store_redis._redis_available", True)
 
 
 # ---------------------------------------------------------------------------

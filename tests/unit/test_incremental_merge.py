@@ -128,7 +128,7 @@ class TestIncrementalMergeFiles:
         )
         _save_state(runtime_dir, state)
 
-        with patch("bernstein.core.incremental_merge.run_git") as mock_git:
+        with patch("bernstein.core.git.incremental_merge.run_git") as mock_git:
             result = incremental_merge_files(tmp_path, runtime_dir, "sess", ["src/foo.py"])
 
         mock_git.assert_not_called()

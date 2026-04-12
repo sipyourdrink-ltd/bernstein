@@ -155,7 +155,7 @@ def test_spawn_failure_analysis_prevents_permanent_retry(tmp_path: Path, make_ta
     orch._quarantine.is_quarantined.return_value = False
     orch._spawner.spawn_for_tasks.side_effect = SpawnError("adapter not found")
 
-    with patch("bernstein.core.task_claim.fail_task") as fail_task_mock:
+    with patch("bernstein.core.tasks.task_claim.fail_task") as fail_task_mock:
         claim_and_spawn_batches(orch, [batch], 0, set(), set(), SimpleNamespace(spawned=[], errors=[]))
 
     assert fail_task_mock.call_count == 1

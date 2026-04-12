@@ -53,7 +53,7 @@ class TestMergeResult:
 
 
 class TestParseConflictFiles:
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_unmerged_files(self, mock: MagicMock) -> None:
         mock.return_value = GitResult(
             0,
@@ -63,7 +63,7 @@ class TestParseConflictFiles:
         result = _parse_conflict_files(REPO)
         assert result == ["src/a.py", "src/b.py"]
 
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_all_unmerged_codes(self, mock: MagicMock) -> None:
         mock.return_value = GitResult(
             0,
@@ -73,13 +73,13 @@ class TestParseConflictFiles:
         result = _parse_conflict_files(REPO)
         assert len(result) == 7
 
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_no_conflicts(self, mock: MagicMock) -> None:
         mock.return_value = GitResult(0, "M  src/a.py\nA  src/b.py\n", "")
         result = _parse_conflict_files(REPO)
         assert result == []
 
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_empty_status(self, mock: MagicMock) -> None:
         mock.return_value = GitResult(0, "", "")
         result = _parse_conflict_files(REPO)
@@ -99,7 +99,7 @@ class TestMergeWithConflictDetection:
     # from the old rebase-first implementation, so the stdout for
     # ``diff --stat`` landed at index 6 and was never reached.
 
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_clean_merge(self, mock: MagicMock) -> None:
         mock.side_effect = [
             GitResult(0, "", ""),  # merge --no-commit --no-ff
@@ -112,7 +112,7 @@ class TestMergeWithConflictDetection:
         assert result.conflicting_files == []
         assert "1 file changed" in result.merge_diff
 
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_clean_merge_custom_message(self, mock: MagicMock) -> None:
         mock.side_effect = [
             GitResult(0, "", ""),  # merge --no-commit --no-ff
@@ -125,7 +125,7 @@ class TestMergeWithConflictDetection:
         commit_call = mock.call_args_list[2]
         assert "Custom merge msg" in commit_call[0][0]
 
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_conflict_detected(self, mock: MagicMock) -> None:
         mock.side_effect = [
             GitResult(1, "", "CONFLICT (content): Merge conflict in src/a.py"),  # merge fails
@@ -139,7 +139,7 @@ class TestMergeWithConflictDetection:
         abort_call = mock.call_args_list[-1]
         assert "--abort" in abort_call[0][0]
 
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_non_conflict_failure(self, mock: MagicMock) -> None:
         mock.side_effect = [
             GitResult(128, "", "fatal: 'agent/bad' is not a commit"),  # merge fails
@@ -151,7 +151,7 @@ class TestMergeWithConflictDetection:
         assert result.conflicting_files == []
         assert "not a commit" in result.error
 
-    @patch("bernstein.core.git_pr.run_git")
+    @patch("bernstein.core.git.git_pr.run_git")
     def test_nothing_to_commit_after_merge(self, mock: MagicMock) -> None:
         """Branches are identical — merge succeeds but nothing to commit."""
         mock.side_effect = [
@@ -248,7 +248,7 @@ class TestSpawnerConflictResolution:
         result = spawner.reap_completed_agent(session)
         assert result is None
 
-    @patch("bernstein.core.spawner_merge.merge_with_conflict_detection")
+    @patch("bernstein.core.agents.spawner_merge.merge_with_conflict_detection")
     def test_merge_worktree_branch_delegates(self, mock_merge: MagicMock, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=100)
         spawner = self._make_spawner(tmp_path, adapter)
@@ -266,7 +266,7 @@ class TestSpawnerConflictResolution:
         )
         assert result.success
 
-    @patch("bernstein.core.spawner_merge.merge_with_conflict_detection")
+    @patch("bernstein.core.agents.spawner_merge.merge_with_conflict_detection")
     def test_merge_worktree_branch_handles_exception(
         self, mock_merge: MagicMock, tmp_path: Path, mock_adapter_factory
     ) -> None:

@@ -273,7 +273,7 @@ class TestDetectMergeConflicts:
         base_r = GitResult(returncode=0, stdout="abc123\n", stderr="")
         tree_r = GitResult(returncode=0, stdout=_CLEAN_MERGE, stderr="")
 
-        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]):
+        with patch("bernstein.core.git.merge_queue.run_git", side_effect=[base_r, tree_r]):
             result = detect_merge_conflicts("agent/backend-abc", "main", tmp_path)
 
         assert not result.has_conflicts
@@ -285,7 +285,7 @@ class TestDetectMergeConflicts:
         base_r = GitResult(returncode=0, stdout="abc123\n", stderr="")
         tree_r = GitResult(returncode=0, stdout=_ONE_CONFLICT, stderr="")
 
-        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]):
+        with patch("bernstein.core.git.merge_queue.run_git", side_effect=[base_r, tree_r]):
             result = detect_merge_conflicts("agent/backend-abc", "main", tmp_path)
 
         assert result.has_conflicts
@@ -295,7 +295,7 @@ class TestDetectMergeConflicts:
         base_r = GitResult(returncode=0, stdout="deadbeef\n", stderr="")
         tree_r = GitResult(returncode=0, stdout=_TWO_CONFLICTS, stderr="")
 
-        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]):
+        with patch("bernstein.core.git.merge_queue.run_git", side_effect=[base_r, tree_r]):
             result = detect_merge_conflicts("agent/backend-abc", "main", tmp_path)
 
         assert result.has_conflicts
@@ -305,7 +305,7 @@ class TestDetectMergeConflicts:
         """Unrelated histories / missing branch → skip conflict check."""
         fail_r = GitResult(returncode=1, stdout="", stderr="fatal: no common ancestor\n")
 
-        with patch("bernstein.core.merge_queue.run_git", return_value=fail_r):
+        with patch("bernstein.core.git.merge_queue.run_git", return_value=fail_r):
             result = detect_merge_conflicts("agent/orphan", "main", tmp_path)
 
         assert not result.has_conflicts
@@ -315,7 +315,7 @@ class TestDetectMergeConflicts:
         base_r = GitResult(returncode=0, stdout="deadbeef\n", stderr="")
         tree_r = GitResult(returncode=0, stdout="", stderr="")
 
-        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]) as mock:
+        with patch("bernstein.core.git.merge_queue.run_git", side_effect=[base_r, tree_r]) as mock:
             detect_merge_conflicts("agent/backend-xyz", "main", tmp_path)
 
         calls = mock.call_args_list
@@ -326,7 +326,7 @@ class TestDetectMergeConflicts:
         base_r = GitResult(returncode=0, stdout="abc123\n", stderr="")
         tree_r = GitResult(returncode=0, stdout=_ONE_CONFLICT, stderr="")
 
-        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]):
+        with patch("bernstein.core.git.merge_queue.run_git", side_effect=[base_r, tree_r]):
             result = detect_merge_conflicts("agent/qa-xyz", "main", tmp_path)
 
         assert isinstance(result, ConflictCheckResult)

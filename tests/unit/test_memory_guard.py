@@ -35,7 +35,7 @@ def test_memory_guard_monitor_agents() -> None:
     a1 = MagicMock(id="a1", pid=111)
     a2 = MagicMock(id="a2", pid=222)
 
-    with patch("bernstein.core.memory_guard.get_rss_bytes") as mock_rss:
+    with patch("bernstein.core.knowledge.memory_guard.get_rss_bytes") as mock_rss:
         # First sample
         mock_rss.side_effect = [100 * 1024 * 1024, 100 * 1024 * 1024]
         guard.monitor_agents([a1, a2])

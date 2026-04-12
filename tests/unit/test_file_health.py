@@ -154,7 +154,7 @@ def test_compute_and_record_success(sdd_dir: Path, tracker: FileHealthTracker) -
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("def hello():\n    return 1\n")
 
-    with patch("bernstein.core.file_health._compute_churn_score", return_value=85):
+    with patch("bernstein.core.persistence.file_health._compute_churn_score", return_value=85):
         score, _flagged = tracker.compute_and_record("src/foo.py", "task-1", "success")
 
     assert score.path == "src/foo.py"
@@ -175,7 +175,7 @@ def test_compute_and_record_failure_increases_density(sdd_dir: Path, tracker: Fi
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("x = 1\n")
 
-    with patch("bernstein.core.file_health._compute_churn_score", return_value=70):
+    with patch("bernstein.core.persistence.file_health._compute_churn_score", return_value=70):
         score, _ = tracker.compute_and_record("src/buggy.py", "task-fail", "failure")
 
     assert score.failure_touches == 1
@@ -190,9 +190,9 @@ def test_flagged_when_score_below_threshold(sdd_dir: Path, tracker: FileHealthTr
     branches = "\n    ".join(f"if x > {i}:\n        pass" for i in range(50))
     src.write_text(f"def foo(x):\n    {branches}\n")
 
-    with patch("bernstein.core.file_health._compute_churn_score", return_value=0):
+    with patch("bernstein.core.persistence.file_health._compute_churn_score", return_value=0):
         # Patch bug_density to force a low score
-        with patch("bernstein.core.file_health._bug_density_score", return_value=0):
+        with patch("bernstein.core.persistence.file_health._bug_density_score", return_value=0):
             score, flagged = tracker.compute_and_record("src/bad.py", "task-bad", "failure")
 
     if score.total < MIN_HEALTHY_SCORE:
@@ -208,11 +208,11 @@ def test_flagged_on_degradation(sdd_dir: Path, tracker: FileHealthTracker) -> No
 
     # First touch: high score (all sub-scores = 90)
     with (
-        patch("bernstein.core.file_health._compute_complexity_score", return_value=90),
-        patch("bernstein.core.file_health._compute_coupling_score", return_value=90),
-        patch("bernstein.core.file_health._compute_churn_score", return_value=90),
-        patch("bernstein.core.file_health._compute_coverage_score", return_value=90),
-        patch("bernstein.core.file_health._bug_density_score", return_value=90),
+        patch("bernstein.core.persistence.file_health._compute_complexity_score", return_value=90),
+        patch("bernstein.core.persistence.file_health._compute_coupling_score", return_value=90),
+        patch("bernstein.core.persistence.file_health._compute_churn_score", return_value=90),
+        patch("bernstein.core.persistence.file_health._compute_coverage_score", return_value=90),
+        patch("bernstein.core.persistence.file_health._bug_density_score", return_value=90),
     ):
         score1, _ = tracker.compute_and_record("src/degrade.py", "t1", "success")
 
@@ -220,11 +220,11 @@ def test_flagged_on_degradation(sdd_dir: Path, tracker: FileHealthTracker) -> No
 
     # Second touch: much lower score (all = 60)
     with (
-        patch("bernstein.core.file_health._compute_complexity_score", return_value=60),
-        patch("bernstein.core.file_health._compute_coupling_score", return_value=60),
-        patch("bernstein.core.file_health._compute_churn_score", return_value=60),
-        patch("bernstein.core.file_health._compute_coverage_score", return_value=60),
-        patch("bernstein.core.file_health._bug_density_score", return_value=60),
+        patch("bernstein.core.persistence.file_health._compute_complexity_score", return_value=60),
+        patch("bernstein.core.persistence.file_health._compute_coupling_score", return_value=60),
+        patch("bernstein.core.persistence.file_health._compute_churn_score", return_value=60),
+        patch("bernstein.core.persistence.file_health._compute_coverage_score", return_value=60),
+        patch("bernstein.core.persistence.file_health._bug_density_score", return_value=60),
     ):
         score2, flagged2 = tracker.compute_and_record("src/degrade.py", "t2", "failure")
 
@@ -239,11 +239,11 @@ def test_get_degraded_returns_unhealthy_files(sdd_dir: Path, tracker: FileHealth
     src.write_text("x = 1\n")
 
     with (
-        patch("bernstein.core.file_health._compute_complexity_score", return_value=30),
-        patch("bernstein.core.file_health._compute_coupling_score", return_value=30),
-        patch("bernstein.core.file_health._compute_churn_score", return_value=30),
-        patch("bernstein.core.file_health._compute_coverage_score", return_value=30),
-        patch("bernstein.core.file_health._bug_density_score", return_value=30),
+        patch("bernstein.core.persistence.file_health._compute_complexity_score", return_value=30),
+        patch("bernstein.core.persistence.file_health._compute_coupling_score", return_value=30),
+        patch("bernstein.core.persistence.file_health._compute_churn_score", return_value=30),
+        patch("bernstein.core.persistence.file_health._compute_coverage_score", return_value=30),
+        patch("bernstein.core.persistence.file_health._bug_density_score", return_value=30),
     ):
         tracker.compute_and_record("src/poor.py", "t1", "failure")
 
@@ -258,7 +258,7 @@ def test_record_task_outcome_multiple_files(sdd_dir: Path, tracker: FileHealthTr
         src.parent.mkdir(parents=True, exist_ok=True)
         src.write_text("x = 1\n")
 
-    with patch("bernstein.core.file_health._compute_churn_score", return_value=70):
+    with patch("bernstein.core.persistence.file_health._compute_churn_score", return_value=70):
         results = tracker.record_task_outcome("task-multi", ["src/a.py", "src/b.py"], "success")
 
     assert len(results) == 2
@@ -273,7 +273,7 @@ def test_touch_log_written(sdd_dir: Path, tracker: FileHealthTracker) -> None:
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("x = 1\n")
 
-    with patch("bernstein.core.file_health._compute_churn_score", return_value=70):
+    with patch("bernstein.core.persistence.file_health._compute_churn_score", return_value=70):
         tracker.compute_and_record("src/t.py", "task-123", "success")
 
     touch_path = sdd_dir / "metrics" / "file_health_touches.jsonl"

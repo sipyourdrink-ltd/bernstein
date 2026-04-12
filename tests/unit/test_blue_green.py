@@ -143,7 +143,7 @@ class TestHealthCheck:
         cfg = BlueGreenConfig(health_check_url="http://127.0.0.1:8052/status")
         deploy = BlueGreenDeployment(cfg, base)
 
-        with patch("bernstein.core.blue_green.httpx.get") as mock_get:
+        with patch("bernstein.core.orchestration.blue_green.httpx.get") as mock_get:
             mock_get.return_value.status_code = 200
             assert deploy.health_check() is True
 
@@ -151,7 +151,7 @@ class TestHealthCheck:
         cfg = BlueGreenConfig(health_check_url="http://127.0.0.1:8052/status")
         deploy = BlueGreenDeployment(cfg, base)
 
-        with patch("bernstein.core.blue_green.httpx.get") as mock_get:
+        with patch("bernstein.core.orchestration.blue_green.httpx.get") as mock_get:
             mock_get.return_value.status_code = 503
             assert deploy.health_check() is False
 

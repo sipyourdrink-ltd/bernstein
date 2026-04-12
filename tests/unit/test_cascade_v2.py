@@ -98,7 +98,7 @@ class TestDefaultCascadeOrder:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
+@patch("bernstein.core.routing.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
 class TestChainBasedFallback:
     def test_walks_chain_from_current_entry(self, _mock_disc: object, cascade: CascadeFallbackManager) -> None:
         """When current_entry='opus', should find codex (next viable in chain)."""
@@ -180,7 +180,7 @@ class TestChainBasedFallback:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
+@patch("bernstein.core.routing.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
 class TestStickyFallback:
     def test_sticky_activated_on_cascade(self, _mock_disc: object, cascade: CascadeFallbackManager) -> None:
         """A cascade should activate a sticky fallback."""
@@ -293,7 +293,7 @@ class TestStickyFallback:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
+@patch("bernstein.core.routing.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
 class TestCascadeMetrics:
     def test_cascade_count_increments(self, _mock_disc: object, cascade: CascadeFallbackManager) -> None:
         """Each cascade event increments cascade_count."""
@@ -420,7 +420,7 @@ class TestEntryResolution:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
+@patch("bernstein.core.routing.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
 class TestBackwardCompatibility:
     def test_v1_fallback_still_works(self, _mock_disc: object, cascade: CascadeFallbackManager) -> None:
         """find_fallback without current_entry uses best-available (v1) logic."""

@@ -262,7 +262,7 @@ class TestCIFixPipeline:
     def test_server_post_fallback(self) -> None:
         """When server POST fails and no backlog dir, task_id is empty."""
         pipeline = CIFixPipeline(server_url="http://127.0.0.1:99999")
-        with patch("bernstein.core.ci_fix.post_ci_fix_task", return_value=False):
+        with patch("bernstein.core.quality.ci_fix.post_ci_fix_task", return_value=False):
             attempts = pipeline.run_from_log(_RUFF_LOG)
         assert len(attempts) == 1
         assert attempts[0].result == CIFixResult.TASK_CREATED

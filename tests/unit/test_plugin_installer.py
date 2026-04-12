@@ -230,8 +230,8 @@ class TestGitHubSourceInstall:
             shutil.copy(str(archive), dest)
 
         with (
-            patch("bernstein.core.plugin_installer.urllib.request.urlopen", side_effect=fake_urlopen),
-            patch("bernstein.core.plugin_installer.urllib.request.urlretrieve", side_effect=fake_urlretrieve),
+            patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlopen", side_effect=fake_urlopen),
+            patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlretrieve", side_effect=fake_urlretrieve),
         ):
             install_dir = tmp_path / "plugins"
             result = install_plugin(
@@ -264,7 +264,7 @@ class TestGitHubSourceInstall:
             ctx.read.return_value = api_response
             return ctx
 
-        with patch("bernstein.core.plugin_installer.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlopen", side_effect=fake_urlopen):
             result = install_plugin(GitHubSource(repo="acme/plugin"), tmp_path / "plugins")
 
         assert not result.success
@@ -296,8 +296,8 @@ class TestGitHubSourceInstall:
             shutil.copy(str(archive), dest)
 
         with (
-            patch("bernstein.core.plugin_installer.urllib.request.urlopen", side_effect=fake_urlopen),
-            patch("bernstein.core.plugin_installer.urllib.request.urlretrieve", side_effect=fake_urlretrieve),
+            patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlopen", side_effect=fake_urlopen),
+            patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlretrieve", side_effect=fake_urlretrieve),
         ):
             result = install_plugin(
                 GitHubSource(repo="acme/plugin", asset="specific.zip"),
@@ -327,7 +327,7 @@ class TestGitSourceInstall:
                 shutil.copytree(str(plugin_src), clone_dest)
             return MagicMock(returncode=0, stderr=b"")
 
-        with patch("bernstein.core.plugin_installer.subprocess.run", side_effect=fake_run):
+        with patch("bernstein.core.plugins_core.plugin_installer.subprocess.run", side_effect=fake_run):
             result = install_plugin(
                 GitSource(url="https://github.com/acme/plugin.git"),
                 tmp_path / "plugins",
@@ -348,7 +348,7 @@ class TestGitSourceInstall:
         def fake_run(cmd: list[str], **kwargs: object) -> None:
             raise subprocess.CalledProcessError(1, cmd, stderr=b"fatal: repo not found")
 
-        with patch("bernstein.core.plugin_installer.subprocess.run", side_effect=fake_run):
+        with patch("bernstein.core.plugins_core.plugin_installer.subprocess.run", side_effect=fake_run):
             result = install_plugin(
                 GitSource(url="https://github.com/acme/nonexistent.git"),
                 tmp_path / "plugins",

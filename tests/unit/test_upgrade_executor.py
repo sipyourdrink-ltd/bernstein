@@ -537,7 +537,7 @@ class TestUpgradeReviewer:
         )
 
         async def run() -> Any:
-            with patch("bernstein.core.upgrade_executor.call_llm", new=AsyncMock(return_value=approve_json)):
+            with patch("bernstein.core.config.upgrade_executor.call_llm", new=AsyncMock(return_value=approve_json)):
                 return await reviewer.review_upgrade(txn)
 
         result = asyncio.run(run())
@@ -556,7 +556,7 @@ class TestUpgradeReviewer:
         )
 
         async def run() -> Any:
-            with patch("bernstein.core.upgrade_executor.call_llm", new=AsyncMock(return_value=reject_json)):
+            with patch("bernstein.core.config.upgrade_executor.call_llm", new=AsyncMock(return_value=reject_json)):
                 return await reviewer.review_upgrade(txn)
 
         result = asyncio.run(run())
@@ -597,7 +597,7 @@ class TestUpgradeReviewer:
         wrapped = '```json\n{"verdict": "approve", "reasoning": "ok", "feedback": "fine"}\n```'
 
         async def run() -> Any:
-            with patch("bernstein.core.upgrade_executor.call_llm", new=AsyncMock(return_value=wrapped)):
+            with patch("bernstein.core.config.upgrade_executor.call_llm", new=AsyncMock(return_value=wrapped)):
                 return await reviewer.review_upgrade(txn)
 
         result = asyncio.run(run())

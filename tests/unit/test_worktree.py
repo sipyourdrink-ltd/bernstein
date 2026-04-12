@@ -25,7 +25,7 @@ def test_worktree_manager_create_success(manager: WorktreeManager, repo_root: Pa
     worktree_path = repo_root / ".sdd/worktrees" / session_id
     branch_name = f"agent/{session_id}"
 
-    with patch("bernstein.core.worktree.worktree_add") as mock_add:
+    with patch("bernstein.core.git.worktree.worktree_add") as mock_add:
         mock_add.return_value = GitResult(0, "", "")
 
         path = manager.create(session_id)
@@ -46,7 +46,7 @@ def test_worktree_manager_create_already_exists(manager: WorktreeManager, repo_r
 def test_worktree_manager_create_git_fail(manager: WorktreeManager, repo_root: Path) -> None:
     session_id = "test-session"
 
-    with patch("bernstein.core.worktree.worktree_add") as mock_add:
+    with patch("bernstein.core.git.worktree.worktree_add") as mock_add:
         mock_add.return_value = GitResult(1, "", "some git error")
 
         with pytest.raises(WorktreeError, match="git worktree add failed"):
@@ -56,7 +56,7 @@ def test_worktree_manager_create_git_fail(manager: WorktreeManager, repo_root: P
 def test_worktree_manager_create_branch_exists(manager: WorktreeManager, repo_root: Path) -> None:
     session_id = "test-session"
 
-    with patch("bernstein.core.worktree.worktree_add") as mock_add:
+    with patch("bernstein.core.git.worktree.worktree_add") as mock_add:
         mock_add.return_value = GitResult(1, "", "fatal: 'agent/test-session' already exists")
 
         with pytest.raises(WorktreeError, match="Branch 'agent/test-session' already exists"):
@@ -69,8 +69,8 @@ def test_worktree_manager_cleanup(manager: WorktreeManager, repo_root: Path) -> 
     branch_name = f"agent/{session_id}"
 
     with (
-        patch("bernstein.core.worktree.worktree_remove") as mock_remove,
-        patch("bernstein.core.worktree.branch_delete") as mock_delete,
+        patch("bernstein.core.git.worktree.worktree_remove") as mock_remove,
+        patch("bernstein.core.git.worktree.branch_delete") as mock_delete,
     ):
         mock_remove.return_value = GitResult(0, "", "")
         mock_delete.return_value = GitResult(0, "", "")
@@ -101,7 +101,7 @@ def test_worktree_setup_config_application(repo_root: Path) -> None:
     (repo_root / "node_modules").mkdir()
     (repo_root / ".env").write_text("FOO=BAR")
 
-    with patch("bernstein.core.worktree.worktree_add") as mock_add, patch("subprocess.run") as mock_run:
+    with patch("bernstein.core.git.worktree.worktree_add") as mock_add, patch("subprocess.run") as mock_run:
 
         def mock_add_side_effect(root: Path, path: Path, branch: str) -> GitResult:
             path.mkdir(parents=True)
@@ -134,7 +134,7 @@ def test_worktree_setup_config_application(repo_root: Path) -> None:
 def test_worktree_manager_create_locked_index(manager: WorktreeManager) -> None:
     session_id = "test-session"
 
-    with patch("bernstein.core.worktree.worktree_add") as mock_add:
+    with patch("bernstein.core.git.worktree.worktree_add") as mock_add:
         # Simulate locked index error from git
         mock_add.return_value = GitResult(1, "", "fatal: Unable to create '.git/index.lock': File exists.")
 
@@ -144,7 +144,7 @@ def test_worktree_manager_create_locked_index(manager: WorktreeManager) -> None:
 
 def test_worktree_manager_list_active(manager: WorktreeManager, repo_root: Path) -> None:
     base_dir = repo_root / ".sdd/worktrees"
-    with patch("bernstein.core.worktree.worktree_list") as mock_list:
+    with patch("bernstein.core.git.worktree.worktree_list") as mock_list:
         mock_list.return_value = (
             f"worktree {repo_root.resolve()}\n"
             f"worktree {base_dir / 'session-1'}\n"

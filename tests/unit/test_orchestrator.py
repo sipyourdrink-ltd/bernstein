@@ -1458,7 +1458,7 @@ class TestSpawnResiliency:
 
 
 class TestReaping:
-    @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
+    @patch("bernstein.core.agents.agent_recycling._is_process_alive", return_value=False)
     def test_reaps_stale_heartbeat(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         transport = _mock_transport(
             {
@@ -1568,7 +1568,7 @@ class TestReaping:
 
         assert session.status == "dead"
 
-    @patch("bernstein.core.agent_recycling._is_process_alive", return_value=True)
+    @patch("bernstein.core.agents.agent_recycling._is_process_alive", return_value=True)
     def test_zero_heartbeat_not_reaped_if_alive(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         """An agent that never heartbeated but whose process is alive is NOT reaped."""
         transport = _mock_transport(
@@ -1957,7 +1957,7 @@ class TestFileOwnership:
         r2 = orch.tick()
         assert len(r2.spawned) == 1  # no conflict, spawns fine
 
-    @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
+    @patch("bernstein.core.agents.agent_recycling._is_process_alive", return_value=False)
     def test_ownership_released_on_reap(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         """File ownership released when a stale agent is reaped."""
         transport = _mock_transport(
@@ -2724,7 +2724,7 @@ class TestEvolveIdleDetection:
             competitors=[ResearchResult(query="q", content="CompetitorX data", timestamp=1.0)],
             searches_performed=1,
         )
-        with patch("bernstein.core.researcher.run_research_sync", return_value=fake_report):
+        with patch("bernstein.core.knowledge.researcher.run_research_sync", return_value=fake_report):
             orch.tick()
 
         assert len(created) == 1
@@ -3256,7 +3256,7 @@ class TestDeadAgentFileOwnershipEdgeCases:
 class TestStaleHeartbeatReapingDefault:
     """An agent whose heartbeat exceeds the configured timeout is reaped and its tasks failed."""
 
-    @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
+    @patch("bernstein.core.agents.agent_recycling._is_process_alive", return_value=False)
     def test_stale_heartbeat_reaps_agent(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         """Heartbeat older than heartbeat_timeout_s triggers reaping and task failure."""
         adapter = _mock_adapter()
@@ -5216,7 +5216,7 @@ class TestEvolutionAgentLifetimeRecording:
         assert kw["role"] == "qa"
         assert kw["tasks_completed"] == 0  # timed out before completing
 
-    @patch("bernstein.core.agent_recycling._is_process_alive", return_value=False)
+    @patch("bernstein.core.agents.agent_recycling._is_process_alive", return_value=False)
     def test_heartbeat_reap_records_agent_lifetime(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         """_reap_dead_agents (heartbeat path) calls record_agent_lifetime."""
         transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
@@ -5700,7 +5700,7 @@ class TestRunManagerQueueReview:
         orch._failures_since_review = 2
 
         skipped_result = QueueReviewResult(corrections=[], reasoning="skipped", skipped=True)
-        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+        with patch("bernstein.core.orchestration.manager.ManagerAgent") as mock_cls:
             mock_agent = MagicMock()
             mock_agent.review_queue_sync.return_value = skipped_result
             mock_cls.return_value = mock_agent
@@ -5730,7 +5730,7 @@ class TestRunManagerQueueReview:
         result = self._make_correction_result(
             [{"action": "reassign", "task_id": "t1", "new_role": "frontend", "reason": "CSS work"}]
         )
-        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+        with patch("bernstein.core.orchestration.manager.ManagerAgent") as mock_cls:
             mock_agent = MagicMock()
             mock_agent.review_queue_sync.return_value = result
             mock_cls.return_value = mock_agent
@@ -5757,7 +5757,7 @@ class TestRunManagerQueueReview:
         orch = self._make_orch(tmp_path, transport)
 
         result = self._make_correction_result([{"action": "cancel", "task_id": "t2", "reason": "stalled > 5 min"}])
-        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+        with patch("bernstein.core.orchestration.manager.ManagerAgent") as mock_cls:
             mock_agent = MagicMock()
             mock_agent.review_queue_sync.return_value = result
             mock_cls.return_value = mock_agent
@@ -5786,7 +5786,7 @@ class TestRunManagerQueueReview:
         result = self._make_correction_result(
             [{"action": "change_priority", "task_id": "t3", "new_priority": 1, "reason": "urgent"}]
         )
-        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+        with patch("bernstein.core.orchestration.manager.ManagerAgent") as mock_cls:
             mock_agent = MagicMock()
             mock_agent.review_queue_sync.return_value = result
             mock_cls.return_value = mock_agent
@@ -5826,7 +5826,7 @@ class TestRunManagerQueueReview:
                 }
             ]
         )
-        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+        with patch("bernstein.core.orchestration.manager.ManagerAgent") as mock_cls:
             mock_agent = MagicMock()
             mock_agent.review_queue_sync.return_value = result
             mock_cls.return_value = mock_agent
@@ -5853,7 +5853,7 @@ class TestRunManagerQueueReview:
         orch = self._make_orch(tmp_path, transport)
 
         skipped = QueueReviewResult(corrections=[], reasoning="budget < 10%", skipped=True)
-        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+        with patch("bernstein.core.orchestration.manager.ManagerAgent") as mock_cls:
             mock_agent = MagicMock()
             mock_agent.review_queue_sync.return_value = skipped
             mock_cls.return_value = mock_agent

@@ -356,10 +356,10 @@ def test_oom_slot_reclaimed_and_task_requeued(tmp_path: Path) -> None:
     orch = _make_oom_orch(tmp_path)
 
     with (
-        patch("bernstein.core.agent_reaping.collect_completion_data", return_value={"files_modified": []}),
-        patch("bernstein.core.agent_reaping._has_git_commits_on_branch", return_value=False),
-        patch("bernstein.core.agent_reaping.complete_task") as mock_complete,
-        patch("bernstein.core.agent_reaping.retry_or_fail_task") as mock_retry,
+        patch("bernstein.core.agents.agent_reaping.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agents.agent_reaping._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_reaping.complete_task") as mock_complete,
+        patch("bernstein.core.agents.agent_reaping.retry_or_fail_task") as mock_retry,
     ):
         handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
 
@@ -460,8 +460,8 @@ def test_retry_io_raises_immediately_on_enospc() -> None:
     def _fail() -> None:
         raise enospc
 
-    with patch("bernstein.core.task_store_core.asyncio.to_thread", side_effect=enospc):
-        with patch("bernstein.core.task_store_core.asyncio.sleep"):
+    with patch("bernstein.core.tasks.task_store_core.asyncio.to_thread", side_effect=enospc):
+        with patch("bernstein.core.tasks.task_store_core.asyncio.sleep"):
             try:
                 asyncio.run(_retry_io(_fail))
                 raise AssertionError("Expected OSError to be raised")
@@ -489,7 +489,7 @@ def test_save_partial_work_handles_git_oserror_gracefully(tmp_path: Path) -> Non
 
     disk_full_error = OSError(errno.ENOSPC, "No space left on device")
 
-    with patch("bernstein.core.agent_reaping.subprocess") as mock_sub:
+    with patch("bernstein.core.agents.agent_reaping.subprocess") as mock_sub:
         mock_sub.TimeoutExpired = TimeoutError
         mock_sub.run.side_effect = disk_full_error
 
@@ -518,7 +518,7 @@ def test_save_partial_work_cleanup_still_called_after_disk_full(tmp_path: Path) 
     spawner = MagicMock()
     spawner.get_worktree_path.return_value = worktree
 
-    with patch("bernstein.core.agent_reaping.subprocess") as mock_sub:
+    with patch("bernstein.core.agents.agent_reaping.subprocess") as mock_sub:
         mock_sub.TimeoutExpired = TimeoutError
         mock_sub.run.side_effect = OSError(errno.ENOSPC, "No space left on device")
         _save_partial_work(spawner, session)
@@ -578,7 +578,7 @@ def test_merge_worktree_branch_returns_failed_result_on_exception(tmp_path: Path
 
     enospc = OSError(errno.ENOSPC, "No space left on device")
 
-    with patch("bernstein.core.spawner_merge.merge_with_conflict_detection", side_effect=enospc):
+    with patch("bernstein.core.agents.spawner_merge.merge_with_conflict_detection", side_effect=enospc):
         result = spawner._merge_worktree_branch("disk-sess-4", repo_root=tmp_path)
 
     assert result.success is False
@@ -606,7 +606,7 @@ def test_merge_worktree_branch_no_corruption_after_disk_full(tmp_path: Path) -> 
     worktree.mkdir()
     spawner._worktree_paths[session_id] = worktree
 
-    with patch("bernstein.core.spawner_merge.merge_with_conflict_detection", side_effect=OSError(errno.ENOSPC, "disk full")):
+    with patch("bernstein.core.agents.spawner_merge.merge_with_conflict_detection", side_effect=OSError(errno.ENOSPC, "disk full")):
         result = spawner._merge_worktree_branch(session_id, repo_root=tmp_path)
 
     # Merge failed but worktree tracking is intact for cleanup

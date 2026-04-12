@@ -48,7 +48,7 @@ def _make_run(name: str, conclusion: str = "success", status: str = "completed")
     return json.dumps({"name": name, "conclusion": conclusion, "status": status})
 
 
-@patch("bernstein.core.release_train.subprocess.run")
+@patch("bernstein.core.quality.release_train.subprocess.run")
 def test_gh_check_runs_parses_jq_output(mock_run) -> None:
     mock_run.return_value.returncode = 0
     mock_run.return_value.stdout = "\n".join([_make_run("test", "success"), _make_run("lint", "success")])
@@ -59,7 +59,7 @@ def test_gh_check_runs_parses_jq_output(mock_run) -> None:
     assert runs[0]["name"] == "test"
 
 
-@patch("bernstein.core.release_train.subprocess.run")
+@patch("bernstein.core.quality.release_train.subprocess.run")
 def test_gh_check_runs_returns_empty_on_nonzero_exit(mock_run) -> None:
     mock_run.return_value.returncode = 1
     mock_run.return_value.stdout = ""
@@ -69,7 +69,7 @@ def test_gh_check_runs_returns_empty_on_nonzero_exit(mock_run) -> None:
     assert runs == []
 
 
-@patch("bernstein.core.release_train.subprocess.run", side_effect=FileNotFoundError)
+@patch("bernstein.core.quality.release_train.subprocess.run", side_effect=FileNotFoundError)
 def test_gh_check_runs_returns_empty_when_gh_missing(mock_run) -> None:
     runs = _gh_check_runs("owner/repo", "main")
     assert runs == []
@@ -80,7 +80,7 @@ def test_gh_check_runs_returns_empty_when_gh_missing(mock_run) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.release_train._gh_check_runs")
+@patch("bernstein.core.quality.release_train._gh_check_runs")
 def test_evaluate_repo_green_when_all_checks_pass(mock_runs) -> None:
     mock_runs.return_value = [
         {"name": "test", "conclusion": "success", "status": "completed"},
@@ -94,7 +94,7 @@ def test_evaluate_repo_green_when_all_checks_pass(mock_runs) -> None:
     assert set(result.passing_checks) == {"test", "lint"}
 
 
-@patch("bernstein.core.release_train._gh_check_runs")
+@patch("bernstein.core.quality.release_train._gh_check_runs")
 def test_evaluate_repo_red_when_check_fails(mock_runs) -> None:
     mock_runs.return_value = [
         {"name": "test", "conclusion": "failure", "status": "completed"},
@@ -107,7 +107,7 @@ def test_evaluate_repo_red_when_check_fails(mock_runs) -> None:
     assert any("test" in f for f in result.failing_checks)
 
 
-@patch("bernstein.core.release_train._gh_check_runs")
+@patch("bernstein.core.quality.release_train._gh_check_runs")
 def test_evaluate_repo_red_when_required_check_missing(mock_runs) -> None:
     mock_runs.return_value = [
         {"name": "lint", "conclusion": "success", "status": "completed"},
@@ -120,7 +120,7 @@ def test_evaluate_repo_red_when_required_check_missing(mock_runs) -> None:
     assert any("test" in f for f in result.failing_checks)
 
 
-@patch("bernstein.core.release_train._gh_check_runs")
+@patch("bernstein.core.quality.release_train._gh_check_runs")
 def test_evaluate_repo_red_when_check_timed_out(mock_runs) -> None:
     mock_runs.return_value = [
         {"name": "test", "conclusion": "timed_out", "status": "completed"},
@@ -130,7 +130,7 @@ def test_evaluate_repo_red_when_check_timed_out(mock_runs) -> None:
     assert result.status == RepoStatus.RED
 
 
-@patch("bernstein.core.release_train._gh_check_runs")
+@patch("bernstein.core.quality.release_train._gh_check_runs")
 def test_evaluate_repo_unknown_when_gh_unavailable(mock_runs) -> None:
     mock_runs.return_value = []
     train = ReleaseTrain(name="v1", repos=["owner/api"], required_checks=["test"])
@@ -138,7 +138,7 @@ def test_evaluate_repo_unknown_when_gh_unavailable(mock_runs) -> None:
     assert result.status == RepoStatus.UNKNOWN
 
 
-@patch("bernstein.core.release_train._gh_check_runs")
+@patch("bernstein.core.quality.release_train._gh_check_runs")
 def test_evaluate_repo_in_progress_check_is_red(mock_runs) -> None:
     mock_runs.return_value = [
         {"name": "test", "conclusion": None, "status": "in_progress"},
@@ -153,7 +153,7 @@ def test_evaluate_repo_in_progress_check_is_red(mock_runs) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.release_train._evaluate_repo")
+@patch("bernstein.core.quality.release_train._evaluate_repo")
 def test_orchestrator_go_when_all_repos_green(mock_eval, orchestrator) -> None:
     mock_eval.return_value = RepoCheckResult(
         repo="owner/api",
@@ -167,7 +167,7 @@ def test_orchestrator_go_when_all_repos_green(mock_eval, orchestrator) -> None:
     assert result.blocking_repos == []
 
 
-@patch("bernstein.core.release_train._evaluate_repo")
+@patch("bernstein.core.quality.release_train._evaluate_repo")
 def test_orchestrator_blocked_when_repo_red(mock_eval, orchestrator) -> None:
     def side_effect(repo, train):
         if repo == "owner/api":
@@ -181,7 +181,7 @@ def test_orchestrator_blocked_when_repo_red(mock_eval, orchestrator) -> None:
     assert "owner/api" in result.blocking_repos
 
 
-@patch("bernstein.core.release_train._evaluate_repo")
+@patch("bernstein.core.quality.release_train._evaluate_repo")
 def test_orchestrator_unknown_blocks_by_default(mock_eval, orchestrator) -> None:
     mock_eval.return_value = RepoCheckResult(repo="owner/api", status=RepoStatus.UNKNOWN)
     train = ReleaseTrain(name="v1", repos=["owner/api"], allow_unknown=False)
@@ -191,7 +191,7 @@ def test_orchestrator_unknown_blocks_by_default(mock_eval, orchestrator) -> None
     assert "owner/api" in result.blocking_repos
 
 
-@patch("bernstein.core.release_train._evaluate_repo")
+@patch("bernstein.core.quality.release_train._evaluate_repo")
 def test_orchestrator_unknown_allowed_does_not_block(mock_eval, orchestrator) -> None:
     mock_eval.return_value = RepoCheckResult(repo="owner/api", status=RepoStatus.UNKNOWN)
     train = ReleaseTrain(name="v1", repos=["owner/api"], allow_unknown=True)
@@ -200,7 +200,7 @@ def test_orchestrator_unknown_allowed_does_not_block(mock_eval, orchestrator) ->
     assert result.can_depart is True
 
 
-@patch("bernstein.core.release_train._evaluate_repo")
+@patch("bernstein.core.quality.release_train._evaluate_repo")
 def test_orchestrator_fail_fast_stops_early(mock_eval, orchestrator) -> None:
     call_count = 0
 
@@ -217,7 +217,7 @@ def test_orchestrator_fail_fast_stops_early(mock_eval, orchestrator) -> None:
     assert call_count == 1  # stopped after first failure
 
 
-@patch("bernstein.core.release_train._evaluate_repo")
+@patch("bernstein.core.quality.release_train._evaluate_repo")
 def test_orchestrator_persists_result(mock_eval, orchestrator, workdir) -> None:
     mock_eval.return_value = RepoCheckResult(repo="owner/api", status=RepoStatus.GREEN)
     train = ReleaseTrain(name="v1.2.3", repos=["owner/api"])
@@ -231,7 +231,7 @@ def test_orchestrator_persists_result(mock_eval, orchestrator, workdir) -> None:
     assert event["can_depart"] is True
 
 
-@patch("bernstein.core.release_train._evaluate_repo")
+@patch("bernstein.core.quality.release_train._evaluate_repo")
 def test_orchestrator_get_history_filters_by_name(mock_eval, orchestrator) -> None:
     mock_eval.return_value = RepoCheckResult(repo="owner/api", status=RepoStatus.GREEN)
 
@@ -247,7 +247,7 @@ def test_orchestrator_get_history_filters_by_name(mock_eval, orchestrator) -> No
     assert len(all_history) == 2
 
 
-@patch("bernstein.core.release_train._evaluate_repo")
+@patch("bernstein.core.quality.release_train._evaluate_repo")
 def test_orchestrator_get_history_empty_when_no_file(mock_eval, orchestrator) -> None:
     history = orchestrator.get_history()
     assert history == []

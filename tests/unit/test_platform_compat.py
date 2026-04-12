@@ -173,7 +173,7 @@ class TestShellQuote:
         assert "it" in quoted
         assert "test" in quoted
 
-    @patch("bernstein.core.platform_compat.IS_WINDOWS", True)
+    @patch("bernstein.core.config.platform_compat.IS_WINDOWS", True)
     def test_windows_quoting_with_spaces(self) -> None:
         """On Windows, strings with spaces should be wrapped in double quotes."""
         from bernstein.core.platform_compat import shell_quote as sq
@@ -182,14 +182,14 @@ class TestShellQuote:
         assert quoted.startswith('"')
         assert quoted.endswith('"')
 
-    @patch("bernstein.core.platform_compat.IS_WINDOWS", True)
+    @patch("bernstein.core.config.platform_compat.IS_WINDOWS", True)
     def test_windows_quoting_empty(self) -> None:
         """On Windows, empty string produces empty double quotes."""
         from bernstein.core.platform_compat import shell_quote as sq
 
         assert sq("") == '""'
 
-    @patch("bernstein.core.platform_compat.IS_WINDOWS", True)
+    @patch("bernstein.core.config.platform_compat.IS_WINDOWS", True)
     def test_windows_quoting_no_specials(self) -> None:
         """On Windows, strings without specials are returned as-is."""
         from bernstein.core.platform_compat import shell_quote as sq
@@ -214,14 +214,14 @@ class TestExecutableName:
         """If the name already ends with .exe, no change on any platform."""
         assert executable_name("claude.exe") == "claude.exe"
 
-    @patch("bernstein.core.platform_compat.IS_WINDOWS", True)
+    @patch("bernstein.core.config.platform_compat.IS_WINDOWS", True)
     def test_windows_adds_exe_suffix(self) -> None:
         """On Windows, .exe should be appended."""
         from bernstein.core.platform_compat import executable_name as en
 
         assert en("claude") == "claude.exe"
 
-    @patch("bernstein.core.platform_compat.IS_WINDOWS", True)
+    @patch("bernstein.core.config.platform_compat.IS_WINDOWS", True)
     def test_windows_does_not_double_exe(self) -> None:
         """On Windows, .exe should not be added twice."""
         from bernstein.core.platform_compat import executable_name as en
@@ -241,7 +241,7 @@ class TestPathSeparator:
         if not IS_WINDOWS:
             assert path_separator() == ":"
 
-    @patch("bernstein.core.platform_compat.IS_WINDOWS", True)
+    @patch("bernstein.core.config.platform_compat.IS_WINDOWS", True)
     def test_windows_semicolon(self) -> None:
         from bernstein.core.platform_compat import path_separator as ps
 

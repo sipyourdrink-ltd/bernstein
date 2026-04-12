@@ -18,7 +18,7 @@ def test_run_git_raises_called_process_error_when_check_is_true(tmp_path: Path) 
     completed = subprocess.CompletedProcess(args=["git"], returncode=1, stdout="", stderr="boom")
 
     with (
-        patch("bernstein.core.git_basic.subprocess.run", return_value=completed),
+        patch("bernstein.core.git.git_basic.subprocess.run", return_value=completed),
         pytest.raises(subprocess.CalledProcessError),
     ):
         run_git(["status"], tmp_path, check=True)
@@ -31,7 +31,7 @@ def test_stage_task_files_adds_untracked_siblings_and_filters_runtime_artifacts(
             "bernstein.core.git_basic.status_porcelain",
             return_value="?? src/new_helper.py\n?? .sdd/runtime/server.log\n?? docs/readme.md\n",
         ),
-        patch("bernstein.core.git_basic.run_git") as mock_run_git,
+        patch("bernstein.core.git.git_basic.run_git") as mock_run_git,
     ):
         staged = stage_task_files(tmp_path, ["src/main.py"])
 
@@ -41,7 +41,7 @@ def test_stage_task_files_adds_untracked_siblings_and_filters_runtime_artifacts(
 
 def test_stage_all_except_unstages_explicit_and_never_stage_paths(tmp_path: Path) -> None:
     """stage_all_except bulk-adds first, then resets explicit exclusions and protected runtime dirs."""
-    with patch("bernstein.core.git_basic.run_git") as mock_run_git:
+    with patch("bernstein.core.git.git_basic.run_git") as mock_run_git:
         stage_all_except(tmp_path, exclude=["README.md"])
 
     assert mock_run_git.call_args_list[0].args[0] == ["add", "-A"]
@@ -55,7 +55,7 @@ def test_stage_all_except_unstages_explicit_and_never_stage_paths(tmp_path: Path
 def test_safe_push_corrects_master_and_rebases_when_remote_is_ahead(tmp_path: Path) -> None:
     """safe_push rewrites master to main and rebases before pushing when behind the remote."""
     with (
-        patch("bernstein.core.git_basic.fetch", return_value=GitResult(0, "", "")),
+        patch("bernstein.core.git.git_basic.fetch", return_value=GitResult(0, "", "")),
         patch(
             "bernstein.core.git_basic.run_git",
             side_effect=[

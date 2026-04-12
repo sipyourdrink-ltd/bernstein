@@ -118,7 +118,7 @@ class TestResolveRepo:
 class TestCloneMissing:
     """Tests for Workspace.clone_missing git clone functionality."""
 
-    @patch("bernstein.core.workspace.subprocess.run")
+    @patch("bernstein.core.persistence.workspace.subprocess.run")
     def test_clones_missing_repo(self, mock_run: MagicMock, tmp_path: Path) -> None:
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
         ws = Workspace(
@@ -141,7 +141,7 @@ class TestCloneMissing:
         assert "--branch" in args
         assert "main" in args
 
-    @patch("bernstein.core.workspace.subprocess.run")
+    @patch("bernstein.core.persistence.workspace.subprocess.run")
     def test_skips_existing_repo(self, mock_run: MagicMock, tmp_path: Path) -> None:
         existing = tmp_path / "repos" / "existing"
         existing.mkdir(parents=True)
@@ -167,7 +167,7 @@ class TestCloneMissing:
         cloned = ws.clone_missing()
         assert cloned == []
 
-    @patch("bernstein.core.workspace.subprocess.run")
+    @patch("bernstein.core.persistence.workspace.subprocess.run")
     def test_handles_clone_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
         mock_run.side_effect = subprocess.CalledProcessError(
             returncode=128, cmd=["git", "clone"], stderr="fatal: repo not found"

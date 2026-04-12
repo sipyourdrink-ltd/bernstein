@@ -82,11 +82,11 @@ def test_clean_stale_runtime_removes_pid_files_and_agents_json(tmp_path: Path) -
 def test_run_hygiene_full_accumulates_counts_and_runs_full_cleanup(tmp_path: Path) -> None:
     """run_hygiene(full=True) aggregates helper counts and performs runtime cleanup."""
     with (
-        patch("bernstein.core.git_hygiene._clean_stale_worktrees", return_value=2),
-        patch("bernstein.core.git_hygiene._delete_merged_agent_branches", return_value=3),
-        patch("bernstein.core.git_hygiene._drop_stale_stashes", return_value=1),
-        patch("bernstein.core.git_hygiene._clean_stale_runtime") as mock_runtime,
-        patch("bernstein.core.git_hygiene.run_git", return_value=GitResult(0, "", "")),
+        patch("bernstein.core.git.git_hygiene._clean_stale_worktrees", return_value=2),
+        patch("bernstein.core.git.git_hygiene._delete_merged_agent_branches", return_value=3),
+        patch("bernstein.core.git.git_hygiene._drop_stale_stashes", return_value=1),
+        patch("bernstein.core.git.git_hygiene._clean_stale_runtime") as mock_runtime,
+        patch("bernstein.core.git.git_hygiene.run_git", return_value=GitResult(0, "", "")),
     ):
         stats = run_hygiene(tmp_path, full=True)
 

@@ -75,7 +75,7 @@ class TestFileTree:
         mock_result.stdout = ""
         (tmp_path / "x.py").touch()
 
-        with patch("bernstein.core.git_context.subprocess.run", return_value=mock_result) as mock_run:
+        with patch("bernstein.core.git.git_context.subprocess.run", return_value=mock_result) as mock_run:
             file_tree(tmp_path, max_lines=50)
             file_tree(tmp_path, max_lines=50)
             assert mock_run.call_count == 1

@@ -50,7 +50,7 @@ class TestSaveSessionState:
         orch._client.get.return_value = resp
         orch._cost_tracker.spent_usd = 1.5
 
-        with patch("bernstein.core.session.save_session"):
+        with patch("bernstein.core.persistence.session.save_session"):
             save_session_state(orch)
             # Should not raise
 

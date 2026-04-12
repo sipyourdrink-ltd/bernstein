@@ -193,7 +193,7 @@ def test_process_completed_tasks_blocks_on_formal_verification_violation(tmp_pat
     with (
         patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
         patch("bernstein.core.tasks.task_completion.load_rules_config", return_value=None),
-        patch("bernstein.core.formal_verification.run_formal_verification", return_value=formal_result),
+        patch("bernstein.core.quality.formal_verification.run_formal_verification", return_value=formal_result),
         patch("bernstein.core.tasks.task_completion.append_decision"),
     ):
         result = TickResult()

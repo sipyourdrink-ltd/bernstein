@@ -55,8 +55,8 @@ def test_spawn_in_sandbox_uses_sandbox_path(tmp_path: Path) -> None:
     fake_handle = ContainerHandle(container_id="sandbox-1", session_id="S-1", pid=222)
 
     with (
-        patch("bernstein.core.spawner_core.get_registry", return_value=MagicMock()),
-        patch("bernstein.core.spawner_core.spawn_in_sandbox", return_value=(MagicMock(), fake_handle)) as sandbox_spawn,
+        patch("bernstein.core.agents.spawner_core.get_registry", return_value=MagicMock()),
+        patch("bernstein.core.agents.spawner_core.spawn_in_sandbox", return_value=(MagicMock(), fake_handle)) as sandbox_spawn,
     ):
         spawner = AgentSpawner(
             adapter=adapter,
@@ -90,8 +90,8 @@ def test_spawn_in_sandbox_falls_back_to_adapter_on_runtime_failure(tmp_path: Pat
     session = AgentSession(id="S-2", role="backend")
 
     with (
-        patch("bernstein.core.spawner_core.get_registry", return_value=MagicMock()),
-        patch("bernstein.core.spawner_core.spawn_in_sandbox", side_effect=ContainerError("docker unavailable")),
+        patch("bernstein.core.agents.spawner_core.get_registry", return_value=MagicMock()),
+        patch("bernstein.core.agents.spawner_core.spawn_in_sandbox", side_effect=ContainerError("docker unavailable")),
     ):
         spawner = AgentSpawner(
             adapter=adapter,

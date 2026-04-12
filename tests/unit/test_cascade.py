@@ -64,7 +64,7 @@ def cascade(tracker: RateLimitTracker) -> CascadeFallbackManager:
     return CascadeFallbackManager(rate_limit_tracker=tracker, budget_remaining=10.0)
 
 
-@patch("bernstein.core.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
+@patch("bernstein.core.routing.cascade.discover_agents_cached", return_value=MOCK_AGENTS)
 class TestCascadeFallback:
     """Test suite for CascadeFallbackManager."""
 
@@ -120,7 +120,7 @@ class TestCascadeFallback:
             warnings=[],
             scan_time_ms=0.0,
         )
-        with patch("bernstein.core.cascade.discover_agents_cached", return_value=agents_with_logout):
+        with patch("bernstein.core.routing.cascade.discover_agents_cached", return_value=agents_with_logout):
             mgr = CascadeFallbackManager(rate_limit_tracker=tracker)
             result = mgr.find_fallback(Complexity.MEDIUM, frozenset({"claude"}))
             assert isinstance(result, CascadeExhausted)

@@ -68,7 +68,7 @@ class TestCountTokensViaApi:
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch("bernstein.core.token_counter.httpx.AsyncClient", return_value=mock_client),
+            patch("bernstein.core.tokens.token_counter.httpx.AsyncClient", return_value=mock_client),
         ):
             result = await count_tokens_via_api(_SAMPLE_TEXT)
 
@@ -90,7 +90,7 @@ class TestCountTokensViaApi:
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch("bernstein.core.token_counter.httpx.AsyncClient", return_value=mock_client),
+            patch("bernstein.core.tokens.token_counter.httpx.AsyncClient", return_value=mock_client),
         ):
             with pytest.raises(Exception, match="network failure"):
                 await count_tokens_via_api(_SAMPLE_TEXT)
@@ -104,20 +104,20 @@ class TestCountTokensViaApi:
 class TestCountTokensViaCheapModel:
     @pytest.mark.asyncio
     async def test_extracts_integer_from_response(self) -> None:
-        with patch("bernstein.core.token_counter.call_llm", new=AsyncMock(return_value="37")) as mock_llm:
+        with patch("bernstein.core.tokens.token_counter.call_llm", new=AsyncMock(return_value="37")) as mock_llm:
             result = await count_tokens_via_cheap_model(_SAMPLE_TEXT)
         assert result == 37
         mock_llm.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_raises_when_no_integer_in_response(self) -> None:
-        with patch("bernstein.core.token_counter.call_llm", new=AsyncMock(return_value="I don't know")):
+        with patch("bernstein.core.tokens.token_counter.call_llm", new=AsyncMock(return_value="I don't know")):
             with pytest.raises(RuntimeError, match="No integer found"):
                 await count_tokens_via_cheap_model(_SAMPLE_TEXT)
 
     @pytest.mark.asyncio
     async def test_raises_when_call_llm_raises(self) -> None:
-        with patch("bernstein.core.token_counter.call_llm", new=AsyncMock(side_effect=RuntimeError("api error"))):
+        with patch("bernstein.core.tokens.token_counter.call_llm", new=AsyncMock(side_effect=RuntimeError("api error"))):
             with pytest.raises(RuntimeError, match="api error"):
                 await count_tokens_via_cheap_model(_SAMPLE_TEXT)
 
@@ -154,8 +154,8 @@ class TestCountTokensCascade:
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch("bernstein.core.token_counter.httpx.AsyncClient", return_value=mock_http_client),
-            patch("bernstein.core.token_counter.call_llm", new=AsyncMock(return_value="99")) as mock_llm,
+            patch("bernstein.core.tokens.token_counter.httpx.AsyncClient", return_value=mock_http_client),
+            patch("bernstein.core.tokens.token_counter.call_llm", new=AsyncMock(return_value="99")) as mock_llm,
         ):
             result = await count_tokens(_SAMPLE_TEXT)
 
@@ -172,7 +172,7 @@ class TestCountTokensCascade:
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch("bernstein.core.token_counter.httpx.AsyncClient", return_value=mock_http_client),
+            patch("bernstein.core.tokens.token_counter.httpx.AsyncClient", return_value=mock_http_client),
             patch(
                 "bernstein.core.token_counter.call_llm",
                 new=AsyncMock(side_effect=RuntimeError("llm error")),
@@ -199,8 +199,8 @@ class TestCountTokensCascade:
 
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch("bernstein.core.token_counter.httpx.AsyncClient", return_value=mock_http_client),
-            patch("bernstein.core.token_counter.call_llm", new=AsyncMock()) as mock_llm,
+            patch("bernstein.core.tokens.token_counter.httpx.AsyncClient", return_value=mock_http_client),
+            patch("bernstein.core.tokens.token_counter.call_llm", new=AsyncMock()) as mock_llm,
         ):
             result = await count_tokens(_SAMPLE_TEXT)
 

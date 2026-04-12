@@ -17,7 +17,7 @@ from bernstein.core.recorder import (
 
 def test_record_writes_event_with_elapsed_time(tmp_path: Path) -> None:
     """RunRecorder.record appends a JSONL event with timestamped metadata."""
-    with patch("bernstein.core.recorder.time.time", side_effect=[100.0, 100.25, 100.5]):
+    with patch("bernstein.core.persistence.recorder.time.time", side_effect=[100.0, 100.25, 100.5]):
         recorder = RunRecorder(run_id="run-1", sdd_dir=tmp_path)
         recorder.record("task_claimed", task_id="T-1", agent_id="A-1")
 

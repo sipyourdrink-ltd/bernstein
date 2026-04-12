@@ -196,7 +196,7 @@ class TestDeliverWebhook:
             max_retries=2,
         )
         # Use fast backoff by patching time.sleep.
-        with patch("bernstein.core.webhook_handler.time.sleep"):
+        with patch("bernstein.core.server.webhook_handler.time.sleep"):
             result = deliver_webhook(target, _make_payload(), client=client)
         assert result.success is False
         assert result.status_code == 500
@@ -216,7 +216,7 @@ class TestDeliverWebhook:
         transport = httpx.MockTransport(handler)
         client = httpx.Client(transport=transport)
         target = WebhookTarget(url="https://example.com/hook", max_retries=3)
-        with patch("bernstein.core.webhook_handler.time.sleep"):
+        with patch("bernstein.core.server.webhook_handler.time.sleep"):
             result = deliver_webhook(target, _make_payload(), client=client)
         assert result.success is True
         assert result.attempts == 2

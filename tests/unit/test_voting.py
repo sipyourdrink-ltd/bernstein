@@ -358,7 +358,7 @@ class TestCollectVotes:
 
         with (
             patch("subprocess.run", return_value=diff_result),
-            patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+            patch("bernstein.core.communication.voting.call_llm", new=AsyncMock(return_value=approve_json)),
         ):
             result = await protocol.collect_votes(
                 task=task,
@@ -416,7 +416,7 @@ class TestCollectVotes:
         try:
             with (
                 patch("subprocess.run", return_value=diff_result),
-                patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+                patch("bernstein.core.communication.voting.call_llm", new=AsyncMock(return_value=approve_json)),
             ):
                 await protocol.collect_votes(
                     task=task,
@@ -454,7 +454,7 @@ class TestCollectVotes:
 
         with (
             patch("subprocess.run", return_value=diff_result),
-            patch("bernstein.core.voting.call_llm", new=fake_llm),
+            patch("bernstein.core.communication.voting.call_llm", new=fake_llm),
         ):
             await protocol.collect_votes(
                 task=task,

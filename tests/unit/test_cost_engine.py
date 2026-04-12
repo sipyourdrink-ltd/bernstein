@@ -210,7 +210,7 @@ class TestEpsilonGreedyBanditSelect:
 class TestRoutTaskBanditIntegration:
     """route_task consults the bandit when bandit_metrics_dir is provided."""
 
-    @patch("bernstein.core.cost.cost.random.random", return_value=0.5)
+    @patch("bernstein.core.cost.cost.cost.random.random", return_value=0.5)
     def test_bandit_routes_simple_task_to_cheap_model(self, _mock_rng: object, tmp_path: Path) -> None:
         """When haiku meets quality threshold for 'backend', route_task returns haiku."""
         from bernstein.core.router import route_task
@@ -257,7 +257,7 @@ class TestRoutTaskBanditIntegration:
 class TestSelectBatchConfigBanditIntegration:
     """_select_batch_config uses bandit when metrics_dir is provided."""
 
-    @patch("bernstein.core.cost.cost.random.random", return_value=0.5)
+    @patch("bernstein.core.cost.cost.cost.random.random", return_value=0.5)
     def test_uses_bandit_for_standard_task(self, _mock_rng: object, tmp_path: Path) -> None:
         """When bandit has haiku meeting threshold, _select_batch_config picks haiku."""
         from bernstein.core.spawner import _select_batch_config

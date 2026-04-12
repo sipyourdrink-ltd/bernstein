@@ -11,7 +11,7 @@ from bernstein.core.process_utils import is_process_alive, process_cwd
 
 def test_is_process_alive_treats_zombie_as_dead() -> None:
     with (
-        patch("bernstein.core.process_utils._platform_process_alive", return_value=True),
+        patch("bernstein.core.orchestration.process_utils._platform_process_alive", return_value=True),
         patch(
             "bernstein.core.process_utils.subprocess.run",
             return_value=subprocess.CompletedProcess(

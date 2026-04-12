@@ -372,7 +372,7 @@ class TestMultiVoterVerification:
 
         with (
             patch("subprocess.run", return_value=diff_response),
-            patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+            patch("bernstein.core.communication.voting.call_llm", new=AsyncMock(return_value=approve_json)),
         ):
             verdict = await verify_with_cross_model(
                 task,
@@ -405,7 +405,7 @@ class TestMultiVoterVerification:
 
         with (
             patch("subprocess.run", return_value=diff_response),
-            patch("bernstein.core.voting.call_llm", new=alternating_llm),
+            patch("bernstein.core.communication.voting.call_llm", new=alternating_llm),
         ):
             verdict = await verify_with_cross_model(
                 task,
@@ -430,7 +430,7 @@ class TestMultiVoterVerification:
 
         with (
             patch("subprocess.run", return_value=diff_response),
-            patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+            patch("bernstein.core.communication.voting.call_llm", new=AsyncMock(return_value=approve_json)),
         ):
             verdict = await verify_with_cross_model(
                 task,

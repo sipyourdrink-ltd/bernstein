@@ -210,8 +210,8 @@ def test_claim_and_spawn_batches_auto_decomposes_large_task_before_claim(tmp_pat
     result = TickResult()
 
     with (
-        patch("bernstein.core.task_claim.should_auto_decompose", return_value=True),
-        patch("bernstein.core.task_claim.auto_decompose_task") as mock_decompose,
+        patch("bernstein.core.tasks.task_claim.should_auto_decompose", return_value=True),
+        patch("bernstein.core.tasks.task_claim.auto_decompose_task") as mock_decompose,
     ):
         claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
@@ -282,7 +282,7 @@ def test_claim_and_spawn_batches_sets_large_timeout_bucket(tmp_path: Path, make_
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    with patch("bernstein.core.task_claim.should_auto_decompose", return_value=False):
+    with patch("bernstein.core.tasks.task_claim.should_auto_decompose", return_value=False):
         claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 60 * 60
@@ -302,7 +302,7 @@ def test_claim_and_spawn_batches_sets_xl_timeout_bucket_for_high_risk_batch(tmp_
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    with patch("bernstein.core.task_claim.should_auto_decompose", return_value=False):
+    with patch("bernstein.core.tasks.task_claim.should_auto_decompose", return_value=False):
         claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 120 * 60

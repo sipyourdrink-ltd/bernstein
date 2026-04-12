@@ -45,28 +45,28 @@ def _pr_fail(error: str = "gh error") -> PullRequestResult:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_count_diff_lines_empty_output(mock_run: MagicMock) -> None:
     mock_run.return_value = _git_ok(stdout="")
     result = count_diff_lines_per_file(REPO)
     assert result == {}
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_count_diff_lines_git_failure(mock_run: MagicMock) -> None:
     mock_run.return_value = _git_fail()
     result = count_diff_lines_per_file(REPO)
     assert result == {}
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_count_diff_lines_parses_numstat(mock_run: MagicMock) -> None:
     mock_run.return_value = _git_ok(stdout="10\t5\tsrc/foo.py\n3\t1\tsrc/bar.py\n")
     result = count_diff_lines_per_file(REPO, base_ref="main", head_ref="HEAD")
     assert result == {"src/foo.py": 15, "src/bar.py": 4}
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_count_diff_lines_binary_file_counted_as_zero(mock_run: MagicMock) -> None:
     mock_run.return_value = _git_ok(stdout="-\t-\timage.png\n5\t0\tscript.py\n")
     result = count_diff_lines_per_file(REPO)
@@ -74,7 +74,7 @@ def test_count_diff_lines_binary_file_counted_as_zero(mock_run: MagicMock) -> No
     assert result["script.py"] == 5
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_count_diff_lines_skips_malformed_lines(mock_run: MagicMock) -> None:
     mock_run.return_value = _git_ok(stdout="bad line\n10\t2\tgood.py\n")
     result = count_diff_lines_per_file(REPO)
@@ -184,7 +184,7 @@ def test_build_dependency_order_missing_file_graceful(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_plan_split_no_files_no_diff(mock_run: MagicMock) -> None:
     # No files provided, diff returns nothing
     mock_run.return_value = _git_ok(stdout="")
@@ -194,7 +194,7 @@ def test_plan_split_no_files_no_diff(mock_run: MagicMock) -> None:
     assert plan.total_lines == 0
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_plan_split_under_limit_no_split(mock_run: MagicMock, tmp_path: Path) -> None:
     # 3 files, 100 lines total — well under 400
     mock_run.return_value = _git_ok(stdout="50\t10\ta.py\n30\t10\tb.py\n")
@@ -206,7 +206,7 @@ def test_plan_split_under_limit_no_split(mock_run: MagicMock, tmp_path: Path) ->
     assert plan.total_lines == 100
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_plan_split_over_limit_splits(mock_run: MagicMock, tmp_path: Path) -> None:
     # Two files, each with 300 lines → total 600, needs split into 2 chunks
     mock_run.return_value = _git_ok(stdout="200\t100\ta.py\n200\t100\tb.py\n")
@@ -218,7 +218,7 @@ def test_plan_split_over_limit_splits(mock_run: MagicMock, tmp_path: Path) -> No
     assert len(plan.chunks) == 2
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_plan_split_chunks_chain_bases(mock_run: MagicMock, tmp_path: Path) -> None:
     # 3 chunks → p2 targets p1, p3 targets p2
     numstat = "200\t100\ta.py\n200\t100\tb.py\n200\t100\tc.py\n"
@@ -239,7 +239,7 @@ def test_plan_split_chunks_chain_bases(mock_run: MagicMock, tmp_path: Path) -> N
     assert plan.chunks[2].base_branch == "bernstein/task-abc-p2"
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_plan_split_single_oversized_file_own_chunk(mock_run: MagicMock, tmp_path: Path) -> None:
     # One file with 500 lines → single chunk (cannot split further)
     mock_run.return_value = _git_ok(stdout="300\t200\tbig.py\n")
@@ -251,7 +251,7 @@ def test_plan_split_single_oversized_file_own_chunk(mock_run: MagicMock, tmp_pat
     assert plan.chunks[0].files == ["big.py"]
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_plan_split_auto_detects_files_from_diff(mock_run: MagicMock, tmp_path: Path) -> None:
     # files=[] → reads from diff --name-only, then --numstat
     mock_run.side_effect = [
@@ -268,7 +268,7 @@ def test_plan_split_auto_detects_files_from_diff(mock_run: MagicMock, tmp_path: 
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_execute_split_empty_plan(mock_run: MagicMock) -> None:
     plan = SplitPlan(chunks=[], total_lines=0, needs_split=False)
     result = execute_split(REPO, plan)
@@ -278,7 +278,7 @@ def test_execute_split_empty_plan(mock_run: MagicMock) -> None:
     mock_run.assert_not_called()
 
 
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_execute_split_no_split_needed(mock_run: MagicMock) -> None:
     chunk = PRChunk(
         files=["a.py"],
@@ -295,9 +295,9 @@ def test_execute_split_no_split_needed(mock_run: MagicMock) -> None:
     mock_run.assert_not_called()
 
 
-@patch("bernstein.core.pr_size_governor.create_github_pr")
-@patch("bernstein.core.pr_size_governor.push_branch")
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.create_github_pr")
+@patch("bernstein.core.git.pr_size_governor.push_branch")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_execute_split_creates_prs_for_each_chunk(
     mock_run: MagicMock,
     mock_push: MagicMock,
@@ -338,9 +338,9 @@ def test_execute_split_creates_prs_for_each_chunk(
     assert mock_pr.call_count == 2
 
 
-@patch("bernstein.core.pr_size_governor.create_github_pr")
-@patch("bernstein.core.pr_size_governor.push_branch")
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.create_github_pr")
+@patch("bernstein.core.git.pr_size_governor.push_branch")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_execute_split_branch_creation_failure_returns_error(
     mock_run: MagicMock,
     mock_push: MagicMock,
@@ -372,9 +372,9 @@ def test_execute_split_branch_creation_failure_returns_error(
     mock_pr.assert_not_called()
 
 
-@patch("bernstein.core.pr_size_governor.create_github_pr")
-@patch("bernstein.core.pr_size_governor.push_branch")
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.create_github_pr")
+@patch("bernstein.core.git.pr_size_governor.push_branch")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_execute_split_push_failure_returns_error(
     mock_run: MagicMock,
     mock_push: MagicMock,
@@ -399,9 +399,9 @@ def test_execute_split_push_failure_returns_error(
     mock_pr.assert_not_called()
 
 
-@patch("bernstein.core.pr_size_governor.create_github_pr")
-@patch("bernstein.core.pr_size_governor.push_branch")
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.create_github_pr")
+@patch("bernstein.core.git.pr_size_governor.push_branch")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_execute_split_pr_failure_logged_but_marked_unsuccessful(
     mock_run: MagicMock,
     mock_push: MagicMock,
@@ -427,9 +427,9 @@ def test_execute_split_pr_failure_logged_but_marked_unsuccessful(
     assert result.chunk_count == 0
 
 
-@patch("bernstein.core.pr_size_governor.create_github_pr")
-@patch("bernstein.core.pr_size_governor.push_branch")
-@patch("bernstein.core.pr_size_governor.run_git")
+@patch("bernstein.core.git.pr_size_governor.create_github_pr")
+@patch("bernstein.core.git.pr_size_governor.push_branch")
+@patch("bernstein.core.git.pr_size_governor.run_git")
 def test_execute_split_restores_original_branch(
     mock_run: MagicMock,
     mock_push: MagicMock,
@@ -536,8 +536,8 @@ def test_build_pr_body_lists_files() -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("bernstein.core.pr_size_governor.execute_split")
-@patch("bernstein.core.pr_size_governor.plan_split")
+@patch("bernstein.core.git.pr_size_governor.execute_split")
+@patch("bernstein.core.git.pr_size_governor.plan_split")
 def test_split_pr_if_needed_returns_none_when_no_split(
     mock_plan: MagicMock,
     mock_exec: MagicMock,
@@ -554,8 +554,8 @@ def test_split_pr_if_needed_returns_none_when_no_split(
     mock_exec.assert_not_called()
 
 
-@patch("bernstein.core.pr_size_governor.execute_split")
-@patch("bernstein.core.pr_size_governor.plan_split")
+@patch("bernstein.core.git.pr_size_governor.execute_split")
+@patch("bernstein.core.git.pr_size_governor.plan_split")
 def test_split_pr_if_needed_calls_execute_when_split_needed(
     mock_plan: MagicMock,
     mock_exec: MagicMock,
@@ -577,8 +577,8 @@ def test_split_pr_if_needed_calls_execute_when_split_needed(
     mock_exec.assert_called_once()
 
 
-@patch("bernstein.core.pr_size_governor.execute_split")
-@patch("bernstein.core.pr_size_governor.plan_split")
+@patch("bernstein.core.git.pr_size_governor.execute_split")
+@patch("bernstein.core.git.pr_size_governor.plan_split")
 def test_split_pr_if_needed_uses_task_id_for_branch_prefix(
     mock_plan: MagicMock,
     mock_exec: MagicMock,
@@ -591,8 +591,8 @@ def test_split_pr_if_needed_uses_task_id_for_branch_prefix(
     assert kwargs.get("task_branch") == "bernstein/task-xyz789"
 
 
-@patch("bernstein.core.pr_size_governor.execute_split")
-@patch("bernstein.core.pr_size_governor.plan_split")
+@patch("bernstein.core.git.pr_size_governor.execute_split")
+@patch("bernstein.core.git.pr_size_governor.plan_split")
 def test_split_pr_if_needed_fallback_branch_prefix(
     mock_plan: MagicMock,
     mock_exec: MagicMock,
@@ -605,8 +605,8 @@ def test_split_pr_if_needed_fallback_branch_prefix(
     assert kwargs.get("task_branch") == "bernstein/split"
 
 
-@patch("bernstein.core.pr_size_governor.execute_split")
-@patch("bernstein.core.pr_size_governor.plan_split")
+@patch("bernstein.core.git.pr_size_governor.execute_split")
+@patch("bernstein.core.git.pr_size_governor.plan_split")
 def test_split_pr_if_needed_passes_max_lines(
     mock_plan: MagicMock,
     mock_exec: MagicMock,

@@ -128,7 +128,7 @@ class TestCountTokensCascading:
         """skip_api=True skips the API tier entirely."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-        with patch("bernstein.core.cascading_token_counter._count_tokens_via_api") as mock_api:
+        with patch("bernstein.core.tokens.cascading_token_counter._count_tokens_via_api") as mock_api:
             result = asyncio.run(count_tokens_cascading("text", skip_api=True, skip_cheap_model=True))
         mock_api.assert_not_called()
         assert result > 0
@@ -137,7 +137,7 @@ class TestCountTokensCascading:
         """skip_cheap_model=True skips tier 2."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        with patch("bernstein.core.cascading_token_counter._count_tokens_via_cheap_model") as mock_cheap:
+        with patch("bernstein.core.tokens.cascading_token_counter._count_tokens_via_cheap_model") as mock_cheap:
             result = asyncio.run(count_tokens_cascading("text", skip_cheap_model=True))
         mock_cheap.assert_not_called()
         assert result > 0

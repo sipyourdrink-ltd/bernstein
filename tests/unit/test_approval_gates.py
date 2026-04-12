@@ -449,7 +449,7 @@ class TestApprovalGateAutoMerge:
         mock_create_pr = MagicMock(return_value=PullRequestResult(success=True, pr_url="https://github.com/x/y/pull/1"))
         mock_enable_auto_merge = MagicMock(return_value=GitResult(returncode=0, stdout="", stderr=""))
 
-        with patch("bernstein.core.git_ops.enable_pr_auto_merge", mock_enable_auto_merge):
+        with patch("bernstein.core.git.git_ops.enable_pr_auto_merge", mock_enable_auto_merge):
             gate = ApprovalGate(
                 mode=ApprovalMode.PR,
                 workdir=tmp_path,
@@ -475,7 +475,7 @@ class TestApprovalGateAutoMerge:
         mock_create_pr = MagicMock(return_value=PullRequestResult(success=True, pr_url="https://github.com/x/y/pull/2"))
         mock_enable_auto_merge = MagicMock()
 
-        with patch("bernstein.core.git_ops.enable_pr_auto_merge", mock_enable_auto_merge):
+        with patch("bernstein.core.git.git_ops.enable_pr_auto_merge", mock_enable_auto_merge):
             gate = ApprovalGate(
                 mode=ApprovalMode.PR,
                 workdir=tmp_path,

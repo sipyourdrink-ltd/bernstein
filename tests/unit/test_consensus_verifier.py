@@ -145,7 +145,7 @@ class TestVerifyWithConsensus:
 
         with (
             patch("subprocess.run", return_value=diff_result),
-            patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+            patch("bernstein.core.communication.voting.call_llm", new=AsyncMock(return_value=approve_json)),
         ):
             verdict = await verify_with_consensus(
                 task=task,
@@ -171,7 +171,7 @@ class TestVerifyWithConsensus:
 
         with (
             patch("subprocess.run", return_value=diff_result),
-            patch("bernstein.core.voting.call_llm", new=alternating),
+            patch("bernstein.core.communication.voting.call_llm", new=alternating),
         ):
             verdict = await verify_with_consensus(
                 task=task,
@@ -192,7 +192,7 @@ class TestVerifyWithConsensus:
 
         with (
             patch("subprocess.run", return_value=diff_result),
-            patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+            patch("bernstein.core.communication.voting.call_llm", new=AsyncMock(return_value=approve_json)),
         ):
             verdict = await verify_with_consensus(
                 task=task,
@@ -220,7 +220,7 @@ class TestVerifyWithConsensus:
 
         with (
             patch("subprocess.run", return_value=diff_result),
-            patch("bernstein.core.voting.call_llm", new=mostly_reject),
+            patch("bernstein.core.communication.voting.call_llm", new=mostly_reject),
         ):
             verdict = await verify_with_consensus(
                 task=task,
@@ -239,7 +239,7 @@ class TestVerifyWithConsensus:
 
         with (
             patch("subprocess.run", return_value=diff_result),
-            patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+            patch("bernstein.core.communication.voting.call_llm", new=AsyncMock(return_value=approve_json)),
         ):
             verdict = await verify_with_consensus(
                 task=task,

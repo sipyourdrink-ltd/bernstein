@@ -155,7 +155,7 @@ class TestCIMonitorPollFailures:
 
         monitor = CIMonitor()
 
-        with patch("bernstein.core.ci_monitor.httpx.AsyncClient") as mock_client_cls:
+        with patch("bernstein.core.quality.ci_monitor.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -190,7 +190,7 @@ class TestCIMonitorPollFailures:
         monitor = CIMonitor()
         monitor.seen_run_ids.add(200)
 
-        with patch("bernstein.core.ci_monitor.httpx.AsyncClient") as mock_client_cls:
+        with patch("bernstein.core.quality.ci_monitor.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -209,7 +209,7 @@ class TestCIMonitorPollFailures:
 
         monitor = CIMonitor()
 
-        with patch("bernstein.core.ci_monitor.httpx.AsyncClient") as mock_client_cls:
+        with patch("bernstein.core.quality.ci_monitor.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -232,7 +232,7 @@ class TestCIMonitorParseFailureLogs:
 
         monitor = CIMonitor()
 
-        with patch("bernstein.core.ci_monitor.httpx.AsyncClient") as mock_client_cls:
+        with patch("bernstein.core.quality.ci_monitor.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -319,7 +319,7 @@ class TestCIAutofixPipelineCreatePR:
             pr_url="https://github.com/o/r/pull/42",
         )
 
-        with patch("bernstein.core.git_pr.create_github_pr", return_value=mock_result) as mock_pr:
+        with patch("bernstein.core.git.git_pr.create_github_pr", return_value=mock_result) as mock_pr:
             pr_url = pipeline.create_fix_pr(
                 "task-xyz",
                 failure,

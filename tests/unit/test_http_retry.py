@@ -99,7 +99,7 @@ class TestRetryHttpDecorator:
         assert result.status_code == 200
         assert call_count == 1
 
-    @patch("bernstein.core.http_retry.time.sleep")
+    @patch("bernstein.core.server.http_retry.time.sleep")
     def test_retries_on_retryable_status(self, mock_sleep: MagicMock) -> None:
         call_count = 0
 
@@ -116,7 +116,7 @@ class TestRetryHttpDecorator:
         assert call_count == 3
         assert mock_sleep.call_count == 2
 
-    @patch("bernstein.core.http_retry.time.sleep")
+    @patch("bernstein.core.server.http_retry.time.sleep")
     def test_retries_on_retryable_exception(self, mock_sleep: MagicMock) -> None:
         call_count = 0
 
@@ -142,7 +142,7 @@ class TestRetryHttpDecorator:
         with pytest.raises(ValueError, match="bad value"):
             fetch()
 
-    @patch("bernstein.core.http_retry.time.sleep")
+    @patch("bernstein.core.server.http_retry.time.sleep")
     def test_exhausts_retries(self, mock_sleep: MagicMock) -> None:
         @retry_http(max_retries=2, base_delay_s=0.01)
         def fetch() -> httpx.Response:
@@ -151,7 +151,7 @@ class TestRetryHttpDecorator:
         with pytest.raises(httpx.ConnectError):
             fetch()
 
-    @patch("bernstein.core.http_retry.time.sleep")
+    @patch("bernstein.core.server.http_retry.time.sleep")
     def test_returns_last_retryable_response_when_exhausted(self, mock_sleep: MagicMock) -> None:
         @retry_http(max_retries=1, base_delay_s=0.01)
         def fetch() -> httpx.Response:
@@ -180,7 +180,7 @@ class TestRetryRequest:
         result = retry_request(mock_client, "GET", "http://localhost/tasks")
         assert result.status_code == 200
 
-    @patch("bernstein.core.http_retry.time.sleep")
+    @patch("bernstein.core.server.http_retry.time.sleep")
     def test_retries_and_recovers(self, mock_sleep: MagicMock) -> None:
         mock_client = MagicMock(spec=httpx.Client)
         error_resp = MagicMock(spec=httpx.Response)

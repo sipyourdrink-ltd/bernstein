@@ -41,7 +41,7 @@ def test_clean_stale_runtime_removes_dead_pids_tasks_and_index_locks(tmp_path: P
     (index_dir / "code.db-wal").write_text("", encoding="utf-8")
     (index_dir / "code.db-shm").write_text("", encoding="utf-8")
 
-    with patch("bernstein.core.server_launch._is_alive", return_value=False):
+    with patch("bernstein.core.server.server_launch._is_alive", return_value=False):
         _clean_stale_runtime(tmp_path)
 
     assert not (runtime / "server.pid").exists()
@@ -55,9 +55,9 @@ def test_wait_for_server_polls_until_health_endpoint_succeeds() -> None:
     healthy = SimpleNamespace(status_code=200)
 
     with (
-        patch("bernstein.core.server_launch.httpx.get", side_effect=[httpx.ConnectError("down"), healthy]),
-        patch("bernstein.core.server_launch.time.sleep"),
-        patch("bernstein.core.server_launch.time.monotonic", side_effect=[0.0, 1.0, 2.0]),
+        patch("bernstein.core.server.server_launch.httpx.get", side_effect=[httpx.ConnectError("down"), healthy]),
+        patch("bernstein.core.server.server_launch.time.sleep"),
+        patch("bernstein.core.server.server_launch.time.monotonic", side_effect=[0.0, 1.0, 2.0]),
     ):
         assert _wait_for_server(8052) is True
 
@@ -70,8 +70,8 @@ def test_inject_manager_task_posts_seed_payload_with_auth_header(tmp_path: Path)
     response.json.return_value = {"id": "mgr-1"}
 
     with (
-        patch("bernstein.core.server_launch.seed_to_initial_task", return_value=SimpleNamespace(description="Plan it")),
-        patch("bernstein.core.server_launch.httpx.post", return_value=response) as mock_post,
+        patch("bernstein.core.server.server_launch.seed_to_initial_task", return_value=SimpleNamespace(description="Plan it")),
+        patch("bernstein.core.server.server_launch.httpx.post", return_value=response) as mock_post,
     ):
         task_id = _inject_manager_task(seed, tmp_path, 8052, auth_token="secret")
 
@@ -85,8 +85,8 @@ def test_start_server_rejects_existing_live_pid(tmp_path: Path) -> None:
     (tmp_path / ".sdd" / "runtime").mkdir(parents=True)
 
     with (
-        patch("bernstein.core.server_launch._read_pid", return_value=1234),
-        patch("bernstein.core.server_launch._is_alive", return_value=True),
+        patch("bernstein.core.server.server_launch._read_pid", return_value=1234),
+        patch("bernstein.core.server.server_launch._is_alive", return_value=True),
         pytest.raises(RuntimeError),
     ):
         _start_server(tmp_path, 8052)

@@ -85,7 +85,7 @@ class TestSeedConfigDefault:
 
 
 class TestPreflightChecksAutoMode:
-    @patch("bernstein.core.preflight._check_port_free")
+    @patch("bernstein.core.orchestration.preflight._check_port_free")
     @patch("bernstein.core.agents.agent_discovery.discover_agents_cached")
     def test_auto_mode_prints_found_agents(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
@@ -99,7 +99,7 @@ class TestPreflightChecksAutoMode:
         preflight_checks("auto", 8052)
         # Should not raise; port check is mocked
 
-    @patch("bernstein.core.preflight._check_port_free")
+    @patch("bernstein.core.orchestration.preflight._check_port_free")
     @patch("bernstein.core.agents.agent_discovery.discover_agents_cached")
     def test_auto_mode_no_agents_exits(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
@@ -109,7 +109,7 @@ class TestPreflightChecksAutoMode:
         with pytest.raises(SystemExit):
             preflight_checks("auto", 8052)
 
-    @patch("bernstein.core.preflight._check_port_free")
+    @patch("bernstein.core.orchestration.preflight._check_port_free")
     @patch("bernstein.core.agents.agent_discovery.discover_agents_cached")
     def test_auto_mode_multiple_agents(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
@@ -125,7 +125,7 @@ class TestPreflightChecksAutoMode:
         # Should not raise
         preflight_checks("auto", 8052)
 
-    @patch("bernstein.core.preflight._check_port_free")
+    @patch("bernstein.core.orchestration.preflight._check_port_free")
     @patch("bernstein.core.agents.agent_discovery.discover_agents_cached")
     def test_auto_mode_unauthenticated_agents_shown_as_warning(
         self, mock_discover: MagicMock, mock_port: MagicMock

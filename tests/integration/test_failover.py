@@ -150,7 +150,7 @@ def test_rate_limited_orphan_force_claims_task_on_server(tmp_path: Path) -> None
             budget_ok=True,
         )
 
-        with patch("bernstein.core.agent_reaping.retry_or_fail_task") as retry_or_fail_task:
+        with patch("bernstein.core.agents.agent_reaping.retry_or_fail_task") as retry_or_fail_task:
             handle_orphaned_task(
                 orch,
                 task_id,

@@ -31,9 +31,9 @@ def test_supervised_server_launches_server_and_threads(tmp_path: Path) -> None:
     thread.start.return_value = None
 
     with (
-        patch("bernstein.core.server_supervisor._launch_server", return_value=101) as mock_launch,
-        patch("bernstein.core.server_supervisor.write_supervisor_state") as mock_write,
-        patch("bernstein.core.server_supervisor.threading.Thread", return_value=thread) as mock_thread,
+        patch("bernstein.core.server.server_supervisor._launch_server", return_value=101) as mock_launch,
+        patch("bernstein.core.server.server_supervisor.write_supervisor_state") as mock_write,
+        patch("bernstein.core.server.server_supervisor.threading.Thread", return_value=thread) as mock_thread,
     ):
         pid = server_supervisor.supervised_server(tmp_path, 8052)
 
@@ -50,9 +50,9 @@ def test_launch_server_writes_pid_and_uses_expected_command(tmp_path: Path) -> N
     proc = SimpleNamespace(pid=222)
 
     with (
-        patch("bernstein.core.server_supervisor.rotate_log_file") as mock_rotate,
-        patch("bernstein.core.server_supervisor.write_supervisor_state") as mock_write,
-        patch("bernstein.core.server_supervisor.subprocess.Popen", return_value=proc) as mock_popen,
+        patch("bernstein.core.server.server_supervisor.rotate_log_file") as mock_rotate,
+        patch("bernstein.core.server.server_supervisor.write_supervisor_state") as mock_write,
+        patch("bernstein.core.server.server_supervisor.subprocess.Popen", return_value=proc) as mock_popen,
     ):
         pid = server_supervisor._launch_server(state)
 
@@ -76,10 +76,10 @@ def test_supervisor_loop_restarts_dead_server_with_backoff(tmp_path: Path) -> No
         return 200
 
     with (
-        patch("bernstein.core.server_supervisor._is_alive", return_value=False),
-        patch("bernstein.core.server_supervisor._launch_server", side_effect=_fake_launch) as mock_launch,
-        patch("bernstein.core.server_supervisor.time.sleep") as mock_sleep,
-        patch("bernstein.core.server_supervisor.write_supervisor_state"),
+        patch("bernstein.core.server.server_supervisor._is_alive", return_value=False),
+        patch("bernstein.core.server.server_supervisor._launch_server", side_effect=_fake_launch) as mock_launch,
+        patch("bernstein.core.server.server_supervisor.time.sleep") as mock_sleep,
+        patch("bernstein.core.server.server_supervisor.write_supervisor_state"),
     ):
         server_supervisor._supervisor_loop(state)
 
@@ -97,10 +97,10 @@ def test_supervisor_loop_stops_after_restart_budget_is_exhausted(tmp_path: Path)
     state.restart_timestamps = [now - 1] * server_supervisor.MAX_RESTARTS
 
     with (
-        patch("bernstein.core.server_supervisor._is_alive", return_value=False),
-        patch("bernstein.core.server_supervisor.time.sleep"),
-        patch("bernstein.core.server_supervisor.time.monotonic", return_value=now),
-        patch("bernstein.core.server_supervisor._launch_server") as mock_launch,
+        patch("bernstein.core.server.server_supervisor._is_alive", return_value=False),
+        patch("bernstein.core.server.server_supervisor.time.sleep"),
+        patch("bernstein.core.server.server_supervisor.time.monotonic", return_value=now),
+        patch("bernstein.core.server.server_supervisor._launch_server") as mock_launch,
     ):
         server_supervisor._supervisor_loop(state)
 
@@ -119,9 +119,9 @@ def test_health_check_loop_kills_unresponsive_server_after_consecutive_failures(
 
     with (
         patch("httpx.get", side_effect=RuntimeError("down")),
-        patch("bernstein.core.server_supervisor.time.sleep"),
-        patch("bernstein.core.server_supervisor._is_alive", return_value=True),
-        patch("bernstein.core.server_supervisor.os.kill", side_effect=_kill) as mock_kill,
+        patch("bernstein.core.server.server_supervisor.time.sleep"),
+        patch("bernstein.core.server.server_supervisor._is_alive", return_value=True),
+        patch("bernstein.core.server.server_supervisor.os.kill", side_effect=_kill) as mock_kill,
     ):
         with patch.object(server_supervisor, "MAX_CONSECUTIVE_FAILURES", 1):
             server_supervisor._health_check_loop(state)
