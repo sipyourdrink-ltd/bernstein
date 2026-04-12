@@ -122,7 +122,6 @@ def _get_workdir(request: Request) -> Path:
 
 @router.post(
     "/sbom/generate",
-    response_model=SBOMGenerateResponse,
     responses={
         422: {"description": "Critical vulnerabilities found (gate blocked)"},
         503: {"description": "Server workdir not configured"},
@@ -216,7 +215,6 @@ async def generate_sbom(body: SBOMGenerateRequest, request: Request) -> SBOMGene
 
 @router.get(
     "/sbom/artifacts",
-    response_model=SBOMListResponse,
     responses={503: {"description": "Server workdir not configured"}},
     summary="List generated SBOM artifact files",
     tags=["sbom"],

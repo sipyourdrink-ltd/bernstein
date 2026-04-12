@@ -34,7 +34,6 @@ def _runtime_dir(request: Request) -> Path:
 
 @router.get(
     "/agents/{session_id}/logs",
-    response_model=AgentLogsResponse,
     responses={404: {"description": "No log for session"}},
 )
 def agent_logs(
@@ -72,7 +71,7 @@ def agent_logs(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/agents/{session_id}/kill", response_model=AgentKillResponse)
+@router.post("/agents/{session_id}/kill")
 def agent_kill(request: Request, session_id: str) -> AgentKillResponse:
     """Request termination of an agent by writing a ``.kill`` signal file.
 
