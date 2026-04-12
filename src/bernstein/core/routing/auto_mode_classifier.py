@@ -110,7 +110,7 @@ _SAFE_WRITE_ACTIONS: frozenset[str] = frozenset(
 
 _DESTRUCTIVE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\brm\s+(-[^\s]*\s+){0,10}-r", re.IGNORECASE),
-    re.compile(r"\bgit\s+push\s+\S{0,200}\s+--force", re.IGNORECASE),
+    re.compile(r"\bgit\s+push\s[^\n]{0,200}--force", re.IGNORECASE),
     re.compile(r"\bgit\s+reset\s+--hard", re.IGNORECASE),
     re.compile(r"\bDROP\s+(TABLE|DATABASE|INDEX)", re.IGNORECASE),
     re.compile(r"\bTRUNCATE\s+TABLE", re.IGNORECASE),
