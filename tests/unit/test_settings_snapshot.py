@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.settings_snapshot import (
+from bernstein.cli.settings_snapshot import (
     SettingsSnapshot,
     SettingValue,
     _read_config_file,

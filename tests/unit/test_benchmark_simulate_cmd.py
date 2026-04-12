@@ -13,10 +13,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-from click.testing import CliRunner
-
-from bernstein.benchmark.comparative import BenchmarkTask, load_benchmark_tasks
-from bernstein.benchmark.reproducible import (
+from bernstein.cli.eval_benchmark_cmd import benchmark_simulate
+from bernstein.evolution.benchmark.comparative import BenchmarkTask, load_benchmark_tasks
+from bernstein.evolution.benchmark.reproducible import (
     BenchmarkConfig,
     BenchmarkRun,
     CostMetrics,
@@ -24,7 +23,7 @@ from bernstein.benchmark.reproducible import (
     ReproducibleBenchmark,
     ThroughputMetrics,
 )
-from bernstein.cli.eval_benchmark_cmd import benchmark_simulate
+from click.testing import CliRunner
 
 # ---------------------------------------------------------------------------
 # Helpers

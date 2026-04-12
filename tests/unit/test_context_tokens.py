@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.context_tokens import (
+from bernstein.tui.context_tokens import (
     TokenBreakdown,
     _extract_sections,
     analyze_context,

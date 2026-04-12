@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.session_rename import rename_session, validate_session_name
+from bernstein.tui.session_rename import rename_session, validate_session_name
 
 # ---------------------------------------------------------------------------
 # validate_session_name tests

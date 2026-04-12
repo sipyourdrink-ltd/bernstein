@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bernstein.layout_cache import CacheEntry, LayoutCache
+from bernstein.tui.layout_cache import CacheEntry, LayoutCache
 
 
 @pytest.fixture()

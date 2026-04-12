@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from bernstein.core.policy_engine import DecisionType, PermissionDecision
-from bernstein.permission_explain import PermissionExplanation, explain_decision
+
+from bernstein.plugins.permission_explain import PermissionExplanation, explain_decision
 
 # --- TestPermissionExplanation ---
 

@@ -8,10 +8,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from click.testing import CliRunner
-
-from bernstein.benchmark.swe_bench import InstanceResult, SWEBenchRunner, SWEInstance, compute_report, save_results
 from bernstein.cli.eval_benchmark_cmd import eval_group
+from bernstein.evolution.benchmark.swe_bench import (
+    InstanceResult,
+    SWEBenchRunner,
+    SWEInstance,
+    compute_report,
+    save_results,
+)
+from click.testing import CliRunner
 
 
 def _instance(instance_id: str) -> SWEInstance:
@@ -138,7 +143,7 @@ class TestEvalCli:
 
         try:
             os.chdir(tmp_path)
-            with patch("bernstein.benchmark.swe_bench.SWEBenchRunner", FakeRunner):
+            with patch("bernstein.evolution.benchmark.swe_bench.SWEBenchRunner", FakeRunner):
                 result = runner.invoke(eval_group, ["swe-bench", "--subset", "lite"])
         finally:
             os.chdir(old_cwd)

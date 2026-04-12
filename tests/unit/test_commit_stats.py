@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bernstein.commit_stats import (
+from bernstein.cli.commit_stats import (
     CommitStatsResult,
     RoleStats,
     _author_to_role,

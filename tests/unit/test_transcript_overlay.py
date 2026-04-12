@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.transcript_search import (
+from bernstein.cli.transcript_search import (
     TraceMatchEntry,
     format_search_results,
     search_transcripts,

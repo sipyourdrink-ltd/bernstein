@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bernstein.plugin_trust import (
+from bernstein.plugins.plugin_trust import (
     PluginTrust,
     _compute_signature_fingerprint,
     _compute_trust_score,
