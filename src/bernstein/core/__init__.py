@@ -568,7 +568,7 @@ class _CoreRedirectFinder(MetaPathFinder):
         """Return a ModuleSpec that loads via our redirect loader."""
         if not fullname.startswith(self._PREFIX):
             return None
-        short = fullname[len(self._PREFIX):]
+        short = fullname[len(self._PREFIX) :]
         if "." in short:
             return None  # only handle direct children of bernstein.core
         if short not in _REDIRECT_MAP:
@@ -586,7 +586,7 @@ class _CoreRedirectLoader:
     def exec_module(self, module: ModuleType) -> None:
         """Replace the module object with the real target."""
         fullname = module.__name__
-        short = fullname[len(_CoreRedirectFinder._PREFIX):]
+        short = fullname[len(_CoreRedirectFinder._PREFIX) :]
         target_name = _REDIRECT_MAP[short]
         real = importlib.import_module(target_name)
         # Copy all attributes from real module
