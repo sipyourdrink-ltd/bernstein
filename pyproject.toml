@@ -137,6 +137,10 @@ exclude = [
     "src/bernstein/core/config/",
     "src/bernstein/core/observability/",
     "src/bernstein/core/protocols/",
+    "src/bernstein/core/server/",
+    "src/bernstein/cli/run_confirm.py",
+    "src/bernstein/cli/run_preflight.py",
+    "src/bernstein/cli/run_bootstrap.py",
 ]
 
 [tool.hatch.build.targets.wheel]
