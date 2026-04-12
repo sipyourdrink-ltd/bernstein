@@ -135,12 +135,12 @@ def test_structured_log_emitted_for_systemic_break(tmp_path: Path) -> None:
             records.append(record)
 
     handler = Capture()
-    logging.getLogger("bernstein.core.prompt_caching").addHandler(handler)
+    logging.getLogger("bernstein.core.tokens.prompt_caching").addHandler(handler)
     try:
         corr.add_event(_make_event("a1", "fp-sys"))
         corr.add_event(_make_event("a2", "fp-sys"))
     finally:
-        logging.getLogger("bernstein.core.prompt_caching").removeHandler(handler)
+        logging.getLogger("bernstein.core.tokens.prompt_caching").removeHandler(handler)
 
     warnings = [r for r in records if r.levelno == logging.WARNING]
     assert len(warnings) == 1

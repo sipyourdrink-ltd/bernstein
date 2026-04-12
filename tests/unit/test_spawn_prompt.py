@@ -290,7 +290,7 @@ def test_prompt_stats_are_logged(tmp_path: Path, make_task: Any, caplog: Any) ->
         patch("bernstein.core.agents.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
         patch("bernstein.core.agents.spawn_prompt.gather_lessons_for_context", return_value=""),
         patch("bernstein.core.agents.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
-        caplog.at_level(logging.INFO, logger="bernstein.core.spawn_prompt"),
+        caplog.at_level(logging.INFO, logger="bernstein.core.agents.spawn_prompt"),
     ):
         _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path, session_id="A-1")
 
