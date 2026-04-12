@@ -148,7 +148,7 @@ class TestDetectConflicts:
         assert len(conflicts) == 1
         assert "Conflict" in conflicts[0]
 
-    def test_multiple_requestors_one_fails(self) -> None:
+    def test_multiple_requesters_one_fails(self) -> None:
         db = PluginDependency("db", "1.5.0", dependencies=())
         api = PluginDependency(
             "api",
