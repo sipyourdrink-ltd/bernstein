@@ -83,10 +83,10 @@ _NUMSTAT_RE = re.compile(
 
 # Rename pattern inside --numstat: {old => new} or old => new
 _RENAME_BRACE_RE = re.compile(
-    r"^(?P<prefix>[^{\n]*)\{(?P<old>[^}\n]*) => (?P<new>[^}\n]*)\}(?P<suffix>[^\n]*)$",
+    r"^(?P<prefix>[^{\n]{0,500})\{(?P<old>[^}\n]{0,500}) => (?P<new>[^}\n]{0,500})\}(?P<suffix>[^\n]{0,500})$",
 )
 _RENAME_ARROW_RE = re.compile(
-    r"^(?P<old>[^\n]+?) => (?P<new>[^\n]+)$",
+    r"^(?P<old>[^\n]{1,500}?) => (?P<new>[^\n]{1,500})$",
 )
 
 

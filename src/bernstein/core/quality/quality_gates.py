@@ -547,8 +547,8 @@ def _parse_mutation_score(output: str) -> float | None:
     #   "42 killed, 58 survived"      (number before keyword)
     # Use [ \t]+ (horizontal whitespace only) for the N-before-keyword form so
     # a newline between a digit and the next keyword on a new line is not matched.
-    killed_m = re.search(r"(?:[Kk]illed[: \t]{1,10}(\d+)|(\d+)[ \t]{1,10}[Kk]illed)", output)
-    survived_m = re.search(r"(?:[Ss]urvived[: \t]{1,10}(\d+)|(\d+)[ \t]{1,10}[Ss]urvived)", output)
+    killed_m = re.search(r"(?:[Kk]illed[: \t]{1,10}(\d+)|(\d+)[ \t]{1,10}[Kk]illed)\b", output)
+    survived_m = re.search(r"(?:[Ss]urvived[: \t]{1,10}(\d+)|(\d+)[ \t]{1,10}[Ss]urvived)\b", output)
     if killed_m and survived_m:
         killed = int(next(g for g in killed_m.groups() if g is not None))
         survived = int(next(g for g in survived_m.groups() if g is not None))

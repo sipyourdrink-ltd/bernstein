@@ -93,7 +93,7 @@ class DecisionGraph:
 
 
 _REGEX_RULE_RE = re.compile(r"^(?P<field>[a-z_]+)[ \t]*(?P<operator>!~|=~)[ \t]*/(?P<pattern>.+)/$")
-_COMPARE_RULE_RE = re.compile(r"^(?P<field>[a-z_]+)\s*(?P<operator>==|!=|>=|<=|>|<)\s*(?P<value>.+)$")
+_COMPARE_RULE_RE = re.compile(r"^(?P<field>[a-z_]+)[ \t]{0,10}(?P<operator>==|!=|>=|<=|>|<)[ \t]{0,10}(?P<value>.+)$")
 
 
 @dataclass(frozen=True)
