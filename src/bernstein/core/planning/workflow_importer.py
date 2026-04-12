@@ -28,7 +28,7 @@ _WORKFLOW_FILENAMES: list[str] = [
 ]
 
 # Matches unchecked Markdown checkbox items: `- [ ] description`
-_CHECKBOX_RE = re.compile(r"^\s*[-*]\s+\[\s+\]\s+(.+)$")
+_CHECKBOX_RE = re.compile(r"^[ \t]{0,20}[-*][ \t]{1,5}\[[ \t]+\][ \t]{1,5}(.+)$")
 
 # Sentinel stored in task metadata so we can detect already-imported items
 _IMPORT_SOURCE_KEY = "workflow_import_source"

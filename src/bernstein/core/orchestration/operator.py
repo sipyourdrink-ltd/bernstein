@@ -34,7 +34,7 @@ class OperatorConfig:
     """Configuration for the Bernstein K8s operator."""
 
     namespace: str = ""
-    server_url: str = "http://bernstein-server:8052"
+    server_url: str = "http://bernstein-server:8052"  # Local-only endpoint, HTTPS not applicable
     agent_image: str = "bernstein:latest"
     agent_image_pull_policy: str = "IfNotPresent"
     reconcile_interval_s: float = 10.0
@@ -560,6 +560,7 @@ def main() -> None:
     )
     cfg = OperatorConfig(
         namespace=os.getenv("POD_NAMESPACE", ""),
+        # Local-only endpoint, HTTPS not applicable
         server_url=os.getenv("BERNSTEIN_SERVER_URL", "http://bernstein-server:8052"),
         agent_image=os.getenv("BERNSTEIN_AGENT_IMAGE", "bernstein:latest"),
         auth_secret_name=os.getenv("BERNSTEIN_AUTH_SECRET", "bernstein-auth"),

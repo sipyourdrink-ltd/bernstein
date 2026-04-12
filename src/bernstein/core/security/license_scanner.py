@@ -83,7 +83,7 @@ _PROSE_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
 ]
 
 _DIFF_FILE_RE = re.compile(r"^diff --git a/(.+?) b/")
-_SPDX_SPLIT_RE = re.compile(r"\s+(?:AND|OR|WITH)\s+", re.IGNORECASE)
+_SPDX_SPLIT_RE = re.compile(r"[ \t]{1,10}(?:AND|OR|WITH)[ \t]{1,10}", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------

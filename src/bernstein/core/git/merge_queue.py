@@ -70,7 +70,7 @@ _SECTION_HEADER_RE = re.compile(
     r"^(changed in both|added in both|both added|both removed|removed in both)",
     re.IGNORECASE,
 )
-_DESCRIPTOR_RE = re.compile(r"^[ \t]+(?:base|our|their)[ \t]+\d+[ \t]+[0-9a-f]+[ \t]+(.+)$")
+_DESCRIPTOR_RE = re.compile(r"^[ \t]{1,20}(?:base|our|their)[ \t]{1,10}\d+[ \t]{1,10}[0-9a-f]+[ \t]{1,10}(.+)$")
 _CONFLICT_MARKER = "<<<<<<< "
 
 

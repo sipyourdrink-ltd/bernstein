@@ -10,9 +10,9 @@ from bernstein.core.defaults import override, reset
 
 def test_override_scalar() -> None:
     reset()
-    assert defaults.ORCHESTRATOR.tick_interval_s == 3.0
+    assert defaults.ORCHESTRATOR.tick_interval_s == pytest.approx(3.0)
     override("orchestrator", {"tick_interval_s": 5.0})
-    assert defaults.ORCHESTRATOR.tick_interval_s == 5.0
+    assert defaults.ORCHESTRATOR.tick_interval_s == pytest.approx(5.0)
     reset()
 
 
