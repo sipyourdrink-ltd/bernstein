@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from typing import TypedDict
 
 
-class Task(TypedDict, total=False):
+class CostLineTask(TypedDict, total=False):
+    """Minimal task dict for cost-per-line calculation."""
+
     lines_changed: int
     cost_usd: float
 
@@ -19,13 +21,14 @@ class CostEfficiency:
 
 
 def compute_efficiency(
-    tasks: list[Task],
+    tasks: list[CostLineTask],
     total_cost_usd: float,
     historical_avg: float | None = None,
 ) -> CostEfficiency:
+    """Compute cost-per-line-of-code efficiency metrics."""
     total_lines = sum(t.get("lines_changed", 0) for t in tasks)
 
-    current: Task = tasks[-1] if tasks else {}
+    current: CostLineTask = tasks[-1] if tasks else {}
     current_lines: int = current.get("lines_changed", 0)
     current_cost: float = current.get("cost_usd", 0.0)
     current_cpl: float = current_cost / max(current_lines, 1)
