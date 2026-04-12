@@ -69,7 +69,7 @@ def test_broadcast_message_uses_pipe_first_and_file_fallback(tmp_path: Path) -> 
 
 def test_shutdown_all_wraps_broadcast_with_shutdown_message() -> None:
     """shutdown_all delegates to broadcast_message with a shutdown-prefixed instruction."""
-    with patch("bernstein.core.agent_ipc.broadcast_message", return_value={"A-1": "pipe"}) as mock_broadcast:
+    with patch("bernstein.core.agents.agent_ipc.broadcast_message", return_value={"A-1": "pipe"}) as mock_broadcast:
         result = shutdown_all("maintenance", workdir=Path("/tmp/work"))
 
     assert result == {"A-1": "pipe"}
