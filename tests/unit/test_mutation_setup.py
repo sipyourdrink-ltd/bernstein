@@ -19,7 +19,7 @@ import pytest
 
 MUTMUT_CONFIG = {
     "paths_to_mutate": [
-        "src/bernstein/core/lifecycle.py",
+        "src/bernstein/core/tasks/lifecycle.py",
         "src/bernstein/core/spawner.py",
         "src/bernstein/core/guardrails.py",
         "src/bernstein/core/models.py",
@@ -50,7 +50,7 @@ class TestMutmutConfig:
     def test_modules_importable(self) -> None:
         """All mutation targets must be importable."""
         for p in MUTMUT_CONFIG["paths_to_mutate"]:
-            # Convert path to module name: src/bernstein/core/lifecycle.py -> bernstein.core.lifecycle
+            # Convert path to module name: src/bernstein/core/tasks/lifecycle.py -> bernstein.core.tasks.lifecycle
             module_name = p.replace("src/", "").replace("/", ".").replace(".py", "")
             try:
                 importlib.import_module(module_name)
@@ -109,8 +109,9 @@ class TestKeyMutationScenarios:
 
     def test_lifecycle_transition_guards(self) -> None:
         """Ensure transition table is not trivially bypassable."""
-        from bernstein.core.lifecycle import IllegalTransitionError, transition_task
         from bernstein.core.models import Task, TaskStatus
+
+        from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_task
 
         # DONE -> OPEN should be illegal (mutant might allow all transitions)
         task = Task(id="mut-1", title="t", description="d", role="r", status=TaskStatus.DONE)

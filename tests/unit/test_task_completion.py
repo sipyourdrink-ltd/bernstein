@@ -125,7 +125,7 @@ def test_process_completed_tasks_records_quality_gate_failure(tmp_path: Path, ma
 
     with (
         patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.tasks.task_completion.load_rules_config", return_value=None),
+        patch("bernstein.core.tasks.task_lifecycle.load_rules_config", return_value=None),
         patch("bernstein.core.tasks.task_completion.append_decision"),
     ):
         result = TickResult()
@@ -157,7 +157,7 @@ def test_process_completed_tasks_creates_fix_task_for_cross_model_review(tmp_pat
 
     with (
         patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.tasks.task_completion.load_rules_config", return_value=None),
+        patch("bernstein.core.tasks.task_lifecycle.load_rules_config", return_value=None),
         patch("bernstein.core.tasks.task_completion.run_cross_model_verification_sync", return_value=verdict),
         patch("bernstein.core.tasks.task_completion.append_decision"),
     ):
@@ -192,7 +192,7 @@ def test_process_completed_tasks_blocks_on_formal_verification_violation(tmp_pat
 
     with (
         patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.tasks.task_completion.load_rules_config", return_value=None),
+        patch("bernstein.core.tasks.task_lifecycle.load_rules_config", return_value=None),
         patch("bernstein.core.quality.formal_verification.run_formal_verification", return_value=formal_result),
         patch("bernstein.core.tasks.task_completion.append_decision"),
     ):
@@ -219,7 +219,7 @@ def test_process_completed_tasks_routes_merge_conflicts_to_resolver(tmp_path: Pa
 
     with (
         patch("bernstein.core.tasks.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.tasks.task_completion.load_rules_config", return_value=None),
+        patch("bernstein.core.tasks.task_lifecycle.load_rules_config", return_value=None),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)

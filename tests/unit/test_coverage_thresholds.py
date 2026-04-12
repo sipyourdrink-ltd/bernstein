@@ -73,7 +73,7 @@ class TestModuleThresholds:
             assert 0 < thresh <= 100, f"Threshold for {mod} is {thresh}, expected 1-100"
 
     def test_core_modules_listed(self) -> None:
-        assert "bernstein.core.lifecycle" in MODULE_THRESHOLDS
+        assert "bernstein.core.tasks.lifecycle" in MODULE_THRESHOLDS
         assert "bernstein.core.models" in MODULE_THRESHOLDS
 
     def test_all_module_paths_exist(self) -> None:
