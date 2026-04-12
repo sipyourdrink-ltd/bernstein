@@ -480,70 +480,84 @@ class SBOMGenerator:
 # ---------------------------------------------------------------------------
 
 
+def _osv_extract_severity(vuln: dict[str, Any]) -> SBOMVulnSeverity:
+    """Extract severity from an osv-scanner vulnerability entry."""
+    severity_raw = ""
+    for db_info in vuln.get("database_specific", {}).get("severity", []):
+        if isinstance(db_info, dict):
+            severity_raw = str(db_info.get("score", "")).upper()
+            break
+    if not severity_raw:
+        severity_raw = str(vuln.get("severity", "") or "").lower()
+    return _severity_from_str(severity_raw) if severity_raw else SBOMVulnSeverity.UNKNOWN
+
+
+def _osv_extract_fix_version(vuln: dict[str, Any]) -> str:
+    """Extract the earliest fix version from an osv-scanner vulnerability."""
+    for affected in vuln.get("affected", []):
+        if not isinstance(affected, dict):
+            continue
+        for rng in affected.get("ranges", []):
+            if not isinstance(rng, dict):
+                continue
+            for event in rng.get("events", []):
+                if isinstance(event, dict) and "fixed" in event:
+                    return str(event["fixed"])
+    return ""
+
+
+def _osv_parse_vuln(vuln: dict[str, Any], pkg_name: str, pkg_version: str) -> SBOMVulnFinding | None:
+    """Parse a single osv-scanner vulnerability into a finding."""
+    if not isinstance(vuln, dict):
+        return None
+    vuln_id = str(vuln.get("id", "unknown"))
+    summary = str(vuln.get("summary", "") or vuln.get("details", ""))[:300]
+    return SBOMVulnFinding(
+        component_name=pkg_name,
+        component_version=pkg_version,
+        vuln_id=vuln_id,
+        severity=_osv_extract_severity(vuln),
+        summary=summary,
+        fix_version=_osv_extract_fix_version(vuln),
+        scanner="osv-scanner",
+    )
+
+
+def _osv_parse_package_entry(pkg_entry: dict[str, Any]) -> list[SBOMVulnFinding]:
+    """Parse all vulnerabilities from a single osv-scanner package entry."""
+    if not isinstance(pkg_entry, dict):
+        return []
+    pkg = pkg_entry.get("package", {})
+    if not isinstance(pkg, dict):
+        return []
+    pkg_name = str(pkg.get("name", ""))
+    pkg_version = str(pkg.get("version", ""))
+    findings: list[SBOMVulnFinding] = []
+    for vuln in pkg_entry.get("vulnerabilities", []):
+        finding = _osv_parse_vuln(vuln, pkg_name, pkg_version)
+        if finding is not None:
+            findings.append(finding)
+    return findings
+
+
 def _parse_osv_scanner_output(stdout: str, sbom_serial: str) -> list[SBOMVulnFinding]:
     """Parse JSON output from ``osv-scanner --format=json``."""
-    findings: list[SBOMVulnFinding] = []
     if not stdout.strip():
-        return findings
+        return []
     try:
         payload = json.loads(stdout)
     except json.JSONDecodeError:
         logger.warning("osv-scanner: could not parse JSON output")
-        return findings
+        return []
 
     # osv-scanner JSON schema: {"results": [{"packages": [{"package": {...}, "vulnerabilities": [...]}]}]}
     results = payload.get("results", []) if isinstance(payload, dict) else []
+    findings: list[SBOMVulnFinding] = []
     for result in results:
         if not isinstance(result, dict):
             continue
         for pkg_entry in result.get("packages", []):
-            if not isinstance(pkg_entry, dict):
-                continue
-            pkg = pkg_entry.get("package", {})
-            if not isinstance(pkg, dict):
-                continue
-            pkg_name = str(pkg.get("name", ""))
-            pkg_version = str(pkg.get("version", ""))
-            for vuln in pkg_entry.get("vulnerabilities", []):
-                if not isinstance(vuln, dict):
-                    continue
-                vuln_id = str(vuln.get("id", "unknown"))
-                summary = str(vuln.get("summary", "") or vuln.get("details", ""))[:300]
-                # Extract CVSS-based severity from database_specific or severity field
-                severity_raw = ""
-                for db_info in vuln.get("database_specific", {}).get("severity", []):
-                    if isinstance(db_info, dict):
-                        severity_raw = str(db_info.get("score", "")).upper()
-                        break
-                if not severity_raw:
-                    severity_raw = str(vuln.get("severity", "") or "").lower()
-                severity = _severity_from_str(severity_raw) if severity_raw else SBOMVulnSeverity.UNKNOWN
-                fix_version = ""
-                for affected in vuln.get("affected", []):
-                    if not isinstance(affected, dict):
-                        continue
-                    for rng in affected.get("ranges", []):
-                        if not isinstance(rng, dict):
-                            continue
-                        for event in rng.get("events", []):
-                            if isinstance(event, dict) and "fixed" in event:
-                                fix_version = str(event["fixed"])
-                                break
-                        if fix_version:
-                            break
-                    if fix_version:
-                        break
-                findings.append(
-                    SBOMVulnFinding(
-                        component_name=pkg_name,
-                        component_version=pkg_version,
-                        vuln_id=vuln_id,
-                        severity=severity,
-                        summary=summary,
-                        fix_version=fix_version,
-                        scanner="osv-scanner",
-                    )
-                )
+            findings.extend(_osv_parse_package_entry(pkg_entry))
     return findings
 
 

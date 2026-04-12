@@ -189,6 +189,130 @@ _ACTION_TEMPLATES: dict[str, tuple[str, str, str]] = {
 }
 
 
+def _html_badge(label: str, color: str) -> str:
+    """Render a small colored badge span."""
+    import html as _html
+
+    _badge_css = "padding:2px 6px;border-radius:3px;font-size:0.8em"
+    return f'<span style="background:{color};color:#fff;{_badge_css}">{_html.escape(label)}</span>'
+
+
+def _html_status_badge(kind: str) -> str:
+    """Render a status kind badge."""
+    colors = {
+        "task_start": "#2196F3",
+        "task_complete": "#4CAF50",
+        "task_fail": "#F44336",
+        "error": "#FF9800",
+    }
+    color = colors.get(kind, "#9E9E9E")
+    return _html_badge(kind, color)
+
+
+def _html_priority_badge(priority: str) -> str:
+    """Render a priority badge."""
+    colors = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}
+    color = colors.get(priority, "#9E9E9E")
+    return _html_badge(priority.upper(), color)
+
+
+def _html_timeline_section(report: PostMortemReport) -> str:
+    """Render the HTML timeline section."""
+    import datetime as _dt
+    import html
+
+    if not report.timeline:
+        return "<p class='muted'>No timeline data available.</p>"
+
+    def _ev_time(ev: PostMortemEvent) -> str:
+        return _dt.datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S") if ev.timestamp > 0 else "\u2014"
+
+    timeline_rows = "\n".join(
+        f"<tr><td>{_ev_time(ev)}</td>"
+        f"<td>{html.escape(ev.label)}</td>"
+        f"<td>{_html_status_badge(ev.kind)}</td>"
+        f"<td>{html.escape(ev.task_id) if ev.task_id else '\u2014'}</td></tr>"
+        for ev in report.timeline
+    )
+    return f"""
+<table>
+  <thead><tr><th>Time</th><th>Event</th><th>Kind</th><th>Task</th></tr></thead>
+  <tbody>{timeline_rows}</tbody>
+</table>"""
+
+
+def _html_rca_section(report: PostMortemReport) -> str:
+    """Render the HTML root cause analysis section."""
+    import html
+
+    if not report.contributing_factors:
+        return "<p class='muted'>No dominant failure pattern detected. Review agent logs manually.</p>"
+    dominant = max(report.contributing_factors, key=lambda f: f.count)
+    factor_rows = "\n".join(
+        f"<tr><td><strong>{html.escape(f.category)}</strong></td><td>{f.count}</td><td>{html.escape(f.description)}</td></tr>"
+        for f in sorted(report.contributing_factors, key=lambda f: f.count, reverse=True)
+    )
+    return f"""
+<div class='callout'>
+  <strong>Primary cause:</strong> {html.escape(dominant.category)} ({dominant.count} occurrence(s))<br>
+  <em>{html.escape(dominant.description)}</em>
+</div>
+<table>
+  <thead><tr><th>Category</th><th>Count</th><th>Description</th></tr></thead>
+  <tbody>{factor_rows}</tbody>
+</table>"""
+
+
+def _html_trace_card(trace: Any) -> str:
+    """Render a single failed task trace as an HTML card."""
+    import html
+
+    snippets_html = ""
+    if trace.error_snippets:
+        snippet_text = "\n".join(html.escape(s[:200]) for s in trace.error_snippets[:3])
+        snippets_html = f"<pre class='error-box'>{snippet_text}</pre>"
+    files_html = (
+        ", ".join(f"<code>{html.escape(f)}</code>" for f in trace.files_touched[:5])
+        if trace.files_touched
+        else "\u2014"
+    )
+    retry_html = (
+        f"<p><strong>Retry context:</strong> {html.escape(trace.retry_context)}</p>" if trace.retry_context else ""
+    )
+    return f"""<div class='trace-card'>
+  <h3>Task <code>{html.escape(trace.task_id)}</code></h3>
+  <table class='compact'>
+    <tr><th>Role</th><td>{html.escape(trace.role) or "\u2014"}</td></tr>
+    <tr><th>Model</th><td>{html.escape(trace.model) or "\u2014"}</td></tr>
+    <tr><th>Session</th><td><code>{html.escape(trace.session_id) or "\u2014"}</code></td></tr>
+    <tr><th>Dominant failure</th><td><code>{html.escape(trace.dominant_failure) or "unknown"}</code></td></tr>
+    <tr><th>Files touched</th><td>{files_html}</td></tr>
+  </table>
+  {snippets_html}
+  {retry_html}
+</div>"""
+
+
+def _html_actions_section(report: PostMortemReport) -> str:
+    """Render the HTML recommended actions section."""
+    import html
+
+    if not report.recommended_actions:
+        return "<p class='muted'>No specific actions recommended.</p>"
+    action_rows = "\n".join(
+        f"<tr><td>{_html_priority_badge(a.priority)}</td><td>{html.escape(a.action)}</td><td><em>{html.escape(a.rationale)}</em></td></tr>"
+        for a in sorted(
+            report.recommended_actions,
+            key=lambda a: {"high": 0, "medium": 1, "low": 2}.get(a.priority, 3),
+        )
+    )
+    return f"""
+<table>
+  <thead><tr><th>Priority</th><th>Action</th><th>Rationale</th></tr></thead>
+  <tbody>{action_rows}</tbody>
+</table>"""
+
+
 class PostMortemGenerator:
     """Generates a :class:`PostMortemReport` from ``.sdd/`` data.
 
@@ -237,6 +361,80 @@ class PostMortemGenerator:
             recommended_actions=actions,
         )
 
+    @staticmethod
+    def _md_timeline(report: PostMortemReport) -> list[str]:
+        """Render the timeline section as markdown lines."""
+        import datetime as _dt
+
+        lines: list[str] = ["## Event Timeline", ""]
+        if not report.timeline:
+            lines.append("No timeline data available.")
+            return lines
+        lines.append("| Time | Event | Kind | Task |")
+        lines.append("|------|-------|------|------|")
+        for ev in report.timeline:
+            t_str = _dt.datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S") if ev.timestamp > 0 else "—"
+            lines.append(f"| {t_str} | {ev.label} | `{ev.kind}` | {ev.task_id or '—'} |")
+        return lines
+
+    @staticmethod
+    def _md_root_cause(report: PostMortemReport) -> list[str]:
+        """Render the root cause analysis section as markdown lines."""
+        lines: list[str] = ["## Root Cause Analysis", ""]
+        if not report.contributing_factors:
+            lines.append("No dominant failure pattern detected. Review agent logs manually for more detail.")
+            return lines
+        dominant = max(report.contributing_factors, key=lambda f: f.count)
+        lines.append(f"**Primary cause:** {dominant.category} ({dominant.count} occurrence(s))")
+        lines.append("")
+        lines.append(f"> {dominant.description}")
+        lines.append("")
+        if len(report.contributing_factors) > 1:
+            lines.append("**Additional contributing factors:**")
+            lines.append("")
+            for factor in sorted(report.contributing_factors, key=lambda f: f.count, reverse=True):
+                if factor is dominant:
+                    continue
+                lines.append(f"- **{factor.category}** ({factor.count}x): {factor.description}")
+        return lines
+
+    @staticmethod
+    def _md_trace(trace: Any) -> list[str]:
+        """Render a single failed task trace as markdown lines."""
+        lines: list[str] = [f"### Task `{trace.task_id}`", ""]
+        lines.append(f"- **Role:** {trace.role or '—'}")
+        lines.append(f"- **Model:** {trace.model or '—'}")
+        lines.append(f"- **Session:** `{trace.session_id or '—'}`")
+        lines.append(f"- **Dominant failure:** `{trace.dominant_failure or 'unknown'}`")
+        if trace.files_touched:
+            lines.append(f"- **Files touched:** {', '.join(f'`{f}`' for f in trace.files_touched[:5])}")
+        if trace.error_snippets:
+            lines.extend(["", "**Error snippets:**", "", "```"])
+            for snippet in trace.error_snippets[:3]:
+                lines.append(snippet[:200])
+            lines.append("```")
+        if trace.retry_context:
+            lines.extend(["", f"**Retry context:** {trace.retry_context}"])
+        lines.append("")
+        return lines
+
+    @staticmethod
+    def _md_actions(report: PostMortemReport) -> list[str]:
+        """Render the recommended actions section as markdown lines."""
+        lines: list[str] = ["## Recommended Actions", ""]
+        if not report.recommended_actions:
+            lines.append("No specific actions recommended.")
+            return lines
+        for action in sorted(
+            report.recommended_actions,
+            key=lambda a: {"high": 0, "medium": 1, "low": 2}.get(a.priority, 3),
+        ):
+            badge = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(action.priority, "•")
+            lines.append(f"{badge} **[{action.priority.upper()}]** {action.action}")
+            lines.append(f"  _{action.rationale}_")
+            lines.append("")
+        return lines
+
     def to_markdown(self, report: PostMortemReport) -> str:
         """Render a :class:`PostMortemReport` as a markdown string.
 
@@ -261,84 +459,21 @@ class PostMortemGenerator:
             lines.append(f"**Success rate:** {report.success_rate_pct:.0f}%")
         lines.append("")
 
-        # -- Timeline ----------------------------------------------------------
-        lines.append("## Event Timeline")
+        lines.extend(self._md_timeline(report))
         lines.append("")
-        if report.timeline:
-            import datetime as _dt
-
-            lines.append("| Time | Event | Kind | Task |")
-            lines.append("|------|-------|------|------|")
-            for ev in report.timeline:
-                t_str = _dt.datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S") if ev.timestamp > 0 else "—"
-                lines.append(f"| {t_str} | {ev.label} | `{ev.kind}` | {ev.task_id or '—'} |")
-        else:
-            lines.append("No timeline data available.")
+        lines.extend(self._md_root_cause(report))
         lines.append("")
 
-        # -- Root cause / contributing factors ---------------------------------
-        lines.append("## Root Cause Analysis")
-        lines.append("")
-        if report.contributing_factors:
-            dominant = max(report.contributing_factors, key=lambda f: f.count)
-            lines.append(f"**Primary cause:** {dominant.category} ({dominant.count} occurrence(s))")
-            lines.append("")
-            lines.append(f"> {dominant.description}")
-            lines.append("")
-            if len(report.contributing_factors) > 1:
-                lines.append("**Additional contributing factors:**")
-                lines.append("")
-                for factor in sorted(report.contributing_factors, key=lambda f: f.count, reverse=True):
-                    if factor is dominant:
-                        continue
-                    lines.append(f"- **{factor.category}** ({factor.count}x): {factor.description}")
-        else:
-            lines.append("No dominant failure pattern detected. Review agent logs manually for more detail.")
-        lines.append("")
-
-        # -- Failed task traces ------------------------------------------------
         lines.append("## Agent Decision Traces (Failed Tasks)")
         lines.append("")
         if report.failed_task_traces:
             for trace in report.failed_task_traces:
-                lines.append(f"### Task `{trace.task_id}`")
-                lines.append("")
-                lines.append(f"- **Role:** {trace.role or '—'}")
-                lines.append(f"- **Model:** {trace.model or '—'}")
-                lines.append(f"- **Session:** `{trace.session_id or '—'}`")
-                lines.append(f"- **Dominant failure:** `{trace.dominant_failure or 'unknown'}`")
-                if trace.files_touched:
-                    lines.append(f"- **Files touched:** {', '.join(f'`{f}`' for f in trace.files_touched[:5])}")
-                if trace.error_snippets:
-                    lines.append("")
-                    lines.append("**Error snippets:**")
-                    lines.append("")
-                    lines.append("```")
-                    for snippet in trace.error_snippets[:3]:
-                        lines.append(snippet[:200])
-                    lines.append("```")
-                if trace.retry_context:
-                    lines.append("")
-                    lines.append(f"**Retry context:** {trace.retry_context}")
-                lines.append("")
+                lines.extend(self._md_trace(trace))
         else:
             lines.append("No failed task traces available.")
         lines.append("")
 
-        # -- Recommended actions -----------------------------------------------
-        lines.append("## Recommended Actions")
-        lines.append("")
-        if report.recommended_actions:
-            for action in sorted(
-                report.recommended_actions,
-                key=lambda a: {"high": 0, "medium": 1, "low": 2}.get(a.priority, 3),
-            ):
-                badge = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(action.priority, "•")
-                lines.append(f"{badge} **[{action.priority.upper()}]** {action.action}")
-                lines.append(f"  _{action.rationale}_")
-                lines.append("")
-        else:
-            lines.append("No specific actions recommended.")
+        lines.extend(self._md_actions(report))
         lines.append("")
 
         return "\n".join(lines)
@@ -361,111 +496,11 @@ class PostMortemGenerator:
         ts = datetime.datetime.fromtimestamp(report.generated_at).strftime("%Y-%m-%d %H:%M:%S")
         title = html.escape(f"Post-Mortem: {report.run_id}")
 
-        _badge_css = "padding:2px 6px;border-radius:3px;font-size:0.8em"
-
-        def _status_badge(kind: str) -> str:
-            colors = {
-                "task_start": "#2196F3",
-                "task_complete": "#4CAF50",
-                "task_fail": "#F44336",
-                "error": "#FF9800",
-            }
-            color = colors.get(kind, "#9E9E9E")
-            label = html.escape(kind)
-            return f'<span style="background:{color};color:#fff;{_badge_css}">{label}</span>'
-
-        def _priority_badge(priority: str) -> str:
-            colors = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}
-            color = colors.get(priority, "#9E9E9E")
-            label = html.escape(priority.upper())
-            return f'<span style="background:{color};color:#fff;{_badge_css}">{label}</span>'
-
-        # --- Timeline rows ---
-        if report.timeline:
-            import datetime as _dt
-
-            def _ev_time(ev: PostMortemEvent) -> str:
-                return _dt.datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S") if ev.timestamp > 0 else "—"
-
-            timeline_rows = "\n".join(
-                f"<tr><td>{_ev_time(ev)}</td>"
-                f"<td>{html.escape(ev.label)}</td>"
-                f"<td>{_status_badge(ev.kind)}</td>"
-                f"<td>{html.escape(ev.task_id) if ev.task_id else '—'}</td></tr>"
-                for ev in report.timeline
-            )
-            timeline_section = f"""
-<table>
-  <thead><tr><th>Time</th><th>Event</th><th>Kind</th><th>Task</th></tr></thead>
-  <tbody>{timeline_rows}</tbody>
-</table>"""
-        else:
-            timeline_section = "<p class='muted'>No timeline data available.</p>"
-
-        # --- Root cause section ---
-        if report.contributing_factors:
-            dominant = max(report.contributing_factors, key=lambda f: f.count)
-            factor_rows = "\n".join(
-                f"<tr><td><strong>{html.escape(f.category)}</strong></td><td>{f.count}</td><td>{html.escape(f.description)}</td></tr>"
-                for f in sorted(report.contributing_factors, key=lambda f: f.count, reverse=True)
-            )
-            rca_section = f"""
-<div class='callout'>
-  <strong>Primary cause:</strong> {html.escape(dominant.category)} ({dominant.count} occurrence(s))<br>
-  <em>{html.escape(dominant.description)}</em>
-</div>
-<table>
-  <thead><tr><th>Category</th><th>Count</th><th>Description</th></tr></thead>
-  <tbody>{factor_rows}</tbody>
-</table>"""
-        else:
-            rca_section = "<p class='muted'>No dominant failure pattern detected. Review agent logs manually.</p>"
-
-        # --- Failed task traces ---
-        trace_sections = []
-        for trace in report.failed_task_traces:
-            snippets_html = ""
-            if trace.error_snippets:
-                snippet_text = "\n".join(html.escape(s[:200]) for s in trace.error_snippets[:3])
-                snippets_html = f"<pre class='error-box'>{snippet_text}</pre>"
-            files_html = (
-                ", ".join(f"<code>{html.escape(f)}</code>" for f in trace.files_touched[:5])
-                if trace.files_touched
-                else "—"
-            )
-            trace_sections.append(
-                f"""<div class='trace-card'>
-  <h3>Task <code>{html.escape(trace.task_id)}</code></h3>
-  <table class='compact'>
-    <tr><th>Role</th><td>{html.escape(trace.role) or "—"}</td></tr>
-    <tr><th>Model</th><td>{html.escape(trace.model) or "—"}</td></tr>
-    <tr><th>Session</th><td><code>{html.escape(trace.session_id) or "—"}</code></td></tr>
-    <tr><th>Dominant failure</th><td><code>{html.escape(trace.dominant_failure) or "unknown"}</code></td></tr>
-    <tr><th>Files touched</th><td>{files_html}</td></tr>
-  </table>
-  {snippets_html}
-  {f"<p><strong>Retry context:</strong> {html.escape(trace.retry_context)}</p>" if trace.retry_context else ""}
-</div>"""
-            )
-
-        traces_section = "\n".join(trace_sections) if trace_sections else "<p class='muted'>No failed task traces.</p>"
-
-        # --- Recommended actions ---
-        if report.recommended_actions:
-            action_rows = "\n".join(
-                f"<tr><td>{_priority_badge(a.priority)}</td><td>{html.escape(a.action)}</td><td><em>{html.escape(a.rationale)}</em></td></tr>"
-                for a in sorted(
-                    report.recommended_actions,
-                    key=lambda a: {"high": 0, "medium": 1, "low": 2}.get(a.priority, 3),
-                )
-            )
-            actions_section = f"""
-<table>
-  <thead><tr><th>Priority</th><th>Action</th><th>Rationale</th></tr></thead>
-  <tbody>{action_rows}</tbody>
-</table>"""
-        else:
-            actions_section = "<p class='muted'>No specific actions recommended.</p>"
+        timeline_section = _html_timeline_section(report)
+        rca_section = _html_rca_section(report)
+        trace_cards = [_html_trace_card(t) for t in report.failed_task_traces]
+        traces_section = "\n".join(trace_cards) if trace_cards else "<p class='muted'>No failed task traces.</p>"
+        actions_section = _html_actions_section(report)
 
         if report.success_rate_pct >= 80:
             success_color = "#4CAF50"

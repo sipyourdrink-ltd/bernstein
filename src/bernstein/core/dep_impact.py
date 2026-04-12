@@ -183,6 +183,76 @@ def _extract_removed_param_name(description: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _resolve_call_target(
+    node: ast.Call,
+    imported_names: dict[str, str],
+    module_aliases: set[str],
+) -> str | None:
+    """Return the original symbol name for a call node, or None if unresolvable."""
+    func_node = node.func
+    if isinstance(func_node, ast.Name):
+        return imported_names.get(func_node.id)
+    if (
+        isinstance(func_node, ast.Attribute)
+        and isinstance(func_node.value, ast.Name)
+        and func_node.value.id in module_aliases
+    ):
+        return func_node.attr
+    return None
+
+
+def _check_single_breaking_change(
+    bc: BreakingChange,
+    node: ast.Call,
+    caller_file: str,
+    call_line: int,
+) -> CallSiteImpact | None:
+    """Check whether a single breaking change impacts the given call node."""
+    ct = bc.change_type
+
+    if ct in (ChangeType.REMOVED_FUNCTION, ChangeType.REMOVED_CLASS):
+        return CallSiteImpact(
+            caller_file=caller_file,
+            caller_line=call_line,
+            callee_qualified=bc.name,
+            reason=f"calls removed symbol '{bc.name}'",
+        )
+
+    if ct == ChangeType.REMOVED_METHOD:
+        method_name = bc.name.split(".")[-1]
+        if isinstance(node.func, ast.Attribute) and node.func.attr == method_name:
+            return CallSiteImpact(
+                caller_file=caller_file,
+                caller_line=call_line,
+                callee_qualified=bc.name,
+                reason=f"calls potentially-removed method '{bc.name}'",
+            )
+
+    if ct == ChangeType.REMOVED_PARAMETER:
+        removed_param = _extract_removed_param_name(bc.description)
+        if removed_param:
+            uses_removed = any(kw.arg == removed_param for kw in node.keywords)
+            if uses_removed:
+                return CallSiteImpact(
+                    caller_file=caller_file,
+                    caller_line=call_line,
+                    callee_qualified=bc.name,
+                    reason=f"passes removed keyword argument '{removed_param}'",
+                )
+
+    if ct == ChangeType.CHANGED_PARAM_POSITION:
+        pos_args = [a for a in node.args if not isinstance(a, ast.Starred)]
+        if len(pos_args) >= 2:
+            return CallSiteImpact(
+                caller_file=caller_file,
+                caller_line=call_line,
+                callee_qualified=bc.name,
+                reason=f"uses positional args that may break due to reordered parameters in '{bc.name}'",
+            )
+
+    return None
+
+
 def _find_call_impacts(
     tree: ast.Module,
     caller_file: str,
@@ -208,7 +278,6 @@ def _find_call_impacts(
     # Build a lookup: original_name → list[BreakingChange]
     breaks_by_symbol: dict[str, list[BreakingChange]] = {}
     for bc in breaking_changes:
-        # bc.name is "func_name" or "Class.method" — we key on the top-level name.
         top = bc.name.split(".")[0]
         breaks_by_symbol.setdefault(top, []).append(bc)
 
@@ -218,8 +287,6 @@ def _find_call_impacts(
         if orig_name in breaks_by_symbol:
             local_to_breaks[local_name] = breaks_by_symbol[orig_name]
 
-    # Also resolve module_alias.symbol calls (e.g. ``foo.bar(...)``)
-    # We check Attribute nodes where .value.id ∈ module_aliases.
     has_module_import = bool(module_aliases)
 
     if not local_to_breaks and not has_module_import:
@@ -231,22 +298,7 @@ def _find_call_impacts(
         if not isinstance(node, ast.Call):
             continue
 
-        func_local: str | None = None
-        func_orig: str | None = None  # original symbol name
-
-        func_node = node.func
-        if isinstance(func_node, ast.Name):
-            func_local = func_node.id
-            func_orig = imported_names.get(func_local)
-        elif (
-            isinstance(func_node, ast.Attribute)
-            and isinstance(func_node.value, ast.Name)
-            and func_node.value.id in module_aliases
-        ):
-            # module_alias.symbol(...)
-            func_orig = func_node.attr
-            func_local = func_orig
-
+        func_orig = _resolve_call_target(node, imported_names, module_aliases)
         if func_orig is None:
             continue
 
@@ -257,59 +309,9 @@ def _find_call_impacts(
         call_line: int = getattr(node, "lineno", 0)
 
         for bc in bcs:
-            ct = bc.change_type
-
-            if ct in (ChangeType.REMOVED_FUNCTION, ChangeType.REMOVED_CLASS):
-                impacts.append(
-                    CallSiteImpact(
-                        caller_file=caller_file,
-                        caller_line=call_line,
-                        callee_qualified=bc.name,
-                        reason=f"calls removed symbol '{bc.name}'",
-                    )
-                )
-
-            elif ct == ChangeType.REMOVED_METHOD:
-                # We cannot reliably track method receivers without type info;
-                # flag the call if the method name matches any attribute access.
-                method_name = bc.name.split(".")[-1]
-                if isinstance(func_node, ast.Attribute) and func_node.attr == method_name:
-                    impacts.append(
-                        CallSiteImpact(
-                            caller_file=caller_file,
-                            caller_line=call_line,
-                            callee_qualified=bc.name,
-                            reason=f"calls potentially-removed method '{bc.name}'",
-                        )
-                    )
-
-            elif ct == ChangeType.REMOVED_PARAMETER:
-                removed_param = _extract_removed_param_name(bc.description)
-                if removed_param:
-                    for kw in node.keywords:
-                        if kw.arg == removed_param:
-                            impacts.append(
-                                CallSiteImpact(
-                                    caller_file=caller_file,
-                                    caller_line=call_line,
-                                    callee_qualified=bc.name,
-                                    reason=f"passes removed keyword argument '{removed_param}'",
-                                )
-                            )
-                            break
-
-            elif ct == ChangeType.CHANGED_PARAM_POSITION:
-                # Positional calls with ≥2 args may be reordered.
-                pos_args = [a for a in node.args if not isinstance(a, ast.Starred)]
-                if len(pos_args) >= 2:
-                    impacts.append(
-                        CallSiteImpact(
-                            caller_file=caller_file,
-                            caller_line=call_line,
-                            callee_qualified=bc.name,
-                            reason=(f"uses positional args that may break due to reordered parameters in '{bc.name}'"),
-                        )
-                    )
+            impact = _check_single_breaking_change(bc, node, caller_file, call_line)
+            if impact is not None:
+                impacts.append(impact)
 
     return impacts
 
