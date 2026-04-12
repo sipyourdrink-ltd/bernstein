@@ -187,9 +187,7 @@ def _process_simple_event(
     role = "system" if event_type == "system" else "user"
     content = str(msg.get("message", msg.get("content", "")))
     if content:
-        messages.append(
-            ConversationMessage(role=role, content=content, timestamp=ts, turn_number=turn)
-        )
+        messages.append(ConversationMessage(role=role, content=content, timestamp=ts, turn_number=turn))
         return turn + 1
     return turn
 
@@ -209,16 +207,17 @@ def _process_assistant_event(
 
     text_content = _extract_text_from_content(content_raw)
     if text_content:
-        messages.append(
-            ConversationMessage(role="assistant", content=text_content, timestamp=ts, turn_number=turn)
-        )
+        messages.append(ConversationMessage(role="assistant", content=text_content, timestamp=ts, turn_number=turn))
         turn += 1
 
     for tool_name, tool_input in _extract_tool_uses(content_raw):
         messages.append(
             ConversationMessage(
-                role="assistant", content=tool_input, timestamp=ts,
-                tool_name=tool_name, turn_number=turn,
+                role="assistant",
+                content=tool_input,
+                timestamp=ts,
+                tool_name=tool_name,
+                turn_number=turn,
             )
         )
         turn += 1

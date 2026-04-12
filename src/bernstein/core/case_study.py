@@ -86,7 +86,11 @@ def _append_header(sections: list[str], title: str, config: CaseStudyConfig) -> 
 
 
 def _append_summary_and_problem(
-    sections: list[str], total_tasks: int, completed: int, failed: int, goal: str,
+    sections: list[str],
+    total_tasks: int,
+    completed: int,
+    failed: int,
+    goal: str,
 ) -> None:
     """Append executive summary and problem statement sections."""
     sections.append("## Executive Summary")
@@ -104,7 +108,10 @@ def _append_summary_and_problem(
 
 
 def _append_approach(
-    sections: list[str], agents_used: set[str], models_used: set[str], total_tasks: int,
+    sections: list[str],
+    agents_used: set[str],
+    models_used: set[str],
+    total_tasks: int,
 ) -> None:
     """Append approach section."""
     sections.append("## Approach")
@@ -140,7 +147,11 @@ def _append_results(
 
 
 def _append_lessons(
-    sections: list[str], failed: int, total_cost: float, total_tasks: int, agents_used: set[str],
+    sections: list[str],
+    failed: int,
+    total_cost: float,
+    total_tasks: int,
+    agents_used: set[str],
 ) -> None:
     """Append lessons learned section."""
     sections.append("## Lessons Learned")
