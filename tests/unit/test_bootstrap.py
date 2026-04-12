@@ -11,7 +11,6 @@ from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.bootstrap import bootstrap_from_goal, bootstrap_from_seed
 from bernstein.core.seed import SeedConfig
 from bernstein.core.server_launch import BootstrapResult
@@ -98,7 +97,7 @@ def test_bootstrap_from_seed_returns_bootstrap_result(tmp_path: Path, invariants
         stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=None))
         stack.enter_context(patch("bernstein.core.sync.sync_backlog_to_server", return_value=sync_result))
         mock_inject = stack.enter_context(patch("bernstein.core.orchestration.bootstrap._inject_manager_task", return_value="mgr-1"))
-        stack.enter_context(patch("bernstein.core.cost.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
+        stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_spawner", return_value=222))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_watchdog", return_value=333))
         result = bootstrap_from_seed(tmp_path / "bernstein.yaml", tmp_path)
@@ -135,7 +134,7 @@ def test_bootstrap_from_seed_skips_manager_when_backlog_tasks_exist(
         stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=None))
         stack.enter_context(patch("bernstein.core.sync.sync_backlog_to_server", return_value=sync_result))
         mock_inject = stack.enter_context(patch("bernstein.core.orchestration.bootstrap._inject_manager_task"))
-        stack.enter_context(patch("bernstein.core.cost.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
+        stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_spawner", return_value=222))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_watchdog", return_value=333))
         result = bootstrap_from_seed(tmp_path / "bernstein.yaml", tmp_path)
@@ -198,7 +197,7 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
         stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=None))
         stack.enter_context(patch("bernstein.core.sync.sync_backlog_to_server", return_value=sync_result))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._inject_manager_task", return_value="mgr-1"))
-        stack.enter_context(patch("bernstein.core.cost.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
+        stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_spawner", return_value=222))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_watchdog", return_value=333))
         result = bootstrap_from_goal("Ship the parser", tmp_path, cli="auto")
