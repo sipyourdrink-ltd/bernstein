@@ -1,12 +1,7 @@
-"""Sanitize untrusted input for safe logging."""
+"""Backward-compatibility shim — moved to bernstein.core.security.sanitize."""
+from bernstein.core.security.sanitize import *  # noqa: F401,F403
 
-from __future__ import annotations
-
-
-def sanitize_log(value: str) -> str:
-    """Remove newlines and carriage returns from a value before logging.
-
-    Prevents log injection attacks where user-controlled input could forge
-    log entries by embedding newline characters.
-    """
-    return value.replace("\n", "\\n").replace("\r", "\\r")
+import importlib as _importlib
+_real = _importlib.import_module("bernstein.core.security.sanitize")
+def __getattr__(name: str):
+    return getattr(_real, name)
