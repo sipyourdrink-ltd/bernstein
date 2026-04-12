@@ -277,6 +277,65 @@ def _validate_enum(value: object, allowed: list[str], path: str, errors: list[st
         errors.append(f"{path}: invalid value {value!r}, must be one of {allowed}")
 
 
+_STEP_ENUM_FIELDS: list[tuple[str, list[str]]] = [
+    ("role", KNOWN_ROLES),
+    ("scope", SCOPE_VALUES),
+    ("complexity", COMPLEXITY_VALUES),
+    ("model", MODEL_VALUES),
+    ("effort", EFFORT_VALUES),
+]
+
+
+def _validate_step_enums(step: dict[str, Any], path: str, errors: list[str]) -> None:
+    """Validate enum-typed fields on a step."""
+    for field_name, allowed in _STEP_ENUM_FIELDS:
+        if field_name in step and isinstance(step[field_name], str):
+            _validate_enum(step[field_name], allowed, f"{path}.{field_name}", errors)
+
+
+def _validate_step_priority(step: dict[str, Any], path: str, errors: list[str]) -> None:
+    """Validate the optional priority field on a step."""
+    if "priority" not in step:
+        return
+    if isinstance(step["priority"], int):
+        if not (1 <= step["priority"] <= 5):
+            errors.append(f"{path}.priority: must be between 1 and 5, got {step['priority']}")
+    else:
+        errors.append(f"{path}.priority: expected type integer, got {type(step['priority']).__name__}")
+
+
+def _validate_step_estimated_minutes(step: dict[str, Any], path: str, errors: list[str]) -> None:
+    """Validate the optional estimated_minutes field on a step."""
+    if "estimated_minutes" not in step:
+        return
+    if isinstance(step["estimated_minutes"], int):
+        if step["estimated_minutes"] < 1:
+            errors.append(f"{path}.estimated_minutes: must be >= 1")
+    else:
+        errors.append(
+            f"{path}.estimated_minutes: expected type integer, got {type(step['estimated_minutes']).__name__}"
+        )
+
+
+def _validate_completion_signals(step: dict[str, Any], path: str, errors: list[str]) -> None:
+    """Validate the completion_signals array on a step."""
+    if "completion_signals" not in step:
+        return
+    signals = step["completion_signals"]
+    if not isinstance(signals, list):
+        errors.append(f"{path}.completion_signals: expected type array")
+        return
+    for k, sig in enumerate(signals):
+        sig_path = f"{path}.completion_signals[{k}]"
+        if not isinstance(sig, dict):
+            errors.append(f"{sig_path}: expected a mapping")
+            continue
+        if "type" not in sig:
+            errors.append(f"{sig_path}: missing required field 'type'")
+        elif sig["type"] not in COMPLETION_SIGNAL_TYPES:
+            _validate_enum(sig["type"], COMPLETION_SIGNAL_TYPES, f"{sig_path}.type", errors)
+
+
 def _validate_step(step: dict[str, Any], path: str, errors: list[str]) -> None:
     """Validate a single step dict."""
     if not isinstance(step, dict):
@@ -288,59 +347,14 @@ def _validate_step(step: dict[str, Any], path: str, errors: list[str]) -> None:
     if not has_title and not has_goal:
         errors.append(f"{path}: step must have a 'title' or 'goal' field")
 
-    if "role" in step and isinstance(step["role"], str):
-        _validate_enum(step["role"], KNOWN_ROLES, f"{path}.role", errors)
-
-    if "scope" in step and isinstance(step["scope"], str):
-        _validate_enum(step["scope"], SCOPE_VALUES, f"{path}.scope", errors)
-
-    if "complexity" in step and isinstance(step["complexity"], str):
-        _validate_enum(step["complexity"], COMPLEXITY_VALUES, f"{path}.complexity", errors)
-
-    if "model" in step and isinstance(step["model"], str):
-        _validate_enum(step["model"], MODEL_VALUES, f"{path}.model", errors)
-
-    if "effort" in step and isinstance(step["effort"], str):
-        _validate_enum(step["effort"], EFFORT_VALUES, f"{path}.effort", errors)
-
-    if "priority" in step:
-        if isinstance(step["priority"], int):
-            if not (1 <= step["priority"] <= 5):
-                errors.append(f"{path}.priority: must be between 1 and 5, got {step['priority']}")
-        else:
-            errors.append(f"{path}.priority: expected type integer, got {type(step['priority']).__name__}")
-
-    if "estimated_minutes" in step:
-        if isinstance(step["estimated_minutes"], int):
-            if step["estimated_minutes"] < 1:
-                errors.append(f"{path}.estimated_minutes: must be >= 1")
-        else:
-            errors.append(
-                f"{path}.estimated_minutes: expected type integer, got {type(step['estimated_minutes']).__name__}"
-            )
+    _validate_step_enums(step, path, errors)
+    _validate_step_priority(step, path, errors)
+    _validate_step_estimated_minutes(step, path, errors)
 
     if "files" in step and not isinstance(step["files"], list):
         errors.append(f"{path}.files: expected type array, got {type(step['files']).__name__}")
 
-    if "completion_signals" in step:
-        signals = step["completion_signals"]
-        if not isinstance(signals, list):
-            errors.append(f"{path}.completion_signals: expected type array")
-        else:
-            for k, sig in enumerate(signals):
-                sig_path = f"{path}.completion_signals[{k}]"
-                if not isinstance(sig, dict):
-                    errors.append(f"{sig_path}: expected a mapping")
-                    continue
-                if "type" not in sig:
-                    errors.append(f"{sig_path}: missing required field 'type'")
-                elif sig["type"] not in COMPLETION_SIGNAL_TYPES:
-                    _validate_enum(
-                        sig["type"],
-                        COMPLETION_SIGNAL_TYPES,
-                        f"{sig_path}.type",
-                        errors,
-                    )
+    _validate_completion_signals(step, path, errors)
 
 
 def _validate_stage(stage: dict[str, Any], idx: int, errors: list[str]) -> None:
@@ -410,18 +424,23 @@ def validate_plan(plan_data: dict[str, Any]) -> list[str]:
         errors.append("'context_files' must be an array")
 
     if "repos" in plan_data:
-        if not isinstance(plan_data["repos"], list):
-            errors.append("'repos' must be an array")
-        else:
-            for i, repo in enumerate(plan_data["repos"]):
-                repo_path = f"repos[{i}]"
-                if not isinstance(repo, dict):
-                    errors.append(f"{repo_path}: expected a mapping")
-                    continue
-                if "path" not in repo or not repo["path"]:
-                    errors.append(f"{repo_path}: missing required field 'path'")
+        _validate_repos(plan_data["repos"], errors)
 
     return errors
+
+
+def _validate_repos(repos: Any, errors: list[str]) -> None:
+    """Validate the optional repos array in a plan."""
+    if not isinstance(repos, list):
+        errors.append("'repos' must be an array")
+        return
+    for i, repo in enumerate(repos):
+        repo_path = f"repos[{i}]"
+        if not isinstance(repo, dict):
+            errors.append(f"{repo_path}: expected a mapping")
+            continue
+        if "path" not in repo or not repo["path"]:
+            errors.append(f"{repo_path}: missing required field 'path'")
 
 
 # ---------------------------------------------------------------------------

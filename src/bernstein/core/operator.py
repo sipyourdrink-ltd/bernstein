@@ -197,6 +197,78 @@ class RunReconciler:
         )
         logger.info("Run %s/%s initialized with %d steps", ns, name, total_steps)
 
+    def _process_running_step(
+        self,
+        ns: str,
+        step_st: dict[str, Any],
+        max_retries: int,
+    ) -> tuple[int, int, int, bool]:
+        """Handle a step in Running phase. Returns (completed, failed, active, stage_failed) deltas."""
+        job_name = step_st.get("jobName", "")
+        if not job_name:
+            return 0, 0, 0, False
+        job_phase = self._check_job(ns, job_name)
+        if job_phase == "succeeded":
+            step_st["phase"] = "Completed"
+            step_st["completionTime"] = _now_iso()
+            return 1, 0, 0, False
+        if job_phase == "failed":
+            retries = step_st.get("retries", 0)
+            if retries < max_retries:
+                step_st["retries"] = retries + 1
+                step_st["phase"] = "Pending"
+                step_st["error"] = "Job failed, retrying"
+                return 0, 0, 0, False
+            step_st["phase"] = "Failed"
+            step_st["completionTime"] = _now_iso()
+            step_st["error"] = "Max retries exceeded"
+            return 0, 1, 0, True
+        return 0, 0, 1, False
+
+    def _launch_pending_step(
+        self,
+        ns: str,
+        name: str,
+        si: int,
+        ti: int,
+        plan_stages: list[dict[str, Any]],
+        plan_spec: dict[str, Any],
+        spec: dict[str, Any],
+        step_st: dict[str, Any],
+    ) -> None:
+        """Launch a job for a Pending step."""
+        plan_step = plan_stages[si]["steps"][ti]
+        job_name_str = _job_name(name, si, ti)
+        self._create_agent_job(ns, name, job_name_str, plan_step, plan_spec, spec)
+        step_st["phase"] = "Running"
+        step_st["jobName"] = job_name_str
+        step_st["startTime"] = _now_iso()
+
+    def _update_stage_phase(
+        self, stage_st: dict[str, Any], stage_done: bool, stage_failed: bool, deps_met: bool
+    ) -> None:
+        """Update a stage's phase based on its steps' completion state."""
+        if stage_done and not stage_failed:
+            stage_st["phase"] = "Completed"
+            stage_st["completionTime"] = _now_iso()
+        elif stage_failed:
+            stage_st["phase"] = "Failed"
+            stage_st["completionTime"] = _now_iso()
+        elif stage_st["phase"] == "Pending" and deps_met:
+            stage_st["phase"] = "Running"
+            stage_st["startTime"] = _now_iso()
+
+    @staticmethod
+    def _determine_run_phase(all_done: bool, failed: int, active_jobs: int, stages_status: list[dict[str, Any]]) -> str:
+        """Compute overall run phase from aggregate step counts."""
+        if all_done and failed == 0:
+            return "Completed"
+        if all_done or (failed > 0 and active_jobs == 0):
+            has_pending = any(step.get("phase") == "Pending" for ss in stages_status for step in ss.get("steps", []))
+            if not has_pending:
+                return "Failed" if failed > 0 else "Completed"
+        return "Running"
+
     def _advance_run(
         self,
         ns: str,
@@ -240,55 +312,21 @@ class RunReconciler:
                 all_done = False
 
                 if step_phase == "Running":
-                    job_name = step_st.get("jobName", "")
-                    if job_name:
-                        job_phase = self._check_job(ns, job_name)
-                        if job_phase == "succeeded":
-                            step_st["phase"] = "Completed"
-                            step_st["completionTime"] = _now_iso()
-                            completed += 1
-                        elif job_phase == "failed":
-                            retries = step_st.get("retries", 0)
-                            if retries < max_retries:
-                                step_st["retries"] = retries + 1
-                                step_st["phase"] = "Pending"
-                                step_st["error"] = "Job failed, retrying"
-                            else:
-                                step_st["phase"] = "Failed"
-                                step_st["completionTime"] = _now_iso()
-                                step_st["error"] = "Max retries exceeded"
-                                failed += 1
-                                stage_failed = True
-                        else:
-                            active_jobs += 1
+                    c, f, a, sf = self._process_running_step(ns, step_st, max_retries)
+                    completed += c
+                    failed += f
+                    active_jobs += a
+                    if sf:
+                        stage_failed = True
                     continue
 
                 if step_phase == "Pending":
-                    plan_step = plan_stages[si]["steps"][ti]
-                    job_name_str = _job_name(name, si, ti)
-                    self._create_agent_job(ns, name, job_name_str, plan_step, plan_spec, spec)
-                    step_st["phase"] = "Running"
-                    step_st["jobName"] = job_name_str
-                    step_st["startTime"] = _now_iso()
+                    self._launch_pending_step(ns, name, si, ti, plan_stages, plan_spec, spec, step_st)
                     active_jobs += 1
 
-            if stage_done and not stage_failed:
-                stage_st["phase"] = "Completed"
-                stage_st["completionTime"] = _now_iso()
-            elif stage_failed:
-                stage_st["phase"] = "Failed"
-                stage_st["completionTime"] = _now_iso()
-            elif stage_st["phase"] == "Pending" and deps_met:
-                stage_st["phase"] = "Running"
-                stage_st["startTime"] = _now_iso()
+            self._update_stage_phase(stage_st, stage_done, stage_failed, deps_met)
 
-        run_phase = "Running"
-        if all_done and failed == 0:
-            run_phase = "Completed"
-        elif all_done or (failed > 0 and active_jobs == 0):
-            has_pending = any(step.get("phase") == "Pending" for ss in stages_status for step in ss.get("steps", []))
-            if not has_pending:
-                run_phase = "Failed" if failed > 0 else "Completed"
+        run_phase = self._determine_run_phase(all_done, failed, active_jobs, stages_status)
 
         patch: dict[str, Any] = {
             "phase": run_phase,
