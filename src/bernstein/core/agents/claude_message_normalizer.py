@@ -64,7 +64,7 @@ class NormalizedMessage:
 
 # Pattern for extracting cost/token info from Claude output.
 _COST_PATTERN = re.compile(
-    r"(?:cost|usage)[^\n]*?(\d+)\s*(?:input|prompt)[^\n]*?(\d+)\s*(?:output|completion)",
+    r"(?:cost|usage)[^\n]{0,200}(\d+)\s{0,10}(?:input|prompt)[^\n]{0,200}(\d+)\s{0,10}(?:output|completion)",
     re.IGNORECASE,
 )
 

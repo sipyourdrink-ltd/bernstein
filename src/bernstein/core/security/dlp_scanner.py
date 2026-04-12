@@ -379,8 +379,8 @@ _COMMON_ALLOWLIST: list[re.Pattern[str]] = [
     re.compile(r"(?i)test@|user@|admin@|noreply@"),
     re.compile(r"(?i)placeholder|changeme|your[-_]?api[-_]?key|xxxx"),
     re.compile(r"(?i)localhost|127\.0\.0\.1|0\.0\.0\.0"),
-    re.compile(r"#.*copyright.*author"),  # doc templates
-    re.compile(r"(?i)bernstein[^\n]*copyright|copyright[^\n]*bernstein"),  # project's own header
+    re.compile(r"#[^\n]{0,200}copyright[^\n]{0,200}author"),  # doc templates
+    re.compile(r"(?i)bernstein[^\n]{0,200}copyright|copyright[^\n]{0,200}bernstein"),  # project's own header
 ]
 
 

@@ -92,7 +92,7 @@ class DecisionGraph:
         return PermissionDecision(DecisionType.ALLOW, "All checks passed or bypassed")
 
 
-_REGEX_RULE_RE = re.compile(r"^(?P<field>[a-z_]+)\s*(?P<operator>!~|=~)\s*/(?P<pattern>.+)/$")
+_REGEX_RULE_RE = re.compile(r"^(?P<field>[a-z_]+)[ \t]*(?P<operator>!~|=~)[ \t]*/(?P<pattern>.+)/$")
 _COMPARE_RULE_RE = re.compile(r"^(?P<field>[a-z_]+)\s*(?P<operator>==|!=|>=|<=|>|<)\s*(?P<value>.+)$")
 
 

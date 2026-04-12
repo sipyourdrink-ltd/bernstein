@@ -143,6 +143,6 @@ class CompletionBudget:
         normalized = re.sub(r"^\[RETRY \d+\]\s*", "", normalized)
         normalized = re.sub(r"^\[FIX \d+\]\s*", "", normalized)
         normalized = re.sub(r"^Fix:\s*", "", normalized)
-        normalized = re.sub(r"[ \t]+\((?:janitor|judge retry \d+)\)$", "", normalized)
+        normalized = re.sub(r"[ \t]{1,50}\((?:janitor|judge retry \d+)\)$", "", normalized)
         normalized = re.sub(r"\s+", " ", normalized).strip()
         return normalized or title.strip()

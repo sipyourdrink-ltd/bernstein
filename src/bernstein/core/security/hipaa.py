@@ -134,7 +134,7 @@ _PHI_PATTERNS: list[tuple[PHICategory, re.Pattern[str], str]] = [
     ),
     (
         PHICategory.ACCOUNT_NUMBER,
-        re.compile(r"\b(?:Account|Acct)[\s.:#]*(?:No|Num|Number)?\.?[\s:]*\d{6,16}\b", re.IGNORECASE),
+        re.compile(r"\b(?:Account|Acct)[\s.:#]{0,10}(?:No|Num|Number)?\.?[\s:]{0,10}\d{6,16}\b", re.IGNORECASE),
         "Account Number",
     ),
     (

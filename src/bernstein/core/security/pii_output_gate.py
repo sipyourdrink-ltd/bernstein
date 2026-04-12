@@ -188,7 +188,7 @@ _ALLOWLIST_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"(?i)test@|user@|admin@|noreply@|no-reply@"),
     re.compile(r"(?i)placeholder|changeme|your[-_]?api[-_]?key|xxxx"),
     re.compile(r"(?i)localhost|127\.0\.0\.1|0\.0\.0\.0"),
-    re.compile(r"(?i)password[^\n]*=[^\n]*['\"](?:test|password|changeme|secret|admin)['\"]"),
+    re.compile(r"(?i)password[^\n]{0,200}=[^\n]{0,200}['\"](?:test|password|changeme|secret|admin)['\"]"),
 ]
 _DEFAULT_ALLOWLIST_PREFIXES: tuple[str, ...] = ("FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST")
 

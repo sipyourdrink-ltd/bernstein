@@ -33,7 +33,7 @@ _GOOGLE_SECTION_RE = re.compile(
     re.MULTILINE,
 )
 # Google param line: "    name: description"
-_GOOGLE_PARAM_RE = re.compile(r"^\s{4,}(\w+)[ \t]*(?:\([^)]*\))?[ \t]*:", re.MULTILINE)
+_GOOGLE_PARAM_RE = re.compile(r"^[ \t]{4,20}(\w+)[ \t]*(?:\([^)]*\))?[ \t]*:", re.MULTILINE)
 
 # NumPy: "Parameters\n----------"
 _NUMPY_SECTION_RE = re.compile(

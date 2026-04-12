@@ -140,7 +140,7 @@ _POISON_RULES: list[tuple[re.Pattern[str], int, str]] = [
     (re.compile(r"https?://(?!localhost|127\.0\.0\.1)", re.IGNORECASE), 1, "external URL in lesson content"),
     # --- Shell / code execution bait ---
     (
-        re.compile(r"`{3,}.*?(bash|sh|python|exec|eval|os\.system)", re.IGNORECASE | re.DOTALL),
+        re.compile(r"`{3,}[^\n]{0,100}(bash|sh|python|exec|eval|os\.system)", re.IGNORECASE),
         2,
         "embedded shell code block",
     ),
