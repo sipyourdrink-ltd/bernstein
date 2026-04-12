@@ -199,9 +199,9 @@ class TestHistoricalCalibration:
         assert est.timeout_s == 5400.0
         assert est.confidence == 0.8
 
-    def test_no_historical_gives_lower_confidence(self) -> None:
+    def test_no_historical_gives_lower_confidence(self, tmp_path: Path) -> None:
         task = _make_task()
-        est = estimate_timeout(task, model="sonnet", historical_data=None)
+        est = estimate_timeout(task, model="sonnet", historical_data=None, archive_path=tmp_path / "nonexistent.jsonl")
         assert est.confidence == 0.5
 
 
