@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from bernstein.core.plan_schema import (
     COMPLETION_SIGNAL_TYPES,
@@ -203,7 +203,7 @@ class TestValidatePlanMissingFields:
         assert any("title" in e or "goal" in e for e in errors)
 
     def test_not_a_dict(self) -> None:
-        errors = validate_plan("not a dict")  # type: ignore[arg-type]
+        errors = validate_plan(cast(Any, "not a dict"))
         assert errors == ["Plan must be a YAML mapping (dict)"]
 
     def test_stage_not_a_dict(self) -> None:
