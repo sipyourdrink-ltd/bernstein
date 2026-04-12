@@ -264,6 +264,10 @@ def _p(
 _F = ComplianceFramework
 _S = PolicySeverity
 
+# SOC 2 control ID constants
+_CC6_1 = "CC6.1"
+_CC7_2 = "CC7.2"
+
 # ---------------------------------------------------------------------------
 # SOC 2 — Trust Service Criteria
 # ---------------------------------------------------------------------------
@@ -273,7 +277,7 @@ _SOC2_POLICIES: list[CompliancePolicy] = [
         "soc2-cc6-01",
         "Logical Access Controls",
         _F.SOC2,
-        "CC6.1",
+        _CC6_1,
         "Access to systems is restricted using RBAC and MFA.",
         _S.CRITICAL,
         """package bernstein.soc2.cc6_01
@@ -289,7 +293,7 @@ allow {
         "soc2-cc6-02",
         "Credential Rotation",
         _F.SOC2,
-        "CC6.1",
+        _CC6_1,
         "Secrets and credentials are rotated at least every 90 days.",
         _S.HIGH,
         """package bernstein.soc2.cc6_02
@@ -302,7 +306,7 @@ allow { input.secrets_rotation_days <= 90 }""",
         "soc2-cc6-03",
         "Session Timeout",
         _F.SOC2,
-        "CC6.1",
+        _CC6_1,
         "Operator sessions expire after at most 60 minutes of inactivity.",
         _S.MEDIUM,
         """package bernstein.soc2.cc6_03
@@ -315,7 +319,7 @@ allow { input.session_timeout_minutes <= 60 }""",
         "soc2-cc6-04",
         "Agent Token Expiry",
         _F.SOC2,
-        "CC6.1",
+        _CC6_1,
         "Agent tokens expire within 24 hours.",
         _S.HIGH,
         """package bernstein.soc2.cc6_04
@@ -328,7 +332,7 @@ allow { input.agent_token_expiry_hours <= 24 }""",
         "soc2-cc6-05",
         "Minimum Credential Length",
         _F.SOC2,
-        "CC6.1",
+        _CC6_1,
         "Passwords and passphrases must be at least 12 characters.",
         _S.MEDIUM,
         """package bernstein.soc2.cc6_05
@@ -354,7 +358,7 @@ allow { input.audit_logging == true }""",
         "soc2-cc7-02",
         "Tamper-Evident Audit Log",
         _F.SOC2,
-        "CC7.2",
+        _CC7_2,
         "Audit log entries are HMAC-chained so tampering is detectable.",
         _S.HIGH,
         """package bernstein.soc2.cc7_02
@@ -370,7 +374,7 @@ allow {
         "soc2-cc7-03",
         "Audit Log Retention",
         _F.SOC2,
-        "CC7.2",
+        _CC7_2,
         "Audit logs are retained for at least 365 days.",
         _S.MEDIUM,
         """package bernstein.soc2.cc7_03
@@ -383,7 +387,7 @@ allow { input.audit_retention_days >= 365 }""",
         "soc2-cc7-04",
         "Log Integrity Protection",
         _F.SOC2,
-        "CC7.2",
+        _CC7_2,
         "Log files are protected against unauthorised modification.",
         _S.HIGH,
         """package bernstein.soc2.cc7_04

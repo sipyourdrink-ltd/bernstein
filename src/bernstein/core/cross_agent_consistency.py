@@ -304,6 +304,79 @@ def _check_error_codes(
     return issues
 
 
+def _build_endpoint_index(
+    implementations: list[AgentImplementation],
+) -> dict[str, list[tuple[str, ApiContract]]]:
+    """Index implementations by endpoint."""
+    endpoint_index: dict[str, list[tuple[str, ApiContract]]] = {}
+    for impl in implementations:
+        for contract in impl.contracts:
+            endpoint_index.setdefault(contract.endpoint, []).append((impl.agent_id, contract))
+    return endpoint_index
+
+
+def _elect_producer(
+    endpoint: str,
+    entries: list[tuple[str, ApiContract]],
+    implementations: list[AgentImplementation],
+) -> tuple[str, ApiContract]:
+    """Elect the producer for an endpoint (prefer backend role)."""
+    for impl in implementations:
+        for contract in impl.contracts:
+            if contract.endpoint == endpoint and impl.role == "backend":
+                return impl.agent_id, contract
+    return entries[0]
+
+
+def _check_endpoint_consistency(
+    endpoint: str,
+    entries: list[tuple[str, ApiContract]],
+    implementations: list[AgentImplementation],
+    all_issues: list[ConsistencyIssue],
+) -> None:
+    """Check method, schema, and error-code consistency for one endpoint."""
+    methods = {contract.method for _, contract in entries}
+    if len(methods) > 1:
+        agent_ids = [aid for aid, _ in entries]
+        all_issues.append(
+            ConsistencyIssue(
+                issue_type=ConsistencyIssueType.METHOD_MISMATCH,
+                endpoint=endpoint,
+                method=", ".join(sorted(methods)),
+                description=(f"Endpoint '{endpoint}' has conflicting HTTP methods across agents: {sorted(methods)}"),
+                agents_involved=agent_ids,
+            )
+        )
+        return
+
+    method = next(iter(methods))
+    producer_id, producer_contract = _elect_producer(endpoint, entries, implementations)
+
+    for consumer_id, consumer_contract in entries:
+        if consumer_id == producer_id:
+            continue
+        all_issues.extend(
+            _check_schema_compatibility(
+                endpoint,
+                method,
+                producer_contract,
+                consumer_contract,
+                producer_id,
+                consumer_id,
+            )
+        )
+        all_issues.extend(
+            _check_error_codes(
+                endpoint,
+                method,
+                producer_contract,
+                consumer_contract,
+                producer_id,
+                consumer_id,
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -332,84 +405,17 @@ def check_consistency(implementations: list[AgentImplementation]) -> Consistency
         logger.debug("cross_agent_consistency: fewer than 2 implementations — nothing to compare")
         return ConsistencyReport(issues=[], checked_endpoints=0)
 
-    # Index: endpoint → list of (agent_id, contract)
-    endpoint_index: dict[str, list[tuple[str, ApiContract]]] = {}
-    for impl in implementations:
-        for contract in impl.contracts:
-            key = contract.endpoint
-            endpoint_index.setdefault(key, []).append((impl.agent_id, contract))
+    endpoint_index = _build_endpoint_index(implementations)
 
     all_issues: list[ConsistencyIssue] = []
     checked = 0
 
     for endpoint, entries in endpoint_index.items():
         if len(entries) < 2:
-            # Only one agent touches this endpoint — nothing to compare
             continue
 
         checked += 1
-
-        # --- 1. Method consistency check ---
-        methods = {contract.method for _, contract in entries}
-        if len(methods) > 1:
-            agent_ids = [aid for aid, _ in entries]
-            all_issues.append(
-                ConsistencyIssue(
-                    issue_type=ConsistencyIssueType.METHOD_MISMATCH,
-                    endpoint=endpoint,
-                    method=", ".join(sorted(methods)),
-                    description=(
-                        f"Endpoint '{endpoint}' has conflicting HTTP methods across agents: {sorted(methods)}"
-                    ),
-                    agents_involved=agent_ids,
-                )
-            )
-            # Cannot do schema checks without an agreed method
-            continue
-
-        method = next(iter(methods))
-
-        # --- 2. Elect producer ---
-        # Prefer the backend role; fall back to the first in the list.
-        producer_id: str | None = None
-        producer_contract: ApiContract | None = None
-        for impl in implementations:
-            for contract in impl.contracts:
-                if contract.endpoint == endpoint and impl.role == "backend":
-                    producer_id = impl.agent_id
-                    producer_contract = contract
-                    break
-            if producer_id:
-                break
-
-        if producer_id is None or producer_contract is None:
-            # No backend role — use first declarer as producer
-            producer_id, producer_contract = entries[0]
-
-        # --- 3. Schema and error-code checks for all consumers ---
-        for consumer_id, consumer_contract in entries:
-            if consumer_id == producer_id:
-                continue
-            all_issues.extend(
-                _check_schema_compatibility(
-                    endpoint,
-                    method,
-                    producer_contract,
-                    consumer_contract,
-                    producer_id,
-                    consumer_id,
-                )
-            )
-            all_issues.extend(
-                _check_error_codes(
-                    endpoint,
-                    method,
-                    producer_contract,
-                    consumer_contract,
-                    producer_id,
-                    consumer_id,
-                )
-            )
+        _check_endpoint_consistency(endpoint, entries, implementations, all_issues)
 
     logger.info(
         "cross_agent_consistency: checked %d endpoints, found %d issues",

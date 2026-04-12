@@ -101,10 +101,29 @@ jobs:
       - run: uv run pyright
       - run: uv run python scripts/run_tests.py -x
 
+  version-check:
+    name: Verify tag matches pyproject.toml
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Compare tag to pyproject.toml version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PKG=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Tag version:    $TAG"
+          echo "Package version: $PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match pyproject.toml version $PKG"
+            exit 1
+          fi
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, protocol-gate]
+    needs: [test, protocol-gate, version-check]
     timeout-minutes: 15
     permissions:
       contents: read

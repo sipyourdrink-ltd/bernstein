@@ -428,6 +428,100 @@ def _iso_date(ts: float) -> str:
     return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d")
 
 
+def _bucket_completions(
+    completion_records: list[dict[str, Any]],
+    bucket_key_fn: Any,
+) -> dict[str, list[bool]]:
+    """Bucket completion records into success/fail lists by time key."""
+    bucket_tasks: dict[str, list[bool]] = defaultdict(list)
+    for rec in completion_records:
+        ts = _parse_timestamp(rec.get("timestamp", 0))
+        if not ts:
+            continue
+        key = bucket_key_fn(ts)
+        success = rec.get("labels", {}).get("success", "True") == "True"
+        bucket_tasks[key].append(success)
+    return bucket_tasks
+
+
+def _bucket_gate_results(
+    gate_records: list[dict[str, Any]],
+    bucket_key_fn: Any,
+) -> dict[str, dict[str, dict[str, int]]]:
+    """Bucket gate results by time key and gate name."""
+    bucket_gates: dict[str, dict[str, dict[str, int]]] = defaultdict(
+        lambda: defaultdict(lambda: {"pass": 0, "total": 0})
+    )
+    for rec in gate_records:
+        ts = _parse_timestamp(rec.get("timestamp", 0))
+        if not ts:
+            continue
+        key = bucket_key_fn(ts)
+        gate = rec.get("gate") or "unknown"
+        result = rec.get("result", "pass")
+        bucket_gates[key][gate]["total"] += 1
+        if result == "pass":
+            bucket_gates[key][gate]["pass"] += 1
+    return bucket_gates
+
+
+def _bucket_quality_scores(
+    score_records: list[dict[str, Any]],
+    bucket_key_fn: Any,
+) -> dict[str, list[int]]:
+    """Bucket quality score records by time key."""
+    bucket_scores: dict[str, list[int]] = defaultdict(list)
+    for rec in score_records:
+        ts = _parse_timestamp(rec.get("timestamp", 0))
+        if not ts:
+            continue
+        key = bucket_key_fn(ts)
+        total = rec.get("total")
+        if isinstance(total, (int, float)):
+            bucket_scores[key].append(int(total))
+    return bucket_scores
+
+
+def _build_trend_entry(
+    key: str,
+    bucket_tasks: dict[str, list[bool]],
+    bucket_gates: dict[str, dict[str, dict[str, int]]],
+    bucket_scores: dict[str, list[int]],
+) -> dict[str, Any]:
+    """Build a single trend series entry for the given bucket key."""
+    tasks = bucket_tasks.get(key, [])
+    total_tasks = len(tasks)
+    success_tasks = sum(1 for s in tasks if s)
+    success_rate = success_tasks / total_tasks if total_tasks > 0 else None
+
+    gates = bucket_gates.get(key, {})
+    gate_pass_rates: dict[str, float] = {}
+    for gate, counts in gates.items():
+        if counts["total"] > 0:
+            gate_pass_rates[gate] = counts["pass"] / counts["total"]
+
+    scores = bucket_scores.get(key, [])
+    avg_score = sum(scores) / len(scores) if scores else None
+
+    try:
+        bucket_ts = datetime.strptime(key, "%Y-%m-%d").replace(tzinfo=UTC).timestamp()
+    except ValueError:
+        bucket_ts = 0.0
+
+    entry: dict[str, Any] = {
+        "date": key,
+        "ts": bucket_ts,
+        "tasks_total": total_tasks,
+        "tasks_success": success_tasks,
+        "gate_pass_rates": gate_pass_rates,
+    }
+    if success_rate is not None:
+        entry["success_rate"] = round(success_rate, 4)
+    if avg_score is not None:
+        entry["avg_quality_score"] = round(avg_score, 1)
+    return entry
+
+
 def _bucket_trend_series(
     completion_records: list[dict[str, Any]],
     gate_records: list[dict[str, Any]],
@@ -451,86 +545,16 @@ def _bucket_trend_series(
     def _bucket_key(ts: float) -> str:
         dt = datetime.fromtimestamp(ts, UTC)
         if granularity == "week":
-            # ISO week start (Monday)
             monday = dt - timedelta(days=dt.weekday())
             return monday.strftime("%Y-%m-%d")
         return dt.strftime("%Y-%m-%d")
 
-    # --- Completion success by bucket ---
-    bucket_tasks: dict[str, list[bool]] = defaultdict(list)
-    for rec in completion_records:
-        ts = _parse_timestamp(rec.get("timestamp", 0))
-        if not ts:
-            continue
-        key = _bucket_key(ts)
-        success = rec.get("labels", {}).get("success", "True") == "True"
-        bucket_tasks[key].append(success)
+    bucket_tasks = _bucket_completions(completion_records, _bucket_key)
+    bucket_gates = _bucket_gate_results(gate_records, _bucket_key)
+    bucket_scores = _bucket_quality_scores(score_records, _bucket_key)
 
-    # --- Gate pass/fail by bucket and gate name ---
-    bucket_gates: dict[str, dict[str, dict[str, int]]] = defaultdict(
-        lambda: defaultdict(lambda: {"pass": 0, "total": 0})
-    )
-    for rec in gate_records:
-        ts = _parse_timestamp(rec.get("timestamp", 0))
-        if not ts:
-            continue
-        key = _bucket_key(ts)
-        gate = rec.get("gate") or "unknown"
-        result = rec.get("result", "pass")
-        bucket_gates[key][gate]["total"] += 1
-        if result == "pass":
-            bucket_gates[key][gate]["pass"] += 1
-
-    # --- Quality scores by bucket ---
-    bucket_scores: dict[str, list[int]] = defaultdict(list)
-    for rec in score_records:
-        ts = _parse_timestamp(rec.get("timestamp", 0))
-        if not ts:
-            continue
-        key = _bucket_key(ts)
-        total = rec.get("total")
-        if isinstance(total, (int, float)):
-            bucket_scores[key].append(int(total))
-
-    # --- Merge all buckets ---
     all_keys = sorted(set(bucket_tasks) | set(bucket_gates) | set(bucket_scores))
-    series: list[dict[str, Any]] = []
-    for key in all_keys:
-        tasks = bucket_tasks.get(key, [])
-        total_tasks = len(tasks)
-        success_tasks = sum(1 for s in tasks if s)
-        success_rate = success_tasks / total_tasks if total_tasks > 0 else None
-
-        gates = bucket_gates.get(key, {})
-        gate_pass_rates: dict[str, float] = {}
-        for gate, counts in gates.items():
-            if counts["total"] > 0:
-                gate_pass_rates[gate] = counts["pass"] / counts["total"]
-
-        scores = bucket_scores.get(key, [])
-        avg_score = sum(scores) / len(scores) if scores else None
-
-        # Parse bucket date to a unix timestamp for the start of the bucket
-        try:
-            bucket_ts = datetime.strptime(key, "%Y-%m-%d").replace(tzinfo=UTC).timestamp()
-        except ValueError:
-            bucket_ts = 0.0
-
-        entry: dict[str, Any] = {
-            "date": key,
-            "ts": bucket_ts,
-            "tasks_total": total_tasks,
-            "tasks_success": success_tasks,
-            "gate_pass_rates": gate_pass_rates,
-        }
-        if success_rate is not None:
-            entry["success_rate"] = round(success_rate, 4)
-        if avg_score is not None:
-            entry["avg_quality_score"] = round(avg_score, 1)
-
-        series.append(entry)
-
-    return series
+    return [_build_trend_entry(key, bucket_tasks, bucket_gates, bucket_scores) for key in all_keys]
 
 
 @router.get("/quality/trend")

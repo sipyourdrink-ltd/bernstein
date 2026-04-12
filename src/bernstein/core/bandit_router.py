@@ -425,6 +425,90 @@ class ArmScore:
     total: float
 
 
+def _schema_version_matches(raw_data: dict[str, object], path: Path) -> bool:
+    """Check if stored schema version and feature dim match current values."""
+    stored_schema_version = raw_data.get("feature_schema_version")
+    stored_feature_dim = raw_data.get("feature_dim")
+    if stored_schema_version != FEATURE_SCHEMA_VERSION or stored_feature_dim != FEATURE_DIM:
+        logger.info(
+            "BanditPolicy: resetting %s because feature schema changed (stored=%s/%s current=%s/%s)",
+            path,
+            stored_schema_version,
+            stored_feature_dim,
+            FEATURE_SCHEMA_VERSION,
+            FEATURE_DIM,
+        )
+        return False
+    return True
+
+
+def _validate_raw_matrices(
+    raw_data: dict[str, object],
+    path: Path,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]] | None:
+    """Validate and extract raw matrix dicts from policy data.
+
+    Returns (raw_A_inv_by_arm, raw_A_by_arm, raw_b_by_arm) or None on invalid data.
+    """
+    raw_A_inv = raw_data.get("A_inv")
+    raw_A = raw_data.get("A")
+    raw_b = raw_data.get("b", {})
+
+    if raw_A_inv is None and raw_A is None:
+        logger.info("BanditPolicy: resetting %s because policy matrices are missing", path)
+        return None
+    if raw_A_inv is not None and not isinstance(raw_A_inv, dict):
+        logger.info("BanditPolicy: resetting %s because inverse matrices are invalid", path)
+        return None
+    if raw_A is not None and not isinstance(raw_A, dict):
+        logger.info("BanditPolicy: resetting %s because legacy matrices are invalid", path)
+        return None
+    if not isinstance(raw_b, dict):
+        logger.info("BanditPolicy: resetting %s because policy matrices are invalid", path)
+        return None
+
+    return (
+        cast("dict[str, object]", raw_A_inv or {}),
+        cast("dict[str, object]", raw_A or {}),
+        cast("dict[str, object]", raw_b),
+    )
+
+
+def _load_arm_matrices(
+    raw_data: dict[str, object],
+    arm_list: list[str],
+    path: Path,
+) -> tuple[dict[str, list[list[float]]], dict[str, list[float]], bool] | None:
+    """Load per-arm matrices from raw policy data.
+
+    Returns (loaded_A_inv, loaded_b, legacy_loaded) or None on validation failure.
+    """
+    validated = _validate_raw_matrices(raw_data, path)
+    if validated is None:
+        return None
+
+    raw_A_inv_by_arm, raw_A_by_arm, raw_b_by_arm = validated
+    loaded_A_inv: dict[str, list[list[float]]] = {}
+    loaded_b: dict[str, list[float]] = {}
+    legacy_loaded = False
+
+    for arm in arm_list:
+        raw_matrix = raw_A_inv_by_arm.get(arm)
+        raw_vector = raw_b_by_arm.get(arm)
+        if raw_matrix is None:
+            raw_matrix = raw_A_by_arm.get(arm)
+            if raw_matrix is not None:
+                legacy_loaded = True
+        if not _is_matrix(raw_matrix, FEATURE_DIM) or not _is_vector(raw_vector, FEATURE_DIM):
+            logger.info("BanditPolicy: resetting %s because arm %s has incompatible dimensions", path, arm)
+            return None
+        matrix = [[float(value) for value in row] for row in raw_matrix]
+        loaded_A_inv[arm] = matrix if arm in raw_A_inv_by_arm else _inv(matrix)
+        loaded_b[arm] = [float(value) for value in raw_vector]
+
+    return loaded_A_inv, loaded_b, legacy_loaded
+
+
 class BanditPolicy:
     """LinUCB contextual bandit for model selection.
 
@@ -559,17 +643,7 @@ class BanditPolicy:
             if not isinstance(data, dict):
                 return cls(arms=default_arms)
             raw_data = cast("dict[str, object]", data)
-            stored_schema_version = raw_data.get("feature_schema_version")
-            stored_feature_dim = raw_data.get("feature_dim")
-            if stored_schema_version != FEATURE_SCHEMA_VERSION or stored_feature_dim != FEATURE_DIM:
-                logger.info(
-                    "BanditPolicy: resetting %s because feature schema changed (stored=%s/%s current=%s/%s)",
-                    path,
-                    stored_schema_version,
-                    stored_feature_dim,
-                    FEATURE_SCHEMA_VERSION,
-                    FEATURE_DIM,
-                )
+            if not _schema_version_matches(raw_data, path):
                 return cls(arms=default_arms)
             raw_alpha = raw_data.get("alpha", _DEFAULT_ALPHA)
             raw_total_updates = raw_data.get("total_updates", 0)
@@ -578,40 +652,10 @@ class BanditPolicy:
                 alpha=float(raw_alpha) if isinstance(raw_alpha, int | float | str) else _DEFAULT_ALPHA,
             )
             policy.total_updates = int(raw_total_updates) if isinstance(raw_total_updates, int | float | str) else 0
-            raw_A_inv = raw_data.get("A_inv")
-            raw_A = raw_data.get("A")
-            raw_b = raw_data.get("b", {})
-            if raw_A_inv is None and raw_A is None:
-                logger.info("BanditPolicy: resetting %s because policy matrices are missing", path)
+            result = _load_arm_matrices(raw_data, policy.arms, path)
+            if result is None:
                 return cls(arms=default_arms)
-            if raw_A_inv is not None and not isinstance(raw_A_inv, dict):
-                logger.info("BanditPolicy: resetting %s because inverse matrices are invalid", path)
-                return cls(arms=default_arms)
-            if raw_A is not None and not isinstance(raw_A, dict):
-                logger.info("BanditPolicy: resetting %s because legacy matrices are invalid", path)
-                return cls(arms=default_arms)
-            if not isinstance(raw_b, dict):
-                logger.info("BanditPolicy: resetting %s because policy matrices are invalid", path)
-                return cls(arms=default_arms)
-            raw_A_inv_by_arm = cast("dict[str, object]", raw_A_inv or {})
-            raw_A_by_arm = cast("dict[str, object]", raw_A or {})
-            raw_b_by_arm = cast("dict[str, object]", raw_b)
-            loaded_A_inv: dict[str, list[list[float]]] = {}
-            loaded_b: dict[str, list[float]] = {}
-            legacy_loaded = False
-            for arm in policy.arms:
-                raw_matrix = raw_A_inv_by_arm.get(arm)
-                raw_vector = raw_b_by_arm.get(arm)
-                if raw_matrix is None:
-                    raw_matrix = raw_A_by_arm.get(arm)
-                    if raw_matrix is not None:
-                        legacy_loaded = True
-                if not _is_matrix(raw_matrix, FEATURE_DIM) or not _is_vector(raw_vector, FEATURE_DIM):
-                    logger.info("BanditPolicy: resetting %s because arm %s has incompatible dimensions", path, arm)
-                    return cls(arms=default_arms)
-                matrix = [[float(value) for value in row] for row in raw_matrix]
-                loaded_A_inv[arm] = matrix if arm in raw_A_inv_by_arm else _inv(matrix)
-                loaded_b[arm] = [float(value) for value in raw_vector]
+            loaded_A_inv, loaded_b, legacy_loaded = result
             policy._A_inv.clear()
             policy._A_inv.update(loaded_A_inv)
             policy._b.clear()

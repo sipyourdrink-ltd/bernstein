@@ -4,57 +4,27 @@ goal: 'Implement tickets from .sdd/backlog/open/ by priority (p0 first, then p1,
   task. Do NOT invent new tickets or create tasks beyond what is in the backlog files.
 
   '
-cli: auto
+cli: claude
 max_agents: 7
-adapters:
-  - qwen
-  - gemini
 role_model_policy:
-  manager:
-    cli: qwen
-    model: qwen3.6-plus
-    effort: max
-  architect:
-    cli: qwen
-    model: qwen3.6-plus
-    effort: max
-  security:
-    cli: gemini
-    model: gemini-3.1-pro-preview
-    effort: high
-  backend:
-    cli: qwen
-    model: qwen3.6-plus
-    effort: high
-  frontend:
-    cli: gemini
-    model: gemini-3.1-pro-preview
-    effort: high
-  qa:
-    cli: qwen
-    model: qwen3.6-plus
-    effort: high
-  reviewer:
-    cli: gemini
-    model: gemini-3.1-pro-preview
-    effort: high
-  docs:
-    cli: gemini
-    model: gemini-3.1-pro-preview
-    effort: high
-  devops:
-    cli: qwen
-    model: qwen3.6-plus
-    effort: high
+  manager: {model: opus, effort: max}
+  architect: {model: opus, effort: max}
+  security: {model: sonnet, effort: high}
+  backend: {model: sonnet, effort: high}
+  frontend: {model: sonnet, effort: high}
+  qa: {model: sonnet, effort: high}
+  reviewer: {model: sonnet, effort: high}
+  docs: {model: sonnet, effort: high}
+  devops: {model: sonnet, effort: high}
 budget: $0
-internal_llm_provider: gemini
-internal_llm_model: gemini-3.1-pro-preview
+internal_llm_provider: claude
+internal_llm_model: claude-sonnet-4-6
 evolution_enabled: false
 auto_decompose: false
 constraints:
 - Python 3.12+, strict typing (Pyright strict), Ruff linting
-- "File-based state in .sdd/ only \u2014 no databases"
-- "Short-lived agents only \u2014 no long-running sessions"
+- "File-based state in .sdd/ only — no databases"
+- "Short-lived agents only — no long-running sessions"
 - 'Run tests: uv run python scripts/run_tests.py -x (NOT pytest tests/ directly)'
 - Do NOT modify files outside your task scope
 - Commit with descriptive messages after completing each task

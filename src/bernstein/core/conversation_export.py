@@ -154,79 +154,95 @@ def parse_ndjson_log(log_path: Path) -> list[ConversationMessage]:
         ts_raw = msg.get("timestamp")
         ts: float | None = float(ts_raw) if ts_raw is not None else None
 
-        if event_type == "system":
-            content = str(msg.get("message", msg.get("content", "")))
-            if content:
-                messages.append(
-                    ConversationMessage(
-                        role="system",
-                        content=content,
-                        timestamp=ts,
-                        turn_number=turn,
-                    )
-                )
-                turn += 1
-
-        elif event_type == "human":
-            content = str(msg.get("message", msg.get("content", "")))
-            if content:
-                messages.append(
-                    ConversationMessage(
-                        role="user",
-                        content=content,
-                        timestamp=ts,
-                        turn_number=turn,
-                    )
-                )
-                turn += 1
-
-        elif event_type == "assistant":
-            message_data = msg.get("message", {})
-            if isinstance(message_data, dict):
-                content_raw = cast("dict[str, Any]", message_data).get("content", "")
-            else:
-                content_raw = msg.get("content", "")
-
-            text_content = _extract_text_from_content(content_raw)
-            if text_content:
-                messages.append(
-                    ConversationMessage(
-                        role="assistant",
-                        content=text_content,
-                        timestamp=ts,
-                        turn_number=turn,
-                    )
-                )
-                turn += 1
-
-            # Extract tool_use blocks as separate messages.
-            for tool_name, tool_input in _extract_tool_uses(content_raw):
-                messages.append(
-                    ConversationMessage(
-                        role="assistant",
-                        content=tool_input,
-                        timestamp=ts,
-                        tool_name=tool_name,
-                        turn_number=turn,
-                    )
-                )
-                turn += 1
-
-        elif event_type == "tool_result":
-            tool_name = msg.get("tool", msg.get("name"))
-            content = str(msg.get("content", msg.get("output", "")))
-            messages.append(
-                ConversationMessage(
-                    role="tool_result",
-                    content=content,
-                    timestamp=ts,
-                    tool_name=str(tool_name) if tool_name is not None else None,
-                    turn_number=turn,
-                )
-            )
-            turn += 1
+        turn = _process_ndjson_event(event_type, msg, ts, turn, messages)
 
     return messages
+
+
+def _process_ndjson_event(
+    event_type: str,
+    msg: dict[str, Any],
+    ts: float | None,
+    turn: int,
+    messages: list[ConversationMessage],
+) -> int:
+    """Process a single NDJSON event and append to messages. Returns updated turn."""
+    if event_type in ("system", "human"):
+        return _process_simple_event(event_type, msg, ts, turn, messages)
+    if event_type == "assistant":
+        return _process_assistant_event(msg, ts, turn, messages)
+    if event_type == "tool_result":
+        return _process_tool_result_event(msg, ts, turn, messages)
+    return turn
+
+
+def _process_simple_event(
+    event_type: str,
+    msg: dict[str, Any],
+    ts: float | None,
+    turn: int,
+    messages: list[ConversationMessage],
+) -> int:
+    """Process system or human event types."""
+    role = "system" if event_type == "system" else "user"
+    content = str(msg.get("message", msg.get("content", "")))
+    if content:
+        messages.append(ConversationMessage(role=role, content=content, timestamp=ts, turn_number=turn))
+        return turn + 1
+    return turn
+
+
+def _process_assistant_event(
+    msg: dict[str, Any],
+    ts: float | None,
+    turn: int,
+    messages: list[ConversationMessage],
+) -> int:
+    """Process assistant event type including tool_use blocks."""
+    message_data = msg.get("message", {})
+    if isinstance(message_data, dict):
+        content_raw = cast("dict[str, Any]", message_data).get("content", "")
+    else:
+        content_raw = msg.get("content", "")
+
+    text_content = _extract_text_from_content(content_raw)
+    if text_content:
+        messages.append(ConversationMessage(role="assistant", content=text_content, timestamp=ts, turn_number=turn))
+        turn += 1
+
+    for tool_name, tool_input in _extract_tool_uses(content_raw):
+        messages.append(
+            ConversationMessage(
+                role="assistant",
+                content=tool_input,
+                timestamp=ts,
+                tool_name=tool_name,
+                turn_number=turn,
+            )
+        )
+        turn += 1
+    return turn
+
+
+def _process_tool_result_event(
+    msg: dict[str, Any],
+    ts: float | None,
+    turn: int,
+    messages: list[ConversationMessage],
+) -> int:
+    """Process tool_result event type."""
+    tool_name = msg.get("tool", msg.get("name"))
+    content = str(msg.get("content", msg.get("output", "")))
+    messages.append(
+        ConversationMessage(
+            role="tool_result",
+            content=content,
+            timestamp=ts,
+            tool_name=str(tool_name) if tool_name is not None else None,
+            turn_number=turn,
+        )
+    )
+    return turn + 1
 
 
 def export_conversation(

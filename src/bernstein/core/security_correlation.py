@@ -239,6 +239,46 @@ def correlate_events(
     return matches
 
 
+def _parse_security_line(
+    line: str,
+    security_prefixes: tuple[str, ...],
+    run_ids: list[str] | None,
+) -> SecurityEvent | None:
+    """Parse a single JSONL line into a SecurityEvent if it matches filters."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        entry: dict[str, object] = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+    event_type = str(entry.get("event_type", ""))
+    if not any(event_type.startswith(p) for p in security_prefixes):
+        return None
+
+    details_raw = entry.get("details", {})
+    details_dict: dict[str, object] = details_raw if isinstance(details_raw, dict) else {}
+
+    run_id = str(entry.get("run_id", "") or details_dict.get("run_id", ""))
+    if run_ids is not None and run_id not in run_ids:
+        return None
+
+    severity_raw = str(details_dict.get("severity", "") or entry.get("severity", "low"))
+    if severity_raw not in {"low", "medium", "high", "critical"}:
+        severity_raw = "low"
+
+    return SecurityEvent(
+        event_type=event_type,
+        agent_id=str(entry.get("actor", "") or details_dict.get("agent_id", "")),
+        role=str(details_dict.get("role", "")),
+        run_id=run_id,
+        timestamp=str(entry.get("timestamp", "")),
+        details=str(details_dict.get("description", event_type)),
+        severity=severity_raw,  # type: ignore[arg-type]
+    )
+
+
 def load_security_events(
     audit_dir: Path,
     run_ids: list[str] | None = None,
@@ -272,43 +312,9 @@ def load_security_events(
             continue
 
         for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry: dict[str, object] = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            event_type = str(entry.get("event_type", ""))
-            if not any(event_type.startswith(p) for p in security_prefixes):
-                continue
-
-            details_raw = entry.get("details", {})
-            if isinstance(details_raw, dict):
-                details_dict: dict[str, object] = details_raw
-            else:
-                details_dict: dict[str, object] = {}
-
-            run_id = str(entry.get("run_id", "") or details_dict.get("run_id", ""))
-            if run_ids is not None and run_id not in run_ids:
-                continue
-
-            severity_raw = str(details_dict.get("severity", "") or entry.get("severity", "low"))
-            if severity_raw not in {"low", "medium", "high", "critical"}:
-                severity_raw = "low"
-
-            events.append(
-                SecurityEvent(
-                    event_type=event_type,
-                    agent_id=str(entry.get("actor", "") or details_dict.get("agent_id", "")),
-                    role=str(details_dict.get("role", "")),
-                    run_id=run_id,
-                    timestamp=str(entry.get("timestamp", "")),
-                    details=str(details_dict.get("description", event_type)),
-                    severity=severity_raw,  # type: ignore[arg-type]
-                )
-            )
+            event = _parse_security_line(line, security_prefixes, run_ids)
+            if event is not None:
+                events.append(event)
 
     events.sort(key=lambda e: e.timestamp)
     return events

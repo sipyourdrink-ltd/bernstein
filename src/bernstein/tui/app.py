@@ -89,6 +89,12 @@ _POLL_INTERVAL: float = 2.0
 _WATERFALL_VIEW_SELECTOR = "#waterfall-view"
 #: CSS selector for the approval panel widget.
 _APPROVAL_PANEL_SELECTOR = "#approval-panel"
+#: CSS selectors for panels queried in multiple places.
+_TASK_TIMELINE_SELECTOR = "#task-timeline"
+_SCRATCHPAD_VIEWER_SELECTOR = "#scratchpad-viewer"
+_COORDINATOR_DASHBOARD_SELECTOR = "#coordinator-dashboard"
+_TASK_CONTEXT_SELECTOR = "#task-context"
+_TOAST_OVERLAY_SELECTOR = "#toast-overlay"
 
 
 def _auth_headers() -> dict[str, str]:
@@ -277,21 +283,21 @@ class BernsteinApp(App[None]):
         """Start the periodic poll timer after mounting."""
         # Hide action bar, timeline, scratchpad, waterfall, and others initially.
         self.query_one("#action-bar", ActionBar).display = False
-        self.query_one("#task-timeline", TaskTimeline).display = "task-timeline" in self._layout.visible_panels
+        self.query_one(_TASK_TIMELINE_SELECTOR, TaskTimeline).display = "task-timeline" in self._layout.visible_panels
         self.query_one(_WATERFALL_VIEW_SELECTOR, WaterfallWidget).display = (
             "waterfall-view" in self._layout.visible_panels
         )
-        self.query_one("#scratchpad-viewer", ScratchpadViewer).display = (
+        self.query_one(_SCRATCHPAD_VIEWER_SELECTOR, ScratchpadViewer).display = (
             "scratchpad-viewer" in self._layout.visible_panels
         )
-        self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = (
+        self.query_one(_COORDINATOR_DASHBOARD_SELECTOR, CoordinatorDashboard).display = (
             "coordinator-dashboard" in self._layout.visible_panels
         )
         self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel).display = (
             "approval-panel" in self._layout.visible_panels
         )
         self.query_one("#tool-observer", ToolObserverWidget).display = "tool-observer" in self._layout.visible_panels
-        self.query_one("#task-context", TaskContextPanel).display = "task-context" in self._layout.visible_panels
+        self.query_one(_TASK_CONTEXT_SELECTOR, TaskContextPanel).display = "task-context" in self._layout.visible_panels
         self.query_one("#runtime-health", RuntimeHealthPanel).display = "runtime-health" in self._layout.visible_panels
         self.query_one("#notification-center", NotificationCenterPanel).display = (
             "notification-center" in self._layout.visible_panels
@@ -461,7 +467,7 @@ class BernsteinApp(App[None]):
         runtime_snapshot = data.get("runtime")
         if isinstance(runtime_snapshot, dict):
             runtime = cast("dict[str, Any]", runtime_snapshot)
-            self.query_one("#task-context", TaskContextPanel).set_runtime_snapshot(runtime)
+            self.query_one(_TASK_CONTEXT_SELECTOR, TaskContextPanel).set_runtime_snapshot(runtime)
             self.query_one("#runtime-health", RuntimeHealthPanel).set_snapshot(runtime)
 
         # TUI-010: update aggregate progress for run-level bar
@@ -493,7 +499,7 @@ class BernsteinApp(App[None]):
             self._refresh_session_recorder_panel()
 
         # Update timeline if visible
-        if self.query_one("#task-timeline", TaskTimeline).display:
+        if self.query_one(_TASK_TIMELINE_SELECTOR, TaskTimeline).display:
             self.run_worker(self._refresh_timeline())
 
     def _apply_task_filter(self) -> None:
@@ -534,7 +540,7 @@ class BernsteinApp(App[None]):
             if current is not None
             else None
         )
-        self.query_one("#task-context", TaskContextPanel).set_task(summary)
+        self.query_one(_TASK_CONTEXT_SELECTOR, TaskContextPanel).set_task(summary)
 
     # -- TUI-011: theme cycling -----------------------------------------------
 
@@ -623,12 +629,12 @@ class BernsteinApp(App[None]):
         """Prune expired toasts and refresh the overlay."""
         pruned = self._toasts.prune()
         if pruned or self._toasts.count > 0:
-            self.query_one("#toast-overlay", _ToastOverlay).refresh()
+            self.query_one(_TOAST_OVERLAY_SELECTOR, _ToastOverlay).refresh()
 
     def action_dismiss_toasts(self) -> None:
         """Dismiss all active toast notifications."""
         self._toasts.dismiss_all()
-        self.query_one("#toast-overlay", _ToastOverlay).refresh()
+        self.query_one(_TOAST_OVERLAY_SELECTOR, _ToastOverlay).refresh()
 
     def action_acknowledge_notifications(self) -> None:
         """Mark all notification-center entries as read."""
@@ -733,7 +739,7 @@ class BernsteinApp(App[None]):
 
     def action_toggle_timeline(self) -> None:
         """Show/hide the task execution timeline."""
-        timeline = self.query_one("#task-timeline", TaskTimeline)
+        timeline = self.query_one(_TASK_TIMELINE_SELECTOR, TaskTimeline)
         timeline.display = not timeline.display
         if timeline.display:
             self.run_worker(self._refresh_timeline())
@@ -757,7 +763,7 @@ class BernsteinApp(App[None]):
                 )
                 for e in data.get("entries", [])
             ]
-            self.query_one("#task-timeline", TaskTimeline).update_data(entries)
+            self.query_one(_TASK_TIMELINE_SELECTOR, TaskTimeline).update_data(entries)
 
     def action_toggle_waterfall(self) -> None:
         """Show/hide the waterfall trace view."""
@@ -782,7 +788,7 @@ class BernsteinApp(App[None]):
 
     def action_toggle_scratchpad(self) -> None:
         """Show/hide the scratchpad viewer."""
-        scratchpad = self.query_one("#scratchpad-viewer", ScratchpadViewer)
+        scratchpad = self.query_one(_SCRATCHPAD_VIEWER_SELECTOR, ScratchpadViewer)
         scratchpad.display = not scratchpad.display
         if scratchpad.display:
             self.run_worker(self._refresh_scratchpad())
@@ -793,12 +799,12 @@ class BernsteinApp(App[None]):
         from bernstein.tui.widgets import list_scratchpad_files
 
         entries = list_scratchpad_files()
-        self.query_one("#scratchpad-viewer", ScratchpadViewer).refresh_entries(entries)
+        self.query_one(_SCRATCHPAD_VIEWER_SELECTOR, ScratchpadViewer).refresh_entries(entries)
 
     def action_scratchpad_filter(self) -> None:
         """Open scratchpad filter input."""
         # Toggle scratchpad if not visible
-        scratchpad = self.query_one("#scratchpad-viewer", ScratchpadViewer)
+        scratchpad = self.query_one(_SCRATCHPAD_VIEWER_SELECTOR, ScratchpadViewer)
         if not scratchpad.display:
             scratchpad.display = True
             self.run_worker(self._refresh_scratchpad())
@@ -826,7 +832,7 @@ class BernsteinApp(App[None]):
 
         if isinstance(event, Input.Submitted) and event.input.id == "scratchpad-filter":
             query = event.value
-            scratchpad = self.query_one("#scratchpad-viewer", ScratchpadViewer)
+            scratchpad = self.query_one(_SCRATCHPAD_VIEWER_SELECTOR, ScratchpadViewer)
             scratchpad.set_filter(query)
             event.input.remove()
             scratchpad.focus()
@@ -856,7 +862,7 @@ class BernsteinApp(App[None]):
 
     def action_toggle_coordinator(self) -> None:
         """Show/hide the coordinator mode dashboard."""
-        dashboard = self.query_one("#coordinator-dashboard", CoordinatorDashboard)
+        dashboard = self.query_one(_COORDINATOR_DASHBOARD_SELECTOR, CoordinatorDashboard)
         dashboard.display = not dashboard.display
         if dashboard.display:
             self._refresh_coordinator_dashboard()
@@ -900,7 +906,7 @@ class BernsteinApp(App[None]):
             for tr in self._current_rows
         ]
         rows.sort(key=lambda row: {"coordinator": 0, "worker": 1}.get(classify_role(row.role), 2))
-        self.query_one("#coordinator-dashboard", CoordinatorDashboard).refresh_data(rows)
+        self.query_one(_COORDINATOR_DASHBOARD_SELECTOR, CoordinatorDashboard).refresh_data(rows)
 
     def action_toggle_action_bar(self) -> None:
         """Toggle the action bar for the selected task."""
@@ -1055,7 +1061,7 @@ class BernsteinApp(App[None]):
             timestamp=toast.timestamp,
         )
         self._refresh_notification_center()
-        self.query_one("#toast-overlay", _ToastOverlay).refresh()
+        self.query_one(_TOAST_OVERLAY_SELECTOR, _ToastOverlay).refresh()
 
     def _refresh_notification_center(self) -> None:
         """Render the latest notification history into the side panel."""

@@ -35,6 +35,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Shared glob pattern constants (used across trust level permission profiles)
+# ---------------------------------------------------------------------------
+
+_CMD_CURL = "curl *"
+_CMD_WGET = "wget *"
+_CMD_SSH = "ssh *"
+_CMD_NC = "nc *"
+_CMD_NCAT = "ncat *"
+_PATH_SRC = "src/*"
+_PATH_TESTS = "tests/*"
+_PATH_SDD = ".sdd/*"
+_PATH_GITHUB = ".github/*"
+_PATH_ROLES = "templates/roles/*"
+
+# ---------------------------------------------------------------------------
 # Trust level definitions
 # ---------------------------------------------------------------------------
 
@@ -144,22 +159,22 @@ def get_permissions_for_trust_level(level: TrustLevel) -> AgentPermissions:
                 denied_commands=(
                     "rm *",
                     "rm-rf *",
-                    "curl *",
-                    "wget *",
+                    _CMD_CURL,
+                    _CMD_WGET,
                     "git push*",
                     "git commit*",
                     "pip install*",
                     "uv add*",
-                    "ssh *",
-                    "nc *",
-                    "ncat *",
+                    _CMD_SSH,
+                    _CMD_NC,
+                    _CMD_NCAT,
                 ),
             )
         case TrustLevel.RESTRICTED:
             # Limited writes to source and test directories.
             return AgentPermissions(
-                allowed_paths=("src/*", "tests/*"),
-                denied_paths=(".sdd/*", ".github/*", "templates/roles/*"),
+                allowed_paths=(_PATH_SRC, _PATH_TESTS),
+                denied_paths=(_PATH_SDD, _PATH_GITHUB, _PATH_ROLES),
                 allowed_commands=(
                     "git log*",
                     "git status*",
@@ -174,35 +189,35 @@ def get_permissions_for_trust_level(level: TrustLevel) -> AgentPermissions:
                 ),
                 denied_commands=(
                     "rm *",
-                    "curl *",
-                    "wget *",
+                    _CMD_CURL,
+                    _CMD_WGET,
                     "git push*",
-                    "ssh *",
-                    "nc *",
-                    "ncat *",
+                    _CMD_SSH,
+                    _CMD_NC,
+                    _CMD_NCAT,
                 ),
             )
         case TrustLevel.TRUSTED:
             # Standard permissions — matches the "backend" role profile.
             return AgentPermissions(
-                allowed_paths=("src/*", "tests/*", "docs/*", "scripts/*", "pyproject.toml"),
-                denied_paths=(".sdd/*", ".github/*", "templates/roles/*"),
+                allowed_paths=(_PATH_SRC, _PATH_TESTS, "docs/*", "scripts/*", "pyproject.toml"),
+                denied_paths=(_PATH_SDD, _PATH_GITHUB, _PATH_ROLES),
                 allowed_commands=(),  # all commands allowed (subject to deny list)
                 denied_commands=(
-                    "curl *",
-                    "wget *",
-                    "ssh *",
-                    "nc *",
-                    "ncat *",
+                    _CMD_CURL,
+                    _CMD_WGET,
+                    _CMD_SSH,
+                    _CMD_NC,
+                    _CMD_NCAT,
                 ),
             )
         case TrustLevel.ELEVATED:
             # Expanded — infrastructure files and CI allowed.
             return AgentPermissions(
-                allowed_paths=("src/*", "tests/*", "docs/*", "scripts/*", ".github/*", "Dockerfile*", "*.yml"),
-                denied_paths=(".sdd/*", "templates/roles/*"),
+                allowed_paths=(_PATH_SRC, _PATH_TESTS, "docs/*", "scripts/*", _PATH_GITHUB, "Dockerfile*", "*.yml"),
+                denied_paths=(_PATH_SDD, _PATH_ROLES),
                 allowed_commands=(),
-                denied_commands=("nc *", "ncat *"),
+                denied_commands=(_CMD_NC, _CMD_NCAT),
             )
 
 

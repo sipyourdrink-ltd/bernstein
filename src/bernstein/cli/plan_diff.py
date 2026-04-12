@@ -199,6 +199,39 @@ def compute_plan_diff(old_plan: dict, new_plan: dict) -> PlanDiff:
 # ---------------------------------------------------------------------------
 
 
+def _format_step_list(header: str, step_ids: list[str], color: str, marker: str) -> list[str]:
+    """Format a list of step IDs as Rich-markup lines."""
+    lines = [f"[bold]{header}:[/bold]"]
+    for sid in step_ids:
+        lines.append(f"  [{color}][{marker}][/{color}] {sid}")
+    lines.append("")
+    return lines
+
+
+def _format_modified_steps(changes: list[StepChange]) -> list[str]:
+    """Format step modifications as Rich-markup lines."""
+    lines = ["[bold]Steps modified:[/bold]"]
+    current_step: str | None = None
+    for change in changes:
+        if change.step_id != current_step:
+            current_step = change.step_id
+            lines.append(f"  [yellow][~][/yellow] {change.step_id}")
+        old = change.old_value if change.old_value is not None else "(none)"
+        new = change.new_value if change.new_value is not None else "(none)"
+        lines.append(f"      {change.field}: [red]{old}[/red] -> [green]{new}[/green]")
+    lines.append("")
+    return lines
+
+
+def _format_dep_list(header: str, deps: list[tuple[str, str]], color: str, marker: str) -> list[str]:
+    """Format dependency additions/removals as Rich-markup lines."""
+    lines = [f"[bold]{header}:[/bold]"]
+    for stage, dep in deps:
+        lines.append(f"  [{color}][{marker}][/{color}] {stage} -> {dep}")
+    lines.append("")
+    return lines
+
+
 def format_plan_diff(diff: PlanDiff) -> str:
     """Format a :class:`PlanDiff` as a human-readable string with Rich markup.
 
@@ -217,40 +250,19 @@ def format_plan_diff(diff: PlanDiff) -> str:
     lines: list[str] = []
 
     if diff.added_steps:
-        lines.append("[bold]Steps added:[/bold]")
-        for sid in diff.added_steps:
-            lines.append(f"  [green][+][/green] {sid}")
-        lines.append("")
+        lines.extend(_format_step_list("Steps added", diff.added_steps, "green", "+"))
 
     if diff.removed_steps:
-        lines.append("[bold]Steps removed:[/bold]")
-        for sid in diff.removed_steps:
-            lines.append(f"  [red][-][/red] {sid}")
-        lines.append("")
+        lines.extend(_format_step_list("Steps removed", diff.removed_steps, "red", "-"))
 
     if diff.modified_steps:
-        lines.append("[bold]Steps modified:[/bold]")
-        current_step: str | None = None
-        for change in diff.modified_steps:
-            if change.step_id != current_step:
-                current_step = change.step_id
-                lines.append(f"  [yellow][~][/yellow] {change.step_id}")
-            old = change.old_value if change.old_value is not None else "(none)"
-            new = change.new_value if change.new_value is not None else "(none)"
-            lines.append(f"      {change.field}: [red]{old}[/red] -> [green]{new}[/green]")
-        lines.append("")
+        lines.extend(_format_modified_steps(diff.modified_steps))
 
     if diff.added_deps:
-        lines.append("[bold]Dependencies added:[/bold]")
-        for stage, dep in diff.added_deps:
-            lines.append(f"  [green][+][/green] {stage} -> {dep}")
-        lines.append("")
+        lines.extend(_format_dep_list("Dependencies added", diff.added_deps, "green", "+"))
 
     if diff.removed_deps:
-        lines.append("[bold]Dependencies removed:[/bold]")
-        for stage, dep in diff.removed_deps:
-            lines.append(f"  [red][-][/red] {stage} -> {dep}")
-        lines.append("")
+        lines.extend(_format_dep_list("Dependencies removed", diff.removed_deps, "red", "-"))
 
     # Strip trailing blank line
     while lines and lines[-1] == "":

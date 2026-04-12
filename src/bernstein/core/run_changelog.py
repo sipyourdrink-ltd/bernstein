@@ -171,6 +171,33 @@ def _fetch_tasks_from_server(server_url: str, status: str = "done") -> list[dict
         return []
 
 
+def _parse_metric_timestamp(ts: object) -> float:
+    """Normalise a metric record timestamp to a Unix float."""
+    if isinstance(ts, str):
+        import datetime
+
+        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.timestamp()
+    return float(ts)
+
+
+def _parse_metric_line(line: str, since_ts: float) -> dict[str, object] | None:
+    """Parse a single JSONL metric line, returning the record or None."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        rec = json.loads(line)
+        ts = _parse_metric_timestamp(rec.get("timestamp", 0))
+        if ts < since_ts:
+            return None
+        if rec.get("success") is True:
+            return rec  # type: ignore[no-any-return]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None
+
+
 def _fetch_tasks_from_metrics(metrics_dir: Path, since_ts: float = 0.0) -> list[dict[str, object]]:
     """Read completed tasks from daily metric JSONL files.
 
@@ -185,31 +212,14 @@ def _fetch_tasks_from_metrics(metrics_dir: Path, since_ts: float = 0.0) -> list[
     if not metrics_dir.is_dir():
         return tasks
 
-    # Daily metric files are named YYYY-MM-DD.jsonl and contain one record per
-    # agent run, each with task_id, role, success, etc.
     for jsonl in sorted(metrics_dir.glob("*.jsonl")):
-        # Skip non-date files (agent_success_*.jsonl, api_usage_*.jsonl, etc.)
         if not re.match(r"^\d{4}-\d{2}-\d{2}\.jsonl$", jsonl.name):
             continue
         try:
             for line in jsonl.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                    ts = rec.get("timestamp", 0)
-                    if isinstance(ts, str):
-                        # ISO format "2026-04-11T..."
-                        import datetime
-
-                        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                        ts = dt.timestamp()
-                    if float(ts) < since_ts:
-                        continue
-                    if rec.get("success") is True:
-                        tasks.append(rec)
-                except (json.JSONDecodeError, ValueError):
-                    continue
+                rec = _parse_metric_line(line, since_ts)
+                if rec is not None:
+                    tasks.append(rec)
         except OSError:
             continue
 
@@ -337,6 +347,77 @@ def _make_summary(task_title: str, commit_subjects: list[str], files: list[str])
     return "Miscellaneous change"
 
 
+def _check_commits_breaking(commit_shas: list[str], workdir: Path) -> tuple[list[str], list[str], bool]:
+    """Aggregate files and check for breaking changes across commits.
+
+    Returns:
+        Tuple of (unique_files, commit_subjects, is_breaking).
+    """
+    all_files: list[str] = []
+    is_breaking = False
+    commit_subjects: list[str] = []
+
+    for sha in commit_shas:
+        files = _files_in_commit(sha, workdir)
+        all_files.extend(files)
+        subject = _subject_for_commit(sha, workdir)
+        commit_subjects.append(subject)
+
+        if "!" in subject or "BREAKING CHANGE" in subject.upper():
+            is_breaking = True
+
+        if not is_breaking:
+            diff = _diff_for_commit(sha, workdir)
+            if _is_breaking_diff(diff):
+                is_breaking = True
+
+    # Deduplicate files preserving order
+    seen: set[str] = set()
+    unique_files: list[str] = []
+    for f in all_files:
+        if f not in seen:
+            seen.add(f)
+            unique_files.append(f)
+
+    return unique_files, commit_subjects, is_breaking
+
+
+def _build_task_change(
+    task: dict[str, object],
+    workdir: Path,
+    since_ref: str | None,
+    include_no_commits: bool,
+) -> TaskChange | None:
+    """Build a TaskChange from a single task dict, or return None to skip."""
+    task_id = str(task.get("task_id") or task.get("id") or "")
+    title = str(task.get("title") or "Untitled")
+    role = str(task.get("role") or "")
+    result_summary = str(task.get("result_summary") or "")
+
+    if not task_id:
+        return None
+
+    commit_shas = _commits_for_task(task_id, workdir, since_ref=since_ref)
+    if not commit_shas and not include_no_commits:
+        return None
+
+    unique_files, commit_subjects, is_breaking = _check_commits_breaking(commit_shas, workdir)
+    component = _dominant_component(unique_files) if unique_files else _component_for_role(role)
+    summary = _make_summary(title, commit_subjects, unique_files)
+
+    return TaskChange(
+        task_id=task_id,
+        title=title,
+        role=role,
+        result_summary=result_summary,
+        component=component,
+        files=unique_files,
+        is_breaking=is_breaking,
+        commit_shas=commit_shas,
+        summary=summary,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -389,65 +470,11 @@ def generate_run_changelog(
     breaking_changes: list[TaskChange] = []
 
     for task in tasks:
-        task_id = str(task.get("task_id") or task.get("id") or "")
-        title = str(task.get("title") or "Untitled")
-        role = str(task.get("role") or "")
-        result_summary = str(task.get("result_summary") or "")
-
-        if not task_id:
+        change = _build_task_change(task, workdir, since_ref, include_no_commits)
+        if change is None:
             continue
-
-        # Find associated commits
-        commit_shas = _commits_for_task(task_id, workdir, since_ref=since_ref)
-
-        if not commit_shas and not include_no_commits:
-            continue
-
-        # Aggregate files and check for breaking changes
-        all_files: list[str] = []
-        is_breaking = False
-        commit_subjects: list[str] = []
-
-        for sha in commit_shas:
-            files = _files_in_commit(sha, workdir)
-            all_files.extend(files)
-            subject = _subject_for_commit(sha, workdir)
-            commit_subjects.append(subject)
-
-            # Check commit subject for breaking marker
-            if "!" in subject or "BREAKING CHANGE" in subject.upper():
-                is_breaking = True
-
-            # Check diff content for structural breaking changes
-            if not is_breaking:
-                diff = _diff_for_commit(sha, workdir)
-                if _is_breaking_diff(diff):
-                    is_breaking = True
-
-        # Deduplicate files preserving order
-        seen: set[str] = set()
-        unique_files: list[str] = []
-        for f in all_files:
-            if f not in seen:
-                seen.add(f)
-                unique_files.append(f)
-
-        component = _dominant_component(unique_files) if unique_files else _component_for_role(role)
-        summary = _make_summary(title, commit_subjects, unique_files)
-
-        change = TaskChange(
-            task_id=task_id,
-            title=title,
-            role=role,
-            result_summary=result_summary,
-            component=component,
-            files=unique_files,
-            is_breaking=is_breaking,
-            commit_shas=commit_shas,
-            summary=summary,
-        )
-        changes_by_component[component].append(change)
-        if is_breaking:
+        changes_by_component[change.component].append(change)
+        if change.is_breaking:
             breaking_changes.append(change)
 
     return RunChangelog(

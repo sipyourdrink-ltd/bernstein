@@ -48,6 +48,32 @@ def _task_affinity_config(task: Task) -> dict[str, object]:
     return hints
 
 
+def _resolve_preferred_agent(
+    hints: dict[str, object],
+    tasks_by_id: dict[str, Task],
+    effective_affinity: dict[str, str],
+) -> str | None:
+    """Resolve the preferred agent from affinity hints, returning the agent name or None."""
+    preferred_agent = hints.get("preferred_agent")
+    if isinstance(preferred_agent, str) and preferred_agent.strip():
+        return preferred_agent.strip()
+
+    preferred_agent = hints.get("preferred_agent_id")
+    if isinstance(preferred_agent, str) and preferred_agent.strip():
+        return preferred_agent.strip()
+
+    same_as_task = hints.get("same_as_task") or hints.get("same_agent_as_task")
+    if not isinstance(same_as_task, str) or not same_as_task.strip():
+        return None
+
+    referenced_task = tasks_by_id.get(same_as_task)
+    if referenced_task is not None and referenced_task.assigned_agent:
+        return referenced_task.assigned_agent
+    if same_as_task in effective_affinity:
+        return effective_affinity[same_as_task]
+    return None
+
+
 def _apply_task_affinity_hints(tasks: list[Task], agent_affinity: dict[str, str] | None) -> dict[str, str]:
     """Resolve metadata-driven affinity hints into batching inputs."""
     effective_affinity = dict(agent_affinity or {})
@@ -59,21 +85,9 @@ def _apply_task_affinity_hints(tasks: list[Task], agent_affinity: dict[str, str]
         if isinstance(preferred_model, str) and preferred_model.strip() and not task.model:
             task.model = preferred_model.strip()
 
-        preferred_agent = hints.get("preferred_agent")
-        if not isinstance(preferred_agent, str) or not preferred_agent.strip():
-            preferred_agent = hints.get("preferred_agent_id")
-
-        if not isinstance(preferred_agent, str) or not preferred_agent.strip():
-            same_as_task = hints.get("same_as_task") or hints.get("same_agent_as_task")
-            if isinstance(same_as_task, str) and same_as_task.strip():
-                referenced_task = tasks_by_id.get(same_as_task)
-                if referenced_task is not None and referenced_task.assigned_agent:
-                    preferred_agent = referenced_task.assigned_agent
-                elif same_as_task in effective_affinity:
-                    preferred_agent = effective_affinity[same_as_task]
-
-        if isinstance(preferred_agent, str) and preferred_agent.strip():
-            effective_affinity[task.id] = preferred_agent.strip()
+        resolved_agent = _resolve_preferred_agent(hints, tasks_by_id, effective_affinity)
+        if resolved_agent is not None:
+            effective_affinity[task.id] = resolved_agent
 
     return effective_affinity
 

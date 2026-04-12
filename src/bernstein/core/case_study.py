@@ -53,6 +53,119 @@ def _format_duration(seconds: float) -> str:
     return f"{hours:.1f}h"
 
 
+def _collect_task_metrics(metrics_dir: Path) -> list[dict[str, Any]]:
+    """Collect task metric files from the metrics directory."""
+    task_files: list[dict[str, Any]] = []
+    if metrics_dir.is_dir():
+        for f in sorted(metrics_dir.iterdir()):
+            if f.suffix == ".json":
+                data = _load_json_safe(f)
+                if data:
+                    task_files.append(data)
+    return task_files
+
+
+def _collect_agents_and_models(task_files: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
+    """Extract unique agent roles and models from task files."""
+    agents_used: set[str] = set()
+    models_used: set[str] = set()
+    for t in task_files:
+        if role := t.get("role"):
+            agents_used.add(str(role))
+        if model := t.get("model"):
+            models_used.add(str(model))
+    return agents_used, models_used
+
+
+def _append_header(sections: list[str], title: str, config: CaseStudyConfig) -> None:
+    """Append header section."""
+    sections.append(f"# {title}")
+    if config.author:
+        sections.append(f"\n*Author: {config.author}*")
+    sections.append("")
+
+
+def _append_summary_and_problem(
+    sections: list[str],
+    total_tasks: int,
+    completed: int,
+    failed: int,
+    goal: str,
+) -> None:
+    """Append executive summary and problem statement sections."""
+    sections.append("## Executive Summary")
+    sections.append("")
+    sections.append(
+        f"This case study covers an orchestration run that executed "
+        f"**{total_tasks}** tasks with **{completed}** completed "
+        f"and **{failed}** failed."
+    )
+    sections.append("")
+    sections.append("## Problem Statement")
+    sections.append("")
+    sections.append(f"{goal}")
+    sections.append("")
+
+
+def _append_approach(
+    sections: list[str],
+    agents_used: set[str],
+    models_used: set[str],
+    total_tasks: int,
+) -> None:
+    """Append approach section."""
+    sections.append("## Approach")
+    sections.append("")
+    if agents_used:
+        sections.append(f"- **Agents**: {', '.join(sorted(agents_used))}")
+    if models_used:
+        sections.append(f"- **Models**: {', '.join(sorted(models_used))}")
+    sections.append(f"- **Total tasks**: {total_tasks}")
+    sections.append("")
+
+
+def _append_results(
+    sections: list[str],
+    completed: int,
+    total_tasks: int,
+    failed: int,
+    duration: float,
+    total_cost: float,
+    config: CaseStudyConfig,
+) -> None:
+    """Append results section."""
+    sections.append("## Results")
+    sections.append("")
+    sections.append(f"- **Tasks completed**: {completed}/{total_tasks}")
+    if failed:
+        sections.append(f"- **Tasks failed**: {failed}")
+    if config.include_timeline and duration > 0:
+        sections.append(f"- **Total duration**: {_format_duration(duration)}")
+    if config.include_costs and total_cost > 0:
+        sections.append(f"- **Total cost**: ${total_cost:.2f}")
+    sections.append("")
+
+
+def _append_lessons(
+    sections: list[str],
+    failed: int,
+    total_cost: float,
+    total_tasks: int,
+    agents_used: set[str],
+) -> None:
+    """Append lessons learned section."""
+    sections.append("## Lessons Learned")
+    sections.append("")
+    if failed > 0:
+        sections.append(f"- {failed} task(s) failed and may warrant investigation.")
+    if total_cost > 0 and total_tasks > 0:
+        avg_cost = total_cost / total_tasks
+        sections.append(f"- Average cost per task: ${avg_cost:.4f}")
+    if not agents_used:
+        sections.append("- No agent role data available for analysis.")
+    sections.append("")
+
+
 def generate_case_study(run_dir: Path, config: CaseStudyConfig) -> str:
     """Generate a Markdown case study from a completed run.
 
@@ -68,16 +181,7 @@ def generate_case_study(run_dir: Path, config: CaseStudyConfig) -> str:
     """
     sdd = run_dir / ".sdd"
     summary = _load_json_safe(sdd / "summary.json")
-    metrics_dir = sdd / "metrics"
-
-    # Collect task metrics.
-    task_files: list[dict[str, Any]] = []
-    if metrics_dir.is_dir():
-        for f in sorted(metrics_dir.iterdir()):
-            if f.suffix == ".json":
-                data = _load_json_safe(f)
-                if data:
-                    task_files.append(data)
+    task_files = _collect_task_metrics(sdd / "metrics")
 
     goal = summary.get("goal", config.title or "Orchestration Run")
     title = config.title or goal
@@ -87,72 +191,14 @@ def generate_case_study(run_dir: Path, config: CaseStudyConfig) -> str:
     total_cost = summary.get("total_cost_usd", 0.0)
     duration = summary.get("duration_s", 0.0)
 
-    # Collect unique agents/models used.
-    agents_used: set[str] = set()
-    models_used: set[str] = set()
-    for t in task_files:
-        if role := t.get("role"):
-            agents_used.add(str(role))
-        if model := t.get("model"):
-            models_used.add(str(model))
+    agents_used, models_used = _collect_agents_and_models(task_files)
 
     sections: list[str] = []
-
-    # Header.
-    sections.append(f"# {title}")
-    if config.author:
-        sections.append(f"\n*Author: {config.author}*")
-    sections.append("")
-
-    # Executive Summary.
-    sections.append("## Executive Summary")
-    sections.append("")
-    sections.append(
-        f"This case study covers an orchestration run that executed "
-        f"**{total_tasks}** tasks with **{completed}** completed "
-        f"and **{failed}** failed."
-    )
-    sections.append("")
-
-    # Problem Statement.
-    sections.append("## Problem Statement")
-    sections.append("")
-    sections.append(f"{goal}")
-    sections.append("")
-
-    # Approach.
-    sections.append("## Approach")
-    sections.append("")
-    if agents_used:
-        sections.append(f"- **Agents**: {', '.join(sorted(agents_used))}")
-    if models_used:
-        sections.append(f"- **Models**: {', '.join(sorted(models_used))}")
-    sections.append(f"- **Total tasks**: {total_tasks}")
-    sections.append("")
-
-    # Results.
-    sections.append("## Results")
-    sections.append("")
-    sections.append(f"- **Tasks completed**: {completed}/{total_tasks}")
-    if failed:
-        sections.append(f"- **Tasks failed**: {failed}")
-    if config.include_timeline and duration > 0:
-        sections.append(f"- **Total duration**: {_format_duration(duration)}")
-    if config.include_costs and total_cost > 0:
-        sections.append(f"- **Total cost**: ${total_cost:.2f}")
-    sections.append("")
-
-    # Lessons Learned.
-    sections.append("## Lessons Learned")
-    sections.append("")
-    if failed > 0:
-        sections.append(f"- {failed} task(s) failed and may warrant investigation.")
-    if total_cost > 0 and total_tasks > 0:
-        avg_cost = total_cost / total_tasks
-        sections.append(f"- Average cost per task: ${avg_cost:.4f}")
-    if not agents_used:
-        sections.append("- No agent role data available for analysis.")
-    sections.append("")
+    _append_header(sections, title, config)
+    _append_summary_and_problem(sections, total_tasks, completed, failed, goal)
+    _append_approach(sections, agents_used, models_used, total_tasks)
+    _append_results(sections, completed, total_tasks, failed, duration, total_cost, config)
+    _append_lessons(sections, failed, total_cost, total_tasks, agents_used)
 
     return "\n".join(sections)
 

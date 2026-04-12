@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -64,9 +65,6 @@ def dep_impact_cmd(
     Blocks merge (exit code 1) when breaking API changes are found or when
     downstream callers are incompatible with the new signatures.
     """
-    import json as _json
-
-    from rich.table import Table
 
     from bernstein.core.dep_impact import analyze_dep_impact
 
@@ -74,38 +72,52 @@ def dep_impact_cmd(
     report = analyze_dep_impact(work_path, base_ref=base)
 
     if output_json:
-        out = {
-            "blocks_merge": report.blocks_merge,
-            "api_breaking": [
-                {
-                    "file": bc.file,
-                    "name": bc.name,
-                    "change_type": bc.change_type.value,
-                    "description": bc.description,
-                    "line": bc.line,
-                }
-                for bc in report.api_breaking
-            ],
-            "call_site_impacts": [
-                {
-                    "caller_file": ci.caller_file,
-                    "caller_line": ci.caller_line,
-                    "callee_qualified": ci.callee_qualified,
-                    "reason": ci.reason,
-                }
-                for ci in report.call_site_impacts
-            ],
-        }
-        console.print(_json.dumps(out, indent=2))
-        if report.blocks_merge or (strict and report.call_site_impacts):
-            raise SystemExit(1)
+        _print_json_report(report, strict)
         return
 
     if not report.api_breaking and not report.call_site_impacts:
         console.print("[dim]No dependency impact detected.[/dim]")
         return
 
-    # ---- API breaking changes ----
+    _print_rich_report(report)
+    _check_exit_conditions(report, strict)
+
+
+def _print_json_report(report: Any, strict: bool) -> None:
+    """Print the dep-impact report as JSON and exit on failure."""
+    import json as _json
+
+    out = {
+        "blocks_merge": report.blocks_merge,
+        "api_breaking": [
+            {
+                "file": bc.file,
+                "name": bc.name,
+                "change_type": bc.change_type.value,
+                "description": bc.description,
+                "line": bc.line,
+            }
+            for bc in report.api_breaking
+        ],
+        "call_site_impacts": [
+            {
+                "caller_file": ci.caller_file,
+                "caller_line": ci.caller_line,
+                "callee_qualified": ci.callee_qualified,
+                "reason": ci.reason,
+            }
+            for ci in report.call_site_impacts
+        ],
+    }
+    console.print(_json.dumps(out, indent=2))
+    if report.blocks_merge or (strict and report.call_site_impacts):
+        raise SystemExit(1)
+
+
+def _print_rich_report(report: Any) -> None:
+    """Print the dep-impact report as Rich tables."""
+    from rich.table import Table
+
     if report.api_breaking:
         console.print()
         console.print(f"[bold red]API breaking changes ({len(report.api_breaking)}):[/bold red]")
@@ -120,7 +132,6 @@ def dep_impact_cmd(
         console.print(table)
         console.print()
 
-    # ---- Call-site impacts ----
     if report.call_site_impacts:
         console.print(f"[bold yellow]Affected call sites ({len(report.call_site_impacts)}):[/bold yellow]")
         table = Table(show_header=True, box=None, padding=(0, 2))
@@ -133,6 +144,9 @@ def dep_impact_cmd(
         console.print(table)
         console.print()
 
+
+def _check_exit_conditions(report: Any, strict: bool) -> None:
+    """Check merge-blocking conditions and exit accordingly."""
     if report.blocks_merge:
         n_api = len(report.api_breaking)
         n_cs = len(report.call_site_impacts)

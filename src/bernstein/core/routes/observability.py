@@ -717,6 +717,111 @@ def _estimate_role_prompt_tokens(workdir: Path, role: str) -> int:
         return 0
 
 
+def _parse_token_file(tokens_file: Path) -> tuple[int, int]:
+    """Sum input/output tokens from a ``.tokens`` sidecar file."""
+    input_tokens = 0
+    output_tokens = 0
+    try:
+        for line in tokens_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec: dict[str, Any] = json.loads(line)
+                input_tokens += int(rec.get("in", 0))
+                output_tokens += int(rec.get("out", 0))
+            except (json.JSONDecodeError, ValueError):
+                continue
+    except OSError:
+        pass
+    return input_tokens, output_tokens
+
+
+def _safe_pct(numerator: float, denominator: float) -> float:
+    """Return rounded percentage, or 0.0 when denominator is zero."""
+    return round(100.0 * numerator / denominator, 1) if denominator > 0 else 0.0
+
+
+def _find_optimization_opportunities(
+    system_prompt_estimated: int,
+    context_estimated: int,
+    input_tokens: int,
+    output_tokens: int,
+    total: int,
+) -> list[str]:
+    """Return human-readable optimization suggestions for a session."""
+    if input_tokens <= 0:
+        return []
+    opportunities: list[str] = []
+    system_pct = _safe_pct(system_prompt_estimated, input_tokens)
+    context_pct = _safe_pct(context_estimated, input_tokens)
+    output_pct = _safe_pct(output_tokens, total)
+
+    if system_pct > 30:
+        opportunities.append(
+            f"System prompt is ~{system_pct}% of input — consider trimming the role template for this task type"
+        )
+    if context_pct > 60:
+        opportunities.append(
+            f"Context files/history are ~{context_pct}% of input — agent may be loading files it never used"
+        )
+    if output_pct < 5 and total >= 1000:
+        opportunities.append("Output is <5% of total tokens — agent consumed many tokens producing little output")
+    return opportunities
+
+
+def _estimate_task_tokens(task_ids: list[str], tasks_by_id: dict[str, Any]) -> tuple[int, list[str]]:
+    """Estimate tokens from task descriptions and collect titles."""
+    task_desc_estimated = 0
+    task_titles: list[str] = []
+    for task_id in task_ids:
+        task = tasks_by_id.get(task_id)
+        if task:
+            task_titles.append(task.title)
+            text_len = len(task.title) + len(getattr(task, "description", "") or "")
+            task_desc_estimated += max(1, text_len // 4)
+    return task_desc_estimated, task_titles
+
+
+def _build_session_entry(
+    session_id: str,
+    role: str,
+    task_ids: list[str],
+    task_titles: list[str],
+    input_tokens: int,
+    output_tokens: int,
+    system_prompt_estimated: int,
+    task_desc_estimated: int,
+) -> dict[str, Any]:
+    """Build the per-session result dict."""
+    context_estimated = max(0, input_tokens - system_prompt_estimated - task_desc_estimated)
+    total = input_tokens + output_tokens
+    return {
+        "session_id": session_id,
+        "role": role,
+        "task_ids": task_ids,
+        "task_titles": task_titles,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total,
+        "breakdown": {
+            "system_prompt_estimated": system_prompt_estimated,
+            "task_description_estimated": task_desc_estimated,
+            "context_estimated": context_estimated,
+            "output_tokens": output_tokens,
+        },
+        "percentages": {
+            "system_prompt_pct": _safe_pct(system_prompt_estimated, input_tokens),
+            "task_description_pct": _safe_pct(task_desc_estimated, input_tokens),
+            "context_pct": _safe_pct(context_estimated, input_tokens),
+            "output_pct": _safe_pct(output_tokens, total),
+        },
+        "optimization_opportunities": _find_optimization_opportunities(
+            system_prompt_estimated, context_estimated, input_tokens, output_tokens, total
+        ),
+    }
+
+
 @router.get("/observability/token-breakdown")
 def token_breakdown(request: Request) -> dict[str, Any]:
     """Return per-session token consumption breakdown.
@@ -761,22 +866,7 @@ def token_breakdown(request: Request) -> dict[str, Any]:
 
     for tokens_file in sorted(runtime_dir.glob("*.tokens")):
         session_id = tokens_file.stem
-        input_tokens = 0
-        output_tokens = 0
-
-        try:
-            for line in tokens_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec: dict[str, Any] = json.loads(line)
-                    input_tokens += int(rec.get("in", 0))
-                    output_tokens += int(rec.get("out", 0))
-                except (json.JSONDecodeError, ValueError):
-                    continue
-        except OSError:
-            continue
+        input_tokens, output_tokens = _parse_token_file(tokens_file)
 
         if input_tokens == 0 and output_tokens == 0:
             continue
@@ -785,70 +875,20 @@ def token_breakdown(request: Request) -> dict[str, Any]:
         role = info.get("role", "unknown")
         task_ids: list[str] = info.get("task_ids", [])
 
-        # Estimate system prompt tokens from role template file size (~4 chars/token)
         system_prompt_estimated = _estimate_role_prompt_tokens(workdir, role)
-
-        # Estimate task description tokens from title + description length
-        task_desc_estimated = 0
-        task_titles: list[str] = []
-        for task_id in task_ids:
-            task = tasks_by_id.get(task_id)
-            if task:
-                task_titles.append(task.title)
-                text_len = len(task.title) + len(getattr(task, "description", "") or "")
-                task_desc_estimated += max(1, text_len // 4)
-
-        # Context = remaining input after accounting for system prompt + task desc
-        context_estimated = max(0, input_tokens - system_prompt_estimated - task_desc_estimated)
-        total = input_tokens + output_tokens
-
-        # Compute optimization opportunities
-        opportunities: list[str] = []
-        if input_tokens > 0:
-            system_pct = round(100.0 * system_prompt_estimated / input_tokens, 1)
-            context_pct = round(100.0 * context_estimated / input_tokens, 1)
-            output_pct = round(100.0 * output_tokens / total, 1) if total > 0 else 0.0
-
-            if system_pct > 30:
-                opportunities.append(
-                    f"System prompt is ~{system_pct}% of input — consider trimming the role template for this task type"
-                )
-            if context_pct > 60:
-                opportunities.append(
-                    f"Context files/history are ~{context_pct}% of input — agent may be loading files it never used"
-                )
-            if output_pct < 5 and total >= 1000:
-                opportunities.append(
-                    "Output is <5% of total tokens — agent consumed many tokens producing little output"
-                )
+        task_desc_estimated, task_titles = _estimate_task_tokens(task_ids, tasks_by_id)
 
         sessions.append(
-            {
-                "session_id": session_id,
-                "role": role,
-                "task_ids": task_ids,
-                "task_titles": task_titles,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": total,
-                "breakdown": {
-                    "system_prompt_estimated": system_prompt_estimated,
-                    "task_description_estimated": task_desc_estimated,
-                    "context_estimated": context_estimated,
-                    "output_tokens": output_tokens,
-                },
-                "percentages": {
-                    "system_prompt_pct": round(100.0 * system_prompt_estimated / input_tokens, 1)
-                    if input_tokens > 0
-                    else 0.0,
-                    "task_description_pct": round(100.0 * task_desc_estimated / input_tokens, 1)
-                    if input_tokens > 0
-                    else 0.0,
-                    "context_pct": round(100.0 * context_estimated / input_tokens, 1) if input_tokens > 0 else 0.0,
-                    "output_pct": round(100.0 * output_tokens / total, 1) if total > 0 else 0.0,
-                },
-                "optimization_opportunities": opportunities,
-            }
+            _build_session_entry(
+                session_id,
+                role,
+                task_ids,
+                task_titles,
+                input_tokens,
+                output_tokens,
+                system_prompt_estimated,
+                task_desc_estimated,
+            )
         )
 
     total_input = sum(s["input_tokens"] for s in sessions)
@@ -862,9 +902,7 @@ def token_breakdown(request: Request) -> dict[str, Any]:
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,
             "total_tokens": total_input + total_output,
-            "system_prompt_overhead_pct": round(100.0 * total_system_overhead / total_input, 1)
-            if total_input > 0
-            else 0.0,
+            "system_prompt_overhead_pct": _safe_pct(total_system_overhead, total_input),
         },
         "note": "Breakdown is estimated. system_prompt and task_description use a ~4 chars/token heuristic.",
     }
