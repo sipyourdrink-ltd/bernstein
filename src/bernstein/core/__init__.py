@@ -15,8 +15,7 @@ import importlib
 import sys
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
-from types import ModuleType
-
+from types import ModuleType  # noqa: TC003 - used at runtime by MetaPathFinder
 
 # Map: old module name → new fully-qualified module path
 _REDIRECT_MAP: dict[str, str] = {
