@@ -82,6 +82,10 @@ class BoundaryConfig:
         allowed_mounts: Mount paths that are permitted.
     """
 
+    # /tmp is intentionally included: this detector's job is to define the
+    # sandbox boundary.  /tmp is allowed so agents can use temporary files,
+    # while denied_paths below blocks sensitive system paths.  The publicly
+    # writable nature of /tmp is acceptable within the sandbox model.
     allowed_paths: tuple[str, ...] = (
         "/workspace/*",
         "/tmp/*",

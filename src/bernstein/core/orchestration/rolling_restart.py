@@ -280,6 +280,9 @@ def _filter_alive(pids: list[int]) -> list[int]:
     alive: list[int] = []
     for pid in pids:
         try:
+            # Intentional: signal 0 does not terminate the process; it only
+            # checks whether the PID exists and is reachable.  This is the
+            # standard Unix idiom for a "process alive?" probe.
             os.kill(pid, 0)
         except ProcessLookupError:
             logger.debug("PID %d is not running; excluding from restart", pid)
