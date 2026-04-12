@@ -224,6 +224,15 @@ def _extract_archive(archive_path: Path, dest: Path) -> None:
     name = archive_path.name
     if name.endswith(".zip"):
         with zipfile.ZipFile(archive_path) as zf:
+            # Validate member paths to prevent Zip Slip (path traversal via
+            # absolute paths or ".." components).
+            resolved_dest = dest.resolve()
+            for info in zf.infolist():
+                target = (resolved_dest / info.filename).resolve()
+                if not str(target).startswith(str(resolved_dest)):
+                    raise ValueError(
+                        f"Zip entry would escape target directory: {info.filename}"
+                    )
             zf.extractall(dest)
     elif name.endswith((".tar.gz", ".tgz")):
         with tarfile.open(archive_path, "r:gz") as tf:

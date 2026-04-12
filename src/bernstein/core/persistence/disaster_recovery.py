@@ -237,6 +237,7 @@ def restore_sdd(
 
         if decrypt:
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tar:
+                # Read-only: getnames() lists entries without extraction.
                 names = tar.getnames()
                 return {
                     "files_restored": str(len(names)),
@@ -246,6 +247,7 @@ def restore_sdd(
                 }
         else:
             with tarfile.open(source, "r:gz") as tar:
+                # Read-only: getnames() lists entries without extraction.
                 names = tar.getnames()
                 return {
                     "files_restored": str(len(names)),
@@ -264,6 +266,8 @@ def restore_sdd(
         fileobj=io.BytesIO(data) if decrypt else source.open("rb"),
         mode="r:*",
     ) as tar:
+        # filter="data" (Python 3.12+) blocks absolute paths, ".."
+        # components, and special file types — mitigating path traversal.
         tar.extractall(path=sdd_path, filter="data")
 
     # Count restored files
