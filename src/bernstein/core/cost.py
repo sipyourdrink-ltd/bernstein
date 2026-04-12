@@ -40,6 +40,10 @@ EPSILON: float = 0.1  # 10% explore, 90% exploit
 MIN_OBSERVATIONS: int = 5  # arms trusted only after this many samples
 QUALITY_THRESHOLD: float = 0.80  # minimum success_rate to consider an arm
 
+# Model name constants (used across pricing tables and cache tiers)
+MODEL_GPT_5_4 = "gpt-5.4"
+MODEL_GEMINI_3_1_PRO = "gemini-3.1-pro"
+
 
 class ModelUsdPer1MTokens(TypedDict, total=False):
     """USD per 1 million tokens (list prices, approximate)."""
@@ -56,12 +60,12 @@ MODEL_COSTS_PER_1M_TOKENS: dict[str, ModelUsdPer1MTokens] = {
     "haiku": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_write": 1.25},
     "sonnet": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
     "opus": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write": 6.25},
-    "gpt-5.4": {"input": 2.5, "output": 15.0},
+    MODEL_GPT_5_4: {"input": 2.5, "output": 15.0},
     "gpt-5.4-mini": {"input": 0.75, "output": 4.5},
     "o3": {"input": 2.0, "output": 8.0},
     "o4-mini": {"input": 1.1, "output": 4.4},
     "gemini-3": {"input": 3.0, "output": 15.0, "cache_read": 0.1},
-    "gemini-3.1-pro": {"input": 0.50, "output": 3.00, "cache_read": 0.02},
+    MODEL_GEMINI_3_1_PRO: {"input": 0.50, "output": 3.00, "cache_read": 0.02},
     "gemini-3-flash": {"input": 0.15, "output": 1.00, "cache_read": 0.005},
     "qwen3-coder": {"input": 0.22, "output": 0.9},
     # Blended-only entries in ``_MODEL_COST_USD_PER_1K`` — approximate 40/60 input/output split of total $/1M.
@@ -79,13 +83,13 @@ _MODEL_COST_USD_PER_1K: dict[str, float] = {
     "sonnet": 0.009,  # ($3 + $15) / 2 / 1000
     "opus": 0.015,  # ($5 + $25) / 2 / 1000
     # OpenAI — per 1M tokens: GPT-5.4 $2.50/$15, o3 $2/$8, o4-mini $1.10/$4.40
-    "gpt-5.4": 0.00875,  # ($2.50 + $15) / 2 / 1000
+    MODEL_GPT_5_4: 0.00875,  # ($2.50 + $15) / 2 / 1000
     "gpt-5.4-mini": 0.002625,  # ($0.75 + $4.50) / 2 / 1000
     "o3": 0.005,  # ($2 + $8) / 2 / 1000
     "o4-mini": 0.00275,  # ($1.10 + $4.40) / 2 / 1000
     # Gemini (Google) — per 1M tokens: 3-pro ~$3/$15, 3.1-pro $0.50/$3, 3-flash $0.15/$1
     "gemini-3": 0.009,  # ($3 + $15) / 2 / 1000
-    "gemini-3.1-pro": 0.00175,  # ($0.50 + $3.00) / 2 / 1000
+    MODEL_GEMINI_3_1_PRO: 0.00175,  # ($0.50 + $3.00) / 2 / 1000
     "gemini-3-flash": 0.000575,  # ($0.15 + $1.00) / 2 / 1000
     # Qwen — open-weight, very cheap via API
     "qwen3-coder": 0.00056,  # ($0.22 + $0.90) / 2 / 1000
@@ -758,7 +762,7 @@ class CachePricingRegistry:
         # OpenAI models
         self.register_tier(
             CachePricingTier(
-                model="gpt-5.4",
+                model=MODEL_GPT_5_4,
                 provider="openai",
                 cache_read_usd_per_1m=0.25,
                 cache_write_usd_per_1m=0.25,
@@ -771,7 +775,7 @@ class CachePricingRegistry:
         # Google models
         self.register_tier(
             CachePricingTier(
-                model="gemini-3.1-pro",
+                model=MODEL_GEMINI_3_1_PRO,
                 provider="google",
                 cache_read_usd_per_1m=0.20,
                 cache_write_usd_per_1m=0.20,

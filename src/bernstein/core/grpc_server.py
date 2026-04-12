@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# gRPC error messages
+_ERR_TASK_NOT_FOUND = "task not found"
+_ERR_NODE_NOT_FOUND = "node not found"
+
 _STATUS_MAP: dict[str, int] = {
     "open": 1,
     "claimed": 2,
@@ -122,7 +126,7 @@ class TaskServiceImpl:
 
         task = self._store.get(request.task_id)
         if task is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "task not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, _ERR_TASK_NOT_FOUND)
         self._store.claim(request.task_id, request.agent_id)
         if request.node_id:
             task_dict = self._store.get(request.task_id)
@@ -138,7 +142,7 @@ class TaskServiceImpl:
 
         task = self._store.get(request.task_id)
         if task is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "task not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, _ERR_TASK_NOT_FOUND)
         self._store.complete(
             request.task_id,
             result_summary=request.result_summary,
@@ -153,7 +157,7 @@ class TaskServiceImpl:
 
         task = self._store.get(request.task_id)
         if task is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "task not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, _ERR_TASK_NOT_FOUND)
         self._store.fail(request.task_id, error=request.error)
         task = self._store.get(request.task_id)
         resp = tasks_pb2.TaskResponse()
@@ -165,7 +169,7 @@ class TaskServiceImpl:
 
         task = self._store.get(request.task_id)
         if task is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "task not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, _ERR_TASK_NOT_FOUND)
         resp = tasks_pb2.ProgressResponse(acknowledged=True)
         return resp
 
@@ -194,7 +198,7 @@ class TaskServiceImpl:
 
         task = self._store.get(request.task_id)
         if task is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "task not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, _ERR_TASK_NOT_FOUND)
         resp = tasks_pb2.TaskResponse()
         self._fill_task_proto(resp.task, task)
         return resp
@@ -287,7 +291,7 @@ class ClusterServiceImpl:
 
         node = self._registry.get(request.node_id)
         if node is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "node not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, _ERR_NODE_NOT_FOUND)
         self._registry.cordon(request.node_id)
         return cluster_pb2.NodeStatusResponse(
             node_id=request.node_id,
@@ -299,7 +303,7 @@ class ClusterServiceImpl:
 
         node = self._registry.get(request.node_id)
         if node is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "node not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, _ERR_NODE_NOT_FOUND)
         self._registry.uncordon(request.node_id)
         return cluster_pb2.NodeStatusResponse(
             node_id=request.node_id,
@@ -311,7 +315,7 @@ class ClusterServiceImpl:
 
         node = self._registry.get(request.node_id)
         if node is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, "node not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, _ERR_NODE_NOT_FOUND)
         self._registry.start_drain(request.node_id)
         return cluster_pb2.NodeStatusResponse(
             node_id=request.node_id,

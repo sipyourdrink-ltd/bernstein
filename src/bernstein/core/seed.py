@@ -45,6 +45,9 @@ from bernstein.core.worktree import WorktreeSetupConfig
 if TYPE_CHECKING:
     from pathlib import Path
 
+# Type alias for the common cast target used when parsing untyped YAML dicts.
+type _StrObjDict = dict[str, object]
+
 
 class SeedError(Exception):
     """Raised when the seed file is missing, unreadable, or invalid."""
@@ -210,7 +213,7 @@ def _parse_model_fallback(raw: object) -> ModelFallbackSeedConfig | None:
         return None
     if not isinstance(raw, dict):
         raise SeedError(f"model_fallback must be a mapping, got: {type(raw).__name__}")
-    mf: dict[str, object] = cast("dict[str, object]", raw)
+    mf: dict[str, object] = cast("_StrObjDict", raw)
 
     chain_raw = mf.get("fallback_chain")
     chain: list[str] = []
@@ -459,13 +462,13 @@ def _parse_metrics(raw: object) -> dict[str, MetricSchema]:
         raise SeedError(f"metrics must be a mapping, got: {type(raw).__name__}")
 
     result: dict[str, MetricSchema] = {}
-    metrics_dict: dict[str, object] = cast("dict[str, object]", raw)
+    metrics_dict: dict[str, object] = cast("_StrObjDict", raw)
     for name, entry in metrics_dict.items():
         if not isinstance(name, str) or not name.strip():
             raise SeedError(f"metrics keys must be non-empty strings, got: {name!r}")
         if not isinstance(entry, dict):
             raise SeedError(f"metrics.{name} must be a mapping, got: {type(entry).__name__}")
-        entry_dict: dict[str, object] = cast("dict[str, object]", entry)
+        entry_dict: dict[str, object] = cast("_StrObjDict", entry)
 
         formula = entry_dict.get("formula")
         if not isinstance(formula, str) or not formula.strip():
@@ -548,7 +551,7 @@ def _parse_cors_config(raw: object) -> CORSConfig | None:
     if not isinstance(raw, dict):
         raise SeedError(f"cors must be a mapping or boolean, got: {type(raw).__name__}")
 
-    cors_dict: dict[str, object] = cast("dict[str, object]", raw)
+    cors_dict: dict[str, object] = cast("_StrObjDict", raw)
 
     origins = _parse_string_list(cors_dict.get("allowed_origins"), "cors.allowed_origins")
     if not origins:
@@ -611,7 +614,7 @@ def _parse_dashboard_auth(raw: object) -> DashboardAuthConfig | None:
     if not isinstance(raw, dict):
         raise SeedError(f"dashboard_auth must be a mapping, got: {type(raw).__name__}")
 
-    da_dict: dict[str, object] = cast("dict[str, object]", raw)
+    da_dict: dict[str, object] = cast("_StrObjDict", raw)
 
     password_raw = da_dict.get("password", "")
     if not isinstance(password_raw, str):
@@ -695,7 +698,7 @@ def _parse_tenants(raw: object) -> tuple[TenantConfig, ...]:
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             raise SeedError(f"tenants[{index}] must be a mapping")
-        entry = cast("dict[str, object]", item)
+        entry = cast("_StrObjDict", item)
         tenant_id_raw = entry.get("id")
         if not isinstance(tenant_id_raw, str) or not tenant_id_raw.strip():
             raise SeedError(f"tenants[{index}].id must be a non-empty string")
@@ -752,7 +755,7 @@ def _parse_openclaw_runtime_config(raw: object) -> OpenClawBridgeConfig | None:
     if not isinstance(raw, dict):
         raise SeedError(f"bridges.openclaw must be a mapping, got: {type(raw).__name__}")
 
-    data = cast("dict[str, object]", raw)
+    data = cast("_StrObjDict", raw)
     enabled_raw = data.get("enabled", False)
     if not isinstance(enabled_raw, bool):
         raise SeedError(f"bridges.openclaw.enabled must be a bool, got: {type(enabled_raw).__name__}")
@@ -843,7 +846,7 @@ def _parse_bridge_settings(raw: object) -> BridgeConfigSet | None:
         return None
     if not isinstance(raw, dict):
         raise SeedError(f"bridges must be a mapping, got: {type(raw).__name__}")
-    data = cast("dict[str, object]", raw)
+    data = cast("_StrObjDict", raw)
     return BridgeConfigSet(openclaw=_parse_openclaw_runtime_config(data.get("openclaw")))
 
 
@@ -897,7 +900,7 @@ def _parse_smtp(raw: object) -> SmtpConfig | None:
     if not isinstance(raw, dict):
         raise SeedError(f"smtp must be a mapping, got: {type(raw).__name__}")
 
-    data = cast("dict[str, object]", raw)
+    data = cast("_StrObjDict", raw)
     host = data.get("host")
     if not isinstance(host, str) or not host:
         raise SeedError("smtp.host is required and must be a string")
@@ -949,7 +952,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if not isinstance(data_raw, dict):
         raise SeedError(f"Seed file must be a YAML mapping, got {type(data_raw).__name__}")
 
-    data: dict[str, object] = cast("dict[str, object]", data_raw)
+    data: dict[str, object] = cast("_StrObjDict", data_raw)
 
     # --- Required fields ---
     goal: object = data.get("goal")
@@ -1012,7 +1015,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if notify_raw is not None:
         if not isinstance(notify_raw, dict):
             raise SeedError(f"notify must be a mapping, got: {type(notify_raw).__name__}")
-        notify_dict: dict[str, object] = cast("dict[str, object]", notify_raw)
+        notify_dict: dict[str, object] = cast("_StrObjDict", notify_raw)
         webhook_url: object = notify_dict.get("webhook")
         if webhook_url is not None and not isinstance(webhook_url, str):
             raise SeedError(f"notify.webhook must be a string, got: {type(webhook_url).__name__}")
@@ -1041,7 +1044,7 @@ def parse_seed(path: Path) -> SeedConfig:
         for idx, item in enumerate(webhooks_raw):
             if not isinstance(item, dict):
                 raise SeedError(f"webhooks[{idx}] must be a mapping")
-            entry = cast("dict[str, object]", item)
+            entry = cast("_StrObjDict", item)
             url_raw: object = entry.get("url")
             if not isinstance(url_raw, str) or not url_raw.strip():
                 raise SeedError(f"webhooks[{idx}].url must be a non-empty string")
@@ -1060,7 +1063,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if storage_raw is not None:
         if not isinstance(storage_raw, dict):
             raise SeedError(f"storage must be a mapping, got: {type(storage_raw).__name__}")
-        storage_dict: dict[str, object] = cast("dict[str, object]", storage_raw)
+        storage_dict: dict[str, object] = cast("_StrObjDict", storage_raw)
         storage_backend_raw: object = storage_dict.get("backend", "memory")
         _valid_storage_backends = ("memory", "postgres", "redis")
         if storage_backend_raw not in _valid_storage_backends:
@@ -1087,7 +1090,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if cluster_raw is not None:
         if not isinstance(cluster_raw, dict):
             raise SeedError(f"cluster must be a mapping, got: {type(cluster_raw).__name__}")
-        cluster_dict: dict[str, object] = cast("dict[str, object]", cluster_raw)
+        cluster_dict: dict[str, object] = cast("_StrObjDict", cluster_raw)
         topology_str: object = cluster_dict.get("topology", "star")
         try:
             topology = ClusterTopology(topology_str)
@@ -1113,7 +1116,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if session_raw is not None:
         if not isinstance(session_raw, dict):
             raise SeedError(f"session must be a mapping, got: {type(session_raw).__name__}")
-        session_dict: dict[str, object] = cast("dict[str, object]", session_raw)
+        session_dict: dict[str, object] = cast("_StrObjDict", session_raw)
         resume_raw: object = session_dict.get("resume", True)
         if not isinstance(resume_raw, bool):
             raise SeedError(f"session.resume must be a bool, got: {type(resume_raw).__name__}")
@@ -1146,7 +1149,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if worktree_setup_raw is not None:
         if not isinstance(worktree_setup_raw, dict):
             raise SeedError(f"worktree_setup must be a mapping, got: {type(worktree_setup_raw).__name__}")
-        ws_dict: dict[str, object] = cast("dict[str, object]", worktree_setup_raw)
+        ws_dict: dict[str, object] = cast("_StrObjDict", worktree_setup_raw)
         symlink_dirs = _parse_string_list(ws_dict.get("symlink_dirs"), "worktree_setup.symlink_dirs")
         copy_files = _parse_string_list(ws_dict.get("copy_files"), "worktree_setup.copy_files")
         setup_cmd_raw: object = ws_dict.get("setup_command")
@@ -1163,7 +1166,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if batch_raw is not None:
         if not isinstance(batch_raw, dict):
             raise SeedError(f"batch must be a mapping, got: {type(batch_raw).__name__}")
-        batch_dict: dict[str, object] = cast("dict[str, object]", batch_raw)
+        batch_dict: dict[str, object] = cast("_StrObjDict", batch_raw)
         enabled_raw: object = batch_dict.get("enabled", False)
         if not isinstance(enabled_raw, bool):
             raise SeedError(f"batch.enabled must be a bool, got: {type(enabled_raw).__name__}")
@@ -1175,7 +1178,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if test_agent_raw is not None:
         if not isinstance(test_agent_raw, dict):
             raise SeedError(f"test_agent must be a mapping, got: {type(test_agent_raw).__name__}")
-        test_agent_dict: dict[str, object] = cast("dict[str, object]", test_agent_raw)
+        test_agent_dict: dict[str, object] = cast("_StrObjDict", test_agent_raw)
         always_spawn_raw: object = test_agent_dict.get("always_spawn", False)
         if not isinstance(always_spawn_raw, bool):
             raise SeedError(f"test_agent.always_spawn must be a bool, got: {type(always_spawn_raw).__name__}")
@@ -1205,7 +1208,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if quality_gates_raw is not None:
         if not isinstance(quality_gates_raw, dict):
             raise SeedError(f"quality_gates must be a mapping, got: {type(quality_gates_raw).__name__}")
-        qg_dict: dict[str, object] = cast("dict[str, object]", quality_gates_raw)
+        qg_dict: dict[str, object] = cast("_StrObjDict", quality_gates_raw)
 
         def _qg_bool(key: str, default: bool) -> bool:
             val = qg_dict.get(key, default)
@@ -1289,7 +1292,7 @@ def parse_seed(path: Path) -> SeedConfig:
         if benchmark_raw is not None:
             if not isinstance(benchmark_raw, dict):
                 raise SeedError(f"quality_gates.benchmark must be a mapping, got: {type(benchmark_raw).__name__}")
-            bm_dict: dict[str, object] = cast("dict[str, object]", benchmark_raw)
+            bm_dict: dict[str, object] = cast("_StrObjDict", benchmark_raw)
             bm_enabled = bm_dict.get("enabled", False)
             if not isinstance(bm_enabled, bool):
                 raise SeedError(f"quality_gates.benchmark.enabled must be a bool, got: {type(bm_enabled).__name__}")
@@ -1363,7 +1366,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if formal_verification_raw is not None:
         if not isinstance(formal_verification_raw, dict):
             raise SeedError(f"formal_verification must be a mapping, got: {type(formal_verification_raw).__name__}")
-        fv_dict: dict[str, object] = cast("dict[str, object]", formal_verification_raw)
+        fv_dict: dict[str, object] = cast("_StrObjDict", formal_verification_raw)
         fv_enabled = fv_dict.get("enabled", True)
         if not isinstance(fv_enabled, bool):
             raise SeedError(f"formal_verification.enabled must be a bool, got: {type(fv_enabled).__name__}")
@@ -1416,7 +1419,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if secrets_raw is not None:
         if not isinstance(secrets_raw, dict):
             raise SeedError(f"secrets must be a mapping, got: {type(secrets_raw).__name__}")
-        secrets_dict: dict[str, object] = cast("dict[str, object]", secrets_raw)
+        secrets_dict: dict[str, object] = cast("_StrObjDict", secrets_raw)
         secrets_provider_raw: object = secrets_dict.get("provider")
         if not isinstance(secrets_provider_raw, str):
             raise SeedError("secrets.provider is required and must be a string")
@@ -1437,7 +1440,7 @@ def parse_seed(path: Path) -> SeedConfig:
         if field_map_raw is not None:
             if not isinstance(field_map_raw, dict):
                 raise SeedError(f"secrets.field_map must be a mapping, got: {type(field_map_raw).__name__}")
-            for fk, fv in cast("dict[str, object]", field_map_raw).items():
+            for fk, fv in cast("_StrObjDict", field_map_raw).items():
                 if not isinstance(fv, str):
                     raise SeedError(f"secrets.field_map values must be strings, got: {type(fv).__name__}")
                 field_map[str(fk)] = fv
@@ -1454,7 +1457,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if kr_raw is not None:
         if not isinstance(kr_raw, dict):
             raise SeedError(f"key_rotation must be a mapping, got: {type(kr_raw).__name__}")
-        kr_dict: dict[str, object] = cast("dict[str, object]", kr_raw)
+        kr_dict: dict[str, object] = cast("_StrObjDict", kr_raw)
 
         kr_interval_raw: object = kr_dict.get("interval", 2592000)
         try:

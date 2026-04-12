@@ -48,6 +48,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ISO 8601 UTC datetime format used in HIPAA event timestamps and reports
+ISO_DATETIME_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
 # ---------------------------------------------------------------------------
 # PHI categories and patterns
 # ---------------------------------------------------------------------------
@@ -531,7 +534,7 @@ def generate_hipaa_report(
     """
     from bernstein.core.audit import AuditLog
 
-    generated_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = datetime.now(tz=UTC).strftime(ISO_DATETIME_FMT)
     events = phi_events_log or []
 
     # Summarize PHI scan events
@@ -661,7 +664,7 @@ class HIPAAMode:
                         "category": finding.category.value,
                         "action": "detected",
                         "source": source,
-                        "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "timestamp": datetime.now(tz=UTC).strftime(ISO_DATETIME_FMT),
                     }
                 )
             logger.warning(
@@ -687,7 +690,7 @@ class HIPAAMode:
                     "category": "file_access",
                     "action": "blocked",
                     "file_path": file_path,
-                    "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "timestamp": datetime.now(tz=UTC).strftime(ISO_DATETIME_FMT),
                 }
             )
             logger.warning("HIPAA: Blocked PHI file access: %s", file_path)
