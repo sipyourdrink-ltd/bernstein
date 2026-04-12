@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.defaults import AGENT
 from bernstein.core.platform_compat import IS_WINDOWS, kill_process, process_alive
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ DEFAULT_SIGTERM_GRACE_S: int = 10
 
 #: Maximum age for a PID file to be considered (seconds).  Files older than
 #: this are stale metadata from very old runs and are simply deleted.
-MAX_PID_FILE_AGE_S: float = 7 * 24 * 3600  # 7 days
+MAX_PID_FILE_AGE_S: float = AGENT.zombie_pid_max_age_s
 
 
 @dataclass(frozen=True)

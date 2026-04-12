@@ -21,6 +21,7 @@ from bernstein.core.adapter_health import AdapterHealthMonitor
 from bernstein.core.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
+from bernstein.core.defaults import SPAWN
 from bernstein.core.heartbeat import HeartbeatMonitor
 from bernstein.core.in_process_agent import InProcessAgent
 from bernstein.core.lessons import gather_lessons_for_context
@@ -1222,9 +1223,10 @@ class AgentSpawner:
         try:
             usage = shutil.disk_usage(self._workdir)
             free_gb = usage.free / (1024**3)
-            if free_gb < 1.0:
+            if free_gb < SPAWN.disk_free_threshold_gb:
                 logger.error("Disk space critical: %.1f GB free, skipping spawn", free_gb)
-                raise SpawnError(f"Disk space critical: {free_gb:.1f} GB free (need >= 1 GB)")
+                threshold = SPAWN.disk_free_threshold_gb
+                raise SpawnError(f"Disk space critical: {free_gb:.1f} GB free (need >= {threshold} GB)")
         except OSError as exc:
             logger.warning("Could not check disk space: %s", exc)
 
@@ -1232,11 +1234,11 @@ class AgentSpawner:
         now = time.time()
         adapter_name = self._adapter.name()
         last_fail = self._agent_failure_timestamps.get(adapter_name, 0.0)
-        if now - last_fail < 300:
+        if now - last_fail < SPAWN.spawn_failure_cooldown_s:
             logger.info(
                 "Agent %s in cooldown (%.1fs remaining) — skipping spawn",
                 adapter_name,
-                300 - (now - last_fail),
+                SPAWN.spawn_failure_cooldown_s - (now - last_fail),
             )
             raise SpawnError(f"Agent {adapter_name} is in cooldown after recent failure")
         if not self._adapter_health.is_healthy(adapter_name):

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.context_recommendations import RecommendationEngine
+from bernstein.core.defaults import SPAWN
 from bernstein.core.heartbeat import HeartbeatMonitor
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.templates.renderer import TemplateError, render_role_prompt
@@ -222,7 +223,7 @@ def filter_sections(
 # Lesson extraction cache (per-role, TTL-based)
 # ---------------------------------------------------------------------------
 _lesson_cache: dict[str, tuple[float, str]] = {}  # role -> (timestamp, text)
-_LESSON_CACHE_TTL = 300  # 5 minutes
+_LESSON_CACHE_TTL = SPAWN.lesson_cache_ttl_s
 
 # ---------------------------------------------------------------------------
 # Cache-safe parameters for forked agents

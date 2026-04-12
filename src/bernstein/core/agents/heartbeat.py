@@ -13,12 +13,13 @@ from typing import Any, cast
 
 from bernstein.core.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
 from bernstein.core.agent_signals import AgentSignalManager
+from bernstein.core.defaults import AGENT
 from bernstein.core.models import AgentHeartbeat, ProgressSnapshot, Task
 
 logger = logging.getLogger(__name__)
 
-# Idle agent detection thresholds
-IDLE_LOG_AGE_THRESHOLD_SECONDS = 180  # 3 minutes without log activity
+# Idle agent detection thresholds — sourced from defaults
+IDLE_LOG_AGE_THRESHOLD_SECONDS = int(AGENT.idle_log_age_threshold_s)
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ class StallProfile:
 class HeartbeatMonitor:
     """Monitor agent liveness via heartbeat files."""
 
-    def __init__(self, workdir: Path, *, timeout_s: float = 120.0) -> None:
+    def __init__(self, workdir: Path, *, timeout_s: float = AGENT.heartbeat_stale_s) -> None:
         self._workdir = workdir
         self._timeout_s = timeout_s
         self._signal_mgr = AgentSignalManager(workdir)
@@ -173,10 +174,10 @@ def check_stale_agents(orch: Any) -> None:
             age = now - hb.timestamp
             task_title = ", ".join(session.task_ids) if session.task_ids else "unknown task"
             elapsed = now - session.spawn_ts
-            if age >= 120:
+            if age >= AGENT.escalation_sigterm_s:
                 with contextlib.suppress(OSError):
                     orch._signal_mgr.write_shutdown(session.id, reason="no_heartbeat_120s", task_title=task_title)
-            elif age >= 60:
+            elif age >= AGENT.escalation_warn_s:
                 with contextlib.suppress(OSError):
                     orch._signal_mgr.write_wakeup(
                         session.id,
@@ -186,8 +187,8 @@ def check_stale_agents(orch: Any) -> None:
                     )
         return
 
-    timeout_s = float(getattr(config, "heartbeat_timeout_s", 120))
-    wakeup_after_s = max(timeout_s / 2.0, 60.0)
+    timeout_s = float(getattr(config, "heartbeat_timeout_s", AGENT.heartbeat_stale_s))
+    wakeup_after_s = max(timeout_s / 2.0, AGENT.escalation_warn_s)
     monitor = HeartbeatMonitor(workdir, timeout_s=timeout_s)
     for session in orch._agents.values():
         if session.status == "dead":
@@ -251,18 +252,18 @@ def check_stalled_tasks(orch: Any) -> None:
                     orch._stall_counts[task_id] = 0
                 count = orch._stall_counts[task_id]
                 elapsed = time.time() - session.spawn_ts
-                if count >= 7:
+                if count >= AGENT.escalation_kill_count:
                     with contextlib.suppress(Exception):
                         orch._spawner.kill(session)
                     orch._stall_counts[task_id] = 0
-                elif count >= 5:
+                elif count >= AGENT.escalation_high_count:
                     with contextlib.suppress(OSError):
                         orch._signal_mgr.write_shutdown(
                             session.id,
                             reason="stalled_5min",
                             task_title=task_id,
                         )
-                elif count >= 3:
+                elif count >= AGENT.escalation_med_count:
                     with contextlib.suppress(OSError):
                         orch._signal_mgr.write_wakeup(
                             session.id,
@@ -272,7 +273,7 @@ def check_stalled_tasks(orch: Any) -> None:
                         )
         return
 
-    timeout_s = float(getattr(getattr(orch, "_config", None), "heartbeat_timeout_s", 120))
+    timeout_s = float(getattr(getattr(orch, "_config", None), "heartbeat_timeout_s", AGENT.heartbeat_stale_s))
     monitor = HeartbeatMonitor(workdir, timeout_s=timeout_s)
     aggregator = AgentLogAggregator(workdir)
     latest_tasks = getattr(orch, "_latest_tasks_by_id", {})

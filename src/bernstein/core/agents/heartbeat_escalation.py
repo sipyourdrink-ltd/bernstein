@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass, field
 from enum import IntEnum
 
+from bernstein.core.defaults import AGENT
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,10 +49,10 @@ class EscalationThresholds:
         sigkill_s: Seconds before sending SIGKILL.
     """
 
-    warn_s: float = 60.0
-    sigusr1_s: float = 90.0
-    sigterm_s: float = 120.0
-    sigkill_s: float = 150.0
+    warn_s: float = AGENT.escalation_warn_s
+    sigusr1_s: float = AGENT.escalation_sigusr1_s
+    sigterm_s: float = AGENT.escalation_sigterm_s
+    sigkill_s: float = AGENT.escalation_sigkill_s
 
     def validate(self) -> list[str]:
         """Validate that thresholds are monotonically increasing.
