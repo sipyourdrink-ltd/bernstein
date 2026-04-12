@@ -101,6 +101,49 @@ def fuzzy_match(
     return None
 
 
+def _iter_plan_steps(plan_data: dict[str, object]) -> list[dict[str, object]]:
+    """Extract all step dicts from a plan's stages list."""
+    stages = plan_data.get("stages")
+    if not isinstance(stages, list):
+        return []
+    steps: list[dict[str, object]] = []
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        stage_steps = stage.get("steps")
+        if not isinstance(stage_steps, list):
+            continue
+        for step in stage_steps:
+            if isinstance(step, dict):
+                steps.append(step)
+    return steps
+
+
+def _check_step_field(
+    step: dict[str, object],
+    field_name: str,
+    candidates: frozenset[str],
+) -> CorrectionSuggestion | None:
+    """Check a single field in a step for typos, returning a suggestion or None."""
+    raw = step.get(field_name)
+    if raw is None or not isinstance(raw, str):
+        return None
+    normalised = raw.lower().strip()
+    if normalised in candidates:
+        return None
+    match = fuzzy_match(normalised, candidates)
+    if match is None:
+        return None
+    ratio = difflib.SequenceMatcher(None, normalised, match.lower()).ratio()
+    return CorrectionSuggestion(
+        field=field_name,
+        original=raw,
+        suggested=match,
+        confidence=round(ratio, 2),
+        reason=f"{field_name.capitalize()} '{raw}' not found. Did you mean '{match}'?",
+    )
+
+
 def check_plan_for_typos(plan_data: dict[str, object]) -> list[CorrectionSuggestion]:
     """Scan all steps in *plan_data* for typos in role/complexity/scope.
 
@@ -115,38 +158,11 @@ def check_plan_for_typos(plan_data: dict[str, object]) -> list[CorrectionSuggest
         A list of correction suggestions (may be empty).
     """
     suggestions: list[CorrectionSuggestion] = []
-    stages = plan_data.get("stages")
-    if not isinstance(stages, list):
-        return suggestions
-
-    for stage in stages:
-        if not isinstance(stage, dict):
-            continue
-        steps = stage.get("steps")
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            for field_name, candidates in _FIELD_CANDIDATES.items():
-                raw = step.get(field_name)
-                if raw is None or not isinstance(raw, str):
-                    continue
-                normalised = raw.lower().strip()
-                if normalised in candidates:
-                    continue
-                match = fuzzy_match(normalised, candidates)
-                if match is not None:
-                    ratio = difflib.SequenceMatcher(None, normalised, match.lower()).ratio()
-                    suggestions.append(
-                        CorrectionSuggestion(
-                            field=field_name,
-                            original=raw,
-                            suggested=match,
-                            confidence=round(ratio, 2),
-                            reason=(f"{field_name.capitalize()} '{raw}' not found. Did you mean '{match}'?"),
-                        )
-                    )
+    for step in _iter_plan_steps(plan_data):
+        for field_name, candidates in _FIELD_CANDIDATES.items():
+            suggestion = _check_step_field(step, field_name, candidates)
+            if suggestion is not None:
+                suggestions.append(suggestion)
     return suggestions
 
 
@@ -172,26 +188,14 @@ def apply_corrections(
     result: dict[str, object] = copy.deepcopy(plan_data)
     lookup: dict[tuple[str, str], str] = {(c.field, c.original): c.suggested for c in corrections}
 
-    stages = result.get("stages")
-    if not isinstance(stages, list):
-        return result
-
-    for stage in stages:
-        if not isinstance(stage, dict):
-            continue
-        steps = stage.get("steps")
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
+    for step in _iter_plan_steps(result):
+        for field_name in _FIELD_CANDIDATES:
+            raw = step.get(field_name)
+            if not isinstance(raw, str):
                 continue
-            for field_name in _FIELD_CANDIDATES:
-                raw = step.get(field_name)
-                if raw is None or not isinstance(raw, str):
-                    continue
-                key = (field_name, raw)
-                if key in lookup:
-                    step[field_name] = lookup[key]
+            key = (field_name, raw)
+            if key in lookup:
+                step[field_name] = lookup[key]
 
     return result
 

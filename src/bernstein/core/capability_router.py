@@ -165,54 +165,51 @@ class CapabilityRouter:
     def __post_init__(self) -> None:
         self._build_agent_capability_index()
 
+    @staticmethod
+    def _caps_for_agent(agent: object) -> set[str]:
+        """Derive capabilities for a single agent based on its properties."""
+        caps: set[str] = set()
+
+        # Feature-based capabilities
+        if getattr(agent, "supports_headless", False):
+            caps.add("headless")
+        if getattr(agent, "supports_sandbox", False):
+            caps.add("sandbox")
+        if getattr(agent, "supports_mcp", False):
+            caps.update(("mcp", "tool-use"))
+
+        # Reasoning strength
+        reasoning = getattr(agent, "reasoning_strength", "")
+        if reasoning in ("high", "very_high"):
+            caps.update(("reasoning", "design", "security", "refactoring"))
+        if reasoning == "very_high":
+            caps.add("code-review")
+
+        # Cost tier
+        if getattr(agent, "cost_tier", "") in ("free", "cheap"):
+            caps.update(("cheap", "fast"))
+
+        # Context window
+        if getattr(agent, "max_context_tokens", 0) >= 500_000:
+            caps.add("long-context")
+
+        # best_for tags → capabilities (reverse mapping)
+        for bf_tag in getattr(agent, "best_for", ()):
+            caps.add(bf_tag)
+            for cap, bf_set in _CAPABILITY_TO_BEST_FOR.items():
+                if bf_tag in bf_set:
+                    caps.add(cap)
+
+        # All agents can do basic coding
+        caps.update(("python", "javascript", "typescript", "backend"))
+        return caps
+
     def _build_agent_capability_index(self) -> None:
         """Build a capability set for each discovered agent."""
         for agent in self.discovery.agents:
             if not agent.logged_in:
                 continue
-            caps: set[str] = set()
-
-            # Feature-based capabilities
-            if agent.supports_headless:
-                caps.add("headless")
-            if agent.supports_sandbox:
-                caps.add("sandbox")
-            if agent.supports_mcp:
-                caps.add("mcp")
-                caps.add("tool-use")
-
-            # Reasoning strength → capability
-            if agent.reasoning_strength in ("high", "very_high"):
-                caps.add("reasoning")
-                caps.add("design")
-                caps.add("security")
-                caps.add("refactoring")
-            if agent.reasoning_strength == "very_high":
-                caps.add("code-review")
-
-            # Cost tier → capability
-            if agent.cost_tier in ("free", "cheap"):
-                caps.add("cheap")
-                caps.add("fast")
-
-            # Context window → capability
-            if agent.max_context_tokens >= 500_000:
-                caps.add("long-context")
-
-            # best_for tags → capabilities (reverse mapping)
-            for bf_tag in agent.best_for:
-                caps.add(bf_tag)
-                for cap, bf_set in _CAPABILITY_TO_BEST_FOR.items():
-                    if bf_tag in bf_set:
-                        caps.add(cap)
-
-            # All agents can do basic coding
-            caps.add("python")
-            caps.add("javascript")
-            caps.add("typescript")
-            caps.add("backend")
-
-            self._agent_caps[agent.name] = caps
+            self._agent_caps[agent.name] = self._caps_for_agent(agent)
 
     def match(
         self,

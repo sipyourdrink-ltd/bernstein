@@ -121,6 +121,37 @@ def compute_agent_metrics(sessions: list[dict[str, Any]]) -> list[AgentMetrics]:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_agent_status(agent: Any) -> str:
+    """Map an agent's internal status to a session status string."""
+    agent_status = getattr(agent, "status", "working")
+    if agent_status == "dead":
+        return "done" if getattr(agent, "exit_code", None) == 0 else "failed"
+    if agent_status in ("idle",):
+        return "done"
+    return "working"
+
+
+def _sum_task_costs(store: Any, task_ids: list[str]) -> tuple[float, bool]:
+    """Sum cost and check quality gates across tasks.
+
+    Returns:
+        Tuple of (total_cost_usd, all_quality_gates_passed).
+    """
+    cost_usd = 0.0
+    quality_gate_passed = True
+    for tid in task_ids:
+        task = store.get_task(tid)
+        if task is None:
+            continue
+        task_cost = getattr(task, "cost_usd", None) or task.metadata.get("cost_usd", 0.0)
+        if task_cost:
+            cost_usd += float(task_cost)
+        task_status = getattr(task, "status", None)
+        if task_status is not None and hasattr(task_status, "value") and task_status.value == "failed":
+            quality_gate_passed = False
+    return cost_usd, quality_gate_passed
+
+
 def _extract_sessions(request: Request) -> list[dict[str, Any]]:
     """Build session dicts from the task store's agent sessions and tasks.
 
@@ -137,7 +168,6 @@ def _extract_sessions(request: Request) -> list[dict[str, Any]]:
 
     store = request.app.state.store
     agents: dict[str, Any] = store.agents
-
     sessions: list[dict[str, Any]] = []
 
     for _agent_id, agent in agents.items():
@@ -145,41 +175,17 @@ def _extract_sessions(request: Request) -> list[dict[str, Any]]:
         model_cfg = getattr(agent, "model_config", None)
         model = getattr(model_cfg, "model", "unknown") if model_cfg else "unknown"
 
-        agent_status = getattr(agent, "status", "working")
         spawn_ts = getattr(agent, "spawn_ts", 0.0)
-        now = time.time()
-        duration_s = now - spawn_ts if spawn_ts > 0 else 0.0
+        duration_s = time.time() - spawn_ts if spawn_ts > 0 else 0.0
 
-        # Map agent status to done/failed
-        if agent_status == "dead":
-            exit_code = getattr(agent, "exit_code", None)
-            status = "done" if exit_code == 0 else "failed"
-        elif agent_status in ("idle",):
-            status = "done"
-        else:
-            status = "working"
-
-        # Sum cost from associated tasks using the public get_task() API
         task_ids: list[str] = getattr(agent, "task_ids", [])
-        cost_usd = 0.0
-        quality_gate_passed = True
-        for tid in task_ids:
-            task = store.get_task(tid)
-            if task is None:
-                continue
-            # Task model does not have cost_usd; check metadata as fallback
-            task_cost = getattr(task, "cost_usd", None) or task.metadata.get("cost_usd", 0.0)
-            if task_cost:
-                cost_usd += float(task_cost)
-            task_status = getattr(task, "status", None)
-            if task_status is not None and hasattr(task_status, "value") and task_status.value == "failed":
-                quality_gate_passed = False
+        cost_usd, quality_gate_passed = _sum_task_costs(store, task_ids)
 
         sessions.append(
             {
                 "provider": provider,
                 "model": model,
-                "status": status,
+                "status": _resolve_agent_status(agent),
                 "duration_s": duration_s,
                 "cost_usd": cost_usd,
                 "quality_gate_passed": quality_gate_passed,

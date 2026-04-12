@@ -346,6 +346,26 @@ class ProviderLatencyTracker:
         except OSError as exc:
             logger.warning("Failed to persist latency sample: %s", exc)
 
+    @staticmethod
+    def _parse_latency_record(line: str, cutoff: float) -> tuple[str, float] | None:
+        """Parse a single JSONL latency record, returning ``(key, latency_ms)`` or None."""
+        line = line.strip()
+        if not line:
+            return None
+        try:
+            record: dict[str, object] = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        ts = float(record.get("timestamp", 0))
+        if ts < cutoff:
+            return None
+        provider = str(record.get("provider", ""))
+        model = str(record.get("model", ""))
+        latency_ms = float(record.get("latency_ms", 0))
+        if not provider or not model or latency_ms <= 0:
+            return None
+        return _make_key(provider, model), latency_ms
+
     def _load_baseline(self) -> None:
         """Load historical p99 baselines by replaying persisted JSONL data.
 
@@ -358,21 +378,9 @@ class ProviderLatencyTracker:
         for jsonl_file in sorted(self._metrics_dir.glob("provider_latency_*.jsonl")):
             try:
                 for line in jsonl_file.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record: dict[str, object] = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    ts = float(record.get("timestamp", 0))
-                    if ts < cutoff:
-                        continue
-                    provider = str(record.get("provider", ""))
-                    model = str(record.get("model", ""))
-                    latency_ms = float(record.get("latency_ms", 0))
-                    if provider and model and latency_ms > 0:
-                        key = _make_key(provider, model)
+                    parsed = self._parse_latency_record(line, cutoff)
+                    if parsed is not None:
+                        key, latency_ms = parsed
                         key_samples.setdefault(key, []).append(latency_ms)
             except OSError:
                 continue

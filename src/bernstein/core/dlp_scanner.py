@@ -446,46 +446,44 @@ class DLPScanner:
             return cfg.block_proprietary_data
         return rule_block_default
 
+    @staticmethod
+    def _extract_line_for_scan(raw_line: str, diff_mode: bool) -> str | None:
+        """Extract the scannable line content, or None to skip this line."""
+        if not diff_mode:
+            return raw_line
+        if not raw_line.startswith("+") or raw_line.startswith("+++"):
+            return None
+        return raw_line[1:]  # strip leading "+"
+
+    @staticmethod
+    def _build_redacted_excerpt(line: str, m: object) -> str:
+        """Build a redacted excerpt around a regex match."""
+        start = max(0, m.start() - 15)  # type: ignore[union-attr]
+        end = min(len(line), m.end() + 15)  # type: ignore[union-attr]
+        raw_excerpt = line[start:end]
+        rel_start = m.start() - start  # type: ignore[union-attr]
+        rel_end = m.end() - start  # type: ignore[union-attr]
+        redacted = raw_excerpt[:rel_start] + "***" + raw_excerpt[rel_end:]
+        if len(redacted) > 80:
+            redacted = redacted[:77] + "..."
+        return redacted
+
     def _scan_lines(self, lines: list[str], *, diff_mode: bool = False) -> list[DLPFinding]:
         """Scan a list of text lines and return findings."""
         findings: list[DLPFinding] = []
         seen_rules: set[str] = set()
-        line_num = 0
 
-        for raw_line in lines:
-            line_num += 1
-
-            if diff_mode:
-                if not raw_line.startswith("+"):
-                    continue
-                if raw_line.startswith("+++"):
-                    continue
-                line = raw_line[1:]  # strip leading "+"
-            else:
-                line = raw_line
-
-            if _is_allowlisted_line(line, self._config):
+        for line_num, raw_line in enumerate(lines, 1):
+            line = self._extract_line_for_scan(raw_line, diff_mode)
+            if line is None or _is_allowlisted_line(line, self._config):
                 continue
 
             for category, rule_label, pattern, severity, description, block_default in self._rules:
                 if rule_label in seen_rules:
                     continue
-
                 m = pattern.search(line)
                 if not m:
                     continue
-
-                # Build redacted excerpt — never store raw sensitive data.
-                start = max(0, m.start() - 15)
-                end = min(len(line), m.end() + 15)
-                raw_excerpt = line[start:end]
-                rel_start = m.start() - start
-                rel_end = m.end() - start
-                redacted = raw_excerpt[:rel_start] + "***" + raw_excerpt[rel_end:]
-                if len(redacted) > 80:
-                    redacted = redacted[:77] + "..."
-
-                block = self._should_block(category, block_default)
 
                 findings.append(
                     DLPFinding(
@@ -493,9 +491,9 @@ class DLPScanner:
                         rule=rule_label,
                         severity=severity,
                         line_number=line_num,
-                        redacted_match=redacted,
+                        redacted_match=self._build_redacted_excerpt(line, m),
                         description=description,
-                        block_merge=block,
+                        block_merge=self._should_block(category, block_default),
                     )
                 )
                 seen_rules.add(rule_label)

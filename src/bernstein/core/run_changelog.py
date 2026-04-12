@@ -171,6 +171,33 @@ def _fetch_tasks_from_server(server_url: str, status: str = "done") -> list[dict
         return []
 
 
+def _parse_metric_timestamp(ts: object) -> float:
+    """Normalise a metric record timestamp to a Unix float."""
+    if isinstance(ts, str):
+        import datetime
+
+        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.timestamp()
+    return float(ts)
+
+
+def _parse_metric_line(line: str, since_ts: float) -> dict[str, object] | None:
+    """Parse a single JSONL metric line, returning the record or None."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        rec = json.loads(line)
+        ts = _parse_metric_timestamp(rec.get("timestamp", 0))
+        if ts < since_ts:
+            return None
+        if rec.get("success") is True:
+            return rec  # type: ignore[no-any-return]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None
+
+
 def _fetch_tasks_from_metrics(metrics_dir: Path, since_ts: float = 0.0) -> list[dict[str, object]]:
     """Read completed tasks from daily metric JSONL files.
 
@@ -185,31 +212,14 @@ def _fetch_tasks_from_metrics(metrics_dir: Path, since_ts: float = 0.0) -> list[
     if not metrics_dir.is_dir():
         return tasks
 
-    # Daily metric files are named YYYY-MM-DD.jsonl and contain one record per
-    # agent run, each with task_id, role, success, etc.
     for jsonl in sorted(metrics_dir.glob("*.jsonl")):
-        # Skip non-date files (agent_success_*.jsonl, api_usage_*.jsonl, etc.)
         if not re.match(r"^\d{4}-\d{2}-\d{2}\.jsonl$", jsonl.name):
             continue
         try:
             for line in jsonl.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                    ts = rec.get("timestamp", 0)
-                    if isinstance(ts, str):
-                        # ISO format "2026-04-11T..."
-                        import datetime
-
-                        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                        ts = dt.timestamp()
-                    if float(ts) < since_ts:
-                        continue
-                    if rec.get("success") is True:
-                        tasks.append(rec)
-                except (json.JSONDecodeError, ValueError):
-                    continue
+                rec = _parse_metric_line(line, since_ts)
+                if rec is not None:
+                    tasks.append(rec)
         except OSError:
             continue
 

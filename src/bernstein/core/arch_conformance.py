@@ -163,6 +163,36 @@ def _import_violates_module(import_module: str, module: ArchModule) -> str | Non
 # ---------------------------------------------------------------------------
 
 
+def _check_file_imports(
+    filepath: str,
+    imports: list[str],
+    config: ArchConformanceConfig,
+) -> tuple[list[PermissionDecision], bool]:
+    """Check imports in a single file against module boundary rules.
+
+    Returns:
+        Tuple of (violations, checked_any).
+    """
+    violations: list[PermissionDecision] = []
+    checked_any = False
+    decision_type = DecisionType.DENY if config.block_on_violation else DecisionType.ASK
+
+    for module in config.modules:
+        if not _file_belongs_to_module(filepath, module):
+            continue
+        checked_any = True
+        for import_module in imports:
+            reason = _import_violates_module(import_module, module)
+            if reason is not None:
+                violations.append(
+                    PermissionDecision(
+                        type=decision_type,
+                        reason=f"Arch violation in {filepath}: {reason}",
+                    )
+                )
+    return violations, checked_any
+
+
 def check_arch_conformance(
     diff: str,
     config: ArchConformanceConfig,
@@ -187,27 +217,16 @@ def check_arch_conformance(
     if not added_imports:
         return [PermissionDecision(type=DecisionType.ALLOW, reason="Architecture conformance: no added imports")]
 
-    violations: list[PermissionDecision] = []
+    all_violations: list[PermissionDecision] = []
     checked_any = False
 
     for filepath, imports in added_imports.items():
-        for module in config.modules:
-            if not _file_belongs_to_module(filepath, module):
-                continue
-            checked_any = True
-            for import_module in imports:
-                reason = _import_violates_module(import_module, module)
-                if reason is not None:
-                    decision_type = DecisionType.DENY if config.block_on_violation else DecisionType.ASK
-                    violations.append(
-                        PermissionDecision(
-                            type=decision_type,
-                            reason=f"Arch violation in {filepath}: {reason}",
-                        )
-                    )
+        violations, was_checked = _check_file_imports(filepath, imports, config)
+        all_violations.extend(violations)
+        checked_any = checked_any or was_checked
 
-    if violations:
-        return violations
+    if all_violations:
+        return all_violations
 
     if checked_any:
         return [PermissionDecision(type=DecisionType.ALLOW, reason="Architecture conformance: boundaries respected")]
