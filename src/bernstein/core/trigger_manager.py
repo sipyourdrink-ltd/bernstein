@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from bernstein.core.defaults import TRIGGER
 from bernstein.core.models import (
     TriggerConfig,
     TriggerEvent,
@@ -37,8 +38,8 @@ logger = logging.getLogger(__name__)
 # Safety defaults
 # ---------------------------------------------------------------------------
 
-_DEFAULT_MAX_TASKS_PER_MINUTE = 20
-_DEFAULT_MAX_TASKS_PER_TRIGGER_PER_HOUR = 50
+_DEFAULT_MAX_TASKS_PER_MINUTE = TRIGGER.max_tasks_per_minute
+_DEFAULT_MAX_TASKS_PER_TRIGGER_PER_HOUR = TRIGGER.max_tasks_per_trigger_per_hour
 _DEFAULT_EXCLUDE_SENDERS: list[str] = ["bernstein[bot]", "github-actions[bot]"]
 _DEFAULT_EXCLUDE_COMMIT_PATTERNS: list[str] = [r"\[bernstein\]"]
 

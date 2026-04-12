@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Literal
 
+from bernstein.core.defaults import GATE
 from bernstein.core.telemetry import start_span
 
 if TYPE_CHECKING:
@@ -34,13 +35,13 @@ logger = logging.getLogger(__name__)
 # Intent verification constants
 # ---------------------------------------------------------------------------
 
-_INTENT_MAX_DIFF_CHARS = 8_000
-_INTENT_MAX_TOKENS = 256
+_INTENT_MAX_DIFF_CHARS = GATE.intent_max_diff_chars
+_INTENT_MAX_TOKENS = GATE.intent_max_tokens
 _INTENT_DEFAULT_MODEL = "google/gemini-flash-1.5"
 _INTENT_PROVIDER = "openrouter"
 
 #: Maximum characters from the parent agent's context to prepend when forking.
-_FORK_CONTEXT_MAX_CHARS = 4_000
+_FORK_CONTEXT_MAX_CHARS = GATE.fork_context_max_chars
 
 _INTENT_PROMPT_TEMPLATE = """\
 You are an intent verifier. A task was given to an AI agent. Compare the \

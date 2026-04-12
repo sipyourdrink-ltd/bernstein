@@ -25,6 +25,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.defaults import PROTOCOL
+
 if TYPE_CHECKING:
     from bernstein.core.protocols.mcp_manager import MCPManager
 
@@ -34,11 +36,11 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_PROBE_INTERVAL: float = 30.0
-DEFAULT_MAX_RESTARTS: int = 5
+DEFAULT_PROBE_INTERVAL: float = PROTOCOL.mcp_probe_interval_s
+DEFAULT_MAX_RESTARTS: int = PROTOCOL.mcp_max_restarts
 DEFAULT_INITIAL_BACKOFF: float = 1.0
-DEFAULT_MAX_BACKOFF: float = 30.0
-BACKOFF_MULTIPLIER: float = 2.0
+DEFAULT_MAX_BACKOFF: float = PROTOCOL.mcp_max_backoff_s
+BACKOFF_MULTIPLIER: float = PROTOCOL.mcp_backoff_multiplier
 
 
 # ---------------------------------------------------------------------------

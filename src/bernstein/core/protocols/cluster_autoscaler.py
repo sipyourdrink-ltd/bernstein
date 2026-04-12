@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from bernstein.core.defaults import PROTOCOL
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -32,9 +34,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_HIGH_WATERMARK = 10  # Tasks per node before scale-up
 _DEFAULT_LOW_WATERMARK = 2  # Tasks per node before scale-down
-_DEFAULT_COOLDOWN_S = 120.0  # Min seconds between scaling actions
-_DEFAULT_MIN_NODES = 1
-_DEFAULT_MAX_NODES = 20
+_DEFAULT_COOLDOWN_S = PROTOCOL.cluster_autoscale_cooldown_s
+_DEFAULT_MIN_NODES = PROTOCOL.cluster_min_nodes
+_DEFAULT_MAX_NODES = PROTOCOL.cluster_max_nodes
 
 
 class ScaleDirection(StrEnum):

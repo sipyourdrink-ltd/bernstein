@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.defaults import APPROVAL
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -32,8 +34,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_POLL_INTERVAL_S = 5.0
-_DEFAULT_MAX_WAIT_S = 3600.0  # 1 hour — orchestrator blocks for up to 1h waiting for approval
+_DEFAULT_POLL_INTERVAL_S = APPROVAL.poll_interval_s
+_DEFAULT_MAX_WAIT_S = APPROVAL.max_wait_s
 
 
 class ApprovalMode(StrEnum):

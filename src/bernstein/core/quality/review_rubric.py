@@ -27,6 +27,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.defaults import GATE
+
 if TYPE_CHECKING:
     from bernstein.core.models import Task
 
@@ -34,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "google/gemini-flash-1.5"
 _DEFAULT_PROVIDER = "openrouter"
-_MAX_DIFF_CHARS = 10_000
-_MAX_TOKENS = 1_024
+_MAX_DIFF_CHARS = GATE.review_max_diff_chars
+_MAX_TOKENS = GATE.review_max_tokens
 
 # Composite score weights (must sum to 1.0)
 _DIMENSION_WEIGHTS: dict[str, float] = {

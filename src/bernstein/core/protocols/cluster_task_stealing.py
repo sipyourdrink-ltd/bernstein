@@ -18,6 +18,8 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from bernstein.core.defaults import PROTOCOL
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,9 +27,9 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-_DEFAULT_STEAL_THRESHOLD = 3  # Victim must have this many queued tasks
+_DEFAULT_STEAL_THRESHOLD = PROTOCOL.cluster_steal_threshold
 _DEFAULT_STEAL_BATCH = 1  # Max tasks to steal per attempt
-_DEFAULT_COOLDOWN_S = 10.0  # Min seconds between steal attempts per pair
+_DEFAULT_COOLDOWN_S = PROTOCOL.cluster_steal_cooldown_s
 
 
 class StealResult(StrEnum):

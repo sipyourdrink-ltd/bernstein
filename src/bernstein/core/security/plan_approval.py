@@ -21,6 +21,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from bernstein.core.cost import _MODEL_COST_USD_PER_1K  # pyright: ignore[reportPrivateUsage]
+from bernstein.core.defaults import COST, PLAN
 from bernstein.core.models import (
     Complexity,
     PlanStatus,
@@ -115,18 +116,10 @@ def _classify_risk(task: Task) -> tuple[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 # Average tokens per task by scope (empirical estimates).
-_TOKENS_BY_SCOPE: dict[str, int] = {
-    "small": 30_000,  # ~30k tokens for small tasks
-    "medium": 80_000,  # ~80k tokens for medium tasks
-    "large": 200_000,  # ~200k tokens for large tasks
-}
+_TOKENS_BY_SCOPE: dict[str, int] = PLAN.tokens_by_scope
 
 # Model selection heuristic by complexity (when no explicit model set).
-_DEFAULT_MODEL_BY_COMPLEXITY: dict[str, str] = {
-    "low": "haiku",
-    "medium": "sonnet",
-    "high": "opus",
-}
+_DEFAULT_MODEL_BY_COMPLEXITY: dict[str, str] = PLAN.model_by_complexity
 
 # Populated at plan creation time from the seed's role_model_policy.
 _ROLE_MODEL_OVERRIDES: dict[str, str] = {}
@@ -169,11 +162,11 @@ def _estimate_task_cost(task: Task) -> TaskCostEstimate:
     estimated_tokens = _TOKENS_BY_SCOPE.get(task.scope.value, 80_000)
 
     # Look up cost rate — free-tier adapters cost $0
-    _FREE_ADAPTERS = ("qwen", "gemini", "ollama", "tabby")
+    _FREE_ADAPTERS = PLAN.free_adapters
     if cli and cli.lower() in _FREE_ADAPTERS:
         rate: float = 0.0
     else:
-        rate = 0.005  # fallback
+        rate = COST.fallback_cost_per_1k_tokens
         model_lower = model.lower()
         for key, cost in _MODEL_COST_USD_PER_1K.items():
             if key in model_lower:
