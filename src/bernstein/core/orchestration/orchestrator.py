@@ -4191,7 +4191,7 @@ if __name__ == "__main__":
 # Re-exported from nudge_manager.py for backward compatibility (ORCH-009).
 # ---------------------------------------------------------------------------
 from bernstein.core.orchestration.nudge_manager import OrchestratorNudge as OrchestratorNudge  # noqa: E402
-from bernstein.core.orchestration.nudge_manager import (
+from bernstein.core.orchestration.nudge_manager import (  # noqa: E402
     OrchestratorNudgeManager as OrchestratorNudgeManager,
 )
 from bernstein.core.orchestration.nudge_manager import get_orchestrator_nudges as get_orchestrator_nudges  # noqa: E402

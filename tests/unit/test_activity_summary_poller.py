@@ -6,10 +6,10 @@ import time
 from pathlib import Path
 
 import pytest
-
-from bernstein.activity_tracker import ActivitySession
 from bernstein.core.activity_summary_poller import ActivitySummaryPoller
 from bernstein.core.bulletin import BulletinBoard
+
+from bernstein.tui.activity_tracker import ActivitySession
 
 
 @pytest.fixture()

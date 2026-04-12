@@ -14,7 +14,8 @@ from bernstein.cli.tip_integration import (
     mark_tip_shown,
     should_show_tip,
 )
-from bernstein.contextual_tips import TipsCatalog
+
+from bernstein.tui.contextual_tips import TipsCatalog
 
 
 class TestCommandTipMap:

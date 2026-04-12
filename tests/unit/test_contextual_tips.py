@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from bernstein.contextual_tips import (
+from bernstein.tui.contextual_tips import (
     COOLDOWN_SECONDS,
     TipEntry,
     TipsCatalog,

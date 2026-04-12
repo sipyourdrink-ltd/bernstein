@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bernstein.release_notes import (
+from bernstein.cli.release_notes import (
     _fetch_remote,
     _find_local_changelog,
     fetch_release_notes,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.keybindings import (
+from bernstein.cli.keybindings import (
     DEFAULT_BINDINGS,
     RESERVED_KEYS,
     KeyAction,

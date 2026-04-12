@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bernstein.diff_folding import (
+from bernstein.tui.diff_folding import (
     DiffHunk,
     FileDiff,
     _count_changes,

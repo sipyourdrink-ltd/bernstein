@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bernstein.security_review import (
+from bernstein.plugins.security_review import (
     SecurityReviewResult,
     format_security_review,
     run_security_review,

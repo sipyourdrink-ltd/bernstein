@@ -1,12 +1,12 @@
 """Truecolor gradient background engine for terminal output.
 
 Uses half-block characters (▄) with 24-bit ANSI color codes to achieve
-2× vertical pixel resolution: one terminal cell = two pixel rows.
+2x vertical pixel resolution: one terminal cell = two pixel rows.
 
   • Top pixel    → background color:  \\033[48;2;R;G;Bm
   • Bottom pixel → foreground + ▄:    \\033[38;2;R;G;Bm + ▄
 
-Performance target: <20ms for an 80×24 gradient.
+Performance target: <20ms for an 80x24 gradient.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def _make_stops(
 
     Args:
         colors: Sequence of RGB tuples.
-        stops: Explicit positions (0.0–1.0) matching each color, or *None* to
+        stops: Explicit positions (0.0-1.0) matching each color, or *None* to
                distribute colors evenly across [0, 1].
 
     Returns:
@@ -82,7 +82,7 @@ def _make_stops(
 
 
 def _lerp_color(t: float, color_stops: list[tuple[float, RGB]]) -> RGB:
-    """Linearly interpolate color at position *t* (0.0–1.0) across sorted stops."""
+    """Linearly interpolate color at position *t* (0.0-1.0) across sorted stops."""
     if t <= color_stops[0][0]:
         return color_stops[0][1]
     if t >= color_stops[-1][0]:
@@ -111,7 +111,7 @@ def _linear_pixel_grid(
     color_stops: list[tuple[float, RGB]],
     direction: Literal["top_bottom", "left_right", "diagonal"],
 ) -> list[list[RGB]]:
-    """Build a *pixel_height* × *width* RGB grid for a linear gradient."""
+    """Build a *pixel_height* x *width* RGB grid for a linear gradient."""
     ph_1 = max(pixel_height - 1, 1)
     w_1 = max(width - 1, 1)
     grid: list[list[RGB]] = []
@@ -139,7 +139,7 @@ def _radial_pixel_grid(
     cx: float,
     cy: float,
 ) -> list[list[RGB]]:
-    """Build a *pixel_height* × *width* RGB grid for a radial gradient.
+    """Build a *pixel_height* x *width* RGB grid for a radial gradient.
 
     Args:
         cx: Center x in pixel coordinates.
@@ -226,7 +226,7 @@ def linear_gradient(
         height: Terminal rows (output has *height* lines).
         colors: RGB color tuples from first stop to last.
         direction: ``'top_bottom'``, ``'left_right'``, or ``'diagonal'``.
-        stops: Explicit positions (0.0–1.0) for each color.  *None* distributes
+        stops: Explicit positions (0.0-1.0) for each color.  *None* distributes
                colors evenly.
 
     Returns:
@@ -261,8 +261,8 @@ def radial_gradient(
         height: Terminal rows.
         center_color: RGB color at the glow center.
         edge_color: RGB color at the outer edge.
-        center_x: Horizontal center as fraction of width (0.0–1.0).
-        center_y: Vertical center as fraction of pixel height (0.0–1.0).
+        center_x: Horizontal center as fraction of width (0.0-1.0).
+        center_y: Vertical center as fraction of pixel height (0.0-1.0).
         extra_stops: Optional intermediate stops as ``[(position, color), ...]``
                      inserted between center (0.0) and edge (1.0).
 

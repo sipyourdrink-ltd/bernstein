@@ -12,7 +12,7 @@ Usage::
         while animating:
             buf.render_frame(build_frame())
 
-Performance: <1 ms overhead per frame for typical 80×24 terminal frames.
+Performance: <1 ms overhead per frame for typical 80x24 terminal frames.
 """
 
 from __future__ import annotations

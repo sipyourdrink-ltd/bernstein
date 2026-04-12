@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bernstein.usage_provisioning import (
+from bernstein.cli.usage_provisioning import (
     UsageBudget,
     _budget_color,
     _make_progress_bar,

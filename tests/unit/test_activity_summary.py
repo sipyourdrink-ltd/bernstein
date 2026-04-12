@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.activity_tracker import ActivitySession
+from bernstein.tui.activity_tracker import ActivitySession
 
 
 @pytest.fixture()

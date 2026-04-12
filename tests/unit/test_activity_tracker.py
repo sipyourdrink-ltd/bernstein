@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from bernstein.activity_tracker import (
+from bernstein.tui.activity_tracker import (
     ActivityCategory,
     ActivityMetric,
     ActivitySession,
