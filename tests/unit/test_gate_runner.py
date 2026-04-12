@@ -389,7 +389,7 @@ def test_type_check_command_falls_back_when_dependency_info_unavailable(tmp_path
         return True, "ok"
 
     with (
-        patch("bernstein.core.quality.test_impact.TestImpactAnalyzer") as mock_analyzer_cls,
+        patch("bernstein.core.test_impact.TestImpactAnalyzer") as mock_analyzer_cls,
         patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run),
     ):
         mock_analyzer_cls.side_effect = RuntimeError("index unavailable")

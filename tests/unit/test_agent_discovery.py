@@ -153,7 +153,7 @@ class TestDetectGemini:
 
     @patch("bernstein.core.agents.agent_discovery._run_probe")
     @patch("bernstein.core.agents.agent_discovery.shutil.which", return_value="/usr/local/bin/gemini")
-    @patch("bernstein.core.orchestration.preflight.gemini_has_auth", return_value=(True, "gcloud auth"))
+    @patch("bernstein.core.preflight.gemini_has_auth", return_value=(True, "gcloud auth"))
     def test_logged_in_via_gcloud(self, _auth: Any, _which: Any, mock_probe: MagicMock) -> None:
         version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.1.0\n", stderr="")
         mock_probe.return_value = version_result
@@ -676,8 +676,8 @@ class TestAutoRouteTask:
 
         # Patch both real module and shim to handle cached vs fresh imports
         with (
-            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
-            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
         ):
             decision = auto_route_task(task)
 
@@ -694,8 +694,8 @@ class TestAutoRouteTask:
         task = _make_task("Write tests", "qa")
 
         with (
-            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
-            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
         ):
             decision = auto_route_task(task)
 
@@ -708,8 +708,8 @@ class TestAutoRouteTask:
         task = _make_task("Do something", "backend")
 
         with (
-            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
-            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
         ):
             decision = auto_route_task(task)
 

@@ -319,7 +319,7 @@ class TestCIAutofixPipelineCreatePR:
             pr_url="https://github.com/o/r/pull/42",
         )
 
-        with patch("bernstein.core.git.git_pr.create_github_pr", return_value=mock_result) as mock_pr:
+        with patch("bernstein.core.git_pr.create_github_pr", return_value=mock_result) as mock_pr:
             pr_url = pipeline.create_fix_pr(
                 "task-xyz",
                 failure,

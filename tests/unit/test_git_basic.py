@@ -31,7 +31,7 @@ def test_stage_task_files_adds_untracked_siblings_and_filters_runtime_artifacts(
             "bernstein.core.git_basic.status_porcelain",
             return_value="?? src/new_helper.py\n?? .sdd/runtime/server.log\n?? docs/readme.md\n",
         ),
-        patch("bernstein.core.git.git_basic.run_git") as mock_run_git,
+        patch("bernstein.core.git_basic.run_git") as mock_run_git,
     ):
         staged = stage_task_files(tmp_path, ["src/main.py"])
 
@@ -41,7 +41,7 @@ def test_stage_task_files_adds_untracked_siblings_and_filters_runtime_artifacts(
 
 def test_stage_all_except_unstages_explicit_and_never_stage_paths(tmp_path: Path) -> None:
     """stage_all_except bulk-adds first, then resets explicit exclusions and protected runtime dirs."""
-    with patch("bernstein.core.git.git_basic.run_git") as mock_run_git:
+    with patch("bernstein.core.git_basic.run_git") as mock_run_git:
         stage_all_except(tmp_path, exclude=["README.md"])
 
     assert mock_run_git.call_args_list[0].args[0] == ["add", "-A"]
