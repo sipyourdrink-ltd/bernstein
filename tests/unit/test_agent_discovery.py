@@ -674,7 +674,11 @@ class TestAutoRouteTask:
 
         task = _make_task("Design system", "architect")
 
-        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
+        # Patch both real module and shim to handle cached vs fresh imports
+        with (
+            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+        ):
             decision = auto_route_task(task)
 
         assert decision.agent_name == "claude"
@@ -689,7 +693,10 @@ class TestAutoRouteTask:
 
         task = _make_task("Write tests", "qa")
 
-        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
+        with (
+            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+        ):
             decision = auto_route_task(task)
 
         assert decision.agent_name == "codex"
@@ -700,7 +707,10 @@ class TestAutoRouteTask:
         discovery = DiscoveryResult(agents=[], warnings=[])
         task = _make_task("Do something", "backend")
 
-        with patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery):
+        with (
+            patch("bernstein.core.agents.agent_discovery.discover_agents_cached", return_value=discovery),
+            patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery),
+        ):
             decision = auto_route_task(task)
 
         # Should fall back to claude/sonnet
