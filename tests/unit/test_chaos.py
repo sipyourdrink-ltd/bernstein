@@ -578,7 +578,7 @@ def test_merge_worktree_branch_returns_failed_result_on_exception(tmp_path: Path
 
     enospc = OSError(errno.ENOSPC, "No space left on device")
 
-    with patch("bernstein.core.spawner.merge_with_conflict_detection", side_effect=enospc):
+    with patch("bernstein.core.spawner_merge.merge_with_conflict_detection", side_effect=enospc):
         result = spawner._merge_worktree_branch("disk-sess-4", repo_root=tmp_path)
 
     assert result.success is False
@@ -606,7 +606,7 @@ def test_merge_worktree_branch_no_corruption_after_disk_full(tmp_path: Path) -> 
     worktree.mkdir()
     spawner._worktree_paths[session_id] = worktree
 
-    with patch("bernstein.core.spawner.merge_with_conflict_detection", side_effect=OSError(errno.ENOSPC, "disk full")):
+    with patch("bernstein.core.spawner_merge.merge_with_conflict_detection", side_effect=OSError(errno.ENOSPC, "disk full")):
         result = spawner._merge_worktree_branch(session_id, repo_root=tmp_path)
 
     # Merge failed but worktree tracking is intact for cleanup

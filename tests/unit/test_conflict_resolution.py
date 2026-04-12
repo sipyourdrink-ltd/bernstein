@@ -248,7 +248,7 @@ class TestSpawnerConflictResolution:
         result = spawner.reap_completed_agent(session)
         assert result is None
 
-    @patch("bernstein.core.spawner.merge_with_conflict_detection")
+    @patch("bernstein.core.spawner_merge.merge_with_conflict_detection")
     def test_merge_worktree_branch_delegates(self, mock_merge: MagicMock, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=100)
         spawner = self._make_spawner(tmp_path, adapter)
@@ -266,7 +266,7 @@ class TestSpawnerConflictResolution:
         )
         assert result.success
 
-    @patch("bernstein.core.spawner.merge_with_conflict_detection")
+    @patch("bernstein.core.spawner_merge.merge_with_conflict_detection")
     def test_merge_worktree_branch_handles_exception(
         self, mock_merge: MagicMock, tmp_path: Path, mock_adapter_factory
     ) -> None:
