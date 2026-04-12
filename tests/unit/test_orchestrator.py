@@ -4783,7 +4783,7 @@ class TestParallelVerification:
         )
         orch = _build_orchestrator(tmp_path, transport)
 
-        with patch("bernstein.core.task_lifecycle.verify_task", side_effect=slow_verify):
+        with patch("bernstein.core.task_completion.verify_task", side_effect=slow_verify):
             t_start = time.time()
             result = TickResult()
             orch._process_completed_tasks(tasks_with_signals, result)
@@ -4838,7 +4838,7 @@ class TestProcessCompletedTasksParallel:
             time.sleep(SLEEP)
             return True, []
 
-        with patch("bernstein.core.task_lifecycle.verify_task", side_effect=slow_verify):
+        with patch("bernstein.core.task_completion.verify_task", side_effect=slow_verify):
             tick_result = TickResult()
             start = time.monotonic()
             orch._process_completed_tasks([Task.from_dict(d) for d in task_dicts], tick_result)
