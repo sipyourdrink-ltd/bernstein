@@ -442,7 +442,7 @@ class TestBuildFilteredEnvWithSecrets:
 
         with (
             patch("bernstein.adapters.env_isolation.os.environ", fake_env),
-            patch("bernstein.core.security.secrets.load_secrets", return_value={"ANTHROPIC_API_KEY": "sk-from-vault"}),
+            patch("bernstein.core.secrets.load_secrets", return_value={"ANTHROPIC_API_KEY": "sk-from-vault"}),
         ):
             result = build_filtered_env(secrets_config=cfg)
 
@@ -461,7 +461,7 @@ class TestBuildFilteredEnvWithSecrets:
 
         with (
             patch("bernstein.adapters.env_isolation.os.environ", fake_env),
-            patch("bernstein.core.security.secrets.load_secrets", return_value={"ANTHROPIC_API_KEY": "sk-from-vault"}),
+            patch("bernstein.core.secrets.load_secrets", return_value={"ANTHROPIC_API_KEY": "sk-from-vault"}),
         ):
             result = build_filtered_env(["ANTHROPIC_API_KEY"], secrets_config=cfg)
 

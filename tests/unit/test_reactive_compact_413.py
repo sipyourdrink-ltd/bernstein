@@ -354,7 +354,7 @@ class TestHandleOrphanedTaskContextOverflow:
         log_file.write_text("ERROR: 413 prompt is too long\n")
 
         with (
-            patch("bernstein.core.agents.agent_state_refresh._try_compact_and_retry", return_value=True) as mock_compact,
+            patch("bernstein.core.agent_state_refresh._try_compact_and_retry", return_value=True) as mock_compact,
             patch("bernstein.core.agents.agent_reaping.emit_orphan_metrics"),
         ):
             handle_orphaned_task(orch, task.id, session, _snapshot(task))
@@ -372,7 +372,7 @@ class TestHandleOrphanedTaskContextOverflow:
         (sdd_runtime / f"{session.id}.log").write_text("ERROR: 413\n")
 
         with (
-            patch("bernstein.core.agents.agent_state_refresh._try_compact_and_retry", return_value=False),
+            patch("bernstein.core.agent_state_refresh._try_compact_and_retry", return_value=False),
             patch("bernstein.core.agents.agent_reaping.emit_orphan_metrics") as mock_metrics,
         ):
             handle_orphaned_task(orch, task.id, session, _snapshot(task))
