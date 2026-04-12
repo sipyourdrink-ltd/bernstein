@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from fastapi import Request
     from starlette.responses import Response as StarletteResponse
 
 # ---------------------------------------------------------------------------

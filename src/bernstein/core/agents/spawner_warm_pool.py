@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.models import ModelConfig, Task
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

@@ -8,12 +8,8 @@ compatibility.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from bernstein.agents.catalog import CatalogRegistry
-from bernstein.core.compliance import ComplianceConfig
-from bernstein.core.formal_verification import FormalVerificationConfig
-from bernstein.core.key_rotation import KeyRotationConfig
 from bernstein.core.models import (
     BatchConfig,
     BridgeConfigSet,
@@ -21,13 +17,19 @@ from bernstein.core.models import (
     SmtpConfig,
     TestAgentConfig,
 )
-from bernstein.core.quality_gates import QualityGatesConfig
-from bernstein.core.sandbox import DockerSandbox
-from bernstein.core.secrets import SecretsConfig
-from bernstein.core.tenanting import TenantConfig
-from bernstein.core.visual_config import VisualConfig
-from bernstein.core.workspace import Workspace
-from bernstein.core.worktree import WorktreeSetupConfig
+
+if TYPE_CHECKING:
+    from bernstein.agents.catalog import CatalogRegistry
+    from bernstein.core.compliance import ComplianceConfig
+    from bernstein.core.formal_verification import FormalVerificationConfig
+    from bernstein.core.key_rotation import KeyRotationConfig
+    from bernstein.core.quality_gates import QualityGatesConfig
+    from bernstein.core.sandbox import DockerSandbox
+    from bernstein.core.secrets import SecretsConfig
+    from bernstein.core.tenanting import TenantConfig
+    from bernstein.core.visual_config import VisualConfig
+    from bernstein.core.workspace import Workspace
+    from bernstein.core.worktree import WorktreeSetupConfig
 
 
 class SeedError(Exception):
