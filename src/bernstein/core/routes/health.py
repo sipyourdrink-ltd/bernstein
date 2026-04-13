@@ -123,7 +123,7 @@ def _check_sse_bus(request: Request) -> DependencyStatus:
     )
 
 
-@router.get("/health/deps", response_model=HealthDepsResponse)
+@router.get("/health/deps")
 def health_deps(request: Request) -> HealthDepsResponse:
     """Return health status with dependency checks.
 

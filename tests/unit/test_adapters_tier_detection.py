@@ -333,13 +333,13 @@ class TestBaseAdapterTierDetection:
 
         class TestAdapter(CLIAdapter):
             def spawn(self, *args, **kwargs):  # type: ignore
-                pass
+                pass  # Stub: no-op spawn for test adapter
 
             def is_alive(self, pid: int) -> bool:
                 return True
 
             def kill(self, pid: int) -> None:
-                pass
+                pass  # Stub: no-op kill for test adapter
 
             def name(self) -> str:
                 return "Test"

@@ -104,7 +104,7 @@ def list_flagged_files(request: Request) -> JSONResponse:
     )
 
 
-@router.get("/quality/file-health/{file_path:path}")
+@router.get("/quality/file-health/{file_path:path}", responses={404: {"description": "File not tracked yet"}})
 def get_file_health(file_path: str, request: Request) -> JSONResponse:
     """Return the current health score for a single file.
 

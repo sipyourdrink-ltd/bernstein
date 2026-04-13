@@ -93,7 +93,7 @@ class AgentEscalationState:
 
     session_id: str
     highest_tier: EscalationTier = EscalationTier.NONE
-    tier_timestamps: dict[EscalationTier, float] = field(default_factory=lambda: dict[EscalationTier, float]())
+    tier_timestamps: dict[EscalationTier, float] = field(default_factory=dict)
     pid: int | None = None
 
 

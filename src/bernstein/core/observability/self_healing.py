@@ -59,7 +59,7 @@ class HealingAction:
 
     failure_mode: FailureMode
     action: str
-    adjustments: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    adjustments: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.5
 
 

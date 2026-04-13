@@ -38,7 +38,7 @@ class SuppressedEvent:
     """
 
     event_type: str
-    payload: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    payload: dict[str, Any] = field(default_factory=dict)
     suppressed_at: float = field(default_factory=time.time)
 
 

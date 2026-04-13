@@ -175,7 +175,7 @@ class TestWarmupProvider:
 
         class FakeClient:
             def __init__(self, *a, **kw):
-                pass
+                pass  # Stub: no-op for test HTTP client
 
             async def __aenter__(self):
                 return self
@@ -208,7 +208,7 @@ class TestWarmupProvider:
 
         class FailingClient:
             def __init__(self, *a, **kw):
-                pass
+                pass  # Stub: no-op for test HTTP client
 
             async def __aenter__(self):
                 raise OSError("connect failed")
@@ -237,7 +237,7 @@ class TestWarmupProvider:
             call_count: int = 0
 
             def __init__(self, *a, **kw):
-                pass
+                pass  # Stub: no-op for test HTTP client
 
             async def __aenter__(self):
                 return self

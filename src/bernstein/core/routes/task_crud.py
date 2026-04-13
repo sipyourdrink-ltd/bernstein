@@ -364,8 +364,12 @@ def _update_file_health(
 @router.post(
     "/tasks",
     status_code=201,
-    response_model=TaskResponse,
-    responses={400: {"description": "Blocked by pre-create hook"}},
+    responses={
+        400: {"description": "Blocked by pre-create hook"},
+        403: {"description": "Tenant access denied"},
+        404: {"description": "Tenant not found"},
+        429: {"description": "Tenant task quota exceeded"},
+    },
 )
 async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     """Create a new task."""
@@ -432,7 +436,6 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
 @router.post(
     "/tasks/batch",
     status_code=201,
-    response_model=BatchCreateResponse,
     responses={503: {"description": "Server is draining"}},
 )
 async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> BatchCreateResponse:
@@ -507,7 +510,6 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
 @router.post(
     "/tasks/self-create",
     status_code=201,
-    response_model=TaskResponse,
     responses={404: {"description": "Parent task not found"}},
 )
 async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskResponse:
@@ -567,7 +569,6 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
 
 @router.get(
     "/tasks/next/{role}",
-    response_model=TaskResponse,
     responses={404: {"description": "No open tasks for role"}, 503: {"description": "Server is draining"}},
 )
 async def next_task(
@@ -604,7 +605,7 @@ async def next_task(
 
 
 @router.post(
-    "/tasks/claim-batch", response_model=BatchClaimResponse, responses={503: {"description": "Server is draining"}}
+    "/tasks/claim-batch", responses={503: {"description": "Server is draining"}}
 )
 async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimResponse:
     """Atomically claim multiple tasks by ID for an agent."""
@@ -635,7 +636,6 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
 
 @router.post(
     "/tasks/{task_id}/claim",
-    response_model=TaskResponse,
     responses={
         404: {"description": "Task not found"},
         409: {"description": "Version conflict or invalid state"},
@@ -684,7 +684,6 @@ async def claim_task(
 
 @router.post(
     "/tasks/{task_id}/complete",
-    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def complete_task(task_id: str, body: TaskCompleteRequest, request: Request) -> TaskResponse:
@@ -726,7 +725,6 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
 
 @router.post(
     "/tasks/{task_id}/wait-for-subtasks",
-    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, request: Request) -> TaskResponse:
@@ -749,7 +747,6 @@ async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, requ
 
 @router.post(
     "/tasks/{task_id}/fail",
-    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> TaskResponse:
@@ -780,7 +777,6 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
 
 @router.post(
     "/tasks/{task_id}/close",
-    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def close_task(task_id: str, request: Request) -> TaskResponse:
@@ -803,7 +799,6 @@ async def close_task(task_id: str, request: Request) -> TaskResponse:
 
 @router.post(
     "/tasks/{task_id}/cancel",
-    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -> TaskResponse:
@@ -824,7 +819,6 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
 
 @router.post(
     "/tasks/{task_id}/block",
-    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> TaskResponse:
@@ -846,7 +840,7 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
 
 
 @router.post(
-    "/tasks/{task_id}/progress", response_model=TaskResponse, responses={404: {"description": "Task not found"}}
+    "/tasks/{task_id}/progress", responses={404: {"description": "Task not found"}}
 )
 async def progress_task(task_id: str, body: TaskProgressRequest, request: Request) -> TaskResponse:
     """Append an intermediate progress update to a task.
@@ -1106,7 +1100,7 @@ def list_tasks(
     return [task_to_response(t) for t in all_tasks]
 
 
-@router.get("/tasks/counts", response_model=TaskCountsResponse)
+@router.get("/tasks/counts")
 def task_counts(
     request: Request,
     tenant: str | None = None,
@@ -1162,7 +1156,7 @@ def get_task_graph(request: Request) -> JSONResponse:
     return JSONResponse(content=data)
 
 
-@router.get("/tasks/{task_id}", response_model=TaskResponse, responses={404: {"description": "Task not found"}})
+@router.get("/tasks/{task_id}", responses={404: {"description": "Task not found"}})
 def get_task(task_id: str, request: Request) -> TaskResponse:
     """Get a single task by ID."""
     store = _get_store(request)

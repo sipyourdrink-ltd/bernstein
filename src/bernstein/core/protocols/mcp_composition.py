@@ -55,7 +55,7 @@ class ToolStep:
 
     tool_name: str
     server: str
-    args_template: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    args_template: dict[str, str] = field(default_factory=dict)
     output_key: str = ""
     on_failure: Literal["stop", "skip", "retry"] = "stop"
 
@@ -73,7 +73,7 @@ class CompositeToolDef:
 
     name: str
     description: str
-    steps: list[ToolStep] = field(default_factory=lambda: list[ToolStep]())
+    steps: list[ToolStep] = field(default_factory=list)
     timeout_seconds: int = 300
 
 
@@ -91,7 +91,7 @@ class StepResult:
 
     tool_name: str
     success: bool
-    output: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    output: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     duration_ms: float = 0.0
 

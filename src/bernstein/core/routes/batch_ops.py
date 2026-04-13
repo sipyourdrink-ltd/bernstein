@@ -150,7 +150,7 @@ async def _tag_task(store: TaskStore, task_id: str, tags: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/tasks/batch-ops")
+@router.post("/tasks/batch-ops", responses={422: {"description": "Invalid batch request"}})
 async def batch_operations(body: BatchRequest, request: Request) -> BatchResult:
     """Execute a batch operation on multiple tasks.
 

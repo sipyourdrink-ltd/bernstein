@@ -87,14 +87,23 @@ class SolutionPackInfo(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/packs", response_model=list[SolutionPackInfo])
+@router.get("/packs", response_model=list[SolutionPackInfo], responses={503: {"description": "Sandbox not enabled"}})
 async def list_solution_packs(request: Request) -> list[dict[str, Any]]:
     """List available solution packs."""
     mgr = _get_manager(request)
     return mgr.get_solution_packs()
 
 
-@router.post("/sessions", response_model=CreateSessionResponse, status_code=201)
+@router.post(
+    "/sessions",
+    response_model=CreateSessionResponse,
+    status_code=201,
+    responses={
+        400: {"description": "Invalid request parameters"},
+        429: {"description": "Rate limit exceeded"},
+        503: {"description": "Sandbox not enabled"},
+    },
+)
 async def create_session(body: CreateSessionRequest, request: Request) -> dict[str, Any]:
     """Create a new sandbox evaluation session."""
     mgr = _get_manager(request)
@@ -121,7 +130,11 @@ async def list_sessions(request: Request, include_finished: bool = False) -> lis
     return mgr.list_sessions(include_finished=include_finished)
 
 
-@router.get("/sessions/{session_id}", response_model=SessionResponse)
+@router.get(
+    "/sessions/{session_id}",
+    response_model=SessionResponse,
+    responses={404: {"description": "Session not found"}, 503: {"description": "Sandbox not enabled"}},
+)
 async def get_session(session_id: str, request: Request) -> dict[str, Any]:
     """Get sandbox session details."""
     mgr = _get_manager(request)
@@ -131,7 +144,14 @@ async def get_session(session_id: str, request: Request) -> dict[str, Any]:
     return session.to_dict()
 
 
-@router.post("/sessions/{session_id}/cancel", status_code=200)
+@router.post(
+    "/sessions/{session_id}/cancel",
+    status_code=200,
+    responses={
+        404: {"description": "Session not found or already finished"},
+        503: {"description": "Sandbox not enabled"},
+    },
+)
 async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
     """Cancel a running sandbox session."""
     mgr = _get_manager(request)
@@ -140,7 +160,12 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
     return {"status": "cancelled"}
 
 
-@router.get("/{session_id}", response_class=HTMLResponse, include_in_schema=False)
+@router.get(
+    "/{session_id}",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+    responses={400: {"description": "Invalid session id"}, 404: {"description": "Session not found"}},
+)
 async def sandbox_dashboard(session_id: str, request: Request) -> HTMLResponse:
     """Serve the sandbox session dashboard page."""
     session_id = _validate_session_id(session_id)

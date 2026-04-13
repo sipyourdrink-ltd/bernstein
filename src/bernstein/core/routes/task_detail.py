@@ -60,7 +60,7 @@ def _get_agent_log_path(runtime_dir: Path, session_id: str) -> Path | None:
     return None
 
 
-@router.get("/dashboard/tasks/{task_id}", response_model=TaskDetailResponse)
+@router.get("/dashboard/tasks/{task_id}", responses={404: {"description": "Task not found"}})
 def task_detail(request: Request, task_id: str) -> TaskDetailResponse:
     """Return detailed task view including log tail and progress.
 
@@ -104,7 +104,7 @@ def task_detail(request: Request, task_id: str) -> TaskDetailResponse:
     )
 
 
-@router.get("/dashboard/tasks/{task_id}/logs/stream")
+@router.get("/dashboard/tasks/{task_id}/logs/stream", responses={404: {"description": "Task not found"}})
 async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
     """Stream agent logs for a task via Server-Sent Events.
 

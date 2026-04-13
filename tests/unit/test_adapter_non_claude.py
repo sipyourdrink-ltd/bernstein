@@ -311,18 +311,18 @@ class TestGeminiAdapterSpawn:
 
 def _make_llm_settings(**kwargs: object) -> MagicMock:
     """Build a LLMSettings mock with all fields defaulting to None."""
-    defaults = dict(
-        openrouter_api_key_paid=None,
-        openrouter_api_key_free=None,
-        oxen_api_key=None,
-        oxen_base_url="https://hub.oxen.ai/api",
-        togetherai_user_key=None,
-        g4f_api_key=None,
-        g4f_base_url="https://g4f.space/v1",
-        openai_api_key=None,
-        openai_base_url=None,
-        tavily_api_key=None,
-    )
+    defaults = {
+        "openrouter_api_key_paid": None,
+        "openrouter_api_key_free": None,
+        "oxen_api_key": None,
+        "oxen_base_url": "https://hub.oxen.ai/api",
+        "togetherai_user_key": None,
+        "g4f_api_key": None,
+        "g4f_base_url": "https://g4f.space/v1",
+        "openai_api_key": None,
+        "openai_base_url": None,
+        "tavily_api_key": None,
+    }
     defaults.update(kwargs)
     m = MagicMock()
     for k, v in defaults.items():

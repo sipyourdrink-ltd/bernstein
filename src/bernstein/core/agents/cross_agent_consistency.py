@@ -92,9 +92,9 @@ class ApiContract:
 
     endpoint: str
     method: str
-    request_fields: dict[str, str] = field(default_factory=lambda: dict[str, str]())
-    response_fields: dict[str, str] = field(default_factory=lambda: dict[str, str]())
-    error_codes: list[int] = field(default_factory=lambda: list[int]())
+    request_fields: dict[str, str] = field(default_factory=dict)
+    response_fields: dict[str, str] = field(default_factory=dict)
+    error_codes: list[int] = field(default_factory=list)
     role: str = ""
 
     def __post_init__(self) -> None:

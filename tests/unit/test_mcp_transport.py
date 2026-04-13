@@ -295,13 +295,13 @@ class TestTransportFactory:
                 return False
 
             def connect(self, config: object) -> None:
-                pass
+                pass  # Stub: no-op for test transport
 
             def health_check(self) -> bool:
                 return False
 
             def disconnect(self) -> None:
-                pass
+                pass  # Stub: no-op for test transport
 
         register_transport("grpc", GrpcTransport)
         assert "grpc" in list_transports()
@@ -324,13 +324,13 @@ class TestTransportFactory:
                 return False
 
             def connect(self, config: object) -> None:
-                pass
+                pass  # Stub: no-op for test transport
 
             def health_check(self) -> bool:
                 return False
 
             def disconnect(self) -> None:
-                pass
+                pass  # Stub: no-op for test transport
 
         register_transport("custom", CustomTransport)
         assert "custom" in list_transports()
