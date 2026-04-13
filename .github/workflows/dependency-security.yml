@@ -1,8 +1,6 @@
 name: Dependency Security
 
 on:
-  schedule:
-    # Run daily at 2 AM UTC
   workflow_dispatch:
     inputs:
       create_pr:

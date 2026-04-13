@@ -1,8 +1,6 @@
 name: Mutation Testing
 
 on:
-  schedule:
-    # Run weekly on Monday at 03:00 UTC (off-peak, avoids prime CI hours)
   workflow_dispatch:
     inputs:
       paths:
