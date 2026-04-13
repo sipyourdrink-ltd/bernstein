@@ -116,7 +116,7 @@ class PluginAdapter(CLIAdapter):
         """
         return []
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(self, _config: dict[str, Any]) -> list[str]:
         """Validate adapter-specific configuration.
 
         Args:

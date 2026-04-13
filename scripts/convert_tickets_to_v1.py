@@ -126,7 +126,7 @@ def _guess_affected_paths(body: str) -> list[str]:
     return paths[:10]  # Cap at 10
 
 
-def _guess_janitor_signals(ticket_id: str, affected: list[str], body: str) -> list[dict[str, str]]:
+def _guess_janitor_signals(_ticket_id: str, affected: list[str], body: str) -> list[dict[str, str]]:
     """Generate janitor signals from affected paths and body."""
     signals: list[dict[str, str]] = []
     # New files mentioned with "(new)"

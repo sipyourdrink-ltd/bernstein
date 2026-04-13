@@ -137,7 +137,7 @@ COMPACTION_MARKER = "⚡"
 COMPACTION_MARKER_COLOR = "yellow"
 
 
-def build_compaction_marker(reason: str = "", ts: float | None = None) -> str:
+def build_compaction_marker(reason: str = "", _ts: float | None = None) -> str:
     """Build a Rich markup string for a compaction event marker (T563).
 
     Args:

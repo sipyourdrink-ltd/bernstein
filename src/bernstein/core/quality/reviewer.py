@@ -102,7 +102,7 @@ async def review_queue(
     server_url: str,
     model: str,
     provider: str,
-    templates_dir: Path,
+    _templates_dir: Path,
 ) -> QueueReviewResult:
     """Review the task queue and return corrections.
 

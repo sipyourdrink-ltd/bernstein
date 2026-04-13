@@ -147,7 +147,7 @@ class RouteDecisionTracker:
 
 
 def format_routing_reasons(
-    task_id: str,
+    _task_id: str,
     adapter: str,
     model: str,
     effort: str,

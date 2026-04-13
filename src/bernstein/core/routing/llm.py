@@ -373,7 +373,7 @@ class LLMOAuthRefreshHandler:
         self.refresh_callbacks[provider] = refresh_callback
         logger.info(f"Registered OAuth refresh for LLM provider: {provider}")
 
-    def handle_llm_auth_error(self, provider: str, error_code: int, error_message: str) -> bool:
+    def handle_llm_auth_error(self, provider: str, error_code: int, _error_message: str) -> bool:
         """Handle 401/403 errors from LLM providers."""
         if error_code not in (401, 403):
             return False

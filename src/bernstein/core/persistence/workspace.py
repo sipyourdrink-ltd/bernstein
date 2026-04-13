@@ -231,15 +231,14 @@ class Workspace:
         indegree: dict[str, int] = dict.fromkeys(repo_names, 0)
 
         for task in tasks:
-            if not task.repo or not task.depends_on_repo:
+            dep, repo = task.depends_on_repo, task.repo
+            if not repo or not dep or dep == repo:
                 continue
-            if task.repo not in repo_set or task.depends_on_repo not in repo_set:
+            if repo not in repo_set or dep not in repo_set:
                 continue
-            if task.depends_on_repo == task.repo:
-                continue
-            if task.repo not in adjacency[task.depends_on_repo]:
-                adjacency[task.depends_on_repo].add(task.repo)
-                indegree[task.repo] += 1
+            if repo not in adjacency[dep]:
+                adjacency[dep].add(repo)
+                indegree[repo] += 1
 
         queue = [name for name in repo_names if indegree[name] == 0]
         ordered: list[str] = []

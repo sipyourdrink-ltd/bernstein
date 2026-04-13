@@ -843,7 +843,7 @@ class EvolutionLoop:
     def _apply_proposal(
         self,
         proposal: UpgradeProposal,
-        sandbox_result: SandboxResult,
+        _sandbox_result: SandboxResult,
     ) -> bool:
         """Apply an accepted proposal.
 
@@ -852,7 +852,7 @@ class EvolutionLoop:
 
         Args:
             proposal: The approved proposal.
-            sandbox_result: Sandbox validation result.
+            _sandbox_result: Sandbox validation result.
 
         Returns:
             True if the proposal was applied successfully.

@@ -163,7 +163,7 @@ def _is_git_repo(workdir: Path) -> bool:
     return result.returncode == 0
 
 
-def _worktree_add(workdir: Path, sandbox_path: Path, branch_name: str) -> bool:
+def _worktree_add(workdir: Path, sandbox_path: Path, _branch_name: str) -> bool:
     """Try ``git worktree add`` and return ``True`` on success."""
     result = _run_git(
         ["worktree", "add", "--detach", str(sandbox_path)],

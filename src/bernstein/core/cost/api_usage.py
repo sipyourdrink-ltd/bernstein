@@ -172,7 +172,7 @@ class ApiUsageTracker:
 
         self.persist()
 
-    def record_tier_usage(self, tier: str, task_id: str, cost_usd: float) -> None:
+    def record_tier_usage(self, tier: str, _task_id: str, cost_usd: float) -> None:
         """Record usage at a specific tier.
 
         Args:

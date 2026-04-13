@@ -336,7 +336,7 @@ class AgentRegistry:
             schema_version=str(data.get("schema_version", self.SCHEMA_VERSION)),
         )
 
-    def _validate_schema(self, data: dict[str, Any], source: Path) -> None:
+    def _validate_schema(self, data: dict[str, Any], _source: Path) -> None:
         """Validate agent definition against schema.
 
         Args:

@@ -581,7 +581,7 @@ class _CoreRedirectFinder(MetaPathFinder):
 class _CoreRedirectLoader:
     """Load a redirected module by importing the real target."""
 
-    def create_module(self, spec: ModuleSpec) -> ModuleType | None:
+    def create_module(self, _spec: ModuleSpec) -> ModuleType | None:
         """Let the real import create the module."""
         return None  # use default semantics
 
@@ -599,7 +599,7 @@ class _CoreRedirectLoader:
         # Also register real module under old name for subsequent imports
         sys.modules[fullname] = real
 
-    def get_code(self, fullname: str) -> None:
+    def get_code(self, _fullname: str) -> None:
         """Return None — redirect loaders don't provide code objects."""
         return None
 

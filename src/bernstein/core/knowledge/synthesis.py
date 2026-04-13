@@ -50,7 +50,7 @@ class SynthesisEngine:
         self,
         worker_results: list[dict[str, Any]],
         parent_task_id: str,
-        scratchpad_path: Path | None = None,
+        _scratchpad_path: Path | None = None,
     ) -> SynthesisResult:
         """Synthesize worker results into coherent summary.
 

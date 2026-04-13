@@ -915,7 +915,7 @@ def check_review_checklist(
     diff: str,
     task: Task,
     checklist: list[str],
-    workdir: Path,
+    _workdir: Path,
 ) -> list[PermissionDecision]:
     """Verify a custom review checklist against the git diff using LLM.
 

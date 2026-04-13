@@ -346,7 +346,7 @@ def _get_git_diff_stats(workdir: Path, done_tasks: list[Any]) -> dict[str, Any]:
         }
 
 
-def _get_quality_score_distribution(workdir: Path, done_tasks: list[Any]) -> dict[str, Any]:
+def _get_quality_score_distribution(workdir: Path, _done_tasks: list[Any]) -> dict[str, Any]:
     """Get quality score distribution for completed tasks.
 
     Args:

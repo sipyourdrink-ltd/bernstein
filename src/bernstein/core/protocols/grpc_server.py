@@ -339,7 +339,7 @@ class ClusterServiceImpl:
             self._fill_node_proto(node_msg, n)
         return resp
 
-    async def GetClusterStatus(self, request: Any, context: Any) -> Any:
+    async def GetClusterStatus(self, _request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         summary = self._registry.cluster_summary()
