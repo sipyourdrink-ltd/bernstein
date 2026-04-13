@@ -189,6 +189,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "difficulty_estimator": "bernstein.core.tasks.difficulty_estimator",
     "disaster_recovery": "bernstein.core.persistence.disaster_recovery",
     "dlp_scanner": "bernstein.core.security.dlp_scanner",
+    "dlp_scanner_v2": "bernstein.core.security.dlp_scanner_v2",
     "doc_generator": "bernstein.core.knowledge.doc_generator",
     "dp_telemetry": "bernstein.core.security.dp_telemetry",
     "drain": "bernstein.core.orchestration.drain",
