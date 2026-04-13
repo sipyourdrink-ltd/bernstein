@@ -25,7 +25,7 @@ linear = []
 slack = []
 teams = []
 all = ["bernstein-sdk[jira,linear,slack,teams]"]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21"]
+dev = ["pytest>=9.0.3", "pytest-asyncio>=0.23", "respx>=0.21"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bernstein_sdk"]
