@@ -84,9 +84,6 @@ jobs:
           # makes ``$(( ... ))`` fail with "syntax error in expression"
           # — see CI logs for the previous run.
           # We just use ``|| true`` to swallow grep's exit status.
-          KILLED=$(uv run mutmut results 2>/dev/null | grep -c "^Killed" || true)
-          SURVIVED=$(uv run mutmut results 2>/dev/null | grep -c "^Survived" || true)
-          TIMEOUT=$(uv run mutmut results 2>/dev/null | grep -c "^Timeout" || true)
 
           # Use junitxml export if available (mutmut >= 2.0 supports it)
           uv run mutmut junitxml > mutmut_junit.xml 2>/dev/null || true
