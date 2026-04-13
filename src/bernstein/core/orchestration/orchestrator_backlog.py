@@ -100,6 +100,7 @@ def ingest_backlog(orch: Any) -> int:
 
     # Filter by task pattern if BERNSTEIN_TASK_FILTER is set (e.g. "gh-62" or "mutant-fish")
     import os
+
     task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
     if task_filter:
         task_filter_lower = task_filter.lower()

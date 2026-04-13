@@ -17,11 +17,13 @@ import sys
 # Platform-specific imports for terminal handling
 if sys.platform == "win32":
     import msvcrt
+
     _IS_WINDOWS = True
 else:
     import select
     import termios
     import tty
+
     _IS_WINDOWS = False
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
