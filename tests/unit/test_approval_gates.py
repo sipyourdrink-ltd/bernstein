@@ -262,7 +262,7 @@ class TestApprovalGatePR:
         pr_url = gate.create_pr(
             task,
             worktree_path=tmp_path / "worktree",
-            _session_id="agent-pr123",
+            session_id="agent-pr123",
             base_branch="master",
         )
 
@@ -291,7 +291,7 @@ class TestApprovalGatePR:
         gate.create_pr(
             _make_task(id="T-abc"),
             worktree_path=tmp_path / "wt",
-            _session_id="agent-xyz",
+            session_id="agent-xyz",
             base_branch="master",
         )
 
@@ -318,7 +318,7 @@ class TestApprovalGatePR:
         gate.create_pr(
             _make_task(),
             worktree_path=tmp_path / "wt",
-            _session_id="agent-lab",
+            session_id="agent-lab",
             base_branch="master",
         )
 
@@ -340,7 +340,7 @@ class TestApprovalGatePR:
         pr_url = gate.create_pr(
             _make_task(),
             worktree_path=tmp_path / "wt",
-            _session_id="agent-fail",
+            session_id="agent-fail",
             base_branch="master",
         )
 
@@ -462,7 +462,7 @@ class TestApprovalGateAutoMerge:
             pr_url = gate.create_pr(
                 _make_task(id="T-automerge"),
                 worktree_path=tmp_path / "wt",
-                _session_id="agent-am",
+                session_id="agent-am",
                 base_branch="master",
             )
 
@@ -488,7 +488,7 @@ class TestApprovalGateAutoMerge:
             gate.create_pr(
                 _make_task(id="T-nomerge"),
                 worktree_path=tmp_path / "wt",
-                _session_id="agent-nm",
+                session_id="agent-nm",
                 base_branch="master",
             )
 
@@ -517,7 +517,7 @@ class TestApprovalGateAutoMerge:
         gate.create_pr(
             _make_task(id="T-labels"),
             worktree_path=tmp_path / "wt",
-            _session_id="agent-lbl",
+            session_id="agent-lbl",
             base_branch="master",
         )
 
@@ -546,7 +546,7 @@ class TestApprovalGateAutoMerge:
         gate.create_pr(
             _make_task(id="T-override"),
             worktree_path=tmp_path / "wt",
-            _session_id="agent-ov",
+            session_id="agent-ov",
             base_branch="master",
             labels=["override-label"],
         )

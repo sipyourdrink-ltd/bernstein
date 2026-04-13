@@ -328,7 +328,7 @@ class TestUsageQuotas:
 
 class TestQualityAndErrors:
     def test_record_janitor_result_writes_metric(self, collector: MetricsCollector) -> None:
-        collector.record_janitor_result("t1", passed=True, role="backend", model="sonnet", _provider="claude")
+        collector.record_janitor_result("t1", passed=True, role="backend", model="sonnet", provider="claude")
         today = datetime.now().strftime("%Y-%m-%d")
         f = collector._metrics_dir / f"agent_success_{today}.jsonl"
         assert f.exists()
@@ -338,7 +338,7 @@ class TestQualityAndErrors:
 
     def test_record_janitor_result_updates_task_metrics(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
-        collector.record_janitor_result("t1", passed=True, role="backend", model="sonnet", _provider="claude")
+        collector.record_janitor_result("t1", passed=True, role="backend", model="sonnet", provider="claude")
         assert collector._task_metrics["t1"].janitor_passed is True
 
     def test_record_error_writes_metric(self, collector: MetricsCollector) -> None:
@@ -440,18 +440,18 @@ class TestJsonlFileWriting:
 
 class TestRecordApiCall:
     def test_writes_api_usage_metric(self, collector: MetricsCollector) -> None:
-        collector.record_api_call("claude", "sonnet", latency_ms=200, tokens=300, _cost_usd=0.01, success=True)
+        collector.record_api_call("claude", "sonnet", latency_ms=200, tokens=300, cost_usd=0.01, success=True)
         today = datetime.now().strftime("%Y-%m-%d")
         f = collector._metrics_dir / f"api_usage_{today}.jsonl"
         assert f.exists()
 
     def test_updates_avg_latency(self, collector: MetricsCollector) -> None:
-        collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, _cost_usd=0.0, success=True)
+        collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, cost_usd=0.0, success=True)
         h = collector.get_provider_health("claude")
         assert h.avg_latency_ms > 0
 
     def test_exponential_moving_average(self, collector: MetricsCollector) -> None:
-        collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, _cost_usd=0.0, success=True)
+        collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, cost_usd=0.0, success=True)
         h = collector.get_provider_health("claude")
         # alpha=0.3: 0.3*100 + 0.7*0 = 30
         assert h.avg_latency_ms == pytest.approx(30.0)

@@ -90,7 +90,7 @@ def _is_provider_configured(provider: str, settings: LLMSettings) -> bool:
 
 async def warmup_provider(
     provider: str,
-    _model: str = "",
+    model: str = "",
     *,
     timeout: float = _WARMUP_TIMEOUT_SECONDS,
 ) -> WarmupResult:

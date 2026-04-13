@@ -985,7 +985,7 @@ class TestRecordAgentLifetime:
             role="backend",
             lifetime_seconds=120.5,
             tasks_completed=2,
-            _model="sonnet",
+            model="sonnet",
         )
 
         agents_file = tmp_path / "metrics" / "agents.jsonl"

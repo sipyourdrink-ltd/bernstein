@@ -393,7 +393,7 @@ class EvolutionCoordinator:
         role: str,
         lifetime_seconds: float,
         tasks_completed: int,
-        _model: str | None = None,
+        model: str | None = None,
     ) -> None:
         """Record agent session lifetime metrics when an agent ends.
 

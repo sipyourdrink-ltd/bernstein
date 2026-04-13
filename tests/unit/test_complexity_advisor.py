@@ -166,7 +166,7 @@ def test_should_auto_decompose_skips_when_single_agent_recommended(tmp_path: Pat
 
     from bernstein.core.task_lifecycle import should_auto_decompose
 
-    assert should_auto_decompose(task, set(), _workdir=tmp_path, force_parallel=False) is False
+    assert should_auto_decompose(task, set(), workdir=tmp_path, force_parallel=False) is False
 
 
 def test_should_auto_decompose_decomposes_when_force_parallel(tmp_path: Path) -> None:
@@ -178,7 +178,7 @@ def test_should_auto_decompose_decomposes_when_force_parallel(tmp_path: Path) ->
 
     from bernstein.core.task_lifecycle import should_auto_decompose
 
-    assert should_auto_decompose(task, set(), _workdir=tmp_path, force_parallel=True) is True
+    assert should_auto_decompose(task, set(), workdir=tmp_path, force_parallel=True) is True
 
 
 def test_should_auto_decompose_decomposes_loosely_coupled_large(tmp_path: Path) -> None:
@@ -188,8 +188,8 @@ def test_should_auto_decompose_decomposes_loosely_coupled_large(tmp_path: Path) 
     from bernstein.core.task_lifecycle import should_auto_decompose
 
     # Default: disabled (modern 1M-context LLMs handle any scope)
-    assert should_auto_decompose(task, set(), _workdir=tmp_path) is False
-    assert should_auto_decompose(task, set(), _workdir=tmp_path, force_parallel=True) is True
+    assert should_auto_decompose(task, set(), workdir=tmp_path) is False
+    assert should_auto_decompose(task, set(), workdir=tmp_path, force_parallel=True) is True
 
 
 def test_should_auto_decompose_no_workdir_decomposes_large(tmp_path: Path) -> None:
@@ -198,8 +198,8 @@ def test_should_auto_decompose_no_workdir_decomposes_large(tmp_path: Path) -> No
 
     from bernstein.core.task_lifecycle import should_auto_decompose
 
-    assert should_auto_decompose(task, set(), _workdir=None) is False
-    assert should_auto_decompose(task, set(), _workdir=None, force_parallel=True) is True
+    assert should_auto_decompose(task, set(), workdir=None) is False
+    assert should_auto_decompose(task, set(), workdir=None, force_parallel=True) is True
 
 
 def test_should_auto_decompose_skips_small_scope(tmp_path: Path) -> None:
@@ -207,4 +207,4 @@ def test_should_auto_decompose_skips_small_scope(tmp_path: Path) -> None:
 
     from bernstein.core.task_lifecycle import should_auto_decompose
 
-    assert should_auto_decompose(task, set(), _workdir=tmp_path) is False
+    assert should_auto_decompose(task, set(), workdir=tmp_path) is False

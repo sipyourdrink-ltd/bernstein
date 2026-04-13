@@ -2233,10 +2233,10 @@ class AgentSpawner:
     def _adapter_cmd_for_container(
         self,
         *,
-        _prompt_file: Path,
+        prompt_file: Path,
         model_config: ModelConfig,
         session_id: str,
-        _mcp_config: dict[str, Any] | None,
+        mcp_config: dict[str, Any] | None,
         adapter: CLIAdapter,
     ) -> list[str]:
         """Build the CLI command to run inside the container.

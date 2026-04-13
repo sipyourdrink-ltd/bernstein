@@ -375,7 +375,7 @@ def detect_signature_changes(
 def find_call_sites(
     source: str,
     func_names: set[str],
-    _file: str = "",
+    file: str = "",
 ) -> list[tuple[str, int, str]]:
     """Find call sites for *func_names* in *source*.
 
