@@ -1,11 +1,12 @@
 # Adapter Selection Guide
 
-Bernstein supports 19 adapters for different CLI coding agents. This guide helps
-you pick the right one for your use case.
+Bernstein ships 29 adapter modules in `src/bernstein/adapters/`. Of these, 19 are
+CLI agent adapters for different coding agents, and 10 are support modules
+(caching, conformance testing, environment isolation, plugin SDK, etc.).
 
-All adapters implement the `CLIAdapter` interface (`adapters/base.py`): `spawn()`,
-process monitoring via PID, log capture to `.sdd/runtime/<session>.log`, and
-timeout watchdog with SIGTERM-then-SIGKILL cleanup.
+All CLI agent adapters implement the `CLIAdapter` interface (`adapters/base.py`):
+`spawn()`, process monitoring via PID, log capture to `.sdd/runtime/<session>.log`,
+and timeout watchdog with SIGTERM-then-SIGKILL cleanup.
 
 Source of truth: `src/bernstein/adapters/registry.py`, individual adapter files.
 
@@ -445,6 +446,26 @@ tabby serve --model TabbyML/StarCoder-1B --device cuda
 ### mock (Testing only)
 
 Simulates agent behavior for unit and integration tests. Not for production use.
+
+---
+
+## Support Modules
+
+In addition to the 19 CLI agent adapters above, the adapter package includes
+10 support modules that provide cross-cutting infrastructure:
+
+| Module | Purpose |
+|--------|---------|
+| `caching_adapter` | Prompt prefix deduplication and response reuse wrapper |
+| `claude_agents` | Per-task Claude Code subagent definitions for `--agents` flag |
+| `claude_exit_codes` | Maps Claude Code exit codes to Bernstein lifecycle enums |
+| `claude_stream_parser` | Parses Claude Code `--output-format stream-json` events |
+| `conformance` | Golden-transcript replay and adapter conformance validation |
+| `env_isolation` | Environment variable filtering to prevent credential leakage |
+| `manager` | Spawns the internal Python ManagerAgent |
+| `plugin_sdk` | Base classes and utilities for third-party adapter plugins |
+| `registry` | Adapter discovery and registration (entry-point and runtime) |
+| `skills_injector` | Injects per-task Claude Code skills into worktrees before spawn |
 
 ---
 

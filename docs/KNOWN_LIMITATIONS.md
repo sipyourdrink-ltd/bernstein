@@ -6,13 +6,14 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 
 ## 1) Process and adapter parity is not perfect
 
-**What:** Different CLI adapters expose different capabilities and process semantics.
+**What:** Bernstein ships 29 adapter modules (19 CLI agent adapters + 10 support modules), but different CLI agents expose different capabilities and process semantics.
 
-**Impact:** Stop/restart behavior, output shape, and error handling can vary by adapter.
+**Impact:** Stop/restart behavior, output shape, structured output support, and error handling can vary by adapter. The conformance harness (`adapters/conformance.py`) helps catch regressions, but not all adapters have full golden-transcript coverage.
 
 **Workaround:**
 - Run `bernstein doctor` before long runs.
-- Prefer proven adapters in production workflows.
+- Run `bernstein test-adapter <name>` to smoke-test specific adapters.
+- Prefer proven adapters (claude, codex, gemini) in production workflows.
 - Use `bernstein stop` for controlled shutdown; use force-stop only when needed.
 
 ---
@@ -76,8 +77,9 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 
 **Workaround:**
 - Set hard budgets.
-- Monitor spend via cost endpoints/CLI.
-- Use anomaly detection and budget thresholds as guardrails.
+- Monitor spend via `bernstein cost` and cost endpoints.
+- Use anomaly detection, quota tracking (`quota_tracker.py`), and budget thresholds as guardrails.
+- Use peak-hour routing (`peak_hour_router.py`) to reduce costs during expensive windows.
 
 ---
 
@@ -90,7 +92,21 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 **Workaround:**
 - Cross-check CLI (`bernstein --help`) and API routes when implementing automation.
 - Prefer core reference docs (`GETTING_STARTED`, `CONFIG`, `FEATURE_MATRIX`) over older narrative pages.
+- Use `bernstein debug` to generate a debug bundle for comprehensive triage.
 
 ---
 
-*Last updated: 2026-04-03.*
+## 8) Protocol negotiation is best-effort
+
+**What:** Protocol negotiation (`protocol_negotiation.py`) detects version compatibility at connection time, but not all agents support all protocol versions.
+
+**Impact:** Mixed-version deployments may see fallback behavior or reduced functionality when newer protocol features are unavailable on the remote side.
+
+**Workaround:**
+- Keep agent CLIs updated to versions that support the protocol features you need.
+- Check the schema registry (`schema_registry.py`) for supported message versions.
+- Use `bernstein test-adapter` to validate protocol support before production runs.
+
+---
+
+*Last updated: 2026-04-13.*
