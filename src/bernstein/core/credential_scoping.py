@@ -186,9 +186,7 @@ def validate_request_against_scope(
     # Check token budget
     tokens = request.get("tokens")
     tokens_within_budget = (
-        tokens is None
-        or scope.max_tokens_per_request is None
-        or tokens <= scope.max_tokens_per_request
+        tokens is None or scope.max_tokens_per_request is None or tokens <= scope.max_tokens_per_request
     )
 
     return tokens_within_budget
@@ -297,9 +295,7 @@ class CredentialScopeManager:
         return [
             c
             for c in self._credentials.values()
-            if c.agent_id == agent_id
-            and c.key_id not in self._revoked
-            and datetime.now(UTC) < c.expires_at
+            if c.agent_id == agent_id and c.key_id not in self._revoked and datetime.now(UTC) < c.expires_at
         ]
 
     # -- Validation -----------------------------------------------------------
@@ -378,11 +374,7 @@ class CredentialScopeManager:
             The number of credentials removed.
         """
         now = datetime.now(UTC)
-        expired_keys = [
-            kid
-            for kid, cred in self._credentials.items()
-            if now >= cred.expires_at
-        ]
+        expired_keys = [kid for kid, cred in self._credentials.items() if now >= cred.expires_at]
         for kid in expired_keys:
             del self._credentials[kid]
             self._revoked.discard(kid)

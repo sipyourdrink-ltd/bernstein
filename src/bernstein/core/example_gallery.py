@@ -34,16 +34,33 @@ REQUIRED_PLAN_FIELDS = ("name", "description", "budget")
 REQUIRED_STEP_FIELDS = ("title", "role", "description")
 REQUIRED_SIGNAL_FIELDS = ("type",)
 VALID_DIFFICULTY = frozenset({"beginner", "intermediate", "advanced"})
-VALID_ROLES = frozenset({
-    "backend", "frontend", "fullstack", "qa", "devops", "architect",
-    "security", "designer", "analyst", "researcher", "writer",
-    "docs", "ci-fixer",
-})
+VALID_ROLES = frozenset(
+    {
+        "backend",
+        "frontend",
+        "fullstack",
+        "qa",
+        "devops",
+        "architect",
+        "security",
+        "designer",
+        "analyst",
+        "researcher",
+        "writer",
+        "docs",
+        "ci-fixer",
+    }
+)
 VALID_COMPLEXITY = frozenset({"low", "medium", "high"})
 VALID_SCOPE = frozenset({"small", "medium", "large"})
-VALID_SIGNAL_TYPES = frozenset({
-    "path_exists", "file_contains", "test_passes", "command",
-})
+VALID_SIGNAL_TYPES = frozenset(
+    {
+        "path_exists",
+        "file_contains",
+        "test_passes",
+        "command",
+    }
+)
 
 
 def _infer_difficulty(plan: dict[str, Any]) -> str:
@@ -56,10 +73,7 @@ def _infer_difficulty(plan: dict[str, Any]) -> str:
     if not steps:
         return "beginner"
 
-    complexities = [
-        s.get("complexity", "medium") for s in steps
-        if isinstance(s, dict) and "complexity" in s
-    ]
+    complexities = [s.get("complexity", "medium") for s in steps if isinstance(s, dict) and "complexity" in s]
     if not complexities:
         return "intermediate"
 
@@ -163,10 +177,7 @@ class ExamplePlan:
         self.raw = raw
 
     def __repr__(self) -> str:
-        return (
-            f"ExamplePlan(name={self.name!r}, category={self.category!r}, "
-            f"difficulty={self.difficulty!r})"
-        )
+        return f"ExamplePlan(name={self.name!r}, category={self.category!r}, difficulty={self.difficulty!r})"
 
 
 class ExampleGallery:
@@ -268,16 +279,18 @@ def discover_examples(examples_dir: Path) -> ExampleGallery:
             if isinstance(description, str):
                 description = description.strip().split("\n")[0][:200]
 
-            plans.append(ExamplePlan(
-                name=name,
-                description=description,
-                category=_infer_category(data),
-                difficulty=_infer_difficulty(data),
-                estimated_cost_usd=_parse_budget(data.get("budget", 0)),
-                agent_count=_count_agents(data),
-                plan_path=yaml_file,
-                raw=data,
-            ))
+            plans.append(
+                ExamplePlan(
+                    name=name,
+                    description=description,
+                    category=_infer_category(data),
+                    difficulty=_infer_difficulty(data),
+                    estimated_cost_usd=_parse_budget(data.get("budget", 0)),
+                    agent_count=_count_agents(data),
+                    plan_path=yaml_file,
+                    raw=data,
+                )
+            )
 
     return ExampleGallery(tuple(plans))
 
@@ -366,42 +379,30 @@ def validate_example_plan(plan_path: Path) -> list[str]:
                             # Validate role
                             role = step.get("role")
                             if isinstance(role, str) and role not in VALID_ROLES:
-                                errors.append(
-                                    f"Stage {i}, step {j}: unknown role '{role}'"
-                                )
+                                errors.append(f"Stage {i}, step {j}: unknown role '{role}'")
 
                             # Validate complexity
                             complexity = step.get("complexity")
                             if isinstance(complexity, str) and complexity not in VALID_COMPLEXITY:
-                                errors.append(
-                                    f"Stage {i}, step {j}: unknown complexity '{complexity}'"
-                                )
+                                errors.append(f"Stage {i}, step {j}: unknown complexity '{complexity}'")
 
                             # Validate scope
                             scope = step.get("scope")
                             if isinstance(scope, str) and scope not in VALID_SCOPE:
-                                errors.append(
-                                    f"Stage {i}, step {j}: unknown scope '{scope}'"
-                                )
+                                errors.append(f"Stage {i}, step {j}: unknown scope '{scope}'")
 
                             # Validate completion signals
                             signals = step.get("completion_signals")
                             if signals is not None:
                                 if not isinstance(signals, list):
-                                    errors.append(
-                                        f"Stage {i}, step {j}: 'completion_signals' must be a list"
-                                    )
+                                    errors.append(f"Stage {i}, step {j}: 'completion_signals' must be a list")
                                 else:
                                     for k, signal in enumerate(signals):
                                         if not isinstance(signal, dict):
-                                            errors.append(
-                                                f"Stage {i}, step {j}, signal {k}: must be a mapping"
-                                            )
+                                            errors.append(f"Stage {i}, step {j}, signal {k}: must be a mapping")
                                             continue
                                         if "type" not in signal:
-                                            errors.append(
-                                                f"Stage {i}, step {j}, signal {k}: missing 'type'"
-                                            )
+                                            errors.append(f"Stage {i}, step {j}, signal {k}: missing 'type'")
                                         elif signal["type"] not in VALID_SIGNAL_TYPES:
                                             errors.append(
                                                 f"Stage {i}, step {j}, signal {k}: "
@@ -430,8 +431,7 @@ def render_gallery_index(gallery: ExampleGallery) -> str:
     lines: list[str] = [
         "# Bernstein Example Gallery",
         "",
-        f"**{len(gallery)} curated orchestration patterns** across "
-        f"{len(gallery.categories)} categories.",
+        f"**{len(gallery)} curated orchestration patterns** across {len(gallery.categories)} categories.",
         "",
         "## Quick Start",
         "",
