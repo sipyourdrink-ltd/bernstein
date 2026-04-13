@@ -136,6 +136,10 @@ from bernstein.evolution.risk import RiskScorer
 
 _BERNSTEIN_YAML = "bernstein.yaml"
 
+# Event constants (must be defined early - used throughout the module)
+_EVENT_RUN_COMPLETED = "run.completed"
+_EVENT_TASK_FAILED = "task.failed"
+
 # Preserve underscore-prefixed aliases so existing test imports keep working
 _compute_total_spent = compute_total_spent
 _total_spent_cache = total_spent_cache
@@ -3524,18 +3528,42 @@ class Orchestrator:
         """
         from bernstein.core.git.git_pr import create_github_pr
 
-        current_branch = self._get_current_branch()
-        if current_branch is None:
-            return
+        # Check if we have a task filter — if so, create a branch from it
+        task_filter = os.environ.get("BERNSTEIN_TASK_FILTER", "")
+        if task_filter:
+            feature_branch = self._create_branch_from_task_filter(task_filter)
+            if feature_branch is None:
+                logger.warning("Auto-PR: failed to create branch from task filter %s", task_filter)
+                return
+            current_branch = feature_branch
+        else:
+            current_branch = self._get_current_branch()
+            if current_branch is None:
+                return
 
-        if current_branch in ("main", "master"):
-            logger.info("Auto-PR: skipping - already on %s branch", current_branch)
-            return
+            # If on main/master with commits ahead, create a feature branch first
+            if current_branch in ("main", "master"):
+                if not self._has_commits_ahead(current_branch):
+                    logger.info("Auto-PR: skipping - no commits ahead of origin/%s", current_branch)
+                    return
+                # Create feature branch from current commits
+                feature_branch = self._create_feature_branch_from_main()
+                if feature_branch is None:
+                    logger.warning("Auto-PR: failed to create feature branch from %s", current_branch)
+                    return
+                current_branch = feature_branch
+
+        # Stage and commit any uncommitted changes before checking for commits ahead
+        self._commit_pending_changes(done_tasks)
 
         if not self._has_commits_ahead(current_branch):
             return
 
         if not self._push_branch(current_branch):
+            return
+
+        # Verify the remote branch actually has commits vs main
+        if not self._verify_remote_diff(current_branch):
             return
 
         existing_url = self._check_existing_pr(current_branch)
@@ -3610,12 +3638,143 @@ class Orchestrator:
             pass  # Continue anyway
         return True
 
+    def _create_feature_branch_from_main(self) -> str | None:
+        """Create a feature branch from the current main commits.
+
+        Used when commits were made on main and we need a branch for the PR.
+
+        Returns:
+            Branch name on success, None on failure.
+        """
+        import subprocess
+        import time
+
+        # Generate unique branch name
+        timestamp = int(time.time())
+        branch_name = f"bernstein/run-{timestamp}"
+
+        try:
+            # Create and switch to the new branch
+            result = subprocess.run(
+                ["git", "checkout", "-b", branch_name],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning("Auto-PR: failed to create branch %s: %s", branch_name, result.stderr)
+                return None
+
+            logger.info("Auto-PR: created feature branch %s from main", branch_name)
+            return branch_name
+        except Exception as exc:
+            logger.warning("Auto-PR: exception creating branch: %s", exc)
+            return None
+
+    def _create_branch_from_task_filter(self, task_filter: str) -> str | None:
+        """Create a feature branch based on the task filter pattern.
+
+        Extracts issue number from patterns like 'gh-59', 'GH-123', 'issue-42'
+        and creates a branch like 'issue-59-bernstein'.
+
+        Args:
+            task_filter: The task filter pattern (e.g., 'gh-59', 'issue-42').
+
+        Returns:
+            Branch name on success, None on failure.
+        """
+        import re
+        import subprocess
+
+        # Extract issue number from common patterns
+        match = re.search(r"(?:gh|issue|#)?-?(\d+)", task_filter, re.IGNORECASE)
+        if match:
+            issue_num = match.group(1)
+            branch_name = f"issue-{issue_num}-bernstein"
+        else:
+            # Fallback: sanitize the filter for use as branch name
+            sanitized = re.sub(r"[^a-zA-Z0-9-]", "-", task_filter).strip("-").lower()
+            branch_name = f"bernstein/{sanitized}" if sanitized else None
+            if not branch_name:
+                logger.warning("Auto-PR: could not derive branch name from filter %s", task_filter)
+                return None
+
+        # Check if branch already exists
+        try:
+            check_result = subprocess.run(
+                ["git", "rev-parse", "--verify", branch_name],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if check_result.returncode == 0:
+                # Branch exists, switch to it
+                subprocess.run(
+                    ["git", "checkout", branch_name],
+                    cwd=self._workdir,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
+                )
+                # Merge main to pick up any new work that was committed there
+                merge_result = subprocess.run(
+                    ["git", "merge", "main", "-m", f"Merge main into {branch_name}"],
+                    cwd=self._workdir,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
+                )
+                if merge_result.returncode != 0:
+                    # Merge failed (conflict or already up-to-date) - log but continue
+                    logger.debug(
+                        "Auto-PR: merge main into %s: %s",
+                        branch_name,
+                        merge_result.stdout.strip() or merge_result.stderr.strip(),
+                    )
+                logger.info("Auto-PR: switched to existing branch %s", branch_name)
+                return branch_name
+        except Exception:
+            pass
+
+        # Create and switch to the new branch
+        try:
+            result = subprocess.run(
+                ["git", "checkout", "-b", branch_name],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "Auto-PR: failed to create branch %s: %s", branch_name, result.stderr
+                )
+                return None
+
+            logger.info("Auto-PR: created feature branch %s from task filter %s", branch_name, task_filter)
+            return branch_name
+        except Exception as exc:
+            logger.warning("Auto-PR: exception creating branch from filter: %s", exc)
+            return None
+
     def _push_branch(self, branch: str) -> bool:
         """Push the branch to origin. Returns True on success."""
         import subprocess
 
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["git", "push", "-u", "origin", branch],
                 cwd=self._workdir,
                 capture_output=True,
@@ -3624,9 +3783,88 @@ class Orchestrator:
                 errors="replace",
                 timeout=60,
             )
+            if result.returncode != 0:
+                logger.warning("Auto-PR: push failed: %s", result.stderr.strip())
+                return False
             return True
         except Exception as exc:
             logger.warning("Auto-PR: failed to push branch: %s", exc)
+            return False
+
+    def _commit_pending_changes(self, done_tasks: list[Task]) -> bool:
+        """Stage and commit any uncommitted changes for the PR.
+
+        Args:
+            done_tasks: List of completed tasks for commit message.
+
+        Returns:
+            True if changes were committed, False if no changes to commit.
+        """
+        import subprocess
+
+        # Check for uncommitted changes
+        try:
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if not status.stdout.strip():
+                logger.info("Auto-PR: no uncommitted changes to commit")
+                return False
+        except Exception as exc:
+            logger.warning("Auto-PR: failed to check git status: %s", exc)
+            return False
+
+        # Stage all changes
+        try:
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+        except Exception as exc:
+            logger.warning("Auto-PR: failed to stage changes: %s", exc)
+            return False
+
+        # Build commit message
+        if len(done_tasks) == 1:
+            title = done_tasks[0].title
+        else:
+            title = f"Bernstein: {len(done_tasks)} tasks completed"
+        task_ids = ", ".join(t.id[:8] for t in done_tasks if t.id)
+        commit_msg = f"{title}\n\nCompleted by automated agent.\nTask IDs: {task_ids}"
+
+        # Create commit
+        try:
+            result = subprocess.run(
+                ["git", "commit", "-m", commit_msg],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            if result.returncode != 0:
+                # Check if it's "nothing to commit" which is okay
+                if "nothing to commit" in result.stdout or "nothing to commit" in result.stderr:
+                    logger.info("Auto-PR: nothing to commit (all changes already committed)")
+                    return False
+                logger.warning("Auto-PR: git commit failed: %s", result.stderr)
+                return False
+            logger.info("Auto-PR: committed pending changes")
+            return True
+        except Exception as exc:
+            logger.warning("Auto-PR: failed to commit: %s", exc)
             return False
 
     def _check_existing_pr(self, branch: str) -> str | None:
@@ -3650,6 +3888,40 @@ class Orchestrator:
         except Exception:
             pass
         return None
+
+    def _verify_remote_diff(self, branch: str) -> bool:
+        """Verify the pushed branch has commits vs origin/main.
+
+        Fetches the latest refs and checks if the remote branch diverges from
+        origin/main. Returns False if they're identical (no PR possible).
+        """
+        import subprocess
+
+        try:
+            # Fetch to ensure we have latest refs
+            subprocess.run(
+                ["git", "fetch", "origin", "main", branch],
+                cwd=self._workdir,
+                capture_output=True,
+                timeout=30,
+            )
+            # Check if there's a diff between origin/main and the pushed branch
+            result = subprocess.run(
+                ["git", "log", f"origin/main..origin/{branch}", "--oneline"],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if not result.stdout.strip():
+                logger.info("Auto-PR: no commits between origin/main and origin/%s - skipping PR", branch)
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("Auto-PR: failed to verify remote diff: %s", exc)
+            return False
 
     def _build_pr_body(self, done_tasks: list[Task], branch: str) -> str:
         """Build the PR body text."""
@@ -4214,6 +4486,10 @@ if __name__ == "__main__":
             ),
         )
 
+        # Check if branches mode is requested (disables git worktrees)
+        use_branches = os.environ.get("BERNSTEIN_USE_BRANCHES") == "1"
+        use_worktrees = not use_branches  # Worktrees disabled when branches mode is on
+
         spawner = AgentSpawner(
             adapter=adapter_inst,
             templates_dir=get_templates_dir(workdir),
@@ -4224,7 +4500,7 @@ if __name__ == "__main__":
             mcp_manager=mcp_manager,
             agency_catalog=agency_catalog,
             catalog=catalog_registry,
-            use_worktrees=True,  # Always use worktrees for isolation + auto-commit
+            use_worktrees=use_worktrees,
             worktree_setup_config=seed.worktree_setup if seed else None,
             enable_caching=True,
             container_config=container_config,
@@ -4409,10 +4685,6 @@ from bernstein.core.orchestration.nudge_manager import (  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import get_orchestrator_nudges as get_orchestrator_nudges  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import nudge_manager as nudge_manager  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import nudge_orchestrator as nudge_orchestrator  # noqa: E402
-
-_EVENT_RUN_COMPLETED = "run.completed"
-
-_EVENT_TASK_FAILED = "task.failed"
 
 _TESTS_DIR = "tests/"
 
