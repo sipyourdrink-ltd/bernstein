@@ -95,10 +95,12 @@ _TRACKED_METRICS: tuple[str, ...] = (
 )
 
 #: Metrics where a *lower* value means *better* quality.
-_LOWER_IS_BETTER: frozenset[str] = frozenset({
-    "lint_errors_per_task",
-    "type_errors_per_task",
-})
+_LOWER_IS_BETTER: frozenset[str] = frozenset(
+    {
+        "lint_errors_per_task",
+        "type_errors_per_task",
+    }
+)
 
 #: Default alert thresholds -- percentage regression that triggers an alert.
 DEFAULT_THRESHOLDS: dict[str, float] = {
@@ -219,10 +221,7 @@ def _linear_slope(values: tuple[float, ...]) -> float:
     x_vals = list(range(n))
     mean_x = sum(x_vals) / n
     mean_y = sum(values) / n
-    numerator = sum(
-        (x - mean_x) * (y - mean_y)
-        for x, y in zip(x_vals, values, strict=False)
-    )
+    numerator = sum((x - mean_x) * (y - mean_y) for x, y in zip(x_vals, values, strict=False))
     denominator = sum((x - mean_x) ** 2 for x in x_vals)
     if abs(denominator) < 1e-15:
         return 0.0
@@ -291,10 +290,7 @@ def compute_trends(
         return []
 
     cutoff = datetime.now(UTC) - timedelta(days=window_days)
-    filtered = [
-        dp for dp in data_points
-        if _parse_timestamp(dp.timestamp) >= cutoff
-    ]
+    filtered = [dp for dp in data_points if _parse_timestamp(dp.timestamp) >= cutoff]
     if not filtered:
         return []
 
@@ -302,9 +298,7 @@ def compute_trends(
     trends: list[TrendLine] = []
 
     for metric in _TRACKED_METRICS:
-        values = tuple(
-            float(getattr(dp, metric)) for dp in filtered
-        )
+        values = tuple(float(getattr(dp, metric)) for dp in filtered)
         slope = _linear_slope(values)
         direction = _trend_direction(metric, slope)
         trends.append(
@@ -365,10 +359,7 @@ def generate_alerts(
 
         display = _DISPLAY_NAMES.get(trend.metric_name, trend.metric_name)
         direction_word = "increased" if pct > 0 else "decreased"
-        alerts.append(
-            f"{display} {direction_word} by {abs(pct):.1f}% "
-            f"(from {first:.2f} to {last:.2f})"
-        )
+        alerts.append(f"{display} {direction_word} by {abs(pct):.1f}% (from {first:.2f} to {last:.2f})")
 
     return alerts
 

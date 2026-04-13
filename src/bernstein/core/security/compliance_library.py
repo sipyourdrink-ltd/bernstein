@@ -171,11 +171,7 @@ def check_audit_logging_enabled(project_root: Path) -> PolicyResult:
     """Verify that .sdd/audit/ directory exists for audit log storage."""
     audit_dir = project_root / ".sdd" / "audit"
     passed = audit_dir.is_dir()
-    evidence = (
-        f"Audit directory exists at {audit_dir}"
-        if passed
-        else f"Audit directory not found at {audit_dir}"
-    )
+    evidence = f"Audit directory exists at {audit_dir}" if passed else f"Audit directory not found at {audit_dir}"
     remediation = "" if passed else "Create .sdd/audit/ directory and enable audit logging in config."
     return PolicyResult(
         rule=_RULE_PLACEHOLDER,
@@ -210,9 +206,7 @@ def check_encryption_at_rest(project_root: Path) -> PolicyResult:
         else "No state_encryption or encrypt_state_at_rest setting found"
     )
     remediation = (
-        ""
-        if has_encryption
-        else "Add 'state_encryption' config or set compliance.encrypt_state_at_rest: true."
+        "" if has_encryption else "Add 'state_encryption' config or set compliance.encrypt_state_at_rest: true."
     )
     return PolicyResult(rule=_RULE_PLACEHOLDER, passed=has_encryption, evidence=evidence, remediation=remediation)
 
@@ -243,9 +237,7 @@ def check_data_retention(project_root: Path) -> PolicyResult:
         or "data_retention" in sdd_config
     )
     evidence = (
-        "Data retention policy found in config"
-        if has_retention
-        else "No retention or data_retention setting found"
+        "Data retention policy found in config" if has_retention else "No retention or data_retention setting found"
     )
     remediation = "" if has_retention else "Add a 'data_retention' section specifying log and data retention periods."
     return PolicyResult(rule=_RULE_PLACEHOLDER, passed=has_retention, evidence=evidence, remediation=remediation)
@@ -317,9 +309,7 @@ def check_vulnerability_scanning(project_root: Path) -> PolicyResult:
         or "vulnerability_scanning" in sdd_config
         or config.get("quality_gates", {}).get("security_scan", False)
     )
-    evidence = (
-        "Vulnerability scanning configured" if has_scanning else "No vulnerability scanning configuration found"
-    )
+    evidence = "Vulnerability scanning configured" if has_scanning else "No vulnerability scanning configuration found"
     remediation = "" if has_scanning else "Enable vulnerability scanning in security settings or quality gates."
     return PolicyResult(rule=_RULE_PLACEHOLDER, passed=has_scanning, evidence=evidence, remediation=remediation)
 
@@ -366,11 +356,7 @@ def check_session_management(project_root: Path) -> PolicyResult:
     """Verify that session timeout / token expiry is configured."""
     config = _load_yaml_config(project_root)
     security = config.get("security", {})
-    has_session = (
-        "session_timeout_minutes" in security
-        or "agent_token_expiry_hours" in security
-        or "session" in config
-    )
+    has_session = "session_timeout_minutes" in security or "agent_token_expiry_hours" in security or "session" in config
     evidence = "Session management settings found" if has_session else "No session timeout or token expiry configured"
     remediation = "" if has_session else "Set security.session_timeout_minutes and security.agent_token_expiry_hours."
     return PolicyResult(rule=_RULE_PLACEHOLDER, passed=has_session, evidence=evidence, remediation=remediation)
@@ -459,15 +445,9 @@ def check_data_classification(project_root: Path) -> PolicyResult:
         or "data_classification" in sdd_config
         or config.get("security", {}).get("data_classification", False)
     )
-    evidence = (
-        "Data classification configured"
-        if has_classification
-        else "No data classification configuration found"
-    )
+    evidence = "Data classification configured" if has_classification else "No data classification configuration found"
     remediation = (
-        ""
-        if has_classification
-        else "Add 'data_classification' settings to label and classify sensitive data."
+        "" if has_classification else "Add 'data_classification' settings to label and classify sensitive data."
     )
     return PolicyResult(rule=_RULE_PLACEHOLDER, passed=has_classification, evidence=evidence, remediation=remediation)
 
@@ -503,9 +483,7 @@ def check_consent_management(project_root: Path) -> PolicyResult:
     )
     evidence = "Consent / data subject rights management found" if has_consent else "No consent management found"
     remediation = (
-        ""
-        if has_consent
-        else "Document consent management and data subject rights procedures for GDPR compliance."
+        "" if has_consent else "Document consent management and data subject rights procedures for GDPR compliance."
     )
     return PolicyResult(rule=_RULE_PLACEHOLDER, passed=has_consent, evidence=evidence, remediation=remediation)
 

@@ -86,10 +86,20 @@ _DEFAULT_STREAMING_PATTERNS: list[re.Pattern[str]] = [
 
 _DEFAULT_MIN_CHUNK_LINES = 10
 _DEFAULT_MAX_CHUNK_SIZE = 500
-_STREAMING_TASK_KEYWORDS = frozenset({
-    "test", "tests", "migration", "migrations", "refactor",
-    "multi-file", "batch", "bulk", "generate", "codegen",
-})
+_STREAMING_TASK_KEYWORDS = frozenset(
+    {
+        "test",
+        "tests",
+        "migration",
+        "migrations",
+        "refactor",
+        "multi-file",
+        "batch",
+        "bulk",
+        "generate",
+        "codegen",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Chunk detection
@@ -385,11 +395,7 @@ class StreamingMergeManager:
         Returns:
             A list of task identifiers still in progress.
         """
-        return [
-            tid
-            for tid, state in self._states.items()
-            if not state.is_complete
-        ]
+        return [tid for tid, state in self._states.items() if not state.is_complete]
 
     def clear(self, task_id: str) -> None:
         """Remove tracking state for a task.

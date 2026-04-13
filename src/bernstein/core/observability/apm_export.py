@@ -438,11 +438,7 @@ class APMExporter:
                         "resource": ev.name,
                         "start": int(ev.timestamp * 1_000_000_000),  # nanoseconds
                         "duration": int(ev.duration_ms * 1_000_000),  # nanoseconds
-                        "meta": {
-                            k: str(v)
-                            for k, v in ev.attributes.items()
-                            if k not in ("type", "service")
-                        },
+                        "meta": {k: str(v) for k, v in ev.attributes.items() if k not in ("type", "service")},
                     }
                 )
             elif ev_type == "log":
@@ -451,9 +447,7 @@ class APMExporter:
                         "message": ev.name,
                         "ddsource": "bernstein",
                         "ddtags": ",".join(
-                            f"{k}:{v}"
-                            for k, v in ev.attributes.items()
-                            if k not in ("type", "level", "service")
+                            f"{k}:{v}" for k, v in ev.attributes.items() if k not in ("type", "level", "service")
                         ),
                         "hostname": "bernstein",
                         "service": ev.attributes.get("service", self._config.service_name),
@@ -465,9 +459,7 @@ class APMExporter:
                 # Metric (default)
                 metric_value = ev.attributes.get("metric_value", 0.0)
                 tag_list = [
-                    f"{k}:{v}"
-                    for k, v in ev.attributes.items()
-                    if k not in ("type", "metric_value", "service")
+                    f"{k}:{v}" for k, v in ev.attributes.items() if k not in ("type", "metric_value", "service")
                 ]
                 series.append(
                     {
@@ -498,9 +490,7 @@ class APMExporter:
         for ev in events:
             ev_type = ev.attributes.get("type", "metric")
             common_attrs = {
-                k: v
-                for k, v in ev.attributes.items()
-                if k not in ("type", "metric_value", "service", "level")
+                k: v for k, v in ev.attributes.items() if k not in ("type", "metric_value", "service", "level")
             }
 
             if ev_type == "span":
@@ -510,9 +500,7 @@ class APMExporter:
                         "id": common_attrs.get("span_id", ""),
                         "attributes": {
                             "name": ev.name,
-                            "service.name": ev.attributes.get(
-                                "service", self._config.service_name
-                            ),
+                            "service.name": ev.attributes.get("service", self._config.service_name),
                             "duration.ms": ev.duration_ms,
                             "timestamp": int(ev.timestamp * 1000),
                             **common_attrs,
@@ -525,9 +513,7 @@ class APMExporter:
                         "timestamp": int(ev.timestamp * 1000),
                         "message": ev.name,
                         "attributes": {
-                            "service": ev.attributes.get(
-                                "service", self._config.service_name
-                            ),
+                            "service": ev.attributes.get("service", self._config.service_name),
                             "level": ev.attributes.get("level", "info"),
                             **common_attrs,
                         },
@@ -542,9 +528,7 @@ class APMExporter:
                         "value": metric_value,
                         "timestamp": int(ev.timestamp * 1000),
                         "attributes": {
-                            "service": ev.attributes.get(
-                                "service", self._config.service_name
-                            ),
+                            "service": ev.attributes.get("service", self._config.service_name),
                             **common_attrs,
                         },
                     }
