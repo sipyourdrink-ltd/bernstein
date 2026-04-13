@@ -171,12 +171,44 @@ def _codex_has_login() -> bool:
         return False
 
 
+def _codex_has_config_toml() -> tuple[bool, str | None]:
+    """Check if ~/.codex/config.toml exists with a model configured.
+
+    Returns:
+        Tuple of (has_config, model_name).
+    """
+    from pathlib import Path
+
+    config_path = Path.home() / ".codex" / "config.toml"
+    if not config_path.exists():
+        return False, None
+
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found,no-redef]
+        except ImportError:
+            return False, None
+
+    try:
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+        model = config.get("model")
+        if isinstance(model, str) and model:
+            return True, model
+    except Exception:
+        pass
+    return False, None
+
+
 def _codex_has_auth() -> tuple[bool, str]:
     """Check all supported Codex authentication methods.
 
     Checks (in order):
     1. ``OPENAI_API_KEY`` env var
     2. ``codex login status`` (ChatGPT / CLI login)
+    3. ``~/.codex/config.toml`` with model configured (proxy setup)
 
     Returns:
         Tuple of (authenticated, method_description).
@@ -185,6 +217,9 @@ def _codex_has_auth() -> tuple[bool, str]:
         return True, "OPENAI_API_KEY"
     if _codex_has_login():
         return True, "ChatGPT login"
+    has_config, model = _codex_has_config_toml()
+    if has_config:
+        return True, f"config.toml ({model})"
     return False, ""
 
 

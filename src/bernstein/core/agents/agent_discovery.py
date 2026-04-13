@@ -154,6 +154,53 @@ def _extract_model_names(result: subprocess.CompletedProcess[str] | None) -> lis
 # ---------------------------------------------------------------------------
 
 
+def _parse_codex_config() -> tuple[str | None, list[str]]:
+    """Parse ~/.codex/config.toml for model configuration.
+
+    Returns:
+        Tuple of (configured_model, list_of_available_models).
+        If config not found or unparseable, returns (None, []).
+    """
+    config_path = Path.home() / ".codex" / "config.toml"
+    if not config_path.exists():
+        return None, []
+
+    try:
+        import tomllib
+    except ImportError:
+        # Python < 3.11 fallback
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found,no-redef]
+        except ImportError:
+            return None, []
+
+    try:
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+    except Exception:
+        return None, []
+
+    # Get the default model from top-level config
+    default_model = config.get("model")
+    if not isinstance(default_model, str):
+        default_model = None
+
+    # Collect models from profiles
+    models: list[str] = []
+    if default_model:
+        models.append(default_model)
+
+    profiles = config.get("profiles", {})
+    if isinstance(profiles, dict):
+        for profile_data in profiles.values():
+            if isinstance(profile_data, dict):
+                profile_model = profile_data.get("model")
+                if isinstance(profile_model, str) and profile_model not in models:
+                    models.append(profile_model)
+
+    return default_model, models
+
+
 def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
     """Detect OpenAI Codex CLI."""
     warnings: list[str] = []
@@ -163,6 +210,9 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
 
     # Version
     version = _extract_version(_run_probe(["codex", "--version"]))
+
+    # Read model config from ~/.codex/config.toml
+    config_model, config_models = _parse_codex_config()
 
     # Login check: `codex login status`
     logged_in = False
@@ -189,8 +239,24 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
         logged_in = True
         login_method = _LOGIN_API_KEY
 
+    # Check for codex proxy auth (custom model_provider with local base_url)
+    if not logged_in and config_model:
+        # If config.toml exists with a model, assume proxy/custom setup is valid
+        config_path = Path.home() / ".codex" / "config.toml"
+        if config_path.exists():
+            logged_in = True
+            login_method = "config.toml"
+
     if binary and not logged_in:
         warnings.append("codex found but not logged in — run: codex login")
+
+    # Use configured models if available, otherwise fall back to defaults
+    if config_models:
+        available_models = config_models
+        default_model = config_model or config_models[0]
+    else:
+        available_models = [MODEL_GPT_5_4, MODEL_GPT_5_4_MINI, "o3", "o4-mini"]
+        default_model = MODEL_GPT_5_4
 
     return AgentCapabilities(
         name="codex",
@@ -198,8 +264,8 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
         version=version,
         logged_in=logged_in,
         login_method=login_method,
-        available_models=[MODEL_GPT_5_4, MODEL_GPT_5_4_MINI, "o3", "o4-mini"],
-        default_model=MODEL_GPT_5_4,
+        available_models=available_models,
+        default_model=default_model,
         supports_headless=True,
         supports_sandbox=True,
         supports_mcp=True,
