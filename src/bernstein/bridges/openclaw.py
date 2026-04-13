@@ -261,6 +261,20 @@ class OpenClawBridge(RuntimeBridge):
             lines.append(f"[{role_text}] {text}")
         return "\n".join(lines) + ("\n" if lines else "")
 
+    @staticmethod
+    def _extract_content_list(content: list[object]) -> str:
+        """Join text from a list of content blocks."""
+        chunks: list[str] = []
+        for block_raw in content:
+            if isinstance(block_raw, str) and block_raw.strip():
+                chunks.append(block_raw.strip())
+            elif isinstance(block_raw, dict):
+                block = cast("dict[str, object]", block_raw)
+                block_text = block.get("text") or block.get("content")
+                if isinstance(block_text, str) and block_text.strip():
+                    chunks.append(block_text.strip())
+        return "\n".join(chunks) if chunks else ""
+
     def _extract_text(self, item: dict[str, Any]) -> str:
         """Extract text content from a gateway transcript item."""
         text = item.get("text")
@@ -270,17 +284,9 @@ class OpenClawBridge(RuntimeBridge):
         if isinstance(content, str) and content.strip():
             return content.strip()
         if isinstance(content, list):
-            chunks: list[str] = []
-            for block_raw in cast("list[object]", content):
-                if isinstance(block_raw, str) and block_raw.strip():
-                    chunks.append(block_raw.strip())
-                elif isinstance(block_raw, dict):
-                    block = cast("dict[str, object]", block_raw)
-                    block_text = block.get("text") or block.get("content")
-                    if isinstance(block_text, str) and block_text.strip():
-                        chunks.append(block_text.strip())
-            if chunks:
-                return "\n".join(chunks)
+            result = self._extract_content_list(cast("list[object]", content))
+            if result:
+                return result
         payload = item.get("payload")
         if isinstance(payload, dict):
             payload_dict = cast("dict[str, object]", payload)

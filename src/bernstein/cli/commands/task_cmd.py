@@ -285,6 +285,39 @@ def pending(ctx: click.Context, workdir: str) -> None:
     console.print("[dim]Reject with:[/dim]  bernstein reject <task_id>")
 
 
+def _build_graph_maps(
+    data: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]], list[dict[str, Any]]]:
+    """Parse raw graph data into task_map, forward-adjacency, and edges."""
+    nodes: list[dict[str, Any]] = data.get("nodes", [])
+    edges: list[dict[str, Any]] = data.get("edges", [])
+    task_map: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
+    forward: dict[str, list[str]] = {n["id"]: [] for n in nodes}
+    for e in edges:
+        src: str = e["from"]
+        tgt: str = e["to"]
+        if src in forward:
+            forward[src].append(tgt)
+    return task_map, forward, edges
+
+
+def _print_critical_path(data: dict[str, Any]) -> None:
+    """Print the critical path and bottleneck summary lines."""
+    critical_path: list[str] = data.get("critical_path", [])
+    if critical_path:
+        console.print()
+        cp_ids = " \u2192 ".join(tid[:8] for tid in critical_path)
+        console.print(f"[bold yellow]Critical path:[/bold yellow] {cp_ids}")
+        minutes: int = int(data.get("critical_path_minutes", 0))
+        if minutes:
+            console.print(f"[dim]Estimated duration: {minutes} min[/dim]")
+
+    bottlenecks: list[str] = data.get("bottlenecks", [])
+    if bottlenecks:
+        console.print()
+        console.print("[bold red]Bottlenecks:[/bold red] " + ", ".join(b[:8] for b in bottlenecks))
+
+
 def _render_graph() -> None:
     """Render ASCII task dependency graph using rich.tree.Tree."""
     from rich.text import Text
@@ -299,24 +332,12 @@ def _render_graph() -> None:
 
     data: dict[str, Any] = raw if isinstance(raw, dict) else {}  # type: ignore[assignment]
     nodes: list[dict[str, Any]] = data.get("nodes", [])
-    edges: list[dict[str, Any]] = data.get("edges", [])
-    critical_path: list[str] = data.get("critical_path", [])
-
     if not nodes:
         console.print("[dim]No tasks found.[/dim]")
         return
 
-    # Build maps
-    task_map: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
-    # forward adjacency: source -> [targets]
-    forward: dict[str, list[str]] = {n["id"]: [] for n in nodes}
-    for e in edges:
-        src: str = e["from"]
-        tgt: str = e["to"]
-        if src in forward:
-            forward[src].append(tgt)
-
-    critical_set: set[str] = set(critical_path)
+    task_map, forward, edges = _build_graph_maps(data)
+    critical_set: set[str] = set(data.get("critical_path", []))
 
     def _node_text(tid: str) -> Text:
         t = task_map.get(tid, {})
@@ -327,13 +348,12 @@ def _render_graph() -> None:
         text = Text()
         if tid in critical_set:
             text.append(f"[{short_id}] {title}", style="bold yellow")
-            text.append(" ★", style="bold yellow")
+            text.append(" \u2605", style="bold yellow")
         else:
             text.append(f"[{short_id}] {title}")
         text.append(f" ({status})", style=status_color)
         return text
 
-    # Nodes that have an incoming edge
     has_incoming: set[str] = {e["to"] for e in edges}
     roots = [n["id"] for n in nodes if n["id"] not in has_incoming]
 
@@ -347,32 +367,18 @@ def _render_graph() -> None:
             if child not in visited:
                 _add_branch(branch, child)
             else:
-                # Already shown elsewhere — add a reference stub
-                branch.add(Text(f"  ↳ [{child[:8]}] (shown above)", style="dim italic"))
+                branch.add(Text(f"  \u21b3 [{child[:8]}] (shown above)", style="dim italic"))
 
     for root_id in sorted(roots):
         _add_branch(tree, root_id)
 
-    # Nodes with no edges at all (isolated)
     edge_nodes: set[str] = {e["from"] for e in edges} | {e["to"] for e in edges}
     for n in nodes:
         if n["id"] not in visited and n["id"] not in edge_nodes:
             tree.add(_node_text(n["id"]))
 
     console.print(tree)
-
-    if critical_path:
-        console.print()
-        cp_ids = " → ".join(tid[:8] for tid in critical_path)
-        console.print(f"[bold yellow]Critical path:[/bold yellow] {cp_ids}")
-        minutes: int = int(data.get("critical_path_minutes", 0))
-        if minutes:
-            console.print(f"[dim]Estimated duration: {minutes} min[/dim]")
-
-    bottlenecks: list[str] = data.get("bottlenecks", [])
-    if bottlenecks:
-        console.print()
-        console.print("[bold red]Bottlenecks:[/bold red] " + ", ".join(b[:8] for b in bottlenecks))
+    _print_critical_path(data)
 
 
 @click.group("plan", invoke_without_command=True)

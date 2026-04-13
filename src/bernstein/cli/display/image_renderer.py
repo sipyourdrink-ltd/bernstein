@@ -135,6 +135,56 @@ class SixelRenderer(BaseRenderer):
         return _encode_sixel(img, max_colors=self._MAX_COLORS)
 
 
+def _sixel_palette(pixels: list[int], palette: list[int]) -> list[str]:
+    """Build sixel palette entries for colors present in the image."""
+    out: list[str] = []
+    for ci in sorted(set(pixels)):
+        r = palette[ci * 3] * 100 // 255
+        g = palette[ci * 3 + 1] * 100 // 255
+        b = palette[ci * 3 + 2] * 100 // 255
+        out.append(f"#{ci};2;{r};{g};{b}")
+    return out
+
+
+def _sixel_band(pixels: list[int], width: int, band_start: int, band_end: int) -> list[str]:
+    """Encode a single 6-row sixel band with RLE compression."""
+    color_cols: dict[int, list[int]] = {}
+    for row_offset in range(band_end - band_start):
+        y = band_start + row_offset
+        bit = 1 << row_offset
+        for x in range(width):
+            ci = pixels[y * width + x]
+            if ci not in color_cols:
+                color_cols[ci] = [0] * width
+            color_cols[ci][x] |= bit
+
+    out: list[str] = []
+    first = True
+    for ci in sorted(color_cols.keys()):
+        if not first:
+            out.append("$")
+        first = False
+        out.append(f"#{ci}")
+        out.extend(_rle_encode(color_cols[ci], width))
+    out.append("-")
+    return out
+
+
+def _rle_encode(cols: list[int], width: int) -> list[str]:
+    """RLE-encode a single color's sixel column data."""
+    out: list[str] = []
+    i = 0
+    while i < width:
+        bits = cols[i]
+        run = 1
+        while i + run < width and cols[i + run] == bits:
+            run += 1
+        char = chr(63 + bits)
+        out.append(f"!{run}{char}" if run >= 4 else char * run)
+        i += run
+    return out
+
+
 def _encode_sixel(img: Image.Image, max_colors: int = 256) -> str:
     """Encode a PIL RGB image as a DCS sixel escape string.
 
@@ -144,7 +194,7 @@ def _encode_sixel(img: Image.Image, max_colors: int = 256) -> str:
     - Palette entries use the ``#N;2;R;G;B`` form (R/G/B in 0-100 range).
     - Sixel bands are 6 pixel rows tall; ``-`` advances to the next band.
     - ``$`` performs a carriage-return within a band (for multi-color output).
-    - RLE: runs of ≥ 4 identical sixel characters are compressed as ``!N<c>``.
+    - RLE: runs of >= 4 identical sixel characters are compressed as ``!N<c>``.
 
     Args:
         img: PIL RGB image.
@@ -161,56 +211,14 @@ def _encode_sixel(img: Image.Image, max_colors: int = 256) -> str:
     width, height = qimg.size
     pixels: list[int] = list(qimg.getdata())  # type: ignore[arg-type]
 
-    out: list[str] = ["\x1bPq"]
-    # Raster attributes: pixel aspect ratio 1:1, image width x height
-    out.append(f'"1;1;{width};{height}')
+    out: list[str] = ["\x1bPq", f'"1;1;{width};{height}']
+    out.extend(_sixel_palette(pixels, palette))
 
-    # Emit palette entries for colors actually present in the image
-    used_colors: set[int] = set(pixels)
-    for ci in sorted(used_colors):
-        r = palette[ci * 3] * 100 // 255
-        g = palette[ci * 3 + 1] * 100 // 255
-        b = palette[ci * 3 + 2] * 100 // 255
-        out.append(f"#{ci};2;{r};{g};{b}")
-
-    # Sixel data: process 6-row bands
     for band_start in range(0, height, 6):
         band_end = min(band_start + 6, height)
+        out.extend(_sixel_band(pixels, width, band_start, band_end))
 
-        # color_cols[color_idx][x] = OR of row-bit flags for this band
-        color_cols: dict[int, list[int]] = {}
-        for row_offset in range(band_end - band_start):
-            y = band_start + row_offset
-            bit = 1 << row_offset
-            for x in range(width):
-                ci = pixels[y * width + x]
-                if ci not in color_cols:
-                    color_cols[ci] = [0] * width
-                color_cols[ci][x] |= bit
-
-        first = True
-        for ci in sorted(color_cols.keys()):
-            if not first:
-                out.append("$")  # carriage-return to band start
-            first = False
-            out.append(f"#{ci}")  # select color
-
-            # Encode columns with RLE compression
-            cols = color_cols[ci]
-            i = 0
-            while i < width:
-                bits = cols[i]
-                run = 1
-                while i + run < width and cols[i + run] == bits:
-                    run += 1
-                char = chr(63 + bits)
-                # RLE: only compress runs of ≥ 4 (shorter runs cost more)
-                out.append(f"!{run}{char}" if run >= 4 else char * run)
-                i += run
-
-        out.append("-")  # advance to next band
-
-    out.append("\x1b\\")  # String Terminator (ST)
+    out.append("\x1b\\")
     return "".join(out)
 
 

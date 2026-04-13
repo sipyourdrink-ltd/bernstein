@@ -39,6 +39,49 @@ def _read_last_lines(log_path: Path, n: int = 40) -> list[str]:
         return []
 
 
+def _wait_for_exit(adapter: Any, result: Any, timeout: int) -> str | int:
+    """Wait for the spawned adapter process to finish or time out."""
+    if not (result.proc and hasattr(result.proc, "wait")):
+        console.print("[yellow]Warning: adapter did not return a waitable process handle.[/yellow]")
+        return "running"
+    try:
+        return result.proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        console.print(f"[yellow]Timeout after {timeout}s — killing pid {result.pid}[/yellow]")
+        adapter.kill(result.pid)
+        return "timed out"
+
+
+def _print_log_tail(result: Any) -> None:
+    """Print the last 40 lines of the adapter log."""
+    if not result.log_path.exists():
+        console.print(f"[red]Log file missing:[/red] {result.log_path}")
+        return
+    lines = _read_last_lines(result.log_path, n=40)
+    console.print("\n[bold]--- Last 40 lines of log --------------------------------------------------[/bold]")
+    if not lines:
+        console.print("[dim](log is empty)[/dim]")
+    for line in lines:
+        console.print(line)
+    console.print("[bold]--------------------------------------------------------------------------[/bold]\n")
+
+
+def _check_expected_file(prompt: str, worktree: Path) -> None:
+    """Heuristic check for a file path mentioned in the prompt."""
+    match = re.search(r'(?:file|path)\s+([^\s\'"]+)', prompt, re.I)
+    if not match:
+        match = re.search(r"(/[\w\.\-/]+|[\w\.\-/]+\.\w+)", prompt)
+    if not match:
+        return
+    expected_path = Path(match.group(1))
+    if not expected_path.is_absolute():
+        expected_path = worktree / expected_path
+    if expected_path.exists():
+        console.print(f"[green]\u2713 Expected file exists:[/green] {expected_path}")
+    else:
+        console.print(f"[red]\u2717 Expected file missing:[/red] {expected_path}")
+
+
 @click.command("test-adapter")
 @click.option("--adapter", "adapter_name", required=True, help="Adapter to test (e.g. gemini, codex).")
 @click.option("--task", "prompt", required=True, help="Task for the adapter to execute.")
@@ -51,11 +94,8 @@ def test_adapter(adapter_name: str, prompt: str, model: str | None, timeout: int
     timestamp = int(time.time())
     session_id = f"test-{adapter_name}-{timestamp}"
 
-    # 1. Create temporary worktree
     worktree = Path.cwd() / ".sdd" / "worktrees" / session_id
     worktree.mkdir(parents=True, exist_ok=True)
-
-    # Adapters often expect these dirs to exist
     (worktree / ".sdd" / "runtime").mkdir(parents=True, exist_ok=True)
 
     result: Any = None
@@ -64,7 +104,6 @@ def test_adapter(adapter_name: str, prompt: str, model: str | None, timeout: int
         console.print(f"[dim]Workdir: {worktree}[/dim]")
         console.print(f"[dim]Task: {prompt}[/dim]\n")
 
-        # 2. Spawn
         result = adapter.spawn(
             prompt=prompt,
             workdir=worktree,
@@ -73,52 +112,10 @@ def test_adapter(adapter_name: str, prompt: str, model: str | None, timeout: int
             timeout_seconds=timeout,
         )
 
-        # 3. Wait for exit
-        exit_code = "running"
-        if result.proc and hasattr(result.proc, "wait"):
-            try:
-                # Wait for the process to complete
-                exit_code = result.proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                console.print(f"[yellow]Timeout after {timeout}s — killing pid {result.pid}[/yellow]")
-                adapter.kill(result.pid)
-                exit_code = "timed out"
-        else:
-            console.print("[yellow]Warning: adapter did not return a waitable process handle.[/yellow]")
-
-        # 4. Print results
+        exit_code = _wait_for_exit(adapter, result, timeout)
         console.print(f"\n[bold]Exit code:[/bold] {exit_code}")
-
-        # Last 40 lines of log
-        if result.log_path.exists():
-            lines = _read_last_lines(result.log_path, n=40)
-            console.print("\n[bold]─── Last 40 lines of log ──────────────────────────────────────────[/bold]")
-            if not lines:
-                console.print("[dim](log is empty)[/dim]")
-            for line in lines:
-                console.print(line)
-            console.print("[bold]───────────────────────────────────────────────────────────────────[/bold]\n")
-        else:
-            console.print(f"[red]Log file missing:[/red] {result.log_path}")
-
-        # 5. Check if expected file exists
-        # Basic heuristic: look for "file <path>" or "/tmp/<path>" in the prompt
-        match = re.search(r'(?:file|path)\s+([^\s\'"]+)', prompt, re.I)
-        if not match:
-            # Fallback: look for any absolute path or path-like string
-            match = re.search(r"(/[\w\.\-/]+|[\w\.\-/]+\.\w+)", prompt)
-
-        if match:
-            expected_path_str = match.group(1)
-            expected_path = Path(expected_path_str)
-            # If relative, it should be in the worktree
-            if not expected_path.is_absolute():
-                expected_path = worktree / expected_path
-
-            if expected_path.exists():
-                console.print(f"[green]✓ Expected file exists:[/green] {expected_path}")
-            else:
-                console.print(f"[red]✗ Expected file missing:[/red] {expected_path}")
+        _print_log_tail(result)
+        _check_expected_file(prompt, worktree)
 
     except Exception as exc:
         console.print(f"[red]Error during adapter test:[/red] {exc}")
@@ -126,8 +123,6 @@ def test_adapter(adapter_name: str, prompt: str, model: str | None, timeout: int
     finally:
         if result is not None:
             CLIAdapter.cancel_timeout(result)
-
-        # 6. Cleanup
         if worktree.exists():
             try:
                 shutil.rmtree(worktree)

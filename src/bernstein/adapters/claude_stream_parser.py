@@ -18,8 +18,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

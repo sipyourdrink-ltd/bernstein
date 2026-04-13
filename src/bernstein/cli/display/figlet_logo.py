@@ -50,6 +50,20 @@ def _plain_fallback(text: str, color: str | None) -> str:
     return text
 
 
+def _try_render_font(text: str, font_name: str, max_width: int) -> list[str] | None:
+    """Attempt to render *text* with *font_name*, returning stripped lines or None."""
+    try:
+        rendered = _render_font(text, font_name)
+    except (RuntimeError, ValueError):
+        return None
+    if not _fits_width(rendered, max_width):
+        return None
+    lines = [line.rstrip() for line in rendered.splitlines()]
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines or None
+
+
 def render_logo(
     text: str = "BERNSTEIN",
     font: str = "slant",
@@ -83,17 +97,8 @@ def render_logo(
             fonts_to_try.append(candidate)
 
     for candidate in fonts_to_try:
-        try:
-            rendered = _render_font(stripped, candidate)
-        except (RuntimeError, ValueError):
-            continue
-        if not _fits_width(rendered, max_width):
-            continue
-
-        lines = [line.rstrip() for line in rendered.splitlines()]
-        while lines and not lines[-1]:
-            lines.pop()
-        if not lines:
+        lines = _try_render_font(stripped, candidate, max_width)
+        if lines is None:
             continue
         if color:
             style = color if "bold" in color else f"bold {color}"

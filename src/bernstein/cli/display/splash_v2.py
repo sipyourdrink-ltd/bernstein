@@ -100,27 +100,9 @@ class SplashRenderer:
     def _render_tier3(self, ctx: SplashContext) -> None:
         self._render_fallback(ctx)
 
-    def _render_premium(self, ctx: SplashContext) -> None:
-        w, h = shutil.get_terminal_size((80, 24))
-
-        # 1. Build gradient background lines (plain ANSI, no cursor positioning).
-        bg_lines = linear_gradient(w, h, BERNSTEIN_COLORS, direction="diagonal").splitlines()
-        while len(bg_lines) < h:
-            bg_lines.append(" " * w)
-
-        # 2. Logo + layout.
-        logo_lines = _load_logo()
-        logo_colors = _logo_gradient(len(logo_lines))
-        content_h = len(logo_lines) + 7
-        logo_row = max(1, (h - content_h) // 2)
-
-        # 3. Hide cursor, clear screen.
-        sys.stdout.write("\033[?25l\033[2J\033[H")
-        sys.stdout.flush()
-
-        # 4. Diamond reveal: expand from center outward diagonally.
-        #    Distance = |row - mid_row| + |col_frac - 0.5| mapped to waves.
-        #    Rows closer to center appear first, edges last.
+    @staticmethod
+    def _diamond_reveal(bg_lines: list[str], h: int) -> None:
+        """Animate a diamond-shaped reveal of background gradient lines."""
         mid = h // 2
         max_dist = mid + 1
         wave_groups: list[list[int]] = [[] for _ in range(max_dist + 1)]
@@ -128,9 +110,8 @@ class SplashRenderer:
             dist = abs(row - mid)
             wave_groups[min(dist, max_dist)].append(row)
 
-        total_time = 0.8
         non_empty = [g for g in wave_groups if g]
-        step = total_time / max(len(non_empty), 1)
+        step = 0.8 / max(len(non_empty), 1)
 
         for group in non_empty:
             buf_part = "".join(f"\033[{r + 1};1H{bg_lines[r]}" for r in group)
@@ -139,7 +120,9 @@ class SplashRenderer:
             if not _key_pressed():
                 time.sleep(step)
 
-        # 5. Overlay logo char-by-char (skip spaces → gradient shows through).
+    @staticmethod
+    def _overlay_logo(logo_lines: list[str], logo_colors: list[str], logo_row: int, w: int, h: int) -> list[str]:
+        """Build ANSI escape sequences for the logo and its reflection."""
         out: list[str] = []
         for idx, logo_line in enumerate(logo_lines):
             row = logo_row + idx
@@ -151,7 +134,7 @@ class SplashRenderer:
                 if ch != " ":
                     out.append(f"\033[{row + 1};{pad + col + 1}H{color}{ch}")
 
-        # 6. Sub-pixel reflection (dim mirror of bottom logo lines).
+        # Sub-pixel reflection (dim mirror of bottom logo lines)
         refl_start = logo_row + len(logo_lines)
         for idx in range(min(3, len(logo_lines))):
             src = logo_lines[len(logo_lines) - 1 - idx]
@@ -165,14 +148,17 @@ class SplashRenderer:
                 if ch != " ":
                     out.append(f"\033[{row + 1};{pad + col + 1}H{dim}{ch}")
 
-        # 7. Subtitle.
-        sub_row = refl_start + 4
+        return out
+
+    @staticmethod
+    def _overlay_text(ctx: SplashContext, sub_row: int, w: int, h: int) -> list[str]:
+        """Build ANSI escape sequences for the subtitle and probe lines."""
+        out: list[str] = []
         if sub_row < h:
             subtitle = "A G E N T   O R C H E S T R A"
             pad_s = max(0, (w - len(subtitle)) // 2)
             out.append(f"\033[{sub_row + 1};{pad_s + 1}H\033[1;38;2;0;212;255m{subtitle}")
 
-        # 8. Probe lines.
         agent_names = ", ".join(str(a.get("name", "?")).title() for a in ctx.agents[:3]) or "none detected"
         probes = [
             f"\u2713 Terminal: truecolor, {w}x{h}",
@@ -185,12 +171,35 @@ class SplashRenderer:
                 break
             pad_p = max(0, (w - len(probe)) // 2)
             out.append(f"\033[{row + 1};{pad_p + 1}H\033[38;2;100;180;200m{probe}")
+        return out
+
+    def _render_premium(self, ctx: SplashContext) -> None:
+        w, h = shutil.get_terminal_size((80, 24))
+
+        bg_lines = linear_gradient(w, h, BERNSTEIN_COLORS, direction="diagonal").splitlines()
+        while len(bg_lines) < h:
+            bg_lines.append(" " * w)
+
+        logo_lines = _load_logo()
+        logo_colors = _logo_gradient(len(logo_lines))
+        content_h = len(logo_lines) + 7
+        logo_row = max(1, (h - content_h) // 2)
+
+        sys.stdout.write("\033[?25l\033[2J\033[H")
+        sys.stdout.flush()
+
+        self._diamond_reveal(bg_lines, h)
+
+        out = self._overlay_logo(logo_lines, logo_colors, logo_row, w, h)
+
+        refl_start = logo_row + len(logo_lines)
+        sub_row = refl_start + 4
+        out.extend(self._overlay_text(ctx, sub_row, w, h))
 
         out.append("\033[0m")
         sys.stdout.write("".join(out))
         sys.stdout.flush()
 
-        # 9. Hold, then clear.
         if not self._skip:
             time.sleep(2.5)
         sys.stdout.write("\033[0m\033[2J\033[H\033[?25h")

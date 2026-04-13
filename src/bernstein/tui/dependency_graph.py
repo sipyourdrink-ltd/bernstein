@@ -103,6 +103,35 @@ def _render_convergence_group(
     return lines
 
 
+def _render_children_group(
+    children: list[str],
+    by_id: dict[str, dict[str, Any]],
+    reverse: dict[str, list[str]],
+    rendered: set[str],
+) -> list[str]:
+    """Render convergence groups for child tasks that have parents."""
+    lines: list[str] = []
+    for child_id in children:
+        if child_id in rendered:
+            continue
+        parents = reverse.get(child_id, [])
+        if not parents:
+            continue
+
+        child_task = by_id[child_id]
+        child_tag = _status_tag(child_task["status"])
+
+        parent_entries: list[tuple[str, str, str]] = []
+        for pid in parents:
+            ptask = by_id[pid]
+            parent_entries.append((_status_tag(str(ptask["status"])), str(ptask["title"]), pid))
+            rendered.add(pid)
+
+        lines.extend(_render_convergence_group(parent_entries, child_tag, child_task["title"]))
+        rendered.add(child_id)
+    return lines
+
+
 def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
     """Render an ASCII dependency graph for a list of tasks.
 
@@ -120,8 +149,7 @@ def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
     by_id: dict[str, dict[str, Any]] = {t["id"]: t for t in tasks}
     forward, reverse = _build_adjacency(tasks, by_id)
 
-    all_ids = list(by_id.keys())
-    topo_order = _topological_sort(all_ids, forward, reverse)
+    topo_order = _topological_sort(list(by_id.keys()), forward, reverse)
 
     lines: list[str] = []
     rendered: set[str] = set()
@@ -131,29 +159,8 @@ def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
             continue
 
         children = forward.get(tid, [])
-        if not children:
-            lines.append(_render_task_line(by_id[tid]))
-            rendered.add(tid)
-            continue
-
-        for child_id in children:
-            if child_id in rendered:
-                continue
-            parents = reverse.get(child_id, [])
-            if not parents:
-                continue
-
-            child_task = by_id[child_id]
-            child_tag = _status_tag(child_task["status"])
-
-            parent_entries: list[tuple[str, str, str]] = []
-            for pid in parents:
-                ptask = by_id[pid]
-                parent_entries.append((_status_tag(str(ptask["status"])), str(ptask["title"]), pid))
-                rendered.add(pid)
-
-            lines.extend(_render_convergence_group(parent_entries, child_tag, child_task["title"]))
-            rendered.add(child_id)
+        if children:
+            lines.extend(_render_children_group(children, by_id, reverse, rendered))
 
         if tid not in rendered:
             lines.append(_render_task_line(by_id[tid]))

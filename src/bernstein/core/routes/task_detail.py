@@ -118,6 +118,18 @@ async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
 
     runtime_dir = _get_runtime_dir(request)
 
+    def _read_new_log_content(log_path: Path, last_size: int) -> tuple[str, int] | None:
+        """Read new bytes appended to a log file since *last_size*.
+
+        Returns (new_content, new_size) or None if nothing new.
+        """
+        current_size = log_path.stat().st_size
+        if current_size <= last_size:
+            return None
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            f.seek(last_size)
+            return f.read(), current_size
+
     async def _stream_logs() -> AsyncGenerator[str, None]:
         last_size = 0
         idle_ticks = 0
@@ -136,14 +148,10 @@ async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
             if session_id:
                 log_path = _get_agent_log_path(runtime_dir, session_id)
                 if log_path is not None and log_path.exists():
-                    current_size = log_path.stat().st_size
-                    if current_size > last_size:
-                        with open(log_path, encoding="utf-8", errors="replace") as f:
-                            f.seek(last_size)
-                            new_content = f.read()
-                        last_size = current_size
+                    chunk = _read_new_log_content(log_path, last_size)
+                    if chunk is not None:
+                        new_content, last_size = chunk
                         idle_ticks = 0
-                        # Escape newlines for SSE data field
                         for line in new_content.splitlines():
                             yield f"event: log\ndata: {line}\n\n"
                         continue

@@ -336,53 +336,47 @@ class AgentRegistry:
             schema_version=str(data.get("schema_version", self.SCHEMA_VERSION)),
         )
 
+    # Fields that must be str if present
+    _STR_FIELDS: frozenset[str] = frozenset({"name", "role", "version", "schema_version"})
+    # Fields that must be int if present
+    _INT_FIELDS: frozenset[str] = frozenset({"max_tokens", "max_concurrent_tasks"})
+
     def _validate_schema(self, data: dict[str, Any], _source: Path) -> None:
         """Validate agent definition against schema.
 
         Args:
             data: Parsed YAML data dictionary.
-            source: Source file path for error messages.
+            _source: Source file path for error messages.
 
         Raises:
             SchemaValidationError: If validation fails.
         """
         errors: list[str] = []
 
-        # Check required fields
         missing = self.REQUIRED_FIELDS - set(data.keys())
         if missing:
             errors.append(f"Missing required fields: {', '.join(missing)}")
 
-        # Validate field types
-        if "name" in data and not isinstance(data["name"], str):
-            errors.append("Field 'name' must be a string")
+        for field_name in self._STR_FIELDS:
+            if field_name in data and not isinstance(data[field_name], str):
+                errors.append(f"Field '{field_name}' must be a string")
 
-        if "role" in data and not isinstance(data["role"], str):
-            errors.append("Field 'role' must be a string")
+        for field_name in self._INT_FIELDS:
+            if field_name in data and not isinstance(data[field_name], int):
+                errors.append(f"Field '{field_name}' must be an integer")
 
-        if "version" in data and not isinstance(data["version"], str):
-            errors.append("Field 'version' must be a string")
-
-        if "model" in data:
-            if not isinstance(data["model"], str):
-                errors.append("Field 'model' must be a string")
-            elif data["model"] not in self.VALID_MODEL_VALUES:
-                errors.append(f"Invalid model '{data['model']}'. Valid values: {', '.join(self.VALID_MODEL_VALUES)}")
-
-        if "effort" in data:
-            if not isinstance(data["effort"], str):
-                errors.append("Field 'effort' must be a string")
-            elif data["effort"] not in self.VALID_EFFORT_VALUES:
-                errors.append(f"Invalid effort '{data['effort']}'. Valid values: {', '.join(self.VALID_EFFORT_VALUES)}")
-
-        if "max_tokens" in data and not isinstance(data["max_tokens"], int):
-            errors.append("Field 'max_tokens' must be an integer")
-
-        if "max_concurrent_tasks" in data and not isinstance(data["max_concurrent_tasks"], int):
-            errors.append("Field 'max_concurrent_tasks' must be an integer")
-
-        if "schema_version" in data and not isinstance(data["schema_version"], str):
-            errors.append("Field 'schema_version' must be a string")
+        # Enum-constrained string fields
+        _enum_rules: dict[str, set[str]] = {
+            "model": self.VALID_MODEL_VALUES,
+            "effort": self.VALID_EFFORT_VALUES,
+        }
+        for field_name, allowed in _enum_rules.items():
+            if field_name not in data:
+                continue
+            if not isinstance(data[field_name], str):
+                errors.append(f"Field '{field_name}' must be a string")
+            elif data[field_name] not in allowed:
+                errors.append(f"Invalid {field_name} '{data[field_name]}'. Valid values: {', '.join(allowed)}")
 
         if errors:
             raise SchemaValidationError(errors, data)
@@ -419,14 +413,7 @@ def get_registry(
         AgentRegistry instance.
     """
     global _registry
-    if _registry is None:
-        _registry = AgentRegistry(
-            definitions_dir=definitions_dir,
-            auto_reload=auto_reload,
-        )
-        _registry.load_definitions()
-    elif definitions_dir is not None and _registry.definitions_dir != definitions_dir:
-        # Reinitialize with new directory
+    if _registry is None or (definitions_dir is not None and _registry.definitions_dir != definitions_dir):
         _registry = AgentRegistry(
             definitions_dir=definitions_dir,
             auto_reload=auto_reload,

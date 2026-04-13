@@ -137,6 +137,65 @@ def _setup_quickstart_project(project_dir: Path, adapter: str) -> None:
         (backlog_open / task["filename"]).write_text(task["content"])
 
 
+def _log_task_transitions(
+    tasks_list: list[dict[str, Any]],
+    seen_done: set[str],
+    seen_failed: set[str],
+    progress: Any,
+) -> None:
+    """Print newly completed/failed tasks to the progress console."""
+    for t in tasks_list:
+        tid = t.get("id", "")
+        title = (t.get("title") or "")[:60]
+        role = t.get("role", "agent")
+        if t.get("status") == "done" and tid not in seen_done:
+            seen_done.add(tid)
+            progress.console.print(f"  [green]\u2713[/green] [{role}] {title}")
+        elif t.get("status") == "failed" and tid not in seen_failed:
+            seen_failed.add(tid)
+            progress.console.print(f"  [red]\u2717[/red] [{role}] {title}")
+
+
+def _poll_until_done(server_url: str, deadline: float) -> None:
+    """Poll the task server until all tasks finish or the deadline passes."""
+    from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+    seen_done: set[str] = set()
+    seen_failed: set[str] = set()
+
+    console.print()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        poll_task = progress.add_task("Agents working\u2026", total=None)
+
+        while time.monotonic() < deadline:
+            try:
+                resp = httpx.get(f"{server_url}/status", timeout=3.0)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    tasks_list: list[dict[str, Any]] = payload.get("tasks", [])
+                    done_count = sum(1 for t in tasks_list if t.get("status") == "done")
+                    failed_count = sum(1 for t in tasks_list if t.get("status") == "failed")
+                    total_tasks = len(tasks_list)
+
+                    _log_task_transitions(tasks_list, seen_done, seen_failed, progress)
+
+                    desc = f"Agents working\u2026 [green]{done_count}[/green]/{total_tasks} tasks done"
+                    if failed_count:
+                        desc += f"  [red]{failed_count} failed[/red]"
+                    progress.update(poll_task, description=desc)
+                    if total_tasks > 0 and done_count + failed_count >= total_tasks:
+                        break
+            except Exception:
+                pass
+            time.sleep(2)
+
+
 def _stop_quickstart_processes(project_dir: Path) -> None:
     """Terminate server, spawner, and watchdog started in project_dir.
 
@@ -297,57 +356,7 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
             cli=detected,
         )
 
-        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-
-        deadline = orchestration_start + timeout
-        seen_done: set[str] = set()
-        seen_failed: set[str] = set()
-
-        console.print()
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console,
-            transient=False,
-        ) as progress:
-            poll_task = progress.add_task("Agents working…", total=None)
-
-            while time.monotonic() < deadline:
-                try:
-                    resp = httpx.get(f"{server_url}/status", timeout=3.0)
-                    if resp.status_code == 200:
-                        payload = resp.json()
-                        tasks_list: list[dict[str, Any]] = payload.get("tasks", [])
-                        done_count = sum(1 for t in tasks_list if t.get("status") == "done")
-                        failed_count = sum(1 for t in tasks_list if t.get("status") == "failed")
-                        total_tasks = len(tasks_list)
-
-                        for t in tasks_list:
-                            tid = t.get("id", "")
-                            title = (t.get("title") or "")[:60]
-                            role = t.get("role", "agent")
-                            if t.get("status") == "done" and tid not in seen_done:
-                                seen_done.add(tid)
-                                progress.console.print(f"  [green]✓[/green] [{role}] {title}")
-                            elif t.get("status") == "failed" and tid not in seen_failed:
-                                seen_failed.add(tid)
-                                progress.console.print(f"  [red]✗[/red] [{role}] {title}")
-
-                        progress.update(
-                            poll_task,
-                            description=(
-                                f"Agents working… "
-                                f"[green]{done_count}[/green]/{total_tasks} tasks done"
-                                + (f"  [red]{failed_count} failed[/red]" if failed_count else "")
-                            ),
-                        )
-                        if total_tasks > 0 and done_count + failed_count >= total_tasks:
-                            break
-                except Exception:
-                    pass
-                time.sleep(2)
-
+        _poll_until_done(server_url, deadline=orchestration_start + timeout)
         console.print("[green]✓[/green] Orchestration finished")
 
     except KeyboardInterrupt:

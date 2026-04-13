@@ -7,6 +7,7 @@ and ``bernstein workflow show`` subcommands.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -156,6 +157,42 @@ def list_cmd(search_dir: str | None) -> None:
     console.print(table)
 
 
+def _build_phase_tree(dag: Any) -> Any:
+    """Build a Rich Tree of workflow phases and their nodes."""
+    from rich.tree import Tree
+
+    tree = Tree(f"[bold]{dag.definition.name}[/bold] v{dag.definition.version}")
+    for phase in dag.definition.phases:
+        roles = ", ".join(sorted(phase.allowed_roles)) if phase.allowed_roles else "all"
+        approval = " [yellow](approval required)[/yellow]" if phase.requires_approval else ""
+        branch = tree.add(f"[cyan]{phase.name}[/cyan]  roles={roles}{approval}")
+        for node in dag.nodes:
+            if node.phase != phase.name:
+                continue
+            retry_info = f" [dim](retry: max={node.retry.max_attempts})[/dim]" if node.retry else ""
+            branch.add(f"{node.id} [{node.role}]{retry_info}")
+    return tree
+
+
+def _build_edge_table(dag: Any) -> Any:
+    """Build a Rich Table of workflow edges."""
+    from rich.table import Table
+
+    edge_table = Table(title="Edges")
+    edge_table.add_column("Source")
+    edge_table.add_column("Target")
+    edge_table.add_column("Type")
+    edge_table.add_column("Condition")
+    for edge in dag.edges:
+        edge_table.add_row(
+            edge.source,
+            edge.target,
+            edge.edge_type.value,
+            edge.condition.raw if edge.condition else "\u2014",
+        )
+    return edge_table
+
+
 @workflow_group.command("show")
 @click.argument("name")
 @click.option(
@@ -173,8 +210,6 @@ def show_cmd(name: str, search_dir: str | None) -> None:
       bernstein workflow show ci-pipeline
     """
     from rich.console import Console
-    from rich.table import Table
-    from rich.tree import Tree
 
     from bernstein.core.workflow_dsl import load_workflow_dsl
 
@@ -186,35 +221,8 @@ def show_cmd(name: str, search_dir: str | None) -> None:
         console.print(f"[red]Workflow {name!r} not found[/red]")
         raise SystemExit(1)
 
-    # Phase tree.
-    tree = Tree(f"[bold]{dag.definition.name}[/bold] v{dag.definition.version}")
-    for phase in dag.definition.phases:
-        roles = ", ".join(sorted(phase.allowed_roles)) if phase.allowed_roles else "all"
-        approval = " [yellow](approval required)[/yellow]" if phase.requires_approval else ""
-        branch = tree.add(f"[cyan]{phase.name}[/cyan]  roles={roles}{approval}")
-        # Show nodes in this phase.
-        for node in dag.nodes:
-            if node.phase == phase.name:
-                retry_info = ""
-                if node.retry:
-                    retry_info = f" [dim](retry: max={node.retry.max_attempts})[/dim]"
-                branch.add(f"{node.id} [{node.role}]{retry_info}")
+    console.print(_build_phase_tree(dag))
 
-    console.print(tree)
-
-    # Edge table.
     if dag.edges:
         console.print()
-        edge_table = Table(title="Edges")
-        edge_table.add_column("Source")
-        edge_table.add_column("Target")
-        edge_table.add_column("Type")
-        edge_table.add_column("Condition")
-        for edge in dag.edges:
-            edge_table.add_row(
-                edge.source,
-                edge.target,
-                edge.edge_type.value,
-                edge.condition.raw if edge.condition else "—",
-            )
-        console.print(edge_table)
+        console.print(_build_edge_table(dag))

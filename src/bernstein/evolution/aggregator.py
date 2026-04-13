@@ -797,6 +797,44 @@ class MetricsAggregator:
     # Goodhart defenses
     # -------------------------------------------------------------------
 
+    def _check_divergences(self, metrics: dict[str, float]) -> list[str]:
+        """Detect correlated metric pairs that are moving in opposite directions."""
+        flags: list[str] = []
+        for m1, m2 in _CORRELATED_PAIRS:
+            v1 = metrics.get(m1)
+            v2 = metrics.get(m2)
+            if v1 is None or v2 is None:
+                continue
+            h1 = self._metric_history.get(m1, [])
+            h2 = self._metric_history.get(m2, [])
+            if len(h1) < 3 or len(h2) < 3:
+                continue
+            d1 = v1 - sum(h1[-3:]) / 3
+            d2 = v2 - sum(h2[-3:]) / 3
+            if d1 > 0.05 and d2 < -0.05:
+                flags.append(f"{m1} improving (+{d1:.2f}) while {m2} declining ({d2:.2f})")
+            elif d2 > 0.05 and d1 < -0.05:
+                flags.append(f"{m2} improving (+{d2:.2f}) while {m1} declining ({d1:.2f})")
+        return flags
+
+    def _check_trip_wires(self, metrics: dict[str, float]) -> list[str]:
+        """Flag suspicious perfect-score streaks."""
+        flags: list[str] = []
+        success_rate = metrics.get("success_rate", 0.0)
+        history = self._metric_history.get("success_rate", [])
+        if success_rate >= 1.0 and len(history) >= 5 and all(v >= 1.0 for v in history[-5:]):
+            flags.append("success_rate has been 100% for 5+ consecutive windows — possible test gaming")
+        return flags
+
+    def _update_metric_history(self, metrics: dict[str, float]) -> None:
+        """Append new metric values and cap history length."""
+        for name, value in metrics.items():
+            if name not in self._metric_history:
+                self._metric_history[name] = []
+            self._metric_history[name].append(value)
+            if len(self._metric_history[name]) > 50:
+                self._metric_history[name] = self._metric_history[name][-50:]
+
     def compute_composite_score(self, metrics: dict[str, float]) -> CompositeScore:
         """Compute multi-metric composite score with hidden weights."""
         score = 0.0
@@ -806,36 +844,9 @@ class MetricsAggregator:
             components[name] = value * weight
             score += value * weight
 
-        divergence_flags: list[str] = []
-        for m1, m2 in _CORRELATED_PAIRS:
-            v1 = metrics.get(m1)
-            v2 = metrics.get(m2)
-            if v1 is not None and v2 is not None:
-                h1 = self._metric_history.get(m1, [])
-                h2 = self._metric_history.get(m2, [])
-                if len(h1) >= 3 and len(h2) >= 3:
-                    avg1_prev = sum(h1[-3:]) / 3
-                    avg2_prev = sum(h2[-3:]) / 3
-                    d1 = v1 - avg1_prev
-                    d2 = v2 - avg2_prev
-                    if d1 > 0.05 and d2 < -0.05:
-                        divergence_flags.append(f"{m1} improving (+{d1:.2f}) while {m2} declining ({d2:.2f})")
-                    elif d2 > 0.05 and d1 < -0.05:
-                        divergence_flags.append(f"{m2} improving (+{d2:.2f}) while {m1} declining ({d1:.2f})")
-
-        trip_wire_flags: list[str] = []
-        success_rate = metrics.get("success_rate", 0.0)
-        if success_rate >= 1.0 and len(self._metric_history.get("success_rate", [])) >= 5:
-            recent = self._metric_history["success_rate"][-5:]
-            if all(v >= 1.0 for v in recent):
-                trip_wire_flags.append("success_rate has been 100% for 5+ consecutive windows — possible test gaming")
-
-        for name, value in metrics.items():
-            if name not in self._metric_history:
-                self._metric_history[name] = []
-            self._metric_history[name].append(value)
-            if len(self._metric_history[name]) > 50:
-                self._metric_history[name] = self._metric_history[name][-50:]
+        divergence_flags = self._check_divergences(metrics)
+        trip_wire_flags = self._check_trip_wires(metrics)
+        self._update_metric_history(metrics)
 
         return CompositeScore(
             score=score,

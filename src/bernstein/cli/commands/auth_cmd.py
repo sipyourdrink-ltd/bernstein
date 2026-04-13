@@ -207,6 +207,28 @@ def auth_login(server: str | None, sso: bool) -> None:
             console.print("[dim]Could not open a browser automatically; open the URL manually.[/dim]")
 
     # Poll for authorization
+    _poll_for_token(target, device_code, expires_in, interval)
+
+
+def _show_profile(target: str, token: str) -> None:
+    """Display profile info for the authenticated user (best-effort)."""
+    try:
+        resp = httpx.get(
+            f"{target}/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            profile = resp.json()
+            console.print(f"  User:  {profile.get('display_name', 'unknown')}")
+            console.print(f"  Email: {profile.get('email', 'unknown')}")
+            console.print(f"  Role:  {profile.get('role', 'unknown')}")
+    except Exception:
+        pass
+
+
+def _poll_for_token(target: str, device_code: str, expires_in: int, interval: int) -> None:
+    """Poll the token endpoint until authorized, expired, or timed out."""
     deadline = time.time() + expires_in
     while time.time() < deadline:
         time.sleep(interval)
@@ -236,22 +258,7 @@ def auth_login(server: str | None, sso: bool) -> None:
             )
             console.print()
             console.print("[bold green]Authenticated successfully![/bold green]")
-
-            # Show profile
-            try:
-                profile_resp = httpx.get(
-                    f"{target}/auth/me",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=5.0,
-                )
-                if profile_resp.status_code == 200:
-                    profile = profile_resp.json()
-                    console.print(f"  User:  {profile.get('display_name', 'unknown')}")
-                    console.print(f"  Email: {profile.get('email', 'unknown')}")
-                    console.print(f"  Role:  {profile.get('role', 'unknown')}")
-            except Exception:
-                pass  # Profile fetch failed; token is still valid
-
+            _show_profile(target, token)
             console.print(f"\n[dim]Token cached at {_TOKEN_FILE}[/dim]")
             return
 
@@ -259,7 +266,6 @@ def auth_login(server: str | None, sso: bool) -> None:
             console.print("\n[red]Device code expired. Please try again.[/red]")
             raise SystemExit(1)
 
-        # Still pending
         console.print("[dim].[/dim]", end="", highlight=False)
 
     console.print("\n[red]Timed out waiting for authorization.[/red]")

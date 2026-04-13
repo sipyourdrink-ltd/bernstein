@@ -134,6 +134,91 @@ def _count_ci_fix_attempts(store: TaskStore, head_branch: str) -> int:
     )
 
 
+def _handle_issue_opened(event: Any) -> list[dict[str, Any]]:
+    """Map a GitHub ``issues/opened`` event to task payloads."""
+    from bernstein.github_app.mapper import issue_to_tasks
+
+    return list(issue_to_tasks(event))
+
+
+def _handle_issue_labeled(event: Any) -> list[dict[str, Any]]:
+    """Map a GitHub ``issues/labeled`` event to task payloads."""
+    from bernstein.github_app.mapper import label_to_action, trigger_label_to_task
+
+    trigger_task = trigger_label_to_task(event)
+    if trigger_task is not None:
+        return [trigger_task]
+    action_task = label_to_action(event)
+    return [action_task] if action_task is not None else []
+
+
+def _handle_comment(event: Any) -> list[dict[str, Any]]:
+    """Map a PR review / issue comment event to task payloads."""
+    from bernstein.github_app.mapper import SlashCommandHandler, pr_review_to_task
+
+    comment: dict[str, Any] = event.payload.get("comment", {})
+    comment_body = comment.get("body", "") or ""
+    slash_task = SlashCommandHandler().handle(event, comment_body)
+    if slash_task is not None:
+        return [slash_task]
+    review_task = pr_review_to_task(event)
+    return [review_task] if review_task is not None else []
+
+
+def _handle_workflow_run(event: Any, store: TaskStore) -> list[dict[str, Any]] | JSONResponse:
+    """Map a GitHub ``workflow_run/completed`` event to task payloads.
+
+    Returns a JSONResponse early when the retry cap is reached.
+    """
+    from bernstein.github_app.ci_router import MAX_CI_RETRIES
+    from bernstein.github_app.mapper import workflow_run_to_task
+
+    run: dict[str, Any] = event.payload.get("workflow_run", {})
+    if run.get("conclusion") != "failure":
+        return []
+
+    head_branch: str = run.get("head_branch", "")
+    retry_count = _count_ci_fix_attempts(store, head_branch)
+    if retry_count >= MAX_CI_RETRIES:
+        safe_branch = head_branch.replace("\n", "").replace("\r", "")[:200]
+        logger.warning(
+            "CI fix retry cap reached for branch %r (%d/%d) — skipping",
+            safe_branch,
+            retry_count,
+            MAX_CI_RETRIES,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "event_type": event.event_type,
+                "action": event.action,
+                "tasks_created": 0,
+                "task_ids": [],
+                "skipped_reason": f"max_retries_reached ({retry_count}/{MAX_CI_RETRIES})",
+            },
+        )
+    return list(workflow_run_to_task(event, retry_count=retry_count))
+
+
+def _dispatch_github_event(event: Any, store: TaskStore) -> list[dict[str, Any]] | JSONResponse:
+    """Route a parsed GitHub webhook event to the appropriate handler."""
+    from bernstein.github_app.mapper import push_to_tasks
+
+    match (event.event_type, event.action):
+        case ("issues", "opened"):
+            return _handle_issue_opened(event)
+        case ("issues", "labeled"):
+            return _handle_issue_labeled(event)
+        case ("pull_request_review_comment", _) | ("issue_comment", _):
+            return _handle_comment(event)
+        case ("push", _):
+            return list(push_to_tasks(event))
+        case ("workflow_run", "completed"):
+            return _handle_workflow_run(event, store)
+        case _:
+            return []
+
+
 @router.post("/webhooks/github", status_code=200)
 async def github_webhook(request: Request) -> JSONResponse:
     """Receive a GitHub App webhook, verify signature, and create tasks.
@@ -148,16 +233,6 @@ async def github_webhook(request: Request) -> JSONResponse:
     Reads ``GITHUB_WEBHOOK_SECRET`` from environment for HMAC verification.
     Returns 200 on success, 401 on bad/missing signature, 400 on parse error.
     """
-    from bernstein.github_app.ci_router import MAX_CI_RETRIES
-    from bernstein.github_app.mapper import (
-        SlashCommandHandler,
-        issue_to_tasks,
-        label_to_action,
-        pr_review_to_task,
-        push_to_tasks,
-        trigger_label_to_task,
-        workflow_run_to_task,
-    )
     from bernstein.github_app.webhooks import parse_webhook, verify_signature
 
     store = _get_store(request)
@@ -184,58 +259,10 @@ async def github_webhook(request: Request) -> JSONResponse:
             content={"detail": "Bad webhook payload"},
         )
 
-    # Map event to tasks based on event type — use handler classes for new events,
-    # keep direct calls for legacy event types that already have tests.
-    task_payloads: list[dict[str, Any]] = []
-
-    if event.event_type == "issues" and event.action == "opened":
-        task_payloads.extend(issue_to_tasks(event))
-    elif event.event_type == "issues" and event.action == "labeled":
-        # Handle bernstein/agent-fix trigger labels first, then evolve-candidate
-        trigger_task = trigger_label_to_task(event)
-        if trigger_task is not None:
-            task_payloads.append(trigger_task)
-        else:
-            action_task = label_to_action(event)
-            if action_task is not None:
-                task_payloads.append(action_task)
-    elif event.event_type in ("pull_request_review_comment", "issue_comment"):
-        # Check for slash commands first, then fall back to actionable review heuristic
-        comment: dict[str, Any] = event.payload.get("comment", {})
-        comment_body = comment.get("body", "") or ""
-        slash_task = SlashCommandHandler().handle(event, comment_body)
-        if slash_task is not None:
-            task_payloads.append(slash_task)
-        else:
-            review_task = pr_review_to_task(event)
-            if review_task is not None:
-                task_payloads.append(review_task)
-    elif event.event_type == "push":
-        task_payloads.extend(push_to_tasks(event))
-    elif event.event_type == "workflow_run" and event.action == "completed":
-        run: dict[str, Any] = event.payload.get("workflow_run", {})
-        if run.get("conclusion") == "failure":
-            head_branch: str = run.get("head_branch", "")
-            retry_count = _count_ci_fix_attempts(store, head_branch)
-            if retry_count >= MAX_CI_RETRIES:
-                safe_branch = head_branch.replace("\n", "").replace("\r", "")[:200]
-                logger.warning(
-                    "CI fix retry cap reached for branch %r (%d/%d) — skipping",
-                    safe_branch,
-                    retry_count,
-                    MAX_CI_RETRIES,
-                )
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "event_type": event.event_type,
-                        "action": event.action,
-                        "tasks_created": 0,
-                        "task_ids": [],
-                        "skipped_reason": f"max_retries_reached ({retry_count}/{MAX_CI_RETRIES})",
-                    },
-                )
-            task_payloads.extend(workflow_run_to_task(event, retry_count=retry_count))
+    result = _dispatch_github_event(event, store)
+    if isinstance(result, JSONResponse):
+        return result
+    task_payloads = result
 
     # Create tasks in the store
     created_ids: list[str] = []
@@ -342,6 +369,57 @@ def _gitlab_pipeline_to_task(payload: dict[str, Any], retry_count: int) -> dict[
     }
 
 
+def _verify_gitlab_token(request: Request) -> JSONResponse | None:
+    """Verify the GitLab webhook token. Returns an error response or None."""
+    gitlab_token = os.environ.get("GITLAB_WEBHOOK_TOKEN", "")
+    provided_token = request.headers.get("x-gitlab-token", "")
+    if gitlab_token and provided_token:
+        if not hmac.compare_digest(provided_token, gitlab_token):
+            return JSONResponse(status_code=401, content={"detail": "Invalid GitLab webhook token"})
+    elif gitlab_token and not provided_token:
+        return JSONResponse(status_code=401, content={"detail": "Missing GitLab webhook token"})
+    return None
+
+
+def _handle_gitlab_pipeline(data: dict[str, Any], store: TaskStore) -> list[dict[str, Any]] | JSONResponse:
+    """Handle a GitLab pipeline-failed event, enforcing the retry cap."""
+    from bernstein.github_app.ci_router import MAX_CI_RETRIES
+
+    status = data.get("object_attributes", {}).get("status", "")
+    if status != "failed":
+        return []
+
+    ref = data.get("object_attributes", {}).get("ref", "")
+    retry_count = _count_gitlab_ci_fix_attempts(store, ref)
+    if retry_count >= MAX_CI_RETRIES:
+        safe_ref = ref.replace("\n", "").replace("\r", "")[:200]
+        logger.warning(
+            "CI fix retry cap reached for ref %r (%d/%d) — skipping",
+            safe_ref,
+            retry_count,
+            MAX_CI_RETRIES,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "event_type": "pipeline",
+                "tasks_created": 0,
+                "task_ids": [],
+                "skipped_reason": f"max_retries_reached ({retry_count}/{MAX_CI_RETRIES})",
+            },
+        )
+    task = _gitlab_pipeline_to_task(data, retry_count=retry_count)
+    return [task] if task is not None else []
+
+
+def _handle_gitlab_job(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Handle a GitLab job-failed event."""
+    if data.get("build_status", "") != "failed":
+        return []
+    task = _gitlab_pipeline_to_task(data, retry_count=0)
+    return [task] if task is not None else []
+
+
 @router.post("/webhooks/gitlab", status_code=200)
 async def gitlab_webhook(request: Request) -> JSONResponse:
     """Receive a GitLab CI webhook, verify token, and create ci-fix tasks.
@@ -355,20 +433,13 @@ async def gitlab_webhook(request: Request) -> JSONResponse:
     plaintext token in the ``x-gitlab-token`` header.
     Returns 200 on success, 401 on bad/missing token.
     """
-    from bernstein.github_app.ci_router import MAX_CI_RETRIES
-
     store = _get_store(request)
     body_bytes = await request.body()
     body = body_bytes.decode("utf-8") if body_bytes else ""
 
-    # Verify GitLab webhook token.
-    gitlab_token = os.environ.get("GITLAB_WEBHOOK_TOKEN", "")
-    provided_token = request.headers.get("x-gitlab-token", "")
-    if gitlab_token and provided_token:
-        if not hmac.compare_digest(provided_token, gitlab_token):
-            return JSONResponse(status_code=401, content={"detail": "Invalid GitLab webhook token"})
-    elif gitlab_token and not provided_token:
-        return JSONResponse(status_code=401, content={"detail": "Missing GitLab webhook token"})
+    denied = _verify_gitlab_token(request)
+    if denied is not None:
+        return denied
 
     try:
         import json
@@ -378,40 +449,18 @@ async def gitlab_webhook(request: Request) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": "Bad JSON payload"})
 
     event_type = data.get("object_kind", "")
-    task_payloads: list[dict[str, Any]] = []
 
-    if event_type == "pipeline":
-        status = data.get("object_attributes", {}).get("status", "")
-        if status == "failed":
-            ref = data.get("object_attributes", {}).get("ref", "")
-            retry_count = _count_gitlab_ci_fix_attempts(store, ref)
-            if retry_count >= MAX_CI_RETRIES:
-                safe_ref = ref.replace("\n", "").replace("\r", "")[:200]
-                logger.warning(
-                    "CI fix retry cap reached for ref %r (%d/%d) — skipping",
-                    safe_ref,
-                    retry_count,
-                    MAX_CI_RETRIES,
-                )
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "event_type": event_type,
-                        "tasks_created": 0,
-                        "task_ids": [],
-                        "skipped_reason": f"max_retries_reached ({retry_count}/{MAX_CI_RETRIES})",
-                    },
-                )
-            task = _gitlab_pipeline_to_task(data, retry_count=retry_count)
-            if task is not None:
-                task_payloads.append(task)
+    match event_type:
+        case "pipeline":
+            result = _handle_gitlab_pipeline(data, store)
+        case "job":
+            result = _handle_gitlab_job(data)
+        case _:
+            result = []
 
-    elif event_type == "job":
-        build_status = data.get("build_status", "")
-        if build_status == "failed":
-            task = _gitlab_pipeline_to_task(data, retry_count=0)
-            if task is not None:
-                task_payloads.append(task)
+    if isinstance(result, JSONResponse):
+        return result
+    task_payloads = result
 
     if not task_payloads:
         return JSONResponse(

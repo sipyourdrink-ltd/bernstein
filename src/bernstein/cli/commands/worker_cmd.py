@@ -257,6 +257,70 @@ class WorkerLoop:
             logger.warning("Failed to spawn agent for task %s: %s", task_id, exc)
         return None
 
+    def _register_with_retry(self, client: httpx.Client) -> str | None:
+        """Try to register, retrying until success or abort signal."""
+        node_id = None
+        while self._running and node_id is None:
+            node_id = self._register(client)
+            if node_id is not None:
+                break
+            console.print("[yellow]Registration failed, retrying in 5s...[/yellow]")
+            if self._wake.wait(timeout_s=5.0) == WakeReason.ABORT:
+                return None
+        return node_id
+
+    def _do_heartbeat(
+        self, client: httpx.Client, node_id: str, heartbeat_s: float, last_heartbeat: float
+    ) -> tuple[str | None, float]:
+        """Send heartbeat if due, re-registering on eviction.
+
+        Returns:
+            (node_id or None on abort, updated last_heartbeat timestamp).
+        """
+        now = time.monotonic()
+        if now - last_heartbeat < heartbeat_s:
+            return node_id, last_heartbeat
+
+        ok = self._heartbeat(client, node_id)
+        if ok:
+            return node_id, time.monotonic()
+
+        # Re-register after eviction
+        new_id = self._register(client)
+        if new_id is None:
+            if self._wake.wait(timeout_s=5.0) == WakeReason.ABORT:
+                return None, last_heartbeat
+            return None, last_heartbeat
+        return new_id, time.monotonic()
+
+    def _claim_available_tasks(self, client: httpx.Client) -> None:
+        """Claim tasks for each role while slots remain."""
+        for role in self._roles:
+            if self.available_slots <= 0:
+                return
+            task = self._claim_task(client, role)
+            if task is None:
+                continue
+            task_id = task.get("id", "unknown")
+            pid = self._spawn_agent(task)
+            if pid is not None:
+                self._active_tasks[task_id] = pid
+                console.print(f"  [green]Claimed[/green] {task_id}: {task.get('title', '')[:50]} (pid={pid})")
+
+    def _unregister(self, client: httpx.Client, node_id: str | None) -> None:
+        """Graceful shutdown: unregister from the server."""
+        if node_id is None:
+            return
+        try:
+            client.delete(
+                f"{self._server_url}/cluster/nodes/{node_id}",
+                headers=self._headers(),
+                timeout=5.0,
+            )
+            console.print(f"[dim]Unregistered node {node_id}[/dim]")
+        except httpx.HTTPError:
+            pass
+
     def run(self) -> None:
         """Main worker loop. Blocks until SIGINT/SIGTERM."""
         self._running = True
@@ -281,69 +345,25 @@ class WorkerLoop:
         console.print()
 
         with httpx.Client() as client:
-            # Register (wake early if abort fires during retry sleep)
-            node_id = None
-            while self._running and node_id is None:
-                node_id = self._register(client)
-                if node_id is None:
-                    console.print("[yellow]Registration failed, retrying in 5s...[/yellow]")
-                    reason = self._wake.wait(timeout_s=5.0)
-                    if reason == WakeReason.ABORT:
-                        return
-
-            if not self._running:
+            node_id = self._register_with_retry(client)
+            if node_id is None or not self._running:
                 return
 
             console.print(f"[green]Registered[/green] as node [bold]{node_id}[/bold]")
-
             last_heartbeat = time.monotonic()
 
             while self._running:
-                # Heartbeat
-                now = time.monotonic()
-                if now - last_heartbeat >= heartbeat_s:
-                    ok = self._heartbeat(client, node_id)  # type: ignore[arg-type]
-                    if not ok:
-                        # Re-register
-                        node_id = self._register(client)
-                        if node_id is None:
-                            reason = self._wake.wait(timeout_s=5.0)
-                            if reason == WakeReason.ABORT:
-                                break
-                            continue
-                    last_heartbeat = time.monotonic()
+                node_id, last_heartbeat = self._do_heartbeat(client, node_id, heartbeat_s, last_heartbeat)
+                if node_id is None:
+                    continue
 
-                # Claim tasks if we have capacity
                 if self.available_slots > 0:
-                    for role in self._roles:
-                        if self.available_slots <= 0:
-                            break
-                        task = self._claim_task(client, role)
-                        if task is not None:
-                            task_id = task.get("id", "unknown")
-                            pid = self._spawn_agent(task)
-                            if pid is not None:
-                                self._active_tasks[task_id] = pid
-                                console.print(
-                                    f"  [green]Claimed[/green] {task_id}: {task.get('title', '')[:50]} (pid={pid})"
-                                )
+                    self._claim_available_tasks(client)
 
-                # Sleep until next poll, but wake early on capacity or abort.
-                wake_reason = self._wake.wait(timeout_s=poll_s)
-                if wake_reason == WakeReason.ABORT:
+                if self._wake.wait(timeout_s=poll_s) == WakeReason.ABORT:
                     break
 
-            # Graceful shutdown: unregister
-            if node_id is not None:
-                try:
-                    client.delete(
-                        f"{self._server_url}/cluster/nodes/{node_id}",
-                        headers=self._headers(),
-                        timeout=5.0,
-                    )
-                    console.print(f"[dim]Unregistered node {node_id}[/dim]")
-                except httpx.HTTPError:
-                    pass
+            self._unregister(client, node_id)
 
         console.print("[bold]Worker stopped.[/bold]")
 
