@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from bernstein.core.view_mode import ViewMode, get_view_config
 from rich.console import Console
 
 from bernstein.cli.status import _extract_run_stats, _select_urgent_tasks, render_status, render_status_plain
-from bernstein.core.view_mode import ViewMode, get_view_config
 
 
 def test_extract_run_stats_accepts_normalized_status_sections() -> None:

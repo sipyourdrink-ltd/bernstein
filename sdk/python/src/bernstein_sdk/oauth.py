@@ -74,9 +74,7 @@ class PKCEChallenge:
         verifier = raw
 
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
-        challenge = (
-            base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-        )
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         return cls(code_verifier=verifier, code_challenge=challenge)
 
 
@@ -284,7 +282,5 @@ def _extract_code(value: str) -> str:
     qs = urllib.parse.parse_qs(parsed.query or parsed.fragment)
     codes = qs.get("code", [])
     if not codes:
-        raise ValueError(
-            f"No 'code' parameter found in redirect URL: {value!r}"
-        )
+        raise ValueError(f"No 'code' parameter found in redirect URL: {value!r}")
     return codes[0]

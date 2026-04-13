@@ -7,9 +7,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, cast
 
-import pytest
-
 import bernstein.core.store_postgres as store_postgres
+import pytest
 from bernstein.core.models import TaskStatus, TaskType
 
 
@@ -38,10 +37,12 @@ class _FakeRedis:
         self.released: list[tuple[str, str]] = []
 
     async def acquire(self, task_id: str) -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         self.acquired.append(task_id)
         return "lock-token"
 
     async def release(self, task_id: str, token: str) -> bool:
+        await asyncio.sleep(0)  # Async interface requirement
         self.released.append((task_id, token))
         return True
 
@@ -95,11 +96,13 @@ def test_claim_by_id_releases_distributed_lock_on_version_conflict(monkeypatch: 
 
     class _Conn:
         async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
             if "AND    version = $2" in query:
                 return None
             raise AssertionError(f"unexpected fetchrow query: {query}")
 
         async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
             if "SELECT 1 FROM tasks" in query:
                 return 1
             if "SELECT version FROM tasks" in query:
@@ -125,16 +128,19 @@ def test_claim_next_reopens_task_when_dependencies_are_unmet(monkeypatch: pytest
             self.reopened = False
 
         async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
             if "UPDATE tasks" in query and "FOR    UPDATE SKIP LOCKED" in query:
                 return _task_row(status="claimed", depends_on=["dep-1"])
             raise AssertionError(f"unexpected fetchrow query: {query}")
 
         async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+            await asyncio.sleep(0)  # Async interface requirement
             if "status = 'done'" in query:
                 return []
             raise AssertionError(f"unexpected fetch query: {query}")
 
         async def execute(self, query: str, *args: object) -> None:
+            await asyncio.sleep(0)  # Async interface requirement
             assert "SET status='open'" in query
             self.reopened = True
 
@@ -153,11 +159,13 @@ def test_claim_by_id_raises_key_error_when_task_does_not_exist(monkeypatch: pyte
 
     class _Conn:
         async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
             if "AND    status = 'open'" in query:
                 return None
             raise AssertionError(f"unexpected fetchrow query: {query}")
 
         async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
             if "SELECT 1 FROM tasks" in query:
                 return None
             raise AssertionError(f"unexpected fetchval query: {query}")
@@ -177,6 +185,7 @@ def test_claim_by_id_without_version_returns_existing_non_open_task(monkeypatch:
             self.calls = 0
 
         async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
             self.calls += 1
             if self.calls == 1 and "AND    status = 'open'" in query:
                 return None
@@ -185,6 +194,7 @@ def test_claim_by_id_without_version_returns_existing_non_open_task(monkeypatch:
             raise AssertionError(f"unexpected fetchrow query: {query}")
 
         async def fetchval(self, query: str, *args: object) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
             if "SELECT 1 FROM tasks" in query:
                 return 1
             raise AssertionError(f"unexpected fetchval query: {query}")

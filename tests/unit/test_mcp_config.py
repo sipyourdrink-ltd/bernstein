@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from bernstein.adapters.claude import ClaudeCodeAdapter, _resolve_env_vars, load_mcp_config
 from bernstein.core.models import ModelConfig
 from bernstein.core.seed import parse_seed
 from bernstein.core.spawner import AgentSpawner
+
+from bernstein.adapters.claude import ClaudeCodeAdapter, _resolve_env_vars, load_mcp_config
 
 if TYPE_CHECKING:
     from pathlib import Path

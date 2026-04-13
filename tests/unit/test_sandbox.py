@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.container import ContainerHandle, NetworkMode
 from bernstein.core.sandbox import DockerSandbox, parse_docker_sandbox, spawn_in_sandbox
 

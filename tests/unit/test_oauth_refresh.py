@@ -13,10 +13,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
-from bernstein.adapters.base import SpawnError
 from bernstein.core.models import ModelConfig, Task
 from bernstein.core.spawner import AgentSpawner
+
+from bernstein.adapters.base import SpawnError
 
 
 def _make_spawner(tmp_path: Path, adapter: MagicMock) -> AgentSpawner:

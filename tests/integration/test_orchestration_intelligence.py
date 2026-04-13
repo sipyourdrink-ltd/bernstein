@@ -8,8 +8,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from bernstein.adapters.base import SpawnError
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.effectiveness import EffectivenessScore, EffectivenessScorer
 from bernstein.core.heartbeat import compute_stall_profile
@@ -17,6 +15,8 @@ from bernstein.core.janitor import create_fix_tasks
 from bernstein.core.models import Scope
 from bernstein.core.spawn_prompt import render_prompt
 from bernstein.core.task_lifecycle import claim_and_spawn_batches, maybe_retry_task
+
+from bernstein.adapters.base import SpawnError
 
 
 def _write_log(tmp_path: Path, session_id: str, content: str) -> None:

@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-
 from bernstein.core.ci_monitor import (
     CIFailure,
     CIMonitor,

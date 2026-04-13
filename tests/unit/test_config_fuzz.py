@@ -11,15 +11,14 @@ from typing import Any
 
 import pytest
 import yaml
-from hypothesis import HealthCheck, given, settings
-from hypothesis import strategies as st
-from pydantic import ValidationError
-
 from bernstein.core.config_schema import (
     BernsteinConfig,
     EnvExpansionError,
     expand_env_vars,
 )
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
+from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
 # Strategies for malformed YAML content
@@ -89,7 +88,7 @@ class TestFuzzedYAMLNoCrash:
             parsed = yaml.safe_load(text)
             if isinstance(parsed, dict):
                 BernsteinConfig.model_validate(parsed)
-        except (yaml.YAMLError, ValidationError, TypeError, ValueError):
+        except (yaml.YAMLError, TypeError, ValueError):
             pass  # Expected for garbage input
 
 

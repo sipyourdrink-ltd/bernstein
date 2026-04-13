@@ -106,7 +106,7 @@ class TaskServiceImpl:
     def __init__(self, task_store: Any) -> None:
         self._store = task_store
 
-    async def CreateTask(self, request: Any, context: Any) -> Any:
+    def CreateTask(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.create(
@@ -173,7 +173,7 @@ class TaskServiceImpl:
         resp = tasks_pb2.ProgressResponse(acknowledged=True)
         return resp
 
-    async def ListTasks(self, request: Any, context: Any) -> Any:
+    def ListTasks(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         status_name = None
@@ -224,7 +224,7 @@ class ClusterServiceImpl:
     def __init__(self, node_registry: NodeRegistry) -> None:
         self._registry = node_registry
 
-    async def RegisterNode(self, request: Any, context: Any) -> Any:
+    def RegisterNode(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
         from bernstein.core.models import NodeCapacity
 
@@ -280,7 +280,7 @@ class ClusterServiceImpl:
                 self._fill_node_proto(resp.node, node)
             yield resp
 
-    async def UnregisterNode(self, request: Any, context: Any) -> Any:
+    def UnregisterNode(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         removed = self._registry.unregister(request.node_id)
@@ -322,7 +322,7 @@ class ClusterServiceImpl:
             status=5,  # DRAINING
         )
 
-    async def ListNodes(self, request: Any, context: Any) -> Any:
+    def ListNodes(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         nodes = self._registry.list_nodes()
@@ -339,7 +339,7 @@ class ClusterServiceImpl:
             self._fill_node_proto(node_msg, n)
         return resp
 
-    async def GetClusterStatus(self, request: Any, context: Any) -> Any:
+    def GetClusterStatus(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         summary = self._registry.cluster_summary()

@@ -359,7 +359,7 @@ def decode_jwt_unverified(token: str) -> dict[str, Any] | None:
         return None
     try:
         claims: dict[str, Any] = json.loads(_b64url_decode(parts[1]))
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         return None
     return claims
 
@@ -426,7 +426,7 @@ def verify_jwt(
     # Verify header
     try:
         header = json.loads(_b64url_decode(header_b64))
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         return None
 
     if header.get("alg") != algorithm:
@@ -454,7 +454,7 @@ def verify_jwt(
     # Decode payload
     try:
         claims: dict[str, Any] = json.loads(_b64url_decode(payload_b64))
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         return None
 
     # Check expiry

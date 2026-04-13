@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.convergence_guard import ConvergenceGuard, ConvergenceStatus
 from bernstein.core.models import ConvergenceGuardConfig
 

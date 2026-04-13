@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.self_healing import (
     HEALING_STRATEGIES,
     FailureMode,

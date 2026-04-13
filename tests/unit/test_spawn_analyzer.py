@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
-from bernstein.adapters.base import RateLimitError, SpawnError
 from bernstein.core.container import ContainerError
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
 from bernstein.core.worktree import WorktreeError
+
+from bernstein.adapters.base import RateLimitError, SpawnError
 
 
 def test_rate_limit_error(make_task: Any) -> None:

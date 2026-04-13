@@ -1,7 +1,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.lifecycle import (
     IllegalTransitionError,
     add_listener,

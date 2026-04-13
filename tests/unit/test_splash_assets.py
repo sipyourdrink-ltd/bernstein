@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from PIL import ImageFont
-
 from bernstein.cli.splash_assets import (
     _load_font,
     generate_agent_icon,
     generate_progress_bar_image,
     generate_splash_image,
 )
+from PIL import ImageFont
 
 
 def test_generate_splash_image_returns_expected_size_and_mode() -> None:

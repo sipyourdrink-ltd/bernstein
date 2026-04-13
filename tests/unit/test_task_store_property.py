@@ -14,12 +14,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hypothesis import HealthCheck, given, settings
-from hypothesis import strategies as st
-
 from bernstein.core.lifecycle import TASK_TRANSITIONS, IllegalTransitionError, transition_task
 from bernstein.core.models import Task, TaskStatus
 from bernstein.core.task_store import TaskStore
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 
 def _run_async(coro: Any) -> Any:

@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.heartbeat import (
     HeartbeatMonitor,
     HeartbeatStatus,
     compute_stall_profile,
 )
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 
 # ---------------------------------------------------------------------------
 # Helpers

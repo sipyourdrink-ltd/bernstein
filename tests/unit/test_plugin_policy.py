@@ -17,6 +17,7 @@ from bernstein.core.plugin_policy import (
     check_plugin_allowed,
     load_plugin_policy,
 )
+
 from bernstein.plugins import hookimpl
 from bernstein.plugins.manager import PluginManager
 

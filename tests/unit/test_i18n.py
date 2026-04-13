@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.i18n import (
     SUPPORTED_LOCALES,
     available_locales,

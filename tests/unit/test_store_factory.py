@@ -51,16 +51,18 @@ class TestCreateStoreMemory:
     """Memory backend -- default, no external deps."""
 
     def test_returns_task_store(self, tmp_path: Path) -> None:
-        from bernstein.core.server import TaskStore
         from bernstein.core.store_factory import create_store
+
+        from bernstein.core.server import TaskStore
 
         store = create_store("memory", jsonl_path=tmp_path / "tasks.jsonl")
         assert isinstance(store, TaskStore)
 
     def test_default_backend_is_memory(self, tmp_path: Path) -> None:
         """When no backend is specified and env var is unset, default to memory."""
-        from bernstein.core.server import TaskStore
         from bernstein.core.store_factory import create_store
+
+        from bernstein.core.server import TaskStore
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("BERNSTEIN_STORAGE_BACKEND", None)
@@ -205,8 +207,9 @@ class TestEnvVarOverride:
         assert isinstance(store, PostgresTaskStore)
 
     def test_explicit_arg_overrides_env(self, tmp_path: Path) -> None:
-        from bernstein.core.server import TaskStore
         from bernstein.core.store_factory import create_store
+
+        from bernstein.core.server import TaskStore
 
         with patch.dict(os.environ, {"BERNSTEIN_STORAGE_BACKEND": "postgres"}):
             store = create_store("memory", jsonl_path=tmp_path / "tasks.jsonl")
@@ -313,8 +316,9 @@ class TestIntegrationSeedToStore:
 
     def test_memory_from_seed(self, tmp_path: Path) -> None:
         from bernstein.core.seed import StorageConfig
-        from bernstein.core.server import TaskStore
         from bernstein.core.store_factory import create_store
+
+        from bernstein.core.server import TaskStore
 
         storage = StorageConfig(backend="memory")
         store = create_store(

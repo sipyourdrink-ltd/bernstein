@@ -7,10 +7,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from bernstein.core.auth_middleware import SSOAuthMiddleware, _get_required_permission
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-
-from bernstein.core.auth_middleware import SSOAuthMiddleware, _get_required_permission
 
 
 def _app_with_middleware(auth_service: Any = None, legacy_token: str | None = None) -> TestClient:

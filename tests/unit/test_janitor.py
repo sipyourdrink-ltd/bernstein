@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.janitor import (
     _get_judge_retry_count,
     _parse_judge_response,
@@ -22,7 +22,6 @@ from bernstein.core.models import CompletionSignal, Task
 
 if TYPE_CHECKING:
     from pathlib import Path
-
 
 # --- Fixtures ---
 
@@ -417,6 +416,7 @@ class TestCreateFixTasks:
         task = _make_task(id="T-FAIL", signals=[])
 
         async def mock_post(self: httpx.AsyncClient, url: str, *, json: dict) -> httpx.Response:  # type: ignore[type-arg]
+            await asyncio.sleep(0)  # Async interface requirement
             assert "/tasks" in url
             assert "Fix:" in json["title"]
             assert "T-FAIL" in json["description"]
@@ -438,6 +438,7 @@ class TestCreateFixTasks:
         task = _make_task(id="T-FAIL", signals=[])
 
         async def mock_post(self: httpx.AsyncClient, url: str, *, json: dict) -> httpx.Response:  # type: ignore[type-arg]
+            await asyncio.sleep(0)  # Async interface requirement
             return httpx.Response(
                 status_code=500,
                 text="Internal Server Error",
@@ -459,6 +460,7 @@ class TestCreateFixTasks:
         )
 
         async def mock_post(self: httpx.AsyncClient, url: str, *, json: dict) -> httpx.Response:  # type: ignore[type-arg]
+            await asyncio.sleep(0)  # Async interface requirement
             return httpx.Response(
                 status_code=201,
                 json={"id": "fix-auto-001"},
@@ -596,6 +598,7 @@ class TestJudgeTask:
         )
 
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
             return '{"verdict": "accept", "confidence": 0.95, "feedback": "All good."}'
 
         with (
@@ -623,6 +626,7 @@ class TestJudgeTask:
         )
 
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
             return '{"verdict": "retry", "confidence": 0.8, "feedback": "Missing unit tests."}'
 
         with (
@@ -646,6 +650,7 @@ class TestJudgeTask:
         )
 
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
             return '{"verdict": "accept", "confidence": 0.4, "feedback": "Not sure."}'
 
         with (
@@ -695,6 +700,7 @@ class TestJudgeTask:
         )
 
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
             return ""
 
         with (
@@ -731,6 +737,7 @@ class TestRunJanitorWithJudge:
         )
 
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
             return '{"verdict": "accept", "confidence": 0.9, "feedback": "Good."}'
 
         with (
@@ -765,9 +772,11 @@ class TestRunJanitorWithJudge:
         )
 
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
             return '{"verdict": "retry", "confidence": 0.8, "feedback": "Missing error handling."}'
 
         async def mock_post(self: httpx.AsyncClient, url: str, *, json: dict) -> httpx.Response:  # type: ignore[type-arg]
+            await asyncio.sleep(0)  # Async interface requirement
             assert "judge retry 1" in json["title"]
             assert "[judge_retry:1]" in json["description"]
             assert "Missing error handling" in json["description"]
@@ -840,6 +849,7 @@ class TestRunJanitorWithJudge:
         )
 
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
             return '{"verdict": "retry", "confidence": 0.8, "feedback": "Still broken."}'
 
         with (
@@ -876,6 +886,7 @@ class TestRunJanitorWithJudge:
         )
 
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
             return '{"verdict": "accept", "confidence": 0.5, "feedback": "Looks OK-ish."}'
 
         with (

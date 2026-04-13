@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.merkle import (
     _combine_hashes,
     _sha256,

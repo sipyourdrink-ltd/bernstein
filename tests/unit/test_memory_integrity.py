@@ -15,7 +15,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.memory_integrity import (
     GENESIS_HASH,
     EntryIntegrity,

@@ -270,7 +270,7 @@ def _post_webhook(url: str, blocks: list[dict[str, Any]], text: str) -> None:
         url, data=data, headers={"Content-Type": "application/json"}, method="POST"
     )
     with urllib.request.urlopen(req, timeout=5):
-        pass
+        pass  # Response body not needed
 
 
 def _post_web_api(

@@ -1,5 +1,4 @@
 import pytest
-
 from bernstein.core.cost_per_line import CostEfficiency, compute_efficiency
 
 

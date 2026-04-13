@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from bernstein.core.cost import forecast_planned_backlog
 from bernstein.core.cost_tracker import CostTracker
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
+
+from bernstein.core.cost import forecast_planned_backlog
 
 
 def test_cost_tracker_accumulate() -> None:

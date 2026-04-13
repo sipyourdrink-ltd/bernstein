@@ -9,10 +9,9 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import bernstein.core.planner as planner
 import httpx
 import pytest
-
-import bernstein.core.planner as planner
 from bernstein.core.models import (
     CompletionSignal,
     Complexity,
@@ -41,6 +40,7 @@ class _FakePlannerClient:
         self.posts: list[dict[str, object]] = []
 
     async def post(self, url: str, json: dict[str, object]) -> _FakeResponse:
+        await asyncio.sleep(0)  # Async interface requirement
         self.posts.append({"url": url, "json": json})
         return _FakeResponse({"id": "server-task-1"})
 
@@ -91,6 +91,7 @@ def test_post_task_to_server_boosts_upgrade_priority_and_sets_planned_status() -
 def test_fetch_existing_tasks_parses_upgrade_details_from_server() -> None:
     class _Client:
         async def get(self, _url: str) -> _FakeResponse:
+            await asyncio.sleep(0)  # Async interface requirement
             return _FakeResponse(
                 [
                     {
@@ -148,15 +149,18 @@ def test_plan_uses_llm_output_and_posts_created_tasks(monkeypatch: pytest.Monkey
             return None
 
     async def _fake_fetch_existing_tasks(_client: object, _server_url: str) -> list[Task]:
+        await asyncio.sleep(0)  # Async interface requirement
         return []
 
     async def _fake_post_task_to_server(
         _client: object, _server_url: str, task: Task, *, plan_mode: bool = False
     ) -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         posted_titles.append(task.title)
         return f"server-{len(posted_titles)}"
 
     async def _fake_call_llm(prompt: str, *, model: str, provider: str) -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         if "Do you need to search the web" in prompt:
             return "NONE"
         return json.dumps(
@@ -244,9 +248,11 @@ def test_plan_recovers_when_fetch_existing_tasks_fails(monkeypatch: pytest.Monke
         raise httpx.HTTPError("server unavailable")
 
     async def _post(_client: object, _server_url: str, task: Task, *, plan_mode: bool = False) -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         return "server-recovered"
 
     async def _fake_call_llm(prompt: str, *, model: str, provider: str) -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         if "Do you need to search the web" in prompt:
             return "NONE"
         return json.dumps([{"title": "Recovered planning task", "role": "backend"}])
@@ -315,9 +321,11 @@ def test_plan_raises_runtime_error_when_llm_planning_fails(monkeypatch: pytest.M
             return None
 
     async def _fetch(_client: object, _server_url: str) -> list[Task]:
+        await asyncio.sleep(0)  # Async interface requirement
         return []
 
     async def _fake_call_llm(prompt: str, *, model: str, provider: str) -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         nonlocal call_count
         call_count += 1
         if "Do you need to search the web" in prompt:

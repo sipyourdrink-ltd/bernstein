@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-
 from bernstein.core.models import TriggerConfig, TriggerEvent, TriggerTaskTemplate
 from bernstein.core.trigger_manager import (
     TriggerManager,

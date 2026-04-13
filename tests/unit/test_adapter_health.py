@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.adapter_health import (
     AdapterHealthConfig,
     AdapterHealthMonitor,

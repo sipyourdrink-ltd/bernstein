@@ -212,9 +212,7 @@ class TestHistoricalCalibration:
 
 class TestGetHistoricalAverage:
     def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
-        result = get_historical_average(
-            "backend", "medium", "medium", tmp_path / "nope.jsonl"
-        )
+        result = get_historical_average("backend", "medium", "medium", tmp_path / "nope.jsonl")
         assert result is None
 
     def test_returns_average_of_matching_records(self, tmp_path: Path) -> None:

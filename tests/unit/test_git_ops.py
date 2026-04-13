@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.git_basic import (
     _classify_change,
     _detect_scope,

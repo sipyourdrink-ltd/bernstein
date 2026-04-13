@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-
 from bernstein.core.evolution import (
     AgentMetrics,
     AnalysisEngine,

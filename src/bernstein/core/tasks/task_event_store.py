@@ -145,7 +145,7 @@ class TaskEventStore:
                 try:
                     data = json.loads(stripped)
                     events.append(TaskEvent.from_dict(data))
-                except (json.JSONDecodeError, KeyError, ValueError):
+                except (KeyError, ValueError):
                     logger.warning(
                         "Skipping corrupt event line %d in %s",
                         lineno,

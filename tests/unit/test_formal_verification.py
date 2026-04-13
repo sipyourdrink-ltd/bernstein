@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.formal_verification import (
     FormalProperty,
     FormalVerificationConfig,

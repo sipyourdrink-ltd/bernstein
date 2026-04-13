@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 import pytest
-
 from bernstein.core.fast_mode import CooldownState, FastModeCoordinator
 
 # ---------------------------------------------------------------------------

@@ -9,15 +9,13 @@ from typing import TYPE_CHECKING
 import pytest
 import respx
 import yaml
-from httpx import Response
-
 from bernstein.core.manager_parsing import _resolve_depends_on
 from bernstein.core.plan_loader import load_plan_from_yaml
+from httpx import Response
 
 if TYPE_CHECKING:
-    from fastapi.testclient import TestClient
-
     from bernstein.core.orchestrator import Orchestrator
+    from fastapi.testclient import TestClient
 
 
 @pytest.mark.asyncio

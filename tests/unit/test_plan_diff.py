@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-
 from bernstein.cli.plan_diff import (
     PlanDiff,
     StepChange,

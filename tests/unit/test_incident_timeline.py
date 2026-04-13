@@ -6,7 +6,6 @@ import json
 import time
 
 import pytest
-
 from bernstein.core.incident_timeline import (
     TimelineEvent,
     build_incident_timeline,

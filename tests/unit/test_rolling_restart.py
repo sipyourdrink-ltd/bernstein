@@ -9,7 +9,6 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.rolling_restart import (
     RestartPhase,
     RestartPlan,

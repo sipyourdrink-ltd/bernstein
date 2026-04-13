@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.cost_arbitrage import (
     PROVIDER_CATALOG,
     ArbitrageConfig,

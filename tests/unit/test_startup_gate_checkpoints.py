@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.session import (
     StartupGateCheckpoint,
     build_startup_gate_checkpoints,

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import click
 import pytest
-
 from bernstein.cli.man_page import (
     generate_all_man_pages,
     generate_man_page,

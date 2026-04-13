@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.cli.benchmark_charts import (
     BenchmarkDataPoint,
     load_benchmark_data,

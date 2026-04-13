@@ -21,6 +21,7 @@ from bernstein.core.spawn_prompt import (
     _render_predecessor_context,
     _render_prompt,
 )
+
 from bernstein.templates.renderer import TemplateError
 
 

@@ -202,7 +202,7 @@ class _VaultInjector:
 
         try:
             with urllib.request.urlopen(req, timeout=10):
-                pass
+                pass  # Response body not needed for revocation
             logger.info("Vault lease revoked: %s", lease.lease_id)
         except urllib.error.HTTPError as exc:
             # 404 means already expired — not an error

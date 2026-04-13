@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.adapters.claude_agents import _SUBAGENTS, build_agents_json
-from bernstein.core.models import ModelConfig
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.plugin_installer import (
     DirectorySource,
     FileSource,
@@ -231,7 +230,9 @@ class TestGitHubSourceInstall:
 
         with (
             patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlopen", side_effect=fake_urlopen),
-            patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlretrieve", side_effect=fake_urlretrieve),
+            patch(
+                "bernstein.core.plugins_core.plugin_installer.urllib.request.urlretrieve", side_effect=fake_urlretrieve
+            ),
         ):
             install_dir = tmp_path / "plugins"
             result = install_plugin(
@@ -297,7 +298,9 @@ class TestGitHubSourceInstall:
 
         with (
             patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlopen", side_effect=fake_urlopen),
-            patch("bernstein.core.plugins_core.plugin_installer.urllib.request.urlretrieve", side_effect=fake_urlretrieve),
+            patch(
+                "bernstein.core.plugins_core.plugin_installer.urllib.request.urlretrieve", side_effect=fake_urlretrieve
+            ),
         ):
             result = install_plugin(
                 GitHubSource(repo="acme/plugin", asset="specific.zip"),

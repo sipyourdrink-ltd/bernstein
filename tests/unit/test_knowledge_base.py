@@ -7,9 +7,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 import bernstein.core.knowledge_base as knowledge_base
+import pytest
 from bernstein.core.knowledge_base import (
     TaskContextBuilder,
     _parse_python_file,

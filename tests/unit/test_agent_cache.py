@@ -7,7 +7,6 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.agent_cache import AgentCache, CacheEntry, _key_hash, cache_key_for_file
 
 if TYPE_CHECKING:

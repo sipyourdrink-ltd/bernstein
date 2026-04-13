@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.batch_router import (
     BATCH_DISCOUNT_FACTOR,
     BatchClassification,

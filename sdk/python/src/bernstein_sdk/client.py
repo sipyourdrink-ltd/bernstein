@@ -97,9 +97,7 @@ class BernsteinClient:
     # ETag-aware GET helper
     # ------------------------------------------------------------------
 
-    def _get_conditional(
-        self, path: str, params: dict[str, str] | None = None
-    ) -> Any:
+    def _get_conditional(self, path: str, params: dict[str, str] | None = None) -> Any:
         """Perform a GET request using If-None-Match / 304 conditional logic.
 
         On a 304 response the previously cached JSON payload is returned

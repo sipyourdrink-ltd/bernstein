@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import httpx
-
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.models import (
     AgentSession,

@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from bernstein.core.metric_collector import EventSink, MetricsCollector
 
 from bernstein.core import prometheus as prom_module
-from bernstein.core.metric_collector import EventSink, MetricsCollector
 
 # ---------------------------------------------------------------------------
 # EventSink enum

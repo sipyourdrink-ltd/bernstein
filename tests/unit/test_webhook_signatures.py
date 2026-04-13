@@ -8,12 +8,12 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from bernstein.core.webhook_signatures import sign_hmac_sha256, verify_hmac_sha256
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.server import create_app
 from bernstein.core.trigger_sources.slack import verify_slack_signature
-from bernstein.core.webhook_signatures import sign_hmac_sha256, verify_hmac_sha256
 from bernstein.github_app.webhooks import verify_signature
 
 

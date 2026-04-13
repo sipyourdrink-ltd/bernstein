@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 from bernstein.core.seed import SeedConfig
 from bernstein.core.server_launch import (
     _clean_stale_runtime,
@@ -70,7 +69,10 @@ def test_inject_manager_task_posts_seed_payload_with_auth_header(tmp_path: Path)
     response.json.return_value = {"id": "mgr-1"}
 
     with (
-        patch("bernstein.core.server.server_launch.seed_to_initial_task", return_value=SimpleNamespace(description="Plan it")),
+        patch(
+            "bernstein.core.server.server_launch.seed_to_initial_task",
+            return_value=SimpleNamespace(description="Plan it"),
+        ),
         patch("bernstein.core.server.server_launch.httpx.post", return_value=response) as mock_post,
     ):
         task_id = _inject_manager_task(seed, tmp_path, 8052, auth_token="secret")

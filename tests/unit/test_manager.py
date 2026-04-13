@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bernstein.core.manager import (
     ManagerAgent,
     QueueCorrection,
@@ -599,7 +598,9 @@ class TestManagerAgentPlan:
         )
 
         # Mock the LLM call
-        with patch("bernstein.core.orchestration.manager.call_llm", new_callable=AsyncMock, return_value=VALID_PLAN_RESPONSE):
+        with patch(
+            "bernstein.core.orchestration.manager.call_llm", new_callable=AsyncMock, return_value=VALID_PLAN_RESPONSE
+        ):
             # Mock HTTP calls
             mock_client = AsyncMock()
 
@@ -647,7 +648,9 @@ class TestManagerAgentReview:
             templates_dir=templates_dir,
         )
 
-        with patch("bernstein.core.orchestration.manager.call_llm", new_callable=AsyncMock, return_value=VALID_REVIEW_RESPONSE):
+        with patch(
+            "bernstein.core.orchestration.manager.call_llm", new_callable=AsyncMock, return_value=VALID_REVIEW_RESPONSE
+        ):
             result = await manager.review(sample_task)
 
         assert result.verdict == "approve"
@@ -790,7 +793,9 @@ class TestRawDictsToTasksBranches:
             }
         ]
         # Force _parse_upgrade_details to raise
-        with patch("bernstein.core.orchestration.manager_parsing._parse_upgrade_details", side_effect=ValueError("bad")):
+        with patch(
+            "bernstein.core.orchestration.manager_parsing._parse_upgrade_details", side_effect=ValueError("bad")
+        ):
             tasks = raw_dicts_to_tasks(raw)
         assert len(tasks) == 1
         assert tasks[0].upgrade_details is None
@@ -829,7 +834,11 @@ class TestManagerAgentReviewFailure:
             templates_dir=templates_dir,
         )
 
-        with patch("bernstein.core.orchestration.manager.call_llm", new_callable=AsyncMock, side_effect=RuntimeError("LLM down")):
+        with patch(
+            "bernstein.core.orchestration.manager.call_llm",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("LLM down"),
+        ):
             with pytest.raises(RuntimeError, match="LLM review call failed"):
                 await manager.review(sample_task)
 

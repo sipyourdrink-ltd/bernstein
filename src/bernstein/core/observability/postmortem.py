@@ -756,7 +756,7 @@ class PostMortemGenerator:
             if result.returncode == 0:
                 logger.info("Post-mortem PDF written to %s (wkhtmltopdf)", path)
                 return _Path(path)
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        except (subprocess.TimeoutExpired, OSError):
             pass
         finally:
             import os as _os

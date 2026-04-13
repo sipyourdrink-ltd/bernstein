@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-
 from bernstein.core.token_monitor import (
     _COMPACT_COOLDOWN_S,
     _COMPACT_MAX_FAILURES,

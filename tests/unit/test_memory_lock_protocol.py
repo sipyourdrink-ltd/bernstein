@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.memory_lock_protocol import (
     DEFAULT_TTL_SECONDS,
     LockInfo,

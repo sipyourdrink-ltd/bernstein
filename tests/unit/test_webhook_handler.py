@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-
 from bernstein.core.hook_events import HookEvent, TaskPayload
 from bernstein.core.webhook_handler import (
     DEFAULT_MAX_RETRIES,

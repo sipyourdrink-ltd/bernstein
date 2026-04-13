@@ -82,21 +82,31 @@ def test_bootstrap_from_seed_returns_bootstrap_result(tmp_path: Path, invariants
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", fake_console))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value="secret-token"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
+        )
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value="secret-token")
+        )
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server")
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=True))
         stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=None))
         stack.enter_context(patch("bernstein.core.sync.sync_backlog_to_server", return_value=sync_result))
-        mock_inject = stack.enter_context(patch("bernstein.core.orchestration.bootstrap._inject_manager_task", return_value="mgr-1"))
+        mock_inject = stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._inject_manager_task", return_value="mgr-1")
+        )
         stack.enter_context(patch("bernstein.core.cost.cost.estimate_run_cost", return_value=(1.0, 2.0)))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_spawner", return_value=222))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._start_watchdog", return_value=333))
@@ -119,16 +129,22 @@ def test_bootstrap_from_seed_skips_manager_when_backlog_tasks_exist(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value=None))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server")
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=True))
         stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=None))
@@ -151,16 +167,22 @@ def test_bootstrap_from_seed_exits_when_server_never_becomes_ready(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", MagicMock()))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.parse_seed", return_value=_seed()))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value=None))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server")
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=False))
         with pytest.raises(SystemExit):
@@ -179,7 +201,9 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
     with ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.console", fake_console))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor)
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._acquire_pid_lock"))
         stack.enter_context(patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery))
         stack.enter_context(patch("bernstein.core.server_launch._detect_project_type", return_value="python"))
@@ -189,9 +213,13 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_bind_host", return_value="127.0.0.1")
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_auth_token", return_value=None))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap._resolve_server_url", return_value="http://server")
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.supervised_server", return_value=111))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._wait_for_server", return_value=True))
         stack.enter_context(patch("bernstein.core.session.check_resume_session", return_value=None))

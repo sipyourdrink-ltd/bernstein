@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.tenant_isolation import (
     TenantIsolationManager,
     TenantQuota,

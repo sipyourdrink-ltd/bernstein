@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-
 from bernstein.core.compliance_report import (
     SOC2_CONTROLS,
     CompliancePackage,

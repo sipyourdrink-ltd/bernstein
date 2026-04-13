@@ -9,13 +9,13 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (
     OrchestratorConfig,
 )
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 
 if TYPE_CHECKING:
     from pathlib import Path

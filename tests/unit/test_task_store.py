@@ -7,10 +7,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
-
 from bernstein.core.models import TaskStatus
 from bernstein.core.task_store import TaskStore
+from fastapi import HTTPException
 
 
 def _task_request(

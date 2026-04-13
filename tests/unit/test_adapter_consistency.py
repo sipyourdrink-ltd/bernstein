@@ -19,10 +19,10 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ApiTierInfo, ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.registry import _ADAPTERS, get_adapter
-from bernstein.core.models import ApiTierInfo, ModelConfig
 
 # ---------------------------------------------------------------------------
 # Adapter factories — enumerate every known adapter

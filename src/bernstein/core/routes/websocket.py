@@ -41,7 +41,7 @@ def _parse_sse_message(raw: str) -> dict[str, Any] | None:
         return None
     try:
         payload: dict[str, Any] = json.loads(data) if data else {}
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         payload = {"raw": data}
     return {"event": event_type, "data": payload}
 

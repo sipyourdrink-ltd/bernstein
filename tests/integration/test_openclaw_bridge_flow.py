@@ -12,16 +12,17 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from bernstein.core.seed import parse_seed
+from bernstein.core.spawner import AgentSpawner
 from websockets.asyncio.server import ServerConnection, serve
 
 from bernstein.bridges.base import BridgeConfig
 from bernstein.bridges.openclaw import OpenClawBridge
-from bernstein.core.seed import parse_seed
-from bernstein.core.spawner import AgentSpawner
 
 if TYPE_CHECKING:
-    from bernstein.adapters.base import CLIAdapter
     from bernstein.core.models import Task
+
+    from bernstein.adapters.base import CLIAdapter
 
 
 @dataclass

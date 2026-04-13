@@ -135,9 +135,7 @@ class JiraTriggerSource:
         return {
             "title": f"[{event.issue_key}] {event.summary}",
             "description": (
-                f"Jira issue {event.issue_key} moved to '{event.status}'.\n"
-                f"Priority: {event.priority}\n"
-                f"URL: {event.url}"
+                f"Jira issue {event.issue_key} moved to '{event.status}'.\nPriority: {event.priority}\nURL: {event.url}"
             ),
             "role": self._default_role,
             "priority": _jira_priority_to_int(event.priority),

@@ -12,9 +12,8 @@ import respx
 from httpx import Response
 
 if TYPE_CHECKING:
-    from fastapi.testclient import TestClient
-
     from bernstein.core.orchestrator import Orchestrator
+    from fastapi.testclient import TestClient
 
 
 def _respx_proxy(test_client: TestClient):

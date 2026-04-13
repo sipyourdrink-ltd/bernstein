@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.context_window import (
     ContextWindowUtilization,
     compute_context_window_utilization,

@@ -197,7 +197,7 @@ def _parse_metric_line(line: str, since_ts: float) -> dict[str, object] | None:
             return None
         if rec.get("success") is True:
             return rec  # type: ignore[no-any-return]
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         pass
     return None
 

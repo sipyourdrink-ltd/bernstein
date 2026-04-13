@@ -183,7 +183,7 @@ def main() -> int:
         for r in results:
             status = "PASS" if r.passed else "FAIL"
             if not r.passed:
-                pass
+                pass  # Failure logged below in status line
             print(f"  [{status}] {r.module}: {r.percent:.1f}% (threshold: {r.threshold}%)")
         print()
 

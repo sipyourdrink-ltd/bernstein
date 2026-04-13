@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.coverage_gate import CoverageGate
 
 

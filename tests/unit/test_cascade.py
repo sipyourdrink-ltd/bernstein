@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult
 from bernstein.core.cascade import (
     CascadeDecision,

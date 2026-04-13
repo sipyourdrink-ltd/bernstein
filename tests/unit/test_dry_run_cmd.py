@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from bernstein.cli.dry_run_cmd import dry_run_cmd, render_dry_run
 from click.testing import CliRunner
 
-from bernstein.cli.dry_run_cmd import dry_run_cmd, render_dry_run
 from bernstein.cli.main import cli
 
 

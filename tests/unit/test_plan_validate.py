@@ -6,9 +6,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from click.testing import CliRunner
-
 from bernstein.cli.plan_validate_cmd import validate_plan
+from click.testing import CliRunner
 
 
 def _write_plan(tmp_path: Path, data: object) -> Path:

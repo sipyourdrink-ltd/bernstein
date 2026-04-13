@@ -11,7 +11,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import httpx
-
 from bernstein.core.sync import SyncResult, sync_backlog_to_server
 
 if TYPE_CHECKING:

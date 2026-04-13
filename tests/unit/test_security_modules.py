@@ -6,12 +6,12 @@ import time
 from pathlib import Path
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from bernstein.core.ip_allowlist import check_ip_allowed
 from bernstein.core.jwt_tokens import JWTManager
 from bernstein.core.models import Task
 from bernstein.core.seed import NetworkConfig, SeedConfig
+from httpx import ASGITransport, AsyncClient
+
 from bernstein.core.server import create_app
 
 

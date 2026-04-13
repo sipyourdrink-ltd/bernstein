@@ -11,16 +11,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-from starlette.testclient import TestClient
-
 from bernstein.core.models import (
     AgentSession,
     ModelConfig,
     OrchestratorConfig,
 )
 from bernstein.core.orchestrator import Orchestrator
-from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
+from starlette.testclient import TestClient
+
+from bernstein.core.server import create_app
 
 if TYPE_CHECKING:
     from pathlib import Path

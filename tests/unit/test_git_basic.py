@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.git_basic import GitResult, run_git, safe_push, stage_all_except, stage_task_files
 
 

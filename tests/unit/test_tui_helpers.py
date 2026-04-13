@@ -598,6 +598,7 @@ class TestRenderWaterfallBatches:
 
     def test_single_batch_renders_bar(self) -> None:
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [_make_step("orient", 1000.0, duration_ms=2000)]
@@ -610,6 +611,7 @@ class TestRenderWaterfallBatches:
 
     def test_concurrent_batch_shows_indicator(self) -> None:
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [
@@ -624,6 +626,7 @@ class TestRenderWaterfallBatches:
 
     def test_abort_batch_shows_reason(self) -> None:
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [
@@ -638,6 +641,7 @@ class TestRenderWaterfallBatches:
 
     def test_abort_batch_shows_trigger_link(self) -> None:
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [
@@ -652,6 +656,7 @@ class TestRenderWaterfallBatches:
 
     def test_serial_batches_render_multiple_rows(self) -> None:
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [
@@ -670,6 +675,7 @@ class TestRenderWaterfallBatches:
     def test_serial_batch_uses_full_block_bar_char(self) -> None:
         """Serial batches use full block █ for the timing bar."""
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [_make_step("orient", 1000.0, duration_ms=2000)]
@@ -681,6 +687,7 @@ class TestRenderWaterfallBatches:
     def test_concurrent_batch_uses_striped_bar_char(self) -> None:
         """Concurrent batches use dark shade ▓ for the timing bar."""
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [
@@ -695,6 +702,7 @@ class TestRenderWaterfallBatches:
     def test_duration_annotation_milliseconds(self) -> None:
         """Batches shorter than 1 second annotate with ms suffix."""
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [_make_step("orient", 1000.0, duration_ms=300)]
@@ -706,6 +714,7 @@ class TestRenderWaterfallBatches:
     def test_duration_annotation_seconds(self) -> None:
         """Batches 1 second or longer annotate with .Xs suffix."""
         from bernstein.core.traces import group_trace_steps_into_batches
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         steps = [_make_step("orient", 1000.0, duration_ms=2500)]
@@ -717,6 +726,7 @@ class TestRenderWaterfallBatches:
     def test_waterfall_from_parsed_log(self, tmp_path: Path) -> None:
         """Full pipeline: parse agent log → batch steps → render waterfall."""
         from bernstein.core.traces import group_trace_steps_into_batches, parse_agent_log
+
         from bernstein.tui.widgets import render_waterfall_batches
 
         log_file = tmp_path / "agent.log"

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult
 
 if TYPE_CHECKING:

@@ -8,7 +8,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.vault_injector import (
     CredentialLease,
     InjectionConfig,

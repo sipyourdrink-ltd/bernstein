@@ -221,7 +221,7 @@ def _score_churn(file_path: Path, project_root: Path) -> float:
         if result.returncode != 0:
             return 0.5  # git not available → neutral
         commit_count = len(result.stdout.strip().splitlines()) if result.stdout.strip() else 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return 0.5
 
     return max(0.0, 1.0 - commit_count / MAX_CHURN)

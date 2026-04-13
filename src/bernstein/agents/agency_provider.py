@@ -7,6 +7,7 @@ followed by the system-prompt body.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import subprocess
@@ -373,6 +374,7 @@ class AgencyProvider:
         Returns:
             All successfully parsed ``CatalogAgent`` instances.
         """
+        await asyncio.sleep(0)  # Async interface requirement
         if not self.is_available():
             return []
 

@@ -7,7 +7,6 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.cost_history import (
     DailyCostSnapshot,
     append_daily_snapshot,

@@ -13,13 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from bernstein.adapters.base import (
-    CLIAdapter,
-    RateLimitError,
-    SpawnError,
-    SpawnResult,
-)
 from bernstein.core.models import (
     Complexity,
     ModelConfig,
@@ -37,6 +30,13 @@ from bernstein.core.spawn_errors import (
     RetryStrategy,
     WorktreeCreationError,
     classify_spawn_error,
+)
+
+from bernstein.adapters.base import (
+    CLIAdapter,
+    RateLimitError,
+    SpawnError,
+    SpawnResult,
 )
 
 # ---------------------------------------------------------------------------

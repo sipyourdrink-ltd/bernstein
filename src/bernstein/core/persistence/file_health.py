@@ -235,28 +235,6 @@ def _compute_churn_score(file_path: Path, workdir: Path, days: int = 30) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _extract_coverage_pct(info: object) -> int | None:
-    """Extract coverage percentage from a single file entry in coverage.json.
-
-    Args:
-        info: The per-file coverage info object.
-
-    Returns:
-        Coverage percentage 0-100, or None if the entry is malformed.
-    """
-    if not isinstance(info, dict):
-        return None
-    info_typed = cast("dict[str, object]", info)
-    summary_raw = info_typed.get("summary", {})
-    if not isinstance(summary_raw, dict):
-        return None
-    summary = cast("dict[str, object]", summary_raw)
-    pct_raw = summary.get("percent_covered", 70)
-    if isinstance(pct_raw, (int, float)):
-        return min(100, max(0, int(pct_raw)))
-    return None
-
-
 def _compute_coverage_score(file_path: Path, metrics_dir: Path) -> int:
     """Read line coverage for this file from coverage.json if available.
 
@@ -283,10 +261,17 @@ def _compute_coverage_score(file_path: Path, metrics_dir: Path) -> int:
         for cov_path_raw, info in files.items():
             cov_path = str(cov_path_raw)
             if cov_path.endswith(rel) or rel.endswith(cov_path):
-                pct = _extract_coverage_pct(info)
-                if pct is not None:
-                    return pct
-    except (json.JSONDecodeError, OSError, ValueError):
+                if not isinstance(info, dict):
+                    continue
+                info_typed = cast("dict[str, object]", info)
+                summary_raw = info_typed.get("summary", {})
+                if not isinstance(summary_raw, dict):
+                    continue
+                summary = cast("dict[str, object]", summary_raw)
+                pct_raw = summary.get("percent_covered", 70)
+                if isinstance(pct_raw, (int, float)):
+                    return min(100, max(0, int(pct_raw)))
+    except (OSError, ValueError):
         pass
 
     return 70

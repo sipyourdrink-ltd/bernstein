@@ -6,8 +6,6 @@ import json
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from click.testing import CliRunner
-
 from bernstein.cli.self_update_cmd import (
     _fetch_changelog,
     _get_installed_version,
@@ -17,6 +15,7 @@ from bernstein.cli.self_update_cmd import (
     _save_previous_version,
     self_update_cmd,
 )
+from click.testing import CliRunner
 
 if TYPE_CHECKING:
     from pathlib import Path

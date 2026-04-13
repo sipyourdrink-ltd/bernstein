@@ -118,7 +118,7 @@ def load_layout(config_path: Path | None = None) -> LayoutConfig:
     path = config_path or _LAYOUT_PATH
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, yaml.YAMLError):
+    except (OSError, yaml.YAMLError):
         return preset_layout("balanced")
 
     if not isinstance(raw, dict):

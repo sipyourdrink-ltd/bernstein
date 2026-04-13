@@ -65,7 +65,7 @@ def get_worktree_status(workdir: Path) -> WorktreeStatus | None:
         is_dirty = bool(dirty_result.stdout.strip())
 
         return WorktreeStatus(branch=branch, is_dirty=is_dirty)
-    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
 
 

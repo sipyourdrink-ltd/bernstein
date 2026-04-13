@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import bernstein.core.semantic_graph as semantic_graph
+import pytest
 from bernstein.core.semantic_graph import (
     SemanticGraph,
     SymbolEdge,

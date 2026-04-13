@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 
 

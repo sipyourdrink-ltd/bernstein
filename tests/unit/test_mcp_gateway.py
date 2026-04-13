@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from bernstein.core.mcp_gateway import GatewayReplay, MCPGateway, ToolMetrics
 
 # ---------------------------------------------------------------------------
@@ -258,6 +258,7 @@ class TestMCPGatewayLiveMode:
 
         # When _send_upstream is called, resolve the future that handle_jsonrpc created
         async def _mock_send(msg: dict[str, Any]) -> None:
+            await asyncio.sleep(0)  # Async interface requirement
             req_id = msg.get("id")
             fut = gw._pending.get(req_id)
             if fut and not fut.done():
@@ -293,6 +294,7 @@ class TestMCPGatewayLiveMode:
         fake_response: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "result": "done"}
 
         async def _mock_send(msg: dict[str, Any]) -> None:
+            await asyncio.sleep(0)  # Async interface requirement
             req_id = msg.get("id")
             fut = gw._pending.get(req_id)
             if fut and not fut.done():
@@ -344,6 +346,7 @@ class TestMCPGatewayLiveMode:
         }
 
         async def _mock_send(msg: dict[str, Any]) -> None:
+            await asyncio.sleep(0)  # Async interface requirement
             req_id = msg.get("id")
             fut = gw._pending.get(req_id)
             if fut and not fut.done():

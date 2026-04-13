@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.soc2_report import (
     SOC2_CONTROLS,
     MerkleAttestation,

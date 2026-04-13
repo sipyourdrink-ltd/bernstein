@@ -10,12 +10,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
-from bernstein.core.models import ModelConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

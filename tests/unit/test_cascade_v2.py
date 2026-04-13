@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult
 from bernstein.core.cascade import (
     DEFAULT_CASCADE_ORDER,

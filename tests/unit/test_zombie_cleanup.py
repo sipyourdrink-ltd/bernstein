@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.zombie_cleanup import (
     scan_and_cleanup_zombies,
 )

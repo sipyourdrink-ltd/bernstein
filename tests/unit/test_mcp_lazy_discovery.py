@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.mcp_lazy_discovery import (
     LazyMCPDiscovery,
     LazyServerEntry,

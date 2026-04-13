@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.models import Task, TaskStatus
 from bernstein.core.task_store import PANEL_GRACE_MS, TaskStore
 

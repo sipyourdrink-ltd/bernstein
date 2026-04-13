@@ -6,10 +6,9 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from click.testing import CliRunner
-
 from bernstein.cli.status_cmd import ps_cmd
 from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult
+from click.testing import CliRunner
 
 
 def _discovery_result() -> DiscoveryResult:

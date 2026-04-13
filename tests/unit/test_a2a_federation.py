@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.a2a_federation import (
     A2AFederation,
     FederatedTask,

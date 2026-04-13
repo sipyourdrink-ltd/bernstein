@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.claude import (
     _RATE_LIMIT_CACHE_TTL,
@@ -21,7 +22,6 @@ from bernstein.adapters.claude import (
     _resolve_env_vars,
     load_mcp_config,
 )
-from bernstein.core.models import ModelConfig
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures

@@ -34,10 +34,7 @@ def main() -> None:
 
     spec_path = Path(args.spec)
     if not spec_path.exists():
-        sys.exit(
-            f"OpenAPI spec not found at {spec_path}\n"
-            "Run: uv run python scripts/generate_openapi.py"
-        )
+        sys.exit(f"OpenAPI spec not found at {spec_path}\nRun: uv run python scripts/generate_openapi.py")
 
     try:
         from bernstein.core.sdk_generator import generate_sdk_to_file, generate_typescript_sdk_to_file

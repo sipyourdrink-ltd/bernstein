@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.session import (
     DEFAULT_STALE_MINUTES,
     SessionState,
@@ -227,7 +226,10 @@ def test_orchestrator_save_session_state(tmp_path: Path) -> None:
     mock_client.get.return_value = mock_response
 
     # Patch evolution/metrics to avoid side effects
-    with patch("bernstein.core.orchestration.orchestrator.EvolutionCoordinator"), patch("bernstein.core.orchestration.orchestrator.get_collector"):
+    with (
+        patch("bernstein.core.orchestration.orchestrator.EvolutionCoordinator"),
+        patch("bernstein.core.orchestration.orchestrator.get_collector"),
+    ):
         orch = Orchestrator(
             config=config,
             spawner=mock_spawner,
@@ -255,7 +257,10 @@ def test_orchestrator_save_session_state_server_down(tmp_path: Path) -> None:
     mock_client = MagicMock()
     mock_client.get.side_effect = Exception("Connection refused")
 
-    with patch("bernstein.core.orchestration.orchestrator.EvolutionCoordinator"), patch("bernstein.core.orchestration.orchestrator.get_collector"):
+    with (
+        patch("bernstein.core.orchestration.orchestrator.EvolutionCoordinator"),
+        patch("bernstein.core.orchestration.orchestrator.get_collector"),
+    ):
         orch = Orchestrator(
             config=config,
             spawner=mock_spawner,

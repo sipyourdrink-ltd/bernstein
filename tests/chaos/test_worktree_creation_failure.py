@@ -7,14 +7,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 import respx
+from bernstein.core.worktree import WorktreeError
 from httpx import Response
 
-from bernstein.core.worktree import WorktreeError
-
 if TYPE_CHECKING:
-    from fastapi.testclient import TestClient
-
     from bernstein.core.orchestrator import Orchestrator
+    from fastapi.testclient import TestClient
 
 
 @pytest.mark.asyncio

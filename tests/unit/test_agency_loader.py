@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.agency_loader import (
     AgencyAgent,
     _map_division,

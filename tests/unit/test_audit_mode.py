@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.audit import AuditLog, RetentionPolicy
 
 

@@ -4,11 +4,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.quality_gates import (
     _FORK_CONTEXT_MAX_CHARS,
@@ -44,6 +44,7 @@ class TestForkFromContext:
         captured_prompts: list[str] = []
 
         async def fake_call_llm(**kwargs: object) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             captured_prompts.append(str(kwargs.get("prompt", "")))
             return '{"verdict": "yes", "reason": "All good."}'
 
@@ -75,6 +76,7 @@ class TestForkFromContext:
         captured_prompts: list[str] = []
 
         async def fake_call_llm(**kwargs: object) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             captured_prompts.append(str(kwargs.get("prompt", "")))
             return '{"verdict": "yes", "reason": "Fine."}'
 
@@ -106,6 +108,7 @@ class TestForkFromContext:
         captured_prompts: list[str] = []
 
         async def fake_call_llm(**kwargs: object) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             captured_prompts.append(str(kwargs.get("prompt", "")))
             return '{"verdict": "yes", "reason": "ok"}'
 

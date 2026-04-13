@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from bernstein.core.canary_mode import (
     build_canary_report,
     compare_decisions,

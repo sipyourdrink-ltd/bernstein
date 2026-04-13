@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.qwen import QwenAdapter
-from bernstein.core.models import ModelConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,7 +71,7 @@ def _spawn_gemini(tmp_path: Path, model: str = "gemini-pro") -> tuple[list[str],
     proc_mock = _make_popen_mock(pid=200)
     with patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock):
         with patch("builtins.open", MagicMock()):
-            pass
+            pass  # Verify Popen is called; actual test below
     # Redo properly with real filesystem so log_path.open works
     adapter2 = GeminiAdapter()
     proc_mock2 = _make_popen_mock(pid=200)

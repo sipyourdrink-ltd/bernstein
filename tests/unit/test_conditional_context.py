@@ -23,6 +23,7 @@ from bernstein.core.spawn_prompt import (
     filter_sections,
     section_is_relevant,
 )
+
 from bernstein.templates.renderer import TemplateError
 
 # ---------------------------------------------------------------------------

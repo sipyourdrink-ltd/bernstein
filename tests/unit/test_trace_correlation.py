@@ -7,7 +7,6 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.trace_correlation import (
     CorrelationRecord,
     TraceContext,

@@ -16,7 +16,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.abort_chain import AbortChain, AbortPolicy, AbortScope, ToolAbortRecord
 
 

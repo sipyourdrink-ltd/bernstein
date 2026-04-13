@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.visual_config import VisualConfig, parse_visual_config, resolve_visual_config
 
 if TYPE_CHECKING:

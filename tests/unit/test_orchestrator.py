@@ -13,8 +13,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (
     AgentSession,
     CompletionSignal,
@@ -41,6 +39,8 @@ from bernstein.core.router import (
 )
 from bernstein.core.spawner import AgentSpawner
 from bernstein.core.tick_pipeline import prioritize_starving_roles
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 
 if TYPE_CHECKING:
     from bernstein.core.bulletin import BulletinBoard
@@ -4859,9 +4859,9 @@ class TestComputeTotalSpentCache:
         from unittest.mock import patch
 
         import pytest
+        from bernstein.core.orchestrator import _compute_total_spent, _total_spent_cache
 
         from bernstein.core import tick_pipeline as pipeline_mod
-        from bernstein.core.orchestrator import _compute_total_spent, _total_spent_cache
 
         metrics_dir = tmp_path / ".sdd" / "metrics"
         metrics_dir.mkdir(parents=True)
@@ -4884,7 +4884,6 @@ class TestComputeTotalSpentCache:
         import time as _time
 
         import pytest
-
         from bernstein.core.orchestrator import _compute_total_spent, _total_spent_cache
 
         metrics_dir = tmp_path / ".sdd" / "metrics"

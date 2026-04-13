@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 
 import pytest
+from bernstein.core.models import Task, TaskStatus
+from bernstein.core.task_store import TaskStore
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from bernstein.core.models import Task, TaskStatus
 from bernstein.core.routes.team_dashboard import router
-from bernstein.core.task_store import TaskStore
 
 
 @pytest.fixture()

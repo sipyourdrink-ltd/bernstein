@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
 from bernstein.adapters.codex import CodexAdapter
-from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
 if TYPE_CHECKING:
     from pathlib import Path

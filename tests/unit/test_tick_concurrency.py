@@ -6,13 +6,13 @@ ConcurrencyGuard to verify thread-safety and generation-based stale detection.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.concurrency_guard import ConcurrencyGuard, GuardState
 from bernstein.core.wal import GENESIS_HASH, WALEntry, WALReader, WALWriter
 
@@ -380,7 +380,7 @@ class TestTickGuardConcurrency:
         def skipping_tick() -> None:
             ready.wait(timeout=5.0)
             with guard.try_acquire():
-                pass
+                pass  # Acquire and immediately release the guard
             barrier.wait()
 
         t1 = threading.Thread(target=holding_tick)
@@ -492,6 +492,7 @@ class TestWALThreadedWriteRace:
         lock = threading.Lock()
 
         async def payload(gen: int) -> None:
+            await asyncio.sleep(0)  # Async interface requirement
             nonlocal discarded_count, executed_count
             if guard.is_stale(gen):
                 with lock:

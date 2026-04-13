@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
 from bernstein.core.loop_detector import (
     LOOP_EDIT_THRESHOLD,
     LOOP_WINDOW_SECONDS,

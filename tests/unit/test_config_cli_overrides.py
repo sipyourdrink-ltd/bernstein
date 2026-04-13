@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.config_cli_overrides import (
     CLIOverride,
     CLIOverrideManager,

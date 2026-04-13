@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-
 from bernstein.core.models import OrchestratorConfig
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner

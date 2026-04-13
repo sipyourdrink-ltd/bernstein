@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.models import Task, TaskStatus, WorkflowPhaseEvent
 from bernstein.core.workflow import (
     GOVERNED_DEFAULT,

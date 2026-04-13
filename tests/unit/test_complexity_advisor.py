@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.complexity_advisor import (
     TIGHT_COUPLING_THRESHOLD,
     ComplexityAdvisor,

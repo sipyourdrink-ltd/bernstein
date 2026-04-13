@@ -16,8 +16,6 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.cost_tracker import BudgetStatus, CostTracker, TokenUsage, estimate_cost
 from bernstein.core.lifecycle import (
     AGENT_TRANSITIONS,
@@ -45,6 +43,8 @@ from bernstein.core.task_lifecycle import (
     maybe_retry_task,
 )
 from bernstein.core.tick_pipeline import prioritize_starving_roles
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 
 # ---------------------------------------------------------------------------
 # Helpers

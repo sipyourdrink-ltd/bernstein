@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.policy import (
     Action,
     ActionType,

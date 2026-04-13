@@ -7,7 +7,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
-
 from bernstein.core.hooks_receiver import (
     HookEvent,
     HookEventType,

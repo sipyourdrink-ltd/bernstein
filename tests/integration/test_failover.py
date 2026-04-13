@@ -6,9 +6,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from starlette.testclient import TestClient
-
-from bernstein.adapters.base import RateLimitError, SpawnResult
 from bernstein.core.agent_lifecycle import handle_orphaned_task
 from bernstein.core.cascade import CascadeDecision
 from bernstein.core.models import (
@@ -21,8 +18,11 @@ from bernstein.core.models import (
     TaskType,
 )
 from bernstein.core.router import ProviderConfig, ProviderHealthStatus, Tier, TierAwareRouter
-from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
+from starlette.testclient import TestClient
+
+from bernstein.adapters.base import RateLimitError, SpawnResult
+from bernstein.core.server import create_app
 
 if TYPE_CHECKING:
     from pathlib import Path

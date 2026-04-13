@@ -7,8 +7,9 @@ import sys
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from bernstein.adapters.kiro import KiroAdapter
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
+
+from bernstein.adapters.kiro import KiroAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

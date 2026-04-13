@@ -68,6 +68,7 @@ class TestPKCEChallenge:
 # OAuthPKCEClient.build_authorization_url
 # ---------------------------------------------------------------------------
 
+
 class TestBuildAuthorizationUrl:
     def _make_client(self) -> OAuthPKCEClient:
         return OAuthPKCEClient(
@@ -128,6 +129,7 @@ class TestBuildAuthorizationUrl:
 # OAuthPKCEClient.exchange_code
 # ---------------------------------------------------------------------------
 
+
 class TestExchangeCode:
     @respx.mock
     def test_exchange_sends_correct_form_body(self) -> None:
@@ -174,9 +176,7 @@ class TestExchangeCode:
     @respx.mock
     def test_token_response_raw_preserved(self) -> None:
         extra = {**TOKEN_PAYLOAD, "custom_field": "custom_value"}
-        respx.post(TOKEN_EP).mock(
-            return_value=httpx.Response(200, json=extra)
-        )
+        respx.post(TOKEN_EP).mock(return_value=httpx.Response(200, json=extra))
         with OAuthPKCEClient(
             client_id=CLIENT_ID,
             authorization_endpoint=AUTH_EP,
@@ -191,13 +191,12 @@ class TestExchangeCode:
 # Full flow (authorize — manual mode)
 # ---------------------------------------------------------------------------
 
+
 class TestFullFlow:
     @respx.mock
     def test_manual_flow_produces_valid_tokens(self) -> None:
         """Full OAuth PKCE flow: generate challenge → build URL → exchange code."""
-        respx.post(TOKEN_EP).mock(
-            return_value=httpx.Response(200, json=TOKEN_PAYLOAD)
-        )
+        respx.post(TOKEN_EP).mock(return_value=httpx.Response(200, json=TOKEN_PAYLOAD))
 
         client = OAuthPKCEClient(
             client_id=CLIENT_ID,
@@ -218,9 +217,7 @@ class TestFullFlow:
 
     @respx.mock
     def test_authorize_manual_mode(self, capsys: pytest.CaptureFixture[str]) -> None:
-        respx.post(TOKEN_EP).mock(
-            return_value=httpx.Response(200, json=TOKEN_PAYLOAD)
-        )
+        respx.post(TOKEN_EP).mock(return_value=httpx.Response(200, json=TOKEN_PAYLOAD))
         with (
             patch("builtins.input", return_value="simulated_code"),
             OAuthPKCEClient(
@@ -238,9 +235,7 @@ class TestFullFlow:
 
     @respx.mock
     def test_authorize_auto_mode_opens_browser(self) -> None:
-        respx.post(TOKEN_EP).mock(
-            return_value=httpx.Response(200, json=TOKEN_PAYLOAD)
-        )
+        respx.post(TOKEN_EP).mock(return_value=httpx.Response(200, json=TOKEN_PAYLOAD))
         with (
             patch("webbrowser.open") as mock_browser,
             patch("builtins.input", return_value="simulated_code"),
@@ -260,6 +255,7 @@ class TestFullFlow:
 # ---------------------------------------------------------------------------
 # _extract_code helper
 # ---------------------------------------------------------------------------
+
 
 class TestExtractCode:
     def test_raw_code_returned_as_is(self) -> None:

@@ -8,7 +8,6 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.auth import (
     AuthRole,
     AuthService,

@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.settings_cascade import (
     SettingsCascade,
     SettingsSource,

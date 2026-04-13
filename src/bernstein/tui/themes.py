@@ -257,7 +257,7 @@ def load_theme_config(config_path: Path | None = None) -> ThemeMode:
         data = json.loads(path.read_text(encoding="utf-8"))
         raw = data.get("theme", "")
         return ThemeMode(raw)
-    except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError):
+    except (FileNotFoundError, KeyError, ValueError):
         return ThemeMode.AUTO
 
 

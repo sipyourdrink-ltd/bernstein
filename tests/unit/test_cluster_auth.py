@@ -6,7 +6,6 @@ import time
 from unittest.mock import MagicMock
 
 import pytest
-
 from bernstein.core.cluster_auth import (
     SCOPE_NODE_ADMIN,
     SCOPE_NODE_HEARTBEAT,

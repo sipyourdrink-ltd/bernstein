@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.seccomp_profiles import (
     _SYSCALLS_ALWAYS_DENY,
     AgentSeccompProfile,

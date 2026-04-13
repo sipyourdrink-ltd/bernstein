@@ -6,9 +6,8 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
-
 import bernstein.core.reviewer as reviewer
+import pytest
 from bernstein.core.manager_models import QueueReviewResult
 from bernstein.core.models import Complexity, Scope, Task
 
@@ -41,6 +40,7 @@ def test_review_parses_follow_up_tasks(monkeypatch: pytest.MonkeyPatch, tmp_path
     collector = _FakeCollector()
 
     async def _fake_call_llm(prompt: str, *, model: str, provider: str) -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         return json.dumps(
             {
                 "verdict": "request_changes",
@@ -91,6 +91,7 @@ def test_review_queue_skips_when_budget_is_low(tmp_path: Path) -> None:
 
 def test_review_queue_sync_runs_async_wrapper(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     async def _fake_review_queue(*args: object, **kwargs: object) -> QueueReviewResult:
+        await asyncio.sleep(0)  # Async interface requirement
         return QueueReviewResult(corrections=[], reasoning="ok")
 
     monkeypatch.setattr(reviewer, "review_queue", _fake_review_queue)
@@ -146,9 +147,11 @@ def test_review_queue_returns_skipped_on_parse_error(monkeypatch: pytest.MonkeyP
             return None
 
         async def get(self, _url: str) -> _Response:
+            await asyncio.sleep(0)  # Async interface requirement
             return _Response()
 
     async def _invalid_json_llm(prompt: str, *, model: str, provider: str, max_tokens: int = 500) -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         return "not-json"
 
     def _fake_queue_prompt(**kwargs: object) -> str:

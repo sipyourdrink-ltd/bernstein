@@ -58,7 +58,7 @@ class TestTickBudget:
         budget.start()
 
         with budget.phase("heartbeat", critical=True):
-            pass
+            pass  # Simulate empty phase execution
         budget.record_skip("nudges")
 
         summary = budget.summary()
@@ -74,11 +74,11 @@ class TestTickBudget:
         budget.start()
 
         with budget.phase("phase_a", critical=True):
-            pass
+            pass  # Simulate empty phase execution
         with budget.phase("phase_b"):
-            pass
+            pass  # Simulate empty phase execution
         with budget.phase("phase_c"):
-            pass
+            pass  # Simulate empty phase execution
 
         assert len(budget.phases) == 3
         names = [p.name for p in budget.phases]

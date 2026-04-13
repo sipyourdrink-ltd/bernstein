@@ -5,15 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import bernstein.core.knowledge_graph as knowledge_graph
+import bernstein.core.semantic_graph as semantic_graph
 import pytest
 import pytest_asyncio
+from bernstein.cli.graph_cmd import graph_group
+from bernstein.core.knowledge_graph import build_knowledge_graph, get_or_build_knowledge_graph, query_impact
 from click.testing import CliRunner
 from httpx import ASGITransport, AsyncClient
 
-import bernstein.core.knowledge_graph as knowledge_graph
-import bernstein.core.semantic_graph as semantic_graph
-from bernstein.cli.graph_cmd import graph_group
-from bernstein.core.knowledge_graph import build_knowledge_graph, get_or_build_knowledge_graph, query_impact
 from bernstein.core.server import create_app
 
 if TYPE_CHECKING:

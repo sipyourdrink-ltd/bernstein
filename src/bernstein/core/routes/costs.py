@@ -1011,7 +1011,7 @@ def _read_lines_for_agent(lines_dir: Any, agent_id: str) -> int:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return int(data.get("lines_changed", 0))
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, ValueError):
         return 0
 
 

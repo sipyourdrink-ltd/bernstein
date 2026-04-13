@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.worktree_isolation import (
     check_no_hardlink_leaks,
     check_sdd_not_shared,

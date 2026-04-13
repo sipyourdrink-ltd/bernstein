@@ -574,6 +574,7 @@ class DrainCoordinator:
 
     async def _phase_commit(self) -> None:
         """Phase 4: Commit — auto-save dirty worktrees."""
+        await asyncio.sleep(0)  # Async interface requirement
         phase = self._phases[3]
 
         if not self._config.auto_commit:

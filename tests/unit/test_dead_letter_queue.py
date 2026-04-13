@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import httpx
-
 from bernstein.core.dead_letter_queue import (
     DeadLetterQueue,
     DLQEntry,

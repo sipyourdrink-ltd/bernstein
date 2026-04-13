@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 
 import pytest
-
 from bernstein.core.agent_cost_ledger import AgentCostEntry, AgentCostLedger
 
 

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from rich.console import Console
-
 from bernstein.cli.splash_v2 import SplashContext, SplashRenderer, render_startup_splash
 from bernstein.cli.terminal_caps import TerminalCaps
 from bernstein.core.visual_config import VisualConfig
+from rich.console import Console
 
 
 def _caps(

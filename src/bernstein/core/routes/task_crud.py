@@ -128,7 +128,7 @@ def _persist_lines_changed(request: Request, agent_id: str, lines_changed: int) 
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 current = int(data.get("lines_changed", 0))
-            except (json.JSONDecodeError, ValueError):
+            except ValueError:
                 current = 0
         path.write_text(
             json.dumps({"agent_id": agent_id, "lines_changed": current + lines_changed}),

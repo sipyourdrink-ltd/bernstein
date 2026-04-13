@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 import yaml
-
 from bernstein.core.vertical_packs import (
     BUILTIN_PACKS,
     QualityGateSpec,

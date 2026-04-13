@@ -5,9 +5,8 @@ from __future__ import annotations
 import sys
 from unittest.mock import patch
 
-import pytest
-
 import bernstein.cli.terminal_caps as _caps_module
+import pytest
 from bernstein.cli.terminal_caps import (
     Protocol,
     TerminalCaps,

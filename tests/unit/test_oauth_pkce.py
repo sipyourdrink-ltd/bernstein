@@ -9,7 +9,6 @@ from unittest.mock import patch
 import httpx
 import pytest
 import respx
-
 from bernstein.core.oauth_pkce import (
     OAuthError,
     PKCEFlow,

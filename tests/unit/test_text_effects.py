@@ -13,7 +13,6 @@ from __future__ import annotations
 import sys
 
 import pytest
-
 from bernstein.cli.text_effects import (
     DEFAULT_COLORS,
     _strip_hash,

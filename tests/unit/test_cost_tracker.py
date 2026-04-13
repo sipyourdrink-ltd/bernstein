@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.cost_tracker import (
     BudgetStatus,
     CostTracker,

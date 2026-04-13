@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.models import Complexity, Scope, TaskStatus
 from bernstein.core.seed import (
     NotifyConfig,

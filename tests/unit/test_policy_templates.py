@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
 from bernstein.core.policy_templates import (
     OrgPolicyTemplate,
     apply_org_policies,

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.traces import (
     build_crash_bundle,
     preview_edit_conflict,

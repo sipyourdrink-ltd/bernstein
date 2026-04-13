@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
+from bernstein.cli.compliance_cmd import compliance_group
+from bernstein.core.eu_ai_act import RiskLevel, assess_risk, summarize_assessments
 from click.testing import CliRunner
 from httpx import ASGITransport, AsyncClient
 
-from bernstein.cli.compliance_cmd import compliance_group
-from bernstein.core.eu_ai_act import RiskLevel, assess_risk, summarize_assessments
 from bernstein.core.server import create_app
 
 if TYPE_CHECKING:

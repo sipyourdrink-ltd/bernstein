@@ -295,7 +295,7 @@ class MessageNormalizer:
                     if cost_val:
                         cost_num = float(cast("str | int | float", cost_val))
                         info["total_cost_usd"] = max(float(info["total_cost_usd"]), cost_num)
-            except (json.JSONDecodeError, ValueError, TypeError):
+            except (ValueError, TypeError):
                 # Try regex extraction for text-format output.
                 match = _SESSION_SUMMARY_PATTERN.search(stripped)
                 if match:

@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.audit_integrity import (
     verify_audit_integrity,
     verify_on_startup,

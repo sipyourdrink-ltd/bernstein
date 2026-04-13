@@ -7,11 +7,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
-from bernstein.core.server import TaskCreate
 from bernstein.core.task_splitter import TaskSplitter
 from bernstein.core.task_store import TaskStore
+
+from bernstein.core.server import TaskCreate
 
 # ---------------------------------------------------------------------------
 # Helper

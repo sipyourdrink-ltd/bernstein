@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.task_event_store import (
     TaskEvent,
     TaskEventKind,

@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.amp import AmpAdapter
-from bernstein.core.models import ModelConfig
 
 
 @pytest.fixture(autouse=True)

@@ -6,13 +6,14 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
-from bernstein.adapters.caching_adapter import CachingAdapter
 from bernstein.core.prompt_caching import (
     CacheBreakCorrelator,
     CacheBreakEvent,
     CacheBreakReason,
 )
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.caching_adapter import CachingAdapter
 
 
 def _make_event(session_id: str, fingerprint: str, ts: float | None = None) -> CacheBreakEvent:

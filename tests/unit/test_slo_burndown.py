@@ -6,7 +6,6 @@ import time
 from typing import Any, cast
 
 import pytest
-
 from bernstein.core.slo import BurnRateSnapshot, SLOTracker
 
 

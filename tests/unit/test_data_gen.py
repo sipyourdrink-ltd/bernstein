@@ -6,7 +6,6 @@ import functools
 import operator
 
 import pytest
-
 from bernstein.core.test_data_gen import (
     GeneratedTask,
     TaskTemplate,

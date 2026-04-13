@@ -7,8 +7,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-from PIL import Image
-
 from bernstein.cli.image_renderer import (
     BaseRenderer,
     BrailleRenderer,
@@ -22,6 +20,7 @@ from bernstein.cli.image_renderer import (
     render_image,
 )
 from bernstein.cli.terminal_caps import Protocol, TerminalCaps
+from PIL import Image
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 

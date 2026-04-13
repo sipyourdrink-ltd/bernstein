@@ -6,9 +6,8 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-from click.testing import CliRunner
-
 from bernstein.cli.cost import cost_cmd
+from click.testing import CliRunner
 
 if TYPE_CHECKING:
     from pathlib import Path

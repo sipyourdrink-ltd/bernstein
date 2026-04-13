@@ -17,7 +17,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.compliance import ComplianceConfig, CompliancePreset
 from bernstein.core.hipaa import (
     HIPAAMode,

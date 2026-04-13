@@ -5,12 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import cast
 
-import pytest
-from rich.console import Console
-
 import bernstein.cli.advanced_cmd as advanced_cmd
+import pytest
 from bernstein.cli.terminal_caps import TerminalCaps
 from bernstein.core.visual_config import VisualConfig
+from rich.console import Console
 
 
 def _live_callback() -> Callable[[float, bool, bool], None]:

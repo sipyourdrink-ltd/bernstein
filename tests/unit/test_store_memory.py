@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.models import TaskStatus
-from bernstein.core.server import TaskCreate
 from bernstein.core.task_store import TaskStore
+
+from bernstein.core.server import TaskCreate
 
 
 @pytest.fixture

@@ -6,7 +6,6 @@ import threading
 import time
 
 import pytest
-
 from bernstein.core.tick_guard import TickGuard, TickGuardStats
 
 # ---------------------------------------------------------------------------
@@ -74,7 +73,7 @@ class TestStatistics:
     def test_stats_after_successful_tick(self) -> None:
         guard = TickGuard()
         with guard.try_acquire():
-            pass
+            pass  # Acquire and immediately release
         assert guard.stats.total_attempts == 1
         assert guard.stats.total_acquired == 1
         assert guard.stats.total_skipped == 0

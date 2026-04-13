@@ -6,7 +6,6 @@ import csv
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.education_tier import (
     ClassroomConfig,
     ClassroomSession,

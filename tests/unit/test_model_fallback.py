@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.model_fallback import (
     DEFAULT_529_STRIKE_LIMIT,
     DEFAULT_FALLBACK_STATUS_CODES,

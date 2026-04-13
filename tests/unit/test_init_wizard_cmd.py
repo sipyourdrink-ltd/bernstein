@@ -5,13 +5,13 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from click.testing import CliRunner
-
 from bernstein.cli.init_wizard_cmd import (
     detect_project_type,
     generate_yaml,
     init_wizard_cmd,
 )
+from click.testing import CliRunner
+
 from bernstein.cli.main import cli
 
 

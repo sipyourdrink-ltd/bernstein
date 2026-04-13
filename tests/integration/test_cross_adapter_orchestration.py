@@ -6,14 +6,14 @@ import json
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from starlette.testclient import TestClient
-
-from bernstein.adapters.base import SpawnResult
 from bernstein.core.models import ModelConfig, OrchestratorConfig
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.router import ProviderConfig, Tier, TierAwareRouter
-from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
+from starlette.testclient import TestClient
+
+from bernstein.adapters.base import SpawnResult
+from bernstein.core.server import create_app
 
 if TYPE_CHECKING:
     from pathlib import Path

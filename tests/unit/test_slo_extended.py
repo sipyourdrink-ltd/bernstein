@@ -13,8 +13,6 @@ from __future__ import annotations
 import time
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from bernstein.core.adaptive_parallelism import AdaptiveParallelism
 from bernstein.core.slo import (
     ErrorBudget,
@@ -22,6 +20,7 @@ from bernstein.core.slo import (
     SLOTracker,
     apply_error_budget_adjustments,
 )
+from httpx import ASGITransport, AsyncClient
 
 # ===================================================================
 # apply_error_budget_adjustments tests

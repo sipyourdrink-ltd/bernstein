@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.wal import WALWriter
 from bernstein.core.wal_replay import (
     IdempotencyStore,

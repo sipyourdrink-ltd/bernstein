@@ -7,7 +7,6 @@ import statistics
 from typing import Any
 
 import pytest
-
 from bernstein.core.differential_privacy import (
     DPConfig,
     GaussianMechanism,

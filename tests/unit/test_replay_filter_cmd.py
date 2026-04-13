@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from click.testing import CliRunner
-
 from bernstein.cli.replay_filter_cmd import filter_events, replay_filter_cmd
+from click.testing import CliRunner
 
 
 def _make_events() -> list[dict[str, object]]:

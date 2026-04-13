@@ -5,9 +5,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
 import bernstein.core.gate_plugins as gate_plugins_module
+import pytest
 from bernstein.core.gate_plugins import GatePlugin, GatePluginRegistry
 
 

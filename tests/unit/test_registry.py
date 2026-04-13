@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING
 
 import yaml
+from bernstein.core.models import ModelConfig
 
 from bernstein.agents.registry import (
     AgentDefinition,
@@ -13,7 +14,6 @@ from bernstein.agents.registry import (
     AgentRegistry,
     get_registry,
 )
-from bernstein.core.models import ModelConfig
 
 if TYPE_CHECKING:
     from pathlib import Path

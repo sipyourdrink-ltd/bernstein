@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import asdict
 
 import pytest
-
 from bernstein.core.compression_models import CompressionMetrics, CompressionResult
 
 

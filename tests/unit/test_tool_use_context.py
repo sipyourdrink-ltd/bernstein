@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.tool_use_context import ToolInvocation, ToolUseContext
 
 # ---------------------------------------------------------------------------

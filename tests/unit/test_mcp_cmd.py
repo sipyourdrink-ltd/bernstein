@@ -7,10 +7,9 @@ import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
-from click.testing import CliRunner
-
 from bernstein.cli.mcp_cmd import mcp_server
 from bernstein.core.mcp_registry import MCPServerEntry, load_catalog_entries, save_catalog_entries
+from click.testing import CliRunner
 
 
 def _write_stdio_fixture_server(path: Path) -> None:

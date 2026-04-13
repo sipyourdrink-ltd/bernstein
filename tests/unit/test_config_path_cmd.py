@@ -5,13 +5,13 @@ from __future__ import annotations
 import os
 import tempfile
 
-from click.testing import CliRunner
-
 from bernstein.cli.config_path_cmd import (
     config_path_cmd,
     resolve_config_path,
     resolve_sdd_config_path,
 )
+from click.testing import CliRunner
+
 from bernstein.cli.main import cli
 
 

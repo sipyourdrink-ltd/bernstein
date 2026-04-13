@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from bernstein.core.plan_loader import PlanConfig, PlanLoadError, RepoRef, load_plan, load_plan_from_yaml
 
 # ---------------------------------------------------------------------------

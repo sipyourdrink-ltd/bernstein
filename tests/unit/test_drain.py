@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-
 from bernstein.core.drain import DrainConfig, DrainCoordinator, DrainPhase, DrainReport
 
 
@@ -69,6 +69,7 @@ async def test_cancel_phase_one_cleans_flags(tmp_path: Path) -> None:
             return None
 
         async def post(self, url: str) -> object:
+            await asyncio.sleep(0)  # Async interface requirement
             return object()
 
     from bernstein.core import drain as drain_module
@@ -101,6 +102,7 @@ async def test_phase_freeze_falls_back_to_flag_on_http_error(tmp_path: Path) -> 
             return None
 
         async def post(self, url: str) -> _Response:
+            await asyncio.sleep(0)  # Async interface requirement
             return _Response()
 
     from bernstein.core import drain as drain_module
@@ -139,6 +141,7 @@ async def test_stop_infrastructure_uses_pid_files_and_supervisor_state(tmp_path:
     calls: list[tuple[int | None, str]] = []
 
     async def _record(pid: int | None, label: str) -> None:
+        await asyncio.sleep(0)  # Async interface requirement
         calls.append((pid, label))
 
     with patch.object(coordinator, "_terminate_process", side_effect=_record):

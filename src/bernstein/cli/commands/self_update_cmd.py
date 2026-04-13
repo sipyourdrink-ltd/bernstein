@@ -69,7 +69,7 @@ def _fetch_latest_pypi_version() -> str | None:
             ver = info.get("version")
             if isinstance(ver, str):
                 return ver
-    except (urllib.error.URLError, json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):
         pass
     return None
 
@@ -116,7 +116,7 @@ def _fetch_changelog(current: str, latest: str) -> list[str]:
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             releases: list[dict[str, object]] = json.loads(resp.read())
-    except (urllib.error.URLError, json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):
         return []
 
     current_tuple = _parse_version(current)

@@ -72,7 +72,9 @@ class TestGetInstalledVersion:
     def test_returns_none_when_not_installed(self) -> None:
         from importlib.metadata import PackageNotFoundError
 
-        with patch("bernstein.cli.install_check.importlib.metadata.version", side_effect=PackageNotFoundError("not found")):
+        with patch(
+            "bernstein.cli.install_check.importlib.metadata.version", side_effect=PackageNotFoundError("not found")
+        ):
             assert _get_installed_version() is None
 
 

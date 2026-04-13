@@ -6,7 +6,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.jwt_tokens import (
     JWTManager,
     TokenRefreshFatalError,

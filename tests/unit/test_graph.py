@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.graph import BLOCKING_EDGE_TYPES, EdgeType, GraphAnalysis, TaskGraph
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
 

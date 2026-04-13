@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from bernstein.cli.aliases import ALIASES, aliases_cmd, get_alias, get_all_aliases
 from click.testing import CliRunner
 
-from bernstein.cli.aliases import ALIASES, aliases_cmd, get_alias, get_all_aliases
 from bernstein.cli.main import cli
 
 
