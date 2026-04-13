@@ -376,6 +376,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "prompt_injection": "bernstein.core.tokens.prompt_injection",
     "prompt_precheck": "bernstein.core.tokens.prompt_precheck",
     "prompt_token_analysis": "bernstein.core.tokens.prompt_token_analysis",
+    "prompt_optimizer": "bernstein.core.prompt_optimizer",
     "prompt_versioning": "bernstein.core.tokens.prompt_versioning",
     "provider_circuit_breaker": "bernstein.core.observability.provider_circuit_breaker",
     "provider_latency": "bernstein.core.observability.provider_latency",
