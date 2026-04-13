@@ -298,7 +298,7 @@ def check_scope_violations(orch: Any, result: Any) -> None:
             ``_workdir``, and ``_client`` attributes).
         result: Current :class:`TickResult` to record reaped agent IDs into.
     """
-    for session in list(orch._agents.values()):
+    for session in orch._agents.values():
         if session.status == "dead":
             continue
 
@@ -422,7 +422,7 @@ def check_budget_violations(orch: Any, result: Any) -> None:
             and ``_config`` attributes).
         result: Current :class:`TickResult` to record reaped agent IDs into.
     """
-    for session in list(orch._agents.values()):
+    for session in orch._agents.values():
         if session.status == "dead":
             continue
         budget: int = getattr(session, "token_budget", 0)
@@ -482,7 +482,7 @@ def check_guardrail_violations(orch: Any, result: Any) -> None:
     from bernstein.core.guardrails import check_secrets  # avoid circular import
     from bernstein.core.policy_engine import DecisionType
 
-    for session in list(orch._agents.values()):
+    for session in orch._agents.values():
         if session.status == "dead":
             continue
 

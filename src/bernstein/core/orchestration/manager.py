@@ -666,7 +666,7 @@ Be precise and complete. Include all necessary imports, tests, and documentation
             open_tasks=open_tasks,
             claimed_tasks=claimed_tasks,
             failed_tasks=failed_tasks,
-            server_url=self._server_url,
+            _server_url=self._server_url,
         )
 
         try:

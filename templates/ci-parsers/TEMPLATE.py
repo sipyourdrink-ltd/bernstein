@@ -25,10 +25,10 @@ from bernstein.core.ci_fix import CIFailure, parse_failures
 #   CircleCI:       "#!/bin/bash -eo pipefail\n..." with ANSI color codes
 #   Jenkins:        "[Pipeline] stage" / "[ERROR] ..."
 
-# TODO: Define patterns for your CI system's log structure
-_SECTION_START_RE = re.compile(r"TODO: regex matching your CI's section/step start marker")
-_SECTION_END_RE = re.compile(r"TODO: regex matching your CI's section/step end marker")
-_ERROR_RE = re.compile(r"TODO: regex matching your CI's error annotation")
+# Define patterns for your CI system's log structure
+_SECTION_START_RE = re.compile(r"FIXME: regex matching your CI's section/step start marker")
+_SECTION_END_RE = re.compile(r"FIXME: regex matching your CI's section/step end marker")
+_ERROR_RE = re.compile(r"FIXME: regex matching your CI's error annotation")
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ def _extract_sections(raw_log: str) -> list[tuple[str, str]]:
     Returns:
         List of (section_name, section_body) tuples.
     """
-    # TODO: implement section extraction for your CI system
+    # Implement section extraction for your CI system
     # Return a list of (name, body) tuples where name is the step/stage name
     # and body is the text content of that step.
     #
@@ -83,7 +83,7 @@ class YourCIParser:
         name: Parser key used in the registry. Must be unique across all parsers.
     """
 
-    name: str = "your_ci"  # TODO: change to your CI system's key, e.g. "gitlab", "circleci"
+    name: str = "your_ci"  # Change to your CI system's key, e.g. "gitlab", "circleci"
 
     def parse(self, raw_log: str) -> list[CIFailure]:
         """Parse raw <YourCI> log output into structured CI failures.
@@ -110,7 +110,7 @@ class YourCIParser:
 
         failures: list[CIFailure] = []
         for section_name, section_body in sections:
-            # TODO: filter to only failing sections if your CI marks them clearly
+            # Filter to only failing sections if your CI marks them clearly
             # e.g.: if not _has_failure(section_body): continue
             section_failures = parse_failures(section_body, job=section_name)
             failures.extend(section_failures)

@@ -175,7 +175,7 @@ def integrate_idle_detection(orch: Any) -> dict[str, int] | None:
     aggregator = AgentLogAggregator(orch._workdir)
     idle_sessions: list[tuple[Any, IdleDetectionResult]] = []
 
-    for session in list(orch._agents.values()):
+    for session in orch._agents.values():
         if session.status == "dead":
             continue
 

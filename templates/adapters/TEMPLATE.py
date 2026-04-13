@@ -90,7 +90,7 @@ class YourCLIAdapter(CLIAdapter):
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
 
         # 3. Build the CLI command
-        # TODO: replace with the actual flags for your CLI tool
+        # Replace with the actual flags for your CLI tool
         cmd = [
             "your-cli-bin",  # binary name on PATH
             "--model",

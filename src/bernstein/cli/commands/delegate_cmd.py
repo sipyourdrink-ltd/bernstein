@@ -5,9 +5,8 @@ server and optionally wait for completion.  The ``--json`` flag emits
 machine-readable output so callers can parse the task ID without screen-
 scraping Rich markup.
 """
-# TODO(D6): Not yet wired into main.py CLI group. Ready to ship — add
-# `cli.add_command(delegate, "delegate")` in main.py. No known blockers.
-# See p0-documentation-overhaul.md.
+# Not yet wired into main.py CLI group. Ready to ship — add
+# `cli.add_command(delegate, "delegate")` in main.py when needed.
 
 from __future__ import annotations
 
