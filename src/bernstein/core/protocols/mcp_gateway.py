@@ -219,7 +219,7 @@ class MCPGateway:
                         fut.set_result(msg)
         except Exception:
             # Upstream died — fail all pending futures
-            for fut in list(self._pending.values()):
+            for fut in self._pending.values():
                 if not fut.done():
                     fut.set_exception(RuntimeError("Upstream process died"))
 

@@ -34,14 +34,14 @@ logger = logging.getLogger(__name__)
 # Regex patterns for detecting breaking changes in unified diffs.
 # A removed line starting with ``def `` or ``class `` in a public module
 # (no leading underscore) is treated as a removed public API.
-_RE_REMOVED_DEF = re.compile(r"^-\s*def\s+([a-zA-Z][a-zA-Z0-9_]*)\s*\(")
-_RE_REMOVED_CLASS = re.compile(r"^-\s*class\s+([a-zA-Z][a-zA-Z0-9_]*)\s*[\(:]")
+_RE_REMOVED_DEF = re.compile(r"^-\s*def\s+([a-zA-Z]\w*)\s*\(")
+_RE_REMOVED_CLASS = re.compile(r"^-\s*class\s+([a-zA-Z]\w*)\s*[\(:]")
 
 # A changed function signature: a removed ``def`` line followed (within a
 # small window) by an added ``def`` line with the same name but different
 # parameters.
-_RE_ADDED_DEF = re.compile(r"^\+\s*def\s+([a-zA-Z][a-zA-Z0-9_]*)\s*\((.+)\)")
-_RE_REMOVED_DEF_PARAMS = re.compile(r"^-\s*def\s+([a-zA-Z][a-zA-Z0-9_]*)\s*\((.+)\)")
+_RE_ADDED_DEF = re.compile(r"^\+\s*def\s+([a-zA-Z]\w*)\s*\((.+)\)")
+_RE_REMOVED_DEF_PARAMS = re.compile(r"^-\s*def\s+([a-zA-Z]\w*)\s*\((.+)\)")
 
 # Component inference: map top-level path segments to logical components.
 _COMPONENT_MAP: dict[str, str] = {

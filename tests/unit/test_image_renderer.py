@@ -94,7 +94,7 @@ class TestKittyRenderer:
         output = KittyRenderer().render(red_image, width=4, height=4)
         assert "\033\\" in output
 
-    def test_output_contains_a_T_param(self, red_image: Image.Image) -> None:
+    def test_output_contains_a_t_param(self, red_image: Image.Image) -> None:
         """Kitty 'a=T' means 'transmit and display'."""
         output = KittyRenderer().render(red_image, width=4, height=4)
         assert "a=T" in output

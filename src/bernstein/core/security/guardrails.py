@@ -175,22 +175,22 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("aws_session_token", re.compile(r"(?i)aws[_\s]*session[_\s]*token\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{100,}")),
     # GCP
     ("gcp_service_account", re.compile(r'"type"\s*:\s*"service_account"')),
-    ("gcp_api_key", re.compile(r"AIza[0-9A-Za-z_-]{35}")),
-    ("gcp_oauth_token", re.compile(r"ya29\.[0-9A-Za-z_-]{50,}")),
+    ("gcp_api_key", re.compile(r"AIza[\w-]{35}")),
+    ("gcp_oauth_token", re.compile(r"ya29\.[\w-]{50,}")),
     # GitHub
-    ("github_token", re.compile(r"ghp_[a-zA-Z0-9]{36}")),
-    ("github_pat", re.compile(r"github_pat_[a-zA-Z0-9_]{82}")),
-    ("github_oauth", re.compile(r"gho_[a-zA-Z0-9]{36}")),
-    ("github_app_token", re.compile(r"(?:ghs|ghu)_[a-zA-Z0-9]{36}")),
-    ("github_fine_grained", re.compile(r"github_pat_[a-zA-Z0-9_]{22,}")),
+    ("github_token", re.compile(r"ghp_\w{36}")),
+    ("github_pat", re.compile(r"github_pat_\w{82}")),
+    ("github_oauth", re.compile(r"gho_\w{36}")),
+    ("github_app_token", re.compile(r"(?:ghs|ghu)_\w{36}")),
+    ("github_fine_grained", re.compile(r"github_pat_\w{22,}")),
     # GitLab
-    ("gitlab_pat", re.compile(r"glpat-[a-zA-Z0-9_-]{20,}")),
-    ("gitlab_runner", re.compile(r"GR1348941[a-zA-Z0-9_-]{20,}")),
+    ("gitlab_pat", re.compile(r"glpat-[\w-]{20,}")),
+    ("gitlab_runner", re.compile(r"GR1348941[\w-]{20,}")),
     # Slack
-    ("slack_bot_token", re.compile(r"xoxb-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24,}")),
-    ("slack_user_token", re.compile(r"xoxp-[0-9]{10,}-[0-9]{10,}-[0-9]{10,}-[a-f0-9]{32}")),
-    ("slack_webhook", re.compile(r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+")),
-    ("slack_app_token", re.compile(r"xapp-[0-9]+-[A-Z0-9]+-[0-9]+-[a-f0-9]+")),
+    ("slack_bot_token", re.compile(r"xoxb-\d{10,}-\d{10,}-\w{24,}")),
+    ("slack_user_token", re.compile(r"xoxp-\d{10,}-\d{10,}-\d{10,}-[a-f\d]{32}")),
+    ("slack_webhook", re.compile(r"https://hooks\.slack\.com/services/T[A-Z\d]+/B[A-Z\d]+/\w+")),
+    ("slack_app_token", re.compile(r"xapp-\d+-[A-Z\d]+-\d+-[a-f\d]+")),
     # Database URLs
     (
         "database_url",
