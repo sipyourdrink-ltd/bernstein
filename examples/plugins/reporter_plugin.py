@@ -65,7 +65,7 @@ class SlackReporter:
         self._summary.failed.append(f"{task_id} ({role}): {error[:100]}")
         self._post(
             f":x: Task *{task_id}* failed ({role})\n```{error[:300]}```",
-            urgent=True,
+            
         )
 
     @hookimpl

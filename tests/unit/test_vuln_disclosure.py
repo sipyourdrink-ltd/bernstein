@@ -325,7 +325,7 @@ class TestRewardCalculation:
         manager.submit_report(sample_report)
         manager.triage_report("VR-001")
         reward = manager.calculate_reward("VR-001")
-        assert reward == 1500.0
+        assert reward == pytest.approx(1500.0)
 
     def test_critical_severity_reward(self, manager: VulnerabilityDisclosureManager) -> None:
         report = VulnReport(
@@ -338,7 +338,7 @@ class TestRewardCalculation:
         manager.submit_report(report)
         manager.triage_report("VR-CRIT")
         reward = manager.calculate_reward("VR-CRIT")
-        assert reward == 5000.0
+        assert reward == pytest.approx(5000.0)
 
     def test_unknown_severity_zero_reward(
         self, manager: VulnerabilityDisclosureManager
@@ -359,7 +359,7 @@ class TestRewardCalculation:
         )
         mgr.submit_report(report)
         mgr.triage_report("VR-LOW")
-        assert mgr.calculate_reward("VR-LOW") == 0.0
+        assert mgr.calculate_reward("VR-LOW") == pytest.approx(0.0)
 
     def test_reward_capped_at_max(
         self, manager: VulnerabilityDisclosureManager
@@ -379,7 +379,7 @@ class TestRewardCalculation:
         )
         mgr.submit_report(report)
         mgr.triage_report("VR-CAP")
-        assert mgr.calculate_reward("VR-CAP") == 10000.0
+        assert mgr.calculate_reward("VR-CAP") == pytest.approx(10000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -469,16 +469,16 @@ class TestBountyScope:
 
     def test_default_rewards(self) -> None:
         scope = BountyScope(in_scope=("/api/*",))
-        assert scope.rewards["low"] == 100.0
-        assert scope.rewards["critical"] == 5000.0
+        assert scope.rewards["low"] == pytest.approx(100.0)
+        assert scope.rewards["critical"] == pytest.approx(5000.0)
 
     def test_custom_rewards(self) -> None:
         scope = BountyScope(
             in_scope=("/api/*",),
             rewards={"low": 50.0, "high": 3000.0},
         )
-        assert scope.rewards.get("low") == 50.0
-        assert scope.rewards.get("high") == 3000.0
+        assert scope.rewards.get("low") == pytest.approx(50.0)
+        assert scope.rewards.get("high") == pytest.approx(3000.0)
 
     def test_frozen_scope(self) -> None:
         scope = BountyScope(in_scope=("/api/*",))
