@@ -73,7 +73,7 @@ class TfIdfBackend:
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
-        return re.findall(r"\b[a-z_][a-z0-9_]{1,}\b", text.lower())
+        return re.findall(r"\b[a-z_][a-z0-9_]+\b", text.lower())
 
     def fit(self, documents: list[str]) -> None:
         doc_count = len(documents)

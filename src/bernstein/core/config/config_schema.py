@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Matches ${VAR} and ${VAR:-default}
-_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}")
+_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_]\w*)(?::-(.*?))?\}")
 
 # Variables that must never be expanded (prevent exfiltration of secrets
 # through config values that end up in logs or error messages).
