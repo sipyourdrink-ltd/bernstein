@@ -87,6 +87,23 @@ def _normalize_mapping_list(raw: object) -> dict[str, list[str]]:
     return normalized
 
 
+def _collect_imports_from_node(node: ast.AST, package_prefixes: set[str]) -> set[str]:
+    """Collect project-scoped import names from a single AST node."""
+    imports: set[str] = set()
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            top = alias.name.split(".", 1)[0]
+            if top in package_prefixes:
+                imports.add(alias.name)
+    elif isinstance(node, ast.ImportFrom):
+        module = node.module or ""
+        if module:
+            top = module.split(".", 1)[0]
+            if top in package_prefixes:
+                imports.add(module)
+    return imports
+
+
 def extract_project_imports(path: Path, package_prefixes: set[str]) -> set[str]:
     """Extract imported project module names from a Python file."""
     try:
@@ -96,18 +113,7 @@ def extract_project_imports(path: Path, package_prefixes: set[str]) -> set[str]:
 
     imports: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                top = alias.name.split(".", 1)[0]
-                if top in package_prefixes:
-                    imports.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            if not module:
-                continue
-            top = module.split(".", 1)[0]
-            if top in package_prefixes:
-                imports.add(module)
+        imports.update(_collect_imports_from_node(node, package_prefixes))
     return imports
 
 
@@ -148,6 +154,21 @@ def build_compat_dep_map(
     }
 
 
+def _check_hashes_fresh(
+    file_iter: list[tuple[str, Path]],
+    dep_map: dict[str, object],
+) -> bool:
+    """Return False if any file hash in dep_map is stale for the given files."""
+    for key, file_path in file_iter:
+        entry = dep_map.get(key)
+        if not isinstance(entry, dict):
+            return False
+        entry_dict = cast(_CAST_DICT_STR_OBJ, entry)
+        if entry_dict.get("hash") != _file_hash(file_path):
+            return False
+    return True
+
+
 def compat_cache_is_fresh(
     cached: dict[str, Any],
     *,
@@ -156,36 +177,60 @@ def compat_cache_is_fresh(
     test_dirs: list[Path],
 ) -> bool:
     """Return whether a legacy dependency map still matches on-disk files."""
-    test_deps_raw = cached.get("test_deps")
-    source_imports_raw = cached.get("source_imports")
     if cached.get("version") != _COMPAT_CACHE_VERSION:
         return False
+    test_deps_raw = cached.get("test_deps")
+    source_imports_raw = cached.get("source_imports")
     test_deps = cast(_CAST_DICT_STR_OBJ, test_deps_raw) if isinstance(test_deps_raw, dict) else {}
     source_imports = cast(_CAST_DICT_STR_OBJ, source_imports_raw) if isinstance(source_imports_raw, dict) else {}
 
+    test_files: list[tuple[str, Path]] = []
     for test_dir in test_dirs:
-        if not test_dir.exists():
-            continue
-        for test_file in test_dir.glob("test_*.py"):
-            rel = test_file.relative_to(root).as_posix()
-            entry = test_deps.get(rel)
-            if not isinstance(entry, dict):
-                return False
-            entry_dict = cast(_CAST_DICT_STR_OBJ, entry)
-            if entry_dict.get("hash") != _file_hash(test_file):
-                return False
+        if test_dir.exists():
+            test_files.extend(
+                (tf.relative_to(root).as_posix(), tf) for tf in test_dir.glob("test_*.py")
+            )
+    if not _check_hashes_fresh(test_files, test_deps):
+        return False
 
     if src_root.exists():
-        for src_file in src_root.rglob("*.py"):
-            module = _path_to_module(src_file, src_root)
-            entry = source_imports.get(module)
-            if not isinstance(entry, dict):
-                return False
-            entry_dict = cast(_CAST_DICT_STR_OBJ, entry)
-            if entry_dict.get("hash") != _file_hash(src_file):
-                return False
+        src_files = [(_path_to_module(sf, src_root), sf) for sf in src_root.rglob("*.py")]
+        if not _check_hashes_fresh(src_files, source_imports):
+            return False
 
     return True
+
+
+def _build_module_to_tests_map(test_deps: dict[str, object]) -> dict[str, set[str]]:
+    """Build a reverse map from module name to test file relative paths."""
+    module_to_tests: dict[str, set[str]] = {}
+    for test_rel, entry in test_deps.items():
+        if not isinstance(entry, dict):
+            continue
+        entry_dict = cast(_CAST_DICT_STR_OBJ, entry)
+        for module in _normalize_string_list(entry_dict.get("imports", [])):
+            module_to_tests.setdefault(module, set()).add(str(test_rel))
+    return module_to_tests
+
+
+def _expand_transitive_modules(
+    changed_modules: set[str],
+    source_imports: dict[str, object],
+) -> set[str]:
+    """Expand changed modules transitively via reverse import edges."""
+    all_affected = set(changed_modules)
+    worklist = set(changed_modules)
+    while worklist:
+        current = worklist.pop()
+        for module, info in source_imports.items():
+            if not isinstance(info, dict):
+                continue
+            info_dict = cast(_CAST_DICT_STR_OBJ, info)
+            imports = _normalize_string_list(info_dict.get("imports", []))
+            if current in imports and module not in all_affected:
+                all_affected.add(str(module))
+                worklist.add(str(module))
+    return all_affected
 
 
 def compat_get_affected_tests(
@@ -204,13 +249,7 @@ def compat_get_affected_tests(
     if any("conftest.py" in changed for changed in changed_files):
         return sorted(root / rel for rel in test_deps)
 
-    module_to_tests: dict[str, set[str]] = {}
-    for test_rel, entry in test_deps.items():
-        if not isinstance(entry, dict):
-            continue
-        entry_dict = cast(_CAST_DICT_STR_OBJ, entry)
-        for module in _normalize_string_list(entry_dict.get("imports", [])):
-            module_to_tests.setdefault(module, set()).add(str(test_rel))
+    module_to_tests = _build_module_to_tests_map(test_deps)
 
     changed_modules: set[str] = set()
     for rel_path in changed_files:
@@ -218,18 +257,7 @@ def compat_get_affected_tests(
         if file_path.suffix == ".py" and file_path.is_relative_to(src_root):
             changed_modules.add(_path_to_module(file_path, src_root))
 
-    all_affected = set(changed_modules)
-    worklist = set(changed_modules)
-    while worklist:
-        current = worklist.pop()
-        for module, info in source_imports.items():
-            if not isinstance(info, dict):
-                continue
-            info_dict = cast(_CAST_DICT_STR_OBJ, info)
-            imports = _normalize_string_list(info_dict.get("imports", []))
-            if current in imports and module not in all_affected:
-                all_affected.add(str(module))
-                worklist.add(str(module))
+    all_affected = _expand_transitive_modules(changed_modules, source_imports)
 
     affected_tests: set[str] = set()
     for rel_path in changed_files:
@@ -335,27 +363,55 @@ class TestImpactAnalyzer:
         self._persist_cache()
         self._built = True
 
+    def _analyze_source(self, rel_path: str) -> tuple[set[str], str] | None:
+        """Determine tests affected by a single changed source file."""
+        file_path = self._root / rel_path
+        module = _path_to_module(file_path, self._src_root)
+        if not module:
+            return None
+
+        module_tests: set[str] = set()
+        reason = "direct_import"
+        if file_path.name == "__init__.py":
+            reason = "all"
+            module_tests.update(self._tests_for_package(module))
+        else:
+            impacted_modules = self._expand_impacted_modules({module})
+            for impacted_module in impacted_modules:
+                tests = self._graph.get(impacted_module, set())
+                if tests:
+                    if impacted_module != module:
+                        reason = "transitive"
+                    module_tests.update(tests)
+
+        return (module_tests, reason) if module_tests else None
+
+    def _compute_coverage_pct(
+        self, changed_sources: list[str], covered_sources: int, affected: set[str],
+    ) -> float:
+        """Compute the coverage percentage for the analysis."""
+        if changed_sources:
+            return round((covered_sources / len(changed_sources)) * 100.0, 2)
+        if affected:
+            return 100.0
+        return 0.0
+
     def analyze(self, changed_files: list[str]) -> ImpactAnalysis:
         """Analyze a changed-file set and return impacted tests."""
         self.build_index()
         normalized = sorted({Path(path).as_posix() for path in changed_files})
         if not normalized:
             return ImpactAnalysis(
-                changed_files=[],
-                affected_tests=[],
-                mappings=[],
-                coverage_pct=0.0,
-                fallback_used=False,
+                changed_files=[], affected_tests=[], mappings=[],
+                coverage_pct=0.0, fallback_used=False,
             )
 
         all_tests = sorted(self._all_tests)
         if any(path.endswith("conftest.py") and path.startswith("tests/") for path in normalized):
             return ImpactAnalysis(
-                changed_files=normalized,
-                affected_tests=all_tests,
+                changed_files=normalized, affected_tests=all_tests,
                 mappings=[TestMapping(source_file="tests/conftest.py", test_files=all_tests, reason="all")],
-                coverage_pct=100.0,
-                fallback_used=True,
+                coverage_pct=100.0, fallback_used=True,
             )
 
         affected: set[str] = set()
@@ -372,51 +428,26 @@ class TestImpactAnalyzer:
                 mappings.append(TestMapping(source_file=rel_path, test_files=[rel_path], reason="direct_import"))
 
         for rel_path in changed_sources:
-            file_path = self._root / rel_path
-            module = _path_to_module(file_path, self._src_root)
-            if not module:
+            result = self._analyze_source(rel_path)
+            if result is None:
                 continue
-
-            module_tests: set[str] = set()
-            reason = "direct_import"
-            if file_path.name == "__init__.py":
-                reason = "all"
-                module_tests.update(self._tests_for_package(module))
-            else:
-                impacted_modules = self._expand_impacted_modules({module})
-                for impacted_module in impacted_modules:
-                    tests = self._graph.get(impacted_module, set())
-                    if tests:
-                        if impacted_module != module:
-                            reason = "transitive"
-                        module_tests.update(tests)
-
-            if module_tests:
-                covered_sources += 1
-                test_list = sorted(module_tests)
-                affected.update(test_list)
-                mappings.append(TestMapping(source_file=rel_path, test_files=test_list, reason=reason))
+            module_tests, reason = result
+            covered_sources += 1
+            test_list = sorted(module_tests)
+            affected.update(test_list)
+            mappings.append(TestMapping(source_file=rel_path, test_files=test_list, reason=reason))
 
         if changed_sources and not affected:
             return ImpactAnalysis(
-                changed_files=normalized,
-                affected_tests=all_tests,
-                mappings=[],
-                coverage_pct=0.0,
-                fallback_used=True,
+                changed_files=normalized, affected_tests=all_tests,
+                mappings=[], coverage_pct=0.0, fallback_used=True,
             )
-
-        coverage_pct = 0.0
-        if changed_sources:
-            coverage_pct = round((covered_sources / len(changed_sources)) * 100.0, 2)
-        elif affected:
-            coverage_pct = 100.0
 
         return ImpactAnalysis(
             changed_files=normalized,
             affected_tests=sorted(affected),
             mappings=mappings,
-            coverage_pct=coverage_pct,
+            coverage_pct=self._compute_coverage_pct(changed_sources, covered_sources, affected),
             fallback_used=False,
         )
 

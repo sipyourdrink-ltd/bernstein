@@ -158,6 +158,33 @@ def _matches_any(command: str, patterns: list[str], compiled: list[re.Pattern[st
 # ---------------------------------------------------------------------------
 
 
+def _parse_string_list(raw: object) -> list[str]:
+    """Parse a YAML value into a list of strings, returning [] if not a list."""
+    return [str(p) for p in cast(_CAST_LIST_OBJ, raw)] if isinstance(raw, list) else []
+
+
+def _parse_role_policy(role_name: str, role_cfg: object) -> RoleCommandPolicy | None:
+    """Parse a single role command policy entry. Returns None if malformed."""
+    if not isinstance(role_cfg, dict):
+        logger.warning("Skipping non-mapping role entry: %r", role_name)
+        return None
+    rc = cast(_CAST_DICT_STR_ANY, role_cfg)
+
+    deny_messages: dict[int, str] = {}
+    raw_msgs: object = rc.get("deny_messages", {})
+    if isinstance(raw_msgs, dict):
+        for k, v in cast("dict[Any, Any]", raw_msgs).items():
+            with contextlib.suppress(ValueError, TypeError):
+                deny_messages[int(k)] = str(v)
+
+    return RoleCommandPolicy(
+        role=str(role_name),
+        allow=_parse_string_list(rc.get("allow", [])),
+        deny=_parse_string_list(rc.get("deny", [])),
+        deny_messages=deny_messages,
+    )
+
+
 def load_command_policies(sdd_dir: Path) -> CommandPoliciesConfig | None:
     """Load ``.sdd/config/command_policies.yaml``.
 
@@ -190,50 +217,19 @@ def load_command_policies(sdd_dir: Path) -> CommandPoliciesConfig | None:
         return None
 
     data = cast(_CAST_DICT_STR_ANY, raw)
-    version = int(data.get("version", 1))
-    enabled = bool(data.get("enabled", True))
 
-    # Global deny patterns
-    raw_global_deny: object = data.get("global_deny", [])
-    global_deny: list[str] = (
-        [str(p) for p in cast(_CAST_LIST_OBJ, raw_global_deny)] if isinstance(raw_global_deny, list) else []
-    )
-
-    # Per-role policies
     roles: dict[str, RoleCommandPolicy] = {}
     raw_roles: object = data.get("roles", {})
     if isinstance(raw_roles, dict):
         for role_name, role_cfg in cast(_CAST_DICT_STR_ANY, raw_roles).items():
-            if not isinstance(role_cfg, dict):
-                logger.warning("Skipping non-mapping role entry: %r", role_name)
-                continue
-            rc = cast(_CAST_DICT_STR_ANY, role_cfg)
-
-            raw_allow: object = rc.get("allow", [])
-            allow = [str(p) for p in cast(_CAST_LIST_OBJ, raw_allow)] if isinstance(raw_allow, list) else []
-
-            raw_deny: object = rc.get("deny", [])
-            deny = [str(p) for p in cast(_CAST_LIST_OBJ, raw_deny)] if isinstance(raw_deny, list) else []
-
-            # Optional per-pattern deny messages
-            raw_msgs: object = rc.get("deny_messages", {})
-            deny_messages: dict[int, str] = {}
-            if isinstance(raw_msgs, dict):
-                for k, v in cast("dict[Any, Any]", raw_msgs).items():
-                    with contextlib.suppress(ValueError, TypeError):
-                        deny_messages[int(k)] = str(v)
-
-            roles[str(role_name)] = RoleCommandPolicy(
-                role=str(role_name),
-                allow=allow,
-                deny=deny,
-                deny_messages=deny_messages,
-            )
+            policy = _parse_role_policy(role_name, role_cfg)
+            if policy is not None:
+                roles[str(role_name)] = policy
 
     return CommandPoliciesConfig(
-        version=version,
-        enabled=enabled,
-        global_deny=global_deny,
+        version=int(data.get("version", 1)),
+        enabled=bool(data.get("enabled", True)),
+        global_deny=_parse_string_list(data.get("global_deny", [])),
         roles=roles,
     )
 

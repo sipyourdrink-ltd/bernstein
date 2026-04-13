@@ -105,6 +105,26 @@ def get_affected_tests(changed_files: list[str], dep_map: dict[str, Any] | None 
     )
 
 
+def _handle_build() -> None:
+    """Force-rebuild the dependency map cache and print stats."""
+    print("Building dependency map...", flush=True)
+    dep_map = build_dep_map()
+    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CACHE_PATH.write_text(json.dumps(dep_map, indent=2))
+    print(
+        f"Cached {len(dep_map['test_deps'])} test files, {len(dep_map['source_imports'])} source modules"
+        f" -> {CACHE_PATH.relative_to(ROOT)}"
+    )
+
+
+def _handle_show_deps(dep_map: dict[str, Any]) -> None:
+    """Print the full test-to-imports dependency map."""
+    for test_file, entry in sorted(dep_map["test_deps"].items()):
+        print(f"\n{test_file}")
+        for imported in entry["imports"]:
+            print(f"  {imported}")
+
+
 def main() -> None:
     """CLI entry point."""
     import argparse
@@ -123,22 +143,12 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.build:
-        print("Building dependency map...", flush=True)
-        dep_map = build_dep_map()
-        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CACHE_PATH.write_text(json.dumps(dep_map, indent=2))
-        print(
-            f"Cached {len(dep_map['test_deps'])} test files, {len(dep_map['source_imports'])} source modules"
-            f" -> {CACHE_PATH.relative_to(ROOT)}"
-        )
+        _handle_build()
         return
 
     dep_map = load_or_build_dep_map()
     if args.show_deps:
-        for test_file, entry in sorted(dep_map["test_deps"].items()):
-            print(f"\n{test_file}")
-            for imported in entry["imports"]:
-                print(f"  {imported}")
+        _handle_show_deps(dep_map)
         return
 
     changed = args.files if args.files else get_changed_files(args.base)

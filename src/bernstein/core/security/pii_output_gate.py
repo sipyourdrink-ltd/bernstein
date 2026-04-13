@@ -248,6 +248,69 @@ def _is_allowlisted(line: str, allowlist_prefixes: list[str] | None = None) -> b
     return any(p.search(line) for p in _ALLOWLIST_PATTERNS) or _contains_allowlist_prefix(line, allowlist_prefixes)
 
 
+def _check_rule_match(
+    rule_label: str,
+    pattern: re.Pattern[str],
+    line: str,
+) -> re.Match[str] | None:
+    """Check a single rule against a line, applying rule-specific filters.
+
+    Returns the match object if the rule fires, or None if it does not apply.
+    """
+    m = pattern.search(line)
+    if not m:
+        return None
+    if rule_label == "credit_card_number" and not _looks_like_credit_card(m.group(0)):
+        return None
+    if rule_label == "high_entropy_assignment":
+        value = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0)
+        if not _has_mixed_case_and_digits(value):
+            return None
+    return m
+
+
+def _build_redacted_excerpt(line: str, m: re.Match[str]) -> str:
+    """Build a redacted excerpt around a regex match — never stores raw secrets."""
+    start = max(0, m.start() - 10)
+    end = min(len(line), m.end() + 10)
+    raw_excerpt = line[start:end]
+    rel_start = m.start() - start
+    rel_end = m.end() - start
+    redacted = raw_excerpt[:rel_start] + "***" + raw_excerpt[rel_end:]
+    if len(redacted) > 60:
+        redacted = redacted[:57] + "..."
+    return redacted
+
+
+def _scan_line(
+    line: str,
+    line_num: int,
+    seen_rules: set[str],
+    allowlist_prefixes: list[str] | None,
+    findings: list[SecretFinding],
+) -> None:
+    """Scan a single line against all secret rules, appending any findings."""
+    if _is_allowlisted(line, allowlist_prefixes):
+        return
+    for rule_label, pattern, severity, description in _SECRET_RULES:
+        if rule_label in seen_rules:
+            continue
+        m = _check_rule_match(rule_label, pattern, line)
+        if m is None:
+            continue
+        redacted = _build_redacted_excerpt(line, m)
+        findings.append(
+            SecretFinding(
+                rule=rule_label,
+                severity=severity,
+                line_number=line_num,
+                redacted_match=redacted,
+                description=description,
+            )
+        )
+        seen_rules.add(rule_label)
+
+
 def scan_text(
     text: str,
     *,
@@ -273,41 +336,7 @@ def scan_text(
     seen_rules: set[str] = set()
 
     for line_num, line in enumerate(text.splitlines(), start=1):
-        if _is_allowlisted(line, allowlist_prefixes):
-            continue
-
-        for rule_label, pattern, severity, description in _SECRET_RULES:
-            if rule_label in seen_rules:
-                continue
-
-            m = pattern.search(line)
-            if m:
-                if rule_label == "credit_card_number" and not _looks_like_credit_card(m.group(0)):
-                    continue
-                if rule_label == "high_entropy_assignment":
-                    value = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0)
-                    if not _has_mixed_case_and_digits(value):
-                        continue
-                # Build redacted excerpt — never store raw secrets
-                start = max(0, m.start() - 10)
-                end = min(len(line), m.end() + 10)
-                raw_excerpt = line[start:end]
-                rel_start = m.start() - start
-                rel_end = m.end() - start
-                redacted = raw_excerpt[:rel_start] + "***" + raw_excerpt[rel_end:]
-                if len(redacted) > 60:
-                    redacted = redacted[:57] + "..."
-
-                findings.append(
-                    SecretFinding(
-                        rule=rule_label,
-                        severity=severity,
-                        line_number=line_num,
-                        redacted_match=redacted,
-                        description=description,
-                    )
-                )
-                seen_rules.add(rule_label)
+        _scan_line(line, line_num, seen_rules, allowlist_prefixes, findings)
 
     return findings
 
@@ -337,48 +366,11 @@ def scan_diff(
         diff_line_num += 1
 
         # Only scan added lines (skip diff headers, context, removals)
-        if not raw_line.startswith("+"):
-            continue
-        # Skip diff header lines like "+++ b/file.py"
-        if raw_line.startswith("+++"):
+        if not raw_line.startswith("+") or raw_line.startswith("+++"):
             continue
 
         line = raw_line[1:]  # strip the leading "+"
-
-        if _is_allowlisted(line, allowlist_prefixes):
-            continue
-
-        for rule_label, pattern, severity, description in _SECRET_RULES:
-            if rule_label in seen_rules:
-                continue
-
-            m = pattern.search(line)
-            if m:
-                if rule_label == "credit_card_number" and not _looks_like_credit_card(m.group(0)):
-                    continue
-                if rule_label == "high_entropy_assignment":
-                    value = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0)
-                    if not _has_mixed_case_and_digits(value):
-                        continue
-                start = max(0, m.start() - 10)
-                end = min(len(line), m.end() + 10)
-                raw_excerpt = line[start:end]
-                rel_start = m.start() - start
-                rel_end = m.end() - start
-                redacted = raw_excerpt[:rel_start] + "***" + raw_excerpt[rel_end:]
-                if len(redacted) > 60:
-                    redacted = redacted[:57] + "..."
-
-                findings.append(
-                    SecretFinding(
-                        rule=rule_label,
-                        severity=severity,
-                        line_number=diff_line_num,
-                        redacted_match=redacted,
-                        description=description,
-                    )
-                )
-                seen_rules.add(rule_label)
+        _scan_line(line, diff_line_num, seen_rules, allowlist_prefixes, findings)
 
     return findings
 

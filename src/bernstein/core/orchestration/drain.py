@@ -263,6 +263,30 @@ class DrainCoordinator:
     # Public API
     # ------------------------------------------------------------------
 
+    async def _execute_phase(
+        self,
+        phase: DrainPhase,
+        method: Callable[[], Coroutine[None, None, None]],
+        callback: Callable[[DrainPhase, list[AgentDrainStatus]], None] | None,
+    ) -> None:
+        """Execute a single drain phase with status tracking and error handling."""
+        self._current_phase = phase.number
+        phase.status = "running"
+        phase.started_at = time.monotonic()
+        if callback is not None:
+            callback(phase, self._agents)
+        try:
+            await method()
+            if phase.status == "running":
+                phase.status = "done"
+        except Exception:
+            phase.status = "failed"
+            logger.exception("Phase %d (%s) failed", phase.number, phase.name)
+        finally:
+            phase.finished_at = time.monotonic()
+            if callback is not None:
+                callback(phase, self._agents)
+
     async def run(
         self,
         callback: Callable[[DrainPhase, list[AgentDrainStatus]], None] | None = None,
@@ -291,25 +315,7 @@ class DrainCoordinator:
         for idx, method in enumerate(phase_methods):
             if self._cancelled:
                 break
-
-            phase = self._phases[idx]
-            self._current_phase = phase.number
-            phase.status = "running"
-            phase.started_at = time.monotonic()
-            if callback is not None:
-                callback(phase, self._agents)
-
-            try:
-                await method()
-                if phase.status == "running":
-                    phase.status = "done"
-            except Exception:
-                phase.status = "failed"
-                logger.exception("Phase %d (%s) failed", phase.number, phase.name)
-            finally:
-                phase.finished_at = time.monotonic()
-                if callback is not None:
-                    callback(phase, self._agents)
+            await self._execute_phase(self._phases[idx], method, callback)
 
         report.agents = self._agents
         report.merges = self._merges
@@ -571,6 +577,56 @@ class DrainCoordinator:
         killed = sum(1 for a in self._agents if a.status == "killed")
         phase.detail = f"{exited} exited, {killed} killed"
 
+    @staticmethod
+    def _try_commit_worktree(agent: AgentDrainStatus) -> bool:
+        """Attempt to stage and commit dirty files in an agent worktree.
+
+        Returns True if a commit was made, False otherwise.
+        """
+        if not agent.worktree_path:
+            return False
+        wt = Path(agent.worktree_path)
+        if not wt.exists():
+            return False
+
+        status_result = _run_git(["status", "--porcelain"], cwd=wt)
+        if status_result.returncode != 0 or not status_result.stdout.strip():
+            return False
+
+        add_result = _run_git(["add", "-A"], cwd=wt)
+        if add_result.returncode != 0:
+            logger.warning("git add failed in %s: %s", wt, add_result.stderr.strip())
+            return False
+
+        commit_result = _run_git(["commit", "-m", "chore(drain): auto-save during drain"], cwd=wt)
+        if commit_result.returncode != 0:
+            logger.warning("git commit failed in %s: %s", wt, commit_result.stderr.strip())
+            return False
+
+        diff_result = _run_git(["diff", "--name-only", "HEAD~1..HEAD"], cwd=wt)
+        file_count = len(diff_result.stdout.strip().splitlines()) if diff_result.returncode == 0 else 0
+        agent.committed_files = file_count
+        logger.info("Auto-committed %d files in %s", file_count, wt)
+        return True
+
+    def _detect_branches_ahead(self) -> None:
+        """Detect agent worktree branches that are ahead of main."""
+        for agent in self._agents:
+            if not agent.worktree_path:
+                continue
+            wt = Path(agent.worktree_path)
+            if not wt.exists():
+                continue
+            branch_result = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt)
+            if branch_result.returncode != 0:
+                continue
+            branch = branch_result.stdout.strip()
+            if not branch or branch == "main":
+                continue
+            log_result = _run_git(["log", f"main..{branch}", "--oneline"], cwd=self._workdir)
+            if log_result.returncode == 0 and log_result.stdout.strip():
+                self._branches_ahead.append(branch)
+
     async def _phase_commit(self) -> None:
         """Phase 4: Commit — auto-save dirty worktrees."""
         await asyncio.sleep(0)  # Async interface requirement
@@ -581,58 +637,8 @@ class DrainCoordinator:
             phase.detail = "Auto-commit disabled"
             return
 
-        committed = 0
-        for agent in self._agents:
-            if not agent.worktree_path:
-                continue
-            wt = Path(agent.worktree_path)
-            if not wt.exists():
-                continue
-
-            # Check for dirty state.
-            status_result = _run_git(["status", "--porcelain"], cwd=wt)
-            if status_result.returncode != 0 or not status_result.stdout.strip():
-                continue
-
-            # Stage and commit.
-            add_result = _run_git(["add", "-A"], cwd=wt)
-            if add_result.returncode != 0:
-                logger.warning("git add failed in %s: %s", wt, add_result.stderr.strip())
-                continue
-
-            commit_result = _run_git(
-                ["commit", "-m", "chore(drain): auto-save during drain"],
-                cwd=wt,
-            )
-            if commit_result.returncode != 0:
-                logger.warning("git commit failed in %s: %s", wt, commit_result.stderr.strip())
-                continue
-
-            # Count files in the commit.
-            diff_result = _run_git(["diff", "--name-only", "HEAD~1..HEAD"], cwd=wt)
-            file_count = len(diff_result.stdout.strip().splitlines()) if diff_result.returncode == 0 else 0
-            agent.committed_files = file_count
-            committed += 1
-            logger.info("Auto-committed %d files in %s", file_count, wt)
-
-        # Detect branches ahead of main.
-        for agent in self._agents:
-            if not agent.worktree_path:
-                continue
-            wt = Path(agent.worktree_path)
-            if not wt.exists():
-                continue
-
-            branch_result = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt)
-            if branch_result.returncode != 0:
-                continue
-            branch = branch_result.stdout.strip()
-            if not branch or branch == "main":
-                continue
-
-            log_result = _run_git(["log", f"main..{branch}", "--oneline"], cwd=self._workdir)
-            if log_result.returncode == 0 and log_result.stdout.strip():
-                self._branches_ahead.append(branch)
+        committed = sum(1 for agent in self._agents if self._try_commit_worktree(agent))
+        self._detect_branches_ahead()
 
         phase.detail = (
             f"{committed} worktree{'s' if committed != 1 else ''} committed, "

@@ -402,6 +402,66 @@ class _RichGroup(click.Group):
         return super().parse_args(ctx, args)
 
 
+def _background_startup(workdir: Path) -> dict[str, object]:
+    """Run slow startup tasks + pre-import heavy modules in background thread."""
+    result: dict[str, object] = {"agents": [], "task_count": 0, "version": "", "goal": ""}
+    try:
+        from bernstein.core.agent_discovery import discover_agents_cached
+
+        _disc = discover_agents_cached()
+        result["agents"] = [
+            {"name": a.name, "logged_in": a.logged_in, "default_model": a.default_model} for a in _disc.agents
+        ]
+    except Exception:
+        pass
+    try:
+        _open_dir = workdir / ".sdd" / "backlog" / "open"
+        if _open_dir.exists():
+            result["task_count"] = sum(1 for f in _open_dir.iterdir() if f.suffix in (".yaml", ".yml", ".md"))
+    except Exception:
+        pass
+    try:
+        import bernstein.cli.run_cmd  # pyright: ignore[reportUnusedImport]
+        import bernstein.core.bootstrap  # pyright: ignore[reportUnusedImport]
+        import bernstein.core.seed  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version as _get_version
+
+        result["version"] = _get_version("bernstein")
+    except Exception:
+        pass
+    return result
+
+
+def _validate_evolve_mode(evolve: bool, budget: float, max_cycles: int, yes: bool) -> None:
+    """Validate evolve mode flags: require safety limit and user confirmation."""
+    if not evolve:
+        return
+    if budget <= 0 and max_cycles <= 0:
+        from bernstein.cli.errors import BernsteinError
+
+        BernsteinError(
+            what="Evolve mode requires a safety limit",
+            why="Evolve mode will autonomously modify code indefinitely",
+            fix="Add --budget 5.00 or --max-cycles 10",
+        ).print()
+        raise SystemExit(1)
+
+    if not yes:
+        budget_str = f"${budget:.2f}" if budget > 0 else "unlimited"
+        cycles_str = f"{max_cycles} cycles" if max_cycles > 0 else "unlimited"
+        console.print(f"\n[bold yellow]Evolve mode (safety limit: {budget_str} cost, {cycles_str})[/bold yellow]")
+        console.print(
+            "[dim]Bernstein will autonomously[/dim] "
+            "[bold]read your codebase, propose changes, and commit them to main[/bold][dim].\n"
+        )
+        if not click.confirm("Ready to enable self-improvement?"):
+            console.print("[dim]Cancelled.[/dim]")
+            raise SystemExit(0)
+
+
 @click.group(cls=_RichGroup, invoke_without_command=True)
 @click.version_option(package_name="bernstein")
 @click.option("--goal", "-g", default=None, help="Inline goal (no seed file needed).")
@@ -543,55 +603,9 @@ def cli(
     workdir = Path.cwd()
     port = 8052
 
-    # Show splash IMMEDIATELY with minimal data — heavy work runs in background.
-    # This eliminates the 5-second blank screen before the splash appears.
-    _splash_future: concurrent.futures.Future[dict[str, object]] | None = None
-
-    def _background_startup() -> dict[str, object]:
-        """Run slow startup tasks + pre-import heavy modules in background thread.
-
-        While the splash is showing (3.5s), this thread:
-        1. Discovers installed agents (checks PATH, runs --version)
-        2. Counts backlog tasks
-        3. Gets bernstein version
-        4. Pre-imports heavy modules (run_cmd, bootstrap, httpx, yaml)
-           so they're cached by the time splash ends and config screen renders.
-        """
-        result: dict[str, object] = {"agents": [], "task_count": 0, "version": "", "goal": ""}
-        try:
-            from bernstein.core.agent_discovery import discover_agents_cached
-
-            _disc = discover_agents_cached()
-            result["agents"] = [
-                {"name": a.name, "logged_in": a.logged_in, "default_model": a.default_model} for a in _disc.agents
-            ]
-        except Exception:
-            pass
-        try:
-            _open_dir = workdir / ".sdd" / "backlog" / "open"
-            if _open_dir.exists():
-                result["task_count"] = sum(1 for f in _open_dir.iterdir() if f.suffix in (".yaml", ".yml", ".md"))
-        except Exception:
-            pass
-        # Pre-import heavy modules while user admires the splash.
-        # These imports take 1-2s but will be instant when needed later.
-        try:
-            import bernstein.cli.run_cmd  # pyright: ignore[reportUnusedImport]
-            import bernstein.core.bootstrap  # pyright: ignore[reportUnusedImport]
-            import bernstein.core.seed  # noqa: F401  # pyright: ignore[reportUnusedImport]
-        except Exception:
-            pass
-        try:
-            from importlib.metadata import version as _get_version
-
-            result["version"] = _get_version("bernstein")
-        except Exception:
-            pass
-        return result
-
     # Start background work, then show splash concurrently.
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    _splash_future = executor.submit(_background_startup)
+    _splash_future = executor.submit(_background_startup, workdir)
 
     # Show splash immediately (gradient + logo) — no agent data needed for visuals.
     splash(
@@ -610,22 +624,6 @@ def cli(
     # Collect background results (should be done by now — splash took 3.5 seconds).
     _bg = _splash_future.result(timeout=10)
     executor.shutdown(wait=False)
-    _splash_agents = list(_bg.get("agents", []))  # type: ignore[arg-type]
-    _raw_count = _bg.get("task_count", 0)
-    _task_count = int(_raw_count) if isinstance(_raw_count, (int, float, str)) else 0
-    _version = str(_bg.get("version", ""))
-
-    # Read goal from seed (fast, no need for background).
-    _goal_preview = goal or ""
-    if not _goal_preview and seed_path:
-        try:
-            import yaml
-
-            with open(seed_path) as f:
-                _seed_data = yaml.safe_load(f)
-            _goal_preview = str(_seed_data.get("goal", ""))[:80]
-        except Exception:
-            pass
 
     if dry_run:
         print_dry_run_table(workdir)
@@ -636,29 +634,7 @@ def cli(
     if recovered:
         console.print(f"[yellow]Recovered {recovered} orphaned ticket(s).[/yellow]")
 
-    # Evolve mode safety: require --budget or --max-cycles
-    if evolve and budget <= 0 and max_cycles <= 0:
-        from bernstein.cli.errors import BernsteinError
-
-        BernsteinError(
-            what="Evolve mode requires a safety limit",
-            why="Evolve mode will autonomously modify code indefinitely",
-            fix="Add --budget 5.00 or --max-cycles 10",
-        ).print()
-        raise SystemExit(1)
-
-    # Evolve mode confirmation: show budget/cycles and require explicit approval
-    if evolve and not yes:
-        budget_str = f"${budget:.2f}" if budget > 0 else "unlimited"
-        cycles_str = f"{max_cycles} cycles" if max_cycles > 0 else "unlimited"
-        console.print(f"\n[bold yellow]Evolve mode (safety limit: {budget_str} cost, {cycles_str})[/bold yellow]")
-        console.print(
-            "[dim]Bernstein will autonomously[/dim] "
-            "[bold]read your codebase, propose changes, and commit them to main[/bold][dim].\n"
-        )
-        if not click.confirm("Ready to enable self-improvement?"):
-            console.print("[dim]Cancelled.[/dim]")
-            raise SystemExit(0)
+    _validate_evolve_mode(evolve, budget, max_cycles, yes)
 
     # Main orchestration flow — call run's callback directly with mapped params
     assert run.callback is not None

@@ -744,6 +744,29 @@ def run_agent_test_mutation_gate_sync(
 # ---------------------------------------------------------------------------
 
 
+_PII_BINARY_SUFFIXES = frozenset({
+    ".pyc", ".pyo", ".so", ".dylib", ".whl", ".egg",
+    ".gz", ".zip", ".tar", ".png", ".jpg", ".gif", ".ico", ".pdf",
+})
+
+
+def _resolve_pii_scan_targets(
+    run_dir: Path,
+    config: QualityGatesConfig,
+    changed_files: list[str] | None,
+) -> list[Path]:
+    """Resolve the list of file paths to scan for PII/secrets."""
+    if changed_files is not None:
+        return [(run_dir / rel_path) for rel_path in changed_files]
+    targets: list[Path] = []
+    for scan_path in config.pii_scan_paths:
+        target = run_dir / scan_path
+        if not target.exists():
+            continue
+        targets.extend([target] if target.is_file() else sorted(target.rglob("*")))
+    return targets
+
+
 def _run_pii_gate(
     config: QualityGatesConfig,
     run_dir: Path,
@@ -764,43 +787,13 @@ def _run_pii_gate(
         QualityGateCheckResult with ``blocked=True`` if any high-severity
         finding is detected.
     """
-    from pathlib import Path as _Path
-
     from bernstein.core.pii_output_gate import format_findings, scan_text
 
     all_findings: list[Any] = []
-    scan_targets: list[_Path]
-    if changed_files is not None:
-        scan_targets = [(_Path(run_dir) / rel_path) for rel_path in changed_files]
-    else:
-        scan_targets = []
-        for scan_path in config.pii_scan_paths:
-            target = _Path(run_dir) / scan_path
-            if not target.exists():
-                continue
-            scan_targets.extend([target] if target.is_file() else sorted(target.rglob("*")))
+    scan_targets = _resolve_pii_scan_targets(run_dir, config, changed_files)
 
     for fpath in scan_targets:
-        if not fpath.is_file():
-            continue
-        # Skip binary / non-text files
-        _skip = {
-            ".pyc",
-            ".pyo",
-            ".so",
-            ".dylib",
-            ".whl",
-            ".egg",
-            ".gz",
-            ".zip",
-            ".tar",
-            ".png",
-            ".jpg",
-            ".gif",
-            ".ico",
-            ".pdf",
-        }
-        if fpath.suffix in _skip:
+        if not fpath.is_file() or fpath.suffix in _PII_BINARY_SUFFIXES:
             continue
         try:
             content = fpath.read_text(encoding="utf-8", errors="ignore")
@@ -814,7 +807,6 @@ def _run_pii_gate(
             allowlist_prefixes=config.pii_allowlist_prefixes,
         )
         for f in findings:
-            # Annotate finding with file path for the report
             all_findings.append((str(fpath.relative_to(run_dir)), f))
 
     if not all_findings:
@@ -825,17 +817,12 @@ def _run_pii_gate(
             detail="No secrets or PII detected in agent output.",
         )
 
-    # Any high-severity finding blocks merge
     has_high = any(f.severity == "high" for _, f in all_findings)
     finding_objs = [f for _, f in all_findings]
     detail = format_findings(finding_objs)
 
-    # Prepend file paths to detail
-    file_lines: list[str] = []
-    for fpath_str, f in all_findings:
-        file_lines.append(f"  {fpath_str}:{f.line_number} [{f.severity.upper()}] {f.rule}")
+    file_lines = [f"  {fp}:{f.line_number} [{f.severity.upper()}] {f.rule}" for fp, f in all_findings]
     detail = detail + "\n\nFiles:\n" + "\n".join(file_lines)
-
     if len(detail) > 2000:
         detail = detail[:2000] + _TRUNCATED_SUFFIX
 

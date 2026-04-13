@@ -20,7 +20,7 @@ import base64
 import io
 import sys
 from abc import ABC, abstractmethod
-from typing import TextIO
+from typing import Any, TextIO
 
 from PIL import Image
 
@@ -296,6 +296,18 @@ class BrailleRenderer(BaseRenderer):
 
     _THRESHOLD: int = 128
 
+    @staticmethod
+    def _braille_bits(pixels: Any, cx: int, cy: int, pixel_w: int, pixel_h: int) -> int:
+        """Compute the braille Unicode bits for a single cell position."""
+        bits = 0
+        for dy, dot_row in enumerate(_BRAILLE_DOTS):
+            for dx, dot_bit in enumerate(dot_row):
+                px_x = cx * 2 + dx
+                px_y = cy * 4 + dy
+                if px_x < pixel_w and px_y < pixel_h and pixels[px_x, px_y]:
+                    bits |= dot_bit
+        return bits
+
     def render(self, img: Image.Image, width: int, height: int) -> str:
         pixel_w = width * 2
         pixel_h = height * 4
@@ -310,16 +322,7 @@ class BrailleRenderer(BaseRenderer):
 
         lines: list[str] = []
         for cy in range(height):
-            row: list[str] = []
-            for cx in range(width):
-                bits = 0
-                for dy, dot_row in enumerate(_BRAILLE_DOTS):
-                    for dx, dot_bit in enumerate(dot_row):
-                        px_x = cx * 2 + dx
-                        px_y = cy * 4 + dy
-                        if px_x < pixel_w and px_y < pixel_h and pixels[px_x, px_y]:
-                            bits |= dot_bit
-                row.append(chr(0x2800 + bits))
+            row = [chr(0x2800 + self._braille_bits(pixels, cx, cy, pixel_w, pixel_h)) for cx in range(width)]
             lines.append("".join(row))
 
         return "\n".join(lines)

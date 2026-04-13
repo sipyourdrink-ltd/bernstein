@@ -1280,6 +1280,24 @@ class GateRunner:
                     timeout=60,
                 )
 
+    @staticmethod
+    def _extract_complexity_from_dict(raw_map: dict[str, object]) -> float | None:
+        """Extract complexity average from a parsed JSON dict."""
+        for key in ("average_complexity", "average", "mean_complexity"):
+            value = raw_map.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+        complexities: list[float] = []
+        for value in raw_map.values():
+            if not isinstance(value, list):
+                continue
+            for item in cast("list[object]", value):
+                if isinstance(item, dict):
+                    complexity = cast("dict[str, object]", item).get("complexity")
+                    if isinstance(complexity, (int, float)):
+                        complexities.append(float(complexity))
+        return sum(complexities) / len(complexities) if complexities else None
+
     def _parse_complexity_average(self, output: str) -> float | None:
         """Parse an average complexity score from command output."""
         try:
@@ -1287,44 +1305,35 @@ class GateRunner:
         except json.JSONDecodeError:
             raw = None
         if isinstance(raw, dict):
-            raw_map = cast("dict[str, object]", raw)
-            for key in ("average_complexity", "average", "mean_complexity"):
-                value = raw_map.get(key)
-                if isinstance(value, (int, float)):
-                    return float(value)
-            complexities: list[float] = []
-            for value in raw_map.values():
-                if isinstance(value, list):
-                    items = cast("list[object]", value)
-                    for item in items:
-                        if isinstance(item, dict):
-                            item_map = cast("dict[str, object]", item)
-                            complexity = item_map.get("complexity")
-                            if isinstance(complexity, (int, float)):
-                                complexities.append(float(complexity))
-            if complexities:
-                return sum(complexities) / len(complexities)
-        stripped = output.strip()
+            result = self._extract_complexity_from_dict(cast("dict[str, object]", raw))
+            if result is not None:
+                return result
         try:
-            return float(stripped)
+            return float(output.strip())
         except ValueError:
             return None
 
-    def _detect_import_cycles_builtin(self, changed_files: list[str], run_dir: Path) -> tuple[bool, str]:
-        """Detect import cycles with a simple AST-based resolver."""
+    @staticmethod
+    def _discover_source_modules(run_dir: Path) -> tuple[dict[str, Path], Path]:
+        """Discover Python source modules, returning module-to-path map and source root."""
         source_root = run_dir / "src"
         search_root = source_root if source_root.exists() else run_dir
         module_to_path: dict[str, Path] = {}
         for py_file in sorted(search_root.rglob("*.py")):
-            if any(part.startswith(".") for part in py_file.relative_to(run_dir).parts):
+            rel_parts = py_file.relative_to(run_dir).parts
+            if any(part.startswith(".") for part in rel_parts):
                 continue
-            if "tests" in py_file.relative_to(run_dir).parts:
+            if "tests" in rel_parts:
                 continue
-            module = _module_name_from_path(py_file, source_root if source_root.exists() else run_dir)
+            module = _module_name_from_path(py_file, search_root)
             if module:
                 module_to_path[module] = py_file
+        return module_to_path, search_root
 
-        graph: dict[str, set[str]] = {module: set() for module in module_to_path}
+    @staticmethod
+    def _build_import_graph(module_to_path: dict[str, Path]) -> dict[str, set[str]]:
+        """Build a module import graph from AST parsing."""
+        graph: dict[str, set[str]] = {mod: set() for mod in module_to_path}
         for module, path in module_to_path.items():
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -1339,14 +1348,14 @@ class GateRunner:
                     target = _resolve_import_from(module, node.level, node.module)
                     if target and target in module_to_path:
                         graph[module].add(target)
+        return graph
 
-        changed_modules = {
-            _module_name_from_path(run_dir / rel_path, source_root if source_root.exists() else run_dir)
-            for rel_path in changed_files
-            if rel_path.endswith(".py")
-        }
-        changed_modules.discard("")
-
+    @staticmethod
+    def _find_cycles(
+        graph: dict[str, set[str]],
+        changed_modules: set[str],
+    ) -> set[tuple[str, ...]]:
+        """Find import cycles that intersect with changed modules via DFS."""
         cycles: set[tuple[str, ...]] = set()
         visited: set[str] = set()
         stack: list[str] = []
@@ -1370,7 +1379,21 @@ class GateRunner:
         for module in graph:
             if module not in visited:
                 visit(module)
+        return cycles
 
+    def _detect_import_cycles_builtin(self, changed_files: list[str], run_dir: Path) -> tuple[bool, str]:
+        """Detect import cycles with a simple AST-based resolver."""
+        module_to_path, search_root = self._discover_source_modules(run_dir)
+        graph = self._build_import_graph(module_to_path)
+
+        changed_modules = {
+            _module_name_from_path(run_dir / rel_path, search_root)
+            for rel_path in changed_files
+            if rel_path.endswith(".py")
+        }
+        changed_modules.discard("")
+
+        cycles = self._find_cycles(graph, changed_modules)
         if not cycles:
             return False, "No import cycles detected."
         cycle_lines = [" -> ".join(cycle) for cycle in sorted(cycles)]
@@ -1511,31 +1534,43 @@ class GateRunner:
     def _quote_paths(self, paths: list[str]) -> str:
         return " ".join(shlex.quote(path) for path in paths)
 
+    @staticmethod
+    def _find_tests_by_name(run_dir: Path, module_name: str) -> set[str]:
+        """Find test files matching a module name by naming convention."""
+        found: set[str] = set()
+        for pattern in (f"tests/**/test_{module_name}.py", f"tests/**/*{module_name}*test.py"):
+            for candidate in sorted(run_dir.glob(pattern)):
+                if candidate.is_file():
+                    found.add(candidate.relative_to(run_dir).as_posix())
+        return found
+
+    @staticmethod
+    def _find_tests_in_ancestor_dirs(run_dir: Path, source_path: Path) -> set[str]:
+        """Find test files in tests/ directories near a source file."""
+        found: set[str] = set()
+        parent = source_path.parent
+        candidate_dirs = [
+            parent / "tests",
+            *(ancestor / "tests" for ancestor in parent.parents if ancestor != run_dir.parent),
+        ]
+        for candidate_dir in candidate_dirs:
+            if not candidate_dir.exists() or not candidate_dir.is_dir():
+                continue
+            try:
+                candidate_dir.relative_to(run_dir)
+            except ValueError:
+                continue
+            for test_file in sorted(candidate_dir.glob("test_*.py")):
+                if test_file.is_file():
+                    found.add(test_file.relative_to(run_dir).as_posix())
+        return found
+
     def _impacted_tests(self, run_dir: Path, changed_python_files: list[str]) -> list[str]:
         impacted: set[str] = set()
         for rel_path in changed_python_files:
-            path = Path(rel_path)
-            module_name = path.stem
-            for pattern in (f"tests/**/test_{module_name}.py", f"tests/**/*{module_name}*test.py"):
-                for candidate in sorted(run_dir.glob(pattern)):
-                    if candidate.is_file():
-                        impacted.add(candidate.relative_to(run_dir).as_posix())
-
-            parent = (run_dir / rel_path).parent
-            candidate_dirs = [
-                parent / "tests",
-                *(ancestor / "tests" for ancestor in parent.parents if ancestor != run_dir.parent),
-            ]
-            for candidate_dir in candidate_dirs:
-                if not candidate_dir.exists() or not candidate_dir.is_dir():
-                    continue
-                try:
-                    candidate_dir.relative_to(run_dir)
-                except ValueError:
-                    continue
-                for test_file in sorted(candidate_dir.glob("test_*.py")):
-                    if test_file.is_file():
-                        impacted.add(test_file.relative_to(run_dir).as_posix())
+            module_name = Path(rel_path).stem
+            impacted.update(self._find_tests_by_name(run_dir, module_name))
+            impacted.update(self._find_tests_in_ancestor_dirs(run_dir, run_dir / rel_path))
         return sorted(impacted)
 
     def _resolve_changed_files_sync(self, task: Task, run_dir: Path) -> list[str] | None:

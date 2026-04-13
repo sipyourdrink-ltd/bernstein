@@ -65,6 +65,34 @@ def collect_completion_data(workdir: Path, session: AgentSession) -> CompletionD
 # ---------------------------------------------------------------------------
 
 
+_EFFORT_LADDER = ["low", "medium", "high", "max"]
+_MODEL_LADDER = ["haiku", "sonnet", "opus"]
+_HIGH_STAKES_ROLES = ("architect", "security")
+
+
+def _escalate_model_effort(task: Task, next_retry: int) -> tuple[str, str]:
+    """Determine escalated model and effort for a retry attempt."""
+    from bernstein.core.tasks.models import Scope as _Scope
+
+    if task.scope == _Scope.LARGE or task.role in _HIGH_STAKES_ROLES:
+        return "opus", "max"
+
+    current_model = task.model or "sonnet"
+    current_effort = task.effort or "high"
+
+    if next_retry == 1:
+        idx = _EFFORT_LADDER.index(current_effort) if current_effort in _EFFORT_LADDER else 2
+        return current_model, _EFFORT_LADDER[min(idx + 1, len(_EFFORT_LADDER) - 1)]
+
+    model_lower = current_model.lower()
+    model_idx = 1
+    for i, name in enumerate(_MODEL_LADDER):
+        if name in model_lower:
+            model_idx = i
+            break
+    return _MODEL_LADDER[min(model_idx + 1, len(_MODEL_LADDER) - 1)], "high"
+
+
 def maybe_retry_task(
     task: Task,
     *,
@@ -114,35 +142,7 @@ def maybe_retry_task(
         return False
 
     next_retry = retry_count + 1
-
-    current_model = task.model or "sonnet"
-    current_effort = task.effort or "high"
-
-    effort_ladder = ["low", "medium", "high", "max"]
-    model_ladder = ["haiku", "sonnet", "opus"]
-
-    from bernstein.core.tasks.models import Scope as _Scope
-
-    # High-stakes roles/scopes always get opus/max on any retry
-    _high_stakes_roles = ("architect", "security")
-    if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:
-        new_model = "opus"
-        new_effort = "max"
-    elif next_retry == 1:
-        # First retry: bump effort one level, keep model
-        idx = effort_ladder.index(current_effort) if current_effort in effort_ladder else 2
-        new_effort = effort_ladder[min(idx + 1, len(effort_ladder) - 1)]
-        new_model = current_model
-    else:
-        # Second+ retry: escalate model, reset effort to high
-        model_lower = current_model.lower()
-        model_idx = 1  # default to sonnet position
-        for i, name in enumerate(model_ladder):
-            if name in model_lower:
-                model_idx = i
-                break
-        new_model = model_ladder[min(model_idx + 1, len(model_ladder) - 1)]
-        new_effort = "high"
+    new_model, new_effort = _escalate_model_effort(task, next_retry)
 
     base_title = re.sub(r"^\[RETRY \d+\] ", "", task.title)
     new_title = f"[RETRY {next_retry}] {base_title}"

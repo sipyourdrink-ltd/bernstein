@@ -1163,6 +1163,44 @@ def emit_orphan_metrics(
 # ---------------------------------------------------------------------------
 
 
+def _poll_file_mtimes(orch: Any, detector: Any, lock_mgr: Any) -> None:
+    """Poll modification times of locked files and record edits."""
+    file_mtime_cache: dict[str, float] = getattr(orch, "_loop_mtime_cache", {})
+    if not hasattr(orch, "_loop_mtime_cache"):
+        orch._loop_mtime_cache = file_mtime_cache  # type: ignore[attr-defined]
+
+    for lock in lock_mgr.all_locks():
+        candidate = orch._workdir / lock.file_path
+        if not candidate.exists():
+            candidate = Path(lock.file_path)
+        try:
+            mtime = candidate.stat().st_mtime
+        except OSError:
+            continue
+        last = file_mtime_cache.get(lock.file_path, 0.0)
+        if mtime > last:
+            detector.record_edit(lock.agent_id, lock.file_path, mtime)
+            file_mtime_cache[lock.file_path] = mtime
+
+
+def _recover_loops(orch: Any, detector: Any, lock_mgr: Any) -> None:
+    """Kill agents caught in edit loops and release their locks."""
+    for loop in detector.detect_loops():
+        session = orch._agents.get(loop.agent_id)
+        if session is None or session.status == "dead":
+            continue
+        logger.warning(
+            "Loop detected: agent %s edited '%s' %d times in %.0fs — killing agent",
+            loop.agent_id, loop.file_path, loop.edit_count, loop.window_seconds,
+        )
+        with contextlib.suppress(Exception):
+            orch._spawner.kill(session)
+        _propagate_abort_to_children(orch, loop.agent_id)
+        detector.clear_wait(loop.agent_id)
+        if lock_mgr is not None:
+            lock_mgr.release(loop.agent_id)
+
+
 def check_loops_and_deadlocks(orch: Any) -> None:
     """Detect and recover from agent edit loops and file-lock deadlocks.
 
@@ -1193,47 +1231,11 @@ def check_loops_and_deadlocks(orch: Any) -> None:
 
     lock_mgr = getattr(orch, "_lock_manager", None)
 
-    # ---- 1. Poll file modification times for loop detection ----------------
     if lock_mgr is not None:
-        file_mtime_cache: dict[str, float] = getattr(orch, "_loop_mtime_cache", {})
-        if not hasattr(orch, "_loop_mtime_cache"):
-            orch._loop_mtime_cache = file_mtime_cache  # type: ignore[attr-defined]
+        _poll_file_mtimes(orch, detector, lock_mgr)
 
-        for lock in lock_mgr.all_locks():
-            # Resolve path relative to workdir; fall back to absolute
-            candidate = orch._workdir / lock.file_path
-            if not candidate.exists():
-                candidate = Path(lock.file_path)
-            try:
-                mtime = candidate.stat().st_mtime
-            except OSError:
-                continue
+    _recover_loops(orch, detector, lock_mgr)
 
-            last = file_mtime_cache.get(lock.file_path, 0.0)
-            if mtime > last:
-                detector.record_edit(lock.agent_id, lock.file_path, mtime)
-                file_mtime_cache[lock.file_path] = mtime
-
-    # ---- 2. Loop recovery --------------------------------------------------
-    for loop in detector.detect_loops():
-        session = orch._agents.get(loop.agent_id)
-        if session is None or session.status == "dead":
-            continue
-        logger.warning(
-            "Loop detected: agent %s edited '%s' %d times in %.0fs — killing agent",
-            loop.agent_id,
-            loop.file_path,
-            loop.edit_count,
-            loop.window_seconds,
-        )
-        with contextlib.suppress(Exception):
-            orch._spawner.kill(session)
-        _propagate_abort_to_children(orch, loop.agent_id)
-        detector.clear_wait(loop.agent_id)
-        if lock_mgr is not None:
-            lock_mgr.release(loop.agent_id)
-
-    # ---- 3. Deadlock recovery ----------------------------------------------
     if lock_mgr is None:
         return
 

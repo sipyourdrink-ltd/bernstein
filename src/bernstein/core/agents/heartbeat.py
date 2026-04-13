@@ -156,6 +156,53 @@ def compute_stall_profile(
     return StallProfile(3, 5, 7, "default profile")
 
 
+def _session_task_title(session: Any) -> str:
+    """Return a comma-separated task title string for a session."""
+    return ", ".join(session.task_ids) if session.task_ids else "unknown task"
+
+
+def _escalate_heartbeat(
+    signal_mgr: AgentSignalManager,
+    session: Any,
+    age: float,
+    elapsed: float,
+    shutdown_threshold: float,
+    wakeup_threshold: float,
+    shutdown_reason: str,
+) -> None:
+    """Send SHUTDOWN or WAKEUP signal based on heartbeat staleness."""
+    task_title = _session_task_title(session)
+    if age >= shutdown_threshold:
+        with contextlib.suppress(OSError):
+            signal_mgr.write_shutdown(session.id, reason=shutdown_reason, task_title=task_title)
+    elif age >= wakeup_threshold:
+        with contextlib.suppress(OSError):
+            signal_mgr.write_wakeup(
+                session.id,
+                task_title=task_title,
+                elapsed_s=elapsed,
+                last_activity_ago_s=age,
+            )
+
+
+def _check_stale_agents_simple(orch: Any) -> None:
+    """Heartbeat check fallback when no workdir is available."""
+    now = time.time()
+    for session in orch._agents.values():
+        if session.status == "dead":
+            continue
+        hb = orch._signal_mgr.read_heartbeat(session.id)
+        if hb is None:
+            continue
+        age = now - hb.timestamp
+        elapsed = now - session.spawn_ts
+        _escalate_heartbeat(
+            orch._signal_mgr, session, age, elapsed,
+            AGENT.escalation_sigterm_s, AGENT.escalation_warn_s,
+            "no_heartbeat_120s",
+        )
+
+
 def check_stale_agents(orch: Any) -> None:
     """Write WAKEUP / SHUTDOWN signals for agents with stale heartbeats."""
     config = getattr(orch, "_config", None)
@@ -164,27 +211,7 @@ def check_stale_agents(orch: Any) -> None:
 
     workdir = getattr(orch, "_workdir", None)
     if not isinstance(workdir, Path):
-        now = time.time()
-        for session in orch._agents.values():
-            if session.status == "dead":
-                continue
-            hb = orch._signal_mgr.read_heartbeat(session.id)
-            if hb is None:
-                continue
-            age = now - hb.timestamp
-            task_title = ", ".join(session.task_ids) if session.task_ids else "unknown task"
-            elapsed = now - session.spawn_ts
-            if age >= AGENT.escalation_sigterm_s:
-                with contextlib.suppress(OSError):
-                    orch._signal_mgr.write_shutdown(session.id, reason="no_heartbeat_120s", task_title=task_title)
-            elif age >= AGENT.escalation_warn_s:
-                with contextlib.suppress(OSError):
-                    orch._signal_mgr.write_wakeup(
-                        session.id,
-                        task_title=task_title,
-                        elapsed_s=elapsed,
-                        last_activity_ago_s=age,
-                    )
+        _check_stale_agents_simple(orch)
         return
 
     timeout_s = float(getattr(config, "heartbeat_timeout_s", AGENT.heartbeat_stale_s))
@@ -199,78 +226,142 @@ def check_stale_agents(orch: Any) -> None:
         else:
             continue
 
-        task_title = ", ".join(session.task_ids) if session.task_ids else "unknown task"
         elapsed = time.time() - session.spawn_ts
-        if hb_status.age_seconds >= timeout_s:
-            with contextlib.suppress(OSError):
-                orch._signal_mgr.write_shutdown(session.id, reason="no_heartbeat", task_title=task_title)
-        elif hb_status.age_seconds >= wakeup_after_s:
-            with contextlib.suppress(OSError):
-                orch._signal_mgr.write_wakeup(
-                    session.id,
-                    task_title=task_title,
-                    elapsed_s=elapsed,
-                    last_activity_ago_s=hb_status.age_seconds,
-                )
+        _escalate_heartbeat(
+            orch._signal_mgr, session, hb_status.age_seconds, elapsed,
+            timeout_s, wakeup_after_s,
+            "no_heartbeat",
+        )
+
+
+def _fetch_latest_snapshot(orch: Any, task_id: str, base: str) -> ProgressSnapshot | None:
+    """Fetch and parse the latest progress snapshot for a task from the server."""
+    try:
+        resp = orch._client.get(f"{base}/tasks/{task_id}/snapshots")
+        resp.raise_for_status()
+        snapshots_raw: Any = resp.json()
+    except Exception:
+        return None
+    if not isinstance(snapshots_raw, list) or not snapshots_raw:
+        return None
+    snapshots_data = cast("list[dict[str, Any]]", snapshots_raw)
+    latest_raw = snapshots_data[-1]
+    return ProgressSnapshot(
+        timestamp=float(latest_raw["timestamp"]),
+        files_changed=int(latest_raw.get("files_changed", 0)),
+        tests_passing=int(latest_raw.get("tests_passing", -1)),
+        errors=int(latest_raw.get("errors", 0)),
+        last_file=str(latest_raw.get("last_file", "")),
+    )
+
+
+def _update_stall_count(
+    orch: Any,
+    task_id: str,
+    latest: ProgressSnapshot,
+    is_alive: bool,
+) -> int:
+    """Update and return the stall count for a task based on snapshot comparison."""
+    last_ts = orch._last_snapshot_ts.get(task_id, 0.0)
+    if latest.timestamp <= last_ts:
+        return -1  # sentinel: no new snapshot
+
+    prev: ProgressSnapshot | None = orch._last_snapshot.get(task_id)
+    orch._last_snapshot_ts[task_id] = latest.timestamp
+    orch._last_snapshot[task_id] = latest
+
+    if is_alive:
+        orch._stall_counts[task_id] = 0
+        return -1  # alive, skip escalation
+
+    if prev is not None and prev.is_same_progress(latest):
+        orch._stall_counts[task_id] = orch._stall_counts.get(task_id, 0) + 1
+    else:
+        orch._stall_counts[task_id] = 0
+
+    return orch._stall_counts[task_id]
+
+
+def _escalate_stall_simple(
+    orch: Any,
+    session: Any,
+    task_id: str,
+    count: int,
+) -> None:
+    """Apply simple fixed-threshold stall escalation (no workdir mode)."""
+    elapsed = time.time() - session.spawn_ts
+    if count >= AGENT.escalation_kill_count:
+        with contextlib.suppress(Exception):
+            orch._spawner.kill(session)
+        orch._stall_counts[task_id] = 0
+    elif count >= AGENT.escalation_high_count:
+        with contextlib.suppress(OSError):
+            orch._signal_mgr.write_shutdown(session.id, reason="stalled_5min", task_title=task_id)
+    elif count >= AGENT.escalation_med_count:
+        with contextlib.suppress(OSError):
+            orch._signal_mgr.write_wakeup(
+                session.id, task_title=task_id, elapsed_s=elapsed, last_activity_ago_s=elapsed,
+            )
+
+
+def _escalate_stall_profiled(
+    orch: Any,
+    session: Any,
+    task_id: str,
+    count: int,
+    profile: StallProfile,
+) -> None:
+    """Apply profile-aware stall escalation (with workdir / log analysis)."""
+    elapsed = time.time() - session.spawn_ts
+    if count >= profile.kill_threshold:
+        logger.warning(
+            "Stall-killing agent %s (task %s): %d identical snapshots (%s)",
+            session.id, task_id, count, profile.reason,
+        )
+        with contextlib.suppress(Exception):
+            orch._spawner.kill(session)
+        orch._stall_counts[task_id] = 0
+    elif count >= profile.shutdown_threshold:
+        logger.warning(
+            "Stall-shutdown agent %s (task %s): %d identical snapshots (%s)",
+            session.id, task_id, count, profile.reason,
+        )
+        with contextlib.suppress(OSError):
+            orch._signal_mgr.write_shutdown(
+                session.id, reason=f"stalled:{profile.reason}", task_title=task_id,
+            )
+    elif count >= profile.wakeup_threshold:
+        logger.info(
+            "Stall-wakeup agent %s (task %s): %d identical snapshots (%s)",
+            session.id, task_id, count, profile.reason,
+        )
+        with contextlib.suppress(OSError):
+            orch._signal_mgr.write_wakeup(
+                session.id, task_title=task_id, elapsed_s=elapsed, last_activity_ago_s=elapsed,
+            )
+
+
+def _check_stalled_tasks_simple(orch: Any) -> None:
+    """Stall detection fallback when no workdir is available."""
+    base = orch._config.server_url
+    for session in orch._agents.values():
+        if session.status == "dead":
+            continue
+        for task_id in session.task_ids:
+            latest = _fetch_latest_snapshot(orch, task_id, base)
+            if latest is None:
+                continue
+            count = _update_stall_count(orch, task_id, latest, is_alive=False)
+            if count < 0:
+                continue
+            _escalate_stall_simple(orch, session, task_id, count)
 
 
 def check_stalled_tasks(orch: Any) -> None:
     """Detect stalled agents via snapshots, heartbeat, and recent log activity."""
     workdir = getattr(orch, "_workdir", None)
     if not isinstance(workdir, Path):
-        base = orch._config.server_url
-        for session in orch._agents.values():
-            if session.status == "dead":
-                continue
-            for task_id in session.task_ids:
-                try:
-                    resp = orch._client.get(f"{base}/tasks/{task_id}/snapshots")
-                    resp.raise_for_status()
-                    snapshots_raw: Any = resp.json()
-                except Exception:
-                    continue
-                if not isinstance(snapshots_raw, list) or not snapshots_raw:
-                    continue
-                snapshots_data = cast("list[dict[str, Any]]", snapshots_raw)
-                latest_raw = snapshots_data[-1]
-                latest = ProgressSnapshot(
-                    timestamp=float(latest_raw["timestamp"]),
-                    files_changed=int(latest_raw.get("files_changed", 0)),
-                    tests_passing=int(latest_raw.get("tests_passing", -1)),
-                    errors=int(latest_raw.get("errors", 0)),
-                    last_file=str(latest_raw.get("last_file", "")),
-                )
-                last_ts = orch._last_snapshot_ts.get(task_id, 0.0)
-                if latest.timestamp <= last_ts:
-                    continue
-                prev: ProgressSnapshot | None = orch._last_snapshot.get(task_id)
-                orch._last_snapshot_ts[task_id] = latest.timestamp
-                orch._last_snapshot[task_id] = latest
-                if prev is not None and prev.is_same_progress(latest):
-                    orch._stall_counts[task_id] = orch._stall_counts.get(task_id, 0) + 1
-                else:
-                    orch._stall_counts[task_id] = 0
-                count = orch._stall_counts[task_id]
-                elapsed = time.time() - session.spawn_ts
-                if count >= AGENT.escalation_kill_count:
-                    with contextlib.suppress(Exception):
-                        orch._spawner.kill(session)
-                    orch._stall_counts[task_id] = 0
-                elif count >= AGENT.escalation_high_count:
-                    with contextlib.suppress(OSError):
-                        orch._signal_mgr.write_shutdown(
-                            session.id,
-                            reason="stalled_5min",
-                            task_title=task_id,
-                        )
-                elif count >= AGENT.escalation_med_count:
-                    with contextlib.suppress(OSError):
-                        orch._signal_mgr.write_wakeup(
-                            session.id,
-                            task_title=task_id,
-                            elapsed_s=elapsed,
-                            last_activity_ago_s=elapsed,
-                        )
+        _check_stalled_tasks_simple(orch)
         return
 
     timeout_s = float(getattr(getattr(orch, "_config", None), "heartbeat_timeout_s", AGENT.heartbeat_stale_s))
@@ -288,88 +379,17 @@ def check_stalled_tasks(orch: Any) -> None:
         log_summary = aggregator.parse_log(session.id)
 
         for task_id in session.task_ids:
-            try:
-                resp = orch._client.get(f"{base}/tasks/{task_id}/snapshots")
-                resp.raise_for_status()
-                snapshots_raw: Any = resp.json()
-            except Exception:
+            latest = _fetch_latest_snapshot(orch, task_id, base)
+            if latest is None:
                 continue
-
-            if not isinstance(snapshots_raw, list) or not snapshots_raw:
+            count = _update_stall_count(orch, task_id, latest, is_alive=hb_status.is_alive)
+            if count < 0:
                 continue
-            snapshots_data = cast("list[dict[str, Any]]", snapshots_raw)
-            latest_raw = snapshots_data[-1]
-            latest = ProgressSnapshot(
-                timestamp=float(latest_raw["timestamp"]),
-                files_changed=int(latest_raw.get("files_changed", 0)),
-                tests_passing=int(latest_raw.get("tests_passing", -1)),
-                errors=int(latest_raw.get("errors", 0)),
-                last_file=str(latest_raw.get("last_file", "")),
-            )
-
-            last_ts = orch._last_snapshot_ts.get(task_id, 0.0)
-            if latest.timestamp <= last_ts:
-                continue
-
-            prev: ProgressSnapshot | None = orch._last_snapshot.get(task_id)
-            orch._last_snapshot_ts[task_id] = latest.timestamp
-            orch._last_snapshot[task_id] = latest
-
-            if hb_status.is_alive:
-                orch._stall_counts[task_id] = 0
-                continue
-
-            if prev is not None and prev.is_same_progress(latest):
-                orch._stall_counts[task_id] = orch._stall_counts.get(task_id, 0) + 1
-            else:
-                orch._stall_counts[task_id] = 0
 
             task_map = cast("dict[str, Task]", latest_tasks) if isinstance(latest_tasks, dict) else {}
             task = task_map.get(task_id)
             profile = compute_stall_profile(task, hb_status, log_summary)
-            count = orch._stall_counts[task_id]
-            elapsed = time.time() - session.spawn_ts
-
-            if count >= profile.kill_threshold:
-                logger.warning(
-                    "Stall-killing agent %s (task %s): %d identical snapshots (%s)",
-                    session.id,
-                    task_id,
-                    count,
-                    profile.reason,
-                )
-                with contextlib.suppress(Exception):
-                    orch._spawner.kill(session)
-                orch._stall_counts[task_id] = 0
-            elif count >= profile.shutdown_threshold:
-                logger.warning(
-                    "Stall-shutdown agent %s (task %s): %d identical snapshots (%s)",
-                    session.id,
-                    task_id,
-                    count,
-                    profile.reason,
-                )
-                with contextlib.suppress(OSError):
-                    orch._signal_mgr.write_shutdown(
-                        session.id,
-                        reason=f"stalled:{profile.reason}",
-                        task_title=task_id,
-                    )
-            elif count >= profile.wakeup_threshold:
-                logger.info(
-                    "Stall-wakeup agent %s (task %s): %d identical snapshots (%s)",
-                    session.id,
-                    task_id,
-                    count,
-                    profile.reason,
-                )
-                with contextlib.suppress(OSError):
-                    orch._signal_mgr.write_wakeup(
-                        session.id,
-                        task_title=task_id,
-                        elapsed_s=elapsed,
-                        last_activity_ago_s=elapsed,
-                    )
+            _escalate_stall_profiled(orch, session, task_id, count, profile)
 
 
 def detect_idle_agents(

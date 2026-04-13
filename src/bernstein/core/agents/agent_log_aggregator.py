@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -108,6 +108,28 @@ class AgentLogAggregator:
         log_path = self._resolve_log_path(session_id)
         return log_path is not None and log_path.exists()
 
+    @staticmethod
+    def _extract_unique_error_messages(error_events: list[AgentLogEvent], limit: int = 3) -> list[str]:
+        """Extract up to *limit* unique error messages from events."""
+        unique: list[str] = []
+        for event in error_events:
+            msg = event.message.strip()
+            if msg and msg not in unique:
+                unique.append(msg)
+            if len(unique) >= limit:
+                break
+        return unique
+
+    @staticmethod
+    def _find_last_success(events: list[AgentLogEvent]) -> str:
+        """Find the last successful action (file edit or passing test) in events."""
+        for event in reversed(events):
+            if event.category == "file_modified":
+                return event.message
+            if "pytest" in event.message.lower() and "passed" in event.message.lower():
+                return event.message
+        return ""
+
     def failure_context_for_retry(self, session_id: str) -> str:
         """Build a concise retry-context summary from a failed session log."""
         summary = self.parse_log(session_id)
@@ -118,22 +140,8 @@ class AgentLogAggregator:
         if not error_events:
             return ""
 
-        unique_messages: list[str] = []
-        for event in error_events:
-            msg = event.message.strip()
-            if msg and msg not in unique_messages:
-                unique_messages.append(msg)
-            if len(unique_messages) >= 3:
-                break
-
-        last_success = ""
-        for event in reversed(summary.events):
-            if event.category == "file_modified":
-                last_success = event.message
-                break
-            if "pytest" in event.message.lower() and "passed" in event.message.lower():
-                last_success = event.message
-                break
+        unique_messages = self._extract_unique_error_messages(error_events)
+        last_success = self._find_last_success(summary.events)
 
         parts: list[str] = []
         if summary.dominant_failure_category:
@@ -161,39 +169,57 @@ class AgentLogAggregator:
                 return candidate
         return None
 
+    def _process_log_line(
+        self,
+        raw_line: str,
+        line_no: int,
+        events: list[AgentLogEvent],
+        files_modified: list[str],
+        state: dict[str, Any],
+    ) -> None:
+        """Process a single log line, updating events and tracking state."""
+        stripped = raw_line.strip()
+        if stripped:
+            state["last_activity_line"] = line_no
+        if not state["first_action_line"] and self._MEANINGFUL_PATTERN.search(stripped):
+            state["first_action_line"] = line_no
+
+        event = self._event_from_line(raw_line)
+        if event is not None:
+            events.append(event)
+            if event.category == "file_modified":
+                file_path = self._extract_modified_path(event.message)
+                if file_path and file_path not in files_modified:
+                    files_modified.append(file_path)
+
+        if stripped and self._TEST_SUMMARY_PATTERN.search(stripped):
+            state["test_summary"] = stripped
+
+    @staticmethod
+    def _compute_summary_stats(
+        events: list[AgentLogEvent],
+        error_categories: frozenset[str],
+    ) -> tuple[int, int, str | None]:
+        """Compute error/warning counts and dominant failure category."""
+        error_events = [e for e in events if e.category in error_categories]
+        warning_count = sum(1 for e in events if e.level == "warning")
+        error_count = sum(1 for e in events if e.level == "error")
+        dominant = None
+        if error_events:
+            dominant = Counter(e.category for e in error_events).most_common(1)[0][0]
+        return error_count, warning_count, dominant
+
     def _summarize(self, session_id: str, lines: list[str]) -> AgentLogSummary:
         """Summarize raw log lines into counts and extracted events."""
         events: list[AgentLogEvent] = []
         files_modified: list[str] = []
-        test_summary = ""
-        first_action_line = 0
-        last_activity_line = 0
+        state: dict[str, Any] = {"test_summary": "", "first_action_line": 0, "last_activity_line": 0}
 
         for line_no, raw_line in enumerate(lines, start=1):
-            stripped = raw_line.strip()
-            if stripped:
-                last_activity_line = line_no
-            if not first_action_line and self._MEANINGFUL_PATTERN.search(stripped):
-                first_action_line = line_no
+            self._process_log_line(raw_line, line_no, events, files_modified, state)
 
-            event = self._event_from_line(raw_line)
-            if event is not None:
-                events.append(event)
-                if event.category == "file_modified":
-                    file_path = self._extract_modified_path(event.message)
-                    if file_path and file_path not in files_modified:
-                        files_modified.append(file_path)
-
-            if stripped and self._TEST_SUMMARY_PATTERN.search(stripped):
-                test_summary = stripped
-
-        error_events = [event for event in events if event.category in self._ERROR_CATEGORIES]
-        warning_count = sum(1 for event in events if event.level == "warning")
-        error_count = sum(1 for event in events if event.level == "error")
-        dominant_failure_category = None
-        if error_events:
-            dominant_failure_category = Counter(event.category for event in error_events).most_common(1)[0][0]
-
+        test_summary: str = state["test_summary"]
+        error_count, warning_count, dominant = self._compute_summary_stats(events, self._ERROR_CATEGORIES)
         tests_run = bool(test_summary) or any("pytest" in line.lower() for line in lines)
         tests_passed = tests_run and "failed" not in test_summary.lower() and "error" not in test_summary.lower()
 
@@ -207,12 +233,12 @@ class AgentLogAggregator:
             tests_run=tests_run,
             tests_passed=tests_passed,
             test_summary=test_summary,
-            rate_limit_hits=sum(1 for event in events if event.category == "rate_limit"),
-            compile_errors=sum(1 for event in events if event.category == "compile_error"),
-            tool_failures=sum(1 for event in events if event.category == "tool_failure"),
-            first_meaningful_action_line=first_action_line,
-            last_activity_line=last_activity_line,
-            dominant_failure_category=dominant_failure_category,
+            rate_limit_hits=sum(1 for e in events if e.category == "rate_limit"),
+            compile_errors=sum(1 for e in events if e.category == "compile_error"),
+            tool_failures=sum(1 for e in events if e.category == "tool_failure"),
+            first_meaningful_action_line=state["first_action_line"],
+            last_activity_line=state["last_activity_line"],
+            dominant_failure_category=dominant,
         )
 
     def _event_from_line(self, raw_line: str) -> AgentLogEvent | None:

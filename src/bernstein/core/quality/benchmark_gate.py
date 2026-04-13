@@ -250,6 +250,32 @@ class BenchmarkGate:
             raise RuntimeError("No benchmarks found in results")
         return metrics
 
+    def _check_metric_regression(
+        self,
+        name: str,
+        metric: str,
+        baseline_val: float | None,
+        current_val: float | None,
+        *,
+        higher_is_worse: bool,
+    ) -> BenchmarkRegression | None:
+        """Check a single metric for regression exceeding the threshold."""
+        if baseline_val is None or current_val is None or baseline_val <= 0:
+            return None
+        if higher_is_worse:
+            delta = (current_val - baseline_val) / baseline_val
+        else:
+            delta = (baseline_val - current_val) / baseline_val
+        if delta <= self._threshold:
+            return None
+        return BenchmarkRegression(
+            name=name,
+            metric=metric,
+            baseline=baseline_val,
+            current=current_val,
+            delta_pct=round(delta * 100, 2),
+        )
+
     def _detect_regressions(
         self,
         baseline: dict[str, BenchmarkMetrics],
@@ -261,45 +287,16 @@ class BenchmarkGate:
             base = baseline.get(name)
             if base is None:
                 continue
-            # mean_s: an increase is a regression (slower)
-            if base.mean_s > 0:
-                delta = (curr.mean_s - base.mean_s) / base.mean_s
-                if delta > self._threshold:
-                    regressions.append(
-                        BenchmarkRegression(
-                            name=name,
-                            metric="mean_s",
-                            baseline=base.mean_s,
-                            current=curr.mean_s,
-                            delta_pct=round(delta * 100, 2),
-                        )
-                    )
-            # ops: a decrease is a regression (lower throughput)
-            if curr.ops is not None and base.ops is not None and base.ops > 0:
-                delta = (base.ops - curr.ops) / base.ops
-                if delta > self._threshold:
-                    regressions.append(
-                        BenchmarkRegression(
-                            name=name,
-                            metric="ops",
-                            baseline=base.ops,
-                            current=curr.ops,
-                            delta_pct=round(delta * 100, 2),
-                        )
-                    )
-            # memory_mb: an increase is a regression (more memory)
-            if curr.memory_mb is not None and base.memory_mb is not None and base.memory_mb > 0:
-                delta = (curr.memory_mb - base.memory_mb) / base.memory_mb
-                if delta > self._threshold:
-                    regressions.append(
-                        BenchmarkRegression(
-                            name=name,
-                            metric="memory_mb",
-                            baseline=base.memory_mb,
-                            current=curr.memory_mb,
-                            delta_pct=round(delta * 100, 2),
-                        )
-                    )
+            for metric, base_val, curr_val, higher_is_worse in (
+                ("mean_s", base.mean_s, curr.mean_s, True),
+                ("ops", base.ops, curr.ops, False),
+                ("memory_mb", base.memory_mb, curr.memory_mb, True),
+            ):
+                reg = self._check_metric_regression(
+                    name, metric, base_val, curr_val, higher_is_worse=higher_is_worse,
+                )
+                if reg is not None:
+                    regressions.append(reg)
         return regressions
 
     def _format_detail(

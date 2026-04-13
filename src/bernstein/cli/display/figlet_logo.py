@@ -64,6 +64,19 @@ def _try_render_font(text: str, font_name: str, max_width: int) -> list[str] | N
     return lines or None
 
 
+def _first_successful_render(
+    text: str,
+    fonts: list[str],
+    max_width: int,
+) -> list[str] | None:
+    """Try each font in order, returning the first successful render or None."""
+    for candidate in fonts:
+        lines = _try_render_font(text, candidate, max_width)
+        if lines is not None:
+            return lines
+    return None
+
+
 def render_logo(
     text: str = "BERNSTEIN",
     font: str = "slant",
@@ -96,13 +109,10 @@ def render_logo(
         if candidate not in fonts_to_try:
             fonts_to_try.append(candidate)
 
-    for candidate in fonts_to_try:
-        lines = _try_render_font(stripped, candidate, max_width)
-        if lines is None:
-            continue
-        if color:
-            style = color if "bold" in color else f"bold {color}"
-            return "\n".join(f"[{style}]{line}[/]" if line else "" for line in lines)
-        return gradient_markup_lines(lines, colors=BERNSTEIN_GRADIENT, style="bold")
-
-    return _plain_fallback(stripped, color)
+    lines = _first_successful_render(stripped, fonts_to_try, max_width)
+    if lines is None:
+        return _plain_fallback(stripped, color)
+    if color:
+        style = color if "bold" in color else f"bold {color}"
+        return "\n".join(f"[{style}]{line}[/]" if line else "" for line in lines)
+    return gradient_markup_lines(lines, colors=BERNSTEIN_GRADIENT, style="bold")
