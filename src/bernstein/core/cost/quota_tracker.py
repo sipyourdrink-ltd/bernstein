@@ -195,10 +195,7 @@ class QuotaTracker:
             List of :class:`QuotaStatus`, one per configured provider.
         """
         with self._lock:
-            return [
-                self._status_from_accum(p, a)
-                for p, a in sorted(self._providers.items())
-            ]
+            return [self._status_from_accum(p, a) for p, a in sorted(self._providers.items())]
 
     def check_alerts(self) -> list[QuotaAlert]:
         """Check if any provider is approaching its limits.
