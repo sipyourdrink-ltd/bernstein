@@ -101,33 +101,21 @@ class _ComplexityVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.count = 1  # baseline of 1 per function/module
 
-    def visit_If(self, node: ast.If) -> None:
+    def _increment_and_visit(self, node: ast.AST) -> None:
+        """Shared handler: increment complexity by 1 and recurse."""
         self.count += 1
         self.generic_visit(node)
 
-    def visit_For(self, node: ast.For) -> None:
-        self.count += 1
-        self.generic_visit(node)
-
-    def visit_While(self, node: ast.While) -> None:
-        self.count += 1
-        self.generic_visit(node)
-
-    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        self.count += 1
-        self.generic_visit(node)
-
-    def visit_With(self, node: ast.With) -> None:
-        self.count += 1
-        self.generic_visit(node)
+    visit_If = _increment_and_visit
+    visit_For = _increment_and_visit
+    visit_While = _increment_and_visit
+    visit_ExceptHandler = _increment_and_visit
+    visit_With = _increment_and_visit
+    visit_comprehension = _increment_and_visit
 
     def visit_BoolOp(self, node: ast.BoolOp) -> None:
         # Each `and`/`or` adds a path
         self.count += len(node.values) - 1
-        self.generic_visit(node)
-
-    def visit_comprehension(self, node: ast.comprehension) -> None:
-        self.count += 1
         self.generic_visit(node)
 
 

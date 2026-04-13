@@ -81,7 +81,7 @@ class TestBuildAuthorizationUrl:
     def test_url_contains_required_params(self) -> None:
         client = self._make_client()
         challenge = PKCEChallenge.generate()
-        url, state = client.build_authorization_url(challenge)
+        url, _state = client.build_authorization_url(challenge)
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
 
         assert qs["response_type"] == ["code"]
@@ -205,7 +205,7 @@ class TestFullFlow:
             redirect_uri=REDIRECT,
         )
         challenge = PKCEChallenge.generate()
-        url, _ = client.build_authorization_url(challenge)
+        _url, _ = client.build_authorization_url(challenge)
 
         # Simulate user visiting url and receiving code in redirect
         tokens = client.exchange_code(

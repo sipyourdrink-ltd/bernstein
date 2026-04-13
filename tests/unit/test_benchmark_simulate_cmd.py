@@ -239,7 +239,6 @@ def test_benchmark_simulate_no_regression_when_identical_baseline(tmp_path: Path
     tasks = load_benchmark_tasks(tasks_dir)
     bench = ReproducibleBenchmark(tasks=tasks, config=BenchmarkConfig(seed=42))
     baseline_run = bench.run()
-    baseline_path = tmp_path / "baseline.jsonl"
     bench.save(baseline_run, tmp_path)
     baseline_path = tmp_path / "benchmark_runs.jsonl"
 
@@ -272,7 +271,6 @@ def test_benchmark_simulate_detects_regression(tmp_path: Path) -> None:
     bench = ReproducibleBenchmark(tasks=tasks, config=BenchmarkConfig(seed=42))
     # Build a "great" baseline run
     great_run = _make_run(run_id="base123", tasks_per_hour=9999.0, per_task_usd=0.00001, pass_rate=0.99)
-    baseline_path = tmp_path / "baseline.jsonl"
     bench.save(great_run, tmp_path)
     baseline_path = tmp_path / "benchmark_runs.jsonl"
 

@@ -450,9 +450,6 @@ class TestSyncBacklogToServer:
 
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
-            key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
             if request.method == "POST" and url.path == "/tasks/batch":
                 return httpx.Response(404, json={"detail": "not found"})
             if request.method == "POST" and url.path == "/tasks":

@@ -293,17 +293,13 @@ def watch_cmd(glob_pattern: str | None, directory: str) -> None:
     )
 
     class _Handler(FileSystemEventHandler):
-        def on_modified(self, event: FileSystemEvent) -> None:
+        def _push_if_file(self, event: FileSystemEvent) -> None:
             if not event.is_directory:
                 handler_wrapper.push(Path(str(event.src_path)))
 
-        def on_created(self, event: FileSystemEvent) -> None:
-            if not event.is_directory:
-                handler_wrapper.push(Path(str(event.src_path)))
-
-        def on_deleted(self, event: FileSystemEvent) -> None:
-            if not event.is_directory:
-                handler_wrapper.push(Path(str(event.src_path)))
+        on_modified = _push_if_file
+        on_created = _push_if_file
+        on_deleted = _push_if_file
 
         def on_moved(self, event: FileSystemEvent) -> None:
             # dest_path exists on MoveEvent subtype; fall back gracefully

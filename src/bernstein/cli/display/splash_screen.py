@@ -495,7 +495,6 @@ def _run_animated(console: Console, data: BootData) -> None:  # pyright: ignore[
             # Hardware checks appear one by one
             if not check_skip():
                 # Build checks incrementally
-                ts = elapsed()
                 d = data
                 checks = [
                     (f"Platform: {d.os_label}", "OK"),

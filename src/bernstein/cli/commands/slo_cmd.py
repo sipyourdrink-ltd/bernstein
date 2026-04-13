@@ -77,12 +77,6 @@ def _render_burndown(data: dict[str, Any], *, compact: bool = False) -> None:
         spark_chars = [bars[min(int(v * 8), 7)] for v in points]
         spark_text = "  " + "".join(spark_chars) + "  [dim](error budget over time)[/dim]"
 
-    # --- Projection line ---
-    proj_style = _STYLE_RED_BOLD if status == "red" else "yellow" if status == "yellow" else "green"
-    projection_line = f"\n[{proj_style}]{status_icon} {breach_projection}[/{proj_style}]"
-    if spark_text:
-        projection_line += f"\n{spark_text}"
-
     panel = Panel(
         table,
         title=f"[bold]SLO Burn-Down Dashboard[/bold]  [{status_style}]{status_icon} {status.upper()}[/{status_style}]",

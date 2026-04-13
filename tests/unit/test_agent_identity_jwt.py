@@ -55,7 +55,6 @@ def test_authenticate_jwt_token_updates_last_authenticated(tmp_path: Path, monke
 def test_authenticate_legacy_opaque_token_remains_supported(tmp_path: Path) -> None:
     """Persisted pre-JWT opaque tokens should continue to authenticate during the compatibility window."""
 
-    store = AgentIdentityStore(tmp_path)
     legacy_token = "legacy-opaque-token"
     identity_path = tmp_path / "agent_identities" / "legacy-1.json"
     identity_path.parent.mkdir(parents=True, exist_ok=True)

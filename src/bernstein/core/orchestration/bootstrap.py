@@ -21,7 +21,6 @@ import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from typing import TypeVar as _TypeVar
 
 import httpx
 from rich.console import Console
@@ -898,17 +897,15 @@ if __name__ == "__main__":
 # Initialization timeout guard (T583)
 # ---------------------------------------------------------------------------
 
-_T = _TypeVar("_T")
-
 INIT_TIMEOUT_SECONDS: float = 30.0
 
 
 async def with_init_timeout[T](
-    coro: _Awaitable[_T],
+    coro: _Awaitable[T],
     *,
     timeout: float = INIT_TIMEOUT_SECONDS,
     context: str = "initialization",
-) -> _T:
+) -> T:
     """Wrap an awaitable with a 30-second initialization timeout guard (T583).
 
     Prevents deadlocks during startup by raising :class:`asyncio.TimeoutError`

@@ -159,8 +159,9 @@ def logo_reveal(
             Defaults to Bernstein green/cyan palette.  Passed to the effect
             when the TTE API supports it; ignored silently otherwise.
     """
-    if colors is None:
-        colors = DEFAULT_COLORS
+    # colors parameter reserved for future TTE color customization;
+    # currently unused by _run_tte_reveal.
+    _ = colors or DEFAULT_COLORS
 
     if not _is_tty() or not _tte_available():
         print(text)

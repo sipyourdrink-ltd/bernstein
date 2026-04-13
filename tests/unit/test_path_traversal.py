@@ -78,7 +78,7 @@ class TestResolveAndValidatePath:
         assert rel == os.path.join("src", "foo.py")
 
     def test_absolute_path_outside_root(self, tmp_path: Path) -> None:
-        _rel, safe = resolve_and_validate_path("/etc/passwd", tmp_path)
+        _rel, safe = resolve_and_validate_path("/usr/bin/env", tmp_path)
         assert not safe
 
     def test_symlink_escape(self, tmp_path: Path) -> None:
