@@ -149,9 +149,7 @@ def _collect_multi_link_inodes(directory: Path) -> set[tuple[int, int]]:
     return inodes
 
 
-def _find_hardlink_violations(
-    wt_dir: Path, parent_inodes: set[tuple[int, int]]
-) -> list[str]:
+def _find_hardlink_violations(wt_dir: Path, parent_inodes: set[tuple[int, int]]) -> list[str]:
     """Check worktree files for inodes shared with the parent repo.
 
     Args:

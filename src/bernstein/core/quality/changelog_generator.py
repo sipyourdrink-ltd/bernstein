@@ -346,13 +346,15 @@ def render_markdown(changelog: Changelog) -> str:
     lines: list[str] = []
 
     version_label = changelog.version if changelog.version else changelog.run_id
-    lines.extend([
-        f"# Changelog — {version_label}",
-        "",
-        f"**Date:** {changelog.date}",
-        f"**Run ID:** {changelog.run_id}",
-        "",
-    ])
+    lines.extend(
+        [
+            f"# Changelog — {version_label}",
+            "",
+            f"**Date:** {changelog.date}",
+            f"**Run ID:** {changelog.run_id}",
+            "",
+        ]
+    )
 
     _render_breaking_section(lines, changelog.breaking_changes)
     _render_changes_section(lines, changelog.entries)

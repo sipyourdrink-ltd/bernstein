@@ -782,14 +782,22 @@ def _fetch_gh_issues(workdir: Path) -> list[dict[str, Any]] | None:
     try:
         result = subprocess.run(
             [
-                "gh", "issue", "list",
-                "--state", "open",
-                "--json", "number,title,body,labels,assignees",
-                "--limit", "500",
+                "gh",
+                "issue",
+                "list",
+                "--state",
+                "open",
+                "--json",
+                "number,title,body,labels,assignees",
+                "--limit",
+                "500",
             ],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=30, cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            cwd=str(workdir),
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("gh issue list failed: %s", exc)

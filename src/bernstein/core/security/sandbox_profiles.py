@@ -381,8 +381,7 @@ def render_profile_summary(profile: SandboxProfile) -> str:
         lines.append("")
 
     network_items = [
-        f"`{r.host}:{'all ports' if r.port == 0 else r.port}` ({r.protocol})"
-        for r in profile.network_rules
+        f"`{r.host}:{'all ports' if r.port == 0 else r.port}` ({r.protocol})" for r in profile.network_rules
     ]
     _render_list_section(lines, "Network Rules", network_items, "No network access")
 

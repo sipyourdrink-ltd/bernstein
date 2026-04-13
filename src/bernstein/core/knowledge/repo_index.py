@@ -262,9 +262,7 @@ def _git_file_owners(workdir: Path, files: list[str]) -> dict[str, str]:
     return owners
 
 
-def _enumerate_py_files(
-    workdir: Path, graph: RepoGraph
-) -> tuple[list[str], set[str], list[str]]:
+def _enumerate_py_files(workdir: Path, graph: RepoGraph) -> tuple[list[str], set[str], list[str]]:
     """Phase 1: Enumerate Python files and add nodes to the graph.
 
     Args:

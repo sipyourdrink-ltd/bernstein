@@ -430,9 +430,7 @@ def _file_imports_module(py_file: Path, target_module: str, target_stem: str) ->
         return name == target_module or name.endswith(f".{target_stem}")
 
     return any(
-        _import_matches(node, _matches)
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
+        _import_matches(node, _matches) for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
     )
 
 

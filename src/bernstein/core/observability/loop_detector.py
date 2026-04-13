@@ -334,9 +334,7 @@ def _all_graph_nodes(graph: dict[str, set[str]]) -> set[str]:
     return nodes
 
 
-def _dfs_cycles_from(
-    start: str, graph: dict[str, set[str]], visited: set[str]
-) -> list[list[str]]:
+def _dfs_cycles_from(start: str, graph: dict[str, set[str]], visited: set[str]) -> list[list[str]]:
     """Run iterative DFS from *start* to find simple cycles back to it.
 
     Args:

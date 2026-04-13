@@ -222,9 +222,7 @@ def _collect_file_nodes_and_edges(
 
     for rel_path in all_files:
         file_node_id = f"file:{rel_path}"
-        nodes.append(
-            KnowledgeNode(id=file_node_id, kind="file", name=Path(rel_path).name, file_path=rel_path)
-        )
+        nodes.append(KnowledgeNode(id=file_node_id, kind="file", name=Path(rel_path).name, file_path=rel_path))
 
         parsed = parse_file_symbols(workdir / rel_path, rel_path)
         if parsed is None:

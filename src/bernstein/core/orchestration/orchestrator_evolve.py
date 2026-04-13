@@ -167,8 +167,14 @@ def check_evolve(orch: Any, result: Any, tasks_by_status: dict[str, list[Any]]) 
 
     # Step 3b: GOVERN
     _run_governance_step(
-        orch, evolve_cfg, cycle_number, test_info,
-        tasks_completed, tasks_failed, committed, consecutive_empty,
+        orch,
+        evolve_cfg,
+        cycle_number,
+        test_info,
+        tasks_completed,
+        tasks_failed,
+        committed,
+        consecutive_empty,
     )
 
     # Step 4: PLAN

@@ -74,9 +74,7 @@ _DESCRIPTOR_RE = re.compile(r"^[ \t]{1,20}(?:base|our|their)[ \t]{1,10}\d+[ \t]{
 _CONFLICT_MARKER = "<<<<<<< "
 
 
-def _flush_conflicting_section(
-    paths: set[str], seen: set[str], files: list[str]
-) -> None:
+def _flush_conflicting_section(paths: set[str], seen: set[str], files: list[str]) -> None:
     """Append paths from a conflicting section to the result list.
 
     Args:

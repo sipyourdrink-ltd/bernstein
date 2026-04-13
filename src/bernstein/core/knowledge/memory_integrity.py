@@ -306,9 +306,7 @@ class ChainVerifyResult:
     broken_at: int = -1
 
 
-def _verify_content_hash(
-    data: dict[str, Any], lineno: int, lesson_id: str, result: ChainVerifyResult
-) -> bool:
+def _verify_content_hash(data: dict[str, Any], lineno: int, lesson_id: str, result: ChainVerifyResult) -> bool:
     """Verify the content_hash field of an entry.
 
     Args:
@@ -361,9 +359,7 @@ def _verify_prev_hash(
             result.broken_at = lineno
 
 
-def _verify_chain_hash(
-    data: dict[str, Any], lineno: int, lesson_id: str, result: ChainVerifyResult
-) -> str | None:
+def _verify_chain_hash(data: dict[str, Any], lineno: int, lesson_id: str, result: ChainVerifyResult) -> str | None:
     """Verify the chain_hash field and return it if valid.
 
     Args:
@@ -387,8 +383,7 @@ def _verify_chain_hash(
     expected = _sha256(f"chain:{stored_content}:{stored_prev}")
     if stored != expected:
         result.errors.append(
-            f"Line {lineno} ({lesson_id}): chain_hash MISMATCH "
-            f"— stored={stored[:12]}… expected={expected[:12]}… "
+            f"Line {lineno} ({lesson_id}): chain_hash MISMATCH — stored={stored[:12]}… expected={expected[:12]}… "
         )
         if result.broken_at < 0:
             result.broken_at = lineno

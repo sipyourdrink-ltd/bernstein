@@ -431,9 +431,7 @@ def execute_split(
     total = len(plan.chunks)
 
     for chunk in plan.chunks:
-        result = _execute_chunk(
-            cwd, chunk, plan, base_ref, head_ref, pr_title_prefix, pr_body_prefix, labels
-        )
+        result = _execute_chunk(cwd, chunk, plan, base_ref, head_ref, pr_title_prefix, pr_body_prefix, labels)
         if result is None:
             continue  # Empty diff, skipped
         if isinstance(result, SplitResult):
@@ -506,7 +504,9 @@ def _execute_chunk(
     branch_r = _create_chunk_branch(cwd, chunk)
     if not branch_r.ok:
         return SplitResult(
-            pr_urls=[], chunk_count=0, success=False,
+            pr_urls=[],
+            chunk_count=0,
+            success=False,
             error=f"Cannot create branch {chunk.branch_name}: {branch_r.stderr}",
         )
 
@@ -518,7 +518,9 @@ def _execute_chunk(
     apply_r = run_git(["apply", "--allow-empty", "-"], cwd, input_data=diff_r.stdout, timeout=30)
     if not apply_r.ok:
         return SplitResult(
-            pr_urls=[], chunk_count=0, success=False,
+            pr_urls=[],
+            chunk_count=0,
+            success=False,
             error=f"Chunk {chunk.part_number}: git apply failed: {apply_r.stderr}",
         )
 
@@ -541,7 +543,9 @@ def _execute_chunk(
     push_r = push_branch(cwd, chunk.branch_name)
     if not push_r.ok:
         return SplitResult(
-            pr_urls=[], chunk_count=0, success=False,
+            pr_urls=[],
+            chunk_count=0,
+            success=False,
             error=f"Push failed for {chunk.branch_name}: {push_r.stderr}",
         )
 

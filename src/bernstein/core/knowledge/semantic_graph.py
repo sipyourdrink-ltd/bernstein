@@ -338,9 +338,7 @@ def _make_func_symbol(
     )
 
 
-def _extract_class_symbols(
-    node: ast.ClassDef, rel_path: str, total_lines: int, result: FileSymbols
-) -> None:
+def _extract_class_symbols(node: ast.ClassDef, rel_path: str, total_lines: int, result: FileSymbols) -> None:
     """Extract class, method symbols and inheritance edges from a ClassDef.
 
     Args:
@@ -413,9 +411,7 @@ def parse_file_symbols(filepath: Path, rel_path: str) -> FileSymbols | None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_call_edge(
-    graph: SemanticGraph, fs: FileSymbols, caller_id: str, callee_name: str
-) -> None:
+def _resolve_call_edge(graph: SemanticGraph, fs: FileSymbols, caller_id: str, callee_name: str) -> None:
     """Resolve a single call reference and add the edge to the graph.
 
     Args:

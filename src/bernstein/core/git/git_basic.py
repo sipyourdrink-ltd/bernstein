@@ -507,9 +507,7 @@ def list_tags(cwd: Path, pattern: str | None = None) -> list[str]:
     return [t.strip() for t in r.stdout.strip().splitlines() if t.strip()]
 
 
-def _parse_latest_version(
-    tags: list[str], tag_prefix: str
-) -> tuple[int, int, int, str | None]:
+def _parse_latest_version(tags: list[str], tag_prefix: str) -> tuple[int, int, int, str | None]:
     """Extract the latest semver from tags.
 
     Args:

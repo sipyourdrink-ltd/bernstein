@@ -351,9 +351,7 @@ def generate_recommendations(patterns: tuple[CollaborationPattern, ...]) -> tupl
     return tuple(recs)
 
 
-def _recommend_high_success_sequential(
-    patterns: tuple[CollaborationPattern, ...], recs: list[str]
-) -> None:
+def _recommend_high_success_sequential(patterns: tuple[CollaborationPattern, ...], recs: list[str]) -> None:
     """Add recommendations for high-success sequential patterns."""
     for pat in patterns:
         if pat.ordering == "sequential" and pat.sample_size >= 3 and pat.success_rate >= 0.8:
@@ -364,9 +362,7 @@ def _recommend_high_success_sequential(
             )
 
 
-def _recommend_low_rework(
-    patterns: tuple[CollaborationPattern, ...], recs: list[str]
-) -> None:
+def _recommend_low_rework(patterns: tuple[CollaborationPattern, ...], recs: list[str]) -> None:
     """Add recommendations for patterns with notably low rework."""
     for pat in patterns:
         if pat.avg_rework_cycles < 0.5 and pat.sample_size >= 3:
@@ -377,9 +373,7 @@ def _recommend_low_rework(
             )
 
 
-def _recommend_high_rework(
-    patterns: tuple[CollaborationPattern, ...], recs: list[str]
-) -> None:
+def _recommend_high_rework(patterns: tuple[CollaborationPattern, ...], recs: list[str]) -> None:
     """Warn about patterns with high rework cycles."""
     for pat in patterns:
         if pat.avg_rework_cycles >= 2.0 and pat.sample_size >= 3:
@@ -390,9 +384,7 @@ def _recommend_high_rework(
             )
 
 
-def _recommend_ordering_comparison(
-    patterns: tuple[CollaborationPattern, ...], recs: list[str]
-) -> None:
+def _recommend_ordering_comparison(patterns: tuple[CollaborationPattern, ...], recs: list[str]) -> None:
     """Compare parallel vs sequential success for same role pair."""
     pair_map: dict[tuple[str, ...], list[CollaborationPattern]] = defaultdict(list)
     for pat in patterns:
@@ -411,9 +403,7 @@ def _recommend_ordering_comparison(
             )
 
 
-def _recommend_qa_involvement(
-    patterns: tuple[CollaborationPattern, ...], recs: list[str]
-) -> None:
+def _recommend_qa_involvement(patterns: tuple[CollaborationPattern, ...], recs: list[str]) -> None:
     """Recommend QA involvement if it reduces rework."""
     qa_patterns = [p for p in patterns if "qa" in p.roles and p.success_rate >= 0.7]
     if not qa_patterns:

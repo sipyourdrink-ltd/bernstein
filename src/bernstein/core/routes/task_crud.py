@@ -604,9 +604,7 @@ async def next_task(
     return task_to_response(task)
 
 
-@router.post(
-    "/tasks/claim-batch", responses={503: {"description": "Server is draining"}}
-)
+@router.post("/tasks/claim-batch", responses={503: {"description": "Server is draining"}})
 async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimResponse:
     """Atomically claim multiple tasks by ID for an agent."""
     if request.app.state.draining:  # type: ignore[attr-defined]
@@ -839,9 +837,7 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
     return task_to_response(task)
 
 
-@router.post(
-    "/tasks/{task_id}/progress", responses={404: {"description": "Task not found"}}
-)
+@router.post("/tasks/{task_id}/progress", responses={404: {"description": "Task not found"}})
 async def progress_task(task_id: str, body: TaskProgressRequest, request: Request) -> TaskResponse:
     """Append an intermediate progress update to a task.
 

@@ -265,18 +265,14 @@ class SchemaRegistry:
         )
 
     @staticmethod
-    def _check_required_fields(
-        schema: SchemaVersion, payload: dict[str, object], errors: list[str]
-    ) -> None:
+    def _check_required_fields(schema: SchemaVersion, payload: dict[str, object], errors: list[str]) -> None:
         """Check that all required fields are present."""
         for req in sorted(schema.required_fields):
             if req not in payload:
                 errors.append(f"Missing required field '{req}'")
 
     @staticmethod
-    def _check_unknown_and_types(
-        schema: SchemaVersion, payload: dict[str, object], errors: list[str]
-    ) -> None:
+    def _check_unknown_and_types(schema: SchemaVersion, payload: dict[str, object], errors: list[str]) -> None:
         """Check for unknown fields and validate types of known fields."""
         for key in sorted(payload):
             if key not in schema.fields:
@@ -292,9 +288,7 @@ class SchemaRegistry:
                 errors.append(f"Field '{key}' expected type '{expected_type_str}', got '{actual_type}'")
 
     @staticmethod
-    def _check_deprecated(
-        schema: SchemaVersion, payload: dict[str, object], warnings: list[str]
-    ) -> None:
+    def _check_deprecated(schema: SchemaVersion, payload: dict[str, object], warnings: list[str]) -> None:
         """Warn on deprecated field usage."""
         for key in sorted(payload):
             if key in schema.deprecated_fields:

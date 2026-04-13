@@ -86,7 +86,7 @@ def _rmtree_windows_safe(path: Path, max_attempts: int = 3) -> bool:
     # Final fallback on Windows: PowerShell Remove-Item -Force
     if is_windows and path.exists():
         try:
-            result = subprocess.run(
+            subprocess.run(
                 [
                     "powershell",
                     "-NoProfile",

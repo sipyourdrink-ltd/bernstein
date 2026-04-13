@@ -108,9 +108,7 @@ def _parse_blame_porcelain(output: str) -> list[tuple[str, str, str]]:
     return changes
 
 
-def _dedup_blame_entries(
-    changes: list[tuple[str, str, str]], max_entries: int
-) -> list[tuple[str, str, str]]:
+def _dedup_blame_entries(changes: list[tuple[str, str, str]], max_entries: int) -> list[tuple[str, str, str]]:
     """Deduplicate blame entries by summary, keeping most recent.
 
     Args:

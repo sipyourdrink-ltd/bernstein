@@ -11,8 +11,7 @@ import click
 from bernstein.cli.helpers import console
 
 _SDD_NOT_FOUND_MSG = (
-    "[red].sdd directory not found.[/red]"
-    " Run [bold]bernstein[/bold] first to initialise the workspace."
+    "[red].sdd directory not found.[/red] Run [bold]bernstein[/bold] first to initialise the workspace."
 )
 
 # ---------------------------------------------------------------------------
@@ -134,9 +133,7 @@ def evolve_run(
     state_dir = root / ".sdd"
 
     if not state_dir.is_dir():
-        console.print(
-            _SDD_NOT_FOUND_MSG
-        )
+        console.print(_SDD_NOT_FOUND_MSG)
         raise SystemExit(1)
 
     # Read evolve.github_sync / evolve.github_repo from bernstein.yaml if present
@@ -353,9 +350,7 @@ def evolve_status(workdir: str) -> None:
     state_dir = root / ".sdd"
 
     if not state_dir.is_dir():
-        console.print(
-            _SDD_NOT_FOUND_MSG
-        )
+        console.print(_SDD_NOT_FOUND_MSG)
         raise SystemExit(1)
 
     report = EvolutionReport(state_dir=state_dir)
@@ -397,9 +392,7 @@ def evolve_export(output: str, fmt: str, workdir: str) -> None:
     state_dir = root / ".sdd"
 
     if not state_dir.is_dir():
-        console.print(
-            _SDD_NOT_FOUND_MSG
-        )
+        console.print(_SDD_NOT_FOUND_MSG)
         raise SystemExit(1)
 
     report = EvolutionReport(state_dir=state_dir)

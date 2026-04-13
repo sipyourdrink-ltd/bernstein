@@ -459,9 +459,7 @@ class PostgresTaskStore(BaseTaskStore):
                 if not exists:
                     raise KeyError(task_id)
                 ver = await conn.fetchval("SELECT version FROM tasks WHERE id=$1", task_id)
-                raise ValueError(
-                    f"Version conflict: task {task_id} is at version {ver}, expected {expected_version}"
-                )
+                raise ValueError(f"Version conflict: task {task_id} is at version {ver}, expected {expected_version}")
             return row
         row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id)
         if row is None:

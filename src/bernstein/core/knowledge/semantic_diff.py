@@ -511,9 +511,7 @@ def _collect_before_after_signatures(
     return all_before, all_after
 
 
-def _check_arg_count_mismatch(
-    change: SignatureChange, n_pos: int
-) -> str | None:
+def _check_arg_count_mismatch(change: SignatureChange, n_pos: int) -> str | None:
     """Check if a call site has an arg-count incompatibility.
 
     Args:
@@ -529,15 +527,9 @@ def _check_arg_count_mismatch(
     if n_pos < 0 or change.after.has_varargs:
         return None
     if n_pos > after_argc:
-        return (
-            f"call passes {n_pos} positional args but "
-            f"'{change.qualname}' now accepts {after_argc}"
-        )
+        return f"call passes {n_pos} positional args but '{change.qualname}' now accepts {after_argc}"
     if n_pos < after_argc and not _has_defaults(change.after):
-        return (
-            f"call passes {n_pos} positional args but "
-            f"'{change.qualname}' now requires {after_argc}"
-        )
+        return f"call passes {n_pos} positional args but '{change.qualname}' now requires {after_argc}"
     return None
 
 
@@ -587,9 +579,7 @@ def _scan_call_sites(
                 issue = _check_arg_count_mismatch(change, n_pos)
                 if issue:
                     report.call_site_mismatches.append(
-                        CallSiteMismatch(
-                            caller_file=rel, lineno=lineno, function_name=func_name, issue=issue
-                        )
+                        CallSiteMismatch(caller_file=rel, lineno=lineno, function_name=func_name, issue=issue)
                     )
 
 
