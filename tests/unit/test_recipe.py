@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.config.recipe import Recipe, RecipeStep, validate_recipe
 
 # --- RecipeStep tests ---
@@ -71,7 +73,7 @@ class TestRecipe:
         d = r.to_dict()
         assert d["id"] == "recipe-001"
         assert d["tags"] == ["infra"]
-        assert d["budget_usd"] == 5.0
+        assert d["budget_usd"] == pytest.approx(5.0)
         assert len(d["steps"]) == 1
         assert d["steps"][0]["id"] == "s1"
 

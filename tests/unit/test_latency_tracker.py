@@ -31,8 +31,8 @@ class TestLatencySample:
         )
         assert sample.provider == "anthropic"
         assert sample.model == "claude-sonnet-4-6"
-        assert sample.latency_ms == 120.5
-        assert sample.timestamp == 1000.0
+        assert sample.latency_ms == pytest.approx(120.5)
+        assert sample.timestamp == pytest.approx(1000.0)
         assert sample.status_code == 200
 
     def test_frozen(self) -> None:
@@ -65,11 +65,11 @@ class TestLatencyPercentiles:
             sample_count=100,
             period_hours=24.0,
         )
-        assert pct.p50_ms == 50.0
-        assert pct.p95_ms == 150.0
-        assert pct.p99_ms == 300.0
+        assert pct.p50_ms == pytest.approx(50.0)
+        assert pct.p95_ms == pytest.approx(150.0)
+        assert pct.p99_ms == pytest.approx(300.0)
         assert pct.sample_count == 100
-        assert pct.period_hours == 24.0
+        assert pct.period_hours == pytest.approx(24.0)
 
     def test_frozen(self) -> None:
         pct = LatencyPercentiles(
@@ -132,9 +132,9 @@ class TestPercentiles:
         tracker = LatencyTracker()
         stats = tracker.get_percentiles("nonexistent", "model")
         assert stats.sample_count == 0
-        assert stats.p50_ms == 0.0
-        assert stats.p95_ms == 0.0
-        assert stats.p99_ms == 0.0
+        assert stats.p50_ms == pytest.approx(0.0)
+        assert stats.p95_ms == pytest.approx(0.0)
+        assert stats.p99_ms == pytest.approx(0.0)
 
     def test_single_sample_percentiles(self) -> None:
         tracker = LatencyTracker()
@@ -142,9 +142,9 @@ class TestPercentiles:
         stats = tracker.get_percentiles("anthropic", "sonnet")
         assert stats.sample_count == 1
         # With only one sample, all percentiles equal that sample.
-        assert stats.p50_ms == 100.0
-        assert stats.p95_ms == 100.0
-        assert stats.p99_ms == 100.0
+        assert stats.p50_ms == pytest.approx(100.0)
+        assert stats.p95_ms == pytest.approx(100.0)
+        assert stats.p99_ms == pytest.approx(100.0)
 
     def test_percentiles_ordering(self) -> None:
         """p50 <= p95 <= p99 for a varied distribution."""
@@ -176,13 +176,13 @@ class TestPercentiles:
             stats = tracker.get_percentiles("anthropic", "sonnet", hours=24)
 
         assert stats.sample_count == 1
-        assert stats.p50_ms == 100.0
+        assert stats.p50_ms == pytest.approx(100.0)
 
     def test_period_hours_returned(self) -> None:
         tracker = LatencyTracker()
         tracker.record("anthropic", "sonnet", 100.0)
         stats = tracker.get_percentiles("anthropic", "sonnet", hours=12)
-        assert stats.period_hours == 12.0
+        assert stats.period_hours == pytest.approx(12.0)
 
 
 # ---------------------------------------------------------------------------
@@ -291,4 +291,4 @@ class TestEviction:
             stats = tracker.get_percentiles("anthropic", "sonnet", hours=24)
 
         assert stats.sample_count == 1
-        assert stats.p50_ms == 200.0
+        assert stats.p50_ms == pytest.approx(200.0)

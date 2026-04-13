@@ -57,10 +57,10 @@ class TestBuildRunSummary:
         s = build_run_summary("run-abc", _PASSING_METRICS)  # type: ignore[arg-type]
         assert s.run_id == "run-abc"
         assert s.agents_used == ["claude", "codex"]
-        assert s.total_cost_usd == 1.23
+        assert s.total_cost_usd == pytest.approx(1.23)
         assert s.quality_gate_passed is True
         assert s.quality_score == 92
-        assert s.duration_seconds == 180.0
+        assert s.duration_seconds == pytest.approx(180.0)
         assert s.tasks_completed == 5
         assert s.tasks_failed == 0
 
@@ -73,7 +73,7 @@ class TestBuildRunSummary:
     def test_missing_keys_use_defaults(self) -> None:
         s = build_run_summary("run-empty", {})
         assert s.agents_used == []
-        assert s.total_cost_usd == 0.0
+        assert s.total_cost_usd == pytest.approx(0.0)
         assert s.quality_gate_passed is False
         assert s.quality_score == 0
         assert s.tasks_completed == 0
@@ -85,7 +85,7 @@ class TestBuildRunSummary:
             "agents_used": "not-a-list",
         }
         s = build_run_summary("run-bad", bad)
-        assert s.total_cost_usd == 0.0
+        assert s.total_cost_usd == pytest.approx(0.0)
         assert s.quality_score == 0
         assert s.agents_used == []
 
