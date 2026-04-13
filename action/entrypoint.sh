@@ -20,11 +20,11 @@ POST_COMMENT="${INPUT_POST_COMMENT:-true}"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-gha_group()    { echo "::group::$1"; }
-gha_endgroup() { echo "::endgroup::"; }
-gha_notice()   { echo "::notice::$1"; }
-gha_warning()  { echo "::warning::$1"; }
-gha_error()    { echo "::error::$1"; }
+gha_group()    { echo "::group::$1"; return 0; }
+gha_endgroup() { echo "::endgroup::"; return 0; }
+gha_notice()   { echo "::notice::$1"; return 0; }
+gha_warning()  { echo "::warning::$1"; return 0; }
+gha_error()    { echo "::error::$1" >&2; return 0; }
 
 ensure_config() {
     if [[ ! -f bernstein.yaml ]]; then
@@ -38,6 +38,7 @@ constraints:
 YAML
         gha_endgroup
     fi
+    return 0
 }
 
 # Emit step outputs to GITHUB_OUTPUT.
@@ -66,6 +67,7 @@ emit_outputs() {
     fi
 
     gha_notice "Tasks completed: ${tasks_completed} | Cost: \$${total_cost}"
+    return 0
 }
 
 # Post a comment on the associated pull request (if running in a PR context).
@@ -135,6 +137,7 @@ Bernstein is a multi-agent orchestration system that hires short-lived CLI codin
 Learn more at https://github.com/chernistry/bernstein
 </details>
 MARKDOWN
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -214,7 +217,10 @@ ${truncated_logs}
     }
     post_pr_comment "$(build_comment "$status" "$tasks_completed" "$total_cost")"
 
-    [[ "$status" = "success" ]]
+    if [[ "$status" = "success" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -246,7 +252,10 @@ run_plan() {
     }
     post_pr_comment "$(build_comment "$status" "$tasks_completed" "$total_cost")"
 
-    [[ "$status" = "success" ]]
+    if [[ "$status" = "success" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -272,7 +281,10 @@ run_normal() {
     }
     post_pr_comment "$(build_comment "$status" "$tasks_completed" "$total_cost")"
 
-    [[ "$status" = "success" ]]
+    if [[ "$status" = "success" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # ---------------------------------------------------------------------------

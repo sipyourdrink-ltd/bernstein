@@ -21,7 +21,7 @@ SERVER="${BERNSTEIN_SERVER_URL:-http://bernstein-server:8052}"
 INTERVAL="${DEMO_CYCLE_INTERVAL:-900}"
 PROJECT_DIR="/workspace/project"
 
-log() { echo "[demo-cycle] $(date -u '+%H:%M:%S') $*"; }
+log() { echo "[demo-cycle] $(date -u '+%H:%M:%S') $*"; return 0; }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -31,6 +31,7 @@ wait_for_server() {
         sleep 3
     done
     log "Server ready."
+    return 0
 }
 
 cancel_all_active() {
@@ -48,6 +49,7 @@ for t in json.load(sys.stdin):
                 -d '{"reason": "demo reset"}' > /dev/null 2>&1 || true
         done
     done
+    return 0
 }
 
 post_task() {
@@ -65,6 +67,7 @@ post_task() {
             \"scope\": \"small\",
             \"complexity\": \"low\"
         }" > /dev/null
+    return 0
 }
 
 seed_tasks() {
@@ -91,6 +94,7 @@ seed_tasks() {
         "qa" 4
 
     log "Seeded 4 tasks."
+    return 0
 }
 
 ensure_git_repo() {
@@ -104,6 +108,7 @@ ensure_git_repo() {
         git -C "${PROJECT_DIR}" add -A
         git -C "${PROJECT_DIR}" commit -m "Initial demo project"
     fi
+    return 0
 }
 
 reset_project() {
@@ -112,6 +117,7 @@ reset_project() {
         git -C "${PROJECT_DIR}" checkout -- . 2>/dev/null || true
         git -C "${PROJECT_DIR}" clean -fd 2>/dev/null || true
     fi
+    return 0
 }
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -127,6 +133,7 @@ cleanup() {
         kill "${CONDUCTOR_PID}" 2>/dev/null || true
         wait "${CONDUCTOR_PID}" 2>/dev/null || true
     fi
+    return 0
 }
 trap cleanup EXIT INT TERM
 

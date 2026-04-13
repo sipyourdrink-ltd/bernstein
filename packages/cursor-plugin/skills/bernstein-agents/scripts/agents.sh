@@ -21,15 +21,15 @@ import sys, json
 d = json.load(sys.stdin)
 agents = d.get('agents', [])
 print(json.dumps({'agents': agents, 'count': len(agents)}, indent=2))
-" || echo '{"error": "API not reachable"}'
+" || echo '{"error": "API not reachable"}' >&2
     ;;
   logs)
     ID="${2:?Session ID required}"
-    curl -sf "${HEADERS[@]}" "$API/agents/$ID/logs?tail_bytes=4096" || echo '{"error": "Could not fetch logs"}'
+    curl -sf "${HEADERS[@]}" "$API/agents/$ID/logs?tail_bytes=4096" || echo '{"error": "Could not fetch logs"}' >&2
     ;;
   kill)
     ID="${2:?Session ID required}"
-    curl -sf "${HEADERS[@]}" -X POST "$API/agents/$ID/kill" || echo '{"error": "Could not kill agent"}'
+    curl -sf "${HEADERS[@]}" -X POST "$API/agents/$ID/kill" || echo '{"error": "Could not kill agent"}' >&2
     ;;
   *)
     echo "Unknown action: $ACTION"

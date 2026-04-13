@@ -26,14 +26,15 @@ _header() {
   echo -e "\n${DIM}${line}${RST}"
   echo -e "${BOLD}${BLU}  ◆ $1${RST}"
   echo -e "${DIM}${line}${RST}"
+  return 0
 }
 
-_ok()   { echo -e "  ${CHECK} $1"; }
-_warn() { echo -e "  ${YEL}⚠${RST}  $1"; }
-_err()  { echo -e "  ${CROSS} $1" >&2; }
-_step() { echo -e "  ${ARROW} ${DIM}$1${RST}"; }
+_ok()   { echo -e "  ${CHECK} $1"; return 0; }
+_warn() { echo -e "  ${YEL}⚠${RST}  $1"; return 0; }
+_err()  { echo -e "  ${CROSS} $1" >&2; return 0; }
+_step() { echo -e "  ${ARROW} ${DIM}$1${RST}"; return 0; }
 
-_branch() { git rev-parse --abbrev-ref HEAD; }
+_branch() { git rev-parse --abbrev-ref HEAD; return 0; }
 _is_dirty() { ! git diff --quiet || ! git diff --cached --quiet; }
 
 _require_gh() {
@@ -69,6 +70,7 @@ _sidebar() {
   [[ -n "$ci_status" ]] && printf "${DIM}│${RST}  CI        %b\n" "$ci_status"
   printf "${DIM}│${RST}  backlog   ${MAG}%s${RST} open tickets\n" "$open_tasks"
   echo -e "${DIM}└────────────────────────────────────────────────────────────┘${RST}"
+  return 0
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -379,6 +381,7 @@ do_git_clean() {
 
   _step "pruning remote refs …"
   git remote prune "${REMOTE}" 2>/dev/null && _ok "remote pruned"
+  return 0
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -588,6 +591,7 @@ main_menu() {
     echo ""
     read -rp "  $(echo -e "${DIM}press enter to return to menu…${RST}")" _
   done
+  return 0
 }
 
 # ── entry point ───────────────────────────────────────────────────────────────

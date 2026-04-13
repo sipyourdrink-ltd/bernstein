@@ -15,16 +15,16 @@ fi
 
 case "$ACTION" in
   list)
-    curl -sf "${HEADERS[@]}" "$API/plans" || echo '{"error": "API not reachable"}'
+    curl -sf "${HEADERS[@]}" "$API/plans" || echo '{"error": "API not reachable"}' >&2
     ;;
   show)
     ID="${2:?Plan ID required}"
-    curl -sf "${HEADERS[@]}" "$API/plans/$ID" || echo '{"error": "Plan not found"}'
+    curl -sf "${HEADERS[@]}" "$API/plans/$ID" || echo '{"error": "Plan not found"}' >&2
     ;;
   submit)
     FILE="${2:?Plan YAML file required}"
     if [[ ! -f "$FILE" ]]; then
-      echo "{\"error\": \"File not found: $FILE\"}"
+      echo "{\"error\": \"File not found: $FILE\"}" >&2
       exit 1
     fi
     # Convert YAML to JSON and submit
@@ -33,7 +33,7 @@ import yaml, json, sys
 with open('$FILE') as f:
     plan = yaml.safe_load(f)
 print(json.dumps(plan))
-" | curl -sf "${HEADERS[@]}" -X POST "$API/plans" -d @- || echo '{"error": "Failed to submit plan"}'
+" | curl -sf "${HEADERS[@]}" -X POST "$API/plans" -d @- || echo '{"error": "Failed to submit plan"}' >&2
     ;;
   *)
     echo "Unknown action: $ACTION"
