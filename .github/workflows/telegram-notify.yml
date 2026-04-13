@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
+    branches: [main]
 
 concurrency:
   group: telegram-${{ github.event.workflow_run.head_branch }}
@@ -11,21 +12,24 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   notify:
+    # Only notify on failure (success is the norm, no need to spam)
+    if: github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Send Telegram notification
+      - name: Send Telegram notification with action buttons
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           STATUS: ${{ github.event.workflow_run.conclusion }}
-          EVENT: ${{ github.event.workflow_run.event }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           HTML_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
           REPO: ${{ github.repository }}
         run: |
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
@@ -34,29 +38,17 @@ jobs:
           fi
 
           SHORT_SHA="${SHA:0:7}"
-
-          case "$STATUS" in
-            success)    ICON="✅" ;;
-            failure)    ICON="❌" ;;
-            cancelled)  ICON="⚪" ;;
-            *)          ICON="🔵" ;;
-          esac
-
-          if [ "$EVENT" = "push" ] && { [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; }; then
-            TITLE="${ICON} CI on ${BRANCH}: ${STATUS}"
-          elif [ "$EVENT" = "pull_request" ]; then
-            TITLE="${ICON} PR CI: ${STATUS}"
-          else
-            TITLE="${ICON} CI: ${STATUS}"
-          fi
+          ICON="❌"
+          TITLE="${ICON} CI failed on ${BRANCH}"
 
           TEXT="${TITLE}
-          Repo: ${REPO}
-          Branch: ${BRANCH}
           Commit: ${SHORT_SHA}
           ${HTML_URL}"
 
+          # Send with inline keyboard for quick actions
+          KEYBOARD='{"inline_keyboard":[[{"text":"🔄 View Run","url":"'"${HTML_URL}"'"},{"text":"📋 Rerun","url":"https://github.com/'"${REPO}"'/actions/runs/'"${RUN_ID}"'/rerun"}]]}'
+
           curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="${TEXT}" \
-            -d parse_mode="" || echo "Telegram notification failed"
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${TEXT}\",\"reply_markup\":${KEYBOARD}}" \
+            || echo "Telegram notification failed"

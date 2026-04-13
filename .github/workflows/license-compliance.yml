@@ -13,7 +13,6 @@ on:
       - "uv.lock"
       - "requirements*.txt"
   schedule:
-    - cron: "0 5 * * 1"
 
 concurrency:
   group: license-${{ github.ref }}
