@@ -55,23 +55,15 @@ class FileSummary:
     imports: list[str]
 
 
-def _parse_python_file(filepath: Path) -> FileSummary | None:
-    """Parse a Python file and extract structural summary via AST.
+def _extract_module_docstring(tree: ast.Module) -> str:
+    """Extract the first-line module docstring from an AST.
 
     Args:
-        filepath: Absolute path to the Python file.
+        tree: Parsed AST module.
 
     Returns:
-        FileSummary or None if parsing fails.
+        First line of the docstring (max 120 chars), or empty string.
     """
-    try:
-        source = filepath.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(filepath))
-    except (SyntaxError, OSError, UnicodeDecodeError):
-        return None
-
-    # Module docstring
-    docstring = ""
     if (
         tree.body
         and isinstance(tree.body[0], ast.Expr)
@@ -79,9 +71,21 @@ def _parse_python_file(filepath: Path) -> FileSummary | None:
         and isinstance(tree.body[0].value.value, str)
     ):
         raw = tree.body[0].value.value.strip()
-        # First line only, truncated
-        docstring = raw.split("\n")[0][:120]
+        return raw.split("\n")[0][:120]
+    return ""
 
+
+def _extract_top_level_symbols(
+    tree: ast.Module,
+) -> tuple[list[tuple[str, list[str]]], list[str], list[str]]:
+    """Extract classes, functions, and imports from top-level AST nodes.
+
+    Args:
+        tree: Parsed AST module.
+
+    Returns:
+        Tuple of (classes, functions, imports).
+    """
     classes: list[tuple[str, list[str]]] = []
     functions: list[str] = []
     imports: list[str] = []
@@ -102,6 +106,27 @@ def _parse_python_file(filepath: Path) -> FileSummary | None:
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 imports.append(node.module.split(".")[0])
+
+    return classes, functions, imports
+
+
+def _parse_python_file(filepath: Path) -> FileSummary | None:
+    """Parse a Python file and extract structural summary via AST.
+
+    Args:
+        filepath: Absolute path to the Python file.
+
+    Returns:
+        FileSummary or None if parsing fails.
+    """
+    try:
+        source = filepath.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(filepath))
+    except (SyntaxError, OSError, UnicodeDecodeError):
+        return None
+
+    docstring = _extract_module_docstring(tree)
+    classes, functions, imports = _extract_top_level_symbols(tree)
 
     return FileSummary(
         path="",  # Filled by caller
@@ -256,6 +281,104 @@ class TaskContextBuilder:
 
         return "\n".join(sections)
 
+    @staticmethod
+    def _expand_parent_owned_files(tasks: list[Any], store: Any) -> None:
+        """Merge parent task owned_files into each child task.
+
+        Args:
+            tasks: Tasks to expand (mutated in place).
+            store: TaskStore for parent lookups.
+        """
+        for task in tasks:
+            if not task.parent_task_id:
+                continue
+            try:
+                parent = getattr(store, "get_task", lambda tid: None)(task.parent_task_id)
+                if parent:
+                    task.owned_files = list(set(task.owned_files) | set(parent.owned_files))
+            except Exception:
+                continue
+
+    def _build_file_context_sections(self, tasks: list[Any], file_budget: int) -> list[str]:
+        """Build compressed file-context sections within a token budget.
+
+        Args:
+            tasks: Tasks to generate context for.
+            file_budget: Max approximate tokens for file context.
+
+        Returns:
+            List of formatted sections.
+        """
+        from bernstein.core.context_compression import ContextCompressor
+
+        try:
+            compressor = ContextCompressor(self.workdir)
+            result = compressor.compress(tasks, max_files=15)
+
+            file_sections: list[str] = []
+            current_tokens = 0
+
+            for fpath in result.selected_files:
+                file_ctx = self.file_context(fpath, max_chars=600)
+                tokens = len(file_ctx) // 4
+                if current_tokens + tokens > file_budget:
+                    logger.info("Truncating file context: reached budget of %d tokens", file_budget)
+                    break
+                file_sections.append(file_ctx)
+                current_tokens += tokens
+
+            if file_sections:
+                return ["## Project Context (File Summaries)", *file_sections]
+        except Exception as exc:
+            logger.warning("ContextCompressor failed, falling back to uncompressed context: %s", exc)
+            all_owned: list[str] = []
+            for task in tasks:
+                all_owned.extend(getattr(task, "owned_files", []))
+            if all_owned:
+                return [self.task_context(all_owned)]
+        return []
+
+    def _build_rag_sections(self, tasks: list[Any], rag_budget: int) -> list[str]:
+        """Build RAG search sections within a token budget.
+
+        Args:
+            tasks: Tasks whose titles drive the search query.
+            rag_budget: Max approximate tokens for RAG context.
+
+        Returns:
+            List of formatted RAG sections.
+        """
+        from bernstein.core.knowledge.rag import CodebaseIndexer
+
+        try:
+            indexer = CodebaseIndexer(self.workdir)
+            query = " ".join(t.title for t in tasks)
+            search_results = indexer.search(query, limit=10)
+            if not search_results:
+                return []
+
+            rag_sections: list[str] = ["## Relevant Code Snippets (RAG)"]
+            current_tokens = 0
+
+            for res in search_results:
+                entry = (
+                    f"### {res.file_path} (lines {res.line_start}-{res.line_end})\n"
+                    f"Symbols: {res.symbols}\n"
+                    f"```\n{res.snippet}\n```\n"
+                )
+                tokens = len(entry) // 4
+                if current_tokens + tokens > rag_budget:
+                    logger.info("Truncating RAG context: reached budget of %d tokens", rag_budget)
+                    break
+                rag_sections.append(entry)
+                current_tokens += tokens
+
+            if len(rag_sections) > 1:  # More than just the header
+                return rag_sections
+        except Exception as exc:
+            logger.debug("RAG search failed: %s", exc)
+        return []
+
     def build_context(self, tasks: list[Any], store: Any | None = None) -> str:
         """Build compressed context for a task batch.
 
@@ -270,83 +393,17 @@ class TaskContextBuilder:
         Returns:
             Formatted context string with compressed file summaries and RAG.
         """
-        from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS, ContextCompressor
-        from bernstein.core.knowledge.rag import CodebaseIndexer
+        from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS
 
-        sections: list[str] = []
         file_budget = DEFAULT_CATEGORY_BUDGETS.get("files", 15_000)
         rag_budget = DEFAULT_CATEGORY_BUDGETS.get("rag", 10_000)
 
-        # 1. Expand tasks with parent owned_files if store is available
         if store is not None:
-            for task in tasks:
-                if task.parent_task_id:
-                    try:
-                        parent = getattr(store, "get_task", lambda tid: None)(task.parent_task_id)
-                        if parent:
-                            task.owned_files = list(set(task.owned_files) | set(parent.owned_files))
-                    except Exception:
-                        continue
+            self._expand_parent_owned_files(tasks, store)
 
-        # 2. File context with budget enforcement
-        try:
-            compressor = ContextCompressor(self.workdir)
-            result = compressor.compress(tasks, max_files=15)
-
-            file_sections: list[str] = []
-            current_file_tokens = 0
-
-            for fpath in result.selected_files:
-                file_ctx = self.file_context(fpath, max_chars=600)
-                tokens = len(file_ctx) // 4
-                if current_file_tokens + tokens > file_budget:
-                    logger.info("Truncating file context: reached budget of %d tokens", file_budget)
-                    break
-                file_sections.append(file_ctx)
-                current_file_tokens += tokens
-
-            if file_sections:
-                sections.append("## Project Context (File Summaries)")
-                sections.extend(file_sections)
-
-        except Exception as exc:
-            logger.warning("ContextCompressor failed, falling back to uncompressed context: %s", exc)
-            all_owned: list[str] = []
-            for task in tasks:
-                all_owned.extend(getattr(task, "owned_files", []))
-            if all_owned:
-                sections.append(self.task_context(all_owned))
-
-        # 3. RAG Search with budget enforcement
-        try:
-            indexer = CodebaseIndexer(self.workdir)
-            query = " ".join(t.title for t in tasks)
-            search_results = indexer.search(query, limit=10)
-
-            rag_sections: list[str] = []
-            current_rag_tokens = 0
-
-            if search_results:
-                rag_sections.append("## Relevant Code Snippets (RAG)")
-                for res in search_results:
-                    # Format RAG result
-                    entry = (
-                        f"### {res.file_path} (lines {res.line_start}-{res.line_end})\n"
-                        f"Symbols: {res.symbols}\n"
-                        f"```\n{res.snippet}\n```\n"
-                    )
-                    tokens = len(entry) // 4
-                    if current_rag_tokens + tokens > rag_budget:
-                        logger.info("Truncating RAG context: reached budget of %d tokens", rag_budget)
-                        break
-                    rag_sections.append(entry)
-                    current_rag_tokens += tokens
-
-                if len(rag_sections) > 1:  # More than just the header
-                    sections.extend(rag_sections)
-
-        except Exception as exc:
-            logger.debug("RAG search failed: %s", exc)
+        sections: list[str] = []
+        sections.extend(self._build_file_context_sections(tasks, file_budget))
+        sections.extend(self._build_rag_sections(tasks, rag_budget))
 
         return "\n".join(sections) if sections else ""
 

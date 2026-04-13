@@ -29,6 +29,10 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bernstein.core.git.git_basic import GitResult
 
 from bernstein.core.git.git_ops import (
     create_github_pr,
@@ -184,46 +188,43 @@ def _file_to_module(filepath: str) -> str:
     return Path(filepath).stem
 
 
-def build_dependency_order(files: list[str], cwd: Path) -> list[str]:
-    """Order files so that imported files precede their importers.
-
-    Only considers intra-changeset dependencies — if file A (in the
-    changeset) imports file B (also in the changeset), B appears before A.
-    External imports are ignored.  Falls back to original order on cycles
-    or parse failures.
-
-    Non-Python files have no detected dependencies and appear first.
+def _build_intra_changeset_deps(files: list[str], cwd: Path) -> dict[str, set[str]]:
+    """Build dependency sets from intra-changeset Python imports.
 
     Args:
         files: File paths in the changeset.
-        cwd: Repository root (used for reading file contents).
+        cwd: Repository root for reading file contents.
 
     Returns:
-        Files in topological order (dependency-first).
+        Mapping of file -> set of files it depends on.
     """
-    if not files:
-        return []
-
-    # Build module-name → file mapping for files in the changeset
     module_to_file: dict[str, str] = {_file_to_module(f): f for f in files}
-
-    # deps[f] = set of files that f depends on (must come before f)
     deps: dict[str, set[str]] = {f: set() for f in files}
 
     for filepath in files:
         if not filepath.endswith(".py"):
             continue
-        full = cwd / filepath
         try:
-            source = full.read_text(encoding="utf-8", errors="ignore")
+            source = (cwd / filepath).read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         for mod in _parse_python_imports(source):
             dep_file = module_to_file.get(mod)
             if dep_file and dep_file != filepath:
                 deps[filepath].add(dep_file)
+    return deps
 
-    # Kahn's topological sort
+
+def _topo_sort(files: list[str], deps: dict[str, set[str]]) -> list[str]:
+    """Kahn's topological sort with cycle-safe fallback.
+
+    Args:
+        files: All file paths.
+        deps: Dependency mapping (file -> set of prerequisites).
+
+    Returns:
+        Files in topological order.
+    """
     in_degree: dict[str, int] = dict.fromkeys(files, 0)
     for f, dep_set in deps.items():
         in_degree[f] += len(dep_set)
@@ -244,12 +245,35 @@ def build_dependency_order(files: list[str], cwd: Path) -> list[str]:
                 if in_degree[f] == 0:
                     queue.append(f)
 
-    # Append any remaining files (cycles or disconnected nodes)
+    # Append remaining (cycles or disconnected)
     for f in files:
         if f not in visited:
             result.append(f)
-
     return result
+
+
+def build_dependency_order(files: list[str], cwd: Path) -> list[str]:
+    """Order files so that imported files precede their importers.
+
+    Only considers intra-changeset dependencies -- if file A (in the
+    changeset) imports file B (also in the changeset), B appears before A.
+    External imports are ignored.  Falls back to original order on cycles
+    or parse failures.
+
+    Non-Python files have no detected dependencies and appear first.
+
+    Args:
+        files: File paths in the changeset.
+        cwd: Repository root (used for reading file contents).
+
+    Returns:
+        Files in topological order (dependency-first).
+    """
+    if not files:
+        return []
+
+    deps = _build_intra_changeset_deps(files, cwd)
+    return _topo_sort(files, deps)
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +424,6 @@ def execute_split(
     if not plan.needs_split:
         return SplitResult(pr_urls=[], chunk_count=0, success=True, error="no split needed")
 
-    # Preserve current branch to restore after
     current_r = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
     original_branch = current_r.stdout.strip() if current_r.ok else head_ref
 
@@ -408,104 +431,23 @@ def execute_split(
     total = len(plan.chunks)
 
     for chunk in plan.chunks:
-        part_label = f"[{chunk.part_number}/{total}]"
-
-        # 1. Create / reset branch from its base
-        branch_r = run_git(
-            ["checkout", "-B", chunk.branch_name, chunk.base_branch],
-            cwd,
-            timeout=30,
+        result = _execute_chunk(
+            cwd, chunk, plan, base_ref, head_ref, pr_title_prefix, pr_body_prefix, labels
         )
-        if not branch_r.ok:
-            run_git(["branch", "-D", chunk.branch_name], cwd)
-            branch_r = run_git(
-                ["checkout", "-B", chunk.branch_name, chunk.base_branch],
-                cwd,
-                timeout=30,
-            )
-            if not branch_r.ok:
-                _restore(cwd, original_branch)
-                return SplitResult(
-                    pr_urls=pr_urls,
-                    chunk_count=len(pr_urls),
-                    success=False,
-                    error=f"Cannot create branch {chunk.branch_name}: {branch_r.stderr}",
-                )
-
-        # 2. Get diff for these files vs original base
-        diff_r = run_git(
-            ["diff", base_ref, head_ref, "--", *chunk.files],
-            cwd,
-            timeout=60,
-        )
-        if not diff_r.ok or not diff_r.stdout.strip():
-            logger.warning("Empty diff for chunk %d, skipping", chunk.part_number)
-            continue
-
-        # 3. Apply diff
-        apply_r = run_git(
-            ["apply", "--allow-empty", "-"],
-            cwd,
-            input_data=diff_r.stdout,
-            timeout=30,
-        )
-        if not apply_r.ok:
+        if result is None:
+            continue  # Empty diff, skipped
+        if isinstance(result, SplitResult):
+            # Fatal error — merge partial pr_urls and return
             _restore(cwd, original_branch)
             return SplitResult(
-                pr_urls=pr_urls,
-                chunk_count=len(pr_urls),
+                pr_urls=pr_urls + result.pr_urls,
+                chunk_count=len(pr_urls) + result.chunk_count,
                 success=False,
-                error=f"Chunk {chunk.part_number}: git apply failed: {apply_r.stderr}",
+                error=result.error,
             )
-
-        # 4. Stage and commit
-        run_git(["add", "--", *chunk.files], cwd)
-        short_names = [Path(f).name for f in chunk.files[:3]]
-        file_summary = ", ".join(short_names)
-        if len(chunk.files) > 3:
-            file_summary += f" (+{len(chunk.files) - 3} more)"
-        commit_msg = (
-            f"{pr_title_prefix}: {file_summary} {part_label}\n\n"
-            f"Part {chunk.part_number} of {total} — {chunk.line_count} lines changed\n\n"
-            f"Files:\n"
-            + "\n".join(f"  {f}" for f in chunk.files)
-            + "\n\nCo-Authored-By: bernstein[bot] <noreply@bernstein.dev>"
-        )
-        commit_r = run_git(["commit", "-m", commit_msg], cwd)
-        if not commit_r.ok:
-            # Allow empty in case apply produced no actual changes
-            run_git(["commit", "--allow-empty", "-m", commit_msg], cwd)
-
-        # 5. Push
-        push_r = push_branch(cwd, chunk.branch_name)
-        if not push_r.ok:
-            _restore(cwd, original_branch)
-            return SplitResult(
-                pr_urls=pr_urls,
-                chunk_count=len(pr_urls),
-                success=False,
-                error=f"Push failed for {chunk.branch_name}: {push_r.stderr}",
-            )
-
-        # 6. Create PR
-        body = _build_pr_body(chunk, plan, pr_body_prefix)
-        pr_result = create_github_pr(
-            cwd,
-            title=f"{pr_title_prefix} {part_label}",
-            body=body,
-            head=chunk.branch_name,
-            base=chunk.base_branch,
-            labels=labels,
-        )
-        if pr_result.success:
-            pr_urls.append(pr_result.pr_url)
-            logger.info("Created PR %d/%d: %s", chunk.part_number, total, pr_result.pr_url)
-        else:
-            logger.warning(
-                "PR creation failed for chunk %d: %s",
-                chunk.part_number,
-                pr_result.error,
-            )
+        # Success — result is a PR URL or empty string
+        if result:
+            pr_urls.append(result)
 
     _restore(cwd, original_branch)
     return SplitResult(
@@ -513,6 +455,110 @@ def execute_split(
         chunk_count=len(pr_urls),
         success=len(pr_urls) == total,
     )
+
+
+def _create_chunk_branch(cwd: Path, chunk: PRChunk) -> GitResult:
+    """Create or reset the branch for a chunk.
+
+    Args:
+        cwd: Repository root.
+        chunk: PR chunk with branch_name and base_branch.
+
+    Returns:
+        GitResult from the checkout.
+    """
+    branch_r = run_git(["checkout", "-B", chunk.branch_name, chunk.base_branch], cwd, timeout=30)
+    if not branch_r.ok:
+        run_git(["branch", "-D", chunk.branch_name], cwd)
+        branch_r = run_git(["checkout", "-B", chunk.branch_name, chunk.base_branch], cwd, timeout=30)
+    return branch_r
+
+
+def _execute_chunk(
+    cwd: Path,
+    chunk: PRChunk,
+    plan: SplitPlan,
+    base_ref: str,
+    head_ref: str,
+    pr_title_prefix: str,
+    pr_body_prefix: str,
+    labels: list[str] | None,
+) -> str | SplitResult | None:
+    """Execute a single chunk: create branch, apply diff, push, open PR.
+
+    Args:
+        cwd: Repository root.
+        chunk: The PR chunk to execute.
+        plan: Full split plan (for PR body generation).
+        base_ref: Original base ref for diffs.
+        head_ref: Head ref with all changes.
+        pr_title_prefix: PR title prefix.
+        pr_body_prefix: Text prepended to each PR body.
+        labels: GitHub labels.
+
+    Returns:
+        PR URL string on success, None if skipped (empty diff),
+        or SplitResult on fatal error (caller should abort).
+    """
+    total = len(plan.chunks)
+    part_label = f"[{chunk.part_number}/{total}]"
+
+    branch_r = _create_chunk_branch(cwd, chunk)
+    if not branch_r.ok:
+        return SplitResult(
+            pr_urls=[], chunk_count=0, success=False,
+            error=f"Cannot create branch {chunk.branch_name}: {branch_r.stderr}",
+        )
+
+    diff_r = run_git(["diff", base_ref, head_ref, "--", *chunk.files], cwd, timeout=60)
+    if not diff_r.ok or not diff_r.stdout.strip():
+        logger.warning("Empty diff for chunk %d, skipping", chunk.part_number)
+        return None
+
+    apply_r = run_git(["apply", "--allow-empty", "-"], cwd, input_data=diff_r.stdout, timeout=30)
+    if not apply_r.ok:
+        return SplitResult(
+            pr_urls=[], chunk_count=0, success=False,
+            error=f"Chunk {chunk.part_number}: git apply failed: {apply_r.stderr}",
+        )
+
+    run_git(["add", "--", *chunk.files], cwd)
+    short_names = [Path(f).name for f in chunk.files[:3]]
+    file_summary = ", ".join(short_names)
+    if len(chunk.files) > 3:
+        file_summary += f" (+{len(chunk.files) - 3} more)"
+    commit_msg = (
+        f"{pr_title_prefix}: {file_summary} {part_label}\n\n"
+        f"Part {chunk.part_number} of {total} — {chunk.line_count} lines changed\n\n"
+        f"Files:\n"
+        + "\n".join(f"  {f}" for f in chunk.files)
+        + "\n\nCo-Authored-By: bernstein[bot] <noreply@bernstein.dev>"
+    )
+    commit_r = run_git(["commit", "-m", commit_msg], cwd)
+    if not commit_r.ok:
+        run_git(["commit", "--allow-empty", "-m", commit_msg], cwd)
+
+    push_r = push_branch(cwd, chunk.branch_name)
+    if not push_r.ok:
+        return SplitResult(
+            pr_urls=[], chunk_count=0, success=False,
+            error=f"Push failed for {chunk.branch_name}: {push_r.stderr}",
+        )
+
+    body = _build_pr_body(chunk, plan, pr_body_prefix)
+    pr_result = create_github_pr(
+        cwd,
+        title=f"{pr_title_prefix} {part_label}",
+        body=body,
+        head=chunk.branch_name,
+        base=chunk.base_branch,
+        labels=labels,
+    )
+    if pr_result.success:
+        logger.info("Created PR %d/%d: %s", chunk.part_number, total, pr_result.pr_url)
+        return pr_result.pr_url
+    logger.warning("PR creation failed for chunk %d: %s", chunk.part_number, pr_result.error)
+    return ""
 
 
 def _restore(cwd: Path, branch: str) -> None:

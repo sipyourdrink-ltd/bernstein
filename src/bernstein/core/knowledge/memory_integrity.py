@@ -306,6 +306,95 @@ class ChainVerifyResult:
     broken_at: int = -1
 
 
+def _verify_content_hash(
+    data: dict[str, Any], lineno: int, lesson_id: str, result: ChainVerifyResult
+) -> bool:
+    """Verify the content_hash field of an entry.
+
+    Args:
+        data: Parsed JSON entry.
+        lineno: Line number for error messages.
+        lesson_id: Entry identifier for error messages.
+        result: Result accumulator (mutated on mismatch).
+
+    Returns:
+        True if content_hash is present and valid.
+    """
+    stored = data.get("content_hash", "")
+    if not stored:
+        result.errors.append(
+            f"Line {lineno} ({lesson_id}): missing content_hash (entry pre-dates integrity enforcement)"
+        )
+        return False
+
+    recomputed = _sha256(_canonical(data))
+    if stored != recomputed:
+        result.errors.append(
+            f"Line {lineno} ({lesson_id}): content_hash MISMATCH "
+            f"— stored={stored[:12]}… computed={recomputed[:12]}… (immutable fields tampered)"
+        )
+        if result.broken_at < 0:
+            result.broken_at = lineno
+    return True
+
+
+def _verify_prev_hash(
+    data: dict[str, Any], expected: str, lineno: int, lesson_id: str, result: ChainVerifyResult
+) -> None:
+    """Verify the prev_hash field matches the expected chain position.
+
+    Args:
+        data: Parsed JSON entry.
+        expected: Expected prev_hash value.
+        lineno: Line number for error messages.
+        lesson_id: Entry identifier.
+        result: Result accumulator.
+    """
+    stored = data.get("prev_hash", "")
+    if stored != expected:
+        result.errors.append(
+            f"Line {lineno} ({lesson_id}): prev_hash MISMATCH "
+            f"— stored={stored[:12] if stored else '(empty)'}… "
+            f"expected={expected[:12]}… (entry inserted, deleted, or reordered)"
+        )
+        if result.broken_at < 0:
+            result.broken_at = lineno
+
+
+def _verify_chain_hash(
+    data: dict[str, Any], lineno: int, lesson_id: str, result: ChainVerifyResult
+) -> str | None:
+    """Verify the chain_hash field and return it if valid.
+
+    Args:
+        data: Parsed JSON entry.
+        lineno: Line number for error messages.
+        lesson_id: Entry identifier.
+        result: Result accumulator.
+
+    Returns:
+        The stored chain_hash (for chaining), or None if missing.
+    """
+    stored = data.get("chain_hash", "")
+    if not stored:
+        result.errors.append(f"Line {lineno} ({lesson_id}): missing chain_hash")
+        if result.broken_at < 0:
+            result.broken_at = lineno
+        return None
+
+    stored_content = data.get("content_hash", "")
+    stored_prev = data.get("prev_hash", "")
+    expected = _sha256(f"chain:{stored_content}:{stored_prev}")
+    if stored != expected:
+        result.errors.append(
+            f"Line {lineno} ({lesson_id}): chain_hash MISMATCH "
+            f"— stored={stored[:12]}… expected={expected[:12]}… "
+        )
+        if result.broken_at < 0:
+            result.broken_at = lineno
+    return stored
+
+
 def verify_chain(lessons_path: Path) -> ChainVerifyResult:
     """Verify the hash chain across all entries in *lessons_path*.
 
@@ -347,61 +436,17 @@ def verify_chain(lessons_path: Path) -> ChainVerifyResult:
 
                 lesson_id = data.get("lesson_id", f"<line {lineno}>")
 
-                # 1. Verify content_hash
-                stored_content_hash = data.get("content_hash", "")
-                if not stored_content_hash:
-                    result.errors.append(
-                        f"Line {lineno} ({lesson_id}): missing content_hash (entry pre-dates integrity enforcement)"
-                    )
-                    # Treat legacy entries as unverifiable but don't break chain
-                    # tracking — use stored chain_hash if present.
+                if not _verify_content_hash(data, lineno, lesson_id, result):
                     count += 1
                     chain_h = data.get("chain_hash", "")
                     if chain_h:
                         expected_prev_hash = chain_h
                     continue
 
-                recomputed_content = _sha256(_canonical(data))
-                if stored_content_hash != recomputed_content:
-                    result.errors.append(
-                        f"Line {lineno} ({lesson_id}): content_hash MISMATCH "
-                        f"— stored={stored_content_hash[:12]}… "
-                        f"computed={recomputed_content[:12]}… "
-                        f"(immutable fields tampered)"
-                    )
-                    if result.broken_at < 0:
-                        result.broken_at = lineno
-
-                # 2. Verify prev_hash matches chain position
-                stored_prev = data.get("prev_hash", "")
-                if stored_prev != expected_prev_hash:
-                    result.errors.append(
-                        f"Line {lineno} ({lesson_id}): prev_hash MISMATCH "
-                        f"— stored={stored_prev[:12] if stored_prev else '(empty)'}… "
-                        f"expected={expected_prev_hash[:12]}… "
-                        f"(entry inserted, deleted, or reordered)"
-                    )
-                    if result.broken_at < 0:
-                        result.broken_at = lineno
-
-                # 3. Verify chain_hash
-                stored_chain_hash = data.get("chain_hash", "")
-                if not stored_chain_hash:
-                    result.errors.append(f"Line {lineno} ({lesson_id}): missing chain_hash")
-                    if result.broken_at < 0:
-                        result.broken_at = lineno
-                else:
-                    expected_chain = _sha256(f"chain:{stored_content_hash}:{stored_prev}")
-                    if stored_chain_hash != expected_chain:
-                        result.errors.append(
-                            f"Line {lineno} ({lesson_id}): chain_hash MISMATCH "
-                            f"— stored={stored_chain_hash[:12]}… "
-                            f"expected={expected_chain[:12]}… "
-                        )
-                        if result.broken_at < 0:
-                            result.broken_at = lineno
-
-                    expected_prev_hash = stored_chain_hash
+                _verify_prev_hash(data, expected_prev_hash, lineno, lesson_id, result)
+                chain_hash = _verify_chain_hash(data, lineno, lesson_id, result)
+                if chain_hash is not None:
+                    expected_prev_hash = chain_hash
 
                 count += 1
 
