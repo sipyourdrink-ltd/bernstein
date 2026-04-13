@@ -228,7 +228,7 @@ class TestExecuteQuery:
         archive = _write_tasks_jsonl(tmp_path, SAMPLE_TASKS)
         intent = QueryIntent(metric="tasks", aggregation="count")
         result = execute_query(intent, archive)
-        assert result.value == 4.0
+        assert result.value == pytest.approx(4.0)
 
     def test_sum_cost(self, tmp_path: Path) -> None:
         archive = _write_tasks_jsonl(tmp_path, SAMPLE_TASKS)
@@ -249,13 +249,13 @@ class TestExecuteQuery:
         archive = _write_tasks_jsonl(tmp_path, SAMPLE_TASKS)
         intent = QueryIntent(metric="cost", aggregation="max")
         result = execute_query(intent, archive)
-        assert result.value == 1.20
+        assert result.value == pytest.approx(1.20)
 
     def test_min_quality(self, tmp_path: Path) -> None:
         archive = _write_tasks_jsonl(tmp_path, SAMPLE_TASKS)
         intent = QueryIntent(metric="quality_score", aggregation="min")
         result = execute_query(intent, archive)
-        assert result.value == 0.40
+        assert result.value == pytest.approx(0.40)
 
     def test_filter_by_status(self, tmp_path: Path) -> None:
         archive = _write_tasks_jsonl(tmp_path, SAMPLE_TASKS)
@@ -265,7 +265,7 @@ class TestExecuteQuery:
             filter_by={"status": "completed"},
         )
         result = execute_query(intent, archive)
-        assert result.value == 3.0
+        assert result.value == pytest.approx(3.0)
 
     def test_group_by_agent(self, tmp_path: Path) -> None:
         archive = _write_tasks_jsonl(tmp_path, SAMPLE_TASKS)
@@ -288,14 +288,14 @@ class TestExecuteQuery:
         archive.write_text("")
         intent = QueryIntent(metric="cost", aggregation="sum")
         result = execute_query(intent, archive)
-        assert result.value == 0.0
+        assert result.value == pytest.approx(0.0)
         assert "No matching" in result.summary
 
     def test_missing_archive(self, tmp_path: Path) -> None:
         archive = tmp_path / "nonexistent.jsonl"
         intent = QueryIntent(metric="cost", aggregation="sum")
         result = execute_query(intent, archive)
-        assert result.value == 0.0
+        assert result.value == pytest.approx(0.0)
 
     def test_malformed_jsonl_skipped(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -312,7 +312,7 @@ class TestExecuteQuery:
         )
         intent = QueryIntent(metric="cost", aggregation="sum")
         result = execute_query(intent, archive)
-        assert result.value == 0.0
+        assert result.value == pytest.approx(0.0)
         assert "No numeric" in result.summary
 
 

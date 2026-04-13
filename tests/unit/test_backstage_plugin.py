@@ -184,7 +184,7 @@ class TestExportRunAsResource:
         assert entry.spec["tasks_total"] == 10
         assert entry.spec["tasks_completed"] == 8
         assert entry.spec["tasks_failed"] == 1
-        assert entry.spec["duration_s"] == 120.5
+        assert entry.spec["duration_s"] == pytest.approx(120.5)
 
     def test_status_label(self, exporter: BackstageExporter, sample_metrics: dict[str, object]) -> None:
         entry = exporter.export_run_as_resource("run-42", sample_metrics)
