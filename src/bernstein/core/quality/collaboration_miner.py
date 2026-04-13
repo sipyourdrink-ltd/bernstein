@@ -343,36 +343,57 @@ def generate_recommendations(patterns: tuple[CollaborationPattern, ...]) -> tupl
         return ()
 
     recs: list[str] = []
+    _recommend_high_success_sequential(patterns, recs)
+    _recommend_low_rework(patterns, recs)
+    _recommend_high_rework(patterns, recs)
+    _recommend_ordering_comparison(patterns, recs)
+    _recommend_qa_involvement(patterns, recs)
+    return tuple(recs)
 
-    # Find the best sequential patterns
-    sequential = [p for p in patterns if p.ordering == "sequential" and p.sample_size >= 3]
-    for pat in sequential:
-        if pat.success_rate >= 0.8:
+
+def _recommend_high_success_sequential(
+    patterns: tuple[CollaborationPattern, ...], recs: list[str]
+) -> None:
+    """Add recommendations for high-success sequential patterns."""
+    for pat in patterns:
+        if pat.ordering == "sequential" and pat.sample_size >= 3 and pat.success_rate >= 0.8:
             recs.append(
                 f"Running {pat.roles[0]} before {pat.roles[1]} (sequential) "
                 f"achieves {pat.success_rate:.0%} success rate over "
                 f"{pat.sample_size} runs."
             )
 
-    # Highlight patterns where rework is notably low
-    low_rework = [p for p in patterns if p.avg_rework_cycles < 0.5 and p.sample_size >= 3]
-    for pat in low_rework:
-        recs.append(
-            f"{pat.roles[0]} + {pat.roles[1]} ({pat.ordering}) has very low "
-            f"rework ({pat.avg_rework_cycles:.1f} cycles) -- consider this pairing "
-            f"for complex tasks."
-        )
 
-    # Warn about high-rework patterns
-    high_rework = [p for p in patterns if p.avg_rework_cycles >= 2.0 and p.sample_size >= 3]
-    for pat in high_rework:
-        recs.append(
-            f"{pat.roles[0]} + {pat.roles[1]} ({pat.ordering}) averages "
-            f"{pat.avg_rework_cycles:.1f} rework cycles -- investigate "
-            f"whether a different ordering or intermediate QA step would help."
-        )
+def _recommend_low_rework(
+    patterns: tuple[CollaborationPattern, ...], recs: list[str]
+) -> None:
+    """Add recommendations for patterns with notably low rework."""
+    for pat in patterns:
+        if pat.avg_rework_cycles < 0.5 and pat.sample_size >= 3:
+            recs.append(
+                f"{pat.roles[0]} + {pat.roles[1]} ({pat.ordering}) has very low "
+                f"rework ({pat.avg_rework_cycles:.1f} cycles) -- consider this pairing "
+                f"for complex tasks."
+            )
 
-    # Compare parallel vs sequential success for same pair
+
+def _recommend_high_rework(
+    patterns: tuple[CollaborationPattern, ...], recs: list[str]
+) -> None:
+    """Warn about patterns with high rework cycles."""
+    for pat in patterns:
+        if pat.avg_rework_cycles >= 2.0 and pat.sample_size >= 3:
+            recs.append(
+                f"{pat.roles[0]} + {pat.roles[1]} ({pat.ordering}) averages "
+                f"{pat.avg_rework_cycles:.1f} rework cycles -- investigate "
+                f"whether a different ordering or intermediate QA step would help."
+            )
+
+
+def _recommend_ordering_comparison(
+    patterns: tuple[CollaborationPattern, ...], recs: list[str]
+) -> None:
+    """Compare parallel vs sequential success for same role pair."""
     pair_map: dict[tuple[str, ...], list[CollaborationPattern]] = defaultdict(list)
     for pat in patterns:
         pair_map[pat.roles].append(pat)
@@ -389,21 +410,27 @@ def generate_recommendations(patterns: tuple[CollaborationPattern, ...]) -> tupl
                 f"success rate."
             )
 
-    # Generic: if QA role is present in high-success patterns, recommend it
-    qa_patterns = [p for p in patterns if "qa" in p.roles and p.success_rate >= 0.7]
-    if qa_patterns:
-        avg_rework_with_qa = sum(p.avg_rework_cycles for p in qa_patterns) / len(qa_patterns)
-        non_qa = [p for p in patterns if "qa" not in p.roles and p.sample_size >= 3]
-        if non_qa:
-            avg_rework_without_qa = sum(p.avg_rework_cycles for p in non_qa) / len(non_qa)
-            if avg_rework_without_qa > 0 and avg_rework_with_qa < avg_rework_without_qa:
-                reduction = (1 - avg_rework_with_qa / avg_rework_without_qa) * 100
-                recs.append(
-                    f"QA involvement reduces rework by {reduction:.0f}% on average "
-                    f"({avg_rework_with_qa:.1f} vs {avg_rework_without_qa:.1f} cycles)."
-                )
 
-    return tuple(recs)
+def _recommend_qa_involvement(
+    patterns: tuple[CollaborationPattern, ...], recs: list[str]
+) -> None:
+    """Recommend QA involvement if it reduces rework."""
+    qa_patterns = [p for p in patterns if "qa" in p.roles and p.success_rate >= 0.7]
+    if not qa_patterns:
+        return
+
+    avg_rework_with_qa = sum(p.avg_rework_cycles for p in qa_patterns) / len(qa_patterns)
+    non_qa = [p for p in patterns if "qa" not in p.roles and p.sample_size >= 3]
+    if not non_qa:
+        return
+
+    avg_rework_without_qa = sum(p.avg_rework_cycles for p in non_qa) / len(non_qa)
+    if avg_rework_without_qa > 0 and avg_rework_with_qa < avg_rework_without_qa:
+        reduction = (1 - avg_rework_with_qa / avg_rework_without_qa) * 100
+        recs.append(
+            f"QA involvement reduces rework by {reduction:.0f}% on average "
+            f"({avg_rework_with_qa:.1f} vs {avg_rework_without_qa:.1f} cycles)."
+        )
 
 
 # ---------------------------------------------------------------------------

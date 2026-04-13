@@ -349,6 +349,22 @@ def validate_profile(profile: SandboxProfile) -> list[ProfileConflict]:
 # ---------------------------------------------------------------------------
 
 
+def _render_list_section(
+    lines: list[str],
+    heading: str,
+    items: list[str],
+    empty_label: str,
+) -> None:
+    """Render a Markdown section with a bullet list or an empty placeholder."""
+    lines.append(f"## {heading}")
+    lines.append("")
+    if items:
+        lines.extend(f"- {item}" for item in items)
+    else:
+        lines.append(f"- *{empty_label}*")
+    lines.append("")
+
+
 def render_profile_summary(profile: SandboxProfile) -> str:
     """Render a Markdown summary of a sandbox profile.
 
@@ -358,53 +374,25 @@ def render_profile_summary(profile: SandboxProfile) -> str:
     Returns:
         A Markdown-formatted string.
     """
-    lines: list[str] = []
-    lines.append(f"# Sandbox Profile: {profile.name}")
-    lines.append("")
+    lines: list[str] = [f"# Sandbox Profile: {profile.name}", ""]
 
     if profile.description:
         lines.append(profile.description)
         lines.append("")
 
-    # Network rules
-    lines.append("## Network Rules")
-    lines.append("")
-    if profile.network_rules:
-        for r in profile.network_rules:
-            port_str = "all ports" if r.port == 0 else str(r.port)
-            lines.append(f"- `{r.host}:{port_str}` ({r.protocol})")
-    else:
-        lines.append("- *No network access*")
-    lines.append("")
+    network_items = [
+        f"`{r.host}:{'all ports' if r.port == 0 else r.port}` ({r.protocol})"
+        for r in profile.network_rules
+    ]
+    _render_list_section(lines, "Network Rules", network_items, "No network access")
 
-    # Filesystem rules
-    lines.append("## Filesystem Rules")
-    lines.append("")
-    if profile.fs_rules:
-        for r in profile.fs_rules:
-            lines.append(f"- `{r.path}` [{r.permissions}]")
-    else:
-        lines.append("- *No filesystem rules*")
-    lines.append("")
+    fs_items = [f"`{r.path}` [{r.permissions}]" for r in profile.fs_rules]
+    _render_list_section(lines, "Filesystem Rules", fs_items, "No filesystem rules")
 
-    # Environment variables
-    lines.append("## Environment Variables")
-    lines.append("")
-    if profile.env_vars:
-        for v in profile.env_vars:
-            lines.append(f"- `{v}`")
-    else:
-        lines.append("- *None*")
-    lines.append("")
+    env_items = [f"`{v}`" for v in profile.env_vars]
+    _render_list_section(lines, "Environment Variables", env_items, "None")
 
-    # Allowed commands
-    lines.append("## Allowed Commands")
-    lines.append("")
-    if profile.allowed_commands:
-        for c in profile.allowed_commands:
-            lines.append(f"- `{c}`")
-    else:
-        lines.append("- *None*")
-    lines.append("")
+    cmd_items = [f"`{c}`" for c in profile.allowed_commands]
+    _render_list_section(lines, "Allowed Commands", cmd_items, "None")
 
     return "\n".join(lines)

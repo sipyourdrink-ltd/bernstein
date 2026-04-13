@@ -253,54 +253,55 @@ def _check_api_key(cli: str) -> None:
     """
     from bernstein.cli.errors import BernsteinError
 
+    error = _get_api_key_error(cli)
+    if error is not None:
+        BernsteinError(what=error[0], why=error[1], fix=error[2]).print()
+        raise SystemExit(1)
+
+
+def _get_api_key_error(cli: str) -> tuple[str, str, str] | None:
+    """Return (what, why, fix) tuple if API key check fails, or None if OK."""
     if cli == "qwen":
         if not any(os.environ.get(v) for v in _QWEN_API_KEY_VARS):
-            BernsteinError(
-                what="No API key configured for qwen",
-                why="Qwen requires one of: " + ", ".join(_QWEN_API_KEY_VARS),
-                fix="export OPENROUTER_API_KEY_PAID=your-key (or any supported key var)",
-            ).print()
-            raise SystemExit(1)
+            return (
+                "No API key configured for qwen",
+                "Qwen requires one of: " + ", ".join(_QWEN_API_KEY_VARS),
+                "export OPENROUTER_API_KEY_PAID=your-key (or any supported key var)",
+            )
     elif cli == "claude":
-        # Claude Code supports OAuth — API key not required if OAuth session active
         if not os.environ.get("ANTHROPIC_API_KEY") and not _claude_has_oauth_session():
-            BernsteinError(
-                what="No Claude authentication found",
-                why="Neither ANTHROPIC_API_KEY nor an active OAuth session was detected",
-                fix="export ANTHROPIC_API_KEY=your-key, or log in via: claude login",
-            ).print()
-            raise SystemExit(1)
+            return (
+                "No Claude authentication found",
+                "Neither ANTHROPIC_API_KEY nor an active OAuth session was detected",
+                "export ANTHROPIC_API_KEY=your-key, or log in via: claude login",
+            )
     elif cli == "gemini":
         authenticated, _method = gemini_has_auth()
         if not authenticated:
-            BernsteinError(
-                what="No Gemini authentication found",
-                why=(
-                    "None of GEMINI_API_KEY, GOOGLE_API_KEY, "
-                    "GOOGLE_APPLICATION_CREDENTIALS, gcloud auth, or "
-                    "~/.config/gemini/ were detected"
-                ),
-                fix="export GOOGLE_API_KEY=your-key, or run: gcloud auth login",
-            ).print()
-            raise SystemExit(1)
+            return (
+                "No Gemini authentication found",
+                "None of GEMINI_API_KEY, GOOGLE_API_KEY, "
+                "GOOGLE_APPLICATION_CREDENTIALS, gcloud auth, or "
+                "~/.config/gemini/ were detected",
+                "export GOOGLE_API_KEY=your-key, or run: gcloud auth login",
+            )
     elif cli == "codex":
         authenticated, _method = _codex_has_auth()
         if not authenticated:
-            BernsteinError(
-                what="No Codex authentication found",
-                why="Neither OPENAI_API_KEY nor an active ChatGPT login was detected",
-                fix="export OPENAI_API_KEY=your-key, or run: codex login",
-            ).print()
-            raise SystemExit(1)
+            return (
+                "No Codex authentication found",
+                "Neither OPENAI_API_KEY nor an active ChatGPT login was detected",
+                "export OPENAI_API_KEY=your-key, or run: codex login",
+            )
     else:
         env_var = _CLI_API_KEY_ENV.get(cli)
         if env_var and not os.environ.get(env_var):
-            BernsteinError(
-                what=f"{cli} adapter requires an API key",
-                why=f"Environment variable {env_var} is not set",
-                fix=f"export {env_var}=your-api-key",
-            ).print()
-            raise SystemExit(1)
+            return (
+                f"{cli} adapter requires an API key",
+                f"Environment variable {env_var} is not set",
+                f"export {env_var}=your-api-key",
+            )
+    return None
 
 
 def _check_port_free(port: int) -> None:
