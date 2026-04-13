@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import py_compile
+import shutil
+import stat
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -353,17 +357,22 @@ def create_github_pr(
 ) -> PullRequestResult:
     """Create a GitHub pull request via the ``gh`` CLI.
 
+    Labels are added as a best-effort post-creation step. If labels don't
+    exist on the repo, the PR is still created successfully and a warning
+    is logged.
+
     Args:
         cwd: Repository root (used as working directory for ``gh``).
         title: PR title.
         body: PR body / description.
         head: Source branch name.
         base: Target branch (default ``"main"``).
-        labels: Optional list of label names to attach.
+        labels: Optional list of label names to attach (best-effort).
 
     Returns:
         PullRequestResult with ``pr_url`` set on success.
     """
+    # Create PR without labels first to avoid failure if labels don't exist
     cmd = [
         "gh",
         "pr",
@@ -377,8 +386,6 @@ def create_github_pr(
         "--base",
         base,
     ]
-    if labels:
-        cmd.extend(["--label", ",".join(labels)])
     try:
         result = subprocess.run(
             cmd,
@@ -389,10 +396,33 @@ def create_github_pr(
             errors="replace",
             timeout=30,
         )
-        if result.returncode == 0:
-            pr_url = result.stdout.strip()
-            return PullRequestResult(success=True, pr_url=pr_url)
-        return PullRequestResult(success=False, error=result.stderr.strip())
+        if result.returncode != 0:
+            return PullRequestResult(success=False, error=result.stderr.strip())
+
+        pr_url = result.stdout.strip()
+
+        # Add labels separately (best-effort) - don't fail if labels don't exist
+        if labels and pr_url:
+            try:
+                label_result = subprocess.run(
+                    ["gh", "pr", "edit", pr_url, "--add-label", ",".join(labels)],
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                )
+                if label_result.returncode != 0:
+                    logger.warning(
+                        "PR created but failed to add labels %s: %s",
+                        labels,
+                        label_result.stderr.strip(),
+                    )
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                logger.warning("PR created but failed to add labels %s: %s", labels, exc)
+
+        return PullRequestResult(success=True, pr_url=pr_url)
     except (subprocess.TimeoutExpired, OSError) as exc:
         return PullRequestResult(success=False, error=str(exc))
 
@@ -447,12 +477,57 @@ def worktree_add(cwd: Path, path: Path, branch: str) -> GitResult:
 
 
 def worktree_remove(cwd: Path, path: Path) -> GitResult:
-    """Remove a worktree (force)."""
-    return run_git(
-        ["worktree", "remove", "--force", str(path)],
-        cwd,
-        timeout=30,
-    )
+    """Remove a worktree (force), with Windows retry logic.
+
+    On Windows, file locks from recently-terminated processes or antivirus
+    can prevent immediate deletion. This function retries up to 3 times with
+    delays, then falls back to manual directory deletion if git fails.
+    """
+    max_attempts = 3 if sys.platform == "win32" else 1
+
+    for attempt in range(max_attempts):
+        result = run_git(
+            ["worktree", "remove", "--force", str(path)],
+            cwd,
+            timeout=30,
+        )
+        if result.ok:
+            return result
+
+        # On Windows, retry after a short delay (file locks may release)
+        if sys.platform == "win32" and attempt < max_attempts - 1:
+            time.sleep(1.0)
+            continue
+
+        # Final fallback on Windows: manual deletion with permission override
+        if sys.platform == "win32" and path.exists():
+            # Extra delay for stubborn file locks (processes fully exiting)
+            time.sleep(2.0)
+
+            def _onerror(func, fpath, _exc_info):  # type: ignore[no-untyped-def]
+                """Clear read-only flag and retry; ignore if still locked."""
+                try:
+                    os.chmod(fpath, stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+                    func(fpath)
+                except OSError:
+                    pass  # File still locked, skip it
+
+            try:
+                shutil.rmtree(path, onerror=_onerror)
+                # Prune to clean up git's worktree list after manual deletion
+                run_git(["worktree", "prune"], cwd, timeout=10)
+                logger.debug("Worktree %s removed via manual deletion fallback", path)
+                return GitResult(returncode=0, stdout="", stderr="")
+            except Exception as exc:
+                logger.debug("Manual worktree deletion failed for %s: %s", path, exc)
+                # Check if directory is mostly gone (some locked files may remain)
+                if not path.exists() or not any(path.iterdir()):
+                    run_git(["worktree", "prune"], cwd, timeout=10)
+                    return GitResult(returncode=0, stdout="", stderr="")
+
+        return result
+
+    return result
 
 
 def worktree_list(cwd: Path) -> str:

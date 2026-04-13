@@ -8,10 +8,12 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
+import re
 import time
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import IO, TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from textual import events
@@ -255,6 +257,31 @@ class BernsteinApp(App[None]):
         self._last_activity: list[str] = []
         self._compare_mark: str | None = None  # first task ID for compare
         self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
+        # Activity log file (--activity-log flag)
+        self._activity_log_file: IO[str] | None = None
+        activity_log_path = os.environ.get("BERNSTEIN_ACTIVITY_LOG")
+        if activity_log_path:
+            try:
+                log_path = Path(activity_log_path)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                self._activity_log_file = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+            except OSError as exc:
+                logging.getLogger(__name__).warning("Failed to open activity log file: %s", exc)
+
+    def _write_activity(self, role: str, line: str) -> None:
+        """Write an activity line to the RichLog and optionally to a file."""
+        formatted = _format_activity_line(role, line)
+        try:
+            log = self.query_one("#activity-log", RichLog)
+            log.write(formatted)
+        except Exception:
+            pass  # Widget may not exist yet during startup
+        # Write to activity log file if configured
+        if self._activity_log_file:
+            # Strip Rich markup for plain text file
+            plain = re.sub(r"\[/?[^\]]+\]", "", formatted)
+            self._activity_log_file.write(plain + "\n")
+            self._activity_log_file.flush()
 
     def compose(self) -> ComposeResult:
         yield DashboardHeader(id="header-bar")
@@ -315,6 +342,11 @@ class BernsteinApp(App[None]):
             logger.debug("Layout calculation error during resize (ignored)", exc_info=True)
 
     def on_mount(self) -> None:
+        # Skip historical spawner.log entries - start from current position
+        sp = Path(".sdd/runtime/spawner.log")
+        if sp.exists():
+            self._spawner_size = sp.stat().st_size
+
         t: DataTable[Any] = self.query_one("#tasks-table", DataTable)  # pyright: ignore[reportUnknownVariableType]
         t.add_columns("", "P", "ROLE", "TASK")
         t.cursor_type = "row"
@@ -330,25 +362,24 @@ class BernsteinApp(App[None]):
                 logger.warning("Failed to read evolve.json: %s", exc)
 
         # Write startup messages to activity log
-        log = self.query_one("#activity-log", RichLog)
-        log.write(_format_activity_line("system", "Bernstein starting..."))
-        log.write(_format_activity_line("system", "Connecting to task server on :8052"))
+        self._write_activity("system", "Bernstein starting...")
+        self._write_activity("system", "Connecting to task server on :8052")
 
         # Immediate agent display from local file (no HTTP wait)
         agents = _load_agents()
         if agents:
             alive = sum(1 for a in agents if a.get("status") != "dead")
-            log.write(_format_activity_line("system", f"{alive} agent(s) active"))
+            self._write_activity("system", f"{alive} agent(s) active")
             costs: dict[str, Any] = {}
             self._update_agents(agents, costs)
         else:
-            log.write(_format_activity_line("system", "Spawning agents..."))
+            self._write_activity("system", "Spawning agents...")
             # Show worktree count as early signal of activity
             wt_dir = Path(".sdd/worktrees")
             if wt_dir.exists():
                 wt_count = sum(1 for _ in wt_dir.iterdir() if _.is_dir())
                 if wt_count > 0:
-                    log.write(_format_activity_line("system", f"{wt_count} worktree(s) detected"))
+                    self._write_activity("system", f"{wt_count} worktree(s) detected")
 
         # File watcher for agents.json (500ms — instant agent visibility)
         self.set_interval(0.5, self._check_agents_file)
@@ -395,20 +426,19 @@ class BernsteinApp(App[None]):
                         f.seek(self._spawner_size)
                         new_lines = f.read()
                     self._spawner_size = size
-                    log = self.query_one("#activity-log", RichLog)
                     for line in new_lines.strip().split("\n"):
                         if not line:
                             continue
                         message = line.split("] ")[-1] if "] " in line else line
                         # Filter to important events
                         if "agent_spawned" in line or "Spawning" in line or "spawned" in line.lower():
-                            log.write(_format_activity_line("system", f"spawned: {message}"))
+                            self._write_activity("system", f"spawned: {message}")
                         elif "ERROR" in line or "error" in line:
-                            log.write(_format_activity_line("system", message))
+                            self._write_activity("system", message)
                         elif "WARNING" in line:
-                            log.write(_format_activity_line("system", f"warning: {message}"))
+                            self._write_activity("system", f"warning: {message}")
                         elif "completed" in line.lower() or "reaped" in line.lower() or "merged" in line.lower():
-                            log.write(_format_activity_line("system", message))
+                            self._write_activity("system", message)
             except Exception:
                 pass
 
@@ -882,7 +912,7 @@ class BernsteinApp(App[None]):
                 message = f"config - {path} (was {before})"
             else:
                 message = f"config ~ {path}: {before} -> {after}"
-            log.write(_format_activity_line("system", message))
+            self._write_activity("system", message)
 
     ROLE_COLORS: ClassVar[dict[str, str]] = ROLE_COLORS
 
@@ -901,6 +931,7 @@ class BernsteinApp(App[None]):
         "no tasks",
         "idle",
         "waiting for",
+        "agent working",
     )
 
     def _update_activity(self, agents: list[dict[str, Any]]) -> None:
@@ -923,6 +954,11 @@ class BernsteinApp(App[None]):
         for line in new_lines:
             if line not in self._last_activity:
                 log.write(line)
+                # Write to activity log file if configured
+                if self._activity_log_file:
+                    plain = re.sub(r"\[/?[^\]]+\]", "", line)
+                    self._activity_log_file.write(plain + "\n")
+                    self._activity_log_file.flush()
         self._last_activity = new_lines
 
     # -- Actions --

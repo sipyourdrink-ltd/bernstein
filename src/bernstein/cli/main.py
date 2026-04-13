@@ -483,6 +483,14 @@ class _RichGroup(click.Group):
     default=False,
     help="Automatically create a GitHub PR when all tasks complete.",
 )
+@click.option(
+    "--activity-log",
+    "activity_log_path",
+    is_flag=False,
+    flag_value=".sdd/logs/activity.log",
+    default=None,
+    help="Write activity to log file. Default: .sdd/logs/activity.log",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -510,6 +518,7 @@ def cli(
     quiet: bool,
     task_filter: str | None,
     auto_pr: bool,
+    activity_log_path: str | None,
 ) -> None:
     """Declarative agent orchestration for engineering teams."""
     setup_json_logging()
@@ -679,6 +688,7 @@ def cli(
         profile=False,
         task_filter=task_filter,
         auto_pr=auto_pr,
+        activity_log_path=activity_log_path,
     )
 
 

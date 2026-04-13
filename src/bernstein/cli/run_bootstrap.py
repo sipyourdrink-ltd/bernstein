@@ -615,6 +615,14 @@ def exec_restart() -> None:
     default=False,
     help="Automatically create a GitHub PR when all tasks complete.",
 )
+@click.option(
+    "--activity-log",
+    "activity_log_path",
+    is_flag=False,
+    flag_value=".sdd/logs/activity.log",
+    default=None,
+    help="Write activity to log file. Use --activity-log for default (.sdd/logs/activity.log) or --activity-log PATH for custom.",
+)
 def run(
     plan_file: Path | None,
     goal: str | None,
@@ -643,6 +651,7 @@ def run(
     profile: bool = False,
     task_filter: str | None = None,
     auto_pr: bool = False,
+    activity_log_path: str | None = None,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -717,9 +726,14 @@ def run(
     # Propagate task filter so the orchestrator only ingests matching backlog tasks
     if task_filter:
         os.environ["BERNSTEIN_TASK_FILTER"] = task_filter
+
     # Propagate auto-PR flag so the orchestrator creates a PR when all tasks complete
     if auto_pr:
         os.environ["BERNSTEIN_AUTO_PR"] = "1"
+
+    # Propagate activity log path so the dashboard writes activity to a file
+    if activity_log_path:
+        os.environ["BERNSTEIN_ACTIVITY_LOG"] = activity_log_path
 
     _configure_quality_gate_bypass(
         goal=goal,
