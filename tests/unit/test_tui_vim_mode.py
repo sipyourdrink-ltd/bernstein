@@ -95,7 +95,7 @@ class TestVimStateNormalNavigation:
         action = state.handle_key("right")
         assert action.kind == VimActionKind.SCROLL_RIGHT
 
-    def test_G_goto_bottom(self) -> None:
+    def test_g_goto_bottom(self) -> None:
         state = VimState()
         action = state.handle_key("G")
         assert action.kind == VimActionKind.GOTO_BOTTOM

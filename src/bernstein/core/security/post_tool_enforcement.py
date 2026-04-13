@@ -42,7 +42,7 @@ _OUTPUT_SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
-    ("credit_card", re.compile(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b")),
+    ("credit_card", re.compile(r"\b(?:4\d{12}(?:\d{3})?|5[1-5]\d{14}|3[47]\d{13})\b")),
 ]
 
 _REDACTED = "[REDACTED]"

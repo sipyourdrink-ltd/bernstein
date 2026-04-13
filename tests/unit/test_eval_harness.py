@@ -239,7 +239,7 @@ class TestEvaluateTask:
         assert result.failure is not None
         assert result.failure.category == FailureCategory.INCOMPLETE
 
-    def test_failing_taFAKE_STRIPE_TEST_KEY_REPLACED(self, tmp_path: Path) -> None:
+    def test_failing_task_replaced(self, tmp_path: Path) -> None:
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()
         h = EvalHarness(state_dir)

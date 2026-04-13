@@ -7,8 +7,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-from PIL import Image
-
 from bernstein.cli.image_renderer import (
     BaseRenderer,
     BrailleRenderer,
@@ -22,6 +20,7 @@ from bernstein.cli.image_renderer import (
     render_image,
 )
 from bernstein.cli.terminal_caps import Protocol, TerminalCaps
+from PIL import Image
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -95,7 +94,7 @@ class TestKittyRenderer:
         output = KittyRenderer().render(red_image, width=4, height=4)
         assert "\033\\" in output
 
-    def test_output_contains_a_T_param(self, red_image: Image.Image) -> None:
+    def test_output_contains_a_t_param(self, red_image: Image.Image) -> None:
         """Kitty 'a=T' means 'transmit and display'."""
         output = KittyRenderer().render(red_image, width=4, height=4)
         assert "a=T" in output

@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.plugin_manifest import (
     ManifestValidationError,
     load_plugin_manifest,
@@ -218,7 +217,7 @@ class TestSemverValidation:
                 }
             )
 
-    def test_prerelease_semver_reJECTED(self) -> None:
+    def test_prerelease_semver_rejected(self) -> None:
         """1.0.0-beta should fail (strict semver only)."""
         with pytest.raises(ManifestValidationError, match="semver"):
             validate_manifest(

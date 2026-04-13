@@ -106,7 +106,7 @@ class TaskServiceImpl:
     def __init__(self, task_store: Any) -> None:
         self._store = task_store
 
-    async def CreateTask(self, request: Any, context: Any) -> Any:
+    async def create_task(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.create(
@@ -121,7 +121,7 @@ class TaskServiceImpl:
         self._fill_task_proto(resp.task, task)
         return resp
 
-    async def ClaimTask(self, request: Any, context: Any) -> Any:
+    async def claim_task(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -137,7 +137,7 @@ class TaskServiceImpl:
         self._fill_task_proto(resp.task, task)
         return resp
 
-    async def CompleteTask(self, request: Any, context: Any) -> Any:
+    async def complete_task(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -152,7 +152,7 @@ class TaskServiceImpl:
         self._fill_task_proto(resp.task, task)
         return resp
 
-    async def FailTask(self, request: Any, context: Any) -> Any:
+    async def fail_task(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -164,7 +164,7 @@ class TaskServiceImpl:
         self._fill_task_proto(resp.task, task)
         return resp
 
-    async def ReportProgress(self, request: Any, context: Any) -> Any:
+    async def report_progress(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -173,7 +173,7 @@ class TaskServiceImpl:
         resp = tasks_pb2.ProgressResponse(acknowledged=True)
         return resp
 
-    async def ListTasks(self, request: Any, context: Any) -> Any:
+    async def list_tasks(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         status_name = None
@@ -193,7 +193,7 @@ class TaskServiceImpl:
             self._fill_task_proto(task_msg, t)
         return resp
 
-    async def GetTask(self, request: Any, context: Any) -> Any:
+    async def get_task(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import tasks_pb2
 
         task = self._store.get(request.task_id)
@@ -217,6 +217,15 @@ class TaskServiceImpl:
         proto.model = t.get("model", "") or ""
         proto.effort = t.get("effort", "") or ""
 
+    # gRPC servicer requires PascalCase method names matching the proto definition.
+    CreateTask = create_task
+    ClaimTask = claim_task
+    CompleteTask = complete_task
+    FailTask = fail_task
+    ReportProgress = report_progress
+    ListTasks = list_tasks
+    GetTask = get_task
+
 
 class ClusterServiceImpl:
     """gRPC implementation of ClusterService, bridging to NodeRegistry."""
@@ -224,7 +233,7 @@ class ClusterServiceImpl:
     def __init__(self, node_registry: NodeRegistry) -> None:
         self._registry = node_registry
 
-    async def RegisterNode(self, request: Any, context: Any) -> Any:
+    async def register_node(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
         from bernstein.core.models import NodeCapacity
 
@@ -246,7 +255,7 @@ class ClusterServiceImpl:
         self._fill_node_proto(resp.node, node)
         return resp
 
-    async def Heartbeat(self, request: Any, context: Any) -> Any:
+    async def heartbeat(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         node = self._registry.get(request.node_id)
@@ -270,7 +279,7 @@ class ClusterServiceImpl:
             self._fill_node_proto(resp.node, node)
         return resp
 
-    async def StreamHeartbeats(self, request_iterator: Any, context: Any) -> Any:
+    async def stream_heartbeats(self, request_iterator: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         async for request in request_iterator:
@@ -280,13 +289,13 @@ class ClusterServiceImpl:
                 self._fill_node_proto(resp.node, node)
             yield resp
 
-    async def UnregisterNode(self, request: Any, context: Any) -> Any:
+    async def unregister_node(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         removed = self._registry.unregister(request.node_id)
         return cluster_pb2.UnregisterNodeResponse(removed=removed)
 
-    async def CordonNode(self, request: Any, context: Any) -> Any:
+    async def cordon_node(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         node = self._registry.get(request.node_id)
@@ -298,7 +307,7 @@ class ClusterServiceImpl:
             status=4,  # CORDONED
         )
 
-    async def UncordonNode(self, request: Any, context: Any) -> Any:
+    async def uncordon_node(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         node = self._registry.get(request.node_id)
@@ -310,7 +319,7 @@ class ClusterServiceImpl:
             status=1,  # ONLINE
         )
 
-    async def DrainNode(self, request: Any, context: Any) -> Any:
+    async def drain_node(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         node = self._registry.get(request.node_id)
@@ -322,7 +331,7 @@ class ClusterServiceImpl:
             status=5,  # DRAINING
         )
 
-    async def ListNodes(self, request: Any, context: Any) -> Any:
+    async def list_nodes(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         nodes = self._registry.list_nodes()
@@ -339,7 +348,7 @@ class ClusterServiceImpl:
             self._fill_node_proto(node_msg, n)
         return resp
 
-    async def GetClusterStatus(self, request: Any, context: Any) -> Any:
+    async def get_cluster_status(self, request: Any, context: Any) -> Any:
         from bernstein.core.grpc_gen import cluster_pb2
 
         summary = self._registry.cluster_summary()
@@ -373,6 +382,17 @@ class ClusterServiceImpl:
                 proto.labels[k] = v
         if node.cell_ids:
             proto.cell_ids[:] = list(node.cell_ids)
+
+    # gRPC servicer requires PascalCase method names matching the proto definition.
+    RegisterNode = register_node
+    Heartbeat = heartbeat
+    StreamHeartbeats = stream_heartbeats
+    UnregisterNode = unregister_node
+    CordonNode = cordon_node
+    UncordonNode = uncordon_node
+    DrainNode = drain_node
+    ListNodes = list_nodes
+    GetClusterStatus = get_cluster_status
 
 
 @dataclass
