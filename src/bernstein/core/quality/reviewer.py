@@ -210,7 +210,13 @@ def review_queue_sync(
         QueueReviewResult with corrections to apply.
     """
     coro = review_queue(
-        completed_count, failed_count, budget_remaining_pct, server_url, model, provider, _templates_dir,
+        completed_count,
+        failed_count,
+        budget_remaining_pct,
+        server_url,
+        model,
+        provider,
+        _templates_dir,
     )
     try:
         loop = asyncio.get_event_loop()
