@@ -216,7 +216,9 @@ def run_ruff_check(orch: Any) -> list[RuffViolation]:
         ["uv", "run", "ruff", "check", ".", "--output-format", "json"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=orch._workdir,
         start_new_session=True,
     )
@@ -330,7 +332,9 @@ def run_pytest(orch: Any) -> TestResults:
         ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=orch._workdir,
         start_new_session=True,
     )
@@ -459,7 +463,9 @@ def evolve_auto_commit(orch: Any) -> bool:
         test_result = subprocess.run(
             ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=orch._workdir,
             timeout=300,
         )

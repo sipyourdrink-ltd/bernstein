@@ -452,7 +452,9 @@ class NotificationManager:
                 [notifier, "-title", payload.title, "-message", body or payload.event, "-group", "bernstein"],
                 check=False,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             logger.info("Desktop notification sent via terminal-notifier: event=%s", payload.event)
             return
@@ -465,6 +467,8 @@ class NotificationManager:
             [notifier, payload.title, body or payload.event],
             check=False,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         logger.info("Desktop notification sent via notify-send: event=%s", payload.event)

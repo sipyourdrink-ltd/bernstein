@@ -23,7 +23,9 @@ def _get_git_diff_stat(start_sha: str) -> str:
             result = subprocess.run(
                 ["git", "diff", "--stat", f"{start_sha}..HEAD"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -35,7 +37,9 @@ def _get_git_diff_stat(start_sha: str) -> str:
         result = subprocess.run(
             ["git", "diff", "--stat", "HEAD"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if result.returncode == 0:
@@ -59,7 +63,9 @@ def _find_session_start_sha(saved_at: float) -> str:
         result = subprocess.run(
             ["git", "log", "--format=%H", "--reverse", f"--after={iso}"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if result.returncode != 0:
@@ -72,7 +78,9 @@ def _find_session_start_sha(saved_at: float) -> str:
         parent_result = subprocess.run(
             ["git", "rev-parse", f"{first_commit}^"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if parent_result.returncode == 0:

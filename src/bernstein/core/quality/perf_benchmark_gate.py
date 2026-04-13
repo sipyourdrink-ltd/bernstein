@@ -146,7 +146,9 @@ def run_benchmark(
         result = subprocess.run(
             shlex.split(command),
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         elapsed_ms = (time.monotonic() - start) * 1000.0
 

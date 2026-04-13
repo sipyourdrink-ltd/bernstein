@@ -122,7 +122,9 @@ def _check_git_changes(workdir: Path, session_id: str) -> bool:
             ["git", "status", "--porcelain"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )
@@ -134,7 +136,9 @@ def _check_git_changes(workdir: Path, session_id: str) -> bool:
             ["git", "log", "--since=5 minutes ago", "--oneline"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )

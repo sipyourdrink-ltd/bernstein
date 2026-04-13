@@ -159,7 +159,9 @@ def check_git_installed() -> dict[str, Any]:
         result = subprocess.run(
             ["git", "--version"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
         version = result.stdout.strip()

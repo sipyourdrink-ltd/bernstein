@@ -36,7 +36,9 @@ def undo_cmd(task_id: str | None, revert_all: bool, yes: bool) -> None:
         res = subprocess.run(
             ["git", "log", "-n", "50", "--pretty=format:%H %s"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=".",
         )
         for line in res.stdout.splitlines():

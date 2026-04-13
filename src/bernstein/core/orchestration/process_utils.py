@@ -23,7 +23,9 @@ def process_state(pid: int) -> str | None:
         result = subprocess.run(
             ["ps", "-o", "stat=", "-p", str(pid)],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=2,
             check=False,
         )
@@ -56,7 +58,9 @@ def process_cwd(pid: int) -> Path | None:
         result = subprocess.run(
             ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=2,
             check=False,
         )

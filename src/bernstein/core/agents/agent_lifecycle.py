@@ -1274,7 +1274,9 @@ def _has_git_commits_on_branch(worktree_path: Path) -> bool:
             ["git", "log", "--oneline", "main..HEAD"],
             cwd=str(worktree_path),
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
         return len(result.stdout.strip()) > 0

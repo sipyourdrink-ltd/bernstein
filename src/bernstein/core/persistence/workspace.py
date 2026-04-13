@@ -267,7 +267,9 @@ class Workspace:
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 cwd=str(repo_path),
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=True,
             )
             return result.stdout.strip()
@@ -282,7 +284,9 @@ class Workspace:
                 ["git", "status", "--porcelain"],
                 cwd=str(repo_path),
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=True,
             )
             return result.stdout.strip() == ""
@@ -297,7 +301,9 @@ class Workspace:
                 ["git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
                 cwd=str(repo_path),
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=True,
             )
             parts = result.stdout.strip().split()

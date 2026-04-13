@@ -171,7 +171,9 @@ def _pip_install(spec: str) -> bool:
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", spec, "--quiet"],
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0:
         console.print(f"[red]pip error:[/red]\n{result.stderr.strip()}")

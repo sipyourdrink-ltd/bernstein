@@ -125,7 +125,9 @@ def prune_orphan_worktrees(
                 ["git", "worktree", "prune"],
                 cwd=mgr.repo_root,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
         except Exception as exc:

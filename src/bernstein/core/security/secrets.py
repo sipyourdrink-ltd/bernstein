@@ -280,7 +280,9 @@ class OnePasswordSecretsProvider(SecretsProvider):
             result = subprocess.run(
                 ["op", "item", "get", path, "--format=json"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=15,
             )
         except FileNotFoundError as exc:
@@ -314,7 +316,9 @@ class OnePasswordSecretsProvider(SecretsProvider):
             result = subprocess.run(
                 ["op", "whoami", "--format=json"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             if result.returncode != 0:

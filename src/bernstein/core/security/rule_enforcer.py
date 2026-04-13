@@ -214,7 +214,9 @@ def _get_git_diff(run_dir: Path) -> str:
                 diff_cmd,
                 cwd=run_dir,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
             if result.returncode == 0 and result.stdout:
@@ -366,7 +368,9 @@ def _check_command(rule: RuleSpec, run_dir: Path, timeout_s: int = 60) -> RuleVi
             # features; not user input
             cwd=run_dir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_s,
         )
         if proc.returncode == 0:

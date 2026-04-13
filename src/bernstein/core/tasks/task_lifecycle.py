@@ -2294,7 +2294,9 @@ def _get_changed_files_in_worktree(worktree_path: Path) -> list[str]:
             ["git", "diff", "--name-only", "HEAD"],
             cwd=worktree_path,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if result.returncode == 0:
@@ -2321,7 +2323,9 @@ def _get_git_diff_line_count_in_worktree(worktree_path: Path) -> int:
             ["git", "diff", "--numstat", "HEAD"],
             cwd=worktree_path,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if result.returncode != 0:

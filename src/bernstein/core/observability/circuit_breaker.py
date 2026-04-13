@@ -216,7 +216,9 @@ def _get_worktree_changed_files(worktree_path: Path) -> list[str] | None:
         result = subprocess.run(
             ["git", "-C", str(worktree_path), "diff", "--name-only", "HEAD"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if result.returncode != 0:
@@ -227,7 +229,9 @@ def _get_worktree_changed_files(worktree_path: Path) -> list[str] | None:
         result2 = subprocess.run(
             ["git", "-C", str(worktree_path), "ls-files", "--others", "--exclude-standard"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         untracked = [f.strip() for f in result2.stdout.splitlines() if f.strip()]
@@ -263,7 +267,9 @@ def _get_worktree_diff(worktree_path: Path) -> str | None:
         result = subprocess.run(
             ["git", "-C", str(worktree_path), "diff", "HEAD"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
         )
         if result.returncode != 0:
@@ -382,7 +388,9 @@ def _get_worktree_branch(worktree_path: Path) -> str | None:
         result = subprocess.run(
             ["git", "-C", str(worktree_path), "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
         if result.returncode == 0:

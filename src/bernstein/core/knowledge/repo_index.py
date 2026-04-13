@@ -246,7 +246,9 @@ def _git_file_owners(workdir: Path, files: list[str]) -> dict[str, str]:
                 ["git", "shortlog", "-sn", "--no-merges", "-1", "--", fpath],
                 cwd=workdir,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():

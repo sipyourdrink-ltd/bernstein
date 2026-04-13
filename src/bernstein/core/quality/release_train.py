@@ -158,7 +158,9 @@ def _gh_check_runs(repo: str, branch: str, timeout: int = 30) -> list[dict[str, 
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         if result.returncode != 0:

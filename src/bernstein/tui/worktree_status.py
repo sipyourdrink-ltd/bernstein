@@ -44,7 +44,9 @@ def get_worktree_status(workdir: Path) -> WorktreeStatus | None:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if branch_result.returncode != 0:
@@ -55,7 +57,9 @@ def get_worktree_status(workdir: Path) -> WorktreeStatus | None:
             ["git", "status", "--porcelain"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         is_dirty = bool(dirty_result.stdout.strip())

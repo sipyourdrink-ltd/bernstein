@@ -230,7 +230,9 @@ class GateRunnerCacheMixin:
                 ["git", "diff", "--name-only", f"{self._base_ref}..HEAD"],
                 cwd=run_dir,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
         except (OSError, subprocess.TimeoutExpired):

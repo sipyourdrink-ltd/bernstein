@@ -446,7 +446,9 @@ class AgencyProvider:
             result = subprocess.run(
                 ["git", "-C", str(target), "pull", "--ff-only", "--quiet"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
             )
             if result.returncode != 0:
@@ -462,7 +464,9 @@ class AgencyProvider:
             result = subprocess.run(
                 ["git", "clone", "--depth=1", "--quiet", url, str(target)],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
             )
             if result.returncode != 0:

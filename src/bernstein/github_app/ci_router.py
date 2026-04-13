@@ -50,7 +50,9 @@ def get_commit_files(head_sha: str, cwd: Path | None = None) -> list[str]:
         result = subprocess.run(
             ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", head_sha],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             cwd=cwd,
         )
@@ -78,7 +80,9 @@ def get_commit_diff(head_sha: str, cwd: Path | None = None) -> str:
         result = subprocess.run(
             ["git", "show", "--stat", "--patch", head_sha],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
             cwd=cwd,
         )
@@ -103,7 +107,9 @@ def get_commit_message(head_sha: str, cwd: Path | None = None) -> str:
         result = subprocess.run(
             ["git", "log", "--format=%s", "-1", head_sha],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             cwd=cwd,
         )

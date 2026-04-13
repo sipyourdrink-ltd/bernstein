@@ -181,7 +181,9 @@ def download_github_actions_log(
     result = subprocess.run(
         ["gh", "run", "view", run_id, "--log-failed"],
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
     )
     if result.returncode != 0:
@@ -231,7 +233,9 @@ def download_github_actions_log_api(
             '.jobs[] | select(.conclusion == "failure") | .id',
         ],
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
     )
     if result.returncode != 0:
@@ -248,7 +252,9 @@ def download_github_actions_log_api(
         log_result = subprocess.run(
             ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         if log_result.returncode == 0:

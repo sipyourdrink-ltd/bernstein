@@ -186,7 +186,9 @@ def current_git_branch(workdir: Path) -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -204,7 +206,9 @@ def current_git_sha(workdir: Path) -> str:
             ["git", "rev-parse", "HEAD"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )

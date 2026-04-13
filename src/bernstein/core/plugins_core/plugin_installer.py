@@ -340,10 +340,9 @@ def _install_npm(source: NpmSource, install_dir: Path) -> PluginInstallResult:
         pack_cmd = ["npm", "pack", pkg_spec, "--pack-destination", str(tmp_path)]
         logger.info("plugin_installer: npm packing %s", pkg_spec)
         try:
-            result = subprocess.run(pack_cmd, check=True, capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace", timeout=120)
+            result = subprocess.run(
+                pack_cmd, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120
+            )
         except subprocess.CalledProcessError as exc:
             return PluginInstallResult(
                 success=False,

@@ -71,7 +71,9 @@ def get_rss_bytes(pid: int) -> int | None:
         result = subprocess.run(
             ["ps", "-o", "rss=", "-p", str(pid)],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
         rss_kb = int(result.stdout.strip())

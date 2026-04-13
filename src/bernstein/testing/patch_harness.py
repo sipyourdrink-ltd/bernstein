@@ -66,7 +66,9 @@ def apply_patch(patch: str, workdir: Path) -> bool:
     check = subprocess.run(
         ["git", "apply", "--check"],
         input=patch,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         cwd=str(workdir),
     )
@@ -76,7 +78,9 @@ def apply_patch(patch: str, workdir: Path) -> bool:
     subprocess.run(
         ["git", "apply"],
         input=patch,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
         cwd=str(workdir),
     )

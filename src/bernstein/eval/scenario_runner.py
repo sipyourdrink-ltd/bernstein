@@ -323,7 +323,9 @@ class ScenarioRunner:
                 # commands are developer-authored YAML configs that may use
                 # shell features; not user input
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self._command_timeout,
                 cwd=self._repo_root,
             )
@@ -652,7 +654,9 @@ class ScenarioRunner:
                 # validation commands are developer-authored shell strings
                 # from YAML configs; not user input
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self._command_timeout,
                 cwd=self._repo_root,
             )

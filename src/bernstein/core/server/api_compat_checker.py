@@ -432,7 +432,9 @@ def _git_diff_files(workdir: Path, base_ref: str, diff_filter: str) -> list[str]
             ["git", "diff", "--name-only", f"--diff-filter={diff_filter}", base_ref, "--", "*.py"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         return [f.strip() for f in result.stdout.splitlines() if f.strip().endswith(".py")]
@@ -520,7 +522,9 @@ def _git_show(workdir: Path, ref: str, rel_path: str) -> str:
             ["git", "show", f"{ref}:{rel_path}"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         if result.returncode == 0:

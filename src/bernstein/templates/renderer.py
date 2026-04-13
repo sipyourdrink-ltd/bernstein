@@ -79,7 +79,9 @@ def _execute_shell_commands(template: str) -> str:
             result = subprocess.run(
                 shlex.split(cmd),
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             if result.returncode != 0:

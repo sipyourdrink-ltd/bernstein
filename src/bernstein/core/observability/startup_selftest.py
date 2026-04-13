@@ -337,7 +337,9 @@ def _check_git(workdir: Path | None) -> CheckResult:
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             cwd=str(workdir),
         )

@@ -376,7 +376,9 @@ class TaskContextBuilder:
                         ["grep", "-n", f"import.*{filename}", fpath],
                         cwd=self.workdir,
                         capture_output=True,
-                        text=True, encoding="utf-8", errors="replace",
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         timeout=2,
                     )
                     if grep_result.returncode == 0:

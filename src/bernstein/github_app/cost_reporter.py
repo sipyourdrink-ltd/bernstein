@@ -106,7 +106,9 @@ def _find_existing_cost_comment(pr_number: int, repo: str) -> int | None:
         result = subprocess.run(
             args,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
         )
         if result.returncode == 0:

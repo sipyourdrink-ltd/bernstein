@@ -494,7 +494,9 @@ def _run_opa_eval(policy_path: Path, payload: dict[str, Any]) -> object:
             ],
             check=False,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
     finally:
@@ -519,7 +521,9 @@ def _run_git(run_dir: Path, args: list[str]) -> str:
         cwd=run_dir,
         check=False,
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if completed.returncode != 0:
         return ""

@@ -1176,7 +1176,9 @@ def expand_shell_commands(template: str, *, timeout: int = 5, workdir: Path | No
             result = _subprocess.run(
                 _shlex.split(cmd),
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 cwd=workdir,
             )

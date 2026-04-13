@@ -290,7 +290,9 @@ def _get_git_diff_stats(workdir: Path, done_tasks: list[Any]) -> dict[str, Any]:
             ["git", "diff", "--stat", "--numstat"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )

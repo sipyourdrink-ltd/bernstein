@@ -122,7 +122,9 @@ def _get_diff(workdir: Path, changed_files: list[str]) -> str:
             cmd,
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         diff = result.stdout.strip()
@@ -132,7 +134,9 @@ def _get_diff(workdir: Path, changed_files: list[str]) -> str:
                 ["git", "diff", "--cached", "--"],
                 cwd=workdir,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
             diff = result.stdout.strip()
@@ -192,7 +196,9 @@ def _find_callers_in_codebase(name: str, workdir: Path) -> list[str]:
             ],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
         )
         if result.returncode not in (0, 1):
@@ -222,7 +228,9 @@ def _count_py_files(workdir: Path) -> int:
             ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.py"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         return len(result.stdout.strip().splitlines())

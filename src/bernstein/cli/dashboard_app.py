@@ -1254,7 +1254,9 @@ class BernsteinApp(App[None]):
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 cwd=".",
             )
             if result.stdout.strip():

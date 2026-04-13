@@ -214,7 +214,9 @@ def _compute_churn_score(file_path: Path, workdir: Path, days: int = 30) -> int:
             ["git", "log", f"--since={days}.days", "--oneline", "--", rel],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if result.returncode != 0:

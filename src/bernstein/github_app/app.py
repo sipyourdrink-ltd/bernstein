@@ -204,7 +204,9 @@ def create_installation_token(config: GitHubAppConfig, installation_id: int) -> 
                 "POST",
             ],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             check=False,
         )

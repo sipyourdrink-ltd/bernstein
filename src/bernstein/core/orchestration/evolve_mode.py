@@ -244,7 +244,9 @@ class EvolveMixin:
             ["uv", "run", "ruff", "check", ".", "--output-format", "json"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=self._workdir,  # type: ignore[attr-defined]
             start_new_session=True,
         )
@@ -308,7 +310,9 @@ class EvolveMixin:
             ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=self._workdir,  # type: ignore[attr-defined]
             start_new_session=True,
         )
@@ -414,7 +418,9 @@ class EvolveMixin:
             test_result = subprocess.run(
                 ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 cwd=self._workdir,  # type: ignore[attr-defined]
                 timeout=300,
             )

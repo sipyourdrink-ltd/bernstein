@@ -410,7 +410,9 @@ def _list_process_snapshots() -> list[_ProcessSnapshot]:
         result = subprocess.run(
             ["ps", "-ax", "-o", "pid=,ppid=,pgid=,command="],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -474,7 +476,9 @@ def _kill_port_holder(port: int, killed: set[int]) -> None:
         result = subprocess.run(
             ["lsof", "-ti", f":{port}"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
         for line in result.stdout.strip().splitlines():

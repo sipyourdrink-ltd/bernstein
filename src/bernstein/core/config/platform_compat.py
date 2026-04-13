@@ -403,7 +403,9 @@ def _win_taskkill(pid: int, *, force: bool = False, tree: bool = False) -> bool:
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         return result.returncode == 0

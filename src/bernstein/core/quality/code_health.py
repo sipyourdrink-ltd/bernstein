@@ -209,7 +209,9 @@ def _score_churn(file_path: Path, project_root: Path) -> float:
         result = subprocess.run(
             ["git", "log", "--follow", "--oneline", "--", str(file_path)],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(project_root),
             timeout=10,
         )

@@ -205,7 +205,9 @@ def _run_ruff_format(workdir: Path, owned_files: list[str]) -> FastPathResult:
         proc = subprocess.run(
             ["uv", "run", "ruff", "format", *targets],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=workdir,
             timeout=30,
         )
@@ -245,7 +247,9 @@ def _run_ruff_fix(workdir: Path, owned_files: list[str]) -> FastPathResult:
         proc = subprocess.run(
             ["uv", "run", "ruff", "check", "--fix", *targets],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=workdir,
             timeout=30,
         )
@@ -278,7 +282,9 @@ def _run_sort_imports(workdir: Path, owned_files: list[str]) -> FastPathResult:
         proc = subprocess.run(
             ["uv", "run", "ruff", "check", "--select", "I", "--fix", *targets],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=workdir,
             timeout=30,
         )

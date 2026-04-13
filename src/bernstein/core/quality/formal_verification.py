@@ -347,7 +347,9 @@ def _verify_lean4(
             result = subprocess.run(
                 ["lean", str(lean_file)],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout_s,
                 cwd=tmpdir,
             )

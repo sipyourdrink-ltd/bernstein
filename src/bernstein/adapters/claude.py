@@ -156,7 +156,9 @@ class ClaudeCodeAdapter(CLIAdapter):
             result = subprocess.run(
                 ["claude", "--print", "--max-turns", "1", "--output-format", "text", "-p", "say ok"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=COST.rate_limit_probe_timeout_s,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:

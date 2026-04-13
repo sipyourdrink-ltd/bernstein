@@ -179,7 +179,9 @@ def anchor_to_git(root_hash: str, workdir: Path) -> str | None:
             ["git", "tag", "-a", tag, "-m", f"Merkle audit seal: {root_hash}"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
         return tag

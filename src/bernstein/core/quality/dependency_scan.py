@@ -340,7 +340,9 @@ def _run_dependency_command(command: DependencyScanCommand, *, cwd: Path, timeou
         list(command.argv),
         cwd=cwd,
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
         timeout=timeout_s,
     )

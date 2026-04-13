@@ -455,7 +455,9 @@ class ContainerManager:
             result = subprocess.run(
                 args,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=_CONTAINER_CMD_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired as exc:
@@ -496,7 +498,9 @@ class ContainerManager:
             result = subprocess.run(
                 [self._runtime_cmd, "start", handle.container_id],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=_CONTAINER_CMD_TIMEOUT_S,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
@@ -557,7 +561,9 @@ class ContainerManager:
                 result = subprocess.run(
                     exec_args,
                     capture_output=True,
-                    text=True, encoding="utf-8", errors="replace",
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=timeout_s or _CONTAINER_CMD_TIMEOUT_S,
                 )
                 return result
@@ -633,7 +639,9 @@ class ContainerManager:
             result = subprocess.run(
                 run_args,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=_CONTAINER_CMD_TIMEOUT_S,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
@@ -676,7 +684,9 @@ class ContainerManager:
                     handle.container_id,
                 ],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             return result.stdout.strip().lower() == "true"
@@ -702,7 +712,9 @@ class ContainerManager:
                     handle.container_id,
                 ],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             if result.returncode == 0:
@@ -732,7 +744,9 @@ class ContainerManager:
                     handle.container_id,
                 ],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -801,7 +815,9 @@ class ContainerManager:
                     "{{.Names}}",
                 ],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=_CONTAINER_CMD_TIMEOUT_S,
             )
         except (subprocess.TimeoutExpired, OSError):
@@ -953,7 +969,9 @@ class ContainerManager:
             result = subprocess.run(
                 run_args,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout_s,
             )
         except subprocess.TimeoutExpired:
@@ -996,7 +1014,9 @@ class ContainerManager:
                     handle.container_id,
                 ],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             if result.returncode == 0:
@@ -1083,7 +1103,9 @@ def ensure_agent_image(
         result = subprocess.run(
             build_args,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=600,  # 10 minutes for image build
         )
         if result.returncode != 0:

@@ -125,7 +125,9 @@ def _get_diff(run_dir: Path, base_ref: str = "HEAD~1") -> str:
         result = subprocess.run(
             ["git", "diff", base_ref, "--", "*.py"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=run_dir,
             timeout=30,
         )
@@ -134,7 +136,9 @@ def _get_diff(run_dir: Path, base_ref: str = "HEAD~1") -> str:
             result = subprocess.run(
                 ["git", "diff", "--cached", "--", "*.py"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 cwd=run_dir,
                 timeout=30,
             )

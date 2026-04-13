@@ -118,10 +118,7 @@ def _run_git_log(
     if until:
         cmd.extend(["--until", until])
 
-    result = subprocess.run(cmd, capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace")
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
 
@@ -202,20 +199,16 @@ def collect_commit_stats(
         commit_cmd.extend(["--until", until])
 
     try:
-        commit_result = subprocess.run(commit_cmd, capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace")
+        commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if commit_result.returncode == 0:
             author_cmd: list[str] = ["git", "-C", repo_dir, "log", "--format=%an <%ae>"]
             if since:
                 author_cmd.extend(["--since", since])
             if until:
                 author_cmd.extend(["--until", until])
-            author_result = subprocess.run(author_cmd, capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace")
+            author_result = subprocess.run(
+                author_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+            )
             if author_result.returncode == 0:
                 author_lines = [line.strip() for line in author_result.stdout.splitlines() if line.strip()]
                 for author_line in author_lines:

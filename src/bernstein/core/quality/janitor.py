@@ -363,7 +363,9 @@ def _get_git_diff(task: Task, workdir: Path) -> str:
             cmd,
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         diff = result.stdout.strip()
@@ -669,7 +671,9 @@ def _check_llm_review(spec: str, workdir: Path) -> tuple[bool, str]:
             ["claude", "-p", prompt, "--model", "sonnet"],
             cwd=workdir,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
         stdout = result.stdout.strip()

@@ -375,7 +375,9 @@ class ComparativeBenchmark:
                 ["bernstein", "--goal", goal, "--headless", "--budget", budget],
                 cwd=self._workdir,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=600,
             )
             success = proc.returncode == 0

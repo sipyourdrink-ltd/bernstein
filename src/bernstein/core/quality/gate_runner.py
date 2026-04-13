@@ -1254,7 +1254,9 @@ class GateRunner:
                 ["git", "worktree", "add", "--detach", str(temp_path), self._base_ref],
                 cwd=self._workdir,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
             )
             if add_proc.returncode != 0:
@@ -1266,7 +1268,9 @@ class GateRunner:
                     ["git", "worktree", "remove", "--force", str(temp_path)],
                     cwd=self._workdir,
                     capture_output=True,
-                    text=True, encoding="utf-8", errors="replace",
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=60,
                 )
 
@@ -1551,7 +1555,9 @@ class GateRunner:
                 ["git", "diff", "--name-only", f"{self._base_ref}..HEAD"],
                 cwd=run_dir,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
         except (OSError, subprocess.TimeoutExpired):

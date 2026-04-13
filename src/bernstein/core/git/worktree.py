@@ -151,7 +151,9 @@ def _check_git_health(repo_root: Path) -> list[str]:
             ["git", "rev-parse", "--verify", "HEAD"],
             cwd=repo_root,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if result.returncode != 0:
@@ -183,7 +185,9 @@ def _apply_sparse_checkout(worktree_path: Path, sparse_paths: Sequence[str]) -> 
             ["git", "sparse-checkout", "init", "--cone"],
             cwd=worktree_path,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         if result.returncode != 0:
@@ -194,7 +198,9 @@ def _apply_sparse_checkout(worktree_path: Path, sparse_paths: Sequence[str]) -> 
             ["git", "sparse-checkout", "set", *sparse_paths],
             cwd=worktree_path,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         if result.returncode != 0:
@@ -282,7 +288,9 @@ def setup_worktree_env(
                 shlex.split(config.setup_command),
                 cwd=worktree_path,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=_SETUP_COMMAND_TIMEOUT_S,
             )
             if result.returncode != 0:
@@ -461,7 +469,9 @@ class WorktreeManager:
                 ["git", "worktree", "prune"],
                 cwd=self.repo_root,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
         except Exception as exc:
@@ -674,7 +684,9 @@ def apply_sparse_checkout(
             ["git", "sparse-checkout", "init", "--cone"],
             cwd=worktree_path,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         if result.returncode != 0:
@@ -690,7 +702,9 @@ def apply_sparse_checkout(
             ["git", "sparse-checkout", "set", *sparse_paths],
             cwd=worktree_path,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         if result.returncode != 0:

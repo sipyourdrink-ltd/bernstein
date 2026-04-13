@@ -22,11 +22,13 @@ from contextlib import contextmanager
 # Platform-specific imports for terminal input handling
 if sys.platform == "win32":
     import msvcrt
+
     _HAS_TERMIOS = False
 else:
     import select
     import termios
     import tty
+
     _HAS_TERMIOS = True
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -155,7 +157,9 @@ def _memory_gb() -> int:
             result = subprocess.run(
                 ["sysctl", "-n", "hw.memsize"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=2,
             )
             if result.returncode == 0:

@@ -440,7 +440,9 @@ def _get_file_at_revision(
             ["git", "show", f"{revision}:{file_rel}"],
             cwd=worktree_path,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         if result.returncode != 0:
@@ -458,7 +460,9 @@ def _get_all_python_files(worktree_path: Path) -> list[Path]:
             ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.py"],
             cwd=worktree_path,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         if result.returncode != 0:
