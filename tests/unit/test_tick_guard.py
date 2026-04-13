@@ -31,19 +31,23 @@ class TestBasicLocking:
     def test_second_acquire_fails_while_held(self) -> None:
         guard = TickGuard()
         results: list[bool] = []
-        barrier = threading.Barrier(2, timeout=5)
+        tick2_done = threading.Event()
 
         def tick1() -> None:
             with guard.try_acquire() as acquired:
                 results.append(acquired)
-                barrier.wait()
-                time.sleep(0.1)
+                # Hold lock until tick2 has attempted and finished
+                tick2_done.wait(timeout=5)
 
         def tick2() -> None:
-            barrier.wait()
-            time.sleep(0.15)  # ensure tick1 holds the lock (needs margin on slow CI)
+            # Wait until tick1 has the lock (poll instead of sleep)
+            for _ in range(100):
+                if guard.is_tick_running:
+                    break
+                time.sleep(0.01)
             with guard.try_acquire() as acquired:
                 results.append(acquired)
+            tick2_done.set()
 
         t1 = threading.Thread(target=tick1)
         t2 = threading.Thread(target=tick2)
