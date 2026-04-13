@@ -105,6 +105,7 @@ class AdaptiveParallelism:
                 # Windows: use psutil if available, otherwise return 0
                 try:
                     import psutil
+
                     return psutil.cpu_percent(interval=None)
                 except ImportError:
                     return 0.0

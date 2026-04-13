@@ -618,7 +618,9 @@ class GitHubClient:
             result = subprocess.run(
                 args,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
             if result.returncode != 0:
@@ -807,7 +809,9 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
                 "500",
             ],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             cwd=str(workdir),
         )
