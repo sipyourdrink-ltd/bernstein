@@ -41,7 +41,7 @@ class TestBasicLocking:
 
         def tick2() -> None:
             barrier.wait()
-            time.sleep(0.02)  # ensure tick1 holds the lock
+            time.sleep(0.15)  # ensure tick1 holds the lock (needs margin on slow CI)
             with guard.try_acquire() as acquired:
                 results.append(acquired)
 
