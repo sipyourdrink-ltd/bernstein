@@ -148,13 +148,13 @@ _SENSITIVE_CONTENT_PATTERNS: tuple[tuple[re.Pattern[str], SensitiveCategory, Det
     ),
     (re.compile(r"-----BEGIN\s+OPENSSH\s+PRIVATE\s+KEY-----"), SensitiveCategory.SSH_KEY, DetectionConfidence.HIGH),
     # API key patterns
-    (re.compile(r"sk-ant-[a-zA-Z0-9\-_]{20,}"), SensitiveCategory.TOKEN_FILE, DetectionConfidence.HIGH),
-    (re.compile(r"sk-[a-zA-Z0-9]{20,}"), SensitiveCategory.TOKEN_FILE, DetectionConfidence.MEDIUM),
-    (re.compile(r"AIza[a-zA-Z0-9\-_]{35}"), SensitiveCategory.TOKEN_FILE, DetectionConfidence.HIGH),
-    (re.compile(r"gsk_[a-zA-Z0-9]{20,}"), SensitiveCategory.TOKEN_FILE, DetectionConfidence.HIGH),
+    (re.compile(r"sk-ant-[\w\-]{20,}"), SensitiveCategory.TOKEN_FILE, DetectionConfidence.HIGH),
+    (re.compile(r"sk-[A-Za-z\d]{20,}"), SensitiveCategory.TOKEN_FILE, DetectionConfidence.MEDIUM),
+    (re.compile(r"AIza[\w\-]{35}"), SensitiveCategory.TOKEN_FILE, DetectionConfidence.HIGH),
+    (re.compile(r"gsk_[A-Za-z\d]{20,}"), SensitiveCategory.TOKEN_FILE, DetectionConfidence.HIGH),
     # Generic secret patterns in config
     (
-        re.compile(r"(?i)(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*['\"]?[a-zA-Z0-9+/=_\-]{16,}"),
+        re.compile(r"(?i)(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*['\"]?[\w+/=\-]{16,}"),
         SensitiveCategory.CONFIG_SECRET,
         DetectionConfidence.MEDIUM,
     ),

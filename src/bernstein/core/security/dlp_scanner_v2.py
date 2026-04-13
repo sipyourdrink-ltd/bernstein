@@ -236,7 +236,7 @@ def _build_credentials_rules() -> list[_RuleDef]:
             "api_key",
             re.compile(
                 r"(?i)(?:api[-_]?key|apikey|api[-_]?secret|secret[-_]?key)"
-                r"\s*[=:]\s*[\"']?[A-Za-z0-9_\-/.+]{20,}[\"']?"
+                r"\s*[=:]\s*[\"']?[\w\-/.+]{20,}[\"']?"
             ),
             "critical",
             0.90,
@@ -253,7 +253,7 @@ def _build_credentials_rules() -> list[_RuleDef]:
         (
             DLPCategory.CREDENTIALS,
             "bearer_token",
-            re.compile(r"(?i)(?:bearer|token|auth[-_]?token)\s*[=:]\s*[\"']?[A-Za-z0-9_\-/.+=]{20,}[\"']?"),
+            re.compile(r"(?i)(?:bearer|token|auth[-_]?token)\s*[=:]\s*[\"']?[\w\-/.+=]{20,}[\"']?"),
             "high",
             0.85,
             "Bearer / auth token",
@@ -281,7 +281,7 @@ def _build_proprietary_data_rules(policy: DLPPolicy) -> list[_RuleDef]:
                 DLPCategory.PROPRIETARY_DATA,
                 f"internal_url_{suffix.strip('.')}",
                 re.compile(
-                    r"\b[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?" + safe_suffix + r"\b",
+                    r"\b[A-Za-z\d](?:[A-Za-z\d-]*[A-Za-z\d])?" + safe_suffix + r"\b",
                     re.IGNORECASE,
                 ),
                 "medium",
@@ -297,7 +297,7 @@ def _build_proprietary_data_rules(policy: DLPPolicy) -> list[_RuleDef]:
             (
                 DLPCategory.PROPRIETARY_DATA,
                 "customer_id",
-                re.compile(rf"(?i)\b(?:{prefix_alt})[-_][A-Za-z0-9]{{4,40}}\b"),
+                re.compile(rf"(?i)\b(?:{prefix_alt})[-_][A-Za-z\d]{{4,40}}\b"),
                 "medium",
                 0.75,
                 "Customer ID with known prefix",
@@ -331,7 +331,7 @@ def _build_source_code_rules() -> list[_RuleDef]:
             DLPCategory.SOURCE_CODE,
             "spdx_license",
             re.compile(
-                r"SPDX-License-Identifier\s*:\s*[A-Za-z0-9.\-+]+",
+                r"SPDX-License-Identifier\s*:\s*[\w.\-+]+",
                 re.IGNORECASE,
             ),
             "high",

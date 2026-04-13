@@ -66,7 +66,7 @@ _SECURITY_PATTERNS: list[tuple[str, re.Pattern[str], Severity, str, str]] = [
     ),
     (
         "aws_secret_key",
-        re.compile(r"(?i)(?:aws_secret_access_key|aws_secret_key)\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{40}['\"]?"),
+        re.compile(r"(?i)(?:aws_secret_access_key|aws_secret_key)\s*[=:]\s*['\"]?[A-Za-z\d/+=]{40}['\"]?"),
         "critical",
         "Hardcoded AWS secret key detected",
         "Store AWS credentials in a secrets manager or use IAM role-based access.",

@@ -56,7 +56,7 @@ _SPDX_LICENSE_DB: dict[str, tuple[str, str]] = {
 
 # SPDX-License-Identifier line (most precise, no false positives)
 _SPDX_RE = re.compile(
-    r"SPDX-License-Identifier:\s*([A-Za-z0-9.\-+]+(?:\s+(?:AND|OR|WITH)\s+[A-Za-z0-9.\-+]+)*)",
+    r"SPDX-License-Identifier:\s*([\w.\-+]+(?:\s+(?:AND|OR|WITH)\s+[\w.\-+]+)*)",
     re.IGNORECASE,
 )
 

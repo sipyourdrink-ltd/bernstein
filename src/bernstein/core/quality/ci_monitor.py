@@ -22,7 +22,7 @@ _GITHUB_API = "https://api.github.com"
 
 # Regex patterns for log parsing
 _PYTEST_FAILURE_RE = re.compile(
-    r"FAILED\s+([\w/._-]+)::(\w+)",
+    r"FAILED\s+([\w/.\-]+)::(\w+)",
 )
 _FILE_LINE_RE = re.compile(
     r"File\s+\"([^\"]+)\",\s+line\s+(\d+)",
@@ -32,7 +32,7 @@ _TRACEBACK_BLOCK_RE = re.compile(
     re.DOTALL,
 )
 _ERROR_LINE_RE = re.compile(
-    r"^((?:(?:\w+\.)*\w+)?(?:Error|Exception|Failure)[^\n]*)",
+    r"^((?:[\w.]*\w)?(?:Error|Exception|Failure)[^\n]*)",
     re.MULTILINE,
 )
 

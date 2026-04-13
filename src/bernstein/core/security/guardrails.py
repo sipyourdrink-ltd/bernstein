@@ -171,8 +171,8 @@ class GuardrailsConfig:
 _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # AWS
     ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
-    ("aws_secret_key", re.compile(r"(?i)aws[_\s]*secret[_\s]*access[_\s]*key\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{40}")),
-    ("aws_session_token", re.compile(r"(?i)aws[_\s]*session[_\s]*token\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{100,}")),
+    ("aws_secret_key", re.compile(r"(?i)aws[\s_]*secret[\s_]*access[\s_]*key\s*[=:]\s*['\"]?[A-Za-z\d/+=]{40}")),
+    ("aws_session_token", re.compile(r"(?i)aws[\s_]*session[\s_]*token\s*[=:]\s*['\"]?[A-Za-z\d/+=]{100,}")),
     # GCP
     ("gcp_service_account", re.compile(r'"type"\s*:\s*"service_account"')),
     ("gcp_api_key", re.compile(r"AIza[\w-]{35}")),
@@ -208,24 +208,24 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # JWT tokens (embedded)
     (
         "jwt_token",
-        re.compile(r"eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}"),
+        re.compile(r"eyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]{10,}"),
     ),
     # Azure
-    ("azure_storage_key", re.compile(r"(?i)AccountKey=[A-Za-z0-9+/=]{44,}")),
+    ("azure_storage_key", re.compile(r"(?i)AccountKey=[A-Za-z\d+/=]{44,}")),
     ("azure_connection_string", re.compile(r"(?i)DefaultEndpointsProtocol=https?;.*AccountKey=")),
     # Stripe
-    ("stripe_live_key", re.compile(r"sk_live_[a-zA-Z0-9]{24,}")),
-    ("stripe_restricted", re.compile(r"rk_live_[a-zA-Z0-9]{24,}")),
+    ("stripe_live_key", re.compile(r"sk_live_[A-Za-z\d]{24,}")),
+    ("stripe_restricted", re.compile(r"rk_live_[A-Za-z\d]{24,}")),
     # Twilio
     ("twilio_api_key", re.compile(r"SK[a-f0-9]{32}")),
     # SendGrid
-    ("sendgrid_api_key", re.compile(r"SG\.[a-zA-Z0-9_-]{22,}\.[a-zA-Z0-9_-]{43,}")),
+    ("sendgrid_api_key", re.compile(r"SG\.[\w-]{22,}\.[\w-]{43,}")),
     # Npm
-    ("npm_token", re.compile(r"npm_[a-zA-Z0-9]{36}")),
+    ("npm_token", re.compile(r"npm_[A-Za-z\d]{36}")),
     # PyPI
-    ("pypi_token", re.compile(r"pypi-[a-zA-Z0-9_-]{50,}")),
+    ("pypi_token", re.compile(r"pypi-[\w-]{50,}")),
     # Docker Hub
-    ("dockerhub_pat", re.compile(r"dckr_pat_[a-zA-Z0-9_-]{20,}")),
+    ("dockerhub_pat", re.compile(r"dckr_pat_[\w-]{20,}")),
     # Heroku
     ("heroku_api_key", re.compile(r"(?i)heroku[_\s]*api[_\s]*key\s*[=:]\s*['\"]?[a-f0-9-]{36}")),
     # Mailgun
@@ -237,7 +237,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "generic_bearer",
-        re.compile(r"(?i)(?:authorization|bearer)\s*[=:]\s*['\"]?(?:Bearer\s+)?[a-zA-Z0-9_-]{20,}['\"]?"),
+        re.compile(r"(?i)(?:authorization|bearer)\s*[=:]\s*['\"]?(?:Bearer\s+)?[\w-]{20,}['\"]?"),
     ),
 ]
 

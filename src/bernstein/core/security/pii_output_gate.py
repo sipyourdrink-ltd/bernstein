@@ -72,7 +72,7 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     ),
     (
         "aws_secret_key",
-        re.compile(r"""(?i)(?:aws_secret_access_key|aws_secret|secret_key)\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})["']?"""),
+        re.compile(r"""(?i)(?:aws_secret_access_key|aws_secret|secret_key)\s*[=:]\s*["']?([A-Za-z\d/+=]{40})["']?"""),
         "high",
         "AWS secret access key",
     ),
@@ -91,13 +91,13 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     ),
     (
         "slack_token",
-        re.compile(r"\bxox[bporas]-[A-Za-z0-9\-]{10,255}\b"),
+        re.compile(r"\bxox[bporas]-[A-Za-z\d\-]{10,255}\b"),
         "high",
         "Slack API token",
     ),
     (
         "stripe_key",
-        re.compile(r"\b[sr]k_(live|test)_[A-Za-z0-9]{16,255}\b"),
+        re.compile(r"\b[sr]k_(live|test)_[A-Za-z\d]{16,255}\b"),
         "high",
         "Stripe API key",
     ),
@@ -111,7 +111,7 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     (
         "generic_api_key",
         re.compile(
-            r"""(?i)(?:api_key|apikey|api[-_]?secret|access[-_]?token|auth[-_]?token|secret[-_]?token)\s*[=:]\s*["']([A-Za-z0-9_\-/.+=]{16,})["']"""
+            r"""(?i)(?:api_key|apikey|api[-_]?secret|access[-_]?token|auth[-_]?token|secret[-_]?token)\s*[=:]\s*["']([\w\-/.+=]{16,})["']"""
         ),
         "high",
         "Generic API key or secret token assignment",
@@ -120,11 +120,9 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
         "high_entropy_assignment",
         re.compile(
             r"""(?ix)
-            (?:secret|token|key|credential|password)[a-z0-9_\-]*
+            (?:secret|token|key|credential|password)[a-z\d_\-]*
             \s*[=:]\s*["']
-            (?=[A-Za-z0-9+/=_\-]{24,})
-            (?=.*[A-Z])(?=.*[a-z])(?=.*\d)
-            [A-Za-z0-9+/=_\-]{24,}
+            ([\w+/=\-]{24,})
             ["']
             """
         ),
@@ -145,20 +143,20 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     ),
     (
         "bearer_token",
-        re.compile(r"""(?i)(?:authorization|bearer)\s*[=:]\s*["']?Bearer\s+[A-Za-z0-9_\-/.+=]{20,}["']?"""),
+        re.compile(r"""(?i)(?:authorization|bearer)\s*[=:]\s*["']?Bearer\s+[\w\-/.+=]{20,}["']?"""),
         "high",
         "Bearer authentication token",
     ),
     (
         "jwt_token",
-        re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b"),
+        re.compile(r"\beyJ[\w-]{20,}\.[\w-]{20,}\.[\w-]{20,}\b"),
         "high",
         "JSON Web Token",
     ),
     # --- PII ---
     (
         "email_address",
-        re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b"),
+        re.compile(r"\b[\w.%+\-]+@[A-Za-z\d.\-]+\.[A-Za-z]{2,}\b"),
         "medium",
         "Email address",
     ),
@@ -215,12 +213,17 @@ def _contains_allowlist_prefix(line: str, allowlist_prefixes: list[str] | None) 
             rf"""(?ix)
             (?:["']|=|:)\s*
             (?:{prefix_pattern})
-            (?:[_:\-A-Za-z0-9./]*)?
+            (?:[:\-\w./]*)?
             (?:["']|$)
             """,
             line,
         )
     )
+
+
+def _has_mixed_case_and_digits(text: str) -> bool:
+    """Return True if text contains uppercase, lowercase, and digit characters."""
+    return any(c.isupper() for c in text) and any(c.islower() for c in text) and any(c.isdigit() for c in text)
 
 
 def _looks_like_credit_card(match_text: str) -> bool:
@@ -281,6 +284,10 @@ def scan_text(
             if m:
                 if rule_label == "credit_card_number" and not _looks_like_credit_card(m.group(0)):
                     continue
+                if rule_label == "high_entropy_assignment":
+                    value = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0)
+                    if not _has_mixed_case_and_digits(value):
+                        continue
                 # Build redacted excerpt — never store raw secrets
                 start = max(0, m.start() - 10)
                 end = min(len(line), m.end() + 10)
@@ -349,6 +356,10 @@ def scan_diff(
             if m:
                 if rule_label == "credit_card_number" and not _looks_like_credit_card(m.group(0)):
                     continue
+                if rule_label == "high_entropy_assignment":
+                    value = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0)
+                    if not _has_mixed_case_and_digits(value):
+                        continue
                 start = max(0, m.start() - 10)
                 end = min(len(line), m.end() + 10)
                 raw_excerpt = line[start:end]

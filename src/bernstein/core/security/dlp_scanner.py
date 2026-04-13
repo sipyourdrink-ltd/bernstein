@@ -165,7 +165,7 @@ def _build_license_violation_rules() -> list[_RuleEntry]:
             "license_violation",
             "spdx_identifier",
             re.compile(
-                r"SPDX-License-Identifier\s*:\s*[A-Za-z0-9.\-+]+",
+                r"SPDX-License-Identifier\s*:\s*[\w.\-+]+",
                 re.IGNORECASE,
             ),
             "high",
@@ -319,7 +319,7 @@ def _build_proprietary_data_rules(config: DLPConfig) -> list[_RuleEntry]:
             "proprietary_data",
             "internal_hostname",
             re.compile(
-                r"\b(?:[a-zA-Z0-9-]+\.)+(?:internal|corp|intranet|lan|private)\b",
+                r"\b(?:[\w-]+\.)+(?:internal|corp|intranet|lan|private)\b",
                 re.IGNORECASE,
             ),
             "medium",
@@ -331,7 +331,7 @@ def _build_proprietary_data_rules(config: DLPConfig) -> list[_RuleEntry]:
             "proprietary_data",
             "customer_id",
             re.compile(
-                r"""(?i)(?:customer_id|account_id|org_id|organisation_id|organization_id|client_id)\s*[=:]\s*["']?[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}["']?"""
+                r"""(?i)(?:customer_id|account_id|org_id|organisation_id|organization_id|client_id)\s*[=:]\s*["']?[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}["']?"""
             ),
             "medium",
             "Customer/account UUID — may expose production customer data",
@@ -402,7 +402,7 @@ def _is_allowlisted_line(line: str, config: DLPConfig) -> bool:
             r"""(?ix)
             (?:["']|=|:)\s*
             (?:{prefixes})
-            (?:[_:\-A-Za-z0-9./]*)?
+            (?:[:\-\w./]*)?
             (?:["']|$)
             """.format(prefixes="|".join(re.escape(p) for p in config.allowlist_prefixes))
         )

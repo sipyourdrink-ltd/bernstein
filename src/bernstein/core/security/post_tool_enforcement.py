@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 _OUTPUT_SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
-    ("github_token", re.compile(r"ghp_[a-zA-Z0-9]{36}")),
+    ("github_token", re.compile(r"ghp_[A-Za-z\d]{36}")),
     (
         "private_key",
         re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"),
@@ -38,7 +38,7 @@ _OUTPUT_SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "generic_secret",
         re.compile(
-            r"(?i)(?<![a-z_])(?:password|secret|api_key|apikey|access_token|auth_token)\s*[:=]\s*['\"]?[a-zA-Z0-9_\-./+=]{8,}"
+            r"(?i)(?<![a-z_])(?:password|secret|api_key|apikey|access_token|auth_token)\s*[:=]\s*['\"]?[\w\-./+=]{8,}"
         ),
     ),
     ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
