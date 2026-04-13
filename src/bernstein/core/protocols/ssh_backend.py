@@ -251,7 +251,7 @@ class SSHBackend:
         cmd: list[str],
         workdir: Path,
         log_path: Path | None = None,
-        timeout_seconds: int = 1800,
+        _timeout_seconds: int = 1800,
     ) -> subprocess.Popen[bytes]:
         """Spawn a command on the remote host via SSH.
 
@@ -443,7 +443,7 @@ def run_agent_over_ssh(
     backend.ensure_remote_dir()
     backend.sync_to_remote(workdir)
 
-    proc = backend.spawn(cmd=cmd, workdir=workdir, log_path=log_path, timeout_seconds=timeout_seconds)
+    proc = backend.spawn(cmd=cmd, workdir=workdir, log_path=log_path, _timeout_seconds=timeout_seconds)
 
     deadline = time.monotonic() + timeout_seconds
     exit_code: int | None = None

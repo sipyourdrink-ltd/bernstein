@@ -375,7 +375,7 @@ def detect_signature_changes(
 def find_call_sites(
     source: str,
     func_names: set[str],
-    file: str = "",
+    _file: str = "",
 ) -> list[tuple[str, int, str]]:
     """Find call sites for *func_names* in *source*.
 
@@ -570,7 +570,7 @@ def _scan_call_sites(
             continue
 
         rel = str(py_file.relative_to(worktree_path))
-        sites = find_call_sites(source, changed_func_names, file=rel)
+        sites = find_call_sites(source, changed_func_names, _file=rel)
 
         for func_name, lineno, call_text in sites:
             matching = [c for c in breaking if c.function_name == func_name]

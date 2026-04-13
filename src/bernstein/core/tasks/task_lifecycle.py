@@ -1848,7 +1848,7 @@ def _reap_and_cleanup_session(
     result: Any,
     janitor_passed: bool,
     skip_merge: bool,
-    completion_data: CompletionData | None,
+    _completion_data: CompletionData | None,
     cache_diff_lines: int,
 ) -> tuple[bool, int]:
     """Reap agent, handle merge, cleanup worktree.
@@ -1929,9 +1929,9 @@ def _record_ab_test_outcome(
 def _handle_merge_result(
     orch: Any,
     task: Task,
-    result: Any,
+    _result: Any,
     merge_result: MergeResult | None,
-    janitor_passed: bool,
+    _janitor_passed: bool,
     skip_merge: bool,
 ) -> bool:
     """Handle merge conflicts and return whether merge succeeded."""
