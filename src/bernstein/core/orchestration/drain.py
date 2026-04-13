@@ -21,7 +21,9 @@ import logging
 import os
 import shutil
 import signal
+import stat
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -171,6 +173,48 @@ def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         errors="replace",
         check=False,
     )
+
+
+def _rmtree_windows_safe(path: Path, max_attempts: int = 3) -> bool:
+    """Remove a directory tree with Windows file-lock handling.
+
+    On Windows, files may be locked by processes that haven't fully exited,
+    antivirus scanning, or editor file watchers. This function retries with
+    delays and uses a permission-override handler as a last resort.
+
+    Args:
+        path: Directory to remove.
+        max_attempts: Number of retry attempts on Windows (default 3).
+
+    Returns:
+        True if the directory was removed, False otherwise.
+    """
+    if not path.exists():
+        return True
+
+    def _onerror(func: object, fpath: str, exc_info: object) -> None:
+        """Handle permission errors by making file writable and retrying."""
+        try:
+            os.chmod(fpath, stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            if callable(func):
+                func(fpath)
+        except OSError:
+            pass  # Give up on this file
+
+    attempts = max_attempts if sys.platform == "win32" else 1
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path, onerror=_onerror)
+            return True
+        except OSError as exc:
+            if attempt < attempts - 1:
+                # Wait for file locks to release (antivirus, processes exiting)
+                time.sleep(1.0)
+                logger.debug("Retry %d/%d removing %s: %s", attempt + 1, attempts, path, exc)
+            else:
+                logger.warning("Failed to remove %s after %d attempts: %s", path, attempts, exc)
+                return False
+    return False
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -664,19 +708,25 @@ class DrainCoordinator:
             for entry in sorted(wt_dir.iterdir()):
                 if not entry.is_dir():
                     continue
-                result = _run_git(
-                    ["worktree", "remove", "--force", str(entry)],
-                    cwd=self._workdir,
-                )
-                if result.returncode == 0:
-                    worktrees_removed += 1
-                else:
-                    # Fallback: rm -rf then prune.
-                    try:
-                        shutil.rmtree(entry)
+                # On Windows, retry git worktree remove with delays for file locks
+                max_git_attempts = 3 if sys.platform == "win32" else 1
+                removed = False
+                for attempt in range(max_git_attempts):
+                    result = _run_git(
+                        ["worktree", "remove", "--force", str(entry)],
+                        cwd=self._workdir,
+                    )
+                    if result.returncode == 0:
                         worktrees_removed += 1
-                    except OSError as exc:
-                        logger.warning("Failed to remove worktree %s: %s", entry, exc)
+                        removed = True
+                        break
+                    if attempt < max_git_attempts - 1:
+                        time.sleep(1.0)  # Wait for file locks to release
+
+                if not removed:
+                    # Fallback: rm -rf with Windows file-lock handling
+                    if _rmtree_windows_safe(entry):
+                        worktrees_removed += 1
 
         # Prune worktree registry BEFORE deleting branches — this
         # unregisters removed worktrees so branch -D succeeds.
