@@ -8,12 +8,14 @@ set -euo pipefail
 ci_status() {
   echo "=== Latest CI Runs ==="
   gh run list --workflow ci.yml --branch main --limit 3 --json databaseId,status,conclusion --jq '.[] | "\(.databaseId) \(.status) \(.conclusion)"'
+  return 0
 }
 
 ci_jobs() {
   local run_id=${1:-$(gh run list --workflow ci.yml --branch main --limit 1 --json databaseId --jq '.[0].databaseId')}
   echo "=== Jobs for run $run_id ==="
   gh api "repos/chernistry/bernstein/actions/runs/$run_id/jobs" --jq '.jobs[] | "\(.status) \(.conclusion // "...") \(.name)"'
+  return 0
 }
 
 ci_errors() {
@@ -27,6 +29,7 @@ ci_errors() {
       gh api "repos/chernistry/bernstein/actions/jobs/$JID/logs" 2>&1 | grep -E "error:|FAILED|Error" | head -5
     fi
   done
+  return 0
 }
 
 # ── Quick Fixes ──
@@ -34,6 +37,7 @@ ci_fix_lint() {
   echo "Fixing lint..."
   uv run ruff check src/bernstein/ --fix 2>&1 | tail -3
   uv run ruff format src/bernstein/ tests/ 2>&1 | tail -3
+  return 0
 }
 
 ci_fix_pyright() {
@@ -45,6 +49,7 @@ ci_fix_pyright() {
   else
     echo "Pyright clean!"
   fi
+  return 0
 }
 
 # ── Git Hygiene ──
@@ -54,6 +59,7 @@ git_hygiene() {
   echo "Agent branches: $(git branch | grep agent/ | wc -l | tr -d ' ')"
   echo "Dirty files: $(git status --short | wc -l | tr -d ' ')"
   echo "Stashes: $(git stash list | wc -l | tr -d ' ')"
+  return 0
 }
 
 git_clean_agents() {
@@ -63,6 +69,7 @@ git_clean_agents() {
   done
   git branch | grep agent/ | while read -r br; do git branch -D "$br" 2>/dev/null; done
   echo "Done"
+  return 0
 }
 
 # ── Runtime ──
@@ -76,6 +83,7 @@ runtime_clean() {
   rm -rf .sdd/runtime/gates/
   rm -f .sdd/index/codebase.db
   echo "Runtime clean. Files: $(ls .sdd/runtime/ 2>/dev/null | wc -l | tr -d ' ')"
+  return 0
 }
 
 # ── Server ──
@@ -84,6 +92,7 @@ server_health() {
     t=$(curl -s -o /dev/null -w '%{time_total}' "http://127.0.0.1:8052${ep}" 2>/dev/null)
     echo "$ep: ${t}s"
   done
+  return 0
 }
 
 server_kill() {
@@ -94,17 +103,20 @@ server_kill() {
   local remaining
   remaining=$(pgrep -f "bernstein" 2>/dev/null | wc -l | tr -d ' ')
   echo "Killed. Remaining: $remaining"
+  return 0
 }
 
 # ── Issues ──
 issues_open() {
   gh issue list --state open --json number,title,labels --jq '.[] | "#\(.number) [\(.labels | map(.name) | join(","))] \(.title)"'
+  return 0
 }
 
 issues_close_done() {
   echo "Looking for implemented issues..."
   # List open issues, check if their feature exists in code
   gh issue list --state open --json number,title --jq '.[] | "\(.number)\t\(.title)"'
+  return 0
 }
 
 # ── Full CI Fix Workflow ──

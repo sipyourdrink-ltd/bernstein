@@ -21,10 +21,10 @@ PROJECT_NAME="bernstein-research"
 
 # ── Colour helpers ─────────────────────────────────────────────────────────
 
-_green()  { printf '\033[0;32m%s\033[0m\n' "$*"; }
-_yellow() { printf '\033[0;33m%s\033[0m\n' "$*"; }
-_red()    { printf '\033[0;31m%s\033[0m\n' "$*"; }
-_bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
+_green()  { printf '\033[0;32m%s\033[0m\n' "$*"; return 0; }
+_yellow() { printf '\033[0;33m%s\033[0m\n' "$*"; return 0; }
+_red()    { printf '\033[0;31m%s\033[0m\n' "$*"; return 0; }
+_bold()   { printf '\033[1m%s\033[0m\n' "$*"; return 0; }
 
 # ── Pre-flight ─────────────────────────────────────────────────────────────
 
@@ -43,6 +43,7 @@ check_deps() {
     if [[ "${docker_version:-0}" -lt 24 ]]; then
         _yellow "Warning: Docker 24+ recommended (found ${docker_version}.x). Proceeding anyway."
     fi
+    return 0
 }
 
 check_ports() {
@@ -53,6 +54,7 @@ check_ports() {
             exit 1
         fi
     done
+    return 0
 }
 
 # ── Commands ───────────────────────────────────────────────────────────────
@@ -87,6 +89,7 @@ cmd_start() {
     echo
     _yellow "All outbound network traffic is blocked inside the sandbox."
     _yellow "To stop: ./scripts/researcher_sandbox.sh stop"
+    return 0
 }
 
 cmd_stop() {
@@ -96,6 +99,7 @@ cmd_stop() {
         -f "${COMPOSE_FILE}" \
         down -v --remove-orphans
     _green "Done."
+    return 0
 }
 
 cmd_reset() {
@@ -115,6 +119,7 @@ async def reset():
 asyncio.run(reset())
 " 2>/dev/null || _yellow "Could not reset task store (server may be starting). Try again in a few seconds."
     _green "Reset complete."
+    return 0
 }
 
 cmd_status() {
@@ -122,6 +127,7 @@ cmd_status() {
         -p "${PROJECT_NAME}" \
         -f "${COMPOSE_FILE}" \
         ps
+    return 0
 }
 
 cmd_logs() {
@@ -129,6 +135,7 @@ cmd_logs() {
         -p "${PROJECT_NAME}" \
         -f "${COMPOSE_FILE}" \
         logs -f --tail=100
+    return 0
 }
 
 # ── Entrypoint ─────────────────────────────────────────────────────────────

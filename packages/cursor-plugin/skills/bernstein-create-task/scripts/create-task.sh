@@ -33,6 +33,6 @@ EOF
 )
 
 curl -sf "${HEADERS[@]}" -X POST "$API/tasks" -d "$BODY" 2>/dev/null || {
-  echo '{"error": "Failed to create task. Is Bernstein running? Start with: bernstein run"}'
+  echo '{"error": "Failed to create task. Is Bernstein running? Start with: bernstein run"}' >&2
   exit 1
 }

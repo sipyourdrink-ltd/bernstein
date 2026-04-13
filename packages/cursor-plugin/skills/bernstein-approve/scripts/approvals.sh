@@ -21,30 +21,30 @@ fi
 
 case "$ACTION" in
   list)
-    curl -sf "${HEADERS[@]}" "$API/approvals" || echo '{"error": "API not reachable"}'
+    curl -sf "${HEADERS[@]}" "$API/approvals" || echo '{"error": "API not reachable"}' >&2
     ;;
   plans)
-    curl -sf "${HEADERS[@]}" "$API/plans?status=pending" || echo '{"error": "API not reachable"}'
+    curl -sf "${HEADERS[@]}" "$API/plans?status=pending" || echo '{"error": "API not reachable"}' >&2
     ;;
   approve)
     ID="${2:?Task ID required}"
     REASON="${3:-Approved via Cursor plugin}"
     curl -sf "${HEADERS[@]}" -X POST "$API/approvals/$ID/approve" \
-      -d "{\"reason\": \"$REASON\"}" || echo '{"error": "Failed to approve"}'
+      -d "{\"reason\": \"$REASON\"}" || echo '{"error": "Failed to approve"}' >&2
     ;;
   reject)
     ID="${2:?Task ID required}"
     REASON="${3:-Rejected via Cursor plugin}"
     curl -sf "${HEADERS[@]}" -X POST "$API/approvals/$ID/reject" \
-      -d "{\"reason\": \"$REASON\"}" || echo '{"error": "Failed to reject"}'
+      -d "{\"reason\": \"$REASON\"}" || echo '{"error": "Failed to reject"}' >&2
     ;;
   approve-plan)
     ID="${2:?Plan ID required}"
-    curl -sf "${HEADERS[@]}" -X POST "$API/plans/$ID/approve" || echo '{"error": "Failed to approve plan"}'
+    curl -sf "${HEADERS[@]}" -X POST "$API/plans/$ID/approve" || echo '{"error": "Failed to approve plan"}' >&2
     ;;
   reject-plan)
     ID="${2:?Plan ID required}"
-    curl -sf "${HEADERS[@]}" -X POST "$API/plans/$ID/reject" || echo '{"error": "Failed to reject plan"}'
+    curl -sf "${HEADERS[@]}" -X POST "$API/plans/$ID/reject" || echo '{"error": "Failed to reject plan"}' >&2
     ;;
   *)
     echo "Unknown action: $ACTION"

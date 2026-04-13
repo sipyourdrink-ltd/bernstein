@@ -28,4 +28,4 @@ result = {
     'costs': dashboard.get('live_costs', {}),
 }
 print(json.dumps(result, indent=2))
-" 2>/dev/null || echo '{"error": "API not reachable. Start Bernstein with: bernstein run"}'
+" 2>/dev/null || echo '{"error": "API not reachable. Start Bernstein with: bernstein run"}' >&2

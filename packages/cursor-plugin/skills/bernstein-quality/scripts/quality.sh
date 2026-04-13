@@ -15,13 +15,13 @@ ACTION="${1:-metrics}"
 
 case "$ACTION" in
   metrics)
-    curl -sf "${HEADERS[@]}" "$API/quality/metrics" || echo '{"error": "API not reachable"}'
+    curl -sf "${HEADERS[@]}" "$API/quality/metrics" || echo '{"error": "API not reachable"}' >&2
     ;;
   pass-rates)
-    curl -sf "${HEADERS[@]}" "$API/quality/pass-rates" || echo '{"error": "API not reachable"}'
+    curl -sf "${HEADERS[@]}" "$API/quality/pass-rates" || echo '{"error": "API not reachable"}' >&2
     ;;
   times)
-    curl -sf "${HEADERS[@]}" "$API/quality/completion-times" || echo '{"error": "API not reachable"}'
+    curl -sf "${HEADERS[@]}" "$API/quality/completion-times" || echo '{"error": "API not reachable"}' >&2
     ;;
   *)
     echo "Unknown action: $ACTION"
