@@ -559,7 +559,7 @@ def format_markdown(cl: RunChangelog, *, repo_url: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def format_console(cl: RunChangelog, *, repo_url: str | None = None) -> str:
+def format_console(cl: RunChangelog, *, _repo_url: str | None = None) -> str:
     """Render *cl* as Rich-markup console output.
 
     Args:

@@ -331,7 +331,7 @@ class SplashRenderer:
 
     # -- Phase 1: Boot POST --
 
-    def phase1_header(self, elapsed: float) -> None:
+    def phase1_header(self, _elapsed: float) -> None:
         """Render the system identification header."""
         w = self.width
 

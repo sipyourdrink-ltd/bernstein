@@ -3509,8 +3509,8 @@ class Orchestrator:
     def _create_auto_pr(
         self,
         done_tasks: list[Task],
-        total_cost: float,
-        duration_str: str,
+        _total_cost: float,
+        _duration_str: str,
     ) -> None:
         """Create a GitHub PR with the completed work.
 
@@ -3725,7 +3725,7 @@ class Orchestrator:
             except Exception as exc:
                 logger.debug("Summary card render failed (non-critical): %s", exc)
 
-    def _record_tick_events(self, result: TickResult, tasks_by_status: dict[str, list[Task]]) -> None:
+    def _record_tick_events(self, result: TickResult, _tasks_by_status: dict[str, list[Task]]) -> None:
         """Record replay events from a completed tick for deterministic replay."""
         # Record spawned agents
         for session_id in result.spawned:

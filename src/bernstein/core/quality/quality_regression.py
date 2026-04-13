@@ -118,7 +118,7 @@ def _snapshots_path(metrics_path: Path) -> Path:
     return metrics_path / "quality" / _SNAPSHOT_FILE
 
 
-def record_quality_snapshot(run_id: str, metrics_path: Path, snapshot: QualitySnapshot) -> Path:
+def record_quality_snapshot(_run_id: str, metrics_path: Path, snapshot: QualitySnapshot) -> Path:
     """Persist a quality snapshot to disk.
 
     Args:

@@ -272,7 +272,7 @@ def _parse_category(value: object) -> ChecklistCategory:
 def _auto_check_item(
     item: ChecklistItem,
     diff_text: str,
-    workdir: Path,
+    _workdir: Path,
 ) -> tuple[bool, str]:
     """Auto-check a single checklist item.
 

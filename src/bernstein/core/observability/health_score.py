@@ -117,7 +117,7 @@ def _read_quality_scores(metrics_dir: Path) -> dict[str, int]:
     return result
 
 
-def _calculate_complexity_score(metrics_dir: Path) -> int:
+def _calculate_complexity_score(_metrics_dir: Path) -> int:
     """Calculate complexity score (lower complexity = higher score).
 
     Args:
@@ -130,7 +130,7 @@ def _calculate_complexity_score(metrics_dir: Path) -> int:
     return 70
 
 
-def _calculate_dependency_freshness(metrics_dir: Path) -> int:
+def _calculate_dependency_freshness(_metrics_dir: Path) -> int:
     """Calculate dependency freshness score.
 
     Args:

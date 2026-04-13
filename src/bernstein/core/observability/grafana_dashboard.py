@@ -54,7 +54,7 @@ def generate_grafana_dashboard(datasource: str = "Prometheus") -> dict[str, Any]
     }
 
 
-def _create_task_completion_panel(datasource: str) -> dict[str, Any]:
+def _create_task_completion_panel(_datasource: str) -> dict[str, Any]:
     """Create task completion rate panel."""
     return {
         "id": 1,
@@ -80,7 +80,7 @@ def _create_task_completion_panel(datasource: str) -> dict[str, Any]:
     }
 
 
-def _create_agent_status_panel(datasource: str) -> dict[str, Any]:
+def _create_agent_status_panel(_datasource: str) -> dict[str, Any]:
     """Create agent status panel."""
     return {
         "id": 2,
@@ -108,7 +108,7 @@ def _create_agent_status_panel(datasource: str) -> dict[str, Any]:
     }
 
 
-def _create_cost_tracking_panel(datasource: str) -> dict[str, Any]:
+def _create_cost_tracking_panel(_datasource: str) -> dict[str, Any]:
     """Create cost tracking panel."""
     return {
         "id": 3,
@@ -134,7 +134,7 @@ def _create_cost_tracking_panel(datasource: str) -> dict[str, Any]:
     }
 
 
-def _create_quality_gates_panel(datasource: str) -> dict[str, Any]:
+def _create_quality_gates_panel(_datasource: str) -> dict[str, Any]:
     """Create quality gates pass rate panel."""
     return {
         "id": 4,
@@ -166,7 +166,7 @@ def _create_quality_gates_panel(datasource: str) -> dict[str, Any]:
     }
 
 
-def _create_token_usage_panel(datasource: str) -> dict[str, Any]:
+def _create_token_usage_panel(_datasource: str) -> dict[str, Any]:
     """Create token usage panel."""
     return {
         "id": 5,
@@ -197,7 +197,7 @@ def _create_token_usage_panel(datasource: str) -> dict[str, Any]:
     }
 
 
-def _create_error_rate_panel(datasource: str) -> dict[str, Any]:
+def _create_error_rate_panel(_datasource: str) -> dict[str, Any]:
     """Create error rate panel."""
     return {
         "id": 6,

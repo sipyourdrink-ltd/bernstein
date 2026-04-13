@@ -711,7 +711,7 @@ class MetricsCollector:
         passed: bool,
         role: str,
         model: str,
-        provider: str,
+        _provider: str,
         *,
         tenant_id: str = "default",
     ) -> None:
@@ -957,7 +957,7 @@ class MetricsCollector:
         model: str,
         latency_ms: float,
         tokens: int,
-        cost_usd: float,
+        _cost_usd: float,
         success: bool,
         *,
         tenant_id: str = "default",

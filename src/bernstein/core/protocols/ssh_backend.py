@@ -251,7 +251,7 @@ class SSHBackend:
         cmd: list[str],
         workdir: Path,
         log_path: Path | None = None,
-        timeout_seconds: int = 1800,
+        _timeout_seconds: int = 1800,
     ) -> subprocess.Popen[bytes]:
         """Spawn a command on the remote host via SSH.
 

@@ -154,7 +154,7 @@ def _subsystem_context(rel_path: str, workdir: Path) -> str:
     return summary.docstring if summary else ""
 
 
-def _find_importers(rel_path: str, workdir: Path) -> list[str]:
+def _find_importers(_rel_path: str, _workdir: Path) -> list[str]:
     """Find files that import the given file.
 
     Args:

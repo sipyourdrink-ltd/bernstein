@@ -724,7 +724,7 @@ def score_patch_match(
     patched: str,
     file_path: str = "",
     *,
-    context_lines: int = 3,
+    _context_lines: int = 3,
 ) -> PatchMatchResult:
     """Score how confidently a patch was applied to a file (T566).
 

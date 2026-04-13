@@ -470,7 +470,7 @@ def _default_slo_targets() -> dict[str, SLOTarget]:
 
 def apply_error_budget_adjustments(
     config_max_agents: int,
-    tracker: SLOTracker,
+    _tracker: SLOTracker,
 ) -> tuple[int, str | None]:
     """Compute adjusted max_agents and model override based on error budget.
 

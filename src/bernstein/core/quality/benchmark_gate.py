@@ -300,7 +300,7 @@ class BenchmarkGate:
 
     def _format_detail(
         self,
-        baseline: dict[str, BenchmarkMetrics],
+        _baseline: dict[str, BenchmarkMetrics],
         current: dict[str, BenchmarkMetrics],
         regressions: list[BenchmarkRegression],
     ) -> str:
