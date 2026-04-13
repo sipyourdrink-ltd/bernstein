@@ -15,6 +15,10 @@ on:
         description: "Delete skipped runs"
         type: boolean
         default: true
+      delete_orphaned:
+        description: "Delete orphaned runs (deleted workflows)"
+        type: boolean
+        default: true
       keep_days:
         description: "Keep runs newer than N days (0 = delete all)"
         type: number
@@ -35,6 +39,7 @@ jobs:
           DELETE_FAILED: ${{ inputs.delete_failed }}
           DELETE_CANCELLED: ${{ inputs.delete_cancelled }}
           DELETE_SKIPPED: ${{ inputs.delete_skipped }}
+          DELETE_ORPHANED: ${{ inputs.delete_orphaned }}
           KEEP_DAYS: ${{ inputs.keep_days }}
         run: |
           set -euo pipefail
@@ -43,17 +48,13 @@ jobs:
 
           delete_by_status() {
             local status="$1"
-            local page=1
-            while true; do
+            for page in $(seq 1 50); do
               ids=$(gh api "repos/$REPO/actions/runs?status=$status&per_page=100&page=$page" --jq '.workflow_runs[].id' 2>/dev/null || true)
               [ -z "$ids" ] && break
-              count=$(echo "$ids" | wc -l)
+              count=$(echo "$ids" | wc -l | tr -d ' ')
               echo "Deleting $count $status runs (page $page)..."
               echo "$ids" | xargs -P 20 -I {} gh api "repos/$REPO/actions/runs/{}" -X DELETE 2>/dev/null || true
               deleted=$((deleted + count))
-              # Stay on page 1 since we're deleting from front
-              # But if we get the same results, move on
-              if [ "$page" -gt 50 ]; then break; fi
             done
           }
 
@@ -70,6 +71,25 @@ jobs:
           if [ "$DELETE_SKIPPED" = "true" ]; then
             echo "=== Cleaning skipped runs ==="
             delete_by_status "skipped"
+          fi
+
+          # Orphaned runs: runs from deleted workflows (name=null)
+          # These don't show up in status-based queries, so we scan ALL runs
+          if [ "$DELETE_ORPHANED" = "true" ]; then
+            echo "=== Cleaning orphaned runs (deleted workflows) ==="
+            for page in $(seq 1 100); do
+              # Get runs where the workflow name is null (deleted workflow)
+              ids=$(gh api "repos/$REPO/actions/runs?per_page=100&page=$page" \
+                --jq '[.workflow_runs[] | select(.name == null or .name == "") | .id] | .[]' 2>/dev/null || true)
+              [ -z "$ids" ] && break
+              count=$(echo "$ids" | wc -l | tr -d ' ')
+              echo "Deleting $count orphaned runs (page $page)..."
+              echo "$ids" | xargs -P 20 -I {} gh api "repos/$REPO/actions/runs/{}" -X DELETE 2>/dev/null || true
+              deleted=$((deleted + count))
+              # If we got less than 100, we're done
+              total_on_page=$(gh api "repos/$REPO/actions/runs?per_page=100&page=$page" --jq '.workflow_runs | length' 2>/dev/null || echo "0")
+              [ "$total_on_page" -lt 100 ] && break
+            done
           fi
 
           echo ""
