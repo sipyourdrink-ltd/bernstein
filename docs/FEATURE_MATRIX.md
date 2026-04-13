@@ -1,6 +1,6 @@
 # Feature Matrix
 
-Shipped capabilities in Bernstein v1.4.11, verified against `src/bernstein/`.
+Shipped capabilities in Bernstein v1.7.0, verified against `src/bernstein/`.
 
 Legend:
 
@@ -49,12 +49,14 @@ Legend:
 | Per-agent token progress | Shipped | Partial | Tracked in `api_usage.py`, surfaced in `bernstein status` |
 | Session analytics | Shipped | Brief | `bernstein recap` shows session-level stats |
 | Agent activity tracking | Shipped | Brief | Activity metrics in `metrics/` |
+| Debug bundle | Shipped | Brief | `bernstein debug`, collects logs/state/config for triage |
+| Quota tracking | Shipped | Brief | `quota_tracker.py` — per-provider rate/spend quota monitoring |
 
 ## Safety and governance
 
 | Capability | Runtime status | Docs status | Notes |
 |---|---|---|---|
-| Quality gates (lint, type-check, tests) | Shipped | Full | Present in run flow |
+| Quality gates (lint, type-check, tests) | Shipped | Full | Present in run flow; extended with coverage, benchmark, arch conformance, mutation testing gates |
 | PII scan quality gate | Shipped | Brief | Active, auto-installed via `log_redact.py` |
 | Rule enforcement (`.bernstein/rules.yaml`) | Shipped | Full | Enforcement behavior documented |
 | Log redaction (PII filter) | Shipped | Brief | Active but under-documented |
@@ -64,6 +66,7 @@ Legend:
 | Circuit breaker | Shipped | Full | Halts misbehaving agents, writes SHUTDOWN signal |
 | Token growth monitor | Shipped | Brief | Auto-intervention on runaway consumption |
 | Cost anomaly detection | Shipped | Brief | Z-score based, acts via task completion |
+| Peak-hour scheduling | Shipped | Brief | `peak_hour_router.py` — cost-aware time-of-day routing |
 | Agent loop detection | Shipped | Brief | Kills agents in edit-loop cycles |
 | Deadlock detection | Shipped | Brief | Wait-for graph, automatic victim selection |
 | Cross-model verification | Shipped | Brief | Different model reviews completed diffs |
@@ -75,7 +78,7 @@ Legend:
 
 | Capability | Runtime status | Docs status | Notes |
 |---|---|---|---|
-| Agent catalog/discovery | Shipped | Full | `bernstein agents sync/list/discover/match/showcase` |
+| Agent catalog/discovery | Shipped | Full | `bernstein agents sync/list/discover/match/showcase` (29 adapter modules, 19 CLI agent adapters) |
 | GitHub App and CI fix flows | Shipped | Full | `bernstein ci fix <url>`, `github setup` |
 | Trigger sources (`github`, `slack`, `file_watch`, `webhook`) | Partial | Brief | Source adapters exist; authoring docs need detail |
 | Plugin hooks (pluggy) | Shipped | Full | SDK docs in CONTRIBUTING.md |
@@ -83,6 +86,8 @@ Legend:
 | Multi-repo workspaces | Shipped | Full | `workspace:` in bernstein.yaml, workspace CLI |
 | MCP server mode | Shipped | Brief | `bernstein mcp`, MCP server in `mcp/server.py` |
 | MCP tool registry | Shipped | Brief | Auto-discovery and per-task config |
+| Protocol negotiation | Shipped | Brief | `protocol_negotiation.py` — runtime protocol version handshake |
+| Schema registry | Shipped | Brief | `schema_registry.py` — versioned message schemas for protocols |
 | Slack integration | Shipped | Brief | Slash commands and events API endpoints |
 | Webhook ingestion | Shipped | Brief | `POST /webhooks/` for external event routing |
 | Adaptive parallelism | Partial | Roadmap-level docs | `adaptive_parallelism.py` exists |
@@ -167,6 +172,7 @@ Legend:
 | `bernstein self-update` | Shipped | Brief | Upgrade from PyPI |
 | `bernstein plugins` | Shipped | Brief | List active plugins |
 | `bernstein install-hooks` | Shipped | Brief | Install git hooks |
+| `bernstein debug` | Shipped | Brief | Generate debug bundle for triage |
 
 ---
 

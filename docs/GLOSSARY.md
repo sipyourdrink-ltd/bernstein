@@ -8,9 +8,21 @@ Bernstein-specific terms used throughout the codebase and documentation.
 
 An append-only communication channel where agents post findings, blockers, and status updates visible to all other agents in the same run. Implemented in `src/bernstein/core/bulletin.py`.
 
+### Caching Adapter
+
+A wrapper adapter that intercepts spawn calls to enable prompt prefix deduplication and response reuse. Delegates actual execution to the underlying adapter while tracking cache break events across agents. Implemented in `src/bernstein/adapters/caching_adapter.py`.
+
 ### Circuit Breaker
 
 A state machine (CLOSED → OPEN → HALF_OPEN) that prevents infinite retry loops when an agent or provider repeatedly fails. After N consecutive failures, the breaker "opens" and blocks further attempts until a recovery probe succeeds. Implemented in `src/bernstein/core/circuit_breaker.py`.
+
+### Conformance Harness
+
+A testing framework that replays golden transcripts against live adapters (with mocked subprocesses) to detect protocol drift and adapter regressions. Implemented in `src/bernstein/adapters/conformance.py`.
+
+### Debug Bundle
+
+A diagnostic archive containing logs, state files, configuration, and runtime metadata collected via `bernstein debug` for troubleshooting. Implemented in `src/bernstein/core/observability/debug_bundle.py`.
 
 ### Drain
 
@@ -24,13 +36,29 @@ An optimization that skips full planning for simple, single-file tasks. Instead 
 
 The verification system that checks whether an agent's work is correct — runs lint, type-checks, tests, and other quality gates before accepting work. Implemented in `src/bernstein/core/janitor.py`.
 
+### Env Isolation
+
+The process of filtering environment variables before spawning agents to prevent credential leakage. Only variables required for the agent's function are passed through. Implemented in `src/bernstein/adapters/env_isolation.py`.
+
 ### Nudge
 
 A message sent to a stalled agent to prompt it to continue working. Part of the heartbeat and idle detection system. Implemented in `src/bernstein/core/nudge_manager.py`.
 
+### Peak-Hour Router
+
+A cost-aware scheduling component that routes tasks to cheaper providers or defers non-urgent work during peak pricing hours. Implemented in `src/bernstein/core/cost/peak_hour_router.py`.
+
+### Protocol Negotiation
+
+Runtime handshake that determines which protocol version (MCP, A2A, ACP) a connected client or agent supports, ensuring compatibility is verified at connection time rather than at failure time. Implemented in `src/bernstein/core/protocols/protocol_negotiation.py`.
+
 ### Quality Gate
 
 Automated checks (lint, type-check, tests, coverage) that must pass before work is accepted or merged. Gates run in sequence and any failure blocks the pipeline. Implemented in `src/bernstein/core/quality_gates.py`.
+
+### Quota Tracker
+
+Monitors per-provider rate limits and spend quotas, preventing agents from exceeding API limits. Tracks RPM, TPM, and budget thresholds. Implemented in `src/bernstein/core/cost/quota_tracker.py`.
 
 ### Reap
 
@@ -39,6 +67,14 @@ Killing or collecting agents that have exceeded their timeout or become unrespon
 ### SDD
 
 Software-Defined Development — the `.sdd/` directory where all runtime state lives: worktrees, sessions, task logs, and agent data. Initialized in `src/bernstein/core/bootstrap.py`.
+
+### Schema Registry
+
+A versioned catalog of message schemas for MCP, A2A, and ACP protocols, enabling forward/backward compatibility checks and migration paths. Implemented in `src/bernstein/core/protocols/schema_registry.py`.
+
+### Skills Injector
+
+Writes role-specific Claude Code skills (`.claude/skills/*.md`) into the agent's worktree before spawn. This moves orchestration boilerplate into skills that survive context compaction, reducing prompt size by 30-40%. Implemented in `src/bernstein/adapters/skills_injector.py`.
 
 ### Spawn
 
