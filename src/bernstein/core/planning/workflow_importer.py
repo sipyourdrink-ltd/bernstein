@@ -87,6 +87,50 @@ def parse_markdown_tasks(content: str) -> list[str]:
     return tasks
 
 
+def _fetch_existing_titles(client: httpx.Client, base_url: str) -> set[str]:
+    """Fetch existing task titles from the server for dedup."""
+    titles: set[str] = set()
+    try:
+        resp = client.get(f"{base_url}/tasks", params={"limit": 500, "offset": 0})
+        if resp.is_success:
+            body = resp.json()
+            tasks_raw = body.get("tasks", body) if isinstance(body, dict) else body
+            for t in tasks_raw:
+                if isinstance(t, dict) and t.get("title"):
+                    titles.add(str(t["title"]).strip().lower())
+    except Exception as exc:
+        logger.warning("workflow_importer: could not fetch existing tasks: %s", exc)
+    return titles
+
+
+def _import_single_task(
+    title: str,
+    wf_file: Path,
+    client: httpx.Client,
+    base_url: str,
+    existing_titles: set[str],
+) -> bool:
+    """Import a single task to the server. Returns True on success."""
+    payload: dict[str, object] = {
+        "title": title,
+        "description": f"Imported from {wf_file.name}: {title}",
+        "role": "backend",
+        "priority": 2,
+        "scope": "medium",
+        "complexity": "medium",
+        "metadata": {_IMPORT_SOURCE_KEY: wf_file.name},
+    }
+    try:
+        post_resp = client.post(f"{base_url}/tasks", json=payload)
+        post_resp.raise_for_status()
+        existing_titles.add(title.strip().lower())
+        logger.info("workflow_importer: imported %r from %s", title, wf_file.name)
+        return True
+    except Exception as exc:
+        logger.warning("workflow_importer: failed to import %r: %s", title, exc)
+        return False
+
+
 def import_workflow_tasks(
     workdir: Path,
     client: httpx.Client,
@@ -120,18 +164,7 @@ def import_workflow_tasks(
         [f.name for f in workflow_files],
     )
 
-    # Collect existing task titles from the server to skip duplicates.
-    existing_titles: set[str] = set()
-    try:
-        resp = client.get(f"{base_url}/tasks", params={"limit": 500, "offset": 0})
-        if resp.is_success:
-            body = resp.json()
-            tasks_raw = body.get("tasks", body) if isinstance(body, dict) else body
-            for t in tasks_raw:
-                if isinstance(t, dict) and t.get("title"):
-                    existing_titles.add(str(t["title"]).strip().lower())
-    except Exception as exc:
-        logger.warning("workflow_importer: could not fetch existing tasks: %s", exc)
+    existing_titles = _fetch_existing_titles(client, base_url)
 
     imported = 0
     for wf_file in workflow_files:
@@ -142,43 +175,17 @@ def import_workflow_tasks(
             continue
 
         items = parse_markdown_tasks(content)
-        logger.info(
-            "workflow_importer: %s → %d unchecked item(s)",
-            wf_file.name,
-            len(items),
-        )
+        logger.info("workflow_importer: %s → %d unchecked item(s)", wf_file.name, len(items))
 
         for title in items:
             if title.strip().lower() in existing_titles:
                 logger.debug("workflow_importer: skipping duplicate %r", title)
                 continue
-
             if dry_run:
                 logger.info("workflow_importer [dry-run]: would import %r", title)
                 imported += 1
-                continue
-
-            payload: dict[str, object] = {
-                "title": title,
-                "description": f"Imported from {wf_file.name}: {title}",
-                "role": "backend",
-                "priority": 2,
-                "scope": "medium",
-                "complexity": "medium",
-                "metadata": {_IMPORT_SOURCE_KEY: wf_file.name},
-            }
-            try:
-                post_resp = client.post(f"{base_url}/tasks", json=payload)
-                post_resp.raise_for_status()
-                existing_titles.add(title.strip().lower())
+            elif _import_single_task(title, wf_file, client, base_url, existing_titles):
                 imported += 1
-                logger.info("workflow_importer: imported %r from %s", title, wf_file.name)
-            except Exception as exc:
-                logger.warning(
-                    "workflow_importer: failed to import %r: %s",
-                    title,
-                    exc,
-                )
 
     if imported:
         logger.info("workflow_importer: imported %d task(s) total", imported)

@@ -113,6 +113,62 @@ class _LicenseHit:
 # ---------------------------------------------------------------------------
 
 
+def _check_spdx_line(
+    content: str,
+    current_file: str,
+    seen: set[str],
+    hits: list[_LicenseHit],
+) -> bool:
+    """Check an added line for SPDX license identifiers.
+
+    Returns True if the line contained an SPDX identifier (so prose
+    scanning can be skipped), False otherwise.
+    """
+    spdx_match = _SPDX_RE.search(content)
+    if not spdx_match:
+        return False
+    spdx_expr = spdx_match.group(1).strip()
+    for component in _SPDX_SPLIT_RE.split(spdx_expr):
+        component = component.strip()
+        if component in _SPDX_LICENSE_DB:
+            _name, strength = _SPDX_LICENSE_DB[component]
+            key = f"{current_file}:{component}"
+            if key not in seen:
+                seen.add(key)
+                hits.append(
+                    _LicenseHit(
+                        license_id=component,
+                        copyleft_strength=strength,
+                        file_path=current_file,
+                        line=content.strip(),
+                    )
+                )
+    return True
+
+
+def _check_prose_line(
+    content: str,
+    current_file: str,
+    seen: set[str],
+    hits: list[_LicenseHit],
+) -> None:
+    """Check an added line against prose license header patterns."""
+    for label, pattern, strength in _PROSE_PATTERNS:
+        if pattern.search(content):
+            key = f"{current_file}:{label}"
+            if key not in seen:
+                seen.add(key)
+                hits.append(
+                    _LicenseHit(
+                        license_id=label,
+                        copyleft_strength=strength,
+                        file_path=current_file,
+                        line=content.strip(),
+                    )
+                )
+            break  # first matching prose pattern wins for this line
+
+
 def _scan_diff_for_licenses(diff: str) -> list[_LicenseHit]:
     """Extract copyleft license indicators from *added* lines in a git diff.
 
@@ -142,43 +198,8 @@ def _scan_diff_for_licenses(diff: str) -> list[_LicenseHit]:
 
         content = line[1:]  # strip leading ``+``
 
-        # 1. SPDX-License-Identifier — highest precision, check first
-        spdx_match = _SPDX_RE.search(content)
-        if spdx_match:
-            spdx_expr = spdx_match.group(1).strip()
-            for component in _SPDX_SPLIT_RE.split(spdx_expr):
-                component = component.strip()
-                if component in _SPDX_LICENSE_DB:
-                    _name, strength = _SPDX_LICENSE_DB[component]
-                    key = f"{current_file}:{component}"
-                    if key not in seen:
-                        seen.add(key)
-                        hits.append(
-                            _LicenseHit(
-                                license_id=component,
-                                copyleft_strength=strength,
-                                file_path=current_file,
-                                line=content.strip(),
-                            )
-                        )
-            # SPDX line processed — skip prose scan for this line
-            continue
-
-        # 2. Prose license header text
-        for label, pattern, strength in _PROSE_PATTERNS:
-            if pattern.search(content):
-                key = f"{current_file}:{label}"
-                if key not in seen:
-                    seen.add(key)
-                    hits.append(
-                        _LicenseHit(
-                            license_id=label,
-                            copyleft_strength=strength,
-                            file_path=current_file,
-                            line=content.strip(),
-                        )
-                    )
-                break  # first matching prose pattern wins for this line
+        if not _check_spdx_line(content, current_file, seen, hits):
+            _check_prose_line(content, current_file, seen, hits)
 
     return hits
 

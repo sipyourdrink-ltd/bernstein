@@ -615,61 +615,71 @@ class TriggerManager:
             return [], {"__system__": "rate_limit_exceeded"}
 
         for trigger in self._configs:
-            if not trigger.enabled:
-                suppressed[trigger.name] = "disabled"
-                continue
-
-            # Source must match
-            if trigger.source != event.source:
-                continue
-
-            # Filter evaluation
-            if not _matches_filter(event, trigger):
-                suppressed[trigger.name] = "no_filter_match"
-                continue
-
-            # Condition evaluation
-            reason = self._check_conditions(trigger, event)
-            if reason:
-                suppressed[trigger.name] = reason
-                logger.info("Trigger %s suppressed by %s", trigger.name, reason)
-                continue
-
-            # Dedup
-            dedup_key = compute_dedup_key(trigger.name, event)
-            if self._check_dedup(dedup_key):
-                suppressed[trigger.name] = "deduplicated"
-                logger.info("Trigger %s deduplicated (key=%s)", trigger.name, dedup_key)
-                continue
-
-            # Determine retry count for model escalation
-            retry_count = 0
-            if trigger.conditions.get("max_retries") and self._store:
-                from bernstein.core.models import TaskStatus
-
-                active_statuses = {TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS, TaskStatus.FAILED}
-                tasks = self._store.list_tasks()
-                title_prefix = trigger.task.title.split("{")[0] if "{" in trigger.task.title else trigger.task.title
-                retry_count = sum(1 for t in tasks if t.title.startswith(title_prefix) and t.status in active_statuses)
-
-            # Render task payload
-            try:
-                payload = render_task_payload(trigger, event, dedup_key, retry_count)
-            except Exception as exc:
-                logger.error("Template render error for trigger %s: %s", trigger.name, exc)
-                suppressed[trigger.name] = f"template_error: {exc}"
-                continue
-
-            task_payloads.append(payload)
-
-            # Record dedup and fire
-            cooldown_s = trigger.conditions.get("cooldown_s", 300)
-            self._record_dedup(dedup_key, max(cooldown_s, 300))
-            self._record_rate()
-
-            logger.info("Trigger %s fired for %s event", trigger.name, event.source)
+            result = self._evaluate_single_trigger(trigger, event, suppressed)
+            if result is not None:
+                task_payloads.append(result)
 
         return task_payloads, suppressed
+
+    def _evaluate_single_trigger(
+        self,
+        trigger: Any,
+        event: TriggerEvent,
+        suppressed: dict[str, str],
+    ) -> dict[str, Any] | None:
+        """Evaluate one trigger against an event.
+
+        Returns a task payload dict if the trigger fires, or None if suppressed.
+        Records suppression reason in *suppressed* when applicable.
+        """
+        if not trigger.enabled:
+            suppressed[trigger.name] = "disabled"
+            return None
+
+        if trigger.source != event.source:
+            return None
+
+        if not _matches_filter(event, trigger):
+            suppressed[trigger.name] = "no_filter_match"
+            return None
+
+        reason = self._check_conditions(trigger, event)
+        if reason:
+            suppressed[trigger.name] = reason
+            logger.info("Trigger %s suppressed by %s", trigger.name, reason)
+            return None
+
+        dedup_key = compute_dedup_key(trigger.name, event)
+        if self._check_dedup(dedup_key):
+            suppressed[trigger.name] = "deduplicated"
+            logger.info("Trigger %s deduplicated (key=%s)", trigger.name, dedup_key)
+            return None
+
+        retry_count = self._compute_retry_count(trigger)
+
+        try:
+            payload = render_task_payload(trigger, event, dedup_key, retry_count)
+        except Exception as exc:
+            logger.error("Template render error for trigger %s: %s", trigger.name, exc)
+            suppressed[trigger.name] = f"template_error: {exc}"
+            return None
+
+        cooldown_s = trigger.conditions.get("cooldown_s", 300)
+        self._record_dedup(dedup_key, max(cooldown_s, 300))
+        self._record_rate()
+        logger.info("Trigger %s fired for %s event", trigger.name, event.source)
+        return payload
+
+    def _compute_retry_count(self, trigger: Any) -> int:
+        """Compute the retry count for model escalation."""
+        if not trigger.conditions.get("max_retries") or not self._store:
+            return 0
+        from bernstein.core.models import TaskStatus
+
+        active_statuses = {TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS, TaskStatus.FAILED}
+        tasks = self._store.list_tasks()
+        title_prefix = trigger.task.title.split("{")[0] if "{" in trigger.task.title else trigger.task.title
+        return sum(1 for t in tasks if t.title.startswith(title_prefix) and t.status in active_statuses)
 
     def record_fire(self, trigger_name: str, source: str, task_id: str, dedup_key: str, summary: str) -> None:
         """Record a trigger fire after task creation succeeds."""

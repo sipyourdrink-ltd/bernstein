@@ -111,56 +111,71 @@ def recycle_idle_agents(
             continue  # Already dead — refresh_agent_states handles it next tick
 
         # Fast path: completion marker written by the wrapper script.
-        # The agent already emitted a ``result`` event — reap immediately
-        # via SIGTERM instead of waiting for the heartbeat to go stale.
-        # This saves up to 300s per agent (CRITICAL-002).
         completion_file = completed_dir / session.id
         if completion_file.exists():
-            logger.info(
-                "Agent %s has completion marker — reaping immediately",
-                session.id,
-            )
+            logger.info("Agent %s has completion marker — reaping immediately", session.id)
             _reap_completed_agent(orch, session, completion_file)
             continue
 
-        idle_reason: str | None = None
-
-        # Case 1: all tasks already resolved on server
-        if session.task_ids and all(tid in resolved_ids for tid in session.task_ids):
-            idle_reason = "task_already_resolved"
-
-        # Case 2: no heartbeat update for idle threshold.
-        # If the process is still alive but heartbeat is stale, use a longer
-        # threshold (600s) to tolerate slow model startup (e.g. Claude Code
-        # thinking for several minutes before emitting its first event).
-        elif orch._signal_mgr.read_heartbeat(session.id) is not None:
-            hb = orch._signal_mgr.read_heartbeat(session.id)
-            if hb is not None and (now - hb.timestamp) >= hb_idle_s:
-                # Process still alive → extend tolerance before recycling
-                pid = session.pid
-                if pid is not None and _is_process_alive(pid) and (now - hb.timestamp) < _IDLE_LIVENESS_EXTENSION_S:
-                    pass  # still alive, within extended window — skip
-                else:
-                    idle_reason = f"no_heartbeat_{int(hb_idle_s)}s"
-
-        # Case 3: agent has no assigned tasks and the role queue is empty.
-        # Handles edge cases where an agent slipped through without tasks, or
-        # had its task list cleared, while the role has no pending work.
-        elif not session.task_ids and open_per_role.get(session.role, 0) == 0:
-            idle_reason = "role_queue_empty_no_tasks"
-
-        # Case 4: role fully drained — zero active tasks (open + claimed +
-        # in_progress) remain for this role.  Catches agents whose task_ids
-        # are orphaned (e.g. task deleted from server) that Cases 1-3 miss,
-        # and enables rebalancing: agents exit so their slots can be used by
-        # under-served roles.  (#333d-03)
-        elif active_per_role.get(session.role, 0) == 0:
-            idle_reason = "role_drained_rebalance"
-
+        idle_reason = _detect_idle_reason(
+            orch,
+            session,
+            now,
+            hb_idle_s,
+            resolved_ids,
+            open_per_role,
+            active_per_role,
+        )
         if idle_reason is None:
             continue
 
         _recycle_or_kill(orch, session, now, idle_reason)
+
+
+def _detect_idle_reason(
+    orch: Any,
+    session: AgentSession,
+    now: float,
+    hb_idle_s: float,
+    resolved_ids: set[str],
+    open_per_role: dict[str, int],
+    active_per_role: dict[str, int],
+) -> str | None:
+    """Determine why an agent is idle, or return None if it is not.
+
+    Args:
+        orch: Orchestrator instance.
+        session: Agent session to check.
+        now: Current Unix timestamp.
+        hb_idle_s: Heartbeat idle threshold in seconds.
+        resolved_ids: Set of resolved task IDs.
+        open_per_role: Count of open tasks per role.
+        active_per_role: Count of active tasks per role.
+
+    Returns:
+        A reason string, or None if the agent is not idle.
+    """
+    # Case 1: all tasks already resolved on server
+    if session.task_ids and all(tid in resolved_ids for tid in session.task_ids):
+        return "task_already_resolved"
+
+    # Case 2: stale heartbeat
+    hb = orch._signal_mgr.read_heartbeat(session.id)
+    if hb is not None and (now - hb.timestamp) >= hb_idle_s:
+        pid = session.pid
+        if pid is not None and _is_process_alive(pid) and (now - hb.timestamp) < _IDLE_LIVENESS_EXTENSION_S:
+            return None  # still alive, within extended window
+        return f"no_heartbeat_{int(hb_idle_s)}s"
+
+    # Case 3: no assigned tasks and role queue empty
+    if not session.task_ids and open_per_role.get(session.role, 0) == 0:
+        return "role_queue_empty_no_tasks"
+
+    # Case 4: role fully drained (rebalancing)
+    if active_per_role.get(session.role, 0) == 0:
+        return "role_drained_rebalance"
+
+    return None
 
 
 def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Path) -> None:
@@ -320,6 +335,48 @@ def check_stalled_tasks(orch: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _poll_file_mtimes(orch: Any, detector: Any, lock_mgr: Any) -> None:
+    """Poll modification times for files locked by active agents."""
+    file_mtime_cache: dict[str, float] = getattr(orch, "_loop_mtime_cache", {})
+    if not hasattr(orch, "_loop_mtime_cache"):
+        orch._loop_mtime_cache = file_mtime_cache  # type: ignore[attr-defined]
+
+    for lock in lock_mgr.all_locks():
+        candidate = orch._workdir / lock.file_path
+        if not candidate.exists():
+            candidate = Path(lock.file_path)
+        try:
+            mtime = candidate.stat().st_mtime
+        except OSError:
+            continue
+
+        last = file_mtime_cache.get(lock.file_path, 0.0)
+        if mtime > last:
+            detector.record_edit(lock.agent_id, lock.file_path, mtime)
+            file_mtime_cache[lock.file_path] = mtime
+
+
+def _recover_loops(orch: Any, detector: Any, lock_mgr: Any) -> None:
+    """Kill agents caught in edit loops and release their locks."""
+    for loop in detector.detect_loops():
+        session = orch._agents.get(loop.agent_id)
+        if session is None or session.status == "dead":
+            continue
+        logger.warning(
+            "Loop detected: agent %s edited '%s' %d times in %.0fs — killing agent",
+            loop.agent_id,
+            loop.file_path,
+            loop.edit_count,
+            loop.window_seconds,
+        )
+        with contextlib.suppress(Exception):
+            orch._spawner.kill(session)
+        _propagate_abort_to_children(orch, loop.agent_id)
+        detector.clear_wait(loop.agent_id)
+        if lock_mgr is not None:
+            lock_mgr.release(loop.agent_id)
+
+
 def check_loops_and_deadlocks(orch: Any) -> None:
     """Detect and recover from agent edit loops and file-lock deadlocks.
 
@@ -352,43 +409,10 @@ def check_loops_and_deadlocks(orch: Any) -> None:
 
     # ---- 1. Poll file modification times for loop detection ----------------
     if lock_mgr is not None:
-        file_mtime_cache: dict[str, float] = getattr(orch, "_loop_mtime_cache", {})
-        if not hasattr(orch, "_loop_mtime_cache"):
-            orch._loop_mtime_cache = file_mtime_cache  # type: ignore[attr-defined]
-
-        for lock in lock_mgr.all_locks():
-            # Resolve path relative to workdir; fall back to absolute
-            candidate = orch._workdir / lock.file_path
-            if not candidate.exists():
-                candidate = Path(lock.file_path)
-            try:
-                mtime = candidate.stat().st_mtime
-            except OSError:
-                continue
-
-            last = file_mtime_cache.get(lock.file_path, 0.0)
-            if mtime > last:
-                detector.record_edit(lock.agent_id, lock.file_path, mtime)
-                file_mtime_cache[lock.file_path] = mtime
+        _poll_file_mtimes(orch, detector, lock_mgr)
 
     # ---- 2. Loop recovery --------------------------------------------------
-    for loop in detector.detect_loops():
-        session = orch._agents.get(loop.agent_id)
-        if session is None or session.status == "dead":
-            continue
-        logger.warning(
-            "Loop detected: agent %s edited '%s' %d times in %.0fs — killing agent",
-            loop.agent_id,
-            loop.file_path,
-            loop.edit_count,
-            loop.window_seconds,
-        )
-        with contextlib.suppress(Exception):
-            orch._spawner.kill(session)
-        _propagate_abort_to_children(orch, loop.agent_id)
-        detector.clear_wait(loop.agent_id)
-        if lock_mgr is not None:
-            lock_mgr.release(loop.agent_id)
+    _recover_loops(orch, detector, lock_mgr)
 
     # ---- 3. Deadlock recovery ----------------------------------------------
     if lock_mgr is None:

@@ -216,6 +216,30 @@ def load_latest_seal(merkle_dir: Path) -> tuple[dict[str, object], Path] | None:
     return data, path
 
 
+def _check_deleted_files(sealed_names: list[str], current_name_set: set[str]) -> list[str]:
+    """Return errors for files present in seal but missing from disk."""
+    return [
+        f"DELETED: {name} (present in seal, missing from disk)" for name in sealed_names if name not in current_name_set
+    ]
+
+
+def _check_inserted_files(current_files: list[Path], sealed_name_set: set[str]) -> list[str]:
+    """Return errors for files on disk but not in seal."""
+    return [f"INSERTED: {f.name} (on disk, not in seal)" for f in current_files if f.name not in sealed_name_set]
+
+
+def _check_tampered_content(sealed_leaves: list[dict[str, str]], audit_dir: Path) -> list[str]:
+    """Return errors for files whose content hash doesn't match the seal."""
+    errors: list[str] = []
+    for leaf in sealed_leaves:
+        fpath = audit_dir / leaf["file"]
+        if fpath.exists():
+            current_hash = file_leaf_hash(fpath)
+            if current_hash != leaf["hash"]:
+                errors.append(f"TAMPERED: {leaf['file']} (hash mismatch)")
+    return errors
+
+
 def verify_merkle(audit_dir: Path, merkle_dir: Path) -> VerifyResult:
     """Verify the Merkle tree against current audit log files.
 
@@ -240,23 +264,9 @@ def verify_merkle(audit_dir: Path, merkle_dir: Path) -> VerifyResult:
     current_files = sorted(audit_dir.glob("*.jsonl"))
     current_name_set = {f.name for f in current_files}
 
-    # Deleted files
-    for name in sealed_names:
-        if name not in current_name_set:
-            result.errors.append(f"DELETED: {name} (present in seal, missing from disk)")
-
-    # Inserted files
-    for f in current_files:
-        if f.name not in sealed_name_set:
-            result.errors.append(f"INSERTED: {f.name} (on disk, not in seal)")
-
-    # Tampered content
-    for leaf in sealed_leaves:
-        fpath = audit_dir / leaf["file"]
-        if fpath.exists():
-            current_hash = file_leaf_hash(fpath)
-            if current_hash != leaf["hash"]:
-                result.errors.append(f"TAMPERED: {leaf['file']} (hash mismatch)")
+    result.errors.extend(_check_deleted_files(sealed_names, current_name_set))
+    result.errors.extend(_check_inserted_files(current_files, sealed_name_set))
+    result.errors.extend(_check_tampered_content(sealed_leaves, audit_dir))
 
     # Rebuild tree and verify root
     if not result.errors:
