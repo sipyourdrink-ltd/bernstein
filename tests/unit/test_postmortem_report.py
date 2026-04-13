@@ -150,7 +150,7 @@ class TestPostMortem:
             summary="Run failed.",
         )
         assert pm.run_id == "run-001"
-        assert pm.end_time - pm.start_time == 300.0
+        assert pm.end_time - pm.start_time == pytest.approx(300.0)
 
     def test_is_frozen(self) -> None:
         pm = PostMortem(

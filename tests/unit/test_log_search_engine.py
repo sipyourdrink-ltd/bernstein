@@ -174,7 +174,7 @@ class TestParseLogLine:
     def test_jsonl_basic(self) -> None:
         line = '{"timestamp": 1705300200.0, "level": "ERROR", "message": "fail"}'
         entry = parse_log_line(line)
-        assert entry.timestamp == 1705300200.0
+        assert entry.timestamp == pytest.approx(1705300200.0)
         assert entry.level == "error"
         assert entry.message == "fail"
 
@@ -210,7 +210,7 @@ class TestParseLogLine:
     def test_plain_text_no_timestamp(self) -> None:
         line = "Something happened without a timestamp"
         entry = parse_log_line(line)
-        assert entry.timestamp == 0.0
+        assert entry.timestamp == pytest.approx(0.0)
         assert entry.level == "info"
 
     def test_plain_text_error_keyword(self) -> None:

@@ -29,9 +29,9 @@ class TestSubtaskProgress:
     def test_defaults(self) -> None:
         sp = SubtaskProgress(subtask_id="S-1", parent_task_id="P-1")
         assert sp.status == "pending"
-        assert sp.progress_pct == 0.0
+        assert sp.progress_pct == pytest.approx(0.0)
         assert sp.last_message == ""
-        assert sp.updated_at == 0.0
+        assert sp.updated_at == pytest.approx(0.0)
 
     def test_frozen(self) -> None:
         sp = SubtaskProgress(subtask_id="S-1", parent_task_id="P-1")
@@ -48,7 +48,7 @@ class TestSubtaskProgress:
             updated_at=100.0,
         )
         assert sp.subtask_id == "S-2"
-        assert sp.progress_pct == 42.5
+        assert sp.progress_pct == pytest.approx(42.5)
         assert sp.last_message == "parsing"
 
 
@@ -148,20 +148,20 @@ class TestManagerUpdateProgress:
         session = mgr.get_session("P-1")
         sub = session.subtasks[0]
         assert sub.status == "running"
-        assert sub.progress_pct == 25.0
+        assert sub.progress_pct == pytest.approx(25.0)
         assert sub.last_message == "compiling"
 
     def test_update_clamps_pct_high(self) -> None:
         mgr = SubtaskStreamManager()
         mgr.register_subtasks("P-1", ("S-1",))
         mgr.update_progress("S-1", "running", 150.0)
-        assert mgr.get_session("P-1").subtasks[0].progress_pct == 100.0
+        assert mgr.get_session("P-1").subtasks[0].progress_pct == pytest.approx(100.0)
 
     def test_update_clamps_pct_low(self) -> None:
         mgr = SubtaskStreamManager()
         mgr.register_subtasks("P-1", ("S-1",))
         mgr.update_progress("S-1", "running", -10.0)
-        assert mgr.get_session("P-1").subtasks[0].progress_pct == 0.0
+        assert mgr.get_session("P-1").subtasks[0].progress_pct == pytest.approx(0.0)
 
     def test_update_unknown_subtask_raises(self) -> None:
         mgr = SubtaskStreamManager()

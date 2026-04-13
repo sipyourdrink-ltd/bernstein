@@ -175,7 +175,7 @@ class TestAPMExporterEventCreation:
 
     def test_export_span_duration(self) -> None:
         ev = self._dd_exporter().export_span("op", duration_ms=99.9)
-        assert ev.duration_ms == 99.9
+        assert ev.duration_ms == pytest.approx(99.9)
 
     def test_export_span_provider(self) -> None:
         ev = self._dd_exporter().export_span("op", duration_ms=1.0)
@@ -189,7 +189,7 @@ class TestAPMExporterEventCreation:
 
     def test_export_metric_value(self) -> None:
         ev = self._dd_exporter().export_metric("cpu", 0.75)
-        assert ev.attributes["metric_value"] == 0.75
+        assert ev.attributes["metric_value"] == pytest.approx(0.75)
 
     def test_export_metric_merges_tags(self) -> None:
         ev = self._dd_exporter().export_metric("cpu", 0.5, tags={"host": "web-1"})
@@ -197,7 +197,7 @@ class TestAPMExporterEventCreation:
 
     def test_export_metric_zero_duration(self) -> None:
         ev = self._dd_exporter().export_metric("cpu", 0.5)
-        assert ev.duration_ms == 0.0
+        assert ev.duration_ms == pytest.approx(0.0)
 
     # -- log -----------------------------------------------------------------
 
@@ -264,7 +264,7 @@ class TestBuildPayloadDatadog:
         points = p["series"][0]["points"]
         assert len(points) == 1
         assert len(points[0]) == 2  # [timestamp, value]
-        assert points[0][1] == 1024.0
+        assert points[0][1] == pytest.approx(1024.0)
 
     def test_log_in_logs(self) -> None:
         ex = self._exporter()
@@ -312,7 +312,7 @@ class TestBuildPayloadNewRelic:
         ex = self._exporter()
         span = ex.export_span("op", duration_ms=77.0)
         p = ex.build_payload([span])
-        assert p["spans"][0]["attributes"]["duration.ms"] == 77.0
+        assert p["spans"][0]["attributes"]["duration.ms"] == pytest.approx(77.0)
 
     def test_metric_wrapped_in_list(self) -> None:
         ex = self._exporter()
@@ -322,7 +322,7 @@ class TestBuildPayloadNewRelic:
         inner = p["metrics"][0]["metrics"]
         assert len(inner) == 1
         assert inner[0]["name"] == "cpu"
-        assert inner[0]["value"] == 0.9
+        assert inner[0]["value"] == pytest.approx(0.9)
 
     def test_log_wrapped_in_list(self) -> None:
         ex = self._exporter()

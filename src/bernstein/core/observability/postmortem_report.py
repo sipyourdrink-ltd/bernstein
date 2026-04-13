@@ -685,13 +685,13 @@ def generate_postmortem(archive_path: Path, run_id: str) -> PostMortem:
     if start_time > 0 and wall_clock > 0:
         end_time = start_time + wall_clock
     elif timeline:
-        if start_time == 0.0:
+        if start_time < 1e-15:
             start_time = timeline[0].timestamp
         end_time = timeline[-1].timestamp
 
-    if end_time == 0.0:
+    if end_time < 1e-15:
         end_time = time.time()
-    if start_time == 0.0:
+    if start_time < 1e-15:
         start_time = end_time
 
     # Build contributing factors from summary data
