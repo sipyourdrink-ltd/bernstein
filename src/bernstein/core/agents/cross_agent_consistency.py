@@ -170,6 +170,71 @@ class ConsistencyReport:
 # ---------------------------------------------------------------------------
 
 
+def _check_field_set(
+    consumer_fields: dict[str, str],
+    producer_fields: dict[str, str],
+    direction: str,
+    missing_type: ConsistencyIssueType,
+    endpoint: str,
+    method: str,
+    producer_id: str,
+    consumer_id: str,
+    agents: list[str],
+) -> list[ConsistencyIssue]:
+    """Check one direction (request or response) of field compatibility.
+
+    Args:
+        consumer_fields: Fields the consumer declares.
+        producer_fields: Fields the producer declares.
+        direction: 'request' or 'response' (for error messages).
+        missing_type: Issue type for missing fields.
+        endpoint: API endpoint path.
+        method: HTTP method.
+        producer_id: Agent ID of the producer.
+        consumer_id: Agent ID of the consumer.
+        agents: List of agent IDs involved.
+
+    Returns:
+        List of consistency issues.
+    """
+    issues: list[ConsistencyIssue] = []
+    verb = "sends" if direction == "request" else "reads"
+    src_verb = "declares" if direction == "request" else "returns"
+    dst_verb = "expects"
+
+    for field_name, consumer_type in consumer_fields.items():
+        if field_name not in producer_fields:
+            issues.append(
+                ConsistencyIssue(
+                    issue_type=missing_type,
+                    endpoint=endpoint,
+                    method=method,
+                    description=(
+                        f"Consumer '{consumer_id}' {verb} field '{field_name}' "
+                        f"in {direction} body, but producer '{producer_id}' does not declare it"
+                    ),
+                    agents_involved=agents,
+                )
+            )
+        else:
+            producer_type = producer_fields[field_name]
+            if producer_type and consumer_type and producer_type != consumer_type:
+                issues.append(
+                    ConsistencyIssue(
+                        issue_type=ConsistencyIssueType.FIELD_TYPE_MISMATCH,
+                        endpoint=endpoint,
+                        method=method,
+                        description=(
+                            f"{direction.capitalize()} field '{field_name}' type mismatch: "
+                            f"producer '{producer_id}' {src_verb} '{producer_type}', "
+                            f"consumer '{consumer_id}' {dst_verb} '{consumer_type}'"
+                        ),
+                        agents_involved=agents,
+                    )
+                )
+    return issues
+
+
 def _check_schema_compatibility(
     endpoint: str,
     method: str,
@@ -191,72 +256,32 @@ def _check_schema_compatibility(
     Returns:
         List of :class:`ConsistencyIssue` for field-level mismatches.
     """
-    issues: list[ConsistencyIssue] = []
     agents = [producer_id, consumer_id]
 
-    # Request fields: consumer declares fields that producer must accept
-    for field_name, consumer_type in consumer.request_fields.items():
-        if field_name not in producer.request_fields:
-            issues.append(
-                ConsistencyIssue(
-                    issue_type=ConsistencyIssueType.MISSING_REQUEST_FIELD,
-                    endpoint=endpoint,
-                    method=method,
-                    description=(
-                        f"Consumer '{consumer_id}' sends field '{field_name}' "
-                        f"in request body, but producer '{producer_id}' does not declare it"
-                    ),
-                    agents_involved=agents,
-                )
-            )
-        else:
-            producer_type = producer.request_fields[field_name]
-            if producer_type and consumer_type and producer_type != consumer_type:
-                issues.append(
-                    ConsistencyIssue(
-                        issue_type=ConsistencyIssueType.FIELD_TYPE_MISMATCH,
-                        endpoint=endpoint,
-                        method=method,
-                        description=(
-                            f"Request field '{field_name}' type mismatch: "
-                            f"producer '{producer_id}' declares '{producer_type}', "
-                            f"consumer '{consumer_id}' expects '{consumer_type}'"
-                        ),
-                        agents_involved=agents,
-                    )
-                )
-
-    # Response fields: consumer expects fields that producer must supply
-    for field_name, consumer_type in consumer.response_fields.items():
-        if field_name not in producer.response_fields:
-            issues.append(
-                ConsistencyIssue(
-                    issue_type=ConsistencyIssueType.MISSING_RESPONSE_FIELD,
-                    endpoint=endpoint,
-                    method=method,
-                    description=(
-                        f"Consumer '{consumer_id}' reads field '{field_name}' "
-                        f"from response, but producer '{producer_id}' does not supply it"
-                    ),
-                    agents_involved=agents,
-                )
-            )
-        else:
-            producer_type = producer.response_fields[field_name]
-            if producer_type and consumer_type and producer_type != consumer_type:
-                issues.append(
-                    ConsistencyIssue(
-                        issue_type=ConsistencyIssueType.FIELD_TYPE_MISMATCH,
-                        endpoint=endpoint,
-                        method=method,
-                        description=(
-                            f"Response field '{field_name}' type mismatch: "
-                            f"producer '{producer_id}' returns '{producer_type}', "
-                            f"consumer '{consumer_id}' expects '{consumer_type}'"
-                        ),
-                        agents_involved=agents,
-                    )
-                )
+    issues = _check_field_set(
+        consumer.request_fields,
+        producer.request_fields,
+        "request",
+        ConsistencyIssueType.MISSING_REQUEST_FIELD,
+        endpoint,
+        method,
+        producer_id,
+        consumer_id,
+        agents,
+    )
+    issues.extend(
+        _check_field_set(
+            consumer.response_fields,
+            producer.response_fields,
+            "response",
+            ConsistencyIssueType.MISSING_RESPONSE_FIELD,
+            endpoint,
+            method,
+            producer_id,
+            consumer_id,
+            agents,
+        )
+    )
 
     return issues
 

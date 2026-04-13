@@ -47,6 +47,61 @@ def _sanitise_for_log(value: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _do_merge(
+    session: AgentSession,
+    worktree_root: Path,
+    merge_locks: dict[Path, threading.Lock],
+    merge_worktree_branch_fn: Any,
+) -> MergeResult | None:
+    """Execute the merge under a lock, record metrics, and push.
+
+    Args:
+        session: Agent session being merged.
+        worktree_root: Root of the repo/worktree.
+        merge_locks: Lock map keyed by repo root.
+        merge_worktree_branch_fn: Callable(session_id, repo_root) -> MergeResult.
+
+    Returns:
+        The MergeResult.
+    """
+    merge_lock = merge_locks.setdefault(worktree_root, threading.Lock())
+    with merge_lock:
+        merge_start = time.perf_counter()
+        merge_result = merge_worktree_branch_fn(session.id, repo_root=worktree_root)
+        merge_duration.observe(time.perf_counter() - merge_start)
+
+        from bernstein.core.metric_collector import get_collector
+
+        merge_ok = merge_result is not None and merge_result.success
+        for task_id in session.task_ids:
+            get_collector().record_merge_result(task_id, success=merge_ok)
+
+        if merge_result and merge_result.success:
+            from bernstein.core.git_ops import safe_push
+
+            push_result = safe_push(worktree_root, "main")
+            if push_result.ok:
+                logger.info("Pushed merged work from %s to origin/main", session.id)
+            else:
+                logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
+
+    return merge_result
+
+
+def _do_cleanup(
+    session_id: str,
+    worktree_mgr: WorktreeManager,
+    warm_pool_entries: dict[str, PoolSlot],
+    warm_pool: WarmPool | None,
+) -> None:
+    """Release the warm pool slot or clean up the worktree."""
+    warm_entry = warm_pool_entries.pop(session_id, None)
+    if warm_entry is not None and warm_pool is not None:
+        warm_pool.release_slot(warm_entry.slot_id)
+    else:
+        worktree_mgr.cleanup(session_id)
+
+
 def merge_and_cleanup_worktree(
     session: AgentSession,
     skip_merge: bool,
@@ -91,36 +146,16 @@ def merge_and_cleanup_worktree(
         worktree_path = worktree_paths.pop(session.id, None)
         worktree_root = worktree_roots.pop(session.id, workdir.resolve())
     worktree_mgr = worktree_managers.get(worktree_root)
+
+    if worktree_path is None or worktree_mgr is None:
+        return None
+
     merge_result: MergeResult | None = None
+    if not skip_merge:
+        merge_result = _do_merge(session, worktree_root, merge_locks, merge_worktree_branch_fn)
 
-    if worktree_path is not None and worktree_mgr is not None:
-        if not skip_merge:
-            merge_lock = merge_locks.setdefault(worktree_root, threading.Lock())
-            with merge_lock:
-                merge_start = time.perf_counter()
-                merge_result = merge_worktree_branch_fn(session.id, repo_root=worktree_root)
-                merge_duration.observe(time.perf_counter() - merge_start)
-
-                from bernstein.core.metric_collector import get_collector
-
-                merge_ok = merge_result is not None and merge_result.success
-                for task_id in session.task_ids:
-                    get_collector().record_merge_result(task_id, success=merge_ok)
-
-                if merge_result and merge_result.success:
-                    from bernstein.core.git_ops import safe_push
-
-                    push_result = safe_push(worktree_root, "main")
-                    if push_result.ok:
-                        logger.info("Pushed merged work from %s to origin/main", session.id)
-                    else:
-                        logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
-        if not defer_cleanup:
-            warm_entry = warm_pool_entries.pop(session.id, None)
-            if warm_entry is not None and warm_pool is not None:
-                warm_pool.release_slot(warm_entry.slot_id)
-            else:
-                worktree_mgr.cleanup(session.id)
+    if not defer_cleanup:
+        _do_cleanup(session.id, worktree_mgr, warm_pool_entries, warm_pool)
 
     return merge_result
 

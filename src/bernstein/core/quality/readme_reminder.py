@@ -89,6 +89,32 @@ class APIChange:
 # ---------------------------------------------------------------------------
 
 
+def _classify_added_line(line: str, current_file: str) -> APIChange | None:
+    """Classify a single added diff line as an API change, if any.
+
+    Args:
+        line: The added line content (without the leading '+').
+        current_file: The file path from the diff header.
+
+    Returns:
+        An APIChange if the line introduces a public API addition, else None.
+    """
+    is_cli_file = current_file.startswith(_CLI_PATH_PREFIX)
+
+    if _CLICK_COMMAND.search(line) and is_cli_file:
+        return APIChange(kind="command", name=_extract_command_name(line), file=current_file)
+
+    if _CLICK_OPTION.search(line) and is_cli_file:
+        return APIChange(kind="option", name=_extract_option_name(line), file=current_file)
+
+    if any(current_file.endswith(suffix) for suffix in _CONFIG_PATH_SUFFIXES):
+        m_cfg = _CONFIG_KEY.search(line)
+        if m_cfg:
+            return APIChange(kind="config_key", name=m_cfg.group(1), file=current_file)
+
+    return None
+
+
 def detect_api_changes(diff: str) -> list[APIChange]:
     """Scan a unified diff for new CLI commands, options, and config keys.
 
@@ -103,33 +129,17 @@ def detect_api_changes(diff: str) -> list[APIChange]:
     current_file = ""
 
     for raw_line in diff.splitlines():
-        # Track which file we're in
         m_file = _FILE_HEADER.match(raw_line)
         if m_file:
             current_file = m_file.group(1)
             continue
 
-        # Only process added lines
         if not _ADDED_LINE.match(raw_line):
             continue
 
-        line = raw_line[1:]  # strip leading '+'
-
-        # New CLI command decorator
-        if _CLICK_COMMAND.search(line) and current_file.startswith(_CLI_PATH_PREFIX):
-            changes.append(APIChange(kind="command", name=_extract_command_name(line), file=current_file))
-            continue
-
-        # New click option / argument
-        if _CLICK_OPTION.search(line) and current_file.startswith(_CLI_PATH_PREFIX):
-            changes.append(APIChange(kind="option", name=_extract_option_name(line), file=current_file))
-            continue
-
-        # New config key in a config-related file
-        if any(current_file.endswith(suffix) for suffix in _CONFIG_PATH_SUFFIXES):
-            m_cfg = _CONFIG_KEY.search(line)
-            if m_cfg:
-                changes.append(APIChange(kind="config_key", name=m_cfg.group(1), file=current_file))
+        change = _classify_added_line(raw_line[1:], current_file)
+        if change is not None:
+            changes.append(change)
 
     return changes
 

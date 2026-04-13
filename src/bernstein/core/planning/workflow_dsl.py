@@ -140,65 +140,65 @@ def _validate_ast_safety(node: ast.AST) -> None:
         _validate_ast_safety(child)
 
 
+_YAML_BUILTINS: dict[str, Any] = {"true": True, "false": False, "null": None}
+
+
+def _eval_name(node: ast.Name, ctx: dict[str, Any]) -> Any:
+    """Evaluate an ast.Name node against the context."""
+    if node.id in ctx:
+        return ctx[node.id]
+    if node.id in _YAML_BUILTINS:
+        return _YAML_BUILTINS[node.id]
+    msg = f"Unknown variable: {node.id!r}"
+    raise ConditionError(msg)
+
+
+def _eval_subscript(node: ast.Subscript, ctx: dict[str, Any]) -> Any:
+    """Evaluate an ast.Subscript node."""
+    obj = _eval_ast(node.value, ctx)
+    key = _eval_ast(node.slice, ctx)
+    if isinstance(obj, (dict, list, tuple)):
+        try:
+            return obj[key]  # type: ignore[index]
+        except (KeyError, IndexError):
+            return None
+    return None
+
+
+def _eval_compare(node: ast.Compare, ctx: dict[str, Any]) -> bool:
+    """Evaluate an ast.Compare node."""
+    left = _eval_ast(node.left, ctx)
+    for op, comparator in zip(node.ops, node.comparators, strict=True):
+        right = _eval_ast(comparator, ctx)
+        if not _compare(op, left, right):
+            return False
+        left = right
+    return True
+
+
 def _eval_ast(node: ast.AST, ctx: dict[str, Any]) -> Any:
     """Recursively evaluate a pre-validated AST against *ctx*."""
     if isinstance(node, ast.Expression):
         return _eval_ast(node.body, ctx)
-
     if isinstance(node, ast.Constant):
         return node.value
-
     if isinstance(node, ast.Name):
-        name = node.id
-        if name in ctx:
-            return ctx[name]
-        # YAML-style booleans/null
-        if name == "true":
-            return True
-        if name == "false":
-            return False
-        if name == "null":
-            return None
-        msg = f"Unknown variable: {name!r}"
-        raise ConditionError(msg)
-
+        return _eval_name(node, ctx)
     if isinstance(node, ast.Attribute):
         obj = _eval_ast(node.value, ctx)
-        if isinstance(obj, dict):
-            return obj.get(node.attr)
-        return getattr(obj, node.attr, None)
-
+        return obj.get(node.attr) if isinstance(obj, dict) else getattr(obj, node.attr, None)
     if isinstance(node, ast.Subscript):
-        obj = _eval_ast(node.value, ctx)
-        key = _eval_ast(node.slice, ctx)
-        if isinstance(obj, (dict, list, tuple)):
-            try:
-                return obj[key]  # type: ignore[index]
-            except (KeyError, IndexError):
-                return None
-        return None
-
+        return _eval_subscript(node, ctx)
     if isinstance(node, ast.List):
         return [_eval_ast(elt, ctx) for elt in node.elts]
-
     if isinstance(node, ast.Tuple):
         return tuple(_eval_ast(elt, ctx) for elt in node.elts)
-
     if isinstance(node, ast.Compare):
-        left = _eval_ast(node.left, ctx)
-        for op, comparator in zip(node.ops, node.comparators, strict=True):
-            right = _eval_ast(comparator, ctx)
-            if not _compare(op, left, right):
-                return False
-            left = right
-        return True
-
+        return _eval_compare(node, ctx)
     if isinstance(node, ast.BoolOp):
         if isinstance(node.op, ast.And):
             return all(_eval_ast(v, ctx) for v in node.values)
-        # ast.Or
         return any(_eval_ast(v, ctx) for v in node.values)
-
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         return not _eval_ast(node.operand, ctx)
 
@@ -565,6 +565,48 @@ def _parse_retry(node_id: str, raw: dict[str, Any]) -> RetryPolicy:
     return RetryPolicy(max_attempts=max_attempts, until=until)
 
 
+def _parse_dict_dep(dep: dict[str, Any], node_id: str, index: int) -> DAGEdge:
+    """Parse a conditional or typed dependency mapping into a DAGEdge.
+
+    Args:
+        dep: The dependency mapping.
+        node_id: Parent node ID (for error messages).
+        index: Index in the depends_on list (for error messages).
+
+    Returns:
+        A DAGEdge.
+
+    Raises:
+        DSLError: If the mapping is malformed.
+    """
+    source = dep.get("source")
+    if not source or not isinstance(source, str):
+        msg = f"nodes.{node_id}.depends_on[{index}]: 'source' is required"
+        raise DSLError(msg)
+
+    condition: ConditionExpr | None = None
+    cond_raw = dep.get("condition")
+    if cond_raw is not None:
+        try:
+            condition = ConditionExpr(raw=str(cond_raw))
+        except ConditionError as exc:
+            msg = f"nodes.{node_id}.depends_on[{index}].condition: {exc}"
+            raise DSLError(msg) from exc
+
+    edge_type_raw = dep.get("edge_type", "blocks")
+    try:
+        edge_type = EdgeType(edge_type_raw)
+    except ValueError:
+        msg = (
+            f"nodes.{node_id}.depends_on[{index}].edge_type: "
+            f"unknown type {edge_type_raw!r}, "
+            f"expected one of {[e.value for e in EdgeType]}"
+        )
+        raise DSLError(msg) from None
+
+    return DAGEdge(source=source, target=str(node_id), condition=condition, edge_type=edge_type)
+
+
 def _parse_edges_from_nodes(raw: dict[str, Any]) -> tuple[DAGEdge, ...]:
     """Extract edges from node depends_on fields."""
     edges: list[DAGEdge] = []
@@ -578,43 +620,9 @@ def _parse_edges_from_nodes(raw: dict[str, Any]) -> tuple[DAGEdge, ...]:
 
         for i, dep in enumerate(deps):
             if isinstance(dep, str):
-                # Simple unconditional dependency.
                 edges.append(DAGEdge(source=dep, target=str(node_id)))
             elif isinstance(dep, dict):
-                # Conditional or typed dependency.
-                source = dep.get("source")
-                if not source or not isinstance(source, str):
-                    msg = f"nodes.{node_id}.depends_on[{i}]: 'source' is required"
-                    raise DSLError(msg)
-
-                condition: ConditionExpr | None = None
-                cond_raw = dep.get("condition")
-                if cond_raw is not None:
-                    try:
-                        condition = ConditionExpr(raw=str(cond_raw))
-                    except ConditionError as exc:
-                        msg = f"nodes.{node_id}.depends_on[{i}].condition: {exc}"
-                        raise DSLError(msg) from exc
-
-                edge_type_raw = dep.get("edge_type", "blocks")
-                try:
-                    edge_type = EdgeType(edge_type_raw)
-                except ValueError:
-                    msg = (
-                        f"nodes.{node_id}.depends_on[{i}].edge_type: "
-                        f"unknown type {edge_type_raw!r}, "
-                        f"expected one of {[e.value for e in EdgeType]}"
-                    )
-                    raise DSLError(msg) from None
-
-                edges.append(
-                    DAGEdge(
-                        source=source,
-                        target=str(node_id),
-                        condition=condition,
-                        edge_type=edge_type,
-                    )
-                )
+                edges.append(_parse_dict_dep(dep, str(node_id), i))
             else:
                 msg = f"nodes.{node_id}.depends_on[{i}]: must be a string or mapping"
                 raise DSLError(msg)
@@ -686,43 +694,57 @@ def validate_dag(dag: WorkflowDAG) -> ValidationResult:
     if result.errors:
         return result
 
-    # Check phase ordering on unconditional edges.
     node_map = dag.node_map
     phase_index = {name: i for i, name in enumerate(phase_names)}
-    for edge in dag.edges:
+
+    result.errors.extend(_check_phase_ordering(dag.edges, node_map, phase_index))
+    result.errors.extend(_check_cycles(dag))
+    result.warnings.extend(_check_reachability(dag))
+    result.warnings.extend(_check_conditional_backward_edges(dag.edges, node_map, phase_index))
+
+    return result
+
+
+def _check_phase_ordering(
+    edges: tuple[DAGEdge, ...],
+    node_map: dict[str, Any],
+    phase_index: dict[str, int],
+) -> list[str]:
+    """Return errors for unconditional edges that go backward in phase ordering."""
+    errors: list[str] = []
+    for edge in edges:
         if edge.condition is not None:
-            continue  # Conditional edges may form loops, skip phase check.
+            continue
         src_phase = phase_index[node_map[edge.source].phase]
         tgt_phase = phase_index[node_map[edge.target].phase]
         if tgt_phase < src_phase:
-            result.errors.append(
+            errors.append(
                 f"Unconditional backward edge: {edge.source!r} (phase "
                 f"{node_map[edge.source].phase!r}) -> {edge.target!r} (phase "
                 f"{node_map[edge.target].phase!r})"
             )
+    return errors
 
-    # Check cycles in unconditional subgraph.
-    cycle_errors = _check_cycles(dag)
-    result.errors.extend(cycle_errors)
 
-    # Check reachability.
-    reachability_warnings = _check_reachability(dag)
-    result.warnings.extend(reachability_warnings)
-
-    # Warn about conditional backward edges (loop patterns).
-    for edge in dag.edges:
+def _check_conditional_backward_edges(
+    edges: tuple[DAGEdge, ...],
+    node_map: dict[str, Any],
+    phase_index: dict[str, int],
+) -> list[str]:
+    """Return warnings for conditional edges that go backward (loop patterns)."""
+    warnings: list[str] = []
+    for edge in edges:
         if edge.condition is None:
             continue
         src_phase = phase_index[node_map[edge.source].phase]
         tgt_phase = phase_index[node_map[edge.target].phase]
         if tgt_phase < src_phase:
-            result.warnings.append(
+            warnings.append(
                 f"Conditional backward edge (loop pattern): "
                 f"{edge.source!r} -> {edge.target!r} "
                 f"(condition: {edge.condition.raw!r})"
             )
-
-    return result
+    return warnings
 
 
 def _check_cycles(dag: WorkflowDAG) -> list[str]:
@@ -863,6 +885,23 @@ class DAGExecutor:
             )
         return EdgeResolution.SKIPPED
 
+    def _is_node_eligible(self, node_id: str, existing: Task | None) -> bool:
+        """Check if a node with resolved deps is eligible for task creation."""
+        if existing is not None and existing.status == TaskStatus.FAILED:
+            return self.should_retry(node_id, existing)
+        return existing is None
+
+    def _are_deps_resolved(self, incoming: list[DAGEdge], tasks: dict[str, Task]) -> bool:
+        """Return True if all incoming edges are resolved and at least one is satisfied."""
+        any_satisfied = False
+        for edge in incoming:
+            resolution = self.resolve_edge(edge, tasks)
+            if resolution == EdgeResolution.PENDING:
+                return False
+            if resolution == EdgeResolution.SATISFIED:
+                any_satisfied = True
+        return any_satisfied
+
     def ready_nodes(self, tasks: dict[str, Task]) -> list[str]:
         """Return node IDs whose dependencies are fully resolved.
 
@@ -883,35 +922,18 @@ class DAGExecutor:
         ready: list[str] = []
 
         for node in self._dag.nodes:
-            # Skip nodes that already have non-failed tasks.
             existing = tasks.get(node.id)
             if existing is not None and existing.status not in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
                 continue
 
             incoming = self._edges_by_target.get(node.id, [])
             if not incoming:
-                # Root node: ready if no active task or retryable.
-                if existing is None or (existing.status == TaskStatus.FAILED and self.should_retry(node.id, existing)):
+                if self._is_node_eligible(node.id, existing):
                     ready.append(node.id)
                 continue
 
-            all_resolved = True
-            any_satisfied = False
-            for edge in incoming:
-                resolution = self.resolve_edge(edge, tasks)
-                if resolution == EdgeResolution.PENDING:
-                    all_resolved = False
-                    break
-                if resolution == EdgeResolution.SATISFIED:
-                    any_satisfied = True
-
-            if all_resolved and any_satisfied:
-                # For failed tasks, check retry policy.
-                if existing is not None and existing.status == TaskStatus.FAILED:
-                    if self.should_retry(node.id, existing):
-                        ready.append(node.id)
-                elif existing is None:
-                    ready.append(node.id)
+            if self._are_deps_resolved(incoming, tasks) and self._is_node_eligible(node.id, existing):
+                ready.append(node.id)
 
         return ready
 

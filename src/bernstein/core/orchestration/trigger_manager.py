@@ -28,7 +28,6 @@ from bernstein.core.models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from bernstein.core.task_store import TaskStore
@@ -153,95 +152,81 @@ def _matches_filter(event: TriggerEvent, trigger: TriggerConfig) -> bool:
         logger.debug("Trigger %s: sender %r excluded", trigger.name, event.sender)
         return False
 
-    _SOURCE_FILTER_DISPATCH: dict[str, Callable[[TriggerEvent, dict[str, Any], str], bool]] = {
-        "github_push": _matches_github_push,
-        "github_workflow_run": _matches_github_workflow_run,
-        "slack": _matches_slack,
-        "file_watch": _matches_file_watch,
-        "webhook": _matches_webhook,
-    }
+    if trigger.source == "github_push":
+        # Branch filter
+        branches = filters.get("branches", [])
+        if branches and event.branch not in branches:
+            return False
+        # Path filters
+        paths = filters.get("paths", [])
+        if paths and not _glob_match_any(paths, list(event.changed_files)):
+            return False
+        exclude_paths = filters.get("exclude_paths", [])
+        if exclude_paths and event.changed_files:
+            from pathlib import PurePath
 
-    handler = _SOURCE_FILTER_DISPATCH.get(trigger.source)
-    if handler is not None:
-        return handler(event, filters, trigger.name)
-
-    return True
-
-
-def _exclude_all_paths(changed_files: Sequence[str], exclude_patterns: list[str]) -> bool:
-    """Return True if all changed files are excluded by the given patterns."""
-    from pathlib import PurePath
-
-    remaining = [f for f in changed_files if not any(PurePath(f).match(p) for p in exclude_patterns)]
-    return not remaining
-
-
-def _matches_github_push(event: TriggerEvent, filters: dict[str, Any], trigger_name: str) -> bool:
-    """Evaluate github_push-specific filters."""
-    branches = filters.get("branches", [])
-    if branches and event.branch not in branches:
-        return False
-    paths = filters.get("paths", [])
-    if paths and not _glob_match_any(paths, list(event.changed_files)):
-        return False
-    exclude_paths = filters.get("exclude_paths", [])
-    if exclude_paths and event.changed_files and _exclude_all_paths(event.changed_files, exclude_paths):
-        return False
-    exclude_commit_patterns = filters.get("exclude_commit_patterns", _DEFAULT_EXCLUDE_COMMIT_PATTERNS)
-    if event.message:
-        for pattern in exclude_commit_patterns:
-            if re.search(pattern, event.message):
-                logger.debug("Trigger %s: commit message matches exclude pattern %r", trigger_name, pattern)
+            remaining = [f for f in event.changed_files if not any(PurePath(f).match(p) for p in exclude_paths)]
+            if not remaining:
                 return False
+        # Commit pattern exclusion
+        exclude_commit_patterns = filters.get("exclude_commit_patterns", _DEFAULT_EXCLUDE_COMMIT_PATTERNS)
+        if event.message:
+            for pattern in exclude_commit_patterns:
+                if re.search(pattern, event.message):
+                    logger.debug("Trigger %s: commit message matches exclude pattern %r", trigger.name, pattern)
+                    return False
+
+    elif trigger.source == "github_workflow_run":
+        conclusion = filters.get("conclusion")
+        if conclusion and event.metadata.get("conclusion") != conclusion:
+            return False
+        workflow_names = filters.get("workflow_names", [])
+        if workflow_names and event.metadata.get("workflow_name") not in workflow_names:
+            return False
+        exclude_workflow_names = filters.get("exclude_workflow_names", [])
+        if event.metadata.get("workflow_name") in exclude_workflow_names:
+            return False
+
+    elif trigger.source == "slack":
+        channels = filters.get("channels", [])
+        if channels and event.metadata.get("channel") not in channels:
+            return False
+        if filters.get("mention_required") and event.message and "@bernstein" not in event.message:
+            return False
+        msg_pattern = filters.get("message_pattern")
+        if msg_pattern and event.message and not re.search(msg_pattern, event.message):
+            return False
+
+    elif trigger.source == "file_watch":
+        patterns = filters.get("patterns", [])
+        if patterns and not _glob_match_any(patterns, list(event.changed_files)):
+            return False
+        exclude_patterns = filters.get("exclude_patterns", [])
+        if exclude_patterns and event.changed_files:
+            from pathlib import PurePath
+
+            remaining = [f for f in event.changed_files if not any(PurePath(f).match(p) for p in exclude_patterns)]
+            if not remaining:
+                return False
+        allowed_events = filters.get("events", [])
+        if allowed_events and event.metadata.get("event_type") not in allowed_events:
+            return False
+
+    elif trigger.source == "webhook":
+        path_filter = filters.get("path")
+        if path_filter and event.metadata.get("request_path") != path_filter:
+            return False
+        method_filter = filters.get("method")
+        if method_filter and event.metadata.get("request_method") != method_filter:
+            return False
+        header_filters: dict[str, str] = filters.get("headers", {})
+        request_headers: dict[str, str] = event.metadata.get("request_headers", {})
+        for key, expected in header_filters.items():
+            actual = request_headers.get(key, "")
+            if actual != expected:
+                return False
+
     return True
-
-
-def _matches_github_workflow_run(event: TriggerEvent, filters: dict[str, Any], _trigger_name: str) -> bool:
-    """Evaluate github_workflow_run-specific filters."""
-    conclusion = filters.get("conclusion")
-    if conclusion and event.metadata.get("conclusion") != conclusion:
-        return False
-    workflow_names = filters.get("workflow_names", [])
-    if workflow_names and event.metadata.get("workflow_name") not in workflow_names:
-        return False
-    exclude_workflow_names = filters.get("exclude_workflow_names", [])
-    return event.metadata.get("workflow_name") not in exclude_workflow_names
-
-
-def _matches_slack(event: TriggerEvent, filters: dict[str, Any], _trigger_name: str) -> bool:
-    """Evaluate slack-specific filters."""
-    channels = filters.get("channels", [])
-    if channels and event.metadata.get("channel") not in channels:
-        return False
-    if filters.get("mention_required") and event.message and "@bernstein" not in event.message:
-        return False
-    msg_pattern = filters.get("message_pattern")
-    return not (msg_pattern and event.message and not re.search(msg_pattern, event.message))
-
-
-def _matches_file_watch(event: TriggerEvent, filters: dict[str, Any], _trigger_name: str) -> bool:
-    """Evaluate file_watch-specific filters."""
-    patterns = filters.get("patterns", [])
-    if patterns and not _glob_match_any(patterns, list(event.changed_files)):
-        return False
-    exclude_patterns = filters.get("exclude_patterns", [])
-    if exclude_patterns and event.changed_files and _exclude_all_paths(event.changed_files, exclude_patterns):
-        return False
-    allowed_events = filters.get("events", [])
-    return not (allowed_events and event.metadata.get("event_type") not in allowed_events)
-
-
-def _matches_webhook(event: TriggerEvent, filters: dict[str, Any], _trigger_name: str) -> bool:
-    """Evaluate webhook-specific filters."""
-    path_filter = filters.get("path")
-    if path_filter and event.metadata.get("request_path") != path_filter:
-        return False
-    method_filter = filters.get("method")
-    if method_filter and event.metadata.get("request_method") != method_filter:
-        return False
-    header_filters: dict[str, str] = filters.get("headers", {})
-    request_headers: dict[str, str] = event.metadata.get("request_headers", {})
-    return all(request_headers.get(key, "") == expected for key, expected in header_filters.items())
 
 
 # ---------------------------------------------------------------------------
@@ -560,77 +545,45 @@ class TriggerManager:
         """Check trigger conditions. Returns suppression reason or None if all pass."""
         conditions = trigger.conditions
 
-        cooldown_reason = self._check_cooldown(trigger.name, conditions)
-        if cooldown_reason:
-            return cooldown_reason
-
-        min_commits_reason = self._check_min_commits(conditions, event)
-        if min_commits_reason:
-            return min_commits_reason
-
-        max_retries_reason = self._check_max_retries(conditions, trigger.task.title)
-        if max_retries_reason:
-            return max_retries_reason
-
-        skip_reason = self._check_skip_if_active(conditions, trigger.name)
-        if skip_reason:
-            return skip_reason
-
-        return None
-
-    def _check_cooldown(self, trigger_name: str, conditions: dict[str, Any]) -> str | None:
-        """Return suppression reason if cooldown has not elapsed."""
+        # Cooldown
         cooldown_s = conditions.get("cooldown_s", 0)
-        if cooldown_s <= 0:
-            return None
-        last = self._last_fire_time(trigger_name)
-        if last is not None and (time.time() - last) < cooldown_s:
-            return f"cooldown (last fired {int(time.time() - last)}s ago, cooldown={cooldown_s}s)"
-        return None
+        if cooldown_s > 0:
+            last = self._last_fire_time(trigger.name)
+            if last is not None and (time.time() - last) < cooldown_s:
+                return f"cooldown (last fired {int(time.time() - last)}s ago, cooldown={cooldown_s}s)"
 
-    def _check_min_commits(self, conditions: dict[str, Any], event: TriggerEvent) -> str | None:
-        """Return suppression reason if commit count is below threshold."""
+        # min_commits (push triggers)
         min_commits = conditions.get("min_commits")
-        if min_commits is None:
-            return None
-        commits = event.raw_payload.get("commits", [])
-        if len(commits) < min_commits:
-            return f"min_commits ({len(commits)} < {min_commits})"
-        return None
+        if min_commits is not None:
+            commits = event.raw_payload.get("commits", [])
+            if len(commits) < min_commits:
+                return f"min_commits ({len(commits)} < {min_commits})"
 
-    def _check_max_retries(self, conditions: dict[str, Any], task_title: str) -> str | None:
-        """Return suppression reason if retry count is at the limit."""
+        # max_retries (CI triggers)
         max_retries = conditions.get("max_retries")
-        if max_retries is None or self._store is None:
-            return None
-        existing = self._count_active_tasks_for_trigger(task_title)
-        if existing >= max_retries:
-            return f"max_retries ({existing}/{max_retries})"
+        if max_retries is not None and self._store is not None:
+            from bernstein.core.models import TaskStatus
+
+            active_statuses = {TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS, TaskStatus.FAILED}
+            tasks = self._store.list_tasks()
+            title_prefix = trigger.task.title.split("{")[0] if "{" in trigger.task.title else trigger.task.title
+            existing = sum(1 for t in tasks if t.title.startswith(title_prefix) and t.status in active_statuses)
+            if existing >= max_retries:
+                return f"max_retries ({existing}/{max_retries})"
+
+        # skip_if_active (cron triggers)
+        if conditions.get("skip_if_active") and self._store is not None:
+            from bernstein.core.models import TaskStatus
+
+            active_statuses = {TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}
+            tasks = self._store.list_tasks()
+            active = any(
+                t for t in tasks if f"<!-- trigger: {trigger.name}" in t.description and t.status in active_statuses
+            )
+            if active:
+                return "skip_if_active (previous task still active)"
+
         return None
-
-    def _check_skip_if_active(self, conditions: dict[str, Any], trigger_name: str) -> str | None:
-        """Return suppression reason if a previous task is still active."""
-        if not conditions.get("skip_if_active") or self._store is None:
-            return None
-        from bernstein.core.models import TaskStatus
-
-        active_statuses = {TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}
-        tasks = self._store.list_tasks()
-        active = any(
-            t for t in tasks if f"<!-- trigger: {trigger_name}" in t.description and t.status in active_statuses
-        )
-        if active:
-            return "skip_if_active (previous task still active)"
-        return None
-
-    def _count_active_tasks_for_trigger(self, task_title: str) -> int:
-        """Count active/failed tasks matching a trigger's title prefix."""
-        from bernstein.core.models import TaskStatus
-
-        active_statuses = {TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS, TaskStatus.FAILED}
-        tasks = self._store.list_tasks()  # type: ignore[union-attr]
-        title_prefix = task_title.split("{")[0] if "{" in task_title else task_title
-        return sum(1 for t in tasks if t.title.startswith(title_prefix) and t.status in active_statuses)
 
     # -- Main evaluate pipeline ---------------------------------------------
 
@@ -662,56 +615,71 @@ class TriggerManager:
             return [], {"__system__": "rate_limit_exceeded"}
 
         for trigger in self._configs:
-            if not trigger.enabled:
-                suppressed[trigger.name] = "disabled"
-                continue
-
-            # Source must match
-            if trigger.source != event.source:
-                continue
-
-            # Filter evaluation
-            if not _matches_filter(event, trigger):
-                suppressed[trigger.name] = "no_filter_match"
-                continue
-
-            # Condition evaluation
-            reason = self._check_conditions(trigger, event)
-            if reason:
-                suppressed[trigger.name] = reason
-                logger.info("Trigger %s suppressed by %s", trigger.name, reason)
-                continue
-
-            # Dedup
-            dedup_key = compute_dedup_key(trigger.name, event)
-            if self._check_dedup(dedup_key):
-                suppressed[trigger.name] = "deduplicated"
-                logger.info("Trigger %s deduplicated (key=%s)", trigger.name, dedup_key)
-                continue
-
-            # Determine retry count for model escalation
-            retry_count = 0
-            if trigger.conditions.get("max_retries") and self._store:
-                retry_count = self._count_active_tasks_for_trigger(trigger.task.title)
-
-            # Render task payload
-            try:
-                payload = render_task_payload(trigger, event, dedup_key, retry_count)
-            except Exception as exc:
-                logger.error("Template render error for trigger %s: %s", trigger.name, exc)
-                suppressed[trigger.name] = f"template_error: {exc}"
-                continue
-
-            task_payloads.append(payload)
-
-            # Record dedup and fire
-            cooldown_s = trigger.conditions.get("cooldown_s", 300)
-            self._record_dedup(dedup_key, max(cooldown_s, 300))
-            self._record_rate()
-
-            logger.info("Trigger %s fired for %s event", trigger.name, event.source)
+            result = self._evaluate_single_trigger(trigger, event, suppressed)
+            if result is not None:
+                task_payloads.append(result)
 
         return task_payloads, suppressed
+
+    def _evaluate_single_trigger(
+        self,
+        trigger: Any,
+        event: TriggerEvent,
+        suppressed: dict[str, str],
+    ) -> dict[str, Any] | None:
+        """Evaluate one trigger against an event.
+
+        Returns a task payload dict if the trigger fires, or None if suppressed.
+        Records suppression reason in *suppressed* when applicable.
+        """
+        if not trigger.enabled:
+            suppressed[trigger.name] = "disabled"
+            return None
+
+        if trigger.source != event.source:
+            return None
+
+        if not _matches_filter(event, trigger):
+            suppressed[trigger.name] = "no_filter_match"
+            return None
+
+        reason = self._check_conditions(trigger, event)
+        if reason:
+            suppressed[trigger.name] = reason
+            logger.info("Trigger %s suppressed by %s", trigger.name, reason)
+            return None
+
+        dedup_key = compute_dedup_key(trigger.name, event)
+        if self._check_dedup(dedup_key):
+            suppressed[trigger.name] = "deduplicated"
+            logger.info("Trigger %s deduplicated (key=%s)", trigger.name, dedup_key)
+            return None
+
+        retry_count = self._compute_retry_count(trigger)
+
+        try:
+            payload = render_task_payload(trigger, event, dedup_key, retry_count)
+        except Exception as exc:
+            logger.error("Template render error for trigger %s: %s", trigger.name, exc)
+            suppressed[trigger.name] = f"template_error: {exc}"
+            return None
+
+        cooldown_s = trigger.conditions.get("cooldown_s", 300)
+        self._record_dedup(dedup_key, max(cooldown_s, 300))
+        self._record_rate()
+        logger.info("Trigger %s fired for %s event", trigger.name, event.source)
+        return payload
+
+    def _compute_retry_count(self, trigger: Any) -> int:
+        """Compute the retry count for model escalation."""
+        if not trigger.conditions.get("max_retries") or not self._store:
+            return 0
+        from bernstein.core.models import TaskStatus
+
+        active_statuses = {TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS, TaskStatus.FAILED}
+        tasks = self._store.list_tasks()
+        title_prefix = trigger.task.title.split("{")[0] if "{" in trigger.task.title else trigger.task.title
+        return sum(1 for t in tasks if t.title.startswith(title_prefix) and t.status in active_statuses)
 
     def record_fire(self, trigger_name: str, source: str, task_id: str, dedup_key: str, summary: str) -> None:
         """Record a trigger fire after task creation succeeds."""

@@ -137,6 +137,84 @@ class OutputNormalizer:
     Stateless -- each line is classified independently.
     """
 
+    @staticmethod
+    def _match_any(patterns: list[re.Pattern[str]], text: str) -> bool:
+        """Return True if any pattern matches *text*."""
+        return any(pat.search(text) for pat in patterns)
+
+    @staticmethod
+    def _extract_progress_pct(match: re.Match[str]) -> int:
+        """Extract a progress percentage from a regex match."""
+        groups = match.groups()
+        if len(groups) == 1:
+            return min(int(groups[0]), 100)
+        if len(groups) == 2:
+            total = int(groups[1])
+            if total > 0:
+                return min(int(int(groups[0]) / total * 100), 100)
+        return -1
+
+    def _classify_line(self, stripped: str, line: str, adapter: str, session_id: str) -> NormalizedEvent | None:
+        """Try to classify a line against known pattern groups.
+
+        Returns a NormalizedEvent if a match is found, None otherwise.
+        """
+        if self._match_any(_COMPLETION_PATTERNS, stripped):
+            return NormalizedEvent(
+                event_type=EventType.COMPLETION,
+                message=stripped,
+                adapter=adapter,
+                session_id=session_id,
+                raw_line=line,
+            )
+
+        if self._match_any(_ERROR_PATTERNS, stripped):
+            return NormalizedEvent(
+                event_type=EventType.ERROR,
+                message=stripped,
+                adapter=adapter,
+                session_id=session_id,
+                raw_line=line,
+            )
+
+        for pat in _PROGRESS_PATTERNS:
+            m = pat.search(stripped)
+            if m:
+                return NormalizedEvent(
+                    event_type=EventType.PROGRESS,
+                    message=stripped,
+                    adapter=adapter,
+                    session_id=session_id,
+                    progress_pct=self._extract_progress_pct(m),
+                    raw_line=line,
+                )
+
+        if self._match_any(_TOOL_PATTERNS, stripped):
+            return NormalizedEvent(
+                event_type=EventType.TOOL_USE,
+                message=stripped,
+                adapter=adapter,
+                session_id=session_id,
+                raw_line=line,
+            )
+
+        for pat in _FILE_CHANGE_PATTERNS:
+            m = pat.search(stripped)
+            if m:
+                meta: dict[str, Any] = {}
+                if m.lastindex and m.lastindex >= 1:
+                    meta["file"] = m.group(1)
+                return NormalizedEvent(
+                    event_type=EventType.FILE_CHANGE,
+                    message=stripped,
+                    adapter=adapter,
+                    session_id=session_id,
+                    metadata=meta,
+                    raw_line=line,
+                )
+
+        return None
+
     def parse_line(
         self,
         line: str,
@@ -164,78 +242,11 @@ class OutputNormalizer:
                 raw_line=line,
             )
 
-        # Check completion first (most specific)
-        for pat in _COMPLETION_PATTERNS:
-            if pat.search(stripped):
-                return NormalizedEvent(
-                    event_type=EventType.COMPLETION,
-                    message=stripped,
-                    adapter=adapter,
-                    session_id=session_id,
-                    raw_line=line,
-                )
+        classified = self._classify_line(stripped, line, adapter, session_id)
+        if classified is not None:
+            return classified
 
-        # Check errors
-        for pat in _ERROR_PATTERNS:
-            if pat.search(stripped):
-                return NormalizedEvent(
-                    event_type=EventType.ERROR,
-                    message=stripped,
-                    adapter=adapter,
-                    session_id=session_id,
-                    raw_line=line,
-                )
-
-        # Check progress
-        for pat in _PROGRESS_PATTERNS:
-            m = pat.search(stripped)
-            if m:
-                groups = m.groups()
-                pct = -1
-                if len(groups) == 1:
-                    pct = min(int(groups[0]), 100)
-                elif len(groups) == 2:
-                    total = int(groups[1])
-                    if total > 0:
-                        pct = min(int(int(groups[0]) / total * 100), 100)
-                return NormalizedEvent(
-                    event_type=EventType.PROGRESS,
-                    message=stripped,
-                    adapter=adapter,
-                    session_id=session_id,
-                    progress_pct=pct,
-                    raw_line=line,
-                )
-
-        # Check tool use
-        for pat in _TOOL_PATTERNS:
-            if pat.search(stripped):
-                return NormalizedEvent(
-                    event_type=EventType.TOOL_USE,
-                    message=stripped,
-                    adapter=adapter,
-                    session_id=session_id,
-                    raw_line=line,
-                )
-
-        # Check file changes
-        for pat in _FILE_CHANGE_PATTERNS:
-            m = pat.search(stripped)
-            if m:
-                meta: dict[str, Any] = {}
-                if m.lastindex and m.lastindex >= 1:
-                    meta["file"] = m.group(1)
-                return NormalizedEvent(
-                    event_type=EventType.FILE_CHANGE,
-                    message=stripped,
-                    adapter=adapter,
-                    session_id=session_id,
-                    metadata=meta,
-                    raw_line=line,
-                )
-
-        # Default: treat as a log line
-        # Check for warning-like patterns
+        # Default: treat as a log line; check for warning-like patterns
         if re.search(r"(?i)\bwarn(?:ing)?\b", stripped):
             return NormalizedEvent(
                 event_type=EventType.WARNING,
@@ -272,6 +283,17 @@ class OutputNormalizer:
         """
         return [self.parse_line(line, adapter=adapter, session_id=session_id) for line in lines]
 
+    @staticmethod
+    def _collect_file_changes(event: NormalizedEvent, files_changed: list[str]) -> None:
+        """Append file paths from a FILE_CHANGE event into *files_changed*."""
+        file_path = event.metadata.get("file", "")
+        if file_path and file_path not in files_changed:
+            files_changed.append(file_path)
+        for m in _FILE_PATH_PATTERN.finditer(event.raw_line):
+            candidate = m.group(1)
+            if candidate not in files_changed:
+                files_changed.append(candidate)
+
     def extract_completion(
         self,
         lines: list[str],
@@ -305,14 +327,7 @@ class OutputNormalizer:
                 status = "failed"
                 summary_parts.append(event.message)
             elif event.event_type == EventType.FILE_CHANGE:
-                file_path = event.metadata.get("file", "")
-                if file_path and file_path not in files_changed:
-                    files_changed.append(file_path)
-                # Also scan the raw line for additional file paths
-                for m in _FILE_PATH_PATTERN.finditer(event.raw_line):
-                    candidate = m.group(1)
-                    if candidate not in files_changed:
-                        files_changed.append(candidate)
+                self._collect_file_changes(event, files_changed)
 
         summary = "; ".join(summary_parts[:3]) if summary_parts else ""
         return CompletionData(
