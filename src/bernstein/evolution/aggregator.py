@@ -450,6 +450,55 @@ def _cusum_update(
     return s_high_new, s_low_new
 
 
+def _bocpd_compute_predictive_probs(
+    x: float,
+    t: int,
+    max_run: int,
+    mu_params: list[float],
+    kappa_params: list[float],
+    alpha_params: list[float],
+    beta_params: list[float],
+) -> list[float]:
+    """Compute predictive probabilities for each run length at time *t*."""
+    pred_probs = [0.0] * max_run
+    for r in range(min(t + 1, max_run)):
+        pred_var = beta_params[r] * (kappa_params[r] + 1) / (alpha_params[r] * kappa_params[r])
+        if pred_var <= 0:
+            pred_var = 1e-10
+        pred_probs[r] = _student_t_pdf(x, mu_params[r], pred_var, 2 * alpha_params[r])
+    return pred_probs
+
+
+def _bocpd_update_params(
+    x: float,
+    t: int,
+    max_run: int,
+    mu0: float,
+    kappa0: float,
+    alpha0: float,
+    beta0: float,
+    mu_params: list[float],
+    kappa_params: list[float],
+    alpha_params: list[float],
+    beta_params: list[float],
+) -> tuple[list[float], list[float], list[float], list[float]]:
+    """Update conjugate prior parameters after observing *x* at time *t*."""
+    new_mu = [mu0] * max_run
+    new_kappa = [kappa0] * max_run
+    new_alpha = [alpha0] * max_run
+    new_beta = [beta0] * max_run
+
+    for r in range(min(t + 1, max_run - 1)):
+        k_r = kappa_params[r]
+        m_r = mu_params[r]
+        new_kappa[r + 1] = k_r + 1
+        new_mu[r + 1] = (k_r * m_r + x) / (k_r + 1)
+        new_alpha[r + 1] = alpha_params[r] + 0.5
+        new_beta[r + 1] = beta_params[r] + k_r * (x - m_r) ** 2 / (2 * (k_r + 1))
+
+    return new_mu, new_kappa, new_alpha, new_beta
+
+
 def _bocpd_offline(
     values: list[float],
     hazard_rate: float = 1.0 / 250.0,
@@ -482,17 +531,9 @@ def _bocpd_offline(
     for t in range(n):
         x = values[t]
 
-        pred_probs = [0.0] * max_run
-        for r in range(min(t + 1, max_run)):
-            mu_r = mu_params[r]
-            kappa_r = kappa_params[r]
-            alpha_r = alpha_params[r]
-            beta_r = beta_params[r]
-
-            pred_var = beta_r * (kappa_r + 1) / (alpha_r * kappa_r)
-            if pred_var <= 0:
-                pred_var = 1e-10
-            pred_probs[r] = _student_t_pdf(x, mu_r, pred_var, 2 * alpha_r)
+        pred_probs = _bocpd_compute_predictive_probs(
+            x, t, max_run, mu_params, kappa_params, alpha_params, beta_params
+        )
 
         new_run_probs = [0.0] * max_run
         for r in range(min(t + 1, max_run - 1)):
@@ -508,34 +549,15 @@ def _bocpd_offline(
 
         if t > 0 and new_run_probs[0] > 0.5:
             changepoints.append(
-                Changepoint(
-                    index=t,
-                    probability=new_run_probs[0],
-                    run_length=0,
-                )
+                Changepoint(index=t, probability=new_run_probs[0], run_length=0)
             )
 
-        new_mu = [mu0] * max_run
-        new_kappa = [kappa0] * max_run
-        new_alpha = [alpha0] * max_run
-        new_beta = [beta0] * max_run
-
-        for r in range(min(t + 1, max_run - 1)):
-            k_r = kappa_params[r]
-            m_r = mu_params[r]
-            a_r = alpha_params[r]
-            b_r = beta_params[r]
-
-            new_kappa[r + 1] = k_r + 1
-            new_mu[r + 1] = (k_r * m_r + x) / (k_r + 1)
-            new_alpha[r + 1] = a_r + 0.5
-            new_beta[r + 1] = b_r + k_r * (x - m_r) ** 2 / (2 * (k_r + 1))
+        mu_params, kappa_params, alpha_params, beta_params = _bocpd_update_params(
+            x, t, max_run, mu0, kappa0, alpha0, beta0,
+            mu_params, kappa_params, alpha_params, beta_params,
+        )
 
         run_length_probs = new_run_probs
-        mu_params = new_mu
-        kappa_params = new_kappa
-        alpha_params = new_alpha
-        beta_params = new_beta
 
     return changepoints
 

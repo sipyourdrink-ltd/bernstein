@@ -242,32 +242,12 @@ class EvolutionLoop:
             effective_max,
             self._cycle_seconds,
         )
-        if self._github_sync:
-            gh = self._gh
-            if gh and gh.available:
-                if self._community_mode:
-                    logger.info(
-                        "Community mode enabled — scanning GitHub for evolve-candidate and feature-request issues"
-                    )
-                else:
-                    logger.info("GitHub sync enabled — proposals will be synced as Issues")
+        self._log_github_mode()
 
         while self._within_window(effective_window) and self._proposals_generated < effective_max and self._running:
             cycle_start = time.time()
-
-            try:
-                result = self.run_cycle()
-                if result is not None:
-                    self._experiments.append(result)
-            except Exception:
-                logger.exception("Unhandled error in evolution cycle")
-
-            # Sleep until next cycle boundary, but only if still running.
-            if self._running and self._within_window(effective_window):
-                elapsed_in_cycle = time.time() - cycle_start
-                remaining = self._cycle_seconds - elapsed_in_cycle
-                if remaining > 0:
-                    time.sleep(remaining)
+            self._execute_single_loop_cycle()
+            self._sleep_until_next_cycle(cycle_start, effective_window)
 
         self._running = False
 
@@ -278,6 +258,124 @@ class EvolutionLoop:
             self._proposals_generated,
         )
         return self._experiments
+
+    def _prepare_governance_cycle(self) -> None:
+        """Adjust governance weights and reset per-cycle accumulators."""
+        self._cycle_weights_before = self._current_weights
+        project_ctx = self._build_project_context()
+        self._current_weights, self._cycle_weight_reason = self._governor.adjust_weights(
+            self._cycle_weights_before, project_ctx
+        )
+        self._governor.persist_weights(self._current_weights, self._cycle_weight_reason)
+        self._cycle_proposals_evaluated = 0
+        self._cycle_proposals_applied = 0
+        self._cycle_risk_scores = []
+        self._cycle_outcome_metrics = {}
+
+    def _log_github_mode(self) -> None:
+        """Log GitHub sync configuration at startup."""
+        if not self._github_sync:
+            return
+        gh = self._gh
+        if not (gh and gh.available):
+            return
+        if self._community_mode:
+            logger.info("Community mode enabled — scanning GitHub for evolve-candidate and feature-request issues")
+        else:
+            logger.info("GitHub sync enabled — proposals will be synced as Issues")
+
+    def _execute_single_loop_cycle(self) -> None:
+        """Execute one cycle of the evolution loop, appending results."""
+        try:
+            result = self.run_cycle()
+            if result is not None:
+                self._experiments.append(result)
+        except Exception:
+            logger.exception("Unhandled error in evolution cycle")
+
+    def _sleep_until_next_cycle(self, cycle_start: float, effective_window: int) -> None:
+        """Sleep until the next cycle boundary if still within window."""
+        if not (self._running and self._within_window(effective_window)):
+            return
+        elapsed_in_cycle = time.time() - cycle_start
+        remaining = self._cycle_seconds - elapsed_in_cycle
+        if remaining > 0:
+            time.sleep(remaining)
+
+    def _make_rejected_result(
+        self,
+        proposal_id: str,
+        title: str,
+        risk_level_value: str,
+        baseline_score: float,
+        candidate_score: float,
+        delta: float,
+        reason: str,
+        cycle_start: float,
+    ) -> ExperimentResult:
+        """Build, log, and return a rejected ExperimentResult."""
+        result = ExperimentResult(
+            proposal_id=proposal_id,
+            title=title,
+            risk_level=risk_level_value,
+            baseline_score=baseline_score,
+            candidate_score=candidate_score,
+            delta=delta,
+            accepted=False,
+            reason=reason,
+            cost_usd=_COST_PER_PROPOSAL_USD,
+            duration_seconds=time.time() - cycle_start,
+        )
+        self._log_experiment(result)
+        self._flush_governance_log()
+        return result
+
+    def _run_sandbox_validation(
+        self, proposal: Any, risk_route: str, composite_risk: float, baseline_score: float
+    ) -> Any:
+        """Run sandbox validation, returning the result or ``None`` for fast-track."""
+        if risk_route == "fast_track":
+            logger.info(
+                "Proposal %s fast-tracked (composite_risk=%.2f) — skipping sandbox",
+                proposal.id,
+                composite_risk,
+            )
+            return self._make_fast_track_sandbox_result(proposal.id, baseline_score)
+        return self._sandbox.validate(
+            proposal_id=proposal.id,
+            diff=proposal.proposed_change,
+            baseline_score=baseline_score,
+        )
+
+    def _record_apply_outcome(
+        self,
+        applied: bool,
+        proposal: Any,
+        risk_level: Any,
+        delta: float,
+        candidate_score: float,
+        composite_risk: float,
+    ) -> None:
+        """Update counters and GitHub state after applying or failing to apply."""
+        if applied:
+            self._proposals_accepted += 1
+            self._consecutive_empty = 0
+            self._cycle_proposals_applied = 1
+            self._cycle_outcome_metrics = {
+                "delta": delta,
+                "candidate_score": candidate_score,
+                "composite_risk": composite_risk,
+            }
+            self._github_close_current(
+                comment=(
+                    f"Proposal **{proposal.title}** applied automatically.\n\n"
+                    f"- Risk: `{risk_level.value}`\n"
+                    f"- Score delta: `{delta:+.4f}`"
+                ),
+            )
+        else:
+            self._consecutive_empty += 1
+            self._cycle_outcome_metrics = {"delta": 0.0, "composite_risk": composite_risk}
 
     def run_cycle(self) -> ExperimentResult | None:
         """Run a single experiment cycle (one proposal).
@@ -301,52 +399,27 @@ class EvolutionLoop:
         rotation = _FOCUS_ROTATION_COMMUNITY if self._community_mode else _FOCUS_ROTATION
         focus = rotation[self._cycle_count % len(rotation)]
         self._cycle_count += 1
-
         logger.info("Evolution cycle %d — focus: %s", self._cycle_count, focus)
 
-        # Community issue cycles delegate to the community pipeline.
         if focus == "community_issue":
             return self._run_community_cycle(cycle_start)
-
-        # Creative vision cycles delegate entirely to the creative pipeline.
         if focus == "creative_vision":
             return self._run_creative_cycle(cycle_start)
 
-        # Governance — adjust weights before each scoring cycle.
-        self._cycle_weights_before = self._current_weights
-        project_ctx = self._build_project_context()
-        self._current_weights, self._cycle_weight_reason = self._governor.adjust_weights(
-            self._cycle_weights_before, project_ctx
-        )
-        self._governor.persist_weights(self._current_weights, self._cycle_weight_reason)
-        # Reset per-cycle accumulators.
-        self._cycle_proposals_evaluated = 0
-        self._cycle_proposals_applied = 0
-        self._cycle_risk_scores = []
-        self._cycle_outcome_metrics = {}
+        self._prepare_governance_cycle()
 
         # Step 1 — Gather metrics, detect opportunities, and run feature discovery.
         self._aggregator.run_full_analysis()
         opportunities = self._detector.identify_opportunities()
         feature_tickets = self._feature_discovery.discover(max_tickets=5)
         if feature_tickets:
-            logger.info(
-                "Feature discovery: %d new ticket(s) written to backlog",
-                len(feature_tickets),
-            )
+            logger.info("Feature discovery: %d new ticket(s) written to backlog", len(feature_tickets))
 
-        # Step 2 — Run baseline benchmark.
         baseline_score = self._run_baseline()
 
-        # Step 3 — GitHub coordination: check for unclaimed issues before generating.
-        # If GitHub sync is enabled, check whether another instance is already
-        # working on something similar.  We still generate locally (the proposal
-        # generator drives from detected metrics), but we skip publishing a new
-        # issue if an equivalent one is already open and unclaimed.
+        # Step 3 — GitHub coordination.
         self._current_issue_number = None
-        github_hint: str | None = None
-        if self._github_sync:
-            github_hint = self._github_check_unclaimed()
+        github_hint: str | None = self._github_check_unclaimed() if self._github_sync else None
 
         # Step 4 — Generate a proposal.
         proposal = self._generate_proposal(opportunities)
@@ -354,174 +427,72 @@ class EvolutionLoop:
             logger.debug("No actionable opportunities found this cycle")
             self._consecutive_empty += 1
             if github_hint is not None:
-                # We may have claimed an issue but generated nothing locally.
-                # Unclaim so another instance can pick it up.
                 self._github_unclaim_current()
             self._flush_governance_log()
             return None
 
         self._proposals_generated += 1
-        # Governance — compute risk score and determine routing strategy.
         composite_risk, risk_level = self._proposal_scorer.compute_risk(proposal)
         self._cycle_risk_scores.append(composite_risk)
         self._cycle_proposals_evaluated = 1
         risk_route = self._proposal_scorer.classify_risk_route(composite_risk)
         logger.info(
             "Proposal %s: %s (risk=%s, confidence=%.2f, composite_risk=%.2f, route=%s)",
-            proposal.id,
-            proposal.title,
-            proposal.risk_assessment.level,
-            proposal.confidence,
-            composite_risk,
-            risk_route,
+            proposal.id, proposal.title, proposal.risk_assessment.level,
+            proposal.confidence, composite_risk, risk_route,
         )
 
-        # Publish or claim a GitHub issue for this proposal.
         if self._github_sync:
             self._github_sync_proposal(proposal.title, proposal.description)
 
         # Step 5 — Circuit breaker check.
         can_evolve, breaker_reason = self._breaker.can_evolve(risk_level)
         if not can_evolve:
-            logger.warning(
-                "Circuit breaker blocked %s: %s",
-                proposal.id,
-                breaker_reason,
+            logger.warning("Circuit breaker blocked %s: %s", proposal.id, breaker_reason)
+            return self._make_rejected_result(
+                proposal.id, proposal.title, risk_level.value,
+                baseline_score, baseline_score, 0.0,
+                f"Circuit breaker: {breaker_reason}", cycle_start,
             )
-            result = ExperimentResult(
-                proposal_id=proposal.id,
-                title=proposal.title,
-                risk_level=risk_level.value,
-                baseline_score=baseline_score,
-                candidate_score=baseline_score,
-                delta=0.0,
-                accepted=False,
-                reason=f"Circuit breaker: {breaker_reason}",
-                cost_usd=_COST_PER_PROPOSAL_USD,
-                duration_seconds=time.time() - cycle_start,
-            )
-            self._log_experiment(result)
-            self._flush_governance_log()
-            return result
 
         # Step 6 — Approval gate routing.
-        decision = self._gate.route(
-            _to_types_proposal(proposal, risk_level),
-        )
-
-        is_auto = decision.outcome in (
-            ApprovalOutcome.AUTO_APPROVED,
-            ApprovalOutcome.AUTO_APPROVED_AUDIT,
-        )
-
+        decision = self._gate.route(_to_types_proposal(proposal, risk_level))
+        is_auto = decision.outcome in (ApprovalOutcome.AUTO_APPROVED, ApprovalOutcome.AUTO_APPROVED_AUDIT)
         if not is_auto:
-            # L2+ or low-confidence: defer to human.
             self._log_deferred(proposal, decision.reason)
-            # Unclaim the GitHub issue so a human (or another instance) can
-            # pick it up via the normal review flow.
             self._github_unclaim_current()
-            result = ExperimentResult(
-                proposal_id=proposal.id,
-                title=proposal.title,
-                risk_level=risk_level.value,
-                baseline_score=baseline_score,
-                candidate_score=baseline_score,
-                delta=0.0,
-                accepted=False,
-                reason=f"Deferred for human review: {decision.reason}",
-                cost_usd=_COST_PER_PROPOSAL_USD,
-                duration_seconds=time.time() - cycle_start,
+            return self._make_rejected_result(
+                proposal.id, proposal.title, risk_level.value,
+                baseline_score, baseline_score, 0.0,
+                f"Deferred for human review: {decision.reason}", cycle_start,
             )
-            self._log_experiment(result)
-            self._flush_governance_log()
-            return result
 
         # Step 7 — Sandbox validation.
-        # Fast-tracked proposals (composite_risk < 0.3) bypass the sandbox.
-        # High-risk proposals (composite_risk > 0.6) are always sandbox-verified.
-        if risk_route == "fast_track":
-            logger.info(
-                "Proposal %s fast-tracked (composite_risk=%.2f) — skipping sandbox",
-                proposal.id,
-                composite_risk,
-            )
-            sandbox_result = self._make_fast_track_sandbox_result(proposal.id, baseline_score)
-        else:
-            sandbox_result = self._sandbox.validate(
-                proposal_id=proposal.id,
-                diff=proposal.proposed_change,
-                baseline_score=baseline_score,
+        sandbox_result = self._run_sandbox_validation(proposal, risk_route, composite_risk, baseline_score)
+        if not sandbox_result.passed:
+            self._breaker.record_sandbox_failure(proposal.id)
+            return self._make_rejected_result(
+                proposal.id, proposal.title, risk_level.value,
+                baseline_score, sandbox_result.candidate_score, sandbox_result.delta,
+                f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}", cycle_start,
             )
 
-            if not sandbox_result.passed:
-                self._breaker.record_sandbox_failure(proposal.id)
-                result = ExperimentResult(
-                    proposal_id=proposal.id,
-                    title=proposal.title,
-                    risk_level=risk_level.value,
-                    baseline_score=baseline_score,
-                    candidate_score=sandbox_result.candidate_score,
-                    delta=sandbox_result.delta,
-                    accepted=False,
-                    reason=f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}",
-                    cost_usd=_COST_PER_PROPOSAL_USD,
-                    duration_seconds=time.time() - cycle_start,
-                )
-                self._log_experiment(result)
-                self._flush_governance_log()
-                return result
-
-        # Step 7b — Eval gate (eval-gated evolution #516).
-        # After sandbox passes, run the eval harness and compare against baseline.
+        # Step 7b — Eval gate.
         eval_result = self._eval_gate.evaluate(
-            proposal=_to_types_proposal(proposal, risk_level),
-            risk_level=risk_level,
+            proposal=_to_types_proposal(proposal, risk_level), risk_level=risk_level,
         )
         if not eval_result.skipped and not eval_result.accepted:
-            result = ExperimentResult(
-                proposal_id=proposal.id,
-                title=proposal.title,
-                risk_level=risk_level.value,
-                baseline_score=eval_result.baseline_score,
-                candidate_score=eval_result.score,
-                delta=eval_result.delta,
-                accepted=False,
-                reason=f"Eval gate rejected: {eval_result.reason}",
-                cost_usd=_COST_PER_PROPOSAL_USD,
-                duration_seconds=time.time() - cycle_start,
+            return self._make_rejected_result(
+                proposal.id, proposal.title, risk_level.value,
+                eval_result.baseline_score, eval_result.score, eval_result.delta,
+                f"Eval gate rejected: {eval_result.reason}", cycle_start,
             )
-            self._log_experiment(result)
-            self._flush_governance_log()
-            return result
 
         # Step 8 — Apply the proposal.
         applied = self._apply_proposal(proposal, sandbox_result)
         candidate_score = sandbox_result.candidate_score if applied else baseline_score
         delta = sandbox_result.delta if applied else 0.0
-
-        if applied:
-            self._proposals_accepted += 1
-            self._consecutive_empty = 0
-            self._cycle_proposals_applied = 1
-            self._cycle_outcome_metrics = {
-                "delta": delta,
-                "candidate_score": candidate_score,
-                "composite_risk": composite_risk,
-            }
-            # Close the GitHub issue to signal completion.
-            self._github_close_current(
-                comment=(
-                    f"Proposal **{proposal.title}** applied automatically.\n\n"
-                    f"- Risk: `{risk_level.value}`\n"
-                    f"- Score delta: `{delta:+.4f}`"
-                ),
-            )
-        else:
-            self._consecutive_empty += 1
-            self._cycle_outcome_metrics = {
-                "delta": 0.0,
-                "composite_risk": composite_risk,
-            }
+        self._record_apply_outcome(applied, proposal, risk_level, delta, candidate_score, composite_risk)
 
         result = ExperimentResult(
             proposal_id=proposal.id,
