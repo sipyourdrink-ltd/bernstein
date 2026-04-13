@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 from bernstein.core.http_retry import (
     RetryConfig,
     compute_backoff,

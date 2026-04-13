@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.lessons import (
     MemoryType,
     _find_similar_lesson_in_content,

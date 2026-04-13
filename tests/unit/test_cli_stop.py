@@ -8,9 +8,9 @@ import signal
 from pathlib import Path
 from unittest.mock import patch
 
+import bernstein.cli.stop_cmd as stop_cmd_module
 from click.testing import CliRunner
 
-import bernstein.cli.stop_cmd as stop_cmd_module
 from bernstein.cli.main import (
     cli,
     kill_pid_hard,

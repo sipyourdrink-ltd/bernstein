@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import Mock, patch
 
-from click.testing import CliRunner
-
 from bernstein.cli.graph_cmd import graph_group
+from click.testing import CliRunner
 
 
 def _response_payload() -> dict[str, object]:

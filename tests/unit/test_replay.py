@@ -5,10 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from click.testing import CliRunner
-
 from bernstein.cli.advanced_cmd import replay_cmd
 from bernstein.core.traces import AgentTrace, build_replay_task_request, render_replay_diff
+from click.testing import CliRunner
 
 
 def _trace() -> AgentTrace:

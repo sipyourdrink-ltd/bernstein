@@ -113,7 +113,7 @@ def _read_pid_file(pid_file: Path) -> dict[str, Any]:
         data = json.loads(pid_file.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             return data
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, ValueError):
         pass
     return {}
 

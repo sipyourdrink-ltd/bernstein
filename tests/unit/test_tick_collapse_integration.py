@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 import pytest
-
 from bernstein.core.context_collapse import CollapseResult, CollapseStage
 from bernstein.core.tick_pipeline import collapse_prompt_sections
 

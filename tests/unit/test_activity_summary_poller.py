@@ -125,10 +125,7 @@ class TestPollerThread:
                     if current.summary == expected:
                         return
                 time.sleep(0.01)
-            raise AssertionError(
-                f"summary did not reach {expected!r} within {timeout}s "
-                f"(last seen: {last_seen!r})"
-            )
+            raise AssertionError(f"summary did not reach {expected!r} within {timeout}s (last seen: {last_seen!r})")
 
         session = ActivitySession(activity_dir)
         poller = ActivitySummaryPoller(agent_id="bg-4", session=session, board=board, interval=0.05)

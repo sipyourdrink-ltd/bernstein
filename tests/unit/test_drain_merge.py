@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.drain_merge import run_merge_agent
 
 
@@ -21,6 +21,7 @@ async def test_run_merge_agent_parses_valid_report(tmp_path: Path) -> None:
             self.returncode: int | None = 0
 
         async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.sleep(0)  # Async interface requirement
             return (
                 b"noise\nMERGE_REPORT_JSON:\n"
                 b'[{"branch":"agent/a","action":"merged","files_changed":2,"reason":"clean"}]\n',
@@ -37,6 +38,7 @@ async def test_run_merge_agent_parses_valid_report(tmp_path: Path) -> None:
     original_wait_for = module.asyncio.wait_for
 
     async def _create(*args: object, **kwargs: object) -> _Proc:
+        await asyncio.sleep(0)  # Async interface requirement
         return proc
 
     async def _wait_for(coro: object, timeout: float) -> tuple[bytes, bytes]:
@@ -63,6 +65,7 @@ async def test_run_merge_agent_timeout_returns_empty(tmp_path: Path) -> None:
             self.killed = False
 
         async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.sleep(0)  # Async interface requirement
             return (b"", b"")
 
         def kill(self) -> None:
@@ -76,9 +79,11 @@ async def test_run_merge_agent_timeout_returns_empty(tmp_path: Path) -> None:
     original_wait_for = module.asyncio.wait_for
 
     async def _create(*args: object, **kwargs: object) -> _Proc:
+        await asyncio.sleep(0)  # Async interface requirement
         return proc
 
     async def _wait_for(coro: object, timeout: float) -> tuple[bytes, bytes]:
+        await asyncio.sleep(0)  # Async interface requirement
         if hasattr(coro, "close"):
             coro.close()  # type: ignore[reportUnknownMemberType]
         raise TimeoutError()
@@ -102,6 +107,7 @@ async def test_run_merge_agent_nonzero_exit_returns_empty(tmp_path: Path) -> Non
             self.returncode: int | None = 2
 
         async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.sleep(0)  # Async interface requirement
             return (b"no report", b"error")
 
         def kill(self) -> None:
@@ -114,6 +120,7 @@ async def test_run_merge_agent_nonzero_exit_returns_empty(tmp_path: Path) -> Non
     original_wait_for = module.asyncio.wait_for
 
     async def _create(*args: object, **kwargs: object) -> _Proc:
+        await asyncio.sleep(0)  # Async interface requirement
         return proc
 
     async def _wait_for(coro: object, timeout: float) -> tuple[bytes, bytes]:

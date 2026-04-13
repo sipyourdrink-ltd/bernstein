@@ -5,13 +5,12 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
-
 from bernstein.core.webhook_signatures import sign_hmac_sha256
 from bernstein.core.webhook_verify import (
     WebhookSignatureVerifier,
     verify_webhook_request,
 )
+from fastapi import HTTPException
 
 
 class TestVerifyWebhookRequest:

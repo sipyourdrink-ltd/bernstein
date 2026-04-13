@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.ssh_backend import SSHBackend, SSHError, SSHHostConfig, parse_ssh_config
 
 # ---------------------------------------------------------------------------

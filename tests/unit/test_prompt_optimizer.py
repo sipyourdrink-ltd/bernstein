@@ -84,7 +84,7 @@ class TestSprtDecide:
         # Act: simulate many successes for challenger
         result = _sprt_decide(
             control_successes=20,
-            control_obs=50,   # 40% success rate
+            control_obs=50,  # 40% success rate
             challenger_successes=45,
             challenger_obs=50,  # 90% success rate — clearly better
             cfg=cfg,
@@ -100,7 +100,7 @@ class TestSprtDecide:
         # Act
         result = _sprt_decide(
             control_successes=35,
-            control_obs=50,   # 70% success
+            control_obs=50,  # 70% success
             challenger_successes=5,
             challenger_obs=50,  # 10% success
             cfg=cfg,
@@ -236,9 +236,7 @@ class TestVariantAssignment:
 
 
 class TestPromptOptimizer:
-    def test_assign_variant_seeds_role_and_returns_assignment(
-        self, optimizer: PromptOptimizer
-    ) -> None:
+    def test_assign_variant_seeds_role_and_returns_assignment(self, optimizer: PromptOptimizer) -> None:
         # Arrange / Act
         assignment = optimizer.assign_variant(role="backend", task_id="task-001")
 
@@ -246,9 +244,7 @@ class TestPromptOptimizer:
         assert assignment.role == "backend"
         assert assignment.task_id == "task-001"
 
-    def test_assign_variant_introduces_challenger_on_first_call(
-        self, optimizer: PromptOptimizer
-    ) -> None:
+    def test_assign_variant_introduces_challenger_on_first_call(self, optimizer: PromptOptimizer) -> None:
         # Arrange / Act
         optimizer.assign_variant(role="backend", task_id="task-001")
         status = optimizer.get_status("backend")
@@ -257,9 +253,7 @@ class TestPromptOptimizer:
         assert status["challenger_version"] is not None
         assert status["challenger_version"] != status["active_version"]
 
-    def test_record_outcome_accumulates_metrics(
-        self, optimizer: PromptOptimizer
-    ) -> None:
+    def test_record_outcome_accumulates_metrics(self, optimizer: PromptOptimizer) -> None:
         # Arrange
         optimizer.assign_variant(role="backend", task_id="task-001")
 
@@ -268,15 +262,10 @@ class TestPromptOptimizer:
         status = optimizer.get_status("backend")
 
         # Assert: at least one side has one observation
-        total_obs = (
-            status["control_metrics"]["observations"]
-            + status["challenger_metrics"]["observations"]
-        )
+        total_obs = status["control_metrics"]["observations"] + status["challenger_metrics"]["observations"]
         assert total_obs == 1
 
-    def test_optimizer_state_persists_across_instances(
-        self, sdd_dir: Path, templates_dir: Path
-    ) -> None:
+    def test_optimizer_state_persists_across_instances(self, sdd_dir: Path, templates_dir: Path) -> None:
         # Arrange: create optimizer, assign, record
         cfg = SprtConfig(min_sample=5, max_sample=50)
         opt1 = PromptOptimizer(sdd_dir, templates_dir, cfg=cfg)
@@ -288,15 +277,10 @@ class TestPromptOptimizer:
         status = opt2.get_status("qa")
 
         # Assert: observations survived reload
-        total_obs = (
-            status["control_metrics"]["observations"]
-            + status["challenger_metrics"]["observations"]
-        )
+        total_obs = status["control_metrics"]["observations"] + status["challenger_metrics"]["observations"]
         assert total_obs >= 1
 
-    def test_optimizer_promotes_challenger_after_clear_winner(
-        self, sdd_dir: Path, templates_dir: Path
-    ) -> None:
+    def test_optimizer_promotes_challenger_after_clear_winner(self, sdd_dir: Path, templates_dir: Path) -> None:
         # Arrange: tight cfg so promotion happens quickly
         cfg = SprtConfig(
             alpha=0.05,
@@ -333,10 +317,9 @@ class TestPromptOptimizer:
         # Now record one more challenger success — should trigger SPRT
         # Assign a new task forced to challenger
         from bernstein.core.tokens.prompt_versioning import PromptRegistry
+
         registry = PromptRegistry(sdd_dir)
-        registry.record_outcome(
-            "backend", challenger_ver, success=True, quality_score=0.9
-        )
+        registry.record_outcome("backend", challenger_ver, success=True, quality_score=0.9)
         rs["challenger_metrics"]["successes"] += 1
         rs["challenger_metrics"]["observations"] += 1
         opt._save_state()
@@ -352,9 +335,7 @@ class TestPromptOptimizer:
         # Assert: SPRT should detect promotion
         assert decision == SprtDecision.PROMOTE_CHALLENGER
 
-    def test_list_active_roles_returns_tracked_roles(
-        self, optimizer: PromptOptimizer
-    ) -> None:
+    def test_list_active_roles_returns_tracked_roles(self, optimizer: PromptOptimizer) -> None:
         # Arrange
         optimizer.assign_variant(role="backend", task_id="t1")
         optimizer.assign_variant(role="qa", task_id="t2")
@@ -366,9 +347,7 @@ class TestPromptOptimizer:
         assert "backend" in roles
         assert "qa" in roles
 
-    def test_get_status_returns_expected_keys(
-        self, optimizer: PromptOptimizer
-    ) -> None:
+    def test_get_status_returns_expected_keys(self, optimizer: PromptOptimizer) -> None:
         # Arrange
         optimizer.assign_variant(role="frontend", task_id="t1")
 
@@ -384,9 +363,7 @@ class TestPromptOptimizer:
         assert "challenger_metrics" in status
         assert "recent_promotions" in status
 
-    def test_record_outcome_for_unknown_task_id_does_not_raise(
-        self, optimizer: PromptOptimizer
-    ) -> None:
+    def test_record_outcome_for_unknown_task_id_does_not_raise(self, optimizer: PromptOptimizer) -> None:
         # Arrange: record without prior assign
         optimizer.assign_variant(role="backend", task_id="t1")
 

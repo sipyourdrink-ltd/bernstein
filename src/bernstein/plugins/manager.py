@@ -274,7 +274,7 @@ class CommandHook:
             return payload, False
         except HookValidationError:
             raise
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except (TypeError, ValueError):
             log.warning(
                 "Hook script %s returned malformed JSON: %s",
                 script.name,

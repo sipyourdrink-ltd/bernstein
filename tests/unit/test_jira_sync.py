@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.jira_sync import JiraSyncConfig, fetch_jira_issues, sync_jira_to_backlog
 
 if TYPE_CHECKING:

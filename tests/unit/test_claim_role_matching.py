@@ -5,6 +5,7 @@ Agents can ONLY claim tasks where agent.role == task.role.
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from bernstein.core.server import TaskCreate, TaskStore
 
 async def _make_store() -> TaskStore:
     """Create and initialize an in-memory task store."""
+    await asyncio.sleep(0)  # Async interface requirement
     from bernstein.core.server import TaskStore as InMemoryStore
 
     tmp_dir = Path(tempfile.mkdtemp())

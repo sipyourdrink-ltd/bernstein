@@ -8,14 +8,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from bernstein.adapters.base import SpawnError, SpawnResult
 from bernstein.core.models import Task
 from bernstein.core.rate_limit_tracker import (
     UnattendedRetryPolicy,
     is_unattended_mode,
 )
 from bernstein.core.spawner import AgentSpawner
+
+from bernstein.adapters.base import SpawnError, SpawnResult
 
 # ---------------------------------------------------------------------------
 # is_unattended_mode tests

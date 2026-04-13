@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from click.testing import CliRunner
-
 from bernstein.cli.templates_cmd import templates_group
 from bernstein.core.hook_templates import get_hook_template, list_hook_templates, scaffold_hook_template
+from click.testing import CliRunner
 
 
 def test_list_hook_templates_contains_expected_templates() -> None:

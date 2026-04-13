@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from click.testing import CliRunner
-
-from bernstein.cli.main import cli
 from bernstein.cli.verbosity import (
     NORMAL,
     QUIET,
@@ -13,6 +10,9 @@ from bernstein.cli.verbosity import (
     is_quiet,
     is_verbose,
 )
+from click.testing import CliRunner
+
+from bernstein.cli.main import cli
 
 
 class TestVerbosityFlags:

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from bernstein.core.models import AbortReason, TransitionReason
+
 from bernstein.adapters.claude_exit_codes import (
     ExitInterpretation,
     interpret_exit_code,
     interpret_result_subtype,
 )
-from bernstein.core.models import AbortReason, TransitionReason
 
 # ---------------------------------------------------------------------------
 # interpret_exit_code

@@ -6,6 +6,7 @@ in routing, planning, or execution quality.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -106,6 +107,7 @@ class GoldenEvalRunner:
 
     async def run_task(self, gtask: GoldenTask) -> dict[str, Any]:
         """Submit a golden task and wait for completion/failure."""
+        await asyncio.sleep(0)  # Async interface requirement
         # This would interact with the task server API
         # For this implementation, we return a mock success result
         return {

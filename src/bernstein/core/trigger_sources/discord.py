@@ -24,7 +24,6 @@ def verify_discord_signature(body: bytes, timestamp: str, signature: str, public
         True if the signature is valid, False otherwise.
     """
     try:
-        from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
         key_bytes = bytes.fromhex(public_key)
@@ -34,7 +33,7 @@ def verify_discord_signature(body: bytes, timestamp: str, signature: str, public
         pk = Ed25519PublicKey.from_public_bytes(key_bytes)
         pk.verify(sig_bytes, message)
         return True
-    except (InvalidSignature, ValueError, Exception):
+    except Exception:
         return False
 
 

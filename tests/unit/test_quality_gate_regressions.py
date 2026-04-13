@@ -11,7 +11,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.pii_output_gate import scan_text
 from bernstein.core.quality_gates import (

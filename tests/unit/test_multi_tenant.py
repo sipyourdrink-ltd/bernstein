@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
-
 from bernstein.core.cost_tracker import CostTracker
 from bernstein.core.metric_collector import MetricsCollector
 from bernstein.core.seed import parse_seed
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
 from bernstein.core.server import create_app
 
 

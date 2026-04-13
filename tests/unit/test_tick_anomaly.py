@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.tick_anomaly import AnomalyAlert, TickAnomalyDetector, TickSample
 
 

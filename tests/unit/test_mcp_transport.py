@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.mcp_transport import (
     McpTransport,
     SseTransport,

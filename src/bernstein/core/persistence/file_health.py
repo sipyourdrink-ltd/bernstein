@@ -271,7 +271,7 @@ def _compute_coverage_score(file_path: Path, metrics_dir: Path) -> int:
                 pct_raw = summary.get("percent_covered", 70)
                 if isinstance(pct_raw, (int, float)):
                     return min(100, max(0, int(pct_raw)))
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (OSError, ValueError):
         pass
 
     return 70

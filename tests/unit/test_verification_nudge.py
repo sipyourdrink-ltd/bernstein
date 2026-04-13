@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.verification_nudge import (
     NudgeSummary,
     VerificationNudgeTracker,

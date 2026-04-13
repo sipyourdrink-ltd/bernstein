@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.sla_monitor import (
     SLAAlert,
     SLADefinition,

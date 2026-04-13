@@ -139,8 +139,9 @@ class TestAdaptersUseFilteredEnv:
     """Each adapter passes env= to subprocess.Popen, not None."""
 
     def test_codex_passes_env(self, tmp_path: Path) -> None:
-        from bernstein.adapters.codex import CodexAdapter
         from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.codex import CodexAdapter
 
         adapter = CodexAdapter()
         proc_mock = _make_popen_mock()
@@ -159,8 +160,9 @@ class TestAdaptersUseFilteredEnv:
         assert "DATABASE_URL" not in kwargs["env"]
 
     def test_gemini_passes_env(self, tmp_path: Path) -> None:
-        from bernstein.adapters.gemini import GeminiAdapter
         from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.gemini import GeminiAdapter
 
         adapter = GeminiAdapter()
         proc_mock = _make_popen_mock()
@@ -176,8 +178,9 @@ class TestAdaptersUseFilteredEnv:
         assert kwargs["env"] is not None
 
     def test_claude_passes_env_to_both_procs(self, tmp_path: Path) -> None:
-        from bernstein.adapters.claude import ClaudeCodeAdapter
         from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.claude import ClaudeCodeAdapter
 
         adapter = ClaudeCodeAdapter()
         claude_mock = _make_popen_mock(pid=100)
@@ -202,8 +205,9 @@ class TestAdaptersUseFilteredEnv:
             assert kw["env"] is not None
 
     def test_claude_env_includes_api_key(self, tmp_path: Path) -> None:
-        from bernstein.adapters.claude import ClaudeCodeAdapter
         from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.claude import ClaudeCodeAdapter
 
         adapter = ClaudeCodeAdapter()
         claude_mock = _make_popen_mock(pid=100)
@@ -235,8 +239,9 @@ class TestAdaptersUseFilteredEnv:
         assert "SECRET_DB" not in first_call_env
 
     def test_aider_passes_env(self, tmp_path: Path) -> None:
-        from bernstein.adapters.aider import AiderAdapter
         from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.aider import AiderAdapter
 
         adapter = AiderAdapter()
         proc_mock = _make_popen_mock()
@@ -252,8 +257,9 @@ class TestAdaptersUseFilteredEnv:
         assert kwargs["env"] is not None
 
     def test_amp_passes_env(self, tmp_path: Path) -> None:
-        from bernstein.adapters.amp import AmpAdapter
         from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.amp import AmpAdapter
 
         adapter = AmpAdapter()
         proc_mock = _make_popen_mock()
@@ -269,8 +275,9 @@ class TestAdaptersUseFilteredEnv:
         assert kwargs["env"] is not None
 
     def test_generic_passes_env(self, tmp_path: Path) -> None:
-        from bernstein.adapters.generic import GenericAdapter
         from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.generic import GenericAdapter
 
         adapter = GenericAdapter(cli_command="mycli", display_name="MyCLI")
         proc_mock = _make_popen_mock()

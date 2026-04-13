@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from starlette.testclient import TestClient
-
 from bernstein.core.models import AgentSession, ModelConfig, OrchestratorConfig
 from bernstein.core.orchestrator import Orchestrator
-from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
+from starlette.testclient import TestClient
+
+from bernstein.core.server import create_app
 
 
 def _make_mock_spawner(session_id: str = "agent-123", role: str = "backend") -> MagicMock:

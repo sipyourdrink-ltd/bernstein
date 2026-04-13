@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from bernstein.core.researcher import (
     ResearchCache,
     ResearchReport,
@@ -163,6 +163,7 @@ class TestRunResearch:
         call_count = 0
 
         async def slow_search(query: str, max_results: int = 5) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             nonlocal call_count
             call_count += 1
             return f"Result for {query}"

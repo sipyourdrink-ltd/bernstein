@@ -8,7 +8,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import yaml
-
 from bernstein.core.config_hot_reload import (
     HotReloader,
     ReloadEvent,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from click.testing import CliRunner
-
 from bernstein.cli.doctor_cmd import (
     check_config_valid,
     check_disk_space,
@@ -12,6 +10,8 @@ from bernstein.cli.doctor_cmd import (
     check_sdd_workspace,
     run_all_checks,
 )
+from click.testing import CliRunner
+
 from bernstein.cli.main import cli
 
 

@@ -8,11 +8,9 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+import bernstein.core.config_schema as _config_schema_mod
 import pytest
 import yaml
-from pydantic import ValidationError
-
-import bernstein.core.config_schema as _config_schema_mod
 from bernstein.core.config_schema import (
     CURRENT_CONFIG_VERSION,
     BernsteinConfig,
@@ -26,6 +24,7 @@ from bernstein.core.config_schema import (
     register_migration,
     validate_file_paths,
 )
+from pydantic import ValidationError
 
 # Access the internal migration registry for testing.  Tests restore it
 # after each mutation so other tests are not affected.

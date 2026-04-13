@@ -6,7 +6,6 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
-
 from bernstein.core.task_templates import (
     BUILTIN_TEMPLATES,
     apply_template,

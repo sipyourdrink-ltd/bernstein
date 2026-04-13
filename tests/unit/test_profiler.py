@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.profiler import (
     OrchestratorProfiler,
     ProfileResult,
@@ -41,7 +40,7 @@ def test_profiler_session_creates_output_dir(tmp_path: Path) -> None:
     assert not output_dir.exists()
 
     with ProfilerSession(output_dir):
-        pass
+        pass  # Session creates output dir on exit
 
     assert output_dir.is_dir()
 
@@ -51,7 +50,7 @@ def test_profiler_session_txt_contains_header(tmp_path: Path) -> None:
     output_dir = tmp_path / "profiles"
 
     with ProfilerSession(output_dir):
-        pass
+        pass  # Session writes profile on exit
 
     txt_file = next(output_dir.glob("profile-*.txt"))
     content = txt_file.read_text()
@@ -101,7 +100,7 @@ def test_profiler_session_prof_file_is_valid_pstats(tmp_path: Path) -> None:
     output_dir = tmp_path / "profiles"
 
     with ProfilerSession(output_dir):
-        pass
+        pass  # Session writes .prof file on exit
 
     prof_file = next(output_dir.glob("profile-*.prof"))
     # Should not raise

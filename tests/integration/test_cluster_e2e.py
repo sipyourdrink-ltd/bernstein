@@ -16,9 +16,9 @@ import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
+from bernstein.core.models import ClusterConfig, ClusterTopology
 from httpx import ASGITransport, AsyncClient
 
-from bernstein.core.models import ClusterConfig, ClusterTopology
 from bernstein.core.server import create_app
 
 # ---------------------------------------------------------------------------

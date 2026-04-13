@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 
 import pytest
-
 from bernstein.core.resource_limits import (
     EnforcementResult,
     ResourceLimits,

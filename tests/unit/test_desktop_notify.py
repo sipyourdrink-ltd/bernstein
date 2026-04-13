@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.desktop_notify import (
     Notification,
     NotificationLevel,

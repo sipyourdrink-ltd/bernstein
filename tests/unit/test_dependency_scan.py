@@ -6,9 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
-from bernstein.cli.status import render_status_plain
 from bernstein.core.dependency_scan import (
     CommandExecution,
     DependencyScanCommand,
@@ -16,6 +13,9 @@ from bernstein.core.dependency_scan import (
     DependencyScanStatus,
     DependencyVulnerabilityScanner,
 )
+from httpx import ASGITransport, AsyncClient
+
+from bernstein.cli.status import render_status_plain
 from bernstein.core.server import create_app
 
 

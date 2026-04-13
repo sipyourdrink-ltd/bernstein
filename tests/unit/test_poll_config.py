@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.poll_config import (
     MAX_INTERVAL_MS,
     MIN_INTERVAL_MS,

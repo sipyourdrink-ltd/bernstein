@@ -15,8 +15,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import httpx
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.models import (
     Complexity,
@@ -27,6 +25,8 @@ from bernstein.core.models import (
 )
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -5,9 +5,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from click.testing import CliRunner
-from pytest import MonkeyPatch
-
 from bernstein.cli.policy_cmd import policy_group
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.policy_engine import (
@@ -18,6 +15,8 @@ from bernstein.core.policy_engine import (
     load_policy_engine,
     run_policy_engine,
 )
+from click.testing import CliRunner
+from pytest import MonkeyPatch
 
 
 def _git(repo: Path, *args: str) -> None:

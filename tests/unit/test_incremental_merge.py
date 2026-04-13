@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.git_basic import GitResult
 from bernstein.core.incremental_merge import (
     IncrementalMergeState,

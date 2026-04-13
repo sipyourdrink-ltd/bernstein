@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.spend_forecast import (
     SpendForecast,
     forecast_monthly_spend,

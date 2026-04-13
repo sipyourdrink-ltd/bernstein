@@ -6,7 +6,6 @@ import threading
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.predictive_cost_model import (
     CostPrediction,
     PredictiveCostModel,

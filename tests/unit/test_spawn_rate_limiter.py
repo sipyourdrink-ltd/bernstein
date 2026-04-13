@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.spawn_rate_limiter import (
     DEFAULT_MAX_SPAWNS,
     DEFAULT_WINDOW_SECONDS,

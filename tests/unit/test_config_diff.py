@@ -6,10 +6,10 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from bernstein.core.config_diff import diff_config_snapshots, load_redacted_config
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from bernstein.core.config_diff import diff_config_snapshots, load_redacted_config
 from bernstein.core.server import create_app
 
 

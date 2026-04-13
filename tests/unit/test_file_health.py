@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.file_health import (
     DEGRADATION_THRESHOLD,
     MIN_HEALTHY_SCORE,

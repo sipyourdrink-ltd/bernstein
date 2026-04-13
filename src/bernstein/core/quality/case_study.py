@@ -38,7 +38,7 @@ def _load_json_safe(path: Path) -> dict[str, Any]:
     """Load a JSON file, returning empty dict on failure."""
     try:
         return dict(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, ValueError):
         return {}
 
 

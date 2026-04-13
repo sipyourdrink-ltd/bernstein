@@ -9,12 +9,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import httpx
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import OrchestratorConfig
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
 from bernstein.core.wal import WALReader, WALRecovery, WALWriter
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 
 if TYPE_CHECKING:
     from pathlib import Path

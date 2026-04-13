@@ -147,7 +147,7 @@ def check_url_reachable(
 
         req = urllib.request.Request(config.url, method="HEAD")
         with urllib.request.urlopen(req, timeout=timeout):
-            pass
+            pass  # Response body not needed; reachability check only
     except Exception as exc:
         return McpConfigError(
             server_name=config.name,

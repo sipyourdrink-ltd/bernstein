@@ -6,7 +6,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.hijacker import (
     EnvVarConfig,
     EnvVarTierDetector,

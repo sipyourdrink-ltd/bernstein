@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.ci_fix import (
     CIFailure,
     CIFailureKind,
@@ -370,8 +369,9 @@ class TestGitHubActionsParser:
             _extract_run_id("https://github.com/owner/repo")
 
     def test_parser_satisfies_protocol(self) -> None:
-        from bernstein.adapters.ci.github_actions import GitHubActionsParser
         from bernstein.core.ci_log_parser import CILogParser
+
+        from bernstein.adapters.ci.github_actions import GitHubActionsParser
 
         parser = GitHubActionsParser()
         assert isinstance(parser, CILogParser)
@@ -384,8 +384,9 @@ class TestGitHubActionsParser:
 
 class TestCILogParserRegistry:
     def test_register_and_get(self) -> None:
-        from bernstein.adapters.ci.github_actions import GitHubActionsParser
         from bernstein.core.ci_log_parser import get_parser, register_parser
+
+        from bernstein.adapters.ci.github_actions import GitHubActionsParser
 
         parser = GitHubActionsParser()
         register_parser(parser)
@@ -398,8 +399,9 @@ class TestCILogParserRegistry:
         assert get_parser("nonexistent_ci_system") is None
 
     def test_list_parsers(self) -> None:
-        from bernstein.adapters.ci.github_actions import GitHubActionsParser
         from bernstein.core.ci_log_parser import list_parsers, register_parser
+
+        from bernstein.adapters.ci.github_actions import GitHubActionsParser
 
         register_parser(GitHubActionsParser())
         names = list_parsers()

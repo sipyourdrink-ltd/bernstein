@@ -17,7 +17,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.compliance import export_soc2_package, parse_period
 
 # ---------------------------------------------------------------------------

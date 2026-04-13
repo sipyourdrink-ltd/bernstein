@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.tick_pipeline import (
     complete_task,
     compute_total_spent,

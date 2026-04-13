@@ -11,7 +11,6 @@ from collections import defaultdict
 from typing import Any
 
 import pytest
-
 from bernstein.core.cost_tracker import CostTracker, TokenUsage
 
 # ---------------------------------------------------------------------------

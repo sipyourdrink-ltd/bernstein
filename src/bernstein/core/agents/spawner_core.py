@@ -1749,7 +1749,7 @@ class AgentSpawner:
                             model_config = decision.model_config
                         except RouterError:
                             provider_name = None
-                    except (SpawnError, Exception) as exc:
+                    except Exception as exc:
                         categorized = classify_spawn_error(exc, provider=provider_name)
                         attempt_errors.append(f"{adapter_name}: {exc}")
 

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bernstein.core.models import Task, VoteEvent
 from bernstein.core.voting import (
     TieBreak,
@@ -449,6 +449,7 @@ class TestCollectVotes:
         captured: list[str] = []
 
         async def fake_llm(prompt: str, **kwargs: object) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             captured.append(prompt)
             return approve_json
 

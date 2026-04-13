@@ -160,8 +160,9 @@ def test_post_api_endpoint_without_response():
 
 def test_spawn_prompt_includes_bulletin_summary(tmp_path: Path):
     """When spawner has a bulletin with messages, the agent prompt includes a team awareness section."""
-    from bernstein.adapters.base import CLIAdapter, SpawnResult
     from bernstein.core.spawner import AgentSpawner
+
+    from bernstein.adapters.base import CLIAdapter, SpawnResult
 
     board = BulletinBoard()
     board.post(BulletinMessage(agent_id="backend-abc", type="status", content="created src/auth.py"))
@@ -191,8 +192,9 @@ def test_spawn_prompt_includes_bulletin_summary(tmp_path: Path):
 
 def test_spawn_prompt_no_bulletin_section_without_board(tmp_path: Path):
     """When no bulletin is provided, the prompt has no team awareness section."""
-    from bernstein.adapters.base import CLIAdapter, SpawnResult
     from bernstein.core.spawner import AgentSpawner
+
+    from bernstein.adapters.base import CLIAdapter, SpawnResult
 
     adapter = MagicMock(spec=CLIAdapter)
     adapter.spawn.return_value = SpawnResult(pid=12345, log_path=tmp_path / "agent.log")
@@ -216,8 +218,9 @@ def test_spawn_prompt_no_bulletin_section_without_board(tmp_path: Path):
 
 def test_spawn_prompt_no_bulletin_section_with_empty_board(tmp_path: Path):
     """Empty bulletin board produces no team awareness section (nothing to show)."""
-    from bernstein.adapters.base import CLIAdapter, SpawnResult
     from bernstein.core.spawner import AgentSpawner
+
+    from bernstein.adapters.base import CLIAdapter, SpawnResult
 
     board = BulletinBoard()  # empty
 
@@ -249,8 +252,9 @@ def test_spawn_prompt_no_bulletin_section_with_empty_board(tmp_path: Path):
 
 def _make_orchestrator(tmp_path: Path) -> Orchestrator:
     """Create a minimal Orchestrator for testing conflict detection."""
-    from bernstein.adapters.base import CLIAdapter, SpawnResult
     from bernstein.core.spawner import AgentSpawner
+
+    from bernstein.adapters.base import CLIAdapter, SpawnResult
 
     adapter = MagicMock(spec=CLIAdapter)
     adapter.spawn.return_value = SpawnResult(pid=999, log_path=tmp_path / "agent.log")

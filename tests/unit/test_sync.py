@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING
 
 import httpx
-
 from bernstein.core.sync import (
     BacklogTask,
     SyncResult,

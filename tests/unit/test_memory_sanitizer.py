@@ -20,7 +20,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.memory_sanitizer import (
     TRUST_THRESHOLD,
     MemoryFirewall,

@@ -7,10 +7,9 @@ import sys
 import textwrap
 from pathlib import Path
 
-from mcp.types import Tool
-
 from bernstein.core.mcp_protocol_test import resolve_catalog_server, run_protocol_test, validate_tool_contracts
 from bernstein.core.mcp_registry import MCPServerEntry, save_catalog_entries
+from mcp.types import Tool
 
 
 def _write_stdio_fixture_server(path: Path) -> None:

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
-
-from bernstein.adapters.ci.gitlab_ci import GitLabCIParser
 from bernstein.core.ci_fix import CIFailureKind
 from bernstein.core.ci_log_parser import CILogParser
+
+from bernstein.adapters.ci.gitlab_ci import GitLabCIParser
 
 # ---------------------------------------------------------------------------
 # Helper: sample log fixtures

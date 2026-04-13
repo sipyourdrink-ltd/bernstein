@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from bernstein.core.degraded_mode import (
     DegradedModeConfig,
     DegradedModeManager,

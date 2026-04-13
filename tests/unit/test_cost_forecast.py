@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.cost_forecast import TaskForecast, forecast_plan_cost
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
 

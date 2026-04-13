@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.mcp_auth_lifecycle import (
     AuthLifecycleManager,
     AuthSession,

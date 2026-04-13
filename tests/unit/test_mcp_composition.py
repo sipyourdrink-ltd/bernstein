@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from bernstein.core.mcp_composition import (
     CompositeToolDef,
     CompositionResult,

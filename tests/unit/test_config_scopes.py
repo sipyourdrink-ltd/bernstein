@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 import yaml
-
 from bernstein.core.config_scopes import (
     ConfigScope,
     MultiScopeConfig,

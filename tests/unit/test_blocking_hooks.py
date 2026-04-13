@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.blocking_hooks import (
     BLOCKING_HOOK_TIMEOUT_S,
     BlockingHookResult,

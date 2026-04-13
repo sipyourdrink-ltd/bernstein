@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
-
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig, setup_worktree_env
 
 # ---------------------------------------------------------------------------

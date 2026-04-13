@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.workspace import RepoConfig, Workspace
 
 # ---------------------------------------------------------------------------
@@ -454,9 +453,8 @@ class TestWorkspaceCLI:
     """Tests for bernstein workspace CLI commands."""
 
     def test_workspace_validate_no_seed_file(self) -> None:
-        from click.testing import CliRunner
-
         from bernstein.cli.workspace_cmd import workspace_validate
+        from click.testing import CliRunner
 
         runner = CliRunner()
         with runner.isolated_filesystem():
@@ -465,9 +463,8 @@ class TestWorkspaceCLI:
             assert "No bernstein.yaml found" in result.output
 
     def test_workspace_clone_no_seed_file(self) -> None:
-        from click.testing import CliRunner
-
         from bernstein.cli.workspace_cmd import workspace_clone
+        from click.testing import CliRunner
 
         runner = CliRunner()
         with runner.isolated_filesystem():
@@ -476,9 +473,8 @@ class TestWorkspaceCLI:
             assert "No bernstein.yaml found" in result.output
 
     def test_workspace_validate_healthy(self, tmp_path: Path) -> None:
-        from click.testing import CliRunner
-
         from bernstein.cli.workspace_cmd import workspace_validate
+        from click.testing import CliRunner
 
         # Create a repo with .git dir
         repo_path = tmp_path / "repos" / "svc"

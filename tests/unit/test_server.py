@@ -8,10 +8,10 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from bernstein.core.auth_rate_limiter import RequestRateLimitMiddleware
 from bernstein.core.bulletin import BulletinBoard, MessageBoard
+from httpx import ASGITransport, AsyncClient
+
 from bernstein.core.server import SSEBus, TaskStore, create_app
 
 
@@ -253,6 +253,7 @@ async def test_simple_cycle_rejected(client: AsyncClient) -> None:
     # Cycle: create P, Q depends on P, then attempt R that P itself depends on Q.
     # Since tasks are immutable we simulate with _detect_cycle directly.
     from bernstein.core.models import Task, TaskStatus, TaskType
+
     from bernstein.core.server import TaskStore
 
     p_id = "p" * 12
@@ -281,6 +282,7 @@ async def test_simple_cycle_rejected(client: AsyncClient) -> None:
 async def test_transitive_cycle_rejected(client: AsyncClient) -> None:
     """_detect_cycle finds A -> B -> C -> A transitive cycles."""
     from bernstein.core.models import Task, TaskStatus, TaskType
+
     from bernstein.core.server import TaskStore
 
     a_id, b_id, c_id = "a" * 12, "b" * 12, "c" * 12
@@ -311,6 +313,7 @@ async def test_transitive_cycle_rejected(client: AsyncClient) -> None:
 async def test_no_cycle_for_valid_chain(client: AsyncClient) -> None:
     """_detect_cycle returns None for a simple linear chain."""
     from bernstein.core.models import Task, TaskStatus, TaskType
+
     from bernstein.core.server import TaskStore
 
     a_id, b_id, c_id = "aa" * 6, "bb" * 6, "cc" * 6

@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.preflight import _check_api_key, _check_binary, _check_port_free, preflight_checks
 
 

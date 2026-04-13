@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.cli.cost_estimate import (
     COST_PER_COMPLEXITY,
     TaskCostEstimate,

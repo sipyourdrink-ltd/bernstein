@@ -6,7 +6,6 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-
 from bernstein.core.log_context import (
     ErrorContext,
     LogContext,

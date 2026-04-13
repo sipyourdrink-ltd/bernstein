@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from click.testing import CliRunner
-
 from bernstein.cli.diff_cmd import (
     FileDiffStat,
     ResolvedDiff,
     diff_cmd,
 )
+from click.testing import CliRunner
+
 from bernstein.cli.main import cli
 
 

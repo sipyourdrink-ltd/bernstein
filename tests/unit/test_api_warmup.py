@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
@@ -183,6 +184,7 @@ class TestWarmupProvider:
                 return False
 
             async def get(self, *a, **kw):
+                await asyncio.sleep(0)  # Async interface requirement
                 return FakeResponse()
 
         with (
@@ -244,6 +246,7 @@ class TestWarmupProvider:
                 return False
 
             async def get(self, url: str, **kw: object) -> object:
+                await asyncio.sleep(0)  # Async interface requirement
                 type(self).call_count += 1
                 resp = MagicMock()
                 resp.status_code = 200

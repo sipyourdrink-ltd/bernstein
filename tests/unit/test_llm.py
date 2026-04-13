@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bernstein.core.llm import LLMSettings, call_llm, get_client, tavily_search
 
 # ---------------------------------------------------------------------------

@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from rich.console import Console
-
 from bernstein.cli.summary_card import (
     RunSummaryData,
     _fmt_duration,
@@ -18,6 +16,7 @@ from bernstein.cli.summary_card import (
     print_summary_card,
     write_summary_json,
 )
+from rich.console import Console
 
 if TYPE_CHECKING:
     from rich.table import Table

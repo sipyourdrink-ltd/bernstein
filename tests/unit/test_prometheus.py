@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from prometheus_client import generate_latest
-
 from bernstein.core.prometheus import (
     agent_spawn_duration,
     merge_duration,
     registry,
     update_metrics_from_status,
 )
+from prometheus_client import generate_latest
 
 
 def test_prometheus_task_metrics() -> None:

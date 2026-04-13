@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
 from bernstein.core.agent_lifecycle import check_stalled_tasks
 from bernstein.core.models import AgentSession, ModelConfig, ProgressSnapshot
+from httpx import ASGITransport, AsyncClient
+
 from bernstein.core.server import TaskStore, create_app
 
 if TYPE_CHECKING:

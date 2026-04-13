@@ -9,9 +9,6 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
-from bernstein.adapters.caching_adapter import CachingAdapter
 from bernstein.core.models import ModelConfig
 from bernstein.core.prompt_caching import (
     MAX_AGENT_CACHE_ENTRIES,
@@ -28,6 +25,9 @@ from bernstein.core.prompt_caching import (
     extract_system_prefix,
     make_prompt_cache_key,
 )
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.caching_adapter import CachingAdapter
 
 # ---------------------------------------------------------------------------
 # CacheEntry / CacheManifest

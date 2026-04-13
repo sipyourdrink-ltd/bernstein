@@ -101,7 +101,7 @@ class SlackNotifier:
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=5):
-                    pass
+                    pass  # Response body not needed
             except Exception as exc:
                 log.warning("SlackNotifier: failed to post webhook: %s", exc)
 

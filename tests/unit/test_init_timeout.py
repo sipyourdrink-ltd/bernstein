@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from bernstein.core.bootstrap import (
     INIT_TIMEOUT_SECONDS,
     with_init_timeout,

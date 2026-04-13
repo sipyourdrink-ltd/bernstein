@@ -6,7 +6,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from bernstein.cli.voice_control import (
     VoiceConfig,
     VoiceIntent,

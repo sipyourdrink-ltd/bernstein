@@ -16,7 +16,6 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.cascade_router import (
     CascadeAttempt,
     CascadeRouter,

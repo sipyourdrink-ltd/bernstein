@@ -382,9 +382,10 @@ class TestApprovalResult:
 class TestSpawnerSkipMerge:
     def test_reap_completed_agent_skip_merge_does_not_merge(self, tmp_path: Path) -> None:
         """When skip_merge=True, worktree cleanup happens but no merge is attempted."""
-        from bernstein.adapters.base import CLIAdapter
         from bernstein.core.models import AgentSession, ModelConfig
         from bernstein.core.spawner import AgentSpawner
+
+        from bernstein.adapters.base import CLIAdapter
 
         mock_adapter = MagicMock(spec=CLIAdapter)
         mock_adapter.is_rate_limited.return_value = False
@@ -411,9 +412,10 @@ class TestSpawnerSkipMerge:
 
     def test_reap_completed_agent_default_behavior_unchanged(self, tmp_path: Path) -> None:
         """When skip_merge=False (default), behavior is unchanged from before."""
-        from bernstein.adapters.base import CLIAdapter
         from bernstein.core.models import AgentSession, ModelConfig
         from bernstein.core.spawner import AgentSpawner
+
+        from bernstein.adapters.base import CLIAdapter
 
         mock_adapter = MagicMock(spec=CLIAdapter)
         mock_adapter.is_rate_limited.return_value = False
@@ -578,8 +580,9 @@ class TestOrchestratorConfigMergeStrategy:
 
 class TestSpawnerGetWorktreePath:
     def test_get_worktree_path_returns_none_when_no_worktree(self, tmp_path: Path) -> None:
-        from bernstein.adapters.base import CLIAdapter
         from bernstein.core.spawner import AgentSpawner
+
+        from bernstein.adapters.base import CLIAdapter
 
         mock_adapter = MagicMock(spec=CLIAdapter)
         mock_adapter.is_rate_limited.return_value = False
@@ -590,8 +593,9 @@ class TestSpawnerGetWorktreePath:
         assert spawner.get_worktree_path("agent-xyz") is None
 
     def test_get_worktree_path_returns_path_when_registered(self, tmp_path: Path) -> None:
-        from bernstein.adapters.base import CLIAdapter
         from bernstein.core.spawner import AgentSpawner
+
+        from bernstein.adapters.base import CLIAdapter
 
         mock_adapter = MagicMock(spec=CLIAdapter)
         mock_adapter.is_rate_limited.return_value = False

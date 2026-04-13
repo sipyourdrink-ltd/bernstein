@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.view_mode import ViewMode, get_view_config, load_view_mode, save_view_mode
 
 # ---------------------------------------------------------------------------

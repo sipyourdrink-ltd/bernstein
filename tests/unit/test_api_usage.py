@@ -6,9 +6,8 @@ import json
 import math
 from pathlib import Path
 
-import pytest
-
 import bernstein.core.api_usage as api_usage
+import pytest
 from bernstein.core.api_usage import ApiUsageTracker
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.cost_root_cause import (
     CostContributor,
     RootCauseReport,

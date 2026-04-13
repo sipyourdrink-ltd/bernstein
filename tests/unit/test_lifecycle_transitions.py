@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Literal
 
 import pytest
-
 from bernstein.core.lifecycle import (
     AGENT_TRANSITIONS,
     TASK_TRANSITIONS,

@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.duration_predictor import (
     MIN_TRAIN_SAMPLES,
     DurationEstimate,

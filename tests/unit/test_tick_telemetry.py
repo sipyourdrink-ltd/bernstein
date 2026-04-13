@@ -11,7 +11,7 @@ class TestTickTelemetryTracker:
     def test_tick_span_records(self) -> None:
         tracker = TickTelemetryTracker()
         with tracker.tick_span(tick_number=1):
-            pass
+            pass  # Verify span is recorded without body
         spans = tracker.completed_spans
         assert len(spans) == 1
         assert spans[0].name == "orchestrator.tick"
@@ -22,9 +22,9 @@ class TestTickTelemetryTracker:
         tracker = TickTelemetryTracker()
         with tracker.tick_span(tick_number=1):
             with tracker.phase_span("fetch_tasks", critical=True):
-                pass
+                pass  # Simulate empty phase
             with tracker.phase_span("spawn_agents"):
-                pass
+                pass  # Simulate empty phase
         tick_span = tracker.completed_spans[0]
         assert len(tick_span.children) == 2
         assert tick_span.children[0].name == "orchestrator.tick.fetch_tasks"
@@ -35,7 +35,7 @@ class TestTickTelemetryTracker:
         tracker = TickTelemetryTracker()
         with tracker.tick_span(tick_number=1):
             with tracker.phase_span("fast"):
-                pass
+                pass  # Fast phase with no work
             with tracker.phase_span("slow"):
                 time.sleep(0.01)  # 10ms
         slowest = tracker.slowest_phases(top_n=1)
@@ -46,7 +46,7 @@ class TestTickTelemetryTracker:
         tracker = TickTelemetryTracker()
         with tracker.tick_span(tick_number=5):
             with tracker.phase_span("test", attributes={"custom": "value"}):
-                pass
+                pass  # Verify attributes are captured
         child = tracker.completed_spans[0].children[0]
         assert child.attributes["custom"] == "value"
 
@@ -79,12 +79,12 @@ class TestTickTelemetryTracker:
         tracker = TickTelemetryTracker()
         with tracker.tick_span(tick_number=1):
             with tracker.phase_span("a"):
-                pass
+                pass  # Simulate empty phase
         assert len(tracker.completed_spans) == 1
 
         with tracker.tick_span(tick_number=2):
             with tracker.phase_span("b"):
-                pass
+                pass  # Simulate empty phase
         # Only tick 2 spans remain
         assert len(tracker.completed_spans) == 1
         assert tracker.completed_spans[0].attributes["tick.number"] == 2

@@ -78,9 +78,7 @@ class TestCalculateHealthScore:
         metrics_dir = tmp_path / "metrics"
         metrics_dir.mkdir()
         quality_file = metrics_dir / "quality_scores.jsonl"
-        quality_file.write_text(
-            json.dumps({"breakdown": {"lint": 90, "tests": 85}}) + "\n"
-        )
+        quality_file.write_text(json.dumps({"breakdown": {"lint": 90, "tests": 85}}) + "\n")
         score = calculate_health_score(metrics_dir)
         assert score.lint_score == 90
         assert score.test_coverage == 85
@@ -89,9 +87,7 @@ class TestCalculateHealthScore:
         metrics_dir = tmp_path / "metrics"
         metrics_dir.mkdir()
         quality_file = metrics_dir / "quality_scores.jsonl"
-        quality_file.write_text(
-            json.dumps({"breakdown": {"lint": 100, "tests": 100}}) + "\n"
-        )
+        quality_file.write_text(json.dumps({"breakdown": {"lint": 100, "tests": 100}}) + "\n")
         score = calculate_health_score(metrics_dir)
         # With lint=100, tests=100, complexity=70 (default), dep=80 (default):
         # total = 100*0.30 + 100*0.25 + 70*0.25 + 80*0.20 = 30 + 25 + 17.5 + 16 = 88

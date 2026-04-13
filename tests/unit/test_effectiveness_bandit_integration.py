@@ -7,9 +7,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from bernstein.core.cost import EpsilonGreedyBandit
 from bernstein.core.effectiveness import EffectivenessScorer
 from bernstein.core.models import Scope
+
+from bernstein.core.cost import EpsilonGreedyBandit
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -145,7 +145,7 @@ def load_checkpoint(checkpoint_path: Path) -> Checkpoint | None:
         raw = checkpoint_path.read_text(encoding="utf-8")
         data = json.loads(raw)
         return _checkpoint_from_dict(data)
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         logger.warning("Corrupt checkpoint %s: %s", checkpoint_path, exc)
         return None
 
@@ -169,7 +169,7 @@ def list_checkpoints(checkpoint_dir: Path) -> list[CheckpointMetadata]:
             data = json.loads(raw)
             meta_dict = data["metadata"]
             results.append(CheckpointMetadata(**meta_dict))
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             logger.warning("Skipping corrupt checkpoint %s: %s", path, exc)
 
     results.sort(key=lambda m: m.created_at)

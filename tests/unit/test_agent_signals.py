@@ -7,7 +7,6 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.models import AgentHeartbeat
 

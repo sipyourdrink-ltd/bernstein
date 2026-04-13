@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.agent_identity import AgentIdentityStore
 from bernstein.core.auth import verify_jwt
 

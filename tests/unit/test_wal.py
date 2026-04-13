@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-
 from bernstein.core.wal import (
     GENESIS_HASH,
     ExecutionFingerprint,

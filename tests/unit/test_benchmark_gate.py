@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.benchmark_gate import (
     BenchmarkGate,
     BenchmarkMetrics,

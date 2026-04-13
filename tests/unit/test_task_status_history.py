@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.models import TaskStatus
 from bernstein.core.task_status_history import StatusHistoryTracker, StatusTransition, TaskHistory
 

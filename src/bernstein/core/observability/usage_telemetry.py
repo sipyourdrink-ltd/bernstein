@@ -73,7 +73,7 @@ def load_consent(config_dir: Path) -> TelemetryConsent:
         data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         raw = data.get("consent", "undecided")
         return TelemetryConsent(raw)
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, ValueError):
         logger.debug("Could not read telemetry consent from %s", path)
         return TelemetryConsent.UNDECIDED
 

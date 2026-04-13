@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
 from bernstein.core.task_tagging import InvalidTagError, TaskTagger, validate_tag
 

@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.iac import IaCAdapter, _build_iac_script, _detect_tool
-from bernstein.core.models import ModelConfig
 
 if TYPE_CHECKING:
     from pathlib import Path

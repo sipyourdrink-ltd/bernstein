@@ -8,13 +8,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
-
 from bernstein.core.request_logging import (
     _NOISY_PATHS,
     _resolve_log_level,
 )
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
 from bernstein.core.server import create_app
 
 

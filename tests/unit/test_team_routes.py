@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from bernstein.core.team_state import TeamStateStore
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from bernstein.core.routes.team import router
-from bernstein.core.team_state import TeamStateStore
 
 
 @pytest.fixture()

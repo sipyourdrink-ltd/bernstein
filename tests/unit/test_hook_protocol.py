@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.hook_protocol import HookValidationError
+
 from bernstein.plugins.manager import CommandHook
 from tests.fixtures.command_hook_harness import CommandHookHarness
 

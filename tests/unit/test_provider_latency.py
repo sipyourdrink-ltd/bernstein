@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.provider_latency import (
     DegradationAlert,
     ProviderLatencyTracker,

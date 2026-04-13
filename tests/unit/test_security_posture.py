@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.security_posture import (
     METRIC_WEIGHTS,
     SecurityMetric,

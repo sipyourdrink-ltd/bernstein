@@ -160,15 +160,11 @@ class TestFreeTierMaximizer:
     def test_persistence(self, tmp_path: Path) -> None:
         ftm1 = FreeTierMaximizer(tmp_path)
         ftm1.record_request("gemini")
-        remaining_after_1 = next(
-            s for s in ftm1.get_all_statuses() if s.provider == "gemini"
-        ).remaining_today
+        remaining_after_1 = next(s for s in ftm1.get_all_statuses() if s.provider == "gemini").remaining_today
 
         # Create new instance from same workdir
         ftm2 = FreeTierMaximizer(tmp_path)
-        remaining_loaded = next(
-            s for s in ftm2.get_all_statuses() if s.provider == "gemini"
-        ).remaining_today
+        remaining_loaded = next(s for s in ftm2.get_all_statuses() if s.provider == "gemini").remaining_today
         assert remaining_loaded == remaining_after_1
 
     def test_reset_daily_limits(self, tmp_path: Path) -> None:

@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from bernstein.adapters.qwen import QwenAdapter
 from bernstein.core.llm import LLMSettings
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
+
+from bernstein.adapters.qwen import QwenAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

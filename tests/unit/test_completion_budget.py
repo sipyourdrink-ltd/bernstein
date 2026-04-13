@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.completion_budget import CompletionBudget
 
 

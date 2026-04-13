@@ -121,6 +121,7 @@ class TestBaseTaskStore:
         class IncompleteStore(BaseTaskStore):
             async def startup(self) -> None: ...
             async def shutdown(self) -> None: ...
+
             # Missing all other abstracts
 
         with pytest.raises(TypeError):

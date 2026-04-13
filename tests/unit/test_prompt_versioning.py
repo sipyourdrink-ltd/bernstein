@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.prompt_versioning import (
     MIN_OBSERVATIONS_FOR_PROMOTION,
     PromptMeta,

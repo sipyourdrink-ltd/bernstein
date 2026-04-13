@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.container import ContainerConfig, ContainerError, ContainerManager
 
 

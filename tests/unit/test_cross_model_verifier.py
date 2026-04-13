@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bernstein.core.cross_model_verifier import (
     CrossModelVerdict,
     CrossModelVerifierConfig,
@@ -243,6 +243,7 @@ class TestVerifyWithCrossModel:
         captured_prompt: list[str] = []
 
         async def fake_llm(prompt: str, **kwargs: object) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             captured_prompt.append(prompt)
             return approve_json
 
@@ -399,6 +400,7 @@ class TestMultiVoterVerification:
         call_count = 0
 
         async def alternating_llm(*args: object, **kwargs: object) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             nonlocal call_count
             call_count += 1
             return approve_json if call_count == 1 else reject_json

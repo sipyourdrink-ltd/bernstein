@@ -6,7 +6,6 @@ import tarfile
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.disaster_recovery import (
     _BACKUP_DIRS,
     _EXCLUDE_DIRS,

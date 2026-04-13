@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.permissions import (
     AgentPermissions,
     has_path_traversal,

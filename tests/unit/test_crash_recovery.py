@@ -16,8 +16,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (
     AgentSession,
     Complexity,
@@ -29,6 +27,8 @@ from bernstein.core.models import (
 )
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 
 if TYPE_CHECKING:
     from pathlib import Path

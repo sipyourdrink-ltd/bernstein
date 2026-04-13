@@ -200,7 +200,7 @@ def require_permission(permission: str) -> Any:
         HTTPException: 401 if no user, 403 if insufficient permissions.
     """
 
-    async def _check(request: Request) -> None:
+    def _check(request: Request) -> None:
         user: AuthUser | None = getattr(request.state, "user", None)
         if user is None:
             raise HTTPException(
@@ -238,7 +238,7 @@ def require_role(role_name: str) -> Any:
 
     required_level = _ROLE_LEVEL.get(role_name, 0)
 
-    async def _check(request: Request) -> None:
+    def _check(request: Request) -> None:
         user: AuthUser | None = getattr(request.state, "user", None)
         if user is None:
             raise HTTPException(

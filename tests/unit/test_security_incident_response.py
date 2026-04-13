@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.security_incident_response import (
     ContainmentStep,
     SecurityEventType,

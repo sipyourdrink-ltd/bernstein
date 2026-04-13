@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.gate_runner import GatePipelineStep
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.quality_gates import (

@@ -8,13 +8,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
-from bernstein.bridges.base import AgentState, AgentStatus, BridgeConfig, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.models import AgentSession
 from bernstein.core.spawner import AgentSpawner
 
+from bernstein.bridges.base import AgentState, AgentStatus, BridgeConfig, BridgeError, RuntimeBridge, SpawnRequest
+
 if TYPE_CHECKING:
-    from bernstein.adapters.base import CLIAdapter
     from bernstein.core.models import Task
+
+    from bernstein.adapters.base import CLIAdapter
 
 
 def _str_list() -> list[str]:

@@ -113,7 +113,9 @@ class TestDepAuditGateRunner:
         runner = GateRunner(config, tmp_path)
         task = _make_task(owned_files=["pyproject.toml"])
 
-        with patch("bernstein.core.quality.quality_gates._run_command", return_value=(True, "No vulnerabilities found")):
+        with patch(
+            "bernstein.core.quality.quality_gates._run_command", return_value=(True, "No vulnerabilities found")
+        ):
             report = asyncio.run(runner.run_all(task, tmp_path))
 
         assert report.overall_pass

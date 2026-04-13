@@ -11,7 +11,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.cascading_failure_circuit_breaker import (
     DEFAULT_BREAKERS,
     CircuitBreaker,

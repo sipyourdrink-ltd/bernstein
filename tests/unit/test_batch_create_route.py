@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -117,6 +118,7 @@ async def test_batch_create_empty_list(app, client: AsyncClient) -> None:  # typ
         *,
         dedup_by_title: bool = True,
     ) -> tuple[list, list[str]]:  # type: ignore[type-arg]
+        await asyncio.sleep(0)  # Async interface requirement
         return [], []
 
     with patch.object(store, "create_batch", side_effect=_fake_create_batch, create=True):

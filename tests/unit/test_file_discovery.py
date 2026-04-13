@@ -19,7 +19,9 @@ from bernstein.core.file_discovery import (
 def test_file_tree_uses_git_ls_files_and_caches_results(tmp_path: Path) -> None:
     """file_tree prefers git ls-files output and reuses the cached result within the TTL."""
     clear_caches()
-    with patch("bernstein.core.knowledge.file_discovery._gc_ls_files", return_value=["src/a.py", "src/b.py"]) as mock_ls:
+    with patch(
+        "bernstein.core.knowledge.file_discovery._gc_ls_files", return_value=["src/a.py", "src/b.py"]
+    ) as mock_ls:
         first = file_tree(tmp_path)
         second = file_tree(tmp_path)
 

@@ -18,10 +18,10 @@ import time
 from pathlib import Path
 
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.registry import _ADAPTERS, get_adapter
-from bernstein.core.models import ModelConfig
 
 # ---------------------------------------------------------------------------
 # Adapter names to test (exclude mock since it has special behavior)

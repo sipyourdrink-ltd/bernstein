@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from bernstein.core.manager_parsing import (
     _resolve_depends_on,
     parse_queue_review_response,

@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi.testclient import TestClient
-
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.effectiveness import EffectivenessScore, EffectivenessScorer
 from bernstein.core.models import AgentHeartbeat
+from fastapi.testclient import TestClient
+
 from bernstein.core.server import create_app
 
 

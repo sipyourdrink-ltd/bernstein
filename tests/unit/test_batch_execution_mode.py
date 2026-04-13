@@ -13,11 +13,11 @@ import textwrap
 from typing import TYPE_CHECKING
 
 import pytest
-
-from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.core.models import Complexity, ModelConfig, Scope, Task, TaskStatus, TaskType
 from bernstein.core.plan_loader import load_plan
 from bernstein.core.spawner import _render_batch_prompt
+
+from bernstein.adapters.claude import ClaudeCodeAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

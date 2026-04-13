@@ -8,7 +8,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.metric_collector import MetricsCollector, MetricType
 
 

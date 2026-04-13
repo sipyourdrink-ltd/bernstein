@@ -11,7 +11,6 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from bernstein.adapters.base import SpawnError
 from bernstein.core.agency_loader import AgencyAgent
 from bernstein.core.models import (
     AgentSession,
@@ -38,6 +37,8 @@ from bernstein.core.spawner import (
     _select_batch_config,
 )
 from bernstein.core.worktree import WorktreeError
+
+from bernstein.adapters.base import SpawnError
 
 # --- spawn_for_tasks ---
 

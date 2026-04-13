@@ -13,8 +13,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from bernstein.agents.catalog import _load_skill_md_files  # pyright: ignore[reportPrivateUsage]
 from bernstein.core.skill_md import SkillMD, load_skill_md, normalise_skill, parse_frontmatter
+
+from bernstein.agents.catalog import _load_skill_md_files  # pyright: ignore[reportPrivateUsage]
 
 # ---------------------------------------------------------------------------
 # parse_frontmatter

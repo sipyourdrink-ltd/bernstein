@@ -6,7 +6,6 @@ import stat
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.git_hooks import _HOOK_MARKER, GitHookInstaller
 
 # ---------------------------------------------------------------------------

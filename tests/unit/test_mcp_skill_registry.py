@@ -6,7 +6,6 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.mcp_skill_registry import (
     build_mcp_skills_from_tools,
     clear_registry,

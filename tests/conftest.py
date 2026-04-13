@@ -25,9 +25,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
-
-from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 from bernstein.core.adaptive_parallelism import AdaptiveParallelism
 from bernstein.core.models import (
     Complexity,
@@ -39,8 +36,11 @@ from bernstein.core.models import (
     TaskType,
 )
 from bernstein.core.orchestrator import Orchestrator
-from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
+from fastapi.testclient import TestClient
+
+from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
+from bernstein.core.server import create_app
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

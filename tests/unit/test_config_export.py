@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 import yaml
-
 from bernstein.core.config_export import (
     ExportMeta,
     export_config,

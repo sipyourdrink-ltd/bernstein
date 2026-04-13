@@ -160,7 +160,7 @@ class NetworkIsolationValidator:
                 detail=f"Successfully connected to {endpoint}",
                 latency_ms=latency,
             )
-        except (OSError, TimeoutError) as exc:
+        except OSError as exc:
             latency = (time.monotonic() - start) * 1000
             return IsolationCheck(
                 name=f"reachability:{endpoint}",

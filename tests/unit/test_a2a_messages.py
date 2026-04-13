@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
+from bernstein.core.a2a import A2AHandler
 from httpx import ASGITransport, AsyncClient, MockTransport, Request, Response
 
-from bernstein.core.a2a import A2AHandler
 from bernstein.core.server import create_app
 
 if TYPE_CHECKING:

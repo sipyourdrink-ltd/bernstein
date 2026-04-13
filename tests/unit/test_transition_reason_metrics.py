@@ -6,9 +6,8 @@ counters with cardinality guards and kill-switch support.
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Counter, generate_latest
-
 from bernstein.core.models import TransitionReason
+from prometheus_client import CollectorRegistry, Counter, generate_latest
 
 # ---------------------------------------------------------------------------
 # Helpers — fresh registry per test to avoid cross-test pollution

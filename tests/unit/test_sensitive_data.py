@@ -6,7 +6,6 @@ import dataclasses
 from typing import Any
 
 import pytest
-
 from bernstein.core.sensitive_data import (
     SensitiveData,
     is_sensitive,

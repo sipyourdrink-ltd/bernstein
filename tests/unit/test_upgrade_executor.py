@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
-
 from bernstein.core.evolution import (
     AnalysisTrigger,
     ApprovalMode,

@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.bulletin_board import BulletinBoard, BulletinMessage
 from bernstein.core.session_checkpoint import (
     SessionCheckpoint,

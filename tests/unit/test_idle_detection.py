@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
 from bernstein.core.idle_detection import (
     DEFAULT_IDLE_TIMEOUT_SECONDS,

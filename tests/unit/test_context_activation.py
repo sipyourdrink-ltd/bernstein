@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.context_activation import (
     BUILTIN_CONTEXT_RULES,
     ContextRule,

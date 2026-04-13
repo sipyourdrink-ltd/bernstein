@@ -13,9 +13,9 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
+from bernstein.core.models import ClusterConfig, ClusterTopology
 from httpx import ASGITransport, AsyncClient
 
-from bernstein.core.models import ClusterConfig, ClusterTopology
 from bernstein.core.server import create_app
 
 if TYPE_CHECKING:

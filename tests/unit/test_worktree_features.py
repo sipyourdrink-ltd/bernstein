@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.worktree import (
     WorktreeError,
     is_worktree_lock_stale,

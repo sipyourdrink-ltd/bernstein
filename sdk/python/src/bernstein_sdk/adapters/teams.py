@@ -117,7 +117,7 @@ class TeamsAdapter:
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=8):
-                    pass
+                    pass  # Response body not needed
             except Exception as exc:
                 log.warning("TeamsAdapter: failed to post webhook: %s", exc)
 

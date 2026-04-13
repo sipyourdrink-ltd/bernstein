@@ -5,9 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import bernstein.core.git_pr as git_pr
+import pytest
 from bernstein.core.git_basic import GitResult
 
 

@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.git_ops import GitResult
 from bernstein.core.git_pr import (
     MergeResult,

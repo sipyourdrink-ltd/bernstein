@@ -7,7 +7,6 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.heartbeat_escalation import (
     EscalationAction,
     EscalationThresholds,

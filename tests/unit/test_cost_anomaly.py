@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.cost_anomaly import (
     AnomalySignal,
     CostAnomalyDetector,

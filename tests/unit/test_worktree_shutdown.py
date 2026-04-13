@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.worktree import WorktreeError, WorktreeManager
 
 if TYPE_CHECKING:

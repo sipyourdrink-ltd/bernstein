@@ -16,7 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.context_fallback import (
     _CODE_BLOCK_MAX_LINES,
     _FILE_LISTING_MAX_ENTRIES,

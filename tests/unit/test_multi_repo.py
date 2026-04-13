@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.seed import parse_seed
-from bernstein.core.server import TaskCreate, create_app
 from bernstein.core.workspace import RepoConfig, Workspace
+from httpx import ASGITransport, AsyncClient
+
+from bernstein.core.server import TaskCreate, create_app
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

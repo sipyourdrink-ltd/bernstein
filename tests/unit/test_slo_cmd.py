@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from click.testing import CliRunner
-
 from bernstein.cli.slo_cmd import _load_offline, _render_burndown, slo_cmd
+from click.testing import CliRunner
 
 # ---------------------------------------------------------------------------
 # _load_offline

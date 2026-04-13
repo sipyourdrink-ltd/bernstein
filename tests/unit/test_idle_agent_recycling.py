@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-
 from bernstein.core.agent_lifecycle import (
     _IDLE_GRACE_S,
     _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S,

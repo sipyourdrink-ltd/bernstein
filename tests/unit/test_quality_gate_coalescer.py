@@ -88,7 +88,9 @@ class TestSingleRun:
         task = _make_task()
         config = QualityGatesConfig(enabled=False)
 
-        with patch("bernstein.core.quality.quality_gate_coalescer.run_quality_gates", return_value=_pass_result()) as mock_rqg:
+        with patch(
+            "bernstein.core.quality.quality_gate_coalescer.run_quality_gates", return_value=_pass_result()
+        ) as mock_rqg:
             coalescer.run(task, tmp_path, tmp_path, config)
 
         mock_rqg.assert_called_once()

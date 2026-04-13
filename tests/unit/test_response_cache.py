@@ -6,7 +6,6 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.semantic_cache import (
     RESPONSE_CACHE_MAX_ENTRIES,
     RESPONSE_CACHE_SIMILARITY_THRESHOLD,

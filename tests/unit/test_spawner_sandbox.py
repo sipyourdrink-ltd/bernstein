@@ -5,11 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.container import ContainerError, ContainerHandle
 from bernstein.core.models import AgentSession, ModelConfig
 from bernstein.core.sandbox import DockerSandbox
 from bernstein.core.spawner import AgentSpawner
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 
 
 class FakeAdapter(CLIAdapter):
@@ -56,7 +57,9 @@ def test_spawn_in_sandbox_uses_sandbox_path(tmp_path: Path) -> None:
 
     with (
         patch("bernstein.core.agents.spawner_core.get_registry", return_value=MagicMock()),
-        patch("bernstein.core.agents.spawner_core.spawn_in_sandbox", return_value=(MagicMock(), fake_handle)) as sandbox_spawn,
+        patch(
+            "bernstein.core.agents.spawner_core.spawn_in_sandbox", return_value=(MagicMock(), fake_handle)
+        ) as sandbox_spawn,
     ):
         spawner = AgentSpawner(
             adapter=adapter,

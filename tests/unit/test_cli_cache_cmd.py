@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from bernstein.core.semantic_cache import ResponseCacheManager
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
-from bernstein.core.semantic_cache import ResponseCacheManager
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -147,6 +147,6 @@ class TestLinesChangedPersistence:
             try:
                 data = json.loads(path.read_text())
                 current = int(data.get("lines_changed", 0))
-            except (json.JSONDecodeError, ValueError):
+            except ValueError:
                 current = 0
         assert current == 0

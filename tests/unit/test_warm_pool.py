@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.warm_pool import (
     PoolSlot,
     WarmPool,

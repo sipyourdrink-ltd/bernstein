@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bernstein.core.consensus_verifier import (
     ConsensusVerifierConfig,
     _writer_family,
@@ -165,6 +165,7 @@ class TestVerifyWithConsensus:
         call_count = 0
 
         async def alternating(*args: object, **kwargs: object) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             nonlocal call_count
             call_count += 1
             return approve_json if call_count == 1 else reject_json
@@ -214,6 +215,7 @@ class TestVerifyWithConsensus:
         call_count = 0
 
         async def mostly_reject(*args: object, **kwargs: object) -> str:
+            await asyncio.sleep(0)  # Async interface requirement
             nonlocal call_count
             call_count += 1
             return approve_json if call_count == 1 else reject_json

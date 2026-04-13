@@ -7,6 +7,7 @@ Bernstein server required — external calls are mocked).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -300,6 +301,7 @@ async def test_webhook_creates_task_with_correct_fields(client: AsyncClient) -> 
     mock_client = AsyncMock()
 
     async def _capture_post(url: str, **kwargs: Any) -> MagicMock:
+        await asyncio.sleep(0)  # Async interface requirement
         captured.append(kwargs.get("json", {}))
         return mock_response
 

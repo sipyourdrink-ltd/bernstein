@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Generator
 
 import pytest
-from mcp.server.fastmcp import FastMCP
-
 from bernstein.core.mcp_skill_bridge import (
     _BUILDERS,
     MCPToolInfo,
@@ -15,6 +13,7 @@ from bernstein.core.mcp_skill_bridge import (
     register_skill_builder,
 )
 from bernstein.core.skill_discovery import SkillSource
+from mcp.server.fastmcp import FastMCP
 
 # ---------------------------------------------------------------------------
 # Fixtures

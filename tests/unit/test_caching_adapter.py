@@ -8,11 +8,11 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from bernstein.core.models import ModelConfig
+from bernstein.core.semantic_cache import ResponseCacheManager
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.caching_adapter import CachingAdapter
-from bernstein.core.models import ModelConfig
-from bernstein.core.semantic_cache import ResponseCacheManager
 
 
 @pytest.fixture

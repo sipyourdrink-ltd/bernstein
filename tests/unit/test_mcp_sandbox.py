@@ -6,7 +6,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.mcp_sandbox import (
     BUILTIN_PROFILES,
     SandboxConfig,

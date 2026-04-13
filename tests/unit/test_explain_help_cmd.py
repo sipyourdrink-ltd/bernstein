@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from bernstein.cli.explain_help_cmd import explain_help_cmd
 from click.testing import CliRunner
 
-from bernstein.cli.explain_help_cmd import explain_help_cmd
 from bernstein.cli.main import cli
 
 

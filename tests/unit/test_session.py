@@ -3,7 +3,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.session import SessionState, discard_session, load_session, save_session
 
 

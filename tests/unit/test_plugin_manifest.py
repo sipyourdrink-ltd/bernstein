@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.plugin_manifest import (
     ManifestValidationError,
     load_plugin_manifest,

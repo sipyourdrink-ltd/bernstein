@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.prompt_precheck import (
     PromptAction,
     check_prompt_size,

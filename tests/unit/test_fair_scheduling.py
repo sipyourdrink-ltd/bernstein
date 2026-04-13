@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.models import Task
 from bernstein.core.tick_pipeline import group_by_role
 

@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.lifecycle import (
     IllegalTransitionError,
     transition_agent,

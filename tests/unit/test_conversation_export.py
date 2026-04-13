@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.conversation_export import (
     ConversationExport,
     ConversationMessage,

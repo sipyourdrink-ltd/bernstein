@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.tool_timing import (
     ToolTimingRecord,
     ToolTimingRecorder,
@@ -89,7 +88,7 @@ class TestToolTimingRecorder:
             patch("bernstein.core.observability.tool_timing.time.time", side_effect=[1000.0, 1000.6]),
         ):
             with recorder.record("search", "session-1"):
-                pass
+                pass  # Timing measured by mocked time.time
 
         histogram = recorder.get_histogram("search")
         assert histogram["p50"] > 0.0
@@ -107,7 +106,7 @@ class TestToolTimingRecorder:
         ):
             queue_start: float = 999.0  # 1000.0 wall_start - 999.0 = 1000ms queue wait
             with recorder.record("search", "session-1", queue_start=queue_start):
-                pass
+                pass  # Timing measured by mocked time.time
 
         full_hist = recorder.get_full_histogram("search")
         self._almost_equals(full_hist["queue_wait_ms"]["p50"], 1000.0)
@@ -122,7 +121,7 @@ class TestToolTimingRecorder:
             patch("bernstein.core.observability.tool_timing.time.time", side_effect=[0.0, 0.1]),
         ):
             with recorder.record("search", "session-1"):
-                pass
+                pass  # Timing measured by mocked time.time
 
         full_hist = recorder.get_full_histogram("search")
         self._almost_equals(full_hist["queue_wait_ms"]["p50"], 0.0, tol=0.01)

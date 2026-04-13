@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from click.testing import CliRunner
-
 from bernstein.cli.advanced_cmd import replay_cmd
+from click.testing import CliRunner
 
 
 def _write_run(run_dir: Path, *, run_id: str) -> None:

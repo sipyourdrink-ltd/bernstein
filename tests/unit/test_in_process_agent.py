@@ -9,14 +9,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
-from bernstein.adapters.base import SpawnResult
 from bernstein.core.in_process_agent import (
     InProcessAgent,
     _next_pid,  # type: ignore[reportPrivateUsage]
     _wait_on_pid,  # type: ignore[reportPrivateUsage]
 )
 from bernstein.core.models import ModelConfig
+
+from bernstein.adapters.base import SpawnResult
 
 
 def _make_model_config() -> ModelConfig:

@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.lifecycle import transition_task
 from bernstein.core.models import Task, TaskStatus
 from bernstein.core.task_store import TaskStore

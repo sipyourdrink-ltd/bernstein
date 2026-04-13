@@ -7,7 +7,6 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.lessons import (
     _MAX_LESSON_CHARS,
     _STALENESS_DAYS,

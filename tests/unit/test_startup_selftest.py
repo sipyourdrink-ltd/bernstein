@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
-
 from bernstein.core.startup_selftest import (
     CheckStatus,
     SelfTestReport,

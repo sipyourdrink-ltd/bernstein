@@ -86,6 +86,7 @@ class TestStaggeredShutdown:
         ]
 
         async def async_kill(pid: int) -> bool:
+            await asyncio.sleep(0)  # Async interface requirement
             return True
 
         report = asyncio.run(shutdown.execute(targets, kill_fn=async_kill))

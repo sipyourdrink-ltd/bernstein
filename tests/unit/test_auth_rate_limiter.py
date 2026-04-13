@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from bernstein.core.auth_rate_limiter import AuthRateLimiter, RequestRateLimitMiddleware
+from bernstein.core.seed import RateLimitBucketConfig, RateLimitConfig, SeedConfig
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from bernstein.core.auth_rate_limiter import AuthRateLimiter, RequestRateLimitMiddleware
-from bernstein.core.seed import RateLimitBucketConfig, RateLimitConfig, SeedConfig
 from bernstein.core.server import create_app
 
 
@@ -69,12 +69,12 @@ class TestAuthRateLimiterHTTP:
     """Test the rate limiter through the FastAPI dependency."""
 
     def test_returns_429_with_retry_after_header(self) -> None:
+        from bernstein.core.auth_rate_limiter import AuthRateLimiter, check_auth_rate_limit
         from fastapi import APIRouter, Depends, FastAPI
         from starlette.testclient import TestClient
 
         # Patch the module-level limiter with a low-limit one for testing
         import bernstein.core.security.auth_rate_limiter as mod
-        from bernstein.core.auth_rate_limiter import AuthRateLimiter, check_auth_rate_limit
 
         original = mod._auth_limiter
         mod._auth_limiter = AuthRateLimiter(max_requests=3, window_seconds=60)

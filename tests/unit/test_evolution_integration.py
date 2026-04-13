@@ -254,11 +254,11 @@ class TestEvolutionEndToEnd:
     def test_pending_proposals_persisted_by_orchestrator(self, tmp_path: Path) -> None:
         """Verify _persist_pending_proposals writes to pending.json."""
         import httpx
-
-        from bernstein.adapters.base import CLIAdapter, SpawnResult
         from bernstein.core.models import OrchestratorConfig
         from bernstein.core.orchestrator import Orchestrator
         from bernstein.core.spawner import AgentSpawner
+
+        from bernstein.adapters.base import CLIAdapter, SpawnResult
 
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()

@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.adapters.amp import AmpAdapter
@@ -19,7 +20,6 @@ from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.kilo import KiloAdapter
 from bernstein.adapters.roo_code import RooCodeAdapter
-from bernstein.core.models import ModelConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

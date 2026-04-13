@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.models import RiskAssessment, RollbackPlan
+
 from bernstein.evolution.aggregator import (
     FileMetricsCollector,
     MetricsAggregator,

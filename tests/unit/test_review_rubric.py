@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bernstein.core.review_rubric import (
     ReviewRubricConfig,
     RubricHistoryWriter,

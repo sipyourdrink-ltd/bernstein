@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.tick_hooks import (
     TickContext,
     TickHookManager,
     TickHookResult,
 )
+
 from bernstein.plugins import hookimpl
 
 # ---------------------------------------------------------------------------

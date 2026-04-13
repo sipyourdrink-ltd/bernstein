@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
 from bernstein.core.context_recommendations import RecommendationEngine
 
 

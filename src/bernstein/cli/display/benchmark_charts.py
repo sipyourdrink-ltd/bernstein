@@ -69,7 +69,7 @@ def load_benchmark_data(data_dir: Path) -> list[BenchmarkDataPoint]:
                     tasks_passed=int(raw["tasks_passed"]),
                 )
             )
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError):
             continue  # skip malformed files
 
     points.sort(key=lambda p: p.timestamp)

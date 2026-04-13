@@ -7,8 +7,9 @@ import sys
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from bernstein.adapters.manager import ManagerAdapter
 from bernstein.core.models import ModelConfig
+
+from bernstein.adapters.manager import ManagerAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

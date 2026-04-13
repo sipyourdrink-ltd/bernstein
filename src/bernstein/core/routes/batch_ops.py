@@ -185,7 +185,7 @@ async def batch_operations(body: BatchRequest, request: Request) -> BatchResult:
             result.succeeded.append(task_id)
         except KeyError:
             result.failed[task_id] = "not found"
-        except (ValueError, Exception) as exc:
+        except Exception as exc:
             result.failed[task_id] = str(exc)
             logger.warning("batch %s failed for task %s: %s", body.action, task_id[:64], type(exc).__name__)
 

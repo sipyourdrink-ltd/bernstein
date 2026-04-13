@@ -6,7 +6,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-
 from bernstein.core.adaptive_parallelism import (
     _LOW_ERROR_SUSTAIN_S,
     AdaptiveParallelism,

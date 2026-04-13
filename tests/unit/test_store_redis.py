@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 import bernstein.core.store_redis as store_redis
+import pytest
 
 
 class _FakeRedisClient:
@@ -16,19 +15,23 @@ class _FakeRedisClient:
         self.ping_called = False
 
     async def ping(self) -> bool:
+        await asyncio.sleep(0)  # Async interface requirement
         self.ping_called = True
         return True
 
     async def aclose(self) -> None:
+        await asyncio.sleep(0)  # Async interface requirement
         self.closed = True
 
     async def set(self, key: str, token: str, *, nx: bool, px: int) -> bool:
+        await asyncio.sleep(0)  # Async interface requirement
         if key in self.tokens:
             return False
         self.tokens[key] = token
         return True
 
     async def eval(self, _script: str, _keys: int, key: str, token: str) -> int:
+        await asyncio.sleep(0)  # Async interface requirement
         if self.tokens.get(key) == token:
             del self.tokens[key]
             return 1

@@ -10,7 +10,6 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from bernstein.core.policy_limits import (
     ESSENTIAL_TRAFFIC_DENY_ON_MISS,
     PolicyLimitEntry,
@@ -328,6 +327,7 @@ class TestPolicyLimitsClient:
         call_count = 0
 
         async def counted_fetch(*_: Any, **__: Any) -> tuple[dict[str, Any], str]:
+            await asyncio.sleep(0)  # Async interface requirement
             nonlocal call_count
             call_count += 1
             return {"limits": [{"feature": "polled", "enabled": True}]}, '"e"'
@@ -351,6 +351,7 @@ class TestPolicyLimitsClient:
         received_etags: list[str | None] = []
 
         async def capture_etag(url: str, etag: str | None = None, **_: Any) -> tuple[dict[str, Any], str]:
+            await asyncio.sleep(0)  # Async interface requirement
             received_etags.append(etag)
             return {"limits": []}, '"new-etag"'
 

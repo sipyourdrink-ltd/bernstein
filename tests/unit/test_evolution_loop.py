@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.models import RiskAssessment, RollbackPlan
+
 from bernstein.evolution.detector import ImprovementOpportunity, UpgradeCategory
 from bernstein.evolution.gate import ApprovalDecision, ApprovalOutcome
 from bernstein.evolution.loop import EvolutionLoop, ExperimentResult

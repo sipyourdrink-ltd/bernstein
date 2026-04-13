@@ -732,7 +732,7 @@ def _parse_token_file(tokens_file: Path) -> tuple[int, int]:
                 rec: dict[str, Any] = json.loads(line)
                 input_tokens += int(rec.get("in", 0))
                 output_tokens += int(rec.get("out", 0))
-            except (json.JSONDecodeError, ValueError):
+            except ValueError:
                 continue
     except OSError:
         pass

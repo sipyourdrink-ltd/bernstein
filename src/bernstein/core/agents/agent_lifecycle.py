@@ -191,7 +191,7 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
             timeout=10,
         )
         committed = result.returncode == 0
-    except (subprocess.TimeoutExpired, OSError, Exception):
+    except Exception:
         pass
 
     # Try to merge the branch before cleanup

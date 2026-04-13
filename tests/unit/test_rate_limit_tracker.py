@@ -6,7 +6,6 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
-
 from bernstein.core.rate_limit_tracker import RateLimitTracker, ThrottleState
 from bernstein.core.router import (
     ProviderConfig,

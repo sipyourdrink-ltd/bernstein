@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
+import asyncio
 
+import pytest
 from bernstein.core.concurrency_guard import ConcurrencyGuard, GuardState, wrap_async
 
 
@@ -78,6 +79,7 @@ async def test_wrap_async_discards_stale() -> None:
     executed = False
 
     async def callback() -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         nonlocal executed
         executed = True
         return "done"
@@ -98,6 +100,7 @@ async def test_wrap_async_runs_fresh() -> None:
     gen = guard.start()
 
     async def callback() -> str:
+        await asyncio.sleep(0)  # Async interface requirement
         return "ok"
 
     guarded = wrap_async(guard, callback, gen)

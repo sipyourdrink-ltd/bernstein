@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.cli.gradients import _LOWER_HALF, _RESET, _make_stops, linear_gradient, radial_gradient
 
 

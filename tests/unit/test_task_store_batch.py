@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from bernstein.core.models import TaskStatus
 from bernstein.core.task_store import TaskStore
 

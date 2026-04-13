@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from bernstein.core.provider_circuit_breaker import (
     CircuitBreakerConfig,
     CircuitBreakerSnapshot,
