@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,48 @@ from rich.panel import Panel
 from bernstein.cli.helpers import is_json, print_json
 
 console = Console()
+
+
+# ---------------------------------------------------------------------------
+# Time-range parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_time_range(spec: str) -> float:
+    """Parse a human time-range spec like ``7d``, ``24h``, ``1h`` into a cutoff timestamp.
+
+    Returns a Unix timestamp; records older than this should be excluded.
+
+    Args:
+        spec: Time range string (e.g. ``"7d"``, ``"24h"``, ``"1h"``).
+
+    Returns:
+        Unix timestamp representing the start of the window.
+
+    Raises:
+        click.BadParameter: If *spec* cannot be parsed.
+    """
+    m = re.fullmatch(r"(\d+)\s*([hHdDwWmM])", spec.strip())
+    if not m:
+        msg = f"Invalid time range: {spec!r}. Use e.g. 1h, 24h, 7d, 30d."
+        raise click.BadParameter(msg)
+    value = int(m.group(1))
+    unit = m.group(2).lower()
+    multipliers = {"h": 3600, "d": 86400, "w": 604800, "m": 2592000}
+    return time.time() - value * multipliers[unit]
+
+
+def _filter_by_time(records: list[dict[str, Any]], cutoff: float) -> list[dict[str, Any]]:
+    """Filter records to those with ``timestamp >= cutoff``.
+
+    Args:
+        records: List of JSONL record dicts.
+        cutoff: Unix timestamp lower bound.
+
+    Returns:
+        Filtered list (preserves order).
+    """
+    return [r for r in records if float(r.get("timestamp", 0) or 0) >= cutoff]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,21 +156,149 @@ def _render_shareable_summary(
 
 
 # ---------------------------------------------------------------------------
+# Cache hit rate
+# ---------------------------------------------------------------------------
+
+
+def _compute_cache_hit_rate(sdd_dir: Path) -> float | None:
+    """Compute cache hit rate from ``.sdd/runtime/*.tokens`` files.
+
+    Each line is JSONL: ``{"ts": float, "in": int, "out": int, "cache_read": int, "cache_write": int}``.
+
+    Returns cache_read / (cache_read + cache_write) * 100, or ``None`` if
+    no cache data is available.
+
+    Args:
+        sdd_dir: Path to the ``.sdd`` directory.
+
+    Returns:
+        Cache hit rate as a percentage, or ``None``.
+    """
+    runtime_dir = sdd_dir / "runtime"
+    if not runtime_dir.exists():
+        return None
+    total_read = 0
+    total_write = 0
+    for tokens_file in runtime_dir.glob("*.tokens"):
+        for line in tokens_file.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            with contextlib.suppress(json.JSONDecodeError):
+                rec = json.loads(line)
+                total_read += int(rec.get("cache_read", 0) or 0)
+                total_write += int(rec.get("cache_write", 0) or 0)
+
+    total = total_read + total_write
+    if total == 0:
+        return None
+    return (total_read / total) * 100.0
+
+
+# ---------------------------------------------------------------------------
+# "By" aggregation helpers
+# ---------------------------------------------------------------------------
+
+
+def _aggregate_by_agent(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Aggregate task records grouped by agent_id."""
+    rows: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"tasks": 0, "cost_usd": 0.0}
+    )
+    for rec in records:
+        agent = str(rec.get("agent_id", "") or rec.get("role", "unknown"))
+        rows[agent]["tasks"] += 1
+        rows[agent]["cost_usd"] += float(rec.get("cost_usd", 0.0) or 0.0)
+    return dict(rows)
+
+
+def _aggregate_by_task(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Aggregate task records grouped by task_id."""
+    rows: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"tasks": 0, "cost_usd": 0.0, "model": ""}
+    )
+    for rec in records:
+        tid = str(rec.get("task_id", "unknown"))
+        rows[tid]["tasks"] += 1
+        rows[tid]["cost_usd"] += float(rec.get("cost_usd", 0.0) or 0.0)
+        rows[tid]["model"] = str(rec.get("model", "") or "")
+    return dict(rows)
+
+
+def _aggregate_by_day(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Aggregate task records grouped by date (YYYY-MM-DD)."""
+    import datetime as _dt
+
+    rows: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"tasks": 0, "cost_usd": 0.0}
+    )
+    for rec in records:
+        ts = float(rec.get("timestamp", 0) or 0)
+        day = _dt.datetime.fromtimestamp(ts, tz=_dt.UTC).strftime("%Y-%m-%d") if ts > 0 else "unknown"
+        rows[day]["tasks"] += 1
+        rows[day]["cost_usd"] += float(rec.get("cost_usd", 0.0) or 0.0)
+    return dict(rows)
+
+
+def _compute_downgrade_tip(records: list[dict[str, Any]]) -> tuple[str, float] | None:
+    """Estimate potential savings from downgrading simple opus tasks to sonnet.
+
+    Returns a (tip_message, savings_usd) tuple, or ``None`` if no savings.
+    """
+    opus_simple_cost = 0.0
+    opus_total = 0
+    opus_simple = 0
+
+    for rec in records:
+        model = str(rec.get("model", "")).lower()
+        if "opus" not in model:
+            continue
+        opus_total += 1
+        scope = str(rec.get("scope", "")).lower()
+        complexity = str(rec.get("complexity", "")).lower()
+        if scope in ("small", "medium", "") and complexity in ("low", "medium", ""):
+            opus_simple += 1
+            opus_simple_cost += float(rec.get("cost_usd", 0.0) or 0.0)
+
+    if opus_total == 0 or opus_simple == 0:
+        return None
+
+    # Sonnet is roughly 60% of opus cost
+    savings = opus_simple_cost * 0.40
+    pct = int((opus_simple / opus_total) * 100)
+
+    tip = (
+        f"{pct}% of opus tasks could have used sonnet "
+        f"(simple scope, low complexity)"
+    )
+    return tip, round(savings, 2)
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
 
-def _load_tasks_jsonl(metrics_dir: Path) -> list[dict[str, Any]]:
-    p = metrics_dir / "tasks.jsonl"
-    if not p.exists():
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Load JSONL records from a single file."""
+    if not path.exists():
         return []
     records: list[dict[str, Any]] = []
-    for line in p.read_text().splitlines():
+    for line in path.read_text().splitlines():
         line = line.strip()
         if line:
             with contextlib.suppress(json.JSONDecodeError):
                 records.append(json.loads(line))
     return records
+
+
+def _load_tasks_jsonl(metrics_dir: Path) -> list[dict[str, Any]]:
+    return _load_jsonl(metrics_dir / "tasks.jsonl")
+
+
+def _load_archive_tasks(sdd_dir: Path) -> list[dict[str, Any]]:
+    """Load task records from ``.sdd/archive/tasks.jsonl``."""
+    return _load_jsonl(sdd_dir / "archive" / "tasks.jsonl")
 
 
 def _load_api_usage_jsonl(metrics_dir: Path) -> list[dict[str, Any]]:
@@ -300,10 +472,18 @@ def estimate_cmd(goal: str, role: str, scope: str, complexity: str, metrics_dir:
     show_default=True,
     help="Directory containing metrics JSONL files.",
 )
+@click.option("--last", "last", type=str, default=None, help="Time range: 1h, 24h, 7d, 30d.")
+@click.option(
+    "--by",
+    "group_by",
+    type=click.Choice(["agent", "model", "task", "day"]),
+    default=None,
+    help="Group breakdown by agent, model, task, or day.",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
 @click.option("--share", is_flag=True, default=False, help="Print only the shareable summary snippet.")
-def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
-    """Show agent spend: cost, tokens, and duration per model."""
+def cost_cmd(metrics_dir: str, last: str | None, group_by: str | None, as_json: bool, share: bool) -> None:
+    """Show cost breakdown for recent runs."""
     mdir = Path(metrics_dir)
     if not mdir.exists():
         if as_json or is_json():
@@ -313,11 +493,26 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
         raise SystemExit(1)
 
     task_records = _load_tasks_jsonl(mdir)
+
+    # Also load archive tasks from .sdd/archive/tasks.jsonl
+    sdd_dir = mdir.parent  # .sdd/metrics -> .sdd
+    archive_records = _load_archive_tasks(sdd_dir)
+    task_records = archive_records + task_records
+
     api_records = _load_api_usage_jsonl(mdir)
+
+    # Apply time-range filter
+    cutoff: float = 0.0
+    time_label = "all time"
+    if last is not None:
+        cutoff = _parse_time_range(last)
+        time_label = f"last {last}"
+        task_records = _filter_by_time(task_records, cutoff)
+        api_records = _filter_by_time(api_records, cutoff)
 
     rows = _aggregate(task_records, api_records)
 
-    if not rows:
+    if not rows and not task_records:
         if as_json or is_json():
             print_json({"rows": [], "totals": {}})
         else:
@@ -362,8 +557,25 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
 
     tasks_done, tasks_failed = _count_task_status(task_records)
 
+    # Cache hit rate from .sdd/runtime/*.tokens
+    cache_hit_rate = _compute_cache_hit_rate(sdd_dir)
+
+    # Downgrade tip
+    downgrade = _compute_downgrade_tip(task_records)
+
+    # --by grouping (alternative views)
+    grouped_data: dict[str, dict[str, Any]] | None = None
+    if group_by == "agent":
+        grouped_data = _aggregate_by_agent(task_records)
+    elif group_by == "task":
+        grouped_data = _aggregate_by_task(task_records)
+    elif group_by == "day":
+        grouped_data = _aggregate_by_day(task_records)
+    # group_by == "model" or None => use the default rows (by model)
+
     if as_json or is_json():
-        output = {
+        output: dict[str, Any] = {
+            "time_range": time_label,
             "rows": [
                 {
                     "model": model,
@@ -386,7 +598,17 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
             "projected_monthly_usd": round(projected_monthly, 4),
             "tasks_done": tasks_done,
             "tasks_failed": tasks_failed,
+            "cache_hit_rate": round(cache_hit_rate, 1) if cache_hit_rate is not None else None,
         }
+        if grouped_data is not None:
+            output["grouped_by"] = group_by
+            output["grouped"] = {
+                k: {"tasks": v["tasks"], "cost_usd": round(v["cost_usd"], 6)}
+                for k, v in sorted(grouped_data.items(), key=lambda kv: -kv[1]["cost_usd"])
+            }
+        if downgrade is not None:
+            output["tip"] = downgrade[0]
+            output["potential_savings_usd"] = downgrade[1]
         print_json(output)
         return
 
@@ -404,7 +626,39 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
 
     from rich.table import Table
 
-    table = Table(title="Bernstein Cost Report", header_style="bold cyan", show_lines=False)
+    # Title includes time range
+    title = f"Bernstein Cost Report ({time_label})"
+
+    # If --by is set to a non-model group, render a simpler grouped table
+    if grouped_data is not None:
+        sorted_grouped = sorted(grouped_data.items(), key=lambda kv: -kv[1]["cost_usd"])
+        total_cost = sum(v["cost_usd"] for v in grouped_data.values())
+        total_tasks = sum(v["tasks"] for v in grouped_data.values())
+        max_cost = max((v["cost_usd"] for v in grouped_data.values()), default=0.0)
+
+        console.print(f"\n[bold]{title}[/bold]\n")
+        assert group_by is not None  # guaranteed when grouped_data is set
+        console.print(f"  [bold]By {group_by.title()}:[/bold]")
+        for label, v in sorted_grouped:
+            pct = int((v["cost_usd"] / total_cost) * 100) if total_cost > 0 else 0
+            bar = _ascii_bar(v["cost_usd"], max_cost, 16)
+            console.print(
+                f"    {label:<22s} ${v['cost_usd']:>7.2f}  ({pct:>2d}%)  {bar}  {v['tasks']:,} tasks"
+            )
+
+        console.print(f"\n  Total: ${total_cost:.2f} across {total_tasks:,} tasks")
+        if total_tasks > 0:
+            console.print(f"  Avg cost/task: ${total_cost / total_tasks:.3f}")
+        if cache_hit_rate is not None:
+            console.print(f"  Cache hit rate: {cache_hit_rate:.0f}%")
+        if downgrade is not None:
+            console.print(f"\n  [dim]Tip: {downgrade[0]}[/dim]")
+            console.print(f"  [dim]Potential savings: ${downgrade[1]:.2f}/week with smarter routing[/dim]")
+        console.print()
+        return
+
+    # Default: full model breakdown table
+    table = Table(title=title, header_style="bold cyan", show_lines=False)
     table.add_column("Model", min_width=20, no_wrap=True)
     table.add_column("Tasks", justify="right", min_width=6)
     table.add_column("Tokens In", justify="right", min_width=10)
@@ -443,6 +697,10 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
 
     console.print(table)
 
+    # Cache hit rate
+    if cache_hit_rate is not None:
+        console.print(f"\n[dim]Cache hit rate:[/dim] {cache_hit_rate:.0f}%")
+
     # Fast-path savings summary
     if fast_path_savings["tasks_bypassed"] > 0:
         bp = fast_path_savings["tasks_bypassed"]
@@ -468,6 +726,11 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
     # Projected monthly cost
     if projected_monthly > 0:
         console.print(f"\n[dim]Projected monthly cost (30d):[/dim] ${projected_monthly:.2f}")
+
+    # Downgrade tip
+    if downgrade is not None:
+        console.print(f"\n  [dim]Tip: {downgrade[0]}[/dim]")
+        console.print(f"  [dim]Potential savings: ${downgrade[1]:.2f}/week with smarter routing[/dim]")
 
     # Shareable run summary
     _render_shareable_summary(
