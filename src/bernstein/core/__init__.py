@@ -168,6 +168,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "coverage_gate": "bernstein.core.quality.coverage_gate",
     "cross_agent_consistency": "bernstein.core.agents.cross_agent_consistency",
     "cross_model_verifier": "bernstein.core.quality.cross_model_verifier",
+    "custom_metric_dsl": "bernstein.core.observability.custom_metric_dsl",
     "custom_metrics": "bernstein.core.observability.custom_metrics",
     "cycle_detector": "bernstein.core.quality.cycle_detector",
     "dashboard_auth": "bernstein.core.server.dashboard_auth",
