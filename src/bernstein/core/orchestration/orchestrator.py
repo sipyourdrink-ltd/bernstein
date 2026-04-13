@@ -3253,6 +3253,12 @@ class Orchestrator:
                 backlog_files.extend(src_dir.glob("*.yml"))
         backlog_files.sort()
 
+        # Apply task filter if BERNSTEIN_TASK_FILTER is set
+        task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
+        if task_filter:
+            task_filter_lower = task_filter.lower()
+            backlog_files = [f for f in backlog_files if task_filter_lower in f.name.lower()]
+
         if not backlog_files:
             return 0
 

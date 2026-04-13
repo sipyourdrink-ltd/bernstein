@@ -930,7 +930,7 @@ def _write_backlog_yaml(backlog_open: Path, issue: dict[str, Any]) -> str:
     """
     number: int = issue["number"]
     title: str = issue.get("title", "Untitled issue")
-    body: str = (issue.get("body") or "")[:500]
+    body: str = issue.get("body") or ""
     labels_raw: list[dict[str, Any]] = issue.get("labels", [])
     labels: list[str] = [str(lbl.get("name", "")).lower() for lbl in labels_raw if lbl.get("name")]
 
