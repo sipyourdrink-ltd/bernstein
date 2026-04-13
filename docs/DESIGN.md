@@ -18,25 +18,27 @@ This document describes the current architecture of Bernstein as implemented in 
 
 ```text
 CLI (src/bernstein/cli/)
-  -> Task server (src/bernstein/core/server.py, FastAPI)
+  -> Task server (src/bernstein/core/server.py shim -> core/server/)
     -> Route modules (src/bernstein/core/routes/)
-      -> Store + lifecycle + orchestration (core/)
+      -> Store + lifecycle + orchestration (core/ sub-packages)
         -> Adapter-based process spawning (adapters/)
 ```
 
+Since v1.6, `core/` is organized into 22 sub-packages. Top-level modules like `core/server.py`, `core/orchestrator.py`, `core/spawner.py`, `core/task_lifecycle.py`, and `core/models.py` are thin re-export shims that redirect to their sub-packages.
+
 Primary orchestration modules:
 
-- `src/bernstein/core/orchestrator.py` (facade)
-- `src/bernstein/core/tick_pipeline.py`
-- `src/bernstein/core/task_lifecycle.py`
-- `src/bernstein/core/agent_lifecycle.py`
+- `src/bernstein/core/orchestrator.py` (shim) -> `src/bernstein/core/orchestration/orchestrator.py`
+- `src/bernstein/core/orchestration/tick_pipeline.py`
+- `src/bernstein/core/tasks/task_lifecycle.py`
+- `src/bernstein/core/agents/agent_lifecycle.py`
 
-Key runtime subsystems:
+Key runtime subsystems (in sub-packages):
 
-- Routing/cost: `router.py`, `cascade_router.py`, `cost.py`, `cost_history.py`, `cost_anomaly.py`
-- Reliability: `heartbeat.py`, `completion_budget.py`, `failure_aware_retry.py`, `loop_detector.py`
-- Verification: `janitor.py`, `quality_gates.py`, `approval.py`, `reviewer.py`
-- Context and memory: `spawn_prompt.py`, `context.py`, `lessons.py`, `knowledge_base.py`, `rag.py`
+- Routing/cost: `core/routing/router.py`, `core/routing/cascade_router.py`, `core/cost/cost.py`, `core/cost/cost_history.py`, `core/cost/cost_anomaly.py`
+- Reliability: `core/agents/heartbeat.py`, `core/cost/completion_budget.py`, `core/observability/loop_detector.py`
+- Verification: `core/quality/janitor.py`, `core/quality/quality_gates.py`, `core/security/approval.py`, `core/quality/reviewer.py`
+- Context and memory: `core/agents/spawn_prompt.py`, `core/tokens/context.py`, `core/knowledge/lessons.py`, `core/knowledge/knowledge_base.py`, `core/knowledge/rag.py`
 
 ---
 
@@ -72,13 +74,15 @@ Notable implemented endpoint groups:
 
 Trigger orchestration is implemented and centered on:
 
-- `src/bernstein/core/trigger_manager.py`
-- `src/bernstein/core/models.py` (`TriggerEvent`, trigger config models)
+- `src/bernstein/core/orchestration/trigger_manager.py`
+- `src/bernstein/core/tasks/models.py` (`TriggerEvent`, trigger config models)
 
 Current source adapters:
 
 - `src/bernstein/core/trigger_sources/github.py`
+- `src/bernstein/core/trigger_sources/gitlab.py`
 - `src/bernstein/core/trigger_sources/slack.py`
+- `src/bernstein/core/trigger_sources/discord.py`
 - `src/bernstein/core/trigger_sources/file_watch.py`
 - `src/bernstein/core/trigger_sources/webhook.py`
 
@@ -94,9 +98,9 @@ Boundary: trigger infrastructure is real and usable, but project-specific rule l
 
 Implemented pieces:
 
-- Worker CLI: `src/bernstein/cli/worker_cmd.py`
-- Cluster data model/policy: `src/bernstein/core/cluster.py`
-- Cluster API routes in `src/bernstein/core/routes/tasks.py`
+- Worker CLI: `src/bernstein/cli/commands/worker_cmd.py`
+- Cluster data model/policy: `src/bernstein/core/protocols/cluster.py`
+- Cluster API routes in `src/bernstein/core/routes/task_cluster.py` and `src/bernstein/core/routes/tasks.py`
 
 Boundary:
 
@@ -143,7 +147,7 @@ Boundary:
 Implemented:
 
 - Evolution package (`src/bernstein/evolution/`)
-- Plan execution and approval modules (`planner.py`, `plan_approval.py`, plan routes)
+- Plan execution and approval modules (`core/planning/planner.py`, `core/security/plan_approval.py`, plan routes)
 - Retrospective/reporting command path (`retro`)
 
 Boundary:
@@ -171,7 +175,7 @@ Exact files vary by enabled features and run mode.
 ## Lifecycle state machines
 
 All task and agent status changes are governed by a deterministic FSM in
-`src/bernstein/core/lifecycle.py`. Every transition is validated against an
+`src/bernstein/core/tasks/lifecycle.py`. Every transition is validated against an
 explicit table; illegal moves raise `IllegalTransitionError` and emit a typed
 `LifecycleEvent` for audit and replay.
 
@@ -254,7 +258,7 @@ stateDiagram-v2
 ### Agent Turn FSM (10 states)
 
 Tracks the lifecycle of a single task-handling turn within an agent process.
-Source: `src/bernstein/core/agent_turn_state.py`.
+Source: `src/bernstein/core/agents/agent_turn_state.py`.
 
 ```mermaid
 stateDiagram-v2

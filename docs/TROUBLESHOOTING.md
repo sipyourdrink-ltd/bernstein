@@ -72,7 +72,7 @@ claude --version  # should print version info
 
 **Symptom:** Adapter logs a warning like `ClaudeCodeAdapter: ANTHROPIC_API_KEY is not set` and the spawned process exits immediately with a non-zero code.
 
-**Cause:** Each adapter requires provider-specific environment variables. The adapter forwards only whitelisted keys via `build_filtered_env()`.
+**Cause:** Each adapter requires provider-specific environment variables. The adapter forwards only allow-listed keys via `build_filtered_env()`.
 
 **Diagnosis:**
 ```bash
@@ -130,15 +130,18 @@ grep -i "rate limit\|429\|hit your limit\|resets" .sdd/runtime/*.log
 
 **Diagnosis:**
 ```bash
-bernstein status   # shows current spend vs budget
+bernstein cost                     # shows spend breakdown
+bernstein status                   # shows current spend vs budget
 cat .sdd/runtime/cost_report.json
 ```
 
 **Resolution:**
 - Increase `budget_usd` in `bernstein.yaml`.
-- Use cheaper models for low-complexity tasks: the router maps `Complexity.LOW` tasks to `haiku` automatically.
+- Use cheaper models for low-complexity tasks: the router maps `Complexity.LOW` tasks to `haiku` automatically (see `PLAN.model_by_complexity` in `src/bernstein/core/defaults.py`).
 - Enable `batch_eligible` for non-urgent tasks (approximately 50% cost reduction via batch APIs).
-- Review per-agent cost with `bernstein status` and kill runaway agents.
+- Review per-agent cost with `bernstein cost --by model` and kill runaway agents.
+- Use peak-hour routing (`core/cost/peak_hour_router.py`) to shift non-urgent work to off-peak windows.
+- Use quota tracking (`core/cost/quota_tracker.py`) to monitor per-provider spend limits.
 
 ---
 
@@ -174,7 +177,7 @@ lsof -i :8052   # check what is listening
 ```
 
 **Resolution:**
-- Start the server: `bernstein run` starts it automatically; for standalone use, check `server_launch.py`.
+- Start the server: `bernstein run` starts it automatically; for standalone use, check `src/bernstein/core/server/server_launch.py`.
 - If the port is in use, set a different port in `bernstein.yaml` or via `BERNSTEIN_PORT`.
 - Check firewall rules if running server and agents on different machines.
 - If the server crashed, check `.sdd/runtime/server.log` for the stack trace.
@@ -267,7 +270,7 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 
 **Symptom:** Agent is killed mid-task. Log shows `"Timeout after Xds: pid=... — sending SIGTERM"`.
 
-**Cause:** The agent exceeded its wall-clock timeout. Default is 1800s (30 min). Scope-based timeouts: small=15min, medium=30min, large=60min. XL roles (architect, security, manager) get 120min.
+**Cause:** The agent exceeded its wall-clock timeout. Default is 1800s (30 min). Scope-based timeouts: small=15min, medium=30min, large=60min. XL roles (architect, security, manager) get 120min. Adaptive timeouts (`core/orchestration/adaptive_timeout.py`) can adjust these based on historical task durations. All timeout constants are in `src/bernstein/core/defaults.py` (`TASK.scope_timeout_s`, `TASK.xl_timeout_s`).
 
 **Diagnosis:**
 ```bash
@@ -378,7 +381,7 @@ for i, line in enumerate(open('.sdd/backlog.jsonl'), 1):
 **Resolution:**
 - Delete the corrupted last line(s). The JSONL format is append-only, so all prior lines are valid.
 - For `.sdd/runtime/access.jsonl` (the request log), truncation is safe since it is append-only and non-authoritative.
-- Consider switching to the PostgreSQL backend (`store_postgres.py`) for production deployments.
+- Consider switching to the PostgreSQL backend (`src/bernstein/core/persistence/store_postgres.py`) for production deployments.
 
 ---
 
@@ -386,11 +389,11 @@ for i, line in enumerate(open('.sdd/backlog.jsonl'), 1):
 
 **Symptom:** `TemplateError` when spawning an agent. The role prompt cannot be rendered.
 
-**Cause:** The `templates/roles/<role>.md` file is missing, contains invalid Jinja2 syntax, or references undefined variables.
+**Cause:** The `templates/roles/<role>.md` file (or directory) is missing, contains invalid Jinja2 syntax, or references undefined variables.
 
 **Diagnosis:**
 ```bash
-ls templates/roles/           # check role file exists
+ls templates/roles/           # check role file/directory exists
 python3 -c "from bernstein.templates.renderer import render_role_prompt; print(render_role_prompt('backend', {}))"
 ```
 
@@ -450,7 +453,7 @@ print(yaml.dump(plan, default_flow_style=False))
   ```
 - Stage-level `depends_on: [other_stage]` must reference existing stage names.
 - Step fields: `goal` (required), `role` (required), `priority`, `scope`, `complexity` (optional with defaults).
-- Validate with `python3 -c "from bernstein.core.plan_loader import load_plan; load_plan('plans/my-project.yaml')"`.
+- Validate with `python3 -c "from bernstein.core.planning.plan_loader import load_plan; load_plan('plans/my-project.yaml')"`.
 
 ---
 
@@ -486,6 +489,9 @@ print(yaml.dump(plan, default_flow_style=False))
 bernstein status
 bernstein doctor
 
+# Generate a full debug bundle (collects logs, config, metrics, git state)
+bernstein debug
+
 # List all tasks by status
 curl -s http://127.0.0.1:8052/tasks?status=open | python3 -m json.tool
 curl -s http://127.0.0.1:8052/tasks?status=claimed | python3 -m json.tool
@@ -497,7 +503,13 @@ cat .sdd/runtime/<session>.log               # tail agent output
 cat .sdd/runtime/pids/<session>.json         # PID + metadata
 
 # Check cost
+bernstein cost                               # spend breakdown
+bernstein cost --by model                    # breakdown by model
+bernstein cost --last 24h                    # last 24 hours only
 cat .sdd/runtime/cost_report.json | python3 -m json.tool
+
+# Run tests (NEVER use `uv run pytest tests/` — leaks 100+ GB RAM)
+uv run python scripts/run_tests.py -x
 
 # Prune stale worktrees (safe to run any time)
 git worktree prune
@@ -512,6 +524,7 @@ bernstein doctor
 If you cannot resolve an issue with this guide:
 
 1. **Run `bernstein doctor`** — the built-in diagnostic prints the most common configuration problems.
-2. **Check agent logs** — `.sdd/runtime/<session>.log` contains the full CLI output including provider error messages.
-3. **Search GitHub Issues** — many error messages are already tracked at `https://github.com/bernstein-ai/bernstein/issues`.
-4. **File a bug report** — include the output of `bernstein doctor`, the relevant log snippet, and your `bernstein.yaml` (redact API keys).
+2. **Run `bernstein debug`** — generates a debug bundle with logs, config, metrics, and git state for sharing.
+3. **Check agent logs** — `.sdd/runtime/<session>.log` contains the full CLI output including provider error messages.
+4. **Search GitHub Issues** — many error messages are already tracked at `https://github.com/chernistry/bernstein/issues`.
+5. **File a bug report** — include the output of `bernstein debug`, the relevant log snippet, and your `bernstein.yaml` (redact API keys).

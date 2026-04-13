@@ -8,6 +8,8 @@ Bernstein configuration comes from three places:
 
 This document focuses on practical settings contributors actually use today.
 
+All magic numbers, timeouts, and thresholds are centralized in `src/bernstein/core/defaults.py` and can be overridden via the `tuning:` section in `bernstein.yaml` or via environment variables.
+
 ---
 
 ## 1) Project config: `bernstein.yaml`
@@ -21,6 +23,7 @@ This document focuses on practical settings contributors actually use today.
 - `storage`
 - `notify` (webhook/email/desktop notification settings)
 - `network` (IP allowlist)
+- `tuning` (override defaults from `core/defaults.py`)
 
 Minimal example:
 
@@ -139,6 +142,33 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_COMPLIANCE` | Compliance preset override |
 | `BERNSTEIN_QUIET` | Quiet mode (reduced terminal output) |
 | `BERNSTEIN_AUDIT` | Enable extra audit behavior in run flow |
+
+---
+
+## 4) Tunable defaults: `core/defaults.py`
+
+All magic numbers live in `src/bernstein/core/defaults.py` as typed dataclasses. Override at runtime via the `tuning:` section in `bernstein.yaml`:
+
+```yaml
+tuning:
+  orchestrator:
+    tick_interval_s: 5.0
+    drain_timeout_s: 120.0
+    stale_claim_timeout_s: 1800.0
+  spawn:
+    spawn_backoff_base_s: 60.0
+```
+
+Key default groups:
+
+| Group | Examples |
+|-------|---------|
+| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s` |
+| `SpawnDefaults` | `spawn_backoff_base_s`, `spawn_backoff_max_s`, `max_spawn_failures` |
+| `TaskDefaults` | Retry limits, deadline windows |
+| `AgentDefaults` | Heartbeat intervals, max dead agents kept |
+
+See `defaults.py` for the full list of parameters and their default values.
 
 ---
 

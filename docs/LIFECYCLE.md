@@ -2,12 +2,12 @@
 
 Bernstein uses deterministic finite state machines (FSMs) for both task and agent
 lifecycle management. All transitions flow through the Lifecycle Governance Kernel
-(`core/lifecycle.py`), which validates transitions against an explicit transition
+(`core/tasks/lifecycle.py`), which validates transitions against an explicit transition
 table, rejects illegal moves with `IllegalTransitionError`, and emits typed
 `LifecycleEvent` records for audit, replay, and metrics.
 
-Source of truth: `src/bernstein/core/lifecycle.py` (transition tables),
-`src/bernstein/core/models.py` (`TaskStatus` enum, `AgentSession` dataclass).
+Source of truth: `src/bernstein/core/tasks/lifecycle.py` (transition tables),
+`src/bernstein/core/tasks/models.py` (`TaskStatus` enum, `AgentSession` dataclass).
 
 ---
 
@@ -82,7 +82,7 @@ stateDiagram-v2
     PENDING_APPROVAL --> [*]
 ```
 
-> **Note — `PENDING_APPROVAL`:** This state exists in the `TaskStatus` enum and is used by the approval subsystem (see `src/bernstein/core/approval.py`). It is set directly rather than through the `TASK_TRANSITIONS` table, so it has no FSM-managed entry or exit path. Tasks in this state await human review and cannot progress further without manual intervention.
+> **Note — `PENDING_APPROVAL`:** This state exists in the `TaskStatus` enum and is used by the approval subsystem (see `src/bernstein/core/security/approval.py`). It is set directly rather than through the `TASK_TRANSITIONS` table, so it has no FSM-managed entry or exit path. Tasks in this state await human review and cannot progress further without manual intervention.
 
 ### Task Transition Table (exhaustive)
 
@@ -263,7 +263,7 @@ The agent turn FSM operates at a finer granularity than the agent session FSM ab
 It tracks the lifecycle of a **single task handling turn** within an agent process —
 from the moment a task is claimed through to cleanup.
 
-Source of truth: `src/bernstein/core/agent_turn_state.py` (`AgentTurnState`,
+Source of truth: `src/bernstein/core/agents/agent_turn_state.py` (`AgentTurnState`,
 `AgentTurnEvent`, `AgentTurnStateMachine`).
 
 | State | Description |

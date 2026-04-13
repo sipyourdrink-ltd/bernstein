@@ -7,7 +7,7 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 ## Prerequisites
 
 - **Python 3.12+** (macOS, Linux, Windows)
-- **At least one CLI coding agent** installed and authenticated. Bernstein supports 12 agents out of the box:
+- **At least one CLI coding agent** installed and authenticated. Bernstein supports 18 adapters out of the box:
 
 | Agent | Install |
 |-------|---------|
@@ -15,14 +15,20 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 | [Amp](https://ampcode.com) | `brew install amp` |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `npm install -g @anthropic-ai/claude-code` |
 | [Codex CLI](https://github.com/openai/codex) | `npm install -g @openai/codex` |
+| [Cody](https://sourcegraph.com/cody) | Install Cody CLI |
+| [Continue](https://continue.dev) | VS Code / JetBrains extension |
 | [Cursor](https://www.cursor.com) | [Cursor app](https://www.cursor.com) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `npm install -g @google/gemini-cli` |
 | [Goose](https://block.github.io/goose/) | Install Goose CLI |
 | [Kilo](https://kilo.dev) | `npm install -g kilo` |
 | [Kiro](https://kiro.dev) | Install Kiro CLI |
+| [Ollama](https://ollama.com) | `brew install ollama` |
 | [OpenCode](https://opencode.ai) | Install OpenCode CLI |
 | [Qwen](https://github.com/QwenLM/Qwen-Agent) | `npm install -g qwen-code` |
 | [Roo Code](https://github.com/RooVetGit/Roo-Code) | VS Code extension |
+| [Tabby](https://tabby.tabbyml.com) | Install Tabby |
+| Generic | Any CLI agent via `generic` adapter |
+| IaC | Infrastructure-as-code adapter |
 
 No agent yet? Run `bernstein demo` for a zero-config walkthrough.
 
@@ -215,6 +221,14 @@ Graceful stop sends a `SHUTDOWN` signal via `.sdd/runtime/signals/`. Agents fini
 ---
 
 ## Diagnostics
+
+### Debug bundle
+
+```bash
+bernstein debug                     # generate a diagnostic zip for bug reports
+```
+
+Collects logs, config (secrets redacted), and runtime state into a zip file suitable for attaching to GitHub issues.
 
 ### Pre-flight health check
 
