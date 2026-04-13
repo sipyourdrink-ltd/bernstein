@@ -328,7 +328,7 @@ def compute_trends(snapshots: list[DailyCostSnapshot]) -> CostTrend:
 
 
 def get_active_alerts(
-    sdd_dir: Path,
+    _sdd_dir: Path,
     current_spent_usd: float,
     budget_usd: float,
 ) -> list[CostAlert]:

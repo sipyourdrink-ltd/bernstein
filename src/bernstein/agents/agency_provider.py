@@ -194,7 +194,7 @@ def _is_non_software_agent(name: str) -> bool:
 def _infer_role(
     name: str,
     description: str,
-    capabilities: list[str],
+    _capabilities: list[str],
     division_role: str,
 ) -> str:
     """Infer the best Bernstein role from agent metadata.

@@ -128,16 +128,22 @@ def load_marketplace(marketplace_path: Path) -> list[MarketplaceEntry]:
 
     entries: list[MarketplaceEntry] = []
     for item in cast("list[Any]", plugins_raw):
-        if isinstance(item, str):
-            name = item.strip()
-            if name:
-                entries.append(MarketplaceEntry(name=name))
-        elif isinstance(item, dict):
-            entry: dict[str, Any] = cast("dict[str, Any]", item)
-            name = str(entry.get("name", "")).strip()
-            if name:
-                entries.append(MarketplaceEntry(name=name, version=str(entry.get("version", ""))))
+        parsed = _parse_marketplace_item(item)
+        if parsed is not None:
+            entries.append(parsed)
     return entries
+
+
+def _parse_marketplace_item(item: Any) -> MarketplaceEntry | None:
+    """Parse a single marketplace entry from raw YAML/JSON data."""
+    if isinstance(item, str):
+        name = item.strip()
+        return MarketplaceEntry(name=name) if name else None
+    if isinstance(item, dict):
+        entry: dict[str, Any] = cast("dict[str, Any]", item)
+        name = str(entry.get("name", "")).strip()
+        return MarketplaceEntry(name=name, version=str(entry.get("version", ""))) if name else None
+    return None
 
 
 # ---------------------------------------------------------------------------

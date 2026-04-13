@@ -143,7 +143,7 @@ def _annotation_str(node: ast.expr | None) -> str:
     return ast.unparse(node)
 
 
-def _extract_params(args: ast.arguments, qualified_prefix: str) -> list[_ParamInfo]:
+def _extract_params(args: ast.arguments, _qualified_prefix: str) -> list[_ParamInfo]:
     """Extract parameter info from an ``ast.arguments`` node.
 
     Skips ``self`` and ``cls`` for methods.

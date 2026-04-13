@@ -44,6 +44,55 @@ _REPLENISH_COOLDOWN_S: float = 60.0
 _REPLENISH_MAX_TASKS: int = 5
 
 
+def _run_governance_step(
+    orch: Any,
+    evolve_cfg: dict[str, Any],
+    cycle_number: int,
+    test_info: dict[str, Any],
+    tasks_completed: int,
+    tasks_failed: int,
+    committed: bool,
+    consecutive_empty: int,
+) -> None:
+    """Run the governance weight-adjustment step of an evolve cycle."""
+    from bernstein.evolution.governance import GovernanceEntry, ProjectContext
+
+    assert orch._governor is not None, "AdaptiveGovernor must be initialized in evolve mode"
+    weights_before = orch._governor.get_current_weights()
+    test_pass_rate = test_info.get("passed", 0) / max(test_info.get("passed", 0) + test_info.get("failed", 0), 1)
+    gov_context = ProjectContext(
+        cycle_number=cycle_number,
+        test_pass_rate=test_pass_rate,
+        lint_violations=evolve_cfg.get("_lint_violations", 0),
+        security_issues_last_5_cycles=evolve_cfg.get("_security_issues", 0),
+        codebase_size_files=evolve_cfg.get("_codebase_files", 0),
+        consecutive_empty_cycles=consecutive_empty,
+    )
+    weights_after, weight_reason = orch._governor.adjust_weights(weights_before, gov_context)
+    orch._governor.persist_weights(weights_after, reason=weight_reason)
+    orch._governor.log_decision(
+        GovernanceEntry(
+            cycle=cycle_number,
+            timestamp=datetime.now(UTC).isoformat(),
+            weights_before=weights_before.to_dict(),
+            weights_after=weights_after.to_dict(),
+            weight_change_reason=weight_reason,
+            proposals_evaluated=tasks_completed + tasks_failed,
+            proposals_applied=tasks_completed,
+            risk_scores=orch._last_cycle_risk_scores,
+            outcome_metrics={
+                "test_pass_rate": test_pass_rate,
+                "committed": 1.0 if committed else 0.0,
+            },
+        )
+    )
+    logger.info(
+        "Evolve: governance cycle %d -- weights adjusted (%s)",
+        cycle_number,
+        weight_reason,
+    )
+
+
 def check_evolve(orch: Any, result: Any, tasks_by_status: dict[str, list[Any]]) -> None:
     """If evolve mode is on and all tasks are done, trigger a new cycle.
 
@@ -52,8 +101,6 @@ def check_evolve(orch: Any, result: Any, tasks_by_status: dict[str, list[Any]]) 
         result: Current tick result (mutated in place).
         tasks_by_status: Pre-fetched task snapshot keyed by status string.
     """
-    from bernstein.evolution.governance import GovernanceEntry, ProjectContext
-
     evolve_path = orch._workdir / ".sdd" / "runtime" / "evolve.json"
     if not evolve_path.exists():
         return
@@ -117,41 +164,9 @@ def check_evolve(orch: Any, result: Any, tasks_by_status: dict[str, list[Any]]) 
     committed = orch._evolve_auto_commit()
 
     # Step 3b: GOVERN
-    # _governor is always non-None here because _check_evolve only runs
-    # when evolve_mode is enabled, and we initialize the governor in that case.
-    assert orch._governor is not None, "AdaptiveGovernor must be initialized in evolve mode"
-    weights_before = orch._governor.get_current_weights()
-    test_pass_rate = test_info.get("passed", 0) / max(test_info.get("passed", 0) + test_info.get("failed", 0), 1)
-    gov_context = ProjectContext(
-        cycle_number=cycle_number,
-        test_pass_rate=test_pass_rate,
-        lint_violations=evolve_cfg.get("_lint_violations", 0),
-        security_issues_last_5_cycles=evolve_cfg.get("_security_issues", 0),
-        codebase_size_files=evolve_cfg.get("_codebase_files", 0),
-        consecutive_empty_cycles=consecutive_empty,
-    )
-    weights_after, weight_reason = orch._governor.adjust_weights(weights_before, gov_context)
-    orch._governor.persist_weights(weights_after, reason=weight_reason)
-    orch._governor.log_decision(
-        GovernanceEntry(
-            cycle=cycle_number,
-            timestamp=datetime.now(UTC).isoformat(),
-            weights_before=weights_before.to_dict(),
-            weights_after=weights_after.to_dict(),
-            weight_change_reason=weight_reason,
-            proposals_evaluated=tasks_completed + tasks_failed,
-            proposals_applied=tasks_completed,
-            risk_scores=orch._last_cycle_risk_scores,
-            outcome_metrics={
-                "test_pass_rate": test_pass_rate,
-                "committed": 1.0 if committed else 0.0,
-            },
-        )
-    )
-    logger.info(
-        "Evolve: governance cycle %d -- weights adjusted (%s)",
-        cycle_number,
-        weight_reason,
+    _run_governance_step(
+        orch, evolve_cfg, cycle_number, test_info,
+        tasks_completed, tasks_failed, committed, consecutive_empty,
     )
 
     # Step 4: PLAN
@@ -718,52 +733,54 @@ def run_evolution_cycle(orch: Any, result: Any) -> None:
                 proposal.status.value,
             )
 
-        if not proposals:
-            return
-
-        _task_eligible_statuses = {UpgradeStatus.PENDING, UpgradeStatus.APPROVED}
-        base = orch._config.server_url
-        for proposal in proposals:
-            if proposal.status not in _task_eligible_statuses:
-                continue
-            try:
-                # Score for task priority routing
-                target_files = proposal.risk_assessment.affected_components
-                diff_estimate = max(len(proposal.proposed_change) // 10, 10)
-                risk_score = orch._risk_scorer.score_proposal(
-                    target_files=target_files,
-                    diff_size=diff_estimate,
-                    test_coverage_delta=0.0,
-                )
-                is_high = orch._risk_scorer.is_high_risk(risk_score)
-                task_body = {
-                    "title": f"Upgrade: {proposal.title}",
-                    "description": proposal.description,
-                    "role": "backend",
-                    "priority": 1 if is_high else 2,
-                    "scope": "large" if is_high else "medium",
-                    "complexity": "high" if is_high else "medium",
-                    "estimated_minutes": 60 if is_high else 30,
-                    "task_type": TaskType.UPGRADE_PROPOSAL.value,
-                }
-                resp = orch._client.post(f"{base}/tasks", json=task_body)
-                resp.raise_for_status()
-                logger.info(
-                    "Created upgrade task for proposal %s: %s (risk=%.2f)",
-                    proposal.id,
-                    proposal.title,
-                    risk_score.composite_risk,
-                )
-            except httpx.HTTPError as exc:
-                logger.warning(
-                    "Failed to create upgrade task for proposal %s: %s",
-                    proposal.id,
-                    exc,
-                )
-                result.errors.append(f"evolution_task: {exc}")
+        if proposals:
+            _create_upgrade_tasks(orch, proposals, result)
     except (OSError, ValueError, RuntimeError) as exc:
         logger.error("Evolution analysis cycle failed: %s", exc)
         result.errors.append(f"evolution: {exc}")
+
+
+def _create_upgrade_tasks(orch: Any, proposals: list[Any], result: Any) -> None:
+    """Create tasks from eligible upgrade proposals."""
+    _task_eligible_statuses = {UpgradeStatus.PENDING, UpgradeStatus.APPROVED}
+    base = orch._config.server_url
+    for proposal in proposals:
+        if proposal.status not in _task_eligible_statuses:
+            continue
+        try:
+            target_files = proposal.risk_assessment.affected_components
+            diff_estimate = max(len(proposal.proposed_change) // 10, 10)
+            risk_score = orch._risk_scorer.score_proposal(
+                target_files=target_files,
+                diff_size=diff_estimate,
+                test_coverage_delta=0.0,
+            )
+            is_high = orch._risk_scorer.is_high_risk(risk_score)
+            task_body = {
+                "title": f"Upgrade: {proposal.title}",
+                "description": proposal.description,
+                "role": "backend",
+                "priority": 1 if is_high else 2,
+                "scope": "large" if is_high else "medium",
+                "complexity": "high" if is_high else "medium",
+                "estimated_minutes": 60 if is_high else 30,
+                "task_type": TaskType.UPGRADE_PROPOSAL.value,
+            }
+            resp = orch._client.post(f"{base}/tasks", json=task_body)
+            resp.raise_for_status()
+            logger.info(
+                "Created upgrade task for proposal %s: %s (risk=%.2f)",
+                proposal.id,
+                proposal.title,
+                risk_score.composite_risk,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Failed to create upgrade task for proposal %s: %s",
+                proposal.id,
+                exc,
+            )
+            result.errors.append(f"evolution_task: {exc}")
 
 
 def persist_pending_proposals(orch: Any) -> None:

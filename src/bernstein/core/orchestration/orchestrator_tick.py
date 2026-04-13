@@ -1521,7 +1521,7 @@ def _log_summary(orch: Any, result: Any) -> None:
         pass
 
 
-def _record_tick_events(orch: Any, result: Any, tasks_by_status: dict[str, list[Task]]) -> None:
+def _record_tick_events(orch: Any, result: Any, _tasks_by_status: dict[str, list[Task]]) -> None:
     """Record replay events from a completed tick for deterministic replay.
 
     Args:

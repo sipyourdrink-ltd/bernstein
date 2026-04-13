@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def should_auto_decompose(
     task: Task,
     decomposed_task_ids: set[str],
-    workdir: Path | None = None,
+    _workdir: Path | None = None,
     force_parallel: bool = False,
 ) -> bool:
     """Return True if a task should be decomposed into subtasks.

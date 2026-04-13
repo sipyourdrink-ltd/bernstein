@@ -183,7 +183,7 @@ async def _handle_run(request: Request, options: dict[str, Any], payload: dict[s
     return _ephemeral(f"Task `{task.id}` created: {task_text[:60]}")
 
 
-def _handle_status(request: Request, payload: dict[str, Any]) -> JSONResponse:
+def _handle_status(request: Request, _payload: dict[str, Any]) -> JSONResponse:
     """Handle ``/bernstein status`` — show current task summary.
 
     Args:
@@ -210,7 +210,7 @@ def _handle_status(request: Request, payload: dict[str, Any]) -> JSONResponse:
     return _ephemeral("\n".join(lines))
 
 
-def _handle_stop(request: Request, payload: dict[str, Any]) -> JSONResponse:
+def _handle_stop(_request: Request, _payload: dict[str, Any]) -> JSONResponse:
     """Handle ``/bernstein stop`` — request graceful shutdown.
 
     Posts a shutdown signal to the orchestrator's ``/shutdown`` endpoint
@@ -233,7 +233,7 @@ def _handle_stop(request: Request, payload: dict[str, Any]) -> JSONResponse:
     return _ephemeral("Graceful shutdown requested. Bernstein will finish in-flight tasks and exit.")
 
 
-def _handle_cost(request: Request, payload: dict[str, Any]) -> JSONResponse:
+def _handle_cost(request: Request, _payload: dict[str, Any]) -> JSONResponse:
     """Handle ``/bernstein cost`` — show cumulative spend report.
 
     Reads cost data from the task store metrics and returns a summary.

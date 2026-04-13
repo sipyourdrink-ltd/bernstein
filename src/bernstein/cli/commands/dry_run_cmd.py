@@ -20,7 +20,7 @@ from bernstein.cli.helpers import console
 def render_dry_run(
     workdir: Path,
     plan_file: Path | None = None,
-    goal: str | None = None,
+    _goal: str | None = None,
 ) -> list[dict[str, Any]]:
     """Build and return dry-run task list with routing info.
 

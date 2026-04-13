@@ -368,7 +368,7 @@ class GoalAnalysis:
     detected_roles: tuple[str, ...]
 
 
-def analyze_goal(goal_text: str, project_root: Path) -> GoalAnalysis:
+def analyze_goal(goal_text: str, _project_root: Path) -> GoalAnalysis:
     """Parse a natural language goal into structured components.
 
     Extracts action verbs, identifies target components, estimates scope,

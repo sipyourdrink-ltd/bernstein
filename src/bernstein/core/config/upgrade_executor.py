@@ -192,7 +192,7 @@ Respond with a JSON object:
 
 Review the upgrade carefully and provide your assessment."""
 
-    def _parse_review_response(self, response: str, transaction: UpgradeTransaction) -> ReviewResult:
+    def _parse_review_response(self, response: str, _transaction: UpgradeTransaction) -> ReviewResult:
         """Parse the LLM review response."""
         import json
 

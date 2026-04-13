@@ -158,12 +158,12 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
 
 
 def _show_dry_run_plan(
-    workdir: Path,
+    _workdir: Path,
     plan_file: Path | None,
     goal: str | None,
-    seed_file: str | None,
+    _seed_file: str | None,
     model_override: str | None,
-    cli: str | None,
+    _cli: str | None,
 ) -> None:
     """Show scheduling plan without executing.
 

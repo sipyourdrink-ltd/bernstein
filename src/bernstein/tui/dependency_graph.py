@@ -32,7 +32,7 @@ def _status_tag(status: str) -> str:
 def _topological_sort(
     nodes: list[str],
     forward: dict[str, list[str]],
-    reverse: dict[str, list[str]],
+    _reverse: dict[str, list[str]],
 ) -> list[str]:
     """Kahn's algorithm. Returns nodes in dependency order."""
     in_degree: dict[str, int] = dict.fromkeys(nodes, 0)
