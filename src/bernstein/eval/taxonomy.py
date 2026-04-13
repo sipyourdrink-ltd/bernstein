@@ -139,74 +139,57 @@ def classify_failure(
     """
     involved = files_involved or []
 
-    if tests_regressed:
-        return FailureRecord(
-            task_id=task_id,
-            category=FailureCategory.TEST_REGRESSION,
-            details=details or "Agent broke existing tests",
-            files_involved=involved,
-            severity="critical",
-        )
+    category, default_details, severity = _classify_category(
+        timed_out=timed_out,
+        tests_regressed=tests_regressed,
+        scope_violated=scope_violated,
+        signals_incomplete=signals_incomplete,
+        compile_error=compile_error,
+        conflict_detected=conflict_detected,
+        orientation_ratio=orientation_ratio,
+    )
 
-    if timed_out:
-        return FailureRecord(
-            task_id=task_id,
-            category=FailureCategory.TIMEOUT,
-            details=details or "Agent hit time or turn limit",
-            files_involved=involved,
-            severity="high",
-        )
-
-    if scope_violated:
-        return FailureRecord(
-            task_id=task_id,
-            category=FailureCategory.SCOPE_CREEP,
-            details=details or "Agent modified files outside owned_files",
-            files_involved=involved,
-            severity="high",
-        )
-
-    if conflict_detected:
-        return FailureRecord(
-            task_id=task_id,
-            category=FailureCategory.CONFLICT,
-            details=details or "Agent's changes conflict with concurrent agent",
-            files_involved=involved,
-            severity="high",
-        )
-
-    if compile_error:
-        return FailureRecord(
-            task_id=task_id,
-            category=FailureCategory.HALLUCINATION,
-            details=details or "Agent created code that doesn't compile",
-            files_involved=involved,
-            severity="high",
-        )
-
-    if orientation_ratio > 0.5:
-        return FailureRecord(
-            task_id=task_id,
-            category=FailureCategory.ORIENTATION_MISS,
-            details=details or f"Agent spent {orientation_ratio:.0%} of turns on exploration",
-            files_involved=involved,
-            severity="medium",
-        )
-
-    if signals_incomplete:
-        return FailureRecord(
-            task_id=task_id,
-            category=FailureCategory.INCOMPLETE,
-            details=details or "Agent didn't complete all required signals",
-            files_involved=involved,
-            severity="medium",
-        )
-
-    # Default: context miss (couldn't determine a more specific cause)
     return FailureRecord(
         task_id=task_id,
-        category=FailureCategory.CONTEXT_MISS,
-        details=details or "Agent lacked necessary context to complete task",
+        category=category,
+        details=details or default_details,
         files_involved=involved,
-        severity="medium",
+        severity=severity,
     )
+
+
+def _classify_category(
+    *,
+    timed_out: bool,
+    tests_regressed: bool,
+    scope_violated: bool,
+    signals_incomplete: bool,
+    compile_error: bool,
+    conflict_detected: bool,
+    orientation_ratio: float,
+) -> tuple[FailureCategory, str, str]:
+    """Return (category, default_details, severity) using priority ordering.
+
+    Priority: test regression > timeout > scope creep > conflict >
+    hallucination > orientation miss > incomplete > context miss.
+    """
+    # Priority-ordered mapping: (condition, category, default_details, severity)
+    checks: list[tuple[bool, FailureCategory, str, str]] = [
+        (tests_regressed, FailureCategory.TEST_REGRESSION, "Agent broke existing tests", "critical"),
+        (timed_out, FailureCategory.TIMEOUT, "Agent hit time or turn limit", "high"),
+        (scope_violated, FailureCategory.SCOPE_CREEP, "Agent modified files outside owned_files", "high"),
+        (conflict_detected, FailureCategory.CONFLICT, "Agent's changes conflict with concurrent agent", "high"),
+        (compile_error, FailureCategory.HALLUCINATION, "Agent created code that doesn't compile", "high"),
+        (
+            orientation_ratio > 0.5,
+            FailureCategory.ORIENTATION_MISS,
+            f"Agent spent {orientation_ratio:.0%} of turns on exploration",
+            "medium",
+        ),
+        (signals_incomplete, FailureCategory.INCOMPLETE, "Agent didn't complete all required signals", "medium"),
+    ]
+    for condition, category, default_details, severity in checks:
+        if condition:
+            return category, default_details, severity
+
+    return FailureCategory.CONTEXT_MISS, "Agent lacked necessary context to complete task", "medium"

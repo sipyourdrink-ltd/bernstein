@@ -2009,6 +2009,35 @@ class TestFileOwnership:
 # --- Feature 3: Metrics Emission ---
 
 
+def _make_task_transport(
+    routes: dict[str, httpx.Response],
+) -> httpx.MockTransport:
+    """Build a MockTransport that returns empty task lists by default."""
+    def _handler(request: httpx.Request) -> httpx.Response:
+        url = request.url
+        key = f"{request.method} {url.path}"
+        if url.query:
+            key += f"?{url.query.decode()}"
+        if request.method == "GET" and url.path == "/tasks":
+            return httpx.Response(200, json=[])
+        return routes.get(key, httpx.Response(404))
+
+    return httpx.MockTransport(_handler)
+
+
+def _find_metrics_record(tmp_path: Path, task_id: str) -> dict[str, Any] | None:
+    """Read all JSONL metrics files and return the first record matching *task_id*."""
+    metrics_dir = tmp_path / ".sdd" / "metrics"
+    for jf in metrics_dir.glob("*.jsonl"):
+        for line in jf.read_text().strip().split("\n"):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("task_id") == task_id:
+                return record
+    return None
+
+
 class TestOrphanMetrics:
     """Orphaned task handling emits MetricsRecord to .sdd/metrics/."""
 
@@ -2020,20 +2049,11 @@ class TestOrphanMetrics:
         task_dict["completion_signals"] = [{"type": "path_exists", "value": "result.txt"}]
         task_dict["status"] = "in_progress"
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            url = request.url
-            key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if request.method == "GET" and url.path == "/tasks":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks/T-met":
-                return httpx.Response(200, json=task_dict)
-            if key == "POST /tasks/T-met/complete":
-                return httpx.Response(200, json={})
-            return httpx.Response(404)
-
-        transport = httpx.MockTransport(handler)
+        routes = {
+            "GET /tasks/T-met": httpx.Response(200, json=task_dict),
+            "POST /tasks/T-met/complete": httpx.Response(200, json={}),
+        }
+        transport = _make_task_transport(routes)
         adapter = _mock_adapter()
         adapter.is_alive.return_value = False
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter)
@@ -2049,22 +2069,8 @@ class TestOrphanMetrics:
 
         orch.tick()
 
-        # Check that a metrics file was written
-        metrics_dir = tmp_path / ".sdd" / "metrics"
-        jsonl_files = list(metrics_dir.glob("*.jsonl"))
-        assert len(jsonl_files) >= 1
-
-        # Parse records — find the one for our task
-        all_records: list[dict[str, Any]] = []
-        for jf in jsonl_files:
-            for line in jf.read_text().strip().split("\n"):
-                if line.strip():
-                    all_records.append(json.loads(line))
-        matching = [r for r in all_records if r.get("task_id") == "T-met"]
-        assert matching, f"No metrics record for T-met in {all_records}"
-        record = matching[0]
-
-        # Verify the metrics record was written for our task
+        record = _find_metrics_record(tmp_path, "T-met")
+        assert record is not None, "No metrics record for T-met"
         assert record.get("task_id") == "T-met"
         assert "duration_seconds" in record or "cost_usd" in record
 
@@ -2072,22 +2078,12 @@ class TestOrphanMetrics:
         """Failed orphan writes a metrics record with error_type set."""
         task_dict = _task_as_dict(_make_task(id="T-fail-met", status="claimed"))
         task_dict["status"] = "claimed"
-        # No completion signals
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            url = request.url
-            key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if request.method == "GET" and url.path == "/tasks":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks/T-fail-met":
-                return httpx.Response(200, json=task_dict)
-            if key == "POST /tasks/T-fail-met/fail":
-                return httpx.Response(200, json={})
-            return httpx.Response(404)
-
-        transport = httpx.MockTransport(handler)
+        routes = {
+            "GET /tasks/T-fail-met": httpx.Response(200, json=task_dict),
+            "POST /tasks/T-fail-met/fail": httpx.Response(200, json={}),
+        }
+        transport = _make_task_transport(routes)
         adapter = _mock_adapter()
         adapter.is_alive.return_value = False
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter)
@@ -2103,20 +2099,8 @@ class TestOrphanMetrics:
 
         orch.tick()
 
-        metrics_dir = tmp_path / ".sdd" / "metrics"
-        jsonl_files = list(metrics_dir.glob("*.jsonl"))
-        assert len(jsonl_files) >= 1
-
-        all_records: list[dict[str, Any]] = []
-        for jf in jsonl_files:
-            for line in jf.read_text().strip().split("\n"):
-                if line.strip():
-                    all_records.append(json.loads(line))
-        matching = [r for r in all_records if r.get("task_id") == "T-fail-met"]
-        assert matching, f"No metrics record for T-fail-met in {all_records}"
-        record = matching[0]
-
-        # Failed task should have a metrics record written
+        record = _find_metrics_record(tmp_path, "T-fail-met")
+        assert record is not None, "No metrics record for T-fail-met"
         assert record.get("task_id") == "T-fail-met"
 
 

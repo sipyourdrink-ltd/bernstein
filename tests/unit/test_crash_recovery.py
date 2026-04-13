@@ -201,6 +201,70 @@ def test_spawn_for_resume_prompt_includes_changed_files(tmp_path: Path):
         assert f in prompt
 
 
+def _find_task_by_id(task_store: list[dict], tid: str) -> dict | None:
+    """Find a task dict in the store by ID."""
+    for t in task_store:
+        if t["id"] == tid:
+            return t
+    return None
+
+
+def _set_task_status(task_store: list[dict], tid: str, status: str) -> None:
+    """Set the status of a task in the store."""
+    task = _find_task_by_id(task_store, tid)
+    if task is not None:
+        task["status"] = status
+
+
+def _handle_get_request(request: httpx.Request, task_store: list[dict]) -> httpx.Response:
+    """Handle GET requests in the mock transport."""
+    if request.url.path == "/tasks":
+        return httpx.Response(200, json=task_store)
+    if "/tasks/" in request.url.path:
+        tid = request.url.path.split("/tasks/")[1]
+        task = _find_task_by_id(task_store, tid)
+        if task is not None:
+            return httpx.Response(200, json=task)
+        return httpx.Response(404, json={"detail": "not found"})
+    return httpx.Response(404, json={"detail": "unhandled"})
+
+
+def _handle_post_request(request: httpx.Request, task_store: list[dict]) -> httpx.Response:
+    """Handle POST requests in the mock transport."""
+    path = request.url.path
+    if path == "/tasks":
+        body = json.loads(request.content)
+        new_task = {
+            **body,
+            "id": f"retry-{len(task_store)}",
+            "status": "open",
+            "completion_signals": [],
+            "progress_log": [],
+            "version": 1,
+            "mcp_servers": [],
+        }
+        task_store.append(new_task)
+        return httpx.Response(201, json=new_task)
+
+    status_actions = {"/fail": "failed", "/complete": "done", "/block": "blocked"}
+    for suffix, status in status_actions.items():
+        if suffix in path:
+            tid = path.split("/tasks/")[1].replace(suffix, "")
+            _set_task_status(task_store, tid, status)
+            return httpx.Response(200, json={"ok": True})
+
+    return httpx.Response(404, json={"detail": "unhandled"})
+
+
+def _route_mock_request(request: httpx.Request, task_store: list[dict]) -> httpx.Response:
+    """Route a mock HTTP request to the appropriate handler."""
+    if request.method == "GET":
+        return _handle_get_request(request, task_store)
+    if request.method == "POST":
+        return _handle_post_request(request, task_store)
+    return httpx.Response(404, json={"detail": "unhandled"})
+
+
 # ---------------------------------------------------------------------------
 # 4. Orchestrator crash tracking — crash count incremented
 # ---------------------------------------------------------------------------
@@ -217,46 +281,7 @@ def _make_orchestrator(
     task_store: list[dict] = list(tasks or [])
 
     def _handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/tasks":
-            return httpx.Response(200, json=task_store)
-        if request.method == "GET" and "/tasks/" in request.url.path:
-            tid = request.url.path.split("/tasks/")[1]
-            for t in task_store:
-                if t["id"] == tid:
-                    return httpx.Response(200, json=t)
-            return httpx.Response(404, json={"detail": "not found"})
-        if request.method == "POST" and request.url.path == "/tasks":
-            body = json.loads(request.content)
-            new_task = {
-                **body,
-                "id": f"retry-{len(task_store)}",
-                "status": "open",
-                "completion_signals": [],
-                "progress_log": [],
-                "version": 1,
-                "mcp_servers": [],
-            }
-            task_store.append(new_task)
-            return httpx.Response(201, json=new_task)
-        if request.method == "POST" and "/fail" in request.url.path:
-            tid = request.url.path.split("/tasks/")[1].replace("/fail", "")
-            for t in task_store:
-                if t["id"] == tid:
-                    t["status"] = "failed"
-            return httpx.Response(200, json={"ok": True})
-        if request.method == "POST" and "/complete" in request.url.path:
-            tid = request.url.path.split("/tasks/")[1].replace("/complete", "")
-            for t in task_store:
-                if t["id"] == tid:
-                    t["status"] = "done"
-            return httpx.Response(200, json={"ok": True})
-        if request.method == "POST" and "/block" in request.url.path:
-            tid = request.url.path.split("/tasks/")[1].replace("/block", "")
-            for t in task_store:
-                if t["id"] == tid:
-                    t["status"] = "blocked"
-            return httpx.Response(200, json={"ok": True})
-        return httpx.Response(404, json={"detail": "unhandled"})
+        return _route_mock_request(request, task_store)
 
     transport = httpx.MockTransport(_handler)
     client = httpx.Client(transport=transport)
