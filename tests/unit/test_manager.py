@@ -899,7 +899,7 @@ class TestRenderQueueReviewPrompt:
             open_tasks=[],
             claimed_tasks=[],
             failed_tasks=[],
-            _server_url="http://localhost:8052",
+            server_url="http://localhost:8052",
         )
         assert "5 task(s) completed" in prompt
         assert "2 failed" in prompt
@@ -912,7 +912,7 @@ class TestRenderQueueReviewPrompt:
             open_tasks=open_tasks,
             claimed_tasks=[],
             failed_tasks=[],
-            _server_url="http://localhost:8052",
+            server_url="http://localhost:8052",
         )
         assert "Fix CSS layout" in prompt
         assert "frontend" in prompt
@@ -927,7 +927,7 @@ class TestRenderQueueReviewPrompt:
             open_tasks=[],
             claimed_tasks=claimed,
             failed_tasks=failed,
-            _server_url="http://localhost:8052",
+            server_url="http://localhost:8052",
         )
         assert "Add auth" in prompt
         assert "Deploy service" in prompt
@@ -939,7 +939,7 @@ class TestRenderQueueReviewPrompt:
             open_tasks=[],
             claimed_tasks=[],
             failed_tasks=[],
-            _server_url="http://localhost:8052",
+            server_url="http://localhost:8052",
         )
         assert "corrections" in prompt.lower()
 
@@ -950,7 +950,7 @@ class TestRenderQueueReviewPrompt:
             open_tasks=[],
             claimed_tasks=[],
             failed_tasks=[],
-            _server_url="http://localhost:8052",
+            server_url="http://localhost:8052",
         )
         assert '"action"' in prompt
         assert "reassign" in prompt
