@@ -121,40 +121,26 @@ class TestValidateRequestAgainstScope:
     """Tests for request-scope validation."""
 
     def test_valid_operation(self, backend_scope: CredentialScope) -> None:
-        assert validate_request_against_scope(
-            {"operation": "code_gen"}, backend_scope
-        )
+        assert validate_request_against_scope({"operation": "code_gen"}, backend_scope)
 
     def test_invalid_operation(self, backend_scope: CredentialScope) -> None:
-        assert not validate_request_against_scope(
-            {"operation": "web_search"}, backend_scope
-        )
+        assert not validate_request_against_scope({"operation": "web_search"}, backend_scope)
 
     def test_valid_model(self, backend_scope: CredentialScope) -> None:
-        assert validate_request_against_scope(
-            {"model": "gpt-4"}, backend_scope
-        )
+        assert validate_request_against_scope({"model": "gpt-4"}, backend_scope)
 
     def test_invalid_model(self, backend_scope: CredentialScope) -> None:
-        assert not validate_request_against_scope(
-            {"model": "llama-3"}, backend_scope
-        )
+        assert not validate_request_against_scope({"model": "llama-3"}, backend_scope)
 
     def test_no_model_restriction(self) -> None:
         scope = CredentialScope(allowed_operations=("code_gen",))
-        assert validate_request_against_scope(
-            {"model": "anything"}, scope
-        )
+        assert validate_request_against_scope({"model": "anything"}, scope)
 
     def test_tokens_within_budget(self, backend_scope: CredentialScope) -> None:
-        assert validate_request_against_scope(
-            {"tokens": 100}, backend_scope
-        )
+        assert validate_request_against_scope({"tokens": 100}, backend_scope)
 
     def test_tokens_exceeds_budget(self, backend_scope: CredentialScope) -> None:
-        assert not validate_request_against_scope(
-            {"tokens": 10000}, backend_scope
-        )
+        assert not validate_request_against_scope({"tokens": 10000}, backend_scope)
 
     def test_empty_request(self, backend_scope: CredentialScope) -> None:
         assert validate_request_against_scope({}, backend_scope)
@@ -251,30 +237,20 @@ class TestCredentialScopeManager:
 
     def test_validate_request(self, manager: CredentialScopeManager) -> None:
         cred = manager.create("agent-1", get_scope_for_role("backend"))
-        assert manager.validate_request(
-            cred.key_id, {"operation": "code_gen", "model": "gpt-4"}
-        )
+        assert manager.validate_request(cred.key_id, {"operation": "code_gen", "model": "gpt-4"})
 
     def test_validate_request_revoked(self, manager: CredentialScopeManager) -> None:
         cred = manager.create("agent-1", get_scope_for_role("backend"))
         manager.revoke(cred.key_id)
-        assert not manager.validate_request(
-            cred.key_id, {"operation": "code_gen"}
-        )
+        assert not manager.validate_request(cred.key_id, {"operation": "code_gen"})
 
-    def test_validate_request_out_of_scope(
-        self, manager: CredentialScopeManager
-    ) -> None:
+    def test_validate_request_out_of_scope(self, manager: CredentialScopeManager) -> None:
         cred = manager.create("agent-1", get_scope_for_role("backend"))
-        assert not manager.validate_request(
-            cred.key_id, {"operation": "web_search"}
-        )
+        assert not manager.validate_request(cred.key_id, {"operation": "web_search"})
 
     def test_cleanup_expired(self, manager: CredentialScopeManager) -> None:
         # Create a credential that expires immediately
-        cred = manager.create(
-            "agent-1", get_scope_for_role("backend"), ttl_hours=0
-        )
+        cred = manager.create("agent-1", get_scope_for_role("backend"), ttl_hours=0)
         # Manually set expiration in the past
         expired_cred = ScopedCredential(
             key_id=cred.key_id,

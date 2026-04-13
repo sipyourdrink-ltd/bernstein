@@ -36,8 +36,26 @@ _GOOGLE_SECTION_RE = re.compile(
 _GOOGLE_PARAM_RE = re.compile(r"^[ \t]{4,20}(\w+)[ \t]{0,10}(?:\([^)]{0,100}\))?[ \t]{0,10}:", re.MULTILINE)
 
 # NumPy: "Parameters\n----------"
+_NUMPY_SECTION_NAMES = frozenset(
+    {
+        "Parameters",
+        "Returns",
+        "Return",
+        "Raises",
+        "Raise",
+        "Yields",
+        "Yield",
+        "Attributes",
+        "Attribute",
+        "Examples",
+        "Example",
+        "Notes",
+        "Note",
+        "See Also",
+    }
+)
 _NUMPY_SECTION_RE = re.compile(
-    r"^\s*(Parameters|Returns?|Raises?|Yields?|Attributes?|Examples?|Notes?|See Also)[ \t]*\n[ \t]*[-=]+",
+    r"^\s*([A-Z][A-Za-z ]+)[ \t]*\n[ \t]*[-=]+",
     re.MULTILINE,
 )
 # NumPy param line: "name : type"
@@ -136,7 +154,7 @@ def _extract_documented_params_google(docstring: str) -> set[str]:
     # ``Returns:`` / ``Raises:``).  We must NOT terminate on the param
     # lines themselves which are typically indented by 4+ spaces.
     args_match = re.search(
-        r"Args:\s*\n(.*?)(?:\n[ \t]{0,3}[A-Z]\w*:|\Z)",
+        r"Args:\s*\n((?:(?!\n[ \t]{0,3}[A-Z]\w*:).)*)",
         docstring,
         re.DOTALL,
     )
@@ -152,7 +170,7 @@ def _extract_documented_params_google(docstring: str) -> set[str]:
 def _extract_documented_params_numpy(docstring: str) -> set[str]:
     """Extract parameter names from a NumPy-style docstring."""
     params_match = re.search(
-        r"Parameters[ \t]*\n[ \t]*[-=]+[ \t]*\n(.*?)(?:\n[ \t]*\w[^\n]*\n[ \t]*[-=]+|$)",
+        r"Parameters[ \t]*\n[ \t]*[-=]+[ \t]*\n((?:(?!\n[ \t]*\w[^\n]*\n[ \t]*[-=]+).)*)",
         docstring,
         re.DOTALL,
     )

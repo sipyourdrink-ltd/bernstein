@@ -82,21 +82,23 @@ class TestDetectMergeReadyChunk:
     """Tests for merge-ready chunk detection."""
 
     def test_detects_markdown_header_boundary(self) -> None:
-        output = "\n".join([
-            "Creating src/app.py",
-            "# Some code here",
-            "x = 1",
-            "y = 2",
-            "a = 3",
-            "b = 4",
-            "c = 5",
-            "d = 6",
-            "e = 7",
-            "f = 8",
-            "",
-            "## File 2",
-            "Creating src/app2.py",
-        ])
+        output = "\n".join(
+            [
+                "Creating src/app.py",
+                "# Some code here",
+                "x = 1",
+                "y = 2",
+                "a = 3",
+                "b = 4",
+                "c = 5",
+                "d = 6",
+                "e = 7",
+                "f = 8",
+                "",
+                "## File 2",
+                "Creating src/app2.py",
+            ]
+        )
         chunk = detect_merge_ready_chunk("task-1", output, min_lines=5)
         assert chunk is not None
         assert chunk.task_id == "task-1"
@@ -122,13 +124,15 @@ class TestDetectMergeReadyChunk:
 
     def test_custom_patterns(self) -> None:
         patterns = [re.compile(r"^=== CHUNK ===$")]
-        output = "\n".join([
-            "some content",
-            "more content",
-            "even more",
-            "=== CHUNK ===",
-            "next part",
-        ])
+        output = "\n".join(
+            [
+                "some content",
+                "more content",
+                "even more",
+                "=== CHUNK ===",
+                "next part",
+            ]
+        )
         chunk = detect_merge_ready_chunk("task-1", output, patterns=patterns, min_lines=2)
         assert chunk is not None
 
@@ -192,33 +196,41 @@ class TestMergeChunk:
     @pytest.mark.asyncio
     async def test_merge_passed_chunk(self) -> None:
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="t1",
-            files=("src/a.py",), quality_gate_passed=True,
+            chunk_id="c1",
+            task_id="t1",
+            files=("src/a.py",),
+            quality_gate_passed=True,
         )
         assert await merge_chunk(chunk)
 
     @pytest.mark.asyncio
     async def test_reject_failed_quality_gate(self) -> None:
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="t1",
-            files=("src/a.py",), quality_gate_passed=False,
+            chunk_id="c1",
+            task_id="t1",
+            files=("src/a.py",),
+            quality_gate_passed=False,
         )
         assert not await merge_chunk(chunk)
 
     @pytest.mark.asyncio
     async def test_merge_empty_files(self) -> None:
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="t1",
-            files=(), quality_gate_passed=True,
+            chunk_id="c1",
+            task_id="t1",
+            files=(),
+            quality_gate_passed=True,
         )
         assert await merge_chunk(chunk)
 
     @pytest.mark.asyncio
     async def test_merge_final_chunk(self) -> None:
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="t1",
+            chunk_id="c1",
+            task_id="t1",
             files=("src/a.py", "src/b.py"),
-            quality_gate_passed=True, is_final=True,
+            quality_gate_passed=True,
+            is_final=True,
         )
         assert await merge_chunk(chunk)
 
@@ -247,7 +259,8 @@ class TestStreamingMergeManager:
         mgr = StreamingMergeManager()
         mgr.register("task-1")
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="task-1",
+            chunk_id="c1",
+            task_id="task-1",
             files=("src/a.py", "src/b.py"),
             quality_gate_passed=True,
         )
@@ -260,9 +273,11 @@ class TestStreamingMergeManager:
         mgr = StreamingMergeManager()
         mgr.register("task-1")
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="task-1",
+            chunk_id="c1",
+            task_id="task-1",
             files=("src/a.py",),
-            quality_gate_passed=True, is_final=True,
+            quality_gate_passed=True,
+            is_final=True,
         )
         mgr.record_chunk(chunk)
         assert mgr.is_complete("task-1")
@@ -271,8 +286,10 @@ class TestStreamingMergeManager:
         mgr = StreamingMergeManager()
         mgr.register("task-1")
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="task-1",
-            files=("src/a.py",), quality_gate_passed=True,
+            chunk_id="c1",
+            task_id="task-1",
+            files=("src/a.py",),
+            quality_gate_passed=True,
         )
         mgr.record_pending(chunk)
         state = mgr.get_state("task-1")
@@ -282,8 +299,10 @@ class TestStreamingMergeManager:
         mgr = StreamingMergeManager()
         mgr.register("task-1")
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="task-1",
-            files=("src/a.py",), quality_gate_passed=True,
+            chunk_id="c1",
+            task_id="task-1",
+            files=("src/a.py",),
+            quality_gate_passed=True,
         )
         mgr.record_pending(chunk)
         mgr.record_chunk(chunk)
@@ -294,12 +313,14 @@ class TestStreamingMergeManager:
         mgr = StreamingMergeManager()
         mgr.register("task-1")
         c1 = IncrementalChunk(
-            chunk_id="c1", task_id="task-1",
+            chunk_id="c1",
+            task_id="task-1",
             files=("src/a.py", "src/b.py"),
             quality_gate_passed=True,
         )
         c2 = IncrementalChunk(
-            chunk_id="c2", task_id="task-1",
+            chunk_id="c2",
+            task_id="task-1",
             files=("src/b.py", "src/c.py"),
             quality_gate_passed=True,
         )
@@ -313,9 +334,11 @@ class TestStreamingMergeManager:
         mgr.register("task-1")
         mgr.register("task-2")
         chunk = IncrementalChunk(
-            chunk_id="c1", task_id="task-2",
+            chunk_id="c1",
+            task_id="task-2",
             files=("src/a.py",),
-            quality_gate_passed=True, is_final=True,
+            quality_gate_passed=True,
+            is_final=True,
         )
         mgr.record_chunk(chunk)
         active = mgr.list_active()
@@ -338,12 +361,16 @@ class TestStreamingMergeManager:
         mgr.register("task-1")
         mgr.register("task-2")
         c1 = IncrementalChunk(
-            chunk_id="c1", task_id="task-1",
-            files=("a.py",), quality_gate_passed=True,
+            chunk_id="c1",
+            task_id="task-1",
+            files=("a.py",),
+            quality_gate_passed=True,
         )
         c2 = IncrementalChunk(
-            chunk_id="c2", task_id="task-2",
-            files=("b.py",), quality_gate_passed=True,
+            chunk_id="c2",
+            task_id="task-2",
+            files=("b.py",),
+            quality_gate_passed=True,
         )
         mgr.record_chunk(c1)
         mgr.record_chunk(c2)

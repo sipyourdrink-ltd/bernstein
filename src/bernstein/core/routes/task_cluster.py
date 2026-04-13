@@ -24,6 +24,14 @@ if TYPE_CHECKING:
 
 router = APIRouter()
 
+_AUTH_RESPONSES: dict[int | str, dict[str, str]] = {
+    401: {"description": "Cluster authentication failed"},
+}
+_AUTH_404_RESPONSES: dict[int | str, dict[str, str]] = {
+    401: {"description": "Cluster authentication failed"},
+    404: {"description": "Node not found"},
+}
+
 
 def _get_store(request: Request) -> TaskStore:
     return request.app.state.store  # type: ignore[no-any-return]
@@ -52,7 +60,7 @@ def _verify_cluster_auth(request: Request, required_scope: str) -> None:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
-@router.post("/cluster/nodes", status_code=201, responses={401: {"description": "Cluster authentication failed"}})
+@router.post("/cluster/nodes", status_code=201, responses=_AUTH_RESPONSES)
 def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
     """Register a new node in the cluster."""
     from bernstein.core.cluster_auth import SCOPE_NODE_REGISTER
@@ -79,7 +87,7 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
 
 @router.post(
     "/cluster/nodes/{node_id}/heartbeat",
-    responses={404: {"description": "Node not registered"}},
+    responses={**_AUTH_RESPONSES, 404: {"description": "Node not registered"}},
 )
 def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -> NodeResponse:
     """Record a heartbeat from a cluster node."""
@@ -102,7 +110,7 @@ def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -
     return node_to_response(node)
 
 
-@router.delete("/cluster/nodes/{node_id}", status_code=204, responses={404: {"description": "Node not found"}})
+@router.delete("/cluster/nodes/{node_id}", status_code=204, responses=_AUTH_404_RESPONSES)
 def unregister_node(node_id: str, request: Request) -> Response:
     """Remove a node from the cluster."""
     from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
@@ -114,7 +122,7 @@ def unregister_node(node_id: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
-@router.post("/cluster/nodes/{node_id}/cordon", responses={404: {"description": "Node not found"}})
+@router.post("/cluster/nodes/{node_id}/cordon", responses=_AUTH_404_RESPONSES)
 def cordon_node(node_id: str, request: Request) -> dict[str, str]:
     """Cordon a node -- exclude from scheduling."""
     from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
@@ -127,7 +135,7 @@ def cordon_node(node_id: str, request: Request) -> dict[str, str]:
     return {"status": "cordoned", "node_id": node_id}
 
 
-@router.post("/cluster/nodes/{node_id}/uncordon", responses={404: {"description": "Node not found"}})
+@router.post("/cluster/nodes/{node_id}/uncordon", responses=_AUTH_404_RESPONSES)
 def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
     """Uncordon a node -- resume accepting tasks."""
     from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
@@ -140,7 +148,7 @@ def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
     return {"status": "uncordoned", "node_id": node_id}
 
 
-@router.post("/cluster/nodes/{node_id}/drain", responses={404: {"description": "Node not found"}})
+@router.post("/cluster/nodes/{node_id}/drain", responses=_AUTH_404_RESPONSES)
 def drain_node(node_id: str, request: Request) -> dict[str, str]:
     """Start draining a node -- cordon + signal agents to finish."""
     from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN

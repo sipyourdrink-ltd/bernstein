@@ -123,7 +123,7 @@ async def create_session(body: CreateSessionRequest, request: Request) -> dict[s
     }
 
 
-@router.get("/sessions", response_model=list[SessionResponse])
+@router.get("/sessions", response_model=list[SessionResponse], responses={503: {"description": "Sandbox not enabled"}})
 async def list_sessions(request: Request, include_finished: bool = False) -> list[dict[str, Any]]:
     """List sandbox sessions."""
     mgr = _get_manager(request)
@@ -164,7 +164,11 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
     "/{session_id}",
     response_class=HTMLResponse,
     include_in_schema=False,
-    responses={400: {"description": "Invalid session id"}, 404: {"description": "Session not found"}},
+    responses={
+        400: {"description": "Invalid session id"},
+        404: {"description": "Session not found"},
+        503: {"description": "Sandbox not enabled"},
+    },
 )
 async def sandbox_dashboard(session_id: str, request: Request) -> HTMLResponse:
     """Serve the sandbox session dashboard page."""

@@ -117,7 +117,7 @@ class ChatSession:
 # patterns are tried first.
 
 _ADD_STAGE_RE = re.compile(
-    r"add\s+(?:a\s+)?(?:new\s+)?stage\s+(?:for\s+|named\s+|called\s+)?(.+)",
+    r"add\s+(?:(?:a|new)\s+)*stage\s+(?:(?:for|named|called)\s+)?(.+)",
     re.IGNORECASE,
 )
 _REMOVE_STAGE_RE = re.compile(

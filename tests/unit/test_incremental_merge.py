@@ -226,13 +226,6 @@ class TestIncrementalMergeFiles:
         """When a merge_lock is passed, it is held during the git operations."""
         runtime_dir = tmp_path / "runtime"
         lock = threading.Lock()
-        lock_held_during_checkout = False
-
-        def mock_run_git(args: list[str], *posargs: object, **kwargs: object) -> GitResult:
-            nonlocal lock_held_during_checkout
-            if args and args[0] == "checkout":
-                lock_held_during_checkout = lock.locked()
-            return _ok("src/foo.py\n") if args[0] == "ls-tree" else _ok("")
 
         commit_sha = "a" * 40
         call_seq = [

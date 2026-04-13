@@ -80,6 +80,11 @@ if TYPE_CHECKING:
 
 router = APIRouter()
 
+_TENANT_RESPONSES: dict[int | str, dict[str, str]] = {
+    403: {"description": "Tenant scope access denied"},
+    404: {"description": "Resource not found or tenant mismatch"},
+}
+
 
 def _get_store(request: Request) -> TaskStore:
     return request.app.state.store  # type: ignore[no-any-return]
@@ -569,7 +574,7 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
 
 @router.get(
     "/tasks/next/{role}",
-    responses={404: {"description": "No open tasks for role"}, 503: {"description": "Server is draining"}},
+    responses={**_TENANT_RESPONSES, 503: {"description": "Server is draining"}},
 )
 async def next_task(
     role: str,

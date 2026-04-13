@@ -331,7 +331,7 @@ def _build_proprietary_data_rules(config: DLPConfig) -> list[_RuleEntry]:
             "proprietary_data",
             "customer_id",
             re.compile(
-                r"""(?i)(?:customer_id|account_id|org_id|organisation_id|organization_id|client_id)\s*[=:]\s*["']?[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}["']?"""
+                r"""(?i)(?:customer|account|org(?:aniz?ation)?|client)_id\s*[=:]\s*["']?[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}["']?"""
             ),
             "medium",
             "Customer/account UUID — may expose production customer data",

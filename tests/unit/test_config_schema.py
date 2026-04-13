@@ -54,7 +54,7 @@ def _write_yaml(tmp_path: Path, data: dict[str, Any], name: str = "bernstein.yam
 # =========================================================================
 
 
-class TestCFG001_PydanticModel:
+class TestCFGPydanticModel:
     """Pydantic model matches bernstein.yaml structure."""
 
     def test_minimal_config(self) -> None:
@@ -206,7 +206,7 @@ class TestCFG001_PydanticModel:
 # =========================================================================
 
 
-class TestCFG002_CrossFieldValidation:
+class TestCFGCrossFieldValidation:
     """Cross-field validators catch conflicting settings."""
 
     def test_zero_budget_means_unlimited(self) -> None:
@@ -278,7 +278,7 @@ class TestCFG002_CrossFieldValidation:
 # =========================================================================
 
 
-class TestCFG003_EnvVarExpansion:
+class TestCFGEnvVarExpansion:
     """Secure ${VAR} expansion with ${VAR:-default} fallback."""
 
     def test_simple_expansion(self) -> None:
@@ -358,7 +358,7 @@ class TestCFG003_EnvVarExpansion:
 # =========================================================================
 
 
-class TestCFG004_ConfigMigration:
+class TestCFGConfigMigration:
     """Version field and migration registry."""
 
     def test_current_version_no_migration(self) -> None:
@@ -448,7 +448,7 @@ class TestCFG004_ConfigMigration:
 # =========================================================================
 
 
-class TestCFG005_ValidateFilePaths:
+class TestCFGValidateFilePaths:
     """Check config-referenced paths exist during startup."""
 
     def test_context_files_exist(self, tmp_path: Path) -> None:

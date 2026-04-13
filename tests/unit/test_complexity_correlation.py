@@ -121,9 +121,7 @@ class TestAgentOutcome:
 
 class TestCorrelationResult:
     def test_frozen(self) -> None:
-        cr = CorrelationResult(
-            metric_name="x", correlation_coefficient=0.5, p_value=0.01, sample_size=30, insight="ok"
-        )
+        cr = CorrelationResult(metric_name="x", correlation_coefficient=0.5, p_value=0.01, sample_size=30, insight="ok")
         with pytest.raises(AttributeError):
             cr.p_value = 0.99  # type: ignore[misc]
 
@@ -136,9 +134,7 @@ class TestAnalysisReport:
 
     def test_tuple_fields(self) -> None:
         r = AnalysisReport(
-            correlations=(
-                CorrelationResult("a", 0.1, 0.5, 10, "weak"),
-            ),
+            correlations=(CorrelationResult("a", 0.1, 0.5, 10, "weak"),),
             recommendations=("do X",),
             high_risk_files=("f.py",),
         )
@@ -154,42 +150,58 @@ class TestAnalysisReport:
 
 class TestComputeFileMetrics:
     def test_simple_file(self, tmp_path: Path) -> None:
-        p = _write_py(tmp_path, "simple.py", """\
+        p = _write_py(
+            tmp_path,
+            "simple.py",
+            """\
             x = 1
             y = 2
-        """)
+        """,
+        )
         m = compute_file_metrics(p)
         assert m.cyclomatic_complexity == 0
         assert m.fan_out == 0
         assert m.line_count >= 2
 
     def test_branching(self, tmp_path: Path) -> None:
-        p = _write_py(tmp_path, "branch.py", """\
+        p = _write_py(
+            tmp_path,
+            "branch.py",
+            """\
             def f(x):
                 if x > 0:
                     for i in range(x):
                         while True:
                             break
-        """)
+        """,
+        )
         m = compute_file_metrics(p)
         assert m.cyclomatic_complexity == 3  # if + for + while
 
     def test_bool_ops(self, tmp_path: Path) -> None:
-        p = _write_py(tmp_path, "boolops.py", """\
+        p = _write_py(
+            tmp_path,
+            "boolops.py",
+            """\
             if a and b and c:
                 pass
-        """)
+        """,
+        )
         m = compute_file_metrics(p)
         # if=1, BoolOp with 3 values=2 extra branches
         assert m.cyclomatic_complexity == 3
 
     def test_fan_out_imports(self, tmp_path: Path) -> None:
-        p = _write_py(tmp_path, "imports.py", """\
+        p = _write_py(
+            tmp_path,
+            "imports.py",
+            """\
             import os
             import sys
             from pathlib import Path
             from collections import defaultdict
-        """)
+        """,
+        )
         m = compute_file_metrics(p)
         assert m.fan_out == 4  # os, sys, pathlib, collections
 
@@ -212,26 +224,34 @@ class TestComputeFileMetrics:
             compute_file_metrics("/nonexistent/file.py")
 
     def test_async_nodes(self, tmp_path: Path) -> None:
-        p = _write_py(tmp_path, "async_nodes.py", """\
+        p = _write_py(
+            tmp_path,
+            "async_nodes.py",
+            """\
             import asyncio
             async def f():
                 async for x in aiter():
                     async with ctx() as c:
                         pass
-        """)
+        """,
+        )
         m = compute_file_metrics(p)
         # async for + async with = 2
         assert m.cyclomatic_complexity == 2
 
     def test_except_handler(self, tmp_path: Path) -> None:
-        p = _write_py(tmp_path, "exc.py", """\
+        p = _write_py(
+            tmp_path,
+            "exc.py",
+            """\
             try:
                 pass
             except ValueError:
                 pass
             except TypeError:
                 pass
-        """)
+        """,
+        )
         m = compute_file_metrics(p)
         assert m.cyclomatic_complexity == 2  # two except handlers
 
@@ -433,9 +453,7 @@ class TestBuildAnalysisReport:
 class TestRenderCorrelationReport:
     def test_contains_sections(self) -> None:
         report = AnalysisReport(
-            correlations=(
-                CorrelationResult("cyclomatic_complexity", 0.5, 0.01, 30, "strong"),
-            ),
+            correlations=(CorrelationResult("cyclomatic_complexity", 0.5, 0.01, 30, "strong"),),
             recommendations=("Reduce complexity",),
             high_risk_files=("big.py",),
         )
@@ -457,9 +475,7 @@ class TestRenderCorrelationReport:
 
     def test_table_header(self) -> None:
         report = AnalysisReport(
-            correlations=(
-                CorrelationResult("fan_in", 0.2, 0.3, 10, "weak"),
-            ),
+            correlations=(CorrelationResult("fan_in", 0.2, 0.3, 10, "weak"),),
             recommendations=(),
             high_risk_files=(),
         )

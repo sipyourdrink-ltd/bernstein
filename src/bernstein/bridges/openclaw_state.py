@@ -140,7 +140,7 @@ class OpenClawRunStore:
         record = self.load(agent_id)
         if record is None:
             raise BridgeError(f"Unknown OpenClaw run {agent_id}", agent_id=agent_id)
-        updated: OpenClawRunRecord = replace(record, last_update=time.time(), **changes)  # type: ignore[assignment]
+        updated = cast(OpenClawRunRecord, replace(record, last_update=time.time(), **changes))
         self.save(updated)
         return updated
 

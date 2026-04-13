@@ -28,8 +28,7 @@ _FILE_LINE_RE = re.compile(
     r"File\s+\"([^\"]+)\",\s+line\s+(\d+)",
 )
 _TRACEBACK_BLOCK_RE = re.compile(
-    r"(Traceback\s+\(most recent call last\):.*?)(?=\n\S|\Z)",
-    re.DOTALL,
+    r"(Traceback\s+\(most recent call last\):(?:\n[ \t]+[^\n]*|\n(?!\S)[^\n]*)*)(?=\n\S|\Z)",
 )
 _ERROR_LINE_RE = re.compile(
     r"^((?:[\w.]*\w)?(?:Error|Exception|Failure)[^\n]*)",

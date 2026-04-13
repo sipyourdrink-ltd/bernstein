@@ -961,13 +961,13 @@ code:not([class]) {
   border-radius: var(--radius-xs);
 }
 
-.method-get  { background: rgba(22, 163, 74, 0.12); color: #15803d; }
-.method-post { background: rgba(37, 99, 235, 0.12); color: #1d4ed8; }
-[data-theme="dark"] .method-get  { background: rgba(74, 222, 128, 0.15); color: #86efac; }
-[data-theme="dark"] .method-post { background: rgba(96, 165, 250, 0.15); color: #93c5fd; }
+.method-get  { background: rgba(22, 163, 74, 0.12); color: #166534; }
+.method-post { background: rgba(37, 99, 235, 0.12); color: #1e40af; }
+[data-theme="dark"] .method-get  { background: rgba(74, 222, 128, 0.18); color: #4ade80; }
+[data-theme="dark"] .method-post { background: rgba(96, 165, 250, 0.18); color: #60a5fa; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .method-get  { background: rgba(74, 222, 128, 0.15); color: #86efac; }
-  :root:not([data-theme="light"]) .method-post { background: rgba(96, 165, 250, 0.15); color: #93c5fd; }
+  :root:not([data-theme="light"]) .method-get  { background: rgba(74, 222, 128, 0.18); color: #4ade80; }
+  :root:not([data-theme="light"]) .method-post { background: rgba(96, 165, 250, 0.18); color: #60a5fa; }
 }
 
 .endpoint-path {

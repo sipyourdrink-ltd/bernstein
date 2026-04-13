@@ -62,7 +62,7 @@
     .skeleton-row { height: 32px; width: 100%; margin-bottom: 4px; }
     /* Filter chip */
     .chip { transition: all 0.15s ease; user-select: none; }
-    .chip-active { background: rgba(79, 70, 229, 0.25); color: #a5b4fc; border-color: rgba(79, 70, 229, 0.4); }
+    .chip-active { background: rgba(79, 70, 229, 0.25); color: #c7d2fe; border-color: rgba(79, 70, 229, 0.4); }
     .chip-inactive { background: transparent; color: #737373; border-color: #2a2a2d; }
     .chip-inactive:hover { color: #a3a3a3; border-color: #3a3a3d; }
     /* Sort indicator */
@@ -1055,6 +1055,7 @@
             if (!this.connected) this.connected = true;
           } catch (_fetchErr) {
             // Fetch failed — mark disconnected and fall back to polling
+            void _fetchErr;
             this.connected = false;
             if (!this.pollTimer) {
               this.startPolling();
@@ -1070,6 +1071,7 @@
             this.workers = Array.isArray(data) ? data : (data.nodes || []);
           } catch (_clusterErr) {
             // Cluster endpoints may not be available in single-node mode
+            void _clusterErr;
           }
         },
 
@@ -1127,7 +1129,7 @@
                   this.connected = true;
                 }
               } catch (_wsParseErr) {
-                // Malformed WebSocket message — ignore
+                void _wsParseErr; // Malformed WebSocket message — ignore
               }
             };
 
@@ -1151,6 +1153,7 @@
             };
           } catch (_wsConnErr) {
             // WebSocket not supported — fall back to SSE
+            void _wsConnErr;
             this.wsActive = false;
             this.connectSSE();
           }
@@ -1204,12 +1207,13 @@
                   this.fetchData();
                 }
               } catch (_sseParseErr) {
-                // Non-JSON SSE message — refresh data anyway
+                void _sseParseErr; // Non-JSON SSE message — refresh data anyway
                 this.fetchData();
               }
             };
           } catch (_sseConnErr) {
             // SSE not available — fall back to polling
+            void _sseConnErr;
             this.connected = false;
             this.startPolling();
           }
@@ -1255,7 +1259,7 @@
                   }
                 }
               } catch (_logParseErr) {
-                // Malformed agent log message — skip
+                void _logParseErr; // Malformed agent log message — skip
               }
             };
 
@@ -1269,6 +1273,7 @@
             };
           } catch (_agentStreamErr) {
             // Agent stream unavailable — fall back to polling
+            void _agentStreamErr;
             this._logPollTimer = setInterval(() => this.fetchAgentLogs(), 2000);
             this.fetchAgentLogs();
           }
@@ -1302,7 +1307,7 @@
               }
             }
           } catch (_logFetchErr) {
-            // Agent may not have logs yet
+            void _logFetchErr; // Agent may not have logs yet
           }
         },
 
@@ -1317,7 +1322,7 @@
             this.addActivity('failed', 'Killed agent ' + agentId.slice(0, 12));
             await this.fetchData();
           } catch (_killErr) {
-            // Kill request failed — best-effort action
+            void _killErr; // Kill request failed — best-effort action
           }
         },
 
@@ -1330,7 +1335,7 @@
             });
             await this.fetchData();
           } catch (_spawnErr) {
-            // Spawn request failed — best-effort action
+            void _spawnErr; // Spawn request failed — best-effort action
           }
         },
 
@@ -1346,7 +1351,7 @@
               this.stats.max_agents = newVal;
             }
           } catch (_configErr) {
-            // Config update failed — best-effort action
+            void _configErr; // Config update failed — best-effort action
           }
         },
 
@@ -1359,7 +1364,7 @@
             });
             await this.fetchData();
           } catch (_cancelErr) {
-            // Cancel request failed — best-effort action
+            void _cancelErr; // Cancel request failed — best-effort action
           }
         },
 
