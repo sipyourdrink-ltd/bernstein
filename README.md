@@ -117,7 +117,7 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
 | Feature | Bernstein | CrewAI | AutoGen | LangGraph |
 |---------|-----------|--------|---------|-----------|
 | Orchestrator | Deterministic code | LLM-driven | LLM-driven | Graph + LLM |
-| Works with | Any CLI agent (18+) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (18 built-in) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
 | Verification | Janitor + quality gates | No | No | Conditional edges |
 | Cost tracking | Built-in | No | No | No |
@@ -151,6 +151,7 @@ bernstein dep-impact # API breakage + downstream caller impact
 bernstein aliases    # show command shortcuts
 bernstein config-path    # show config file locations
 bernstein init-wizard    # interactive project setup
+bernstein debug-bundle   # collect logs, config, and state for bug reports
 ```
 
 ```bash

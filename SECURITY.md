@@ -111,9 +111,9 @@ See [`docs/bug-bounty.md`](docs/bug-bounty.md) for the full sandbox guide.
 
 | Version | Supported |
 |---------|-----------|
-| 1.4.x   | Yes       |
-| 1.3.x   | Critical patches only |
-| < 1.3   | No        |
+| 1.7.x   | Yes       |
+| 1.6.x   | Critical patches only |
+| < 1.6   | No        |
 
 Security patches are backported to the current minor version only. Always run the latest release.
 

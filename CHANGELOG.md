@@ -15,6 +15,28 @@ This file captures the human-curated highlights.
 ### Added
 - Placeholder section for changes landing on `main` between releases.
 
+## [1.7.0] - 2026-04-13
+
+### Changed
+- **Major architecture refactoring**: reorganized `core/` from 533 flat files into 22 sub-packages
+  (orchestration/, agents/, tasks/, quality/, server/, cost/, tokens/, security/, config/,
+  observability/, protocols/, git/, persistence/, planning/, routing/, communication/,
+  knowledge/, plugins_core/, routes/, memory/, trigger_sources/, grpc_gen/).
+- Module decomposition: `orchestrator.py` split into 7+ sub-modules, `spawner` into 4,
+  `task_lifecycle` into 4, with backward-compatible shims at the original import paths.
+- Created `defaults.py` with 150+ configurable constants extracted from scattered literals.
+- CLI commands reorganized into `cli/commands/` sub-package (70+ command modules).
+
+### Added
+- `bernstein debug-bundle` command for collecting logs, config, and state for bug reports.
+- IaC (Infrastructure-as-Code) adapter.
+- 2,600+ new tests (total test files now exceed 1,000).
+- Protocol negotiation for MCP/A2A compatibility.
+- Quality gates, cost tracking, and token monitoring moved into dedicated sub-packages.
+
+### Fixed
+- Numerous orchestration, lifecycle, and merge-ordering bugs addressed during refactoring.
+
 ## [1.6.4] - 2026-04-11
 
 ### Fixed
@@ -69,7 +91,8 @@ This file captures the human-curated highlights.
 - TUI dashboard, web dashboard, Prometheus `/metrics`, and OTel exporter
   presets.
 
-[Unreleased]: https://github.com/chernistry/bernstein/compare/v1.6.4...HEAD
+[Unreleased]: https://github.com/chernistry/bernstein/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/chernistry/bernstein/compare/v1.6.4...v1.7.0
 [1.6.4]: https://github.com/chernistry/bernstein/compare/v1.6.0...v1.6.4
 [1.6.0]: https://github.com/chernistry/bernstein/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/chernistry/bernstein/compare/v1.4.0...v1.5.0

@@ -58,34 +58,36 @@ See [AGENTS.md](AGENTS.md) for the full doctrine, including doctrine, change cla
 
 ## CLI Structure
 
-The CLI is decomposed into separate modules under `src/bernstein/cli/`:
+The CLI is split into two layers under `src/bernstein/cli/`:
+
+**Top-level** (`cli/`): `main.py` (Click group), `run.py`, `run_cmd.py`, `live.py`, `dashboard.py`, `helpers.py`, `ui.py`, `status.py`
+
+**Commands sub-package** (`cli/commands/`): 70+ command modules including:
 
 | Module | Purpose |
 |---|---|
-| `main.py` | Click group and top-level flags |
 | `run_cmd.py` | `bernstein run` / `-g` orchestration entry point |
 | `stop_cmd.py` | `bernstein stop` graceful shutdown |
 | `status_cmd.py` | `bernstein status` / `bernstein ps` |
 | `evolve_cmd.py` | `bernstein evolve` subcommands |
 | `agents_cmd.py` | `bernstein agents` catalog commands |
 | `advanced_cmd.py` | Advanced / less common commands |
+| `debug_cmd.py` | `bernstein debug-bundle` diagnostics |
+| `cost.py` | Cost tracking display |
+| `doctor_cmd.py` | Pre-flight health checks |
 | `checkpoint_cmd.py` | Checkpoint save/restore |
-| `eval_benchmark_cmd.py` | Benchmark evaluation harness |
 | `task_cmd.py` | Direct task manipulation |
 | `workspace_cmd.py` | Multi-repo workspace commands |
-| `wrap_up_cmd.py` | Session wrap-up commands |
-| `helpers.py` | Shared utilities (PID files, port checks, output formatting) |
-| `errors.py` | CLI error types and handlers |
-| `cost.py` | Cost tracking display |
-| `dashboard.py` | Web dashboard launcher |
-| `live.py` | TUI dashboard attachment |
-| `ui.py` | Shared UI components |
+| `audit_cmd.py` | Audit log inspection |
+| `ci_cmd.py` | CI integration commands |
+| `policy_cmd.py` | Policy management |
+| `triggers_cmd.py` | External trigger management |
 
-When adding a new CLI command, create a new `*_cmd.py` module and register it in `main.py`.
+When adding a new CLI command, create a new `*_cmd.py` module in `cli/commands/` and register it in `main.py`.
 
 ## Supported CLI Adapters
 
-Bernstein ships with 13 adapters (12 specific + 1 generic). When writing a new adapter, check that it isn't already implemented:
+Bernstein ships with 18 adapters (17 specific + 1 generic). When writing a new adapter, check that it isn't already implemented:
 
 | Adapter | File | Agent |
 |---------|------|-------|
@@ -93,14 +95,19 @@ Bernstein ships with 13 adapters (12 specific + 1 generic). When writing a new a
 | `amp` | `adapters/amp.py` | [Amp](https://ampcode.com) |
 | `claude` | `adapters/claude.py` | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) |
 | `codex` | `adapters/codex.py` | [Codex CLI](https://github.com/openai/codex) |
+| `cody` | `adapters/cody.py` | [Cody](https://sourcegraph.com/cody) |
+| `continue` | `adapters/continue_dev.py` | [Continue.dev](https://continue.dev) |
 | `cursor` | `adapters/cursor.py` | [Cursor](https://www.cursor.com) |
 | `gemini` | `adapters/gemini.py` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
 | `goose` | `adapters/goose.py` | [Goose](https://block.github.io/goose/) |
+| `iac` | `adapters/iac.py` | Infrastructure-as-Code agent |
 | `kilo` | `adapters/kilo.py` | [Kilo](https://kilo.dev) |
 | `kiro` | `adapters/kiro.py` | [Kiro](https://kiro.dev) |
+| `ollama` | `adapters/ollama.py` | [Ollama](https://ollama.ai) (local models) |
 | `opencode` | `adapters/opencode.py` | [OpenCode](https://opencode.ai) |
 | `qwen` | `adapters/qwen.py` | [Qwen](https://github.com/QwenLM/Qwen-Agent) |
 | `roo_code` | `adapters/roo_code.py` | [Roo Code](https://github.com/RooVetGit/Roo-Code) |
+| `tabby` | `adapters/tabby.py` | [Tabby](https://tabby.tabbyml.com) |
 | `generic` | `adapters/generic.py` | Any CLI agent (catch-all) |
 
 ### Writing a Custom Adapter
@@ -151,7 +158,7 @@ Role templates live in `templates/roles/<role-name>/` with three files:
 - `task_prompt.md` — per-task instructions template
 - `config.yaml` — default model and effort
 
-Built-in roles: `manager`, `backend`, `frontend`, `qa`, `security`, `architect`, `devops`, `reviewer`, `docs`, `ml-engineer`, `prompt-engineer`, `retrieval`, `vp`, `analyst`, `resolver`, `visionary`.
+Built-in roles: `manager`, `backend`, `frontend`, `qa`, `security`, `architect`, `devops`, `reviewer`, `docs`, `ml-engineer`, `prompt-engineer`, `retrieval`, `vp`, `analyst`, `resolver`, `visionary`, `ci-fixer`.
 
 Copy an existing role and customize:
 

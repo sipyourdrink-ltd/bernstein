@@ -12,9 +12,33 @@ You are working on Bernstein, a multi-agent orchestration system for CLI coding 
 
 ## Architecture
 - `src/bernstein/` — Python package (3.12+, hatchling build)
-- `src/bernstein/core/` — task server, spawner, orchestrator, janitor, evolution, routes/, agent_discovery, quality_gates, token_monitor, plan_loader, planner, cross_model_verifier, cost_anomaly, semantic_cache, knowledge_base, bulletin, merge_queue, spawn_prompt
-- `src/bernstein/adapters/` — CLI agent adapters (claude, codex, gemini, qwen, aider, amp, roo_code, cursor, cody, continue_dev, goose, kilo, kiro, ollama, opencode, tabby, generic)
-- `src/bernstein/cli/` — CLI entry points (run_cmd, stop_cmd, status_cmd, agents_cmd, evolve_cmd, advanced_cmd, workspace_cmd, etc.)
+- `src/bernstein/core/` — organized into 22 sub-packages:
+  - `orchestration/` — orchestrator lifecycle, tick pipeline, manager, evolution, drain, shutdown, bootstrap
+  - `agents/` — spawner, agent discovery, heartbeat, idle detection, reaping, recycling, warm pool
+  - `tasks/` — task store, lifecycle, retry, completion, batch mode, dead letter queue, fair scheduler
+  - `quality/` — quality gates, CI monitor, janitor, cross-model verifier, semantic diff
+  - `server/` — task server, API endpoints, middleware
+  - `cost/` — cost tracking, anomaly detection, budget enforcement
+  - `tokens/` — token monitoring, growth detection, auto-intervention
+  - `security/` — HMAC audit logs, policy engine, PII gating, credential scoping
+  - `config/` — configuration loading, defaults, validation
+  - `observability/` — Prometheus metrics, OTel exporter, Grafana dashboards
+  - `protocols/` — MCP server mode, A2A protocol support, protocol negotiation
+  - `git/` — worktree management, merge queue, branch operations
+  - `persistence/` — WAL crash recovery, file-based state, checkpointing
+  - `planning/` — plan loading, task decomposition, dependency resolution
+  - `routing/` — contextual bandit router, model/effort selection
+  - `communication/` — bulletin board, cross-agent messaging
+  - `knowledge/` — knowledge graph, codebase impact analysis
+  - `plugins_core/` — pluggy-based plugin system
+  - `routes/` — HTTP route handlers
+  - `memory/` — semantic caching, session memory
+  - `trigger_sources/` — external trigger integrations
+  - `grpc_gen/` — generated gRPC stubs
+  - Top-level shims: `orchestrator.py`, `spawner.py`, `task_lifecycle.py` etc. re-export from sub-packages
+  - `defaults.py` — 150+ configurable constants
+- `src/bernstein/adapters/` — 18 CLI agent adapters (claude, codex, gemini, qwen, aider, amp, roo_code, cursor, cody, continue_dev, goose, iac, kilo, kiro, ollama, opencode, tabby, generic)
+- `src/bernstein/cli/` — CLI entry points, decomposed into `commands/` sub-package (run_cmd, stop_cmd, status_cmd, agents_cmd, evolve_cmd, advanced_cmd, debug_cmd, etc.)
 - `templates/roles/` — role system prompts (manager, vp, backend, frontend, qa, security, devops, architect, docs, reviewer, ml-engineer, prompt-engineer, retrieval, visionary, analyst, resolver, ci-fixer)
 - `templates/prompts/` — prompt templates for planning and review
 - `templates/plan.yaml` — project plan template
