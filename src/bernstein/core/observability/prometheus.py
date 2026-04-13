@@ -73,27 +73,31 @@ except ImportError as e:
 if not _PROMETHEUS_AVAILABLE:
 
     class CollectorRegistry:  # type: ignore[no-redef]
+        """No-op collector registry when prometheus_client is unavailable."""
+
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
+            pass  # Stub: prometheus_client not installed
 
     class _StubMetric:
+        """No-op metric stub when prometheus_client is unavailable."""
+
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
+            pass  # Stub: no-op metric
 
         def labels(self, *args: Any, **kwargs: Any) -> _StubMetric:
             return self
 
         def inc(self, *args: Any, **kwargs: Any) -> None:
-            pass
+            pass  # Stub: no-op increment
 
         def dec(self, *args: Any, **kwargs: Any) -> None:
-            pass
+            pass  # Stub: no-op decrement
 
         def set(self, *args: Any, **kwargs: Any) -> None:
-            pass
+            pass  # Stub: no-op set
 
         def observe(self, *args: Any, **kwargs: Any) -> None:
-            pass
+            pass  # Stub: no-op observe
 
     Counter = Gauge = Histogram = _StubMetric  # type: ignore[misc,assignment]
 

@@ -16,7 +16,7 @@ class _NoopPlugin:
 
     @hookimpl
     def on_task_created(self, task_id: str, role: str, title: str) -> None:
-        pass
+        pass  # Intentionally empty: testing hook timing, not behavior
 
 
 class TestHookTiming:

@@ -674,55 +674,55 @@ class Harness:
         import random
 
         _MOCK_PARAMS: dict[str, dict[str, float]] = {
-            "solo-sonnet": dict(
-                resolve_rate=0.230,
-                cost_mean=0.14,
-                cost_std=0.05,
-                time_mean=95.0,
-                time_std=20.0,
-                tokens_mean=9_500,
-                tokens_std=2_000,
-            ),
-            "solo-opus": dict(
-                resolve_rate=0.350,
-                cost_mean=1.20,
-                cost_std=0.40,
-                time_mean=110.0,
-                time_std=25.0,
-                tokens_mean=16_000,
-                tokens_std=3_500,
-            ),
-            "bernstein-sonnet": dict(
-                resolve_rate=0.383,
-                cost_mean=0.42,
-                cost_std=0.12,
-                time_mean=195.0,
-                time_std=40.0,
-                tokens_mean=28_000,
-                tokens_std=5_000,
-            ),
-            "bernstein-mixed": dict(
-                resolve_rate=0.360,
-                cost_mean=0.16,
-                cost_std=0.05,
-                time_mean=175.0,
-                time_std=35.0,
-                tokens_mean=22_000,
-                tokens_std=4_000,
-            ),
+            "solo-sonnet": {
+                "resolve_rate": 0.230,
+                "cost_mean": 0.14,
+                "cost_std": 0.05,
+                "time_mean": 95.0,
+                "time_std": 20.0,
+                "tokens_mean": 9_500,
+                "tokens_std": 2_000,
+            },
+            "solo-opus": {
+                "resolve_rate": 0.350,
+                "cost_mean": 1.20,
+                "cost_std": 0.40,
+                "time_mean": 110.0,
+                "time_std": 25.0,
+                "tokens_mean": 16_000,
+                "tokens_std": 3_500,
+            },
+            "bernstein-sonnet": {
+                "resolve_rate": 0.383,
+                "cost_mean": 0.42,
+                "cost_std": 0.12,
+                "time_mean": 195.0,
+                "time_std": 40.0,
+                "tokens_mean": 28_000,
+                "tokens_std": 5_000,
+            },
+            "bernstein-mixed": {
+                "resolve_rate": 0.360,
+                "cost_mean": 0.16,
+                "cost_std": 0.05,
+                "time_mean": 175.0,
+                "time_std": 35.0,
+                "tokens_mean": 22_000,
+                "tokens_std": 4_000,
+            },
         }
 
         params = _MOCK_PARAMS.get(
             scenario.name,
-            dict(
-                resolve_rate=0.25,
-                cost_mean=0.20,
-                cost_std=0.08,
-                time_mean=120.0,
-                time_std=25.0,
-                tokens_mean=12_000,
-                tokens_std=2_500,
-            ),
+            {
+                "resolve_rate": 0.25,
+                "cost_mean": 0.20,
+                "cost_std": 0.08,
+                "time_mean": 120.0,
+                "time_std": 25.0,
+                "tokens_mean": 12_000,
+                "tokens_std": 2_500,
+            },
         )
 
         rng = random.Random(seed)

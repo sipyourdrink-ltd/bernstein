@@ -525,7 +525,7 @@ class TestSkipOnWindows:
 
         @skip_on_windows("testing")
         def dummy_test() -> None:
-            pass
+            pass  # Intentionally empty: testing decorator application only
 
         assert callable(dummy_test)
 

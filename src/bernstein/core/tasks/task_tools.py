@@ -48,7 +48,7 @@ class TaskToolDefinition:
     name: str
     description: str
     command: str
-    args_schema: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    args_schema: dict[str, Any] = field(default_factory=dict)
     working_dir: str | None = None
 
 

@@ -77,7 +77,7 @@ class TokenUsage:
     cached_tokens: int = 0  # Tokens served from cache (legacy)
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
-    cost_tags: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    cost_tags: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict."""

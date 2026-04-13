@@ -52,7 +52,7 @@ def _verify_cluster_auth(request: Request, required_scope: str) -> None:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
-@router.post("/cluster/nodes", status_code=201)
+@router.post("/cluster/nodes", status_code=201, responses={401: {"description": "Cluster authentication failed"}})
 def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
     """Register a new node in the cluster."""
     from bernstein.core.cluster_auth import SCOPE_NODE_REGISTER
@@ -114,7 +114,7 @@ def unregister_node(node_id: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
-@router.post("/cluster/nodes/{node_id}/cordon")
+@router.post("/cluster/nodes/{node_id}/cordon", responses={404: {"description": "Node not found"}})
 def cordon_node(node_id: str, request: Request) -> dict[str, str]:
     """Cordon a node -- exclude from scheduling."""
     from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
@@ -127,7 +127,7 @@ def cordon_node(node_id: str, request: Request) -> dict[str, str]:
     return {"status": "cordoned", "node_id": node_id}
 
 
-@router.post("/cluster/nodes/{node_id}/uncordon")
+@router.post("/cluster/nodes/{node_id}/uncordon", responses={404: {"description": "Node not found"}})
 def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
     """Uncordon a node -- resume accepting tasks."""
     from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
@@ -140,7 +140,7 @@ def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
     return {"status": "uncordoned", "node_id": node_id}
 
 
-@router.post("/cluster/nodes/{node_id}/drain")
+@router.post("/cluster/nodes/{node_id}/drain", responses={404: {"description": "Node not found"}})
 def drain_node(node_id: str, request: Request) -> dict[str, str]:
     """Start draining a node -- cordon + signal agents to finish."""
     from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
@@ -169,7 +169,7 @@ def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse
     return [node_to_response(n) for n in node_registry.list_nodes(node_status)]
 
 
-@router.get("/cluster/status", response_model=ClusterStatusResponse)
+@router.get("/cluster/status")
 def cluster_status(request: Request) -> ClusterStatusResponse:
     """Get cluster status summary."""
     node_registry = _get_node_registry(request)

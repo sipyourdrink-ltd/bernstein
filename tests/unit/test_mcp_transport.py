@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.mcp_transport import (
     McpTransport,
     SseTransport,
@@ -296,13 +295,13 @@ class TestTransportFactory:
                 return False
 
             def connect(self, config: object) -> None:
-                pass
+                pass  # Stub: no-op for test transport
 
             def health_check(self) -> bool:
                 return False
 
             def disconnect(self) -> None:
-                pass
+                pass  # Stub: no-op for test transport
 
         register_transport("grpc", GrpcTransport)
         assert "grpc" in list_transports()
@@ -325,13 +324,13 @@ class TestTransportFactory:
                 return False
 
             def connect(self, config: object) -> None:
-                pass
+                pass  # Stub: no-op for test transport
 
             def health_check(self) -> bool:
                 return False
 
             def disconnect(self) -> None:
-                pass
+                pass  # Stub: no-op for test transport
 
         register_transport("custom", CustomTransport)
         assert "custom" in list_transports()

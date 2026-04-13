@@ -123,6 +123,7 @@ def _get_workdir(request: Request) -> Path:
 @router.post(
     "/sbom/generate",
     responses={
+        400: {"description": "Unknown SBOM format"},
         422: {"description": "Critical vulnerabilities found (gate blocked)"},
         503: {"description": "Server workdir not configured"},
     },

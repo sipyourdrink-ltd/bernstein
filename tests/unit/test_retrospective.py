@@ -76,15 +76,15 @@ class TestFmtSeconds:
 
 class TestBuildRecommendations:
     def _call(self, **kwargs: object) -> list[str]:
-        defaults = dict(
-            n_done=10,
-            n_failed=0,
-            role_failed={},
-            role_done={"backend": 10},
-            cx_failed={},
-            total_cost=0.5,
-            wall_clock_s=300.0,
-        )
+        defaults = {
+            "n_done": 10,
+            "n_failed": 0,
+            "role_failed": {},
+            "role_done": {"backend": 10},
+            "cx_failed": {},
+            "total_cost": 0.5,
+            "wall_clock_s": 300.0,
+        }
         defaults.update(kwargs)
         return _build_recommendations(**defaults)  # type: ignore[arg-type]
 

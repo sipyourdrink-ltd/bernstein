@@ -56,7 +56,7 @@ def _get_store(request: Request) -> TaskStore:
     return request.app.state.store  # type: ignore[no-any-return]
 
 
-@router.get("/tasks/search", response_model=PaginatedSearchResponse)
+@router.get("/tasks/search")
 def search_tasks(
     request: Request,
     page: int = 1,

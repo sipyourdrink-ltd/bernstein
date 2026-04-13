@@ -22,7 +22,7 @@ class FakeStream:
         self.writes.append(data)
 
     def flush(self) -> None:
-        pass
+        pass  # Stub: no-op flush for test stream
 
     @property
     def combined(self) -> str:

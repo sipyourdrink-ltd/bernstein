@@ -64,10 +64,10 @@ class DiffSummary:
 
     task_id: str
     total_files: int
-    files: list[FileDiff] = field(default_factory=lambda: list[FileDiff]())
+    files: list[FileDiff] = field(default_factory=list)
     total_added: int = 0
     total_removed: int = 0
-    test_results: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    test_results: dict[str, str] = field(default_factory=dict)
     generated_at: str = ""
 
 

@@ -128,7 +128,7 @@ class TestOutputOption:
         @click.command()
         @output_option
         def dummy() -> None:
-            pass
+            pass  # Intentionally empty: testing CLI option validation only
 
         runner = CliRunner()
         result = runner.invoke(dummy, ["--output", "xml"])

@@ -30,7 +30,7 @@ class OrgPolicyTemplate:
 
     name: str
     description: str
-    overrides: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    overrides: dict[str, Any] = field(default_factory=dict)
 
 
 def load_org_policies(paths: list[str]) -> list[OrgPolicyTemplate]:

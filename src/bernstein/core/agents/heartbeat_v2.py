@@ -139,7 +139,7 @@ class _AgentRecord:
     last_pong_at: float | None = None
     response_time_ms: float | None = None
     consecutive_failures: int = 0
-    pending_pings: dict[str, float] = field(default_factory=lambda: dict[str, float]())
+    pending_pings: dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
