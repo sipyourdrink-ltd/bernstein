@@ -158,6 +158,10 @@ class _CLIRedirectLoader:
         module.__file__ = getattr(real, "__file__", None)
         sys.modules[fullname] = real
 
+    def get_code(self, fullname: str) -> None:
+        """Return None — redirect loaders don't provide code objects."""
+        return None
+
 
 if not any(isinstance(f, _CLIRedirectFinder) for f in sys.meta_path):
     sys.meta_path.append(_CLIRedirectFinder())
