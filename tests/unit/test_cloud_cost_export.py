@@ -302,7 +302,7 @@ class TestBuildCloudhealthPayload:
         exporter = CostExporter()
         payload = exporter.build_cloudhealth_payload([])
         assert payload["custom_charges"] == []
-        assert payload["total"] == 0.0
+        assert payload["total"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

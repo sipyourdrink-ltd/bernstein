@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.security.graduated_access import (
     AccessPolicy,
     AgentTrustRecord,
@@ -60,8 +62,8 @@ class TestAgentTrustRecord:
         assert record.trust_level == TrustLevel.TRUSTED
         assert record.successful_tasks == 5
         assert record.failed_tasks == 1
-        assert record.first_seen == 1000.0
-        assert record.last_seen == 2000.0
+        assert record.first_seen == pytest.approx(1000.0)
+        assert record.last_seen == pytest.approx(2000.0)
 
 
 # ---------------------------------------------------------------------------

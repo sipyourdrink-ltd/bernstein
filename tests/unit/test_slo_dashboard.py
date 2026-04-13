@@ -115,7 +115,7 @@ class TestDataclasses:
     def test_slo_definition_fields(self) -> None:
         defn = SLODefinition(name="test", target_pct=95.0, metric="task_completion", window_days=7)
         assert defn.name == "test"
-        assert defn.target_pct == 95.0
+        assert defn.target_pct == pytest.approx(95.0)
         assert defn.metric == "task_completion"
         assert defn.window_days == 7
 
@@ -130,8 +130,8 @@ class TestDataclasses:
             status="warning",
         )
         assert status.definition is defn
-        assert status.current_pct == 92.0
-        assert status.error_budget_remaining_pct == 40.0
+        assert status.current_pct == pytest.approx(92.0)
+        assert status.error_budget_remaining_pct == pytest.approx(40.0)
         assert status.burn_rate_per_day == pytest.approx(1.2)
         assert status.days_until_breach == pytest.approx(33.33)
         assert status.status == "warning"
@@ -148,10 +148,10 @@ class TestDataclasses:
 
 class TestComputeBurnRate:
     def test_empty_history(self) -> None:
-        assert compute_burn_rate([], 7) == 0.0
+        assert compute_burn_rate([], 7) == pytest.approx(0.0)
 
     def test_single_point(self) -> None:
-        assert compute_burn_rate([(_BASE_TS, 95.0)], 7) == 0.0
+        assert compute_burn_rate([(_BASE_TS, 95.0)], 7) == pytest.approx(0.0)
 
     def test_stable_compliance(self) -> None:
         history = [
@@ -175,7 +175,7 @@ class TestComputeBurnRate:
             (_BASE_TS - 3 * 86400, 90.0),
             (_BASE_TS, 95.0),
         ]
-        assert compute_burn_rate(history, 7) == 0.0
+        assert compute_burn_rate(history, 7) == pytest.approx(0.0)
 
     def test_multiple_points_uses_endpoints(self) -> None:
         history = [
@@ -192,7 +192,7 @@ class TestComputeBurnRate:
             (_BASE_TS, 95.0),
             (_BASE_TS, 90.0),
         ]
-        assert compute_burn_rate(history, 7) == 0.0
+        assert compute_burn_rate(history, 7) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +232,7 @@ class TestPredictBreach:
             days_until_breach=None,
             status="critical",
         )
-        assert predict_breach(status) == 0.0
+        assert predict_breach(status) == pytest.approx(0.0)
 
     def test_small_budget_with_high_burn(self) -> None:
         status = SLOStatus(
@@ -256,15 +256,15 @@ class TestComputeSloStatus:
         archive = tmp_path / "tasks.jsonl"
         defn = _task_completion_def()
         status = compute_slo_status(defn, archive, now=_BASE_TS)
-        assert status.current_pct == 100.0
+        assert status.current_pct == pytest.approx(100.0)
         assert status.status == "healthy"
-        assert status.error_budget_remaining_pct == 100.0
+        assert status.error_budget_remaining_pct == pytest.approx(100.0)
 
     def test_nonexistent_archive(self, tmp_path: Path) -> None:
         archive = tmp_path / "does_not_exist.jsonl"
         defn = _task_completion_def()
         status = compute_slo_status(defn, archive, now=_BASE_TS)
-        assert status.current_pct == 100.0
+        assert status.current_pct == pytest.approx(100.0)
         assert status.status == "healthy"
 
     def test_all_tasks_done(self, tmp_path: Path) -> None:
@@ -279,9 +279,9 @@ class TestComputeSloStatus:
         )
         defn = _task_completion_def(target=95.0)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
-        assert status.current_pct == 100.0
+        assert status.current_pct == pytest.approx(100.0)
         assert status.status == "healthy"
-        assert status.error_budget_remaining_pct == 100.0
+        assert status.error_budget_remaining_pct == pytest.approx(100.0)
 
     def test_some_failures_within_budget(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -292,7 +292,7 @@ class TestComputeSloStatus:
         defn = _task_completion_def(target=95.0)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
         # 19/20 = 95%, exactly meeting the target
-        assert status.current_pct == 95.0
+        assert status.current_pct == pytest.approx(95.0)
         assert status.status == "healthy"
 
     def test_failures_breach_slo(self, tmp_path: Path) -> None:
@@ -304,9 +304,9 @@ class TestComputeSloStatus:
 
         defn = _task_completion_def(target=95.0)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
-        assert status.current_pct == 70.0
+        assert status.current_pct == pytest.approx(70.0)
         assert status.status == "critical"
-        assert status.error_budget_remaining_pct == 0.0
+        assert status.error_budget_remaining_pct == pytest.approx(0.0)
 
     def test_quality_gate_metric(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -321,7 +321,7 @@ class TestComputeSloStatus:
         defn = _quality_gate_def(target=90.0)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
         # 2 passed out of 4 evaluated = 50%
-        assert status.current_pct == 50.0
+        assert status.current_pct == pytest.approx(50.0)
         assert status.status == "critical"
 
     def test_latency_metric(self, tmp_path: Path) -> None:
@@ -337,7 +337,7 @@ class TestComputeSloStatus:
         defn = _latency_def(target=99.0)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
         # 3 out of 4 within 300s = 75%
-        assert status.current_pct == 75.0
+        assert status.current_pct == pytest.approx(75.0)
 
     def test_records_outside_window_excluded(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -352,7 +352,7 @@ class TestComputeSloStatus:
         defn = _task_completion_def(target=95.0, window=7)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
         # Only t1 is in window, so 100% completion
-        assert status.current_pct == 100.0
+        assert status.current_pct == pytest.approx(100.0)
         assert status.status == "healthy"
 
     def test_unknown_metric_defaults_to_100(self, tmp_path: Path) -> None:
@@ -360,7 +360,7 @@ class TestComputeSloStatus:
         _write_archive(archive, [_make_record("t1", "done", completed_at=_BASE_TS - 100)])
         defn = SLODefinition(name="Unknown", target_pct=90.0, metric="unknown_metric", window_days=7)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
-        assert status.current_pct == 100.0
+        assert status.current_pct == pytest.approx(100.0)
 
     def test_definition_preserved_in_status(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -411,7 +411,7 @@ class TestBuildSloDashboard:
     def test_generated_at_matches_now(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
         dashboard = build_slo_dashboard((), archive, now=12345.0)
-        assert dashboard.generated_at == 12345.0
+        assert dashboard.generated_at == pytest.approx(12345.0)
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +432,7 @@ class TestGetDefaultSlos:
         defaults = get_default_slos()
         tc = defaults[0]
         assert tc.name == "Task Completion"
-        assert tc.target_pct == 95.0
+        assert tc.target_pct == pytest.approx(95.0)
         assert tc.metric == "task_completion"
         assert tc.window_days == 7
 
@@ -440,7 +440,7 @@ class TestGetDefaultSlos:
         defaults = get_default_slos()
         qg = defaults[1]
         assert qg.name == "Quality Gate Pass"
-        assert qg.target_pct == 90.0
+        assert qg.target_pct == pytest.approx(90.0)
         assert qg.metric == "quality_gate"
         assert qg.window_days == 7
 
@@ -448,7 +448,7 @@ class TestGetDefaultSlos:
         defaults = get_default_slos()
         lat = defaults[2]
         assert lat.name == "Latency p99 <300s"
-        assert lat.target_pct == 99.0
+        assert lat.target_pct == pytest.approx(99.0)
         assert lat.metric == "latency"
         assert lat.window_days == 7
 
@@ -589,7 +589,7 @@ class TestArchiveEdgeCases:
 
         defn = _task_completion_def()
         status = compute_slo_status(defn, archive, now=_BASE_TS)
-        assert status.current_pct == 100.0
+        assert status.current_pct == pytest.approx(100.0)
 
     def test_quality_gate_none_treated_as_pass_for_done(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -603,7 +603,7 @@ class TestArchiveEdgeCases:
         defn = _quality_gate_def(target=90.0)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
         # No explicit gate result on completed tasks => treated as passed
-        assert status.current_pct == 100.0
+        assert status.current_pct == pytest.approx(100.0)
 
     def test_latency_from_timestamps_when_no_duration(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -614,7 +614,7 @@ class TestArchiveEdgeCases:
         defn = _latency_def(target=99.0)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
         # Duration = 500 - 200 = 300s, threshold is 300s => within threshold
-        assert status.current_pct == 100.0
+        assert status.current_pct == pytest.approx(100.0)
 
     def test_warning_status_near_target(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -625,6 +625,6 @@ class TestArchiveEdgeCases:
 
         defn = _task_completion_def(target=97.0)
         status = compute_slo_status(defn, archive, now=_BASE_TS)
-        assert status.current_pct == 95.0
+        assert status.current_pct == pytest.approx(95.0)
         assert status.status == "warning"
         assert status.error_budget_remaining_pct > 0.0

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table
@@ -78,7 +80,7 @@ class TestCaptureResult:
         assert result.format == "svg"
         assert result.width == 120
         assert result.height == 40
-        assert result.timestamp == 1000.0
+        assert result.timestamp == pytest.approx(1000.0)
 
     def test_frozen(self) -> None:
         """Result is immutable."""
@@ -140,7 +142,7 @@ class TestDemoDataModels:
             tasks_completed=5,
             tasks_total=10,
         )
-        assert m.quality_score == 0.9
+        assert m.quality_score == pytest.approx(0.9)
         try:
             m.total_tokens = 200  # type: ignore[misc]
             raise AssertionError("Expected FrozenInstanceError")

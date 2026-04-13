@@ -64,7 +64,7 @@ class TestNeovimEvent:
     def test_custom_data(self) -> None:
         evt = NeovimEvent(event_type="cmd", data={"key": "val"}, timestamp=100.0)
         assert evt.data["key"] == "val"
-        assert evt.timestamp == 100.0
+        assert evt.timestamp == pytest.approx(100.0)
 
 
 # ---------------------------------------------------------------------------
