@@ -477,6 +477,122 @@ def _get_all_python_files(worktree_path: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
+def _collect_before_after_signatures(
+    worktree_path: Path,
+    py_files: list[str],
+    revision: str,
+    report: SemanticDiffReport,
+) -> tuple[dict[str, FunctionSignature], dict[str, FunctionSignature]]:
+    """Collect before/after function signatures for each changed file.
+
+    Args:
+        worktree_path: Root of the git worktree.
+        py_files: Changed Python files.
+        revision: Git revision for the "before" state.
+        report: Report to accumulate errors into.
+
+    Returns:
+        (all_before, all_after) signature dicts keyed by qualname.
+    """
+    all_before: dict[str, FunctionSignature] = {}
+    all_after: dict[str, FunctionSignature] = {}
+
+    for rel_path in py_files:
+        before_source = _get_file_at_revision(worktree_path, rel_path, revision)
+        if before_source is not None:
+            all_before.update(extract_signatures_from_source(before_source, file=rel_path))
+
+        try:
+            after_source = (worktree_path / rel_path).read_text(encoding="utf-8", errors="replace")
+            all_after.update(extract_signatures_from_source(after_source, file=rel_path))
+        except OSError as exc:
+            report.errors.append(f"Could not read {rel_path}: {exc}")
+
+    return all_before, all_after
+
+
+def _check_arg_count_mismatch(
+    change: SignatureChange, n_pos: int
+) -> str | None:
+    """Check if a call site has an arg-count incompatibility.
+
+    Args:
+        change: The signature change with before/after info.
+        n_pos: Number of positional args at the call site.
+
+    Returns:
+        Description of the issue, or None if compatible.
+    """
+    if change.before is None or change.after is None:
+        return None
+    after_argc = len(change.after.args)
+    if n_pos < 0 or change.after.has_varargs:
+        return None
+    if n_pos > after_argc:
+        return (
+            f"call passes {n_pos} positional args but "
+            f"'{change.qualname}' now accepts {after_argc}"
+        )
+    if n_pos < after_argc and not _has_defaults(change.after):
+        return (
+            f"call passes {n_pos} positional args but "
+            f"'{change.qualname}' now requires {after_argc}"
+        )
+    return None
+
+
+def _parse_positional_count(call_text: str) -> int:
+    """Extract the positional arg count from a call_text string.
+
+    Args:
+        call_text: Call description like ``"func(2 positional, kwargs=['x'])"``.
+
+    Returns:
+        Number of positional args, or -1 if unparseable.
+    """
+    try:
+        return int(call_text.split("(")[1].split(" ")[0])
+    except (IndexError, ValueError):
+        return -1
+
+
+def _scan_call_sites(
+    worktree_path: Path,
+    breaking: list[SignatureChange],
+    report: SemanticDiffReport,
+) -> None:
+    """Scan all Python files for call sites broken by signature changes.
+
+    Args:
+        worktree_path: Root of the git worktree.
+        breaking: Breaking signature changes to check.
+        report: Report to accumulate mismatches into.
+    """
+    changed_func_names: set[str] = {c.function_name for c in breaking}
+    all_py = _get_all_python_files(worktree_path)
+
+    for py_file in all_py:
+        try:
+            source = py_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        rel = str(py_file.relative_to(worktree_path))
+        sites = find_call_sites(source, changed_func_names, file=rel)
+
+        for func_name, lineno, call_text in sites:
+            matching = [c for c in breaking if c.function_name == func_name]
+            for change in matching:
+                n_pos = _parse_positional_count(call_text)
+                issue = _check_arg_count_mismatch(change, n_pos)
+                if issue:
+                    report.call_site_mismatches.append(
+                        CallSiteMismatch(
+                            caller_file=rel, lineno=lineno, function_name=func_name, issue=issue
+                        )
+                    )
+
+
 def analyze_semantic_diff(
     worktree_path: Path,
     changed_files: list[str],
@@ -509,38 +625,12 @@ def analyze_semantic_diff(
     if not py_files:
         return report
 
-    # --- Collect before/after signatures per file ---
-    all_before: dict[str, FunctionSignature] = {}
-    all_after: dict[str, FunctionSignature] = {}
+    all_before, all_after = _collect_before_after_signatures(worktree_path, py_files, revision, report)
 
-    for rel_path in py_files:
-        abs_path = worktree_path / rel_path
-
-        # Before: from git
-        before_source = _get_file_at_revision(worktree_path, rel_path, revision)
-        if before_source is not None:
-            sigs = extract_signatures_from_source(before_source, file=rel_path)
-            all_before.update(sigs)
-        else:
-            # File is new — no before signatures
-            pass
-
-        # After: current disk state
-        try:
-            after_source = abs_path.read_text(encoding="utf-8", errors="replace")
-            sigs = extract_signatures_from_source(after_source, file=rel_path)
-            all_after.update(sigs)
-        except OSError as exc:
-            report.errors.append(f"Could not read {rel_path}: {exc}")
-
-    # --- Signature changes ---
     changes = detect_signature_changes(all_before, all_after)
     report.signature_changes = changes
 
-    # Collect breaking changes
-    breaking: list[SignatureChange] = [
-        c for c in changes if c.change_type in ("removed", "modified") and c.compatibility_issues
-    ]
+    breaking = [c for c in changes if c.change_type in ("removed", "modified") and c.compatibility_issues]
 
     if breaking:
         report.behavior_preserved = False
@@ -549,60 +639,8 @@ def analyze_semantic_diff(
                 [f"{change.qualname}: {issue}" for issue in change.compatibility_issues]
             )
 
-    # --- Call-site scanning ---
     if scan_call_sites and breaking:
-        changed_func_names: set[str] = {c.function_name for c in breaking}
-        all_py = _get_all_python_files(worktree_path)
-
-        for py_file in all_py:
-            try:
-                source = py_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-
-            rel = str(py_file.relative_to(worktree_path))
-            sites = find_call_sites(source, changed_func_names, file=rel)
-
-            for func_name, lineno, call_text in sites:
-                # Find the matching signature change
-                matching = [c for c in breaking if c.function_name == func_name]
-                if not matching:
-                    continue
-
-                for change in matching:
-                    # Check arg count compatibility if we have before/after
-                    if change.before is not None and change.after is not None:
-                        after_argc = len(change.after.args)
-
-                        # Extract positional arg count from call_text
-                        # e.g. "func(2 positional, kwargs=['x'])"
-                        try:
-                            n_pos = int(call_text.split("(")[1].split(" ")[0])
-                        except (IndexError, ValueError):
-                            n_pos = -1
-
-                        if n_pos >= 0 and not change.after.has_varargs:
-                            issue_desc: str | None = None
-                            if n_pos > after_argc:
-                                issue_desc = (
-                                    f"call passes {n_pos} positional args but "
-                                    f"'{change.qualname}' now accepts {after_argc}"
-                                )
-                            elif n_pos < after_argc and not _has_defaults(change.after):
-                                issue_desc = (
-                                    f"call passes {n_pos} positional args but "
-                                    f"'{change.qualname}' now requires {after_argc}"
-                                )
-
-                            if issue_desc:
-                                report.call_site_mismatches.append(
-                                    CallSiteMismatch(
-                                        caller_file=rel,
-                                        lineno=lineno,
-                                        function_name=func_name,
-                                        issue=issue_desc,
-                                    )
-                                )
+        _scan_call_sites(worktree_path, breaking, report)
 
     if report.call_site_mismatches:
         report.behavior_preserved = False

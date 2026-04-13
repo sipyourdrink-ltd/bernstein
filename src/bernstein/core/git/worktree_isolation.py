@@ -128,6 +128,58 @@ def check_symlinks_read_only(
     return violations
 
 
+def _collect_multi_link_inodes(directory: Path) -> set[tuple[int, int]]:
+    """Collect (device, inode) pairs for files with nlink > 1 in *directory*.
+
+    Args:
+        directory: Directory to scan recursively.
+
+    Returns:
+        Set of (device, inode) tuples for hardlinked files.
+    """
+    inodes: set[tuple[int, int]] = set()
+    try:
+        for f in directory.rglob("*"):
+            if f.is_file() and not f.is_symlink():
+                st = f.stat()
+                if st.st_nlink > 1:
+                    inodes.add((st.st_dev, st.st_ino))
+    except OSError:
+        pass
+    return inodes
+
+
+def _find_hardlink_violations(
+    wt_dir: Path, parent_inodes: set[tuple[int, int]]
+) -> list[str]:
+    """Check worktree files for inodes shared with the parent repo.
+
+    Args:
+        wt_dir: Worktree state directory to scan.
+        parent_inodes: Known multi-linked inodes from the parent.
+
+    Returns:
+        List of violation descriptions.
+    """
+    violations: list[str] = []
+    try:
+        for wt_file in wt_dir.rglob("*"):
+            if not wt_file.is_file() or wt_file.is_symlink():
+                continue
+            try:
+                st = wt_file.stat()
+            except OSError:
+                continue
+            if st.st_nlink > 1 and (st.st_dev, st.st_ino) in parent_inodes:
+                violations.append(
+                    f"Hardlink detected: {wt_file} shares inode with parent repo "
+                    f"(dev={st.st_dev}, ino={st.st_ino}, nlink={st.st_nlink})"
+                )
+    except OSError:
+        pass
+    return violations
+
+
 def check_no_hardlink_leaks(
     worktree_path: Path,
     repo_root: Path,
@@ -160,35 +212,9 @@ def check_no_hardlink_leaks(
         if not wt_dir.is_dir() or not parent_dir.is_dir():
             continue
 
-        # Build set of (device, inode) pairs from parent dir
-        parent_inodes: set[tuple[int, int]] = set()
-        try:
-            for parent_file in parent_dir.rglob("*"):
-                if parent_file.is_file() and not parent_file.is_symlink():
-                    st = parent_file.stat()
-                    if st.st_nlink > 1:
-                        parent_inodes.add((st.st_dev, st.st_ino))
-        except OSError:
-            continue
-
-        if not parent_inodes:
-            continue
-
-        # Check worktree files for matching inodes
-        try:
-            for wt_file in wt_dir.rglob("*"):
-                if wt_file.is_file() and not wt_file.is_symlink():
-                    try:
-                        st = wt_file.stat()
-                    except OSError:
-                        continue
-                    if st.st_nlink > 1 and (st.st_dev, st.st_ino) in parent_inodes:
-                        violations.append(
-                            f"Hardlink detected: {wt_file} shares inode with parent repo "
-                            f"(dev={st.st_dev}, ino={st.st_ino}, nlink={st.st_nlink})"
-                        )
-        except OSError:
-            continue
+        parent_inodes = _collect_multi_link_inodes(parent_dir)
+        if parent_inodes:
+            violations.extend(_find_hardlink_violations(wt_dir, parent_inodes))
 
     return violations
 

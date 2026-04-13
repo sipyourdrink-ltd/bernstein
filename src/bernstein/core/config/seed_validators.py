@@ -53,6 +53,26 @@ def seed_to_initial_task(seed: SeedConfig, workdir: Path | None = None) -> Task:
     )
 
 
+def _read_context_file(workdir: Path, rel_path: str) -> str:
+    """Read a single context file and format it for the description.
+
+    Args:
+        workdir: Project root for resolving the relative path.
+        rel_path: Relative path to the context file.
+
+    Returns:
+        Formatted markdown string for this context file.
+    """
+    full_path = workdir / rel_path
+    if not full_path.is_file():
+        return f"### {rel_path}\n(file not found)"
+    try:
+        content = full_path.read_text(encoding="utf-8")
+        return f"### {rel_path}\n```\n{content}\n```"
+    except OSError:
+        return f"### {rel_path}\n(could not read file)"
+
+
 def _build_manager_description(seed: SeedConfig, workdir: Path | None) -> str:
     """Build the full manager task description from seed config.
 
@@ -68,32 +88,18 @@ def _build_manager_description(seed: SeedConfig, workdir: Path | None) -> str:
     """
     parts: list[str] = [f"## Goal\n{seed.goal}"]
 
-    # Team preference
     if seed.team != "auto":
         parts.append(f"## Team\nRoles: {', '.join(seed.team)}")
 
-    # Budget
     if seed.budget_usd is not None:
         parts.append(f"## Budget\nMax spend: ${seed.budget_usd:.2f}")
 
-    # Constraints
     if seed.constraints:
         lines = "\n".join(f"- {c}" for c in seed.constraints)
         parts.append(f"## Constraints\n{lines}")
 
-    # Context files
     if seed.context_files and workdir is not None:
-        context_parts: list[str] = []
-        for rel_path in seed.context_files:
-            full_path = workdir / rel_path
-            if full_path.is_file():
-                try:
-                    content = full_path.read_text(encoding="utf-8")
-                    context_parts.append(f"### {rel_path}\n```\n{content}\n```")
-                except OSError:
-                    context_parts.append(f"### {rel_path}\n(could not read file)")
-            else:
-                context_parts.append(f"### {rel_path}\n(file not found)")
+        context_parts = [_read_context_file(workdir, rp) for rp in seed.context_files]
         if context_parts:
             parts.append("## Context files\n" + "\n\n".join(context_parts))
 

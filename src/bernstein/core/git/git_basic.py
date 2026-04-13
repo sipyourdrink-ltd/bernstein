@@ -321,6 +321,55 @@ def fetch(cwd: Path, remote: str = "origin") -> GitResult:
     return run_git(["fetch", remote], cwd, timeout=60)
 
 
+def _rebase_or_merge(cwd: Path, remote: str, branch: str) -> GitResult | None:
+    """Attempt rebase, falling back to merge on failure.
+
+    Args:
+        cwd: Repository root.
+        remote: Remote name.
+        branch: Branch name.
+
+    Returns:
+        Failed merge result if both rebase and merge fail, else None.
+    """
+    rebase_r = run_git(["rebase", f"{remote}/{branch}"], cwd, timeout=120)
+    if rebase_r.ok:
+        return None
+    logger.warning("Rebase failed, aborting and falling back to merge")
+    run_git(["rebase", "--abort"], cwd)
+    merge_r = run_git(["merge", f"{remote}/{branch}", "--no-edit"], cwd, timeout=120)
+    if not merge_r.ok:
+        logger.error("Merge fallback also failed: %s", merge_r.stderr)
+        return merge_r
+    return None
+
+
+_TRANSIENT_MARKERS = (
+    "unable to access",
+    "could not read",
+    "connection",
+    "timed out",
+    "timeout",
+    "reset by peer",
+    "non-fast-forward",
+    "fetch first",
+    "cannot lock ref",
+)
+
+
+def _is_transient_push_error(stderr: str) -> bool:
+    """Check if a push failure is transient and worth retrying.
+
+    Args:
+        stderr: Stderr output from the failed push.
+
+    Returns:
+        True if the error matches a known transient pattern.
+    """
+    lower = stderr.lower()
+    return any(marker in lower for marker in _TRANSIENT_MARKERS)
+
+
 def safe_push(
     cwd: Path,
     branch: str,
@@ -353,60 +402,30 @@ def safe_push(
         logger.info("safe_push: correcting branch 'master' -> 'main'")
         branch = "main"
 
-    # 1. Fetch
     fetch_result = fetch(cwd, remote)
     if not fetch_result.ok:
         logger.warning("git fetch failed: %s", fetch_result.stderr)
 
-    # 2. Check divergence
     behind_r = run_git(["rev-list", "--count", f"HEAD..{remote}/{branch}"], cwd)
     behind = int(behind_r.stdout.strip()) if behind_r.ok and behind_r.stdout.strip().isdigit() else 0
 
     if behind > 0:
         logger.info("Branch %s is %d commits behind %s/%s, rebasing", branch, behind, remote, branch)
-        # 3. Rebase
-        rebase_r = run_git(["rebase", f"{remote}/{branch}"], cwd, timeout=120)
-        if not rebase_r.ok:
-            logger.warning("Rebase failed, aborting and falling back to merge")
-            run_git(["rebase", "--abort"], cwd)
-            merge_r = run_git(["merge", f"{remote}/{branch}", "--no-edit"], cwd, timeout=120)
-            if not merge_r.ok:
-                logger.error("Merge fallback also failed: %s", merge_r.stderr)
-                return merge_r
+        fail = _rebase_or_merge(cwd, remote, branch)
+        if fail is not None:
+            return fail
 
-    # 4. Push with retry on transient errors
-    _transient_markers = (
-        "unable to access",
-        "could not read",
-        "connection",
-        "timed out",
-        "timeout",
-        "reset by peer",
-        "non-fast-forward",
-        "fetch first",
-        "cannot lock ref",
-    )
     push_result = GitResult(returncode=1, stdout="", stderr="no push attempted")
     for attempt in range(max_retries + 1):
-        # Re-fetch and rebase before each retry to handle concurrent pushes
         if attempt > 0:
             fetch(cwd, remote)
-            rebase_r = run_git(["rebase", f"{remote}/{branch}"], cwd, timeout=120)
-            if not rebase_r.ok:
-                run_git(["rebase", "--abort"], cwd)
-                run_git(["merge", f"{remote}/{branch}", "--no-edit"], cwd, timeout=120)
+            _rebase_or_merge(cwd, remote, branch)
         push_result = run_git(["push", remote, branch], cwd, timeout=60)
         if push_result.ok:
             return push_result
-        stderr_lower = push_result.stderr.lower()
-        is_transient = any(marker in stderr_lower for marker in _transient_markers)
-        if not is_transient or attempt >= max_retries:
+        if not _is_transient_push_error(push_result.stderr) or attempt >= max_retries:
             if attempt > 0:
-                logger.error(
-                    "git push failed after %d attempts: %s",
-                    attempt + 1,
-                    push_result.stderr,
-                )
+                logger.error("git push failed after %d attempts: %s", attempt + 1, push_result.stderr)
             return push_result
         logger.warning(
             "git push attempt %d/%d failed (transient): %s -- retrying in %.0fs",
@@ -488,6 +507,44 @@ def list_tags(cwd: Path, pattern: str | None = None) -> list[str]:
     return [t.strip() for t in r.stdout.strip().splitlines() if t.strip()]
 
 
+def _parse_latest_version(
+    tags: list[str], tag_prefix: str
+) -> tuple[int, int, int, str | None]:
+    """Extract the latest semver from tags.
+
+    Args:
+        tags: Tag names sorted by recency.
+        tag_prefix: Prefix to strip (e.g. ``"v"``).
+
+    Returns:
+        (major, minor, patch, latest_tag) — tag is None if no valid tag found.
+    """
+    for t in tags:
+        stripped = t.lstrip(tag_prefix)
+        parts = stripped.split(".")
+        if len(parts) >= 3 and all(p.isdigit() for p in parts[:3]):
+            return int(parts[0]), int(parts[1]), int(parts[2]), t
+    return 0, 0, 0, None
+
+
+def _compute_bump(subjects: list[str]) -> str:
+    """Determine semver bump level from conventional commit subjects.
+
+    Args:
+        subjects: Commit subject lines.
+
+    Returns:
+        One of ``"major"``, ``"minor"``, or ``"patch"``.
+    """
+    for subj in subjects:
+        lower = subj.lower()
+        if "breaking change" in lower or "!:" in subj:
+            return "major"
+    if any(subj.lower().startswith("feat") for subj in subjects):
+        return "minor"
+    return "patch"
+
+
 def version_from_commits(cwd: Path, tag_prefix: str = "v") -> str:
     """Compute the next semantic version from conventional commits since the last tag.
 
@@ -505,53 +562,23 @@ def version_from_commits(cwd: Path, tag_prefix: str = "v") -> str:
         Next version string *without* the prefix (e.g. ``"1.3.0"``).
     """
     tags = list_tags(cwd, pattern=f"{tag_prefix}*")
+    major, minor, patch_v, latest_tag = _parse_latest_version(tags, tag_prefix)
 
-    # Parse current version from latest tag
-    major, minor, patch_v = 0, 0, 0
-    latest_tag: str | None = None
-    for t in tags:
-        stripped = t.lstrip(tag_prefix)
-        parts = stripped.split(".")
-        if len(parts) >= 3 and all(p.isdigit() for p in parts[:3]):
-            major, minor, patch_v = int(parts[0]), int(parts[1]), int(parts[2])
-            latest_tag = t
-            break
-
-    # Get commits since latest tag (or all commits)
+    log_cmd = ["log", "--pretty=format:%s"]
     if latest_tag:
-        log_r = run_git(
-            ["log", f"{latest_tag}..HEAD", "--pretty=format:%s"],
-            cwd,
-            timeout=10,
-        )
-    else:
-        log_r = run_git(
-            ["log", "--pretty=format:%s"],
-            cwd,
-            timeout=10,
-        )
+        log_cmd.insert(1, f"{latest_tag}..HEAD")
+    log_r = run_git(log_cmd, cwd, timeout=10)
 
     has_commits = log_r.ok and bool(log_r.stdout.strip())
     subjects = log_r.stdout.strip().splitlines() if has_commits else []
 
-    # Only bump when there are new commits since the last tag
     if subjects:
-        bump_major = False
-        bump_minor = False
-
-        for subj in subjects:
-            lower = subj.lower()
-            if "breaking change" in lower or "!:" in subj:
-                bump_major = True
-                break
-            if lower.startswith("feat"):
-                bump_minor = True
-
-        if bump_major:
+        bump = _compute_bump(subjects)
+        if bump == "major":
             major += 1
             minor = 0
             patch_v = 0
-        elif bump_minor:
+        elif bump == "minor":
             minor += 1
             patch_v = 0
         else:

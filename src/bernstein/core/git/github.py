@@ -770,6 +770,187 @@ def _role_from_labels(labels: list[str]) -> str:
     return "backend"
 
 
+def _fetch_gh_issues(workdir: Path) -> list[dict[str, Any]] | None:
+    """Fetch open GitHub issues via the ``gh`` CLI.
+
+    Args:
+        workdir: Repository root (used as ``cwd`` for ``gh``).
+
+    Returns:
+        Parsed list of issue dicts, or None on failure.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "list",
+                "--state", "open",
+                "--json", "number,title,body,labels,assignees",
+                "--limit", "500",
+            ],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=30, cwd=str(workdir),
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("gh issue list failed: %s", exc)
+        return None
+
+    if result.returncode != 0:
+        logger.debug("gh issue list returned rc=%d: %s", result.returncode, result.stderr.strip())
+        return None
+
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        logger.warning("Failed to parse gh issue list JSON output")
+        return None
+
+
+def _collect_existing_issue_numbers(workdir: Path, backlog_open: Path) -> set[int]:
+    """Collect issue numbers that already have backlog YAML files.
+
+    Checks open/, issues/, claimed/, done/, closed/ subdirectories.
+
+    Args:
+        workdir: Repository root.
+        backlog_open: Path to the open backlog directory.
+
+    Returns:
+        Set of already-synced issue numbers.
+    """
+    numbers: set[int] = set()
+    dirs = [backlog_open]
+    for subdir in ("issues", "claimed", "done", "closed"):
+        d = workdir / ".sdd" / "backlog" / subdir
+        if d.is_dir():
+            dirs.append(d)
+
+    for check_dir in dirs:
+        for path in check_dir.glob("gh-*-*.yaml"):
+            m = re.match(r"gh-(\d+)-", path.name)
+            if m:
+                numbers.add(int(m.group(1)))
+    return numbers
+
+
+def _collect_existing_titles(workdir: Path, backlog_open: Path) -> set[str]:
+    """Build a title dedup set from YAML/md files in open/ and issues/.
+
+    Args:
+        workdir: Repository root.
+        backlog_open: Path to the open backlog directory.
+
+    Returns:
+        Set of normalized (lowered, stripped) titles.
+    """
+    import yaml as _yaml
+
+    titles: set[str] = set()
+    for src_dir in (backlog_open, workdir / ".sdd" / "backlog" / "issues"):
+        if not src_dir.is_dir():
+            continue
+        for path in [*src_dir.glob("*.yaml"), *src_dir.glob("*.md")]:
+            try:
+                raw_text = path.read_text(encoding="utf-8")
+                if not raw_text.startswith("---"):
+                    continue
+                end = raw_text.find("\n---", 3)
+                if end == -1:
+                    continue
+                fm_parsed: dict[str, object] = dict(_yaml.safe_load(raw_text[3:end]) or {})
+                title_val = fm_parsed.get("title")
+                if title_val:
+                    t = re.sub(r"^\[GH#\d+\]\s*", "", str(title_val))
+                    titles.add(t.lower().strip())
+            except Exception:
+                continue
+    return titles
+
+
+def _should_skip_issue(
+    issue: dict[str, Any],
+    existing_numbers: set[int],
+    existing_titles: set[str],
+) -> tuple[bool, bool]:
+    """Determine if an issue should be skipped for backlog creation.
+
+    Args:
+        issue: Issue dict from ``gh issue list``.
+        existing_numbers: Already-synced issue numbers.
+        existing_titles: Already-existing backlog titles.
+
+    Returns:
+        (skip, is_assigned) — True to skip, is_assigned indicates assignee skip.
+    """
+    number: int = issue.get("number", 0)
+    if not number or number in existing_numbers:
+        return True, False
+
+    assignees_raw: list[dict[str, Any]] = issue.get("assignees", []) or []
+    if any(a.get("login") for a in assignees_raw):
+        logger.info(
+            "Skipping GitHub issue #%d — already assigned to %s",
+            number,
+            ",".join(str(a.get("login", "?")) for a in assignees_raw),
+        )
+        return True, True
+
+    title: str = issue.get("title", "Untitled issue")
+    if title.lower().strip() in existing_titles:
+        return True, False
+
+    task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
+    if task_filter:
+        slug_preview = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+        filename_preview = f"gh-{number}-{slug_preview}"
+        if task_filter.lower() not in filename_preview.lower():
+            logger.debug("Skipping issue #%d - does not match filter '%s'", number, task_filter)
+            return True, False
+
+    return False, False
+
+
+def _write_backlog_yaml(backlog_open: Path, issue: dict[str, Any]) -> str:
+    """Write a single backlog YAML file for a GitHub issue.
+
+    Args:
+        backlog_open: Directory to write the file in.
+        issue: Issue dict from ``gh issue list``.
+
+    Returns:
+        Filename of the created file.
+    """
+    number: int = issue["number"]
+    title: str = issue.get("title", "Untitled issue")
+    body: str = (issue.get("body") or "")[:500]
+    labels_raw: list[dict[str, Any]] = issue.get("labels", [])
+    labels: list[str] = [str(lbl.get("name", "")).lower() for lbl in labels_raw if lbl.get("name")]
+
+    priority = _priority_from_labels(labels)
+    role = _role_from_labels(labels)
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+    filename = f"gh-{number}-{slug}.yaml"
+
+    content = (
+        f"---\n"
+        f"id: gh-{number}\n"
+        f'title: "[GH#{number}] {title}"\n'
+        f"role: {role}\n"
+        f"priority: {priority}\n"
+        f"scope: medium\n"
+        f"complexity: medium\n"
+        f"type: feature\n"
+        f"metadata:\n"
+        f"  issue_number: {number}\n"
+        f"---\n\n"
+        f"# [GH#{number}] {title}\n\n"
+        f"{body}\n"
+    )
+
+    (backlog_open / filename).write_text(content, encoding="utf-8")
+    return filename
+
+
 def sync_github_issues_to_backlog(workdir: Path) -> int:
     """Fetch open GitHub Issues and create backlog YAML files for new ones.
 
@@ -790,160 +971,26 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
     backlog_open = workdir / ".sdd" / "backlog" / "open"
     backlog_open.mkdir(parents=True, exist_ok=True)
 
-    # Fetch open issues via gh CLI.
-    # ``assignees`` is read so we can skip any issue that already has a
-    # human volunteer — otherwise bernstein races the contributor to
-    # implement it and closes their assigned ticket out from under them
-    # (incident 2026-04-11, GH#684 → GH#680 apology).
-    try:
-        result = subprocess.run(
-            [
-                "gh",
-                "issue",
-                "list",
-                "--state",
-                "open",
-                "--json",
-                "number,title,body,labels,assignees",
-                "--limit",
-                "500",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-            cwd=str(workdir),
-        )
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.debug("gh issue list failed: %s", exc)
+    issues = _fetch_gh_issues(workdir)
+    if issues is None:
         return 0
 
-    if result.returncode != 0:
-        logger.debug(
-            "gh issue list returned rc=%d: %s",
-            result.returncode,
-            result.stderr.strip(),
-        )
-        return 0
-
-    try:
-        issues: list[dict[str, Any]] = json.loads(result.stdout)
-    except ValueError:
-        logger.warning("Failed to parse gh issue list JSON output")
-        return 0
-
-    # Build set of issue numbers that already have backlog files.
-    # Files are named  gh-{number}-{slug}.yaml
-    existing_numbers: set[int] = set()
-    for path in backlog_open.glob("gh-*-*.yaml"):
-        m = re.match(r"gh-(\d+)-", path.name)
-        if m:
-            existing_numbers.add(int(m.group(1)))
-    # Also check issues/, claimed/, done/, closed/ so we don't re-create
-    for subdir in ("issues", "claimed", "done", "closed"):
-        check_dir = workdir / ".sdd" / "backlog" / subdir
-        if not check_dir.is_dir():
-            continue
-        for path in check_dir.glob("gh-*-*.yaml"):
-            m = re.match(r"gh-(\d+)-", path.name)
-            if m:
-                existing_numbers.add(int(m.group(1)))
-
-    # Also build a title dedup set from ALL files in issues/ and open/
-    # (many backlog files are named road-*, agent-*, etc. — not gh-NNN-*)
-    existing_titles: set[str] = set()
-    for src_dir in (backlog_open, workdir / ".sdd" / "backlog" / "issues"):
-        if not src_dir.is_dir():
-            continue
-        for path in [*src_dir.glob("*.yaml"), *src_dir.glob("*.md")]:
-            try:
-                import yaml as _yaml
-
-                raw_text = path.read_text(encoding="utf-8")
-                if raw_text.startswith("---"):
-                    end = raw_text.find("\n---", 3)
-                    if end != -1:
-                        fm_parsed: dict[str, object] = dict(_yaml.safe_load(raw_text[3:end]) or {})
-                        title_val = fm_parsed.get("title")
-                        if title_val:
-                            # Strip common prefixes like "[GH#123] " for matching
-                            t = re.sub(r"^\[GH#\d+\]\s*", "", str(title_val))
-                            existing_titles.add(t.lower().strip())
-            except Exception:
-                continue
+    existing_numbers = _collect_existing_issue_numbers(workdir, backlog_open)
+    existing_titles = _collect_existing_titles(workdir, backlog_open)
 
     created = 0
     skipped_assigned = 0
     for issue in issues:
-        number: int = issue.get("number", 0)
-        if not number or number in existing_numbers:
-            continue
-
-        # Skip issues that have a human assignee — never race a
-        # contributor. This has to live in the sync step, not the
-        # spawner: once a backlog file has been created, the
-        # orchestrator has no easy way to correlate it back to the
-        # original GitHub issue to check assignment.
-        assignees_raw: list[dict[str, Any]] = issue.get("assignees", []) or []
-        if any(a.get("login") for a in assignees_raw):
+        skip, is_assigned = _should_skip_issue(issue, existing_numbers, existing_titles)
+        if is_assigned:
             skipped_assigned += 1
-            logger.info(
-                "Skipping GitHub issue #%d — already assigned to %s",
-                number,
-                ",".join(str(a.get("login", "?")) for a in assignees_raw),
-            )
+        if skip:
             continue
 
-        title: str = issue.get("title", "Untitled issue")
-        if title.lower().strip() in existing_titles:
-            continue  # Already covered by an existing backlog file
-
-        # Task filter: skip issues that don't match the pattern (e.g., "gh-62")
-        task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
-        if task_filter:
-            slug_preview = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
-            filename_preview = f"gh-{number}-{slug_preview}"
-            if task_filter.lower() not in filename_preview.lower():
-                logger.debug("Skipping issue #%d - does not match filter '%s'", number, task_filter)
-                continue
-
-        body: str = (issue.get("body") or "")[:500]
-        labels_raw: list[dict[str, Any]] = issue.get("labels", [])
-        labels: list[str] = [str(lbl.get("name", "")).lower() for lbl in labels_raw if lbl.get("name")]
-
-        priority = _priority_from_labels(labels)
-        role = _role_from_labels(labels)
-
-        # Build a filename slug from the title
-        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
-        filename = f"gh-{number}-{slug}.yaml"
-
-        # Write YAML-frontmatter format (parsed by backlog_parser._parse_yaml_frontmatter)
-        content = (
-            f"---\n"
-            f"id: gh-{number}\n"
-            f'title: "[GH#{number}] {title}"\n'
-            f"role: {role}\n"
-            f"priority: {priority}\n"
-            f"scope: medium\n"
-            f"complexity: medium\n"
-            f"type: feature\n"
-            f"metadata:\n"
-            f"  issue_number: {number}\n"
-            f"---\n\n"
-            f"# [GH#{number}] {title}\n\n"
-            f"{body}\n"
-        )
-
-        file_path = backlog_open / filename
-        file_path.write_text(content, encoding="utf-8")
+        filename = _write_backlog_yaml(backlog_open, issue)
         created += 1
-        logger.info("Synced GitHub issue #%d to backlog: %s", number, filename)
+        logger.info("Synced GitHub issue #%d to backlog: %s", issue.get("number", 0), filename)
 
     if skipped_assigned:
-        logger.info(
-            "Skipped %d assigned GitHub issue(s) during backlog sync",
-            skipped_assigned,
-        )
+        logger.info("Skipped %d assigned GitHub issue(s) during backlog sync", skipped_assigned)
     return created

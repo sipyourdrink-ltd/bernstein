@@ -319,6 +319,46 @@ class LoopDetector:
 # ---------------------------------------------------------------------------
 
 
+def _all_graph_nodes(graph: dict[str, set[str]]) -> set[str]:
+    """Collect every node referenced in *graph* (keys + values).
+
+    Args:
+        graph: Adjacency mapping.
+
+    Returns:
+        Set of all node IDs.
+    """
+    nodes: set[str] = set(graph)
+    for neighbors in graph.values():
+        nodes.update(neighbors)
+    return nodes
+
+
+def _dfs_cycles_from(
+    start: str, graph: dict[str, set[str]], visited: set[str]
+) -> list[list[str]]:
+    """Run iterative DFS from *start* to find simple cycles back to it.
+
+    Args:
+        start: Starting node for cycle search.
+        graph: Adjacency mapping.
+        visited: Globally visited nodes (not re-entered as start).
+
+    Returns:
+        Cycles found starting/ending at *start*.
+    """
+    cycles: list[list[str]] = []
+    stack: list[tuple[str, list[str], set[str]]] = [(start, [start], {start})]
+    while stack:
+        node, path, path_set = stack.pop()
+        for neighbor in sorted(graph.get(node, set())):
+            if neighbor == start and len(path) > 1:
+                cycles.append(list(path))
+            elif neighbor not in path_set and neighbor not in visited:
+                stack.append((neighbor, [*path, neighbor], path_set | {neighbor}))
+    return cycles
+
+
 def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     """Find all simple cycles in *graph* using iterative DFS.
 
@@ -331,28 +371,14 @@ def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     Returns:
         List of cycles, each as an ordered list of node IDs.
     """
-    all_nodes: set[str] = set(graph)
-    for neighbors in graph.values():
-        all_nodes.update(neighbors)
-
+    all_nodes = _all_graph_nodes(graph)
     cycles: list[list[str]] = []
     visited: set[str] = set()
 
     for start in sorted(all_nodes):  # sorted for determinism
         if start in visited:
             continue
-
-        stack: list[tuple[str, list[str], set[str]]] = [
-            (start, [start], {start}),
-        ]
-        while stack:
-            node, path, path_set = stack.pop()
-            for neighbor in sorted(graph.get(node, set())):
-                if neighbor == start and len(path) > 1:
-                    cycles.append(list(path))
-                elif neighbor not in path_set and neighbor not in visited:
-                    stack.append((neighbor, [*path, neighbor], path_set | {neighbor}))
-
+        cycles.extend(_dfs_cycles_from(start, graph, visited))
         visited.add(start)
 
     return cycles
