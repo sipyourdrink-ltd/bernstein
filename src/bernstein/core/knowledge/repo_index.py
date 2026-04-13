@@ -262,13 +262,101 @@ def _git_file_owners(workdir: Path, files: list[str]) -> dict[str, str]:
     return owners
 
 
+def _enumerate_py_files(
+    workdir: Path, graph: RepoGraph
+) -> tuple[list[str], set[str], list[str]]:
+    """Phase 1: Enumerate Python files and add nodes to the graph.
+
+    Args:
+        workdir: Project root.
+        graph: Graph to add nodes to.
+
+    Returns:
+        (py_files, source_files, test_files).
+    """
+    all_files = _git_ls_files(workdir)
+    py_files = [f for f in all_files if f.endswith(".py")][:_MAX_FILES]
+
+    source_files: set[str] = set()
+    test_files: list[str] = []
+
+    for fpath in py_files:
+        kind = _classify_file(fpath)
+        graph.add_node(GraphNode(id=fpath, kind=kind, module=_path_to_module(fpath)))
+        if kind == "source":
+            source_files.add(fpath)
+        elif kind == "test":
+            test_files.append(fpath)
+
+    return py_files, source_files, test_files
+
+
+def _build_import_edges(workdir: Path, py_files: list[str], graph: RepoGraph) -> None:
+    """Phase 2: Parse ASTs to extract symbols and import edges.
+
+    Args:
+        workdir: Project root.
+        py_files: Python file paths.
+        graph: Graph to add edges to.
+    """
+    module_to_file: dict[str, str] = {}
+    for fpath in py_files:
+        mod = _path_to_module(fpath)
+        module_to_file[mod] = fpath
+        parts = mod.rsplit(".", 1)
+        if len(parts) == 2:
+            module_to_file.setdefault(parts[1], fpath)
+
+    for fpath in py_files:
+        summary = _parse_python_file(workdir / fpath)
+        if not summary:
+            continue
+        node = graph.nodes[fpath]
+        node.symbols = [c[0] for c in summary.classes] + summary.functions[:10]
+
+        for imp in summary.imports:
+            target = module_to_file.get(imp)
+            if target and target != fpath and target in graph.nodes:
+                graph.add_edge(GraphEdge(source=fpath, target=target, kind="imports"))
+
+
+def _add_change_frequency_edges(workdir: Path, graph: RepoGraph) -> None:
+    """Phase 4: Add change frequency and co-change edges from git.
+
+    Args:
+        workdir: Project root.
+        graph: Graph to update.
+    """
+    try:
+        hot = _git_hot_files(workdir, days=14, max_results=50)
+        hot_map = dict(hot)
+        for fpath, count in hot:
+            if fpath in graph.nodes:
+                graph.nodes[fpath].change_frequency = count
+    except Exception as exc:
+        logger.debug("Hot files lookup failed: %s", exc)
+        return
+
+    top_hot = [f for f, _ in sorted(hot_map.items(), key=lambda x: x[1], reverse=True)[:15]]
+    for fpath in top_hot:
+        if fpath not in graph.nodes:
+            continue
+        try:
+            cochanges = _git_cochange_files(workdir, fpath, max_results=3)
+            for target, count in cochanges:
+                if target in graph.nodes and target != fpath:
+                    graph.add_edge(GraphEdge(source=fpath, target=target, kind="cochanges", weight=count))
+        except Exception:
+            pass
+
+
 def build_repo_graph(workdir: Path) -> RepoGraph:
     """Build the repository intelligence graph from scratch.
 
     Phases:
-    1. Enumerate files → create nodes
-    2. Parse Python ASTs → extract import edges
-    3. Map test files → source files via naming convention
+    1. Enumerate files -> create nodes
+    2. Parse Python ASTs -> extract import edges
+    3. Map test files -> source files via naming convention
     4. Query git for change frequency and co-change edges
     5. Query git for file ownership
 
@@ -280,120 +368,31 @@ def build_repo_graph(workdir: Path) -> RepoGraph:
     """
     graph = RepoGraph(built_at=datetime.now().isoformat(timespec="seconds"))
 
-    # Phase 1: Enumerate files
-    all_files = _git_ls_files(workdir)
-    py_files = [f for f in all_files if f.endswith(".py")][:_MAX_FILES]
-
+    py_files, source_files, test_files = _enumerate_py_files(workdir, graph)
     if not py_files:
         logger.info("No Python files found, returning empty graph")
         return graph
 
-    source_files: set[str] = set()
-    test_files: list[str] = []
+    _build_import_edges(workdir, py_files, graph)
 
-    for fpath in py_files:
-        kind = _classify_file(fpath)
-        node = GraphNode(
-            id=fpath,
-            kind=kind,
-            module=_path_to_module(fpath),
-        )
-        graph.add_node(node)
-        if kind == "source":
-            source_files.add(fpath)
-        elif kind == "test":
-            test_files.append(fpath)
-
-    # Phase 2: Parse ASTs → import edges + symbol extraction
-    module_to_file: dict[str, str] = {}
-    for fpath in py_files:
-        mod = _path_to_module(fpath)
-        module_to_file[mod] = fpath
-        # Also index by last component for relative imports
-        parts = mod.rsplit(".", 1)
-        if len(parts) == 2:
-            module_to_file.setdefault(parts[1], fpath)
-
-    for fpath in py_files:
-        summary = _parse_python_file(workdir / fpath)
-        if not summary:
-            continue
-
-        # Extract symbols
-        node = graph.nodes[fpath]
-        node.symbols = [c[0] for c in summary.classes] + summary.functions[:10]
-
-        # Build import edges
-        for imp in summary.imports:
-            target = module_to_file.get(imp)
-            if target and target != fpath and target in graph.nodes:
-                graph.add_edge(
-                    GraphEdge(
-                        source=fpath,
-                        target=target,
-                        kind="imports",
-                    )
-                )
-
-    # Phase 3: Map test → source files
+    # Phase 3: Map test -> source files
     for tpath in test_files:
         target = _infer_test_target(tpath, source_files)
         if target:
-            graph.add_edge(
-                GraphEdge(
-                    source=tpath,
-                    target=target,
-                    kind="tests",
-                )
-            )
+            graph.add_edge(GraphEdge(source=tpath, target=target, kind="tests"))
 
-    # Phase 4: Change frequency + co-changes (from git)
+    _add_change_frequency_edges(workdir, graph)
+
+    # Phase 5: Ownership
     try:
-        hot = _git_hot_files(workdir, days=14, max_results=50)
-        hot_map = dict(hot)
-        for fpath, count in hot:
-            if fpath in graph.nodes:
-                graph.nodes[fpath].change_frequency = count
-    except Exception as exc:
-        logger.debug("Hot files lookup failed: %s", exc)
-        hot_map = {}
-
-    # Co-change edges for frequently modified files
-    top_hot = [f for f, c in sorted(hot_map.items(), key=lambda x: x[1], reverse=True)[:15]]
-    for fpath in top_hot:
-        if fpath not in graph.nodes:
-            continue
-        try:
-            cochanges = _git_cochange_files(workdir, fpath, max_results=3)
-            for target, count in cochanges:
-                if target in graph.nodes and target != fpath:
-                    graph.add_edge(
-                        GraphEdge(
-                            source=fpath,
-                            target=target,
-                            kind="cochanges",
-                            weight=count,
-                        )
-                    )
-        except Exception:
-            pass
-
-    # Phase 5: Ownership (batch, capped)
-    # Only query ownership for hot files + source files up to a limit
-    ownership_candidates = list(source_files)[:50]
-    try:
-        owners = _git_file_owners(workdir, ownership_candidates)
+        owners = _git_file_owners(workdir, list(source_files)[:50])
         for fpath, owner in owners.items():
             if fpath in graph.nodes:
                 graph.nodes[fpath].primary_owner = owner
     except Exception as exc:
         logger.debug("Ownership lookup failed: %s", exc)
 
-    logger.info(
-        "Repo graph built: %d nodes, %d edges",
-        len(graph.nodes),
-        len(graph.edges),
-    )
+    logger.info("Repo graph built: %d nodes, %d edges", len(graph.nodes), len(graph.edges))
     return graph
 
 
@@ -477,6 +476,44 @@ def get_or_build_graph(workdir: Path, max_age_minutes: int = 30) -> RepoGraph:
 # ---------------------------------------------------------------------------
 
 
+def _expand_neighborhood(graph: RepoGraph, fid: str) -> set[str]:
+    """Collect all neighbors of *fid* via imports, dependents, tests, co-changes.
+
+    Args:
+        graph: Full repo graph.
+        fid: File node ID to expand from.
+
+    Returns:
+        Set of neighbor file IDs.
+    """
+    neighbors: set[str] = set()
+    neighbors.update(graph.dependencies(fid))
+    neighbors.update(graph.dependents(fid))
+    neighbors.update(graph.test_files_for(fid))
+    neighbors.update(co for co, _w in graph.cochanged_with(fid)[:2])
+    return neighbors
+
+
+def _score_node(fid: str, seed_files: list[str], graph: RepoGraph) -> float:
+    """Score a node for priority trimming.
+
+    Args:
+        fid: File node ID.
+        seed_files: Seed files get highest priority.
+        graph: Graph for node metadata.
+
+    Returns:
+        Priority score (higher = keep).
+    """
+    score = 100.0 if fid in seed_files else 0.0
+    node = graph.nodes.get(fid)
+    if node:
+        score += node.change_frequency * 2.0
+        if node.kind == "test":
+            score += 5.0
+    return score
+
+
 def extract_subgraph(
     graph: RepoGraph,
     seed_files: list[str],
@@ -506,40 +543,17 @@ def extract_subgraph(
     for _ in range(depth):
         next_frontier: set[str] = set()
         for fid in frontier:
-            # Import dependencies (what this file needs)
-            for dep in graph.dependencies(fid):
-                next_frontier.add(dep)
-            # Dependents (what depends on this file)
-            for dep in graph.dependents(fid):
-                next_frontier.add(dep)
-            # Test files
-            for tf in graph.test_files_for(fid):
-                next_frontier.add(tf)
-            # Co-changes (top 2 by weight)
-            for co, _w in graph.cochanged_with(fid)[:2]:
-                next_frontier.add(co)
+            next_frontier.update(_expand_neighborhood(graph, fid))
         frontier = next_frontier - included
         included.update(frontier)
         if len(included) >= max_nodes:
             break
 
-    # Trim to max_nodes, prioritizing seed files + high-frequency files
     if len(included) > max_nodes:
-        scored: list[tuple[str, float]] = []
-        for fid in included:
-            score = 0.0
-            if fid in seed_files:
-                score += 100.0
-            node = graph.nodes.get(fid)
-            if node:
-                score += node.change_frequency * 2.0
-                if node.kind == "test":
-                    score += 5.0  # Tests are valuable context
-            scored.append((fid, score))
+        scored = [(fid, _score_node(fid, seed_files, graph)) for fid in included]
         scored.sort(key=lambda x: x[1], reverse=True)
         included = {fid for fid, _ in scored[:max_nodes]}
 
-    # Build subgraph
     sub = RepoGraph(built_at=graph.built_at)
     for fid in included:
         if fid in graph.nodes:
@@ -554,6 +568,61 @@ def extract_subgraph(
 # ---------------------------------------------------------------------------
 # Context formatting — render subgraph as agent-readable markdown
 # ---------------------------------------------------------------------------
+
+
+def _format_dep_line(sub: RepoGraph, fid: str) -> str | None:
+    """Format a dependency summary line for a single seed file.
+
+    Args:
+        sub: Subgraph for lookups.
+        fid: File node ID.
+
+    Returns:
+        Formatted line or None if the file has no info.
+    """
+    node = sub.nodes[fid]
+    deps = sub.dependencies(fid)
+    dependents = sub.dependents(fid)
+    tests = sub.test_files_for(fid)
+
+    parts: list[str] = []
+    if deps:
+        parts.append(f"imports: {', '.join(_short(d) for d in deps[:5])}")
+    if dependents:
+        parts.append(f"used by: {', '.join(_short(d) for d in dependents[:5])}")
+    if tests:
+        parts.append(f"tested by: {', '.join(_short(t) for t in tests[:3])}")
+    if node.primary_owner:
+        parts.append(f"owner: {node.primary_owner}")
+
+    if parts:
+        return f"- **{_short(fid)}**: {'; '.join(parts)}"
+    if node.symbols:
+        return f"- **{_short(fid)}**: defines {', '.join(node.symbols[:5])}"
+    return None
+
+
+def _format_test_coverage(sub: RepoGraph, seed_files: list[str]) -> list[str]:
+    """Format the test-coverage section.
+
+    Args:
+        sub: Subgraph.
+        seed_files: Seed file IDs.
+
+    Returns:
+        Lines for the test gaps section (empty if all covered).
+    """
+    uncovered = [
+        fid
+        for fid in seed_files
+        if fid in sub.nodes and not sub.test_files_for(fid) and sub.nodes[fid].kind == "source"
+    ]
+    if not uncovered:
+        return []
+    return [
+        "\n### Test gaps",
+        f"No test files found for: {', '.join(_short(f) for f in uncovered)}",
+    ]
 
 
 def format_subgraph_context(
@@ -583,52 +652,14 @@ def format_subgraph_context(
 
     lines: list[str] = ["## Repository Intelligence"]
 
-    # Section 1: Dependency map for seed files
-    dep_lines: list[str] = []
-    for fid in seed_files:
-        if fid not in sub.nodes:
-            continue
-        node = sub.nodes[fid]
-        deps = sub.dependencies(fid)
-        dependents = sub.dependents(fid)
-        tests = sub.test_files_for(fid)
-
-        parts: list[str] = []
-        if deps:
-            parts.append(f"imports: {', '.join(_short(d) for d in deps[:5])}")
-        if dependents:
-            parts.append(f"used by: {', '.join(_short(d) for d in dependents[:5])}")
-        if tests:
-            parts.append(f"tested by: {', '.join(_short(t) for t in tests[:3])}")
-        if node.primary_owner:
-            parts.append(f"owner: {node.primary_owner}")
-
-        if parts:
-            dep_lines.append(f"- **{_short(fid)}**: {'; '.join(parts)}")
-        elif node.symbols:
-            dep_lines.append(f"- **{_short(fid)}**: defines {', '.join(node.symbols[:5])}")
-
-    if dep_lines:
+    dep_lines = [_format_dep_line(sub, fid) for fid in seed_files if fid in sub.nodes]
+    dep_lines_clean = [dl for dl in dep_lines if dl is not None]
+    if dep_lines_clean:
         lines.append("\n### File relationships")
-        lines.extend(dep_lines)
+        lines.extend(dep_lines_clean)
 
-    # Section 2: Test coverage
-    uncovered: list[str] = []
-    covered: list[str] = []
-    for fid in seed_files:
-        if fid not in sub.nodes:
-            continue
-        tests = sub.test_files_for(fid)
-        if tests:
-            covered.append(fid)
-        elif sub.nodes[fid].kind == "source":
-            uncovered.append(fid)
+    lines.extend(_format_test_coverage(sub, seed_files))
 
-    if uncovered:
-        lines.append("\n### Test gaps")
-        lines.append(f"No test files found for: {', '.join(_short(f) for f in uncovered)}")
-
-    # Section 3: Change hotspots
     hot_nodes = sorted(
         [n for n in sub.nodes.values() if n.change_frequency > 0],
         key=lambda n: n.change_frequency,
@@ -639,7 +670,6 @@ def format_subgraph_context(
         for n in hot_nodes:
             lines.append(f"- {_short(n.id)}: {n.change_frequency} commits")
 
-    # Section 4: Co-change hints
     cochange_hints: list[str] = []
     for fid in seed_files:
         for co, weight in sub.cochanged_with(fid)[:2]:

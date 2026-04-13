@@ -89,6 +89,34 @@ class WorktreeSetupConfig:
 _STALE_LOCK_AGE_S = 300  # 5 minutes — locks older than this are considered stale
 
 
+def _check_stale_lock(lock_path: Path, now: float) -> str | None:
+    """Check a single lock file and remove it if stale.
+
+    Args:
+        lock_path: Path to the lock file.
+        now: Current time (seconds since epoch).
+
+    Returns:
+        Warning message, or None if no issue.
+    """
+    if not lock_path.exists():
+        return None
+    try:
+        age_s = now - lock_path.stat().st_mtime
+        if age_s > _STALE_LOCK_AGE_S:
+            lock_path.unlink()
+            msg = f"Removed stale {lock_path.name} (age {age_s:.0f}s). Likely left by a crashed agent."
+            logger.warning(msg)
+            return msg
+        msg = f"{lock_path} exists (age {age_s:.0f}s) — another git operation may be in progress"
+        logger.info(msg)
+        return msg
+    except OSError as exc:
+        msg = f"Could not inspect {lock_path}: {exc}"
+        logger.warning(msg)
+        return msg
+
+
 def _check_git_health(repo_root: Path) -> list[str]:
     """Pre-flight health check for the git repository before worktree creation.
 
@@ -108,42 +136,17 @@ def _check_git_health(repo_root: Path) -> list[str]:
     now = time.time()
 
     # 1. Check for stale .git/index.lock
-    index_lock = repo_root / ".git" / "index.lock"
-    if index_lock.exists():
-        try:
-            age_s = now - index_lock.stat().st_mtime
-            if age_s > _STALE_LOCK_AGE_S:
-                index_lock.unlink()
-                msg = f"Removed stale .git/index.lock (age {age_s:.0f}s). Likely left by a crashed agent."
-                logger.warning(msg)
-                warnings.append(msg)
-            else:
-                msg = f".git/index.lock exists (age {age_s:.0f}s) — another git operation may be in progress"
-                logger.info(msg)
-                warnings.append(msg)
-        except OSError as exc:
-            msg = f"Could not inspect .git/index.lock: {exc}"
-            logger.warning(msg)
-            warnings.append(msg)
+    w = _check_stale_lock(repo_root / ".git" / "index.lock", now)
+    if w:
+        warnings.append(w)
 
     # 2. Check for stale .git/worktrees/*/locked files
     git_worktrees_dir = repo_root / ".git" / "worktrees"
     if git_worktrees_dir.is_dir():
         for wt_dir in git_worktrees_dir.iterdir():
-            locked_file = wt_dir / "locked"
-            if not locked_file.exists():
-                continue
-            try:
-                age_s = now - locked_file.stat().st_mtime
-                if age_s > _STALE_LOCK_AGE_S:
-                    locked_file.unlink()
-                    msg = f"Removed stale lock {locked_file} (age {age_s:.0f}s). Likely left by a crashed agent."
-                    logger.warning(msg)
-                    warnings.append(msg)
-            except OSError as exc:
-                msg = f"Could not inspect {locked_file}: {exc}"
-                logger.warning(msg)
-                warnings.append(msg)
+            w = _check_stale_lock(wt_dir / "locked", now)
+            if w:
+                warnings.append(w)
 
     # 3. Verify HEAD is valid
     try:
@@ -214,6 +217,56 @@ def _apply_sparse_checkout(worktree_path: Path, sparse_paths: Sequence[str]) -> 
         return False
 
 
+def _symlink_dirs(repo_root: Path, worktree_path: Path, dirs: list[str]) -> None:
+    """Symlink shared directories from repo root into the worktree.
+
+    Args:
+        repo_root: Repository root.
+        worktree_path: Worktree directory.
+        dirs: Directory names to symlink.
+    """
+    for dir_name in dirs:
+        source = repo_root / dir_name
+        target = worktree_path / dir_name
+        if not source.exists():
+            logger.debug("Skipping symlink for %r: source does not exist", dir_name)
+            continue
+        if target.exists() or target.is_symlink():
+            logger.debug("Skipping symlink for %r: target already exists", dir_name)
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(source)
+            logger.info("Symlinked worktree/%s -> %s", dir_name, source)
+        except OSError as exc:
+            logger.warning("Failed to symlink %r into worktree: %s", dir_name, exc)
+
+
+def _copy_files(repo_root: Path, worktree_path: Path, files: list[str]) -> None:
+    """Copy per-worktree files from repo root into the worktree.
+
+    Args:
+        repo_root: Repository root.
+        worktree_path: Worktree directory.
+        files: File names to copy.
+    """
+    for file_name in files:
+        source = repo_root / file_name
+        target = worktree_path / file_name
+        if not source.is_file():
+            logger.debug("Skipping copy of %r: source missing or not a file", file_name)
+            continue
+        if target.exists():
+            logger.debug("Skipping copy of %r: target already exists", file_name)
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            logger.info("Copied %s into worktree", file_name)
+        except OSError as exc:
+            logger.warning("Failed to copy %r into worktree: %s", file_name, exc)
+
+
 def setup_worktree_env(
     repo_root: Path,
     worktree_path: Path,
@@ -237,39 +290,8 @@ def setup_worktree_env(
         worktree_path: Path to the newly-created worktree directory.
         config: Environment setup configuration.
     """
-    # --- Symlink shared directories -------------------------------------------
-    for dir_name in config.symlink_dirs:
-        source = repo_root / dir_name
-        target = worktree_path / dir_name
-        if not source.exists():
-            logger.debug("Skipping symlink for %r: source does not exist", dir_name)
-            continue
-        if target.exists() or target.is_symlink():
-            logger.debug("Skipping symlink for %r: target already exists", dir_name)
-            continue
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.symlink_to(source)
-            logger.info("Symlinked worktree/%s -> %s", dir_name, source)
-        except OSError as exc:
-            logger.warning("Failed to symlink %r into worktree: %s", dir_name, exc)
-
-    # --- Copy environment files -----------------------------------------------
-    for file_name in config.copy_files:
-        source = repo_root / file_name
-        target = worktree_path / file_name
-        if not source.is_file():
-            logger.debug("Skipping copy of %r: source missing or not a file", file_name)
-            continue
-        if target.exists():
-            logger.debug("Skipping copy of %r: target already exists", file_name)
-            continue
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-            logger.info("Copied %s into worktree", file_name)
-        except OSError as exc:
-            logger.warning("Failed to copy %r into worktree: %s", file_name, exc)
+    _symlink_dirs(repo_root, worktree_path, config.symlink_dirs)
+    _copy_files(repo_root, worktree_path, config.copy_files)
 
     # --- Apply sparse checkout ------------------------------------------------
     if config.sparse_paths:

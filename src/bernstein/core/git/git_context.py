@@ -16,8 +16,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-_NO_BLAME_DATA = "(no blame data available)"
-
 logger = logging.getLogger(__name__)
 
 
@@ -83,6 +81,56 @@ def ls_files_pattern(cwd: Path, pattern: str) -> list[str]:
 # ------------------------------------------------------------------
 
 
+def _parse_blame_porcelain(output: str) -> list[tuple[str, str, str]]:
+    """Parse git blame --line-porcelain output into (author, summary, time) tuples.
+
+    Args:
+        output: Raw porcelain output from ``git blame``.
+
+    Returns:
+        List of (author, summary, author-time) tuples.
+    """
+    changes: list[tuple[str, str, str]] = []
+    current_author = ""
+    current_summary = ""
+    current_time = ""
+
+    for line in output.splitlines():
+        if line.startswith("author "):
+            current_author = line[7:]
+        elif line.startswith("author-time "):
+            current_time = line[12:]
+        elif line.startswith("summary "):
+            current_summary = line[8:]
+            if current_summary and current_author:
+                changes.append((current_author, current_summary, current_time))
+
+    return changes
+
+
+def _dedup_blame_entries(
+    changes: list[tuple[str, str, str]], max_entries: int
+) -> list[tuple[str, str, str]]:
+    """Deduplicate blame entries by summary, keeping most recent.
+
+    Args:
+        changes: Raw (author, summary, time) tuples.
+        max_entries: Maximum entries to return.
+
+    Returns:
+        Deduplicated and sorted entries.
+    """
+    seen: set[str] = set()
+    unique: list[tuple[str, str, str]] = []
+    for author, summary, ts in changes:
+        if summary not in seen:
+            seen.add(summary)
+            unique.append((author, summary, ts))
+
+    unique.sort(key=lambda x: x[2], reverse=True)
+    return unique[:max_entries]
+
+
 def blame_summary(
     cwd: Path,
     file_path: str,
@@ -107,45 +155,15 @@ def blame_summary(
 
     out = _run_git(cmd, cwd, timeout=15)
     if not out:
-        return _NO_BLAME_DATA
+        return "(no blame data available)"
 
-    # Parse porcelain output for unique (author, summary) pairs
-    changes: list[tuple[str, str, str]] = []
-    current_author = ""
-    current_summary = ""
-    current_time = ""
-
-    for line in out.splitlines():
-        if line.startswith("author "):
-            current_author = line[7:]
-        elif line.startswith("author-time "):
-            current_time = line[12:]
-        elif line.startswith("summary "):
-            current_summary = line[8:]
-            if current_summary and current_author:
-                changes.append((current_author, current_summary, current_time))
-
+    changes = _parse_blame_porcelain(out)
     if not changes:
-        return _NO_BLAME_DATA
+        return "(no blame data available)"
 
-    # Deduplicate by summary and pick most recent entries
-    seen: set[str] = set()
-    unique: list[tuple[str, str, str]] = []
-    for author, summary, ts in changes:
-        if summary not in seen:
-            seen.add(summary)
-            unique.append((author, summary, ts))
-
-    unique.sort(key=lambda x: x[2], reverse=True)
-    entries = unique[:max_entries]
-
-    lines: list[str] = []
-    for author, summary, ts in entries:
-        # Convert epoch to relative time
-        rel_time = _epoch_to_relative(ts)
-        lines.append(f"- {rel_time}: {summary} ({author})")
-
-    return "\n".join(lines) if lines else _NO_BLAME_DATA
+    entries = _dedup_blame_entries(changes, max_entries)
+    lines = [f"- {_epoch_to_relative(ts)}: {summary} ({author})" for author, summary, ts in entries]
+    return "\n".join(lines) if lines else "(no blame data available)"
 
 
 # ------------------------------------------------------------------
@@ -333,34 +351,56 @@ def build_agent_git_context(cwd: Path, owned_files: list[str]) -> str:
     sections: list[str] = ["### Git Context (auto-generated)"]
 
     for fpath in owned_files[:5]:  # Cap to avoid huge prompts
-        sections.append(f"\n#### File history for {fpath}:")
+        sections.extend(_file_history_section(cwd, fpath))
 
-        # Recent commits
-        changes = recent_changes(cwd, fpath, n=5)
-        if changes:
-            for ch in changes:
-                date = ch.get("relative_date", "")
-                sections.append(f"- {date}: {ch['subject']} ({ch['hash']})")
-        else:
-            sections.append("- (no history)")
-
-        # Co-changes
-        cochanges = cochange_files(cwd, fpath, max_results=3)
-        if cochanges:
-            parts = [f"{f} ({c}x)" for f, c in cochanges]
-            sections.append(f"- Co-changes with: {', '.join(parts)}")
-
-    # Hot files across project
-    hots = hot_files(cwd, days=14, max_results=5)
-    if hots:
-        owned_set = set(owned_files)
-        hot_owned = [(f, c) for f, c in hots if f in owned_set]
-        if hot_owned:
-            sections.append("\n#### Hot files (high churn, last 14 days):")
-            for f, c in hot_owned:
-                sections.append(f"- {f}: {c} commits")
+    _append_hot_files_section(sections, cwd, owned_files)
 
     return "\n".join(sections)
+
+
+def _file_history_section(cwd: Path, fpath: str) -> list[str]:
+    """Build the history + co-change lines for a single file.
+
+    Args:
+        cwd: Repository root.
+        fpath: Relative file path.
+
+    Returns:
+        Lines of markdown to append to the context.
+    """
+    lines: list[str] = [f"\n#### File history for {fpath}:"]
+    changes = recent_changes(cwd, fpath, n=5)
+    if changes:
+        for ch in changes:
+            date = ch.get("relative_date", "")
+            lines.append(f"- {date}: {ch['subject']} ({ch['hash']})")
+    else:
+        lines.append("- (no history)")
+
+    cochanges = cochange_files(cwd, fpath, max_results=3)
+    if cochanges:
+        parts = [f"{f} ({c}x)" for f, c in cochanges]
+        lines.append(f"- Co-changes with: {', '.join(parts)}")
+    return lines
+
+
+def _append_hot_files_section(sections: list[str], cwd: Path, owned_files: list[str]) -> None:
+    """Append hot-files section if any owned files have high churn.
+
+    Args:
+        sections: Accumulated sections list (mutated in place).
+        cwd: Repository root.
+        owned_files: Files owned by the agent.
+    """
+    hots = hot_files(cwd, days=14, max_results=5)
+    if not hots:
+        return
+    owned_set = set(owned_files)
+    hot_owned = [(f, c) for f, c in hots if f in owned_set]
+    if hot_owned:
+        sections.append("\n#### Hot files (high churn, last 14 days):")
+        for f, c in hot_owned:
+            sections.append(f"- {f}: {c} commits")
 
 
 # ------------------------------------------------------------------

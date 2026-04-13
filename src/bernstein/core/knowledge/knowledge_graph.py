@@ -8,7 +8,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from bernstein.core.git_context import ls_files as _git_ls_files
 from bernstein.core.knowledge.semantic_graph import build_semantic_graph, parse_file_symbols
@@ -179,32 +179,51 @@ def _read_built_at(connection: sqlite3.Connection) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def build_knowledge_graph(workdir: Path) -> Path:
-    """Build the SQLite knowledge graph from Python sources.
+def _add_unique_edge(
+    edges: list[KnowledgeEdge],
+    seen: set[tuple[str, str, str]],
+    source_id: str,
+    target_id: str,
+    kind: str,
+) -> None:
+    """Append an edge if its key is not already in *seen*.
 
     Args:
-        workdir: Repository root directory.
+        edges: List to append to.
+        seen: Set of (source, target, kind) tuples already recorded.
+        source_id: Edge source node ID.
+        target_id: Edge target node ID.
+        kind: Edge kind.
+    """
+    key = (source_id, target_id, kind)
+    if key not in seen:
+        seen.add(key)
+        edges.append(KnowledgeEdge(source_id=source_id, target_id=target_id, kind=kind))
+
+
+def _collect_file_nodes_and_edges(
+    workdir: Path,
+    all_files: list[str],
+    module_index: dict[str, str],
+) -> tuple[list[KnowledgeNode], list[KnowledgeEdge], set[tuple[str, str, str]]]:
+    """Collect nodes and edges from Python file ASTs.
+
+    Args:
+        workdir: Repository root.
+        all_files: Relative paths to Python files.
+        module_index: Module-name-to-file mapping.
 
     Returns:
-        Path to the built SQLite database.
+        (nodes, edges, seen_edge_keys).
     """
-    all_files = [path for path in _git_ls_files(workdir) if path.endswith(".py")][:_MAX_FILES]
-    module_index = _module_index(all_files)
-    semantic_graph = build_semantic_graph(workdir)
-
     nodes: list[KnowledgeNode] = []
     edges: list[KnowledgeEdge] = []
-    seen_edges: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
 
     for rel_path in all_files:
         file_node_id = f"file:{rel_path}"
         nodes.append(
-            KnowledgeNode(
-                id=file_node_id,
-                kind="file",
-                name=Path(rel_path).name,
-                file_path=rel_path,
-            )
+            KnowledgeNode(id=file_node_id, kind="file", name=Path(rel_path).name, file_path=rel_path)
         )
 
         parsed = parse_file_symbols(workdir / rel_path, rel_path)
@@ -222,32 +241,34 @@ def build_knowledge_graph(workdir: Path) -> Path:
                     line_end=symbol.line_end,
                 )
             )
-            edge_key = (file_node_id, symbol.id, "defines")
-            if edge_key not in seen_edges:
-                seen_edges.add(edge_key)
-                edges.append(KnowledgeEdge(source_id=file_node_id, target_id=symbol.id, kind="defines"))
+            _add_unique_edge(edges, seen, file_node_id, symbol.id, "defines")
 
         for imported_path in parsed.imports.values():
             target_file = _resolve_import_file(module_index, imported_path)
-            if target_file is None or target_file == rel_path:
-                continue
-            edge_key = (file_node_id, f"file:{target_file}", "imports")
-            if edge_key not in seen_edges:
-                seen_edges.add(edge_key)
-                edges.append(KnowledgeEdge(source_id=file_node_id, target_id=f"file:{target_file}", kind="imports"))
+            if target_file is not None and target_file != rel_path:
+                _add_unique_edge(edges, seen, file_node_id, f"file:{target_file}", "imports")
+
+    return nodes, edges, seen
+
+
+def build_knowledge_graph(workdir: Path) -> Path:
+    """Build the SQLite knowledge graph from Python sources.
+
+    Args:
+        workdir: Repository root directory.
+
+    Returns:
+        Path to the built SQLite database.
+    """
+    all_files = [path for path in _git_ls_files(workdir) if path.endswith(".py")][:_MAX_FILES]
+    module_index = _module_index(all_files)
+    semantic_graph = build_semantic_graph(workdir)
+
+    nodes, edges, seen_edges = _collect_file_nodes_and_edges(workdir, all_files, module_index)
 
     for edge in semantic_graph.edges:
-        edge_key = (edge.source, edge.target, edge.kind)
-        if edge_key in seen_edges:
-            continue
-        seen_edges.add(edge_key)
-        edges.append(
-            KnowledgeEdge(
-                source_id=edge.source,
-                target_id=edge.target,
-                kind="inherits" if edge.kind == "inherits" else "calls",
-            )
-        )
+        kind = "inherits" if edge.kind == "inherits" else "calls"
+        _add_unique_edge(edges, seen_edges, edge.source, edge.target, kind)
 
     built_at = datetime.now(UTC).isoformat()
     db_path = _db_path(workdir)
@@ -290,6 +311,59 @@ def get_or_build_knowledge_graph(workdir: Path, max_age_minutes: int = 30) -> Pa
     return build_knowledge_graph(workdir)
 
 
+def _find_matched_files(connection: Any, file_query: str) -> list[str]:
+    """Find file nodes matching a query by exact path or basename.
+
+    Args:
+        connection: SQLite connection.
+        file_query: Exact path or basename.
+
+    Returns:
+        List of matched file paths.
+    """
+    exact_rows = connection.execute(
+        "SELECT file_path FROM nodes WHERE kind = 'file' AND file_path = ?",
+        (file_query,),
+    ).fetchall()
+    matched = [str(row["file_path"]) for row in exact_rows]
+    if not matched:
+        basename = Path(file_query).name
+        rows = connection.execute(
+            "SELECT file_path FROM nodes WHERE kind = 'file' AND file_path LIKE ? ORDER BY file_path",
+            (f"%/{basename}",),
+        ).fetchall()
+        matched = [str(row["file_path"]) for row in rows]
+    return matched
+
+
+def _build_reverse_file_edges(connection: Any) -> dict[str, set[str]]:
+    """Build a reverse dependency map from the edge table.
+
+    For dependency kinds (imports/calls/inherits), maps target_file -> {source_files}.
+
+    Args:
+        connection: SQLite connection.
+
+    Returns:
+        Reverse adjacency mapping at the file level.
+    """
+    node_rows = connection.execute("SELECT id, kind, file_path FROM nodes").fetchall()
+    node_to_file: dict[str, str] = {}
+    for row in node_rows:
+        node_to_file[str(row["id"])] = str(row["file_path"])
+
+    reverse: dict[str, set[str]] = {}
+    edge_rows = connection.execute("SELECT source_id, target_id, kind FROM edges").fetchall()
+    for row in edge_rows:
+        source_file = node_to_file.get(str(row["source_id"]))
+        target_file = node_to_file.get(str(row["target_id"]))
+        if source_file is None or target_file is None or source_file == target_file:
+            continue
+        if str(row["kind"]) in {"imports", "calls", "inherits"}:
+            reverse.setdefault(target_file, set()).add(source_file)
+    return reverse
+
+
 def query_impact(workdir: Path, file_query: str, max_age_minutes: int = 30) -> ImpactResult:
     """Query downstream impacted files for a given file.
 
@@ -305,44 +379,12 @@ def query_impact(workdir: Path, file_query: str, max_age_minutes: int = 30) -> I
     connection = _connect(db_path)
     try:
         built_at = _read_built_at(connection) or ""
-        exact_rows = connection.execute(
-            "SELECT file_path FROM nodes WHERE kind = 'file' AND file_path = ?",
-            (file_query,),
-        ).fetchall()
-        matched_files = [str(row["file_path"]) for row in exact_rows]
-        if not matched_files:
-            basename = Path(file_query).name
-            rows = connection.execute(
-                "SELECT file_path FROM nodes WHERE kind = 'file' AND file_path LIKE ? ORDER BY file_path",
-                (f"%/{basename}",),
-            ).fetchall()
-            matched_files = [str(row["file_path"]) for row in rows]
+        matched_files = _find_matched_files(connection, file_query)
 
         if not matched_files:
             return ImpactResult(file_query=file_query, matched_files=[], impacted_files=[], built_at=built_at)
 
-        node_rows = connection.execute("SELECT id, kind, file_path FROM nodes").fetchall()
-        node_to_file: dict[str, str] = {}
-        file_nodes: dict[str, str] = {}
-        for row in node_rows:
-            node_id = str(row["id"])
-            file_path = str(row["file_path"])
-            node_to_file[node_id] = file_path
-            if str(row["kind"]) == "file":
-                file_nodes[file_path] = node_id
-
-        reverse_file_edges: dict[str, set[str]] = {}
-        edge_rows = connection.execute("SELECT source_id, target_id, kind FROM edges").fetchall()
-        for row in edge_rows:
-            source_id = str(row["source_id"])
-            target_id = str(row["target_id"])
-            kind = str(row["kind"])
-            source_file = node_to_file.get(source_id)
-            target_file = node_to_file.get(target_id)
-            if source_file is None or target_file is None or source_file == target_file:
-                continue
-            if kind in {"imports", "calls", "inherits"}:
-                reverse_file_edges.setdefault(target_file, set()).add(source_file)
+        reverse_file_edges = _build_reverse_file_edges(connection)
 
         impacted: set[str] = set()
         queue = list(matched_files)
@@ -350,11 +392,10 @@ def query_impact(workdir: Path, file_query: str, max_age_minutes: int = 30) -> I
         while queue:
             current = queue.pop(0)
             for dependent in sorted(reverse_file_edges.get(current, set())):
-                if dependent in visited:
-                    continue
-                visited.add(dependent)
-                impacted.add(dependent)
-                queue.append(dependent)
+                if dependent not in visited:
+                    visited.add(dependent)
+                    impacted.add(dependent)
+                    queue.append(dependent)
 
         return ImpactResult(
             file_query=file_query,

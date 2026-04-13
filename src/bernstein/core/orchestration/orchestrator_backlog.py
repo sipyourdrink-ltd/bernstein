@@ -68,59 +68,49 @@ def sync_backlog_file(orch: Any, task: Task) -> None:
     logger.info("Synced backlog: %s -> closed/", best_match)
 
 
-def ingest_backlog(orch: Any) -> int:
-    """Scan .sdd/backlog/open/ and .sdd/backlog/issues/ for new task files.
-
-    Both directories are scanned so that GitHub-synced P0/P1 tickets
-    (in ``issues/``) are ingested alongside internal backlog (``open/``).
-    Candidates are sorted by priority so P0 tasks are ingested first.
-
-    - ``open/`` files are **moved** to ``claimed/`` after ingestion.
-    - ``issues/`` files stay in place; a marker is created in ``claimed/``
-      to prevent re-ingestion.
+def _collect_backlog_files(orch: Any) -> list[Path]:
+    """Collect and filter backlog files from open/ and issues/ directories.
 
     Args:
         orch: The orchestrator instance.
 
     Returns:
-        Number of files ingested this call.
+        Sorted list of backlog file paths (filtered by BERNSTEIN_TASK_FILTER if set).
     """
+    import os
+
     open_dir = orch._workdir / ".sdd" / "backlog" / "open"
     issues_dir = orch._workdir / ".sdd" / "backlog" / "issues"
-    claimed_dir = orch._workdir / ".sdd" / "backlog" / "claimed"
 
-    # Collect .md, .yaml, .yml from both directories
-    backlog_files: list[Path] = []
+    files: list[Path] = []
     for src_dir in (open_dir, issues_dir):
         if src_dir.exists():
-            backlog_files.extend(src_dir.glob("*.md"))
-            backlog_files.extend(src_dir.glob("*.yaml"))
-            backlog_files.extend(src_dir.glob("*.yml"))
-    backlog_files.sort()
-
-    # Filter by task pattern if BERNSTEIN_TASK_FILTER is set (e.g. "gh-62" or "mutant-fish")
-    import os
+            files.extend(src_dir.glob("*.md"))
+            files.extend(src_dir.glob("*.yaml"))
+            files.extend(src_dir.glob("*.yml"))
+    files.sort()
 
     task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
     if task_filter:
         task_filter_lower = task_filter.lower()
-        backlog_files = [f for f in backlog_files if task_filter_lower in f.name.lower()]
-        logger.info("Task filter '%s' matched %d backlog file(s)", task_filter, len(backlog_files))
+        files = [f for f in files if task_filter_lower in f.name.lower()]
+        logger.info("Task filter '%s' matched %d backlog file(s)", task_filter, len(files))
+    return files
 
-    if not backlog_files:
-        return 0
 
-    # Rate-limit ingestion: max 50 files per tick to prevent server overload.
-    # With 700+ backlog files, posting them all in one tick crashes the server.
-    _MAX_INGEST_PER_TICK = 50
+def _ensure_ingested_titles(orch: Any) -> set[str]:
+    """Ensure the ingested-titles dedup set is initialized and return it.
 
-    # Build title dedup set from existing server tasks (if available).
-    # Prevents re-creating tasks that already exist on the server after a
-    # restart or crash that prevented file move to claimed/.
-    existing_titles: set[str] = set()
+    On first call, seeds from existing server tasks.
+
+    Args:
+        orch: The orchestrator instance.
+
+    Returns:
+        Set of lowered, stripped task titles already on the server.
+    """
     if not hasattr(orch, "_ingested_titles"):
         orch._ingested_titles: set[str] = set()
-        # Seed from server on first call
         try:
             resp = orch._client.get(f"{orch._config.server_url}/tasks")
             resp.raise_for_status()
@@ -129,14 +119,31 @@ def ingest_backlog(orch: Any) -> int:
                 if title:
                     orch._ingested_titles.add(title.lower().strip())
         except Exception:
-            pass  # Server may be starting up; dedup will be best-effort
-    existing_titles = orch._ingested_titles
+            pass
+    return orch._ingested_titles
 
-    claimed_dir.mkdir(parents=True, exist_ok=True)
 
+def _parse_candidates(
+    orch: Any,
+    backlog_files: list[Path],
+    open_dir: Path,
+    claimed_dir: Path,
+    existing_titles: set[str],
+) -> list[tuple[Path, ParsedBacklogTask]]:
+    """Parse backlog files, filter duplicates, return sorted candidates.
+
+    Args:
+        orch: Orchestrator instance.
+        backlog_files: Files to parse.
+        open_dir: Open backlog directory.
+        claimed_dir: Claimed backlog directory.
+        existing_titles: Titles already ingested.
+
+    Returns:
+        Priority-sorted list of (path, parsed_task) tuples.
+    """
     from bernstein.core.backlog_parser import parse_backlog_text
 
-    # Phase 1: Parse all candidates, filter dupes, sort by priority
     candidates: list[tuple[Path, ParsedBacklogTask]] = []
     for backlog_file in backlog_files:
         if (claimed_dir / backlog_file.name).exists():
@@ -156,14 +163,45 @@ def ingest_backlog(orch: Any) -> int:
 
         candidates.append((backlog_file, parsed_task))
 
-    # Sort by priority (lower = more critical) so P0 tasks are ingested first
     candidates.sort(key=lambda t: t[1].priority)
+    return candidates
+
+
+def ingest_backlog(orch: Any) -> int:
+    """Scan .sdd/backlog/open/ and .sdd/backlog/issues/ for new task files.
+
+    Both directories are scanned so that GitHub-synced P0/P1 tickets
+    (in ``issues/``) are ingested alongside internal backlog (``open/``).
+    Candidates are sorted by priority so P0 tasks are ingested first.
+
+    - ``open/`` files are **moved** to ``claimed/`` after ingestion.
+    - ``issues/`` files stay in place; a marker is created in ``claimed/``
+      to prevent re-ingestion.
+
+    Args:
+        orch: The orchestrator instance.
+
+    Returns:
+        Number of files ingested this call.
+    """
+    open_dir = orch._workdir / ".sdd" / "backlog" / "open"
+    claimed_dir = orch._workdir / ".sdd" / "backlog" / "claimed"
+
+    backlog_files = _collect_backlog_files(orch)
+    if not backlog_files:
+        return 0
+
+    _MAX_INGEST_PER_TICK = 50
+
+    existing_titles = _ensure_ingested_titles(orch)
+    claimed_dir.mkdir(parents=True, exist_ok=True)
+
+    candidates = _parse_candidates(orch, backlog_files, open_dir, claimed_dir, existing_titles)
     batch_files = candidates[:_MAX_INGEST_PER_TICK]
 
     if not batch_files:
         return 0
 
-    # Phase 2: POST batch — single HTTP call for all collected tasks
     payloads = [parsed.to_task_payload() for _, parsed in batch_files]
     try:
         resp = orch._client.post(
@@ -173,10 +211,9 @@ def ingest_backlog(orch: Any) -> int:
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
-            # Server doesn't support batch yet — fall back to one-by-one
             return _ingest_backlog_one_by_one(orch, batch_files, open_dir, claimed_dir)
         logger.warning("ingest_backlog: batch POST failed: %s", exc)
-        return 0  # Move NONE on failure
+        return 0
     except httpx.HTTPError as exc:
         logger.warning("ingest_backlog: batch POST failed: %s", exc)
         return 0

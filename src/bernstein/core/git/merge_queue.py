@@ -74,6 +74,22 @@ _DESCRIPTOR_RE = re.compile(r"^[ \t]{1,20}(?:base|our|their)[ \t]{1,10}\d+[ \t]{
 _CONFLICT_MARKER = "<<<<<<< "
 
 
+def _flush_conflicting_section(
+    paths: set[str], seen: set[str], files: list[str]
+) -> None:
+    """Append paths from a conflicting section to the result list.
+
+    Args:
+        paths: Paths found in the current section.
+        seen: Already-recorded paths (updated in place).
+        files: Result list (updated in place).
+    """
+    for p in sorted(paths):
+        if p not in seen:
+            seen.add(p)
+            files.append(p)
+
+
 def _parse_merge_tree_conflicts(output: str) -> list[str]:
     """Extract conflicting file paths from ``git merge-tree`` output.
 
@@ -98,12 +114,8 @@ def _parse_merge_tree_conflicts(output: str) -> list[str]:
 
     for line in output.splitlines():
         if _SECTION_HEADER_RE.match(line):
-            # Finalize the previous section before starting a new one.
             if current_has_conflict:
-                for p in sorted(current_paths):
-                    if p not in seen:
-                        seen.add(p)
-                        files.append(p)
+                _flush_conflicting_section(current_paths, seen, files)
             current_paths = set()
             current_has_conflict = False
         else:
@@ -113,12 +125,8 @@ def _parse_merge_tree_conflicts(output: str) -> list[str]:
             elif _CONFLICT_MARKER in line:
                 current_has_conflict = True
 
-    # Finalize the last section.
     if current_has_conflict:
-        for p in sorted(current_paths):
-            if p not in seen:
-                seen.add(p)
-                files.append(p)
+        _flush_conflicting_section(current_paths, seen, files)
 
     return files
 

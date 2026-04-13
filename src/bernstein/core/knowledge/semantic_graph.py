@@ -283,6 +283,100 @@ def _extract_referenced_names(node: ast.AST) -> list[str]:
     return names
 
 
+def _extract_imports_from_tree(tree: ast.Module) -> dict[str, str]:
+    """Extract import mappings from an AST module.
+
+    Args:
+        tree: Parsed AST module.
+
+    Returns:
+        Dict mapping local name -> full module path.
+    """
+    imports: dict[str, str] = {}
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local_name = alias.asname or alias.name.split(".")[-1]
+                imports[local_name] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                local_name = alias.asname or alias.name
+                imports[local_name] = f"{module}.{alias.name}" if module else alias.name
+    return imports
+
+
+def _make_func_symbol(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    rel_path: str,
+    total_lines: int,
+    prefix: str = "",
+) -> SymbolNode:
+    """Create a SymbolNode from a function/method AST node.
+
+    Args:
+        node: AST function definition.
+        rel_path: Relative file path for IDs.
+        total_lines: Total lines in the file (for clamping end_line).
+        prefix: Optional class prefix (e.g. ``"ClassName."``).
+
+    Returns:
+        SymbolNode for this function.
+    """
+    sym_id = f"{rel_path}::{prefix}{node.name}"
+    end_line = node.end_lineno or node.lineno
+    kind = "method" if prefix else "function"
+    return SymbolNode(
+        id=sym_id,
+        name=node.name,
+        kind=kind,
+        file=rel_path,
+        line_start=node.lineno,
+        line_end=min(end_line, total_lines),
+        signature=_get_func_signature(node),
+        docstring=_first_line_docstring(node),
+    )
+
+
+def _extract_class_symbols(
+    node: ast.ClassDef, rel_path: str, total_lines: int, result: FileSymbols
+) -> None:
+    """Extract class, method symbols and inheritance edges from a ClassDef.
+
+    Args:
+        node: AST class definition.
+        rel_path: Relative file path for IDs.
+        total_lines: Total lines in the file.
+        result: FileSymbols accumulator (mutated in place).
+    """
+    cls_id = f"{rel_path}::{node.name}"
+    end_line = node.end_lineno or node.lineno
+    cls_sym = SymbolNode(
+        id=cls_id,
+        name=node.name,
+        kind="class",
+        file=rel_path,
+        line_start=node.lineno,
+        line_end=min(end_line, total_lines),
+        signature=_get_class_signature(node),
+        docstring=_first_line_docstring(node),
+    )
+    result.symbols.append(cls_sym)
+
+    for item in node.body:
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            method_sym = _make_func_symbol(item, rel_path, total_lines, prefix=f"{node.name}.")
+            result.symbols.append(method_sym)
+            for call_name in _extract_calls(item):
+                result.calls.append((method_sym.id, call_name))
+
+    for base in node.bases:
+        if isinstance(base, ast.Name):
+            result.calls.append((cls_id, base.id))
+        elif isinstance(base, ast.Attribute):
+            result.calls.append((cls_id, base.attr))
+
+
 def parse_file_symbols(filepath: Path, rel_path: str) -> FileSymbols | None:
     """Parse a Python file and extract all symbols with line ranges.
 
@@ -299,85 +393,17 @@ def parse_file_symbols(filepath: Path, rel_path: str) -> FileSymbols | None:
     except (SyntaxError, OSError, UnicodeDecodeError):
         return None
 
-    result = FileSymbols(path=rel_path, imports={})
-    source_lines = source.split("\n")
-    total_lines = len(source_lines)
+    total_lines = len(source.split("\n"))
+    result = FileSymbols(path=rel_path, imports=_extract_imports_from_tree(tree))
 
-    # Extract imports
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                local_name = alias.asname or alias.name.split(".")[-1]
-                result.imports[local_name] = alias.name
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            for alias in node.names:
-                local_name = alias.asname or alias.name
-                result.imports[local_name] = f"{module}.{alias.name}" if module else alias.name
-
-    # Extract top-level symbols
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            sym_id = f"{rel_path}::{node.name}"
-            end_line = node.end_lineno or node.lineno
-            sym = SymbolNode(
-                id=sym_id,
-                name=node.name,
-                kind="function",
-                file=rel_path,
-                line_start=node.lineno,
-                line_end=min(end_line, total_lines),
-                signature=_get_func_signature(node),
-                docstring=_first_line_docstring(node),
-            )
+            sym = _make_func_symbol(node, rel_path, total_lines)
             result.symbols.append(sym)
-
-            # Extract calls within the function body
             for call_name in _extract_calls(node):
-                result.calls.append((sym_id, call_name))
-
+                result.calls.append((sym.id, call_name))
         elif isinstance(node, ast.ClassDef):
-            cls_id = f"{rel_path}::{node.name}"
-            end_line = node.end_lineno or node.lineno
-            cls_sym = SymbolNode(
-                id=cls_id,
-                name=node.name,
-                kind="class",
-                file=rel_path,
-                line_start=node.lineno,
-                line_end=min(end_line, total_lines),
-                signature=_get_class_signature(node),
-                docstring=_first_line_docstring(node),
-            )
-            result.symbols.append(cls_sym)
-
-            # Extract methods
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    method_id = f"{rel_path}::{node.name}.{item.name}"
-                    m_end = item.end_lineno or item.lineno
-                    method_sym = SymbolNode(
-                        id=method_id,
-                        name=item.name,
-                        kind="method",
-                        file=rel_path,
-                        line_start=item.lineno,
-                        line_end=min(m_end, total_lines),
-                        signature=_get_func_signature(item),
-                        docstring=_first_line_docstring(item),
-                    )
-                    result.symbols.append(method_sym)
-
-                    # Extract calls within method body
-                    for call_name in _extract_calls(item):
-                        result.calls.append((method_id, call_name))
-
-            # Inheritance edges stored as calls to base class names
-            for base in node.bases:
-                if isinstance(base, ast.Name):
-                    result.calls.append((cls_id, base.id))
-                elif isinstance(base, ast.Attribute):
-                    result.calls.append((cls_id, base.attr))
+            _extract_class_symbols(node, rel_path, total_lines, result)
 
     return result
 
@@ -387,13 +413,43 @@ def parse_file_symbols(filepath: Path, rel_path: str) -> FileSymbols | None:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_call_edge(
+    graph: SemanticGraph, fs: FileSymbols, caller_id: str, callee_name: str
+) -> None:
+    """Resolve a single call reference and add the edge to the graph.
+
+    Args:
+        graph: Graph to add edges to.
+        fs: FileSymbols context for import resolution.
+        caller_id: Symbol ID of the caller.
+        callee_name: Name being called.
+    """
+    imported_module = fs.imports.get(callee_name)
+    if imported_module:
+        target = _resolve_import_target(graph, imported_module, callee_name)
+        if target:
+            graph.add_edge(SymbolEdge(source=caller_id, target=target, kind="calls"))
+            return
+
+    target = graph.resolve_name(callee_name, prefer_file=fs.path)
+    if not target or target == caller_id:
+        return
+
+    kind = "calls"
+    target_node = graph.nodes.get(target)
+    caller_node = graph.nodes.get(caller_id)
+    if target_node and target_node.kind == "class" and caller_node and caller_node.kind == "class":
+        kind = "inherits"
+    graph.add_edge(SymbolEdge(source=caller_id, target=target, kind=kind))
+
+
 def build_semantic_graph(workdir: Path) -> SemanticGraph:
     """Build a symbol-level semantic graph from all Python files.
 
     Phases:
     1. Enumerate Python files via git ls-files
-    2. Parse each file → extract symbols, imports, calls
-    3. Resolve call targets → create edges
+    2. Parse each file -> extract symbols, imports, calls
+    3. Resolve call targets -> create edges
 
     Args:
         workdir: Project root directory.
@@ -403,7 +459,6 @@ def build_semantic_graph(workdir: Path) -> SemanticGraph:
     """
     graph = SemanticGraph()
 
-    # Phase 1: Enumerate files
     all_files = _git_ls_files(workdir)
     py_files = [f for f in all_files if f.endswith(".py")][:_MAX_FILES]
 
@@ -411,7 +466,6 @@ def build_semantic_graph(workdir: Path) -> SemanticGraph:
         logger.info("No Python files found, returning empty graph")
         return graph
 
-    # Phase 2: Parse all files
     all_file_symbols: list[FileSymbols] = []
     for fpath in py_files:
         parsed = parse_file_symbols(workdir / fpath, fpath)
@@ -420,32 +474,9 @@ def build_semantic_graph(workdir: Path) -> SemanticGraph:
             for sym in parsed.symbols:
                 graph.add_node(sym)
 
-    # Phase 3: Resolve calls → edges
-    # Build import resolution: for each file, map imported names to modules
     for fs in all_file_symbols:
         for caller_id, callee_name in fs.calls:
-            # Try to resolve callee_name to a symbol ID
-            # 1. Check if it's an imported name → resolve via import map
-            imported_module = fs.imports.get(callee_name)
-            if imported_module:
-                # Look for symbol in the imported module's file
-                target = _resolve_import_target(graph, imported_module, callee_name)
-                if target:
-                    graph.add_edge(SymbolEdge(source=caller_id, target=target, kind="calls"))
-                    continue
-
-            # 2. Same-file resolution
-            target = graph.resolve_name(callee_name, prefer_file=fs.path)
-            if target and target != caller_id:
-                # Determine edge kind
-                target_node = graph.nodes.get(target)
-                kind = "calls"
-                if target_node and target_node.kind == "class":
-                    # Check if this is an inheritance reference
-                    caller_node = graph.nodes.get(caller_id)
-                    if caller_node and caller_node.kind == "class":
-                        kind = "inherits"
-                graph.add_edge(SymbolEdge(source=caller_id, target=target, kind=kind))
+            _resolve_call_edge(graph, fs, caller_id, callee_name)
 
     logger.info(
         "Semantic graph built: %d symbols, %d edges across %d files",
@@ -531,81 +562,128 @@ def extract_context_for_files(
     if not target_files:
         return ""
 
-    # Step 1: Collect seed symbols from target files
     seed_ids: set[str] = set()
     for fpath in target_files:
-        for sid in graph.file_symbols.get(fpath, []):
-            seed_ids.add(sid)
+        seed_ids.update(graph.file_symbols.get(fpath, []))
 
     if not seed_ids:
-        # Files have no parsed symbols — fall back to file-level info
         return _fallback_file_context(workdir, target_files)
 
-    # Step 2: Expand through call graph
     expanded = graph.neighborhood(seed_ids, depth=depth, max_nodes=max_symbols)
+    by_file = _group_symbols_by_file(graph, expanded)
 
-    # Step 3: Group symbols by file and read snippets
-    by_file: dict[str, list[SymbolNode]] = {}
-    for sid in expanded:
-        node = graph.nodes[sid]
-        by_file.setdefault(node.file, []).append(node)
+    sections: list[str] = [
+        "## Semantic Code Context",
+        f"_Showing {len(expanded)} relevant symbols from {len(by_file)} files (depth={depth})_\n",
+    ]
 
-    # Sort symbols within each file by line number
-    for syms in by_file.values():
-        syms.sort(key=lambda s: s.line_start)
+    ordered_files = sorted(by_file.keys(), key=lambda f: (0 if f in target_files else 1, f))
+    _format_file_sections(sections, ordered_files, by_file, target_files, workdir, max_snippet_lines)
 
-    # Step 4: Format context
-    sections: list[str] = []
-    sections.append("## Semantic Code Context")
-    sections.append(f"_Showing {len(expanded)} relevant symbols from {len(by_file)} files (depth={depth})_\n")
-
-    total_lines = 0
-
-    # Target files first, then dependency files
-    ordered_files = sorted(
-        by_file.keys(),
-        key=lambda f: (0 if f in target_files else 1, f),
-    )
-
-    for fpath in ordered_files:
-        symbols = by_file[fpath]
-        is_target = fpath in target_files
-
-        # Read source file
-        try:
-            source_lines = (workdir / fpath).read_text(encoding="utf-8").split("\n")
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        label = "**TARGET**" if is_target else "dependency"
-        sections.append(f"### {fpath} ({label})")
-
-        if is_target:
-            # For target files, include full symbol code
-            for sym in symbols:
-                if total_lines >= max_snippet_lines:
-                    sections.append(f"_... truncated ({max_snippet_lines} line limit)_")
-                    break
-
-                snippet = _extract_snippet(source_lines, sym)
-                total_lines += sym.line_end - sym.line_start + 1
-                sections.append(snippet)
-        else:
-            # For dependency files, include only signatures + docstrings
-            for sym in symbols:
-                sig_line = f"- `{sym.signature}`" if sym.signature else f"- `{sym.name}`"
-                if sym.docstring:
-                    sig_line += f" — {sym.docstring}"
-                sections.append(sig_line)
-
-        sections.append("")  # Blank line between files
-
-    # Step 5: Add dependency summary
     dep_summary = _dependency_summary(graph, seed_ids, expanded)
     if dep_summary:
         sections.append(dep_summary)
 
     return "\n".join(sections)
+
+
+def _group_symbols_by_file(graph: SemanticGraph, expanded: set[str]) -> dict[str, list[SymbolNode]]:
+    """Group expanded symbols by their file, sorted by line number.
+
+    Args:
+        graph: Semantic graph.
+        expanded: Set of symbol IDs.
+
+    Returns:
+        Dict mapping file path to sorted list of symbols.
+    """
+    by_file: dict[str, list[SymbolNode]] = {}
+    for sid in expanded:
+        node = graph.nodes[sid]
+        by_file.setdefault(node.file, []).append(node)
+    for syms in by_file.values():
+        syms.sort(key=lambda s: s.line_start)
+    return by_file
+
+
+def _format_target_symbols(
+    sections: list[str], symbols: list[SymbolNode], source_lines: list[str], total_lines: int, max_lines: int
+) -> int:
+    """Format full code snippets for target file symbols.
+
+    Args:
+        sections: Output list to append to.
+        symbols: Symbols in this file.
+        source_lines: File source lines.
+        total_lines: Running total of lines emitted so far.
+        max_lines: Maximum total snippet lines.
+
+    Returns:
+        Updated total_lines count.
+    """
+    for sym in symbols:
+        if total_lines >= max_lines:
+            sections.append(f"_... truncated ({max_lines} line limit)_")
+            break
+        sections.append(_extract_snippet(source_lines, sym))
+        total_lines += sym.line_end - sym.line_start + 1
+    return total_lines
+
+
+def _format_dependency_symbols(sections: list[str], symbols: list[SymbolNode]) -> None:
+    """Format signatures + docstrings for dependency file symbols.
+
+    Args:
+        sections: Output list to append to.
+        symbols: Symbols in this file.
+    """
+    for sym in symbols:
+        sig_line = f"- `{sym.signature}`" if sym.signature else f"- `{sym.name}`"
+        if sym.docstring:
+            sig_line += f" — {sym.docstring}"
+        sections.append(sig_line)
+
+
+def _format_file_sections(
+    sections: list[str],
+    ordered_files: list[str],
+    by_file: dict[str, list[SymbolNode]],
+    target_files: list[str],
+    workdir: Path,
+    max_snippet_lines: int,
+) -> int:
+    """Format all file sections (target + dependency) into the output.
+
+    Args:
+        sections: Output list to append to.
+        ordered_files: Files in display order.
+        by_file: Symbols grouped by file.
+        target_files: Set of target file paths.
+        workdir: Project root for reading source.
+        max_snippet_lines: Maximum total snippet lines.
+
+    Returns:
+        Total lines emitted.
+    """
+    total_lines = 0
+    for fpath in ordered_files:
+        symbols = by_file[fpath]
+        try:
+            source_lines = (workdir / fpath).read_text(encoding="utf-8").split("\n")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        is_target = fpath in target_files
+        label = "**TARGET**" if is_target else "dependency"
+        sections.append(f"### {fpath} ({label})")
+
+        if is_target:
+            total_lines = _format_target_symbols(sections, symbols, source_lines, total_lines, max_snippet_lines)
+        else:
+            _format_dependency_symbols(sections, symbols)
+
+        sections.append("")
+    return total_lines
 
 
 def _extract_snippet(source_lines: list[str], sym: SymbolNode) -> str:

@@ -53,6 +53,47 @@ class EvolveMixin:
     _REPLENISH_COOLDOWN_S: float = 60.0
     _REPLENISH_MAX_TASKS: int = 5
 
+    @staticmethod
+    def _load_evolve_cfg(evolve_path: Any) -> dict[str, Any] | None:
+        """Load and validate the evolve config file.
+
+        Args:
+            evolve_path: Path to evolve.json.
+
+        Returns:
+            Parsed config dict, or None if unavailable/disabled.
+        """
+        if not evolve_path.exists():
+            return None
+        try:
+            cfg = json.loads(evolve_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        return cfg if cfg.get("enabled") else None
+
+    @staticmethod
+    def _evolve_limits_reached(evolve_cfg: dict[str, Any]) -> bool:
+        """Check whether cycle or budget limits have been hit.
+
+        Args:
+            evolve_cfg: Parsed evolve configuration.
+
+        Returns:
+            True if limits are reached and the cycle should be skipped.
+        """
+        cycle_count = evolve_cfg.get("_cycle_count", 0)
+        max_cycles = evolve_cfg.get("max_cycles", 0)
+        if max_cycles > 0 and cycle_count >= max_cycles:
+            logger.info("Evolve: max cycles (%d) reached, stopping", max_cycles)
+            return True
+
+        budget_usd = evolve_cfg.get("budget_usd", 0)
+        spent_usd = evolve_cfg.get("_spent_usd", 0.0)
+        if budget_usd > 0 and spent_usd >= budget_usd:
+            logger.info("Evolve: budget cap ($%.2f) reached, stopping", budget_usd)
+            return True
+        return False
+
     def _check_evolve(self, result: _TickResult, tasks_by_status: dict[str, list[Any]]) -> None:
         """If evolve mode is on and all tasks are done, trigger a new cycle.
 
@@ -63,15 +104,8 @@ class EvolveMixin:
         from bernstein.evolution.governance import GovernanceEntry, ProjectContext
 
         evolve_path = self._workdir / ".sdd" / "runtime" / "evolve.json"  # type: ignore[attr-defined]
-        if not evolve_path.exists():
-            return
-
-        try:
-            evolve_cfg = json.loads(evolve_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return
-
-        if not evolve_cfg.get("enabled"):
+        evolve_cfg = self._load_evolve_cfg(evolve_path)
+        if evolve_cfg is None:
             return
 
         # Only trigger when idle: no open/claimed tasks, no alive agents
@@ -81,21 +115,11 @@ class EvolveMixin:
         if open_tasks or claimed_tasks or alive > 0:
             return  # Still working
 
-        # Check cycle limits
-        cycle_count = evolve_cfg.get("_cycle_count", 0)
-        max_cycles = evolve_cfg.get("max_cycles", 0)
-        if max_cycles > 0 and cycle_count >= max_cycles:
-            logger.info("Evolve: max cycles (%d) reached, stopping", max_cycles)
-            return
-
-        # Check budget cap
-        budget_usd = evolve_cfg.get("budget_usd", 0)
-        spent_usd = evolve_cfg.get("_spent_usd", 0.0)
-        if budget_usd > 0 and spent_usd >= budget_usd:
-            logger.info("Evolve: budget cap ($%.2f) reached, stopping", budget_usd)
+        if self._evolve_limits_reached(evolve_cfg):
             return
 
         # Diminishing returns backoff
+        cycle_count = evolve_cfg.get("_cycle_count", 0)
         consecutive_empty = evolve_cfg.get("_consecutive_empty", 0)
         backoff_factor = min(2**consecutive_empty, 8) if consecutive_empty >= 3 else 1
 
