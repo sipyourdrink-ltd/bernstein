@@ -187,9 +187,7 @@ def compat_cache_is_fresh(
     test_files: list[tuple[str, Path]] = []
     for test_dir in test_dirs:
         if test_dir.exists():
-            test_files.extend(
-                (tf.relative_to(root).as_posix(), tf) for tf in test_dir.glob("test_*.py")
-            )
+            test_files.extend((tf.relative_to(root).as_posix(), tf) for tf in test_dir.glob("test_*.py"))
     if not _check_hashes_fresh(test_files, test_deps):
         return False
 
@@ -387,7 +385,10 @@ class TestImpactAnalyzer:
         return (module_tests, reason) if module_tests else None
 
     def _compute_coverage_pct(
-        self, changed_sources: list[str], covered_sources: int, affected: set[str],
+        self,
+        changed_sources: list[str],
+        covered_sources: int,
+        affected: set[str],
     ) -> float:
         """Compute the coverage percentage for the analysis."""
         if changed_sources:
@@ -402,16 +403,21 @@ class TestImpactAnalyzer:
         normalized = sorted({Path(path).as_posix() for path in changed_files})
         if not normalized:
             return ImpactAnalysis(
-                changed_files=[], affected_tests=[], mappings=[],
-                coverage_pct=0.0, fallback_used=False,
+                changed_files=[],
+                affected_tests=[],
+                mappings=[],
+                coverage_pct=0.0,
+                fallback_used=False,
             )
 
         all_tests = sorted(self._all_tests)
         if any(path.endswith("conftest.py") and path.startswith("tests/") for path in normalized):
             return ImpactAnalysis(
-                changed_files=normalized, affected_tests=all_tests,
+                changed_files=normalized,
+                affected_tests=all_tests,
                 mappings=[TestMapping(source_file="tests/conftest.py", test_files=all_tests, reason="all")],
-                coverage_pct=100.0, fallback_used=True,
+                coverage_pct=100.0,
+                fallback_used=True,
             )
 
         affected: set[str] = set()
@@ -439,8 +445,11 @@ class TestImpactAnalyzer:
 
         if changed_sources and not affected:
             return ImpactAnalysis(
-                changed_files=normalized, affected_tests=all_tests,
-                mappings=[], coverage_pct=0.0, fallback_used=True,
+                changed_files=normalized,
+                affected_tests=all_tests,
+                mappings=[],
+                coverage_pct=0.0,
+                fallback_used=True,
             )
 
         return ImpactAnalysis(

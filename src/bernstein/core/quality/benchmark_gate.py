@@ -293,7 +293,11 @@ class BenchmarkGate:
                 ("memory_mb", base.memory_mb, curr.memory_mb, True),
             ):
                 reg = self._check_metric_regression(
-                    name, metric, base_val, curr_val, higher_is_worse=higher_is_worse,
+                    name,
+                    metric,
+                    base_val,
+                    curr_val,
+                    higher_is_worse=higher_is_worse,
                 )
                 if reg is not None:
                     regressions.append(reg)

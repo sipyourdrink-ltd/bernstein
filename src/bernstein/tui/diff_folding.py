@@ -110,9 +110,7 @@ def _finalize_hunk(
     """Append a completed hunk to the hunks list if valid."""
     if header and lines:
         added, removed = _count_changes(lines)
-        hunks.append(
-            DiffHunk(header=header, lines=lines, start_line=start, end_line=end, added=added, removed=removed)
-        )
+        hunks.append(DiffHunk(header=header, lines=lines, start_line=start, end_line=end, added=added, removed=removed))
 
 
 def _finalize_file(filename: str | None, hunks: list[DiffHunk], files: list[FileDiff]) -> None:
@@ -120,9 +118,7 @@ def _finalize_file(filename: str | None, hunks: list[DiffHunk], files: list[File
     if filename and hunks:
         total_added = sum(h.added for h in hunks)
         total_removed = sum(h.removed for h in hunks)
-        files.append(
-            FileDiff(filename=filename, hunks=hunks, total_added=total_added, total_removed=total_removed)
-        )
+        files.append(FileDiff(filename=filename, hunks=hunks, total_added=total_added, total_removed=total_removed))
 
 
 def parse_diff(diff_text: str) -> list[FileDiff]:

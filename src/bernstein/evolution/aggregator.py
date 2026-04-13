@@ -531,9 +531,7 @@ def _bocpd_offline(
     for t in range(n):
         x = values[t]
 
-        pred_probs = _bocpd_compute_predictive_probs(
-            x, t, max_run, mu_params, kappa_params, alpha_params, beta_params
-        )
+        pred_probs = _bocpd_compute_predictive_probs(x, t, max_run, mu_params, kappa_params, alpha_params, beta_params)
 
         new_run_probs = [0.0] * max_run
         for r in range(min(t + 1, max_run - 1)):
@@ -548,13 +546,20 @@ def _bocpd_offline(
                 new_run_probs[r] /= total
 
         if t > 0 and new_run_probs[0] > 0.5:
-            changepoints.append(
-                Changepoint(index=t, probability=new_run_probs[0], run_length=0)
-            )
+            changepoints.append(Changepoint(index=t, probability=new_run_probs[0], run_length=0))
 
         mu_params, kappa_params, alpha_params, beta_params = _bocpd_update_params(
-            x, t, max_run, mu0, kappa0, alpha0, beta0,
-            mu_params, kappa_params, alpha_params, beta_params,
+            x,
+            t,
+            max_run,
+            mu0,
+            kappa0,
+            alpha0,
+            beta0,
+            mu_params,
+            kappa_params,
+            alpha_params,
+            beta_params,
         )
 
         run_length_probs = new_run_probs
