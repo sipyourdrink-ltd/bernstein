@@ -437,6 +437,12 @@ def _collect_rules(policy: DLPPolicy) -> list[_RuleDef]:
     return rules
 
 
+def _validate_credit_card(matched_raw: str) -> bool:
+    """Validate a potential credit card match using Luhn algorithm."""
+    digits_only = re.sub(r"\D", "", matched_raw)
+    return len(digits_only) >= 13 and _luhn_check(digits_only)
+
+
 def _scan_lines(
     lines: list[str],
     rules: list[_RuleDef],
@@ -456,11 +462,8 @@ def _scan_lines(
 
             matched_raw = m.group(0)
 
-            # Luhn validation for credit card matches
-            if pattern_name == "credit_card":
-                digits_only = re.sub(r"\D", "", matched_raw)
-                if len(digits_only) < 13 or not _luhn_check(digits_only):
-                    continue
+            if pattern_name == "credit_card" and not _validate_credit_card(matched_raw):
+                continue
 
             matches.append(
                 DLPMatch(

@@ -259,48 +259,74 @@ def _check_api_key(cli: str) -> None:
         raise SystemExit(1)
 
 
+def _check_qwen_auth() -> tuple[str, str, str] | None:
+    """Check Qwen API key availability."""
+    if not any(os.environ.get(v) for v in _QWEN_API_KEY_VARS):
+        return (
+            "No API key configured for qwen",
+            "Qwen requires one of: " + ", ".join(_QWEN_API_KEY_VARS),
+            "export OPENROUTER_API_KEY_PAID=your-key (or any supported key var)",
+        )
+    return None
+
+
+def _check_claude_auth() -> tuple[str, str, str] | None:
+    """Check Claude authentication."""
+    if not os.environ.get("ANTHROPIC_API_KEY") and not _claude_has_oauth_session():
+        return (
+            "No Claude authentication found",
+            "Neither ANTHROPIC_API_KEY nor an active OAuth session was detected",
+            "export ANTHROPIC_API_KEY=your-key, or log in via: claude login",
+        )
+    return None
+
+
+def _check_gemini_auth() -> tuple[str, str, str] | None:
+    """Check Gemini authentication."""
+    authenticated, _method = gemini_has_auth()
+    if not authenticated:
+        return (
+            "No Gemini authentication found",
+            "None of GEMINI_API_KEY, GOOGLE_API_KEY, "
+            "GOOGLE_APPLICATION_CREDENTIALS, gcloud auth, or "
+            "~/.config/gemini/ were detected",
+            "export GOOGLE_API_KEY=your-key, or run: gcloud auth login",
+        )
+    return None
+
+
+def _check_codex_auth() -> tuple[str, str, str] | None:
+    """Check Codex authentication."""
+    authenticated, _method = _codex_has_auth()
+    if not authenticated:
+        return (
+            "No Codex authentication found",
+            "Neither OPENAI_API_KEY nor an active ChatGPT login was detected",
+            "export OPENAI_API_KEY=your-key, or run: codex login",
+        )
+    return None
+
+
 def _get_api_key_error(cli: str) -> tuple[str, str, str] | None:
     """Return (what, why, fix) tuple if API key check fails, or None if OK."""
-    if cli == "qwen":
-        if not any(os.environ.get(v) for v in _QWEN_API_KEY_VARS):
-            return (
-                "No API key configured for qwen",
-                "Qwen requires one of: " + ", ".join(_QWEN_API_KEY_VARS),
-                "export OPENROUTER_API_KEY_PAID=your-key (or any supported key var)",
-            )
-    elif cli == "claude":
-        if not os.environ.get("ANTHROPIC_API_KEY") and not _claude_has_oauth_session():
-            return (
-                "No Claude authentication found",
-                "Neither ANTHROPIC_API_KEY nor an active OAuth session was detected",
-                "export ANTHROPIC_API_KEY=your-key, or log in via: claude login",
-            )
-    elif cli == "gemini":
-        authenticated, _method = gemini_has_auth()
-        if not authenticated:
-            return (
-                "No Gemini authentication found",
-                "None of GEMINI_API_KEY, GOOGLE_API_KEY, "
-                "GOOGLE_APPLICATION_CREDENTIALS, gcloud auth, or "
-                "~/.config/gemini/ were detected",
-                "export GOOGLE_API_KEY=your-key, or run: gcloud auth login",
-            )
-    elif cli == "codex":
-        authenticated, _method = _codex_has_auth()
-        if not authenticated:
-            return (
-                "No Codex authentication found",
-                "Neither OPENAI_API_KEY nor an active ChatGPT login was detected",
-                "export OPENAI_API_KEY=your-key, or run: codex login",
-            )
-    else:
-        env_var = _CLI_API_KEY_ENV.get(cli)
-        if env_var and not os.environ.get(env_var):
-            return (
-                f"{cli} adapter requires an API key",
-                f"Environment variable {env_var} is not set",
-                f"export {env_var}=your-api-key",
-            )
+    _CLI_AUTH_CHECKS: dict[str, object] = {
+        "qwen": _check_qwen_auth,
+        "claude": _check_claude_auth,
+        "gemini": _check_gemini_auth,
+        "codex": _check_codex_auth,
+    }
+
+    check_fn = _CLI_AUTH_CHECKS.get(cli)
+    if check_fn is not None:
+        return check_fn()  # type: ignore[operator]
+
+    env_var = _CLI_API_KEY_ENV.get(cli)
+    if env_var and not os.environ.get(env_var):
+        return (
+            f"{cli} adapter requires an API key",
+            f"Environment variable {env_var} is not set",
+            f"export {env_var}=your-api-key",
+        )
     return None
 
 

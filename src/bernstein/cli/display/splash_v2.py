@@ -121,6 +121,11 @@ class SplashRenderer:
                 time.sleep(step)
 
     @staticmethod
+    def _render_line_chars(line: str, row: int, pad: int, color: str) -> list[str]:
+        """Render non-space characters of a line with ANSI positioning."""
+        return [f"\033[{row + 1};{pad + col + 1}H{color}{ch}" for col, ch in enumerate(line) if ch != " "]
+
+    @staticmethod
     def _overlay_logo(logo_lines: list[str], logo_colors: list[str], logo_row: int, w: int, h: int) -> list[str]:
         """Build ANSI escape sequences for the logo and its reflection."""
         out: list[str] = []
@@ -130,9 +135,7 @@ class SplashRenderer:
                 break
             pad = max(0, (w - len(logo_line)) // 2)
             color = logo_colors[idx] if idx < len(logo_colors) else "\033[1;97m"
-            for col, ch in enumerate(logo_line):
-                if ch != " ":
-                    out.append(f"\033[{row + 1};{pad + col + 1}H{color}{ch}")
+            out.extend(SplashRenderer._render_line_chars(logo_line, row, pad, color))
 
         # Sub-pixel reflection (dim mirror of bottom logo lines)
         refl_start = logo_row + len(logo_lines)
@@ -144,9 +147,7 @@ class SplashRenderer:
             pad = max(0, (w - len(src)) // 2)
             alpha = max(30, 70 - idx * 25)
             dim = f"\033[38;2;{alpha};{alpha + 20};{alpha + 40}m"
-            for col, ch in enumerate(src):
-                if ch != " ":
-                    out.append(f"\033[{row + 1};{pad + col + 1}H{dim}{ch}")
+            out.extend(SplashRenderer._render_line_chars(src, row, pad, dim))
 
         return out
 

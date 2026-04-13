@@ -183,6 +183,38 @@ _STATUS_FILTER_KEYWORDS: dict[str, str] = {
 }
 
 
+def _match_first_keyword(lowered: str, keywords: dict[str, str]) -> str | None:
+    """Find the first matching keyword (longest first) in the lowered string."""
+    for kw in sorted(keywords, key=len, reverse=True):
+        if kw in lowered:
+            return keywords[kw]
+    return None
+
+
+def _infer_metric(lowered: str) -> str:
+    """Infer the best metric from keyword matches."""
+    matched_metrics: list[tuple[str, str]] = []
+    for kw in sorted(_METRIC_KEYWORDS, key=len, reverse=True):
+        if kw in lowered:
+            matched_metrics.append((kw, _METRIC_KEYWORDS[kw]))
+
+    if not matched_metrics:
+        return "tasks"
+
+    specific = [m for m in matched_metrics if m[1] not in ("tasks", "agents")]
+    return specific[0][1] if specific else matched_metrics[0][1]
+
+
+def _infer_status_filter(lowered: str) -> dict[str, str]:
+    """Infer status filter from keyword matches with word boundary checking."""
+    for kw in sorted(_STATUS_FILTER_KEYWORDS, key=len, reverse=True):
+        if kw in lowered:
+            pattern = rf"\b{re.escape(kw)}\b"
+            if re.search(pattern, lowered):
+                return {"status": _STATUS_FILTER_KEYWORDS[kw]}
+    return {}
+
+
 def parse_nl_query(question: str) -> QueryIntent:
     """Parse a natural language question into a structured ``QueryIntent``.
 
@@ -198,59 +230,15 @@ def parse_nl_query(question: str) -> QueryIntent:
     """
     lowered = question.lower().strip()
 
-    # --- Aggregation (check multi-word patterns first) ---
-    aggregation: Aggregation = "count"
-    # Sort by length descending so longer phrases match first
-    for kw in sorted(_AGG_KEYWORDS, key=len, reverse=True):
-        if kw in lowered:
-            aggregation = _AGG_KEYWORDS[kw]
-            break
-
-    # --- Metric ---
-    # Collect all matching metric keywords; prefer specific metrics over
-    # the generic "tasks"/"task" fallback.
-    metric = "tasks"  # default
-    matched_metrics: list[tuple[str, str]] = []
-    for kw in sorted(_METRIC_KEYWORDS, key=len, reverse=True):
-        if kw in lowered:
-            matched_metrics.append((kw, _METRIC_KEYWORDS[kw]))
-
-    if matched_metrics:
-        # Prefer non-"tasks" metrics when a more specific one exists
-        specific = [m for m in matched_metrics if m[1] not in ("tasks", "agents")]
-        metric = specific[0][1] if specific else matched_metrics[0][1]
-
-    # --- Time range ---
-    time_range: str | None = None
-    for kw in sorted(_TIME_KEYWORDS, key=len, reverse=True):
-        if kw in lowered:
-            time_range = _TIME_KEYWORDS[kw]
-            break
-
-    # --- Group by ---
-    group_by: str | None = None
-    for kw in sorted(_GROUP_KEYWORDS, key=len, reverse=True):
-        if kw in lowered:
-            group_by = _GROUP_KEYWORDS[kw]
-            break
-
-    # --- Status filter ---
-    filter_by: dict[str, str] = {}
-    for kw in sorted(_STATUS_FILTER_KEYWORDS, key=len, reverse=True):
-        if kw in lowered:
-            # Avoid matching "complete" inside "completed" etc.; check word
-            # boundary using regex
-            pattern = rf"\b{re.escape(kw)}\b"
-            if re.search(pattern, lowered):
-                filter_by["status"] = _STATUS_FILTER_KEYWORDS[kw]
-                break
+    aggregation_str = _match_first_keyword(lowered, _AGG_KEYWORDS)
+    aggregation: Aggregation = aggregation_str if aggregation_str is not None else "count"  # type: ignore[assignment]
 
     return QueryIntent(
-        metric=metric,
+        metric=_infer_metric(lowered),
         aggregation=aggregation,
-        time_range=time_range,
-        group_by=group_by,
-        filter_by=filter_by,
+        time_range=_match_first_keyword(lowered, _TIME_KEYWORDS),
+        group_by=_match_first_keyword(lowered, _GROUP_KEYWORDS),
+        filter_by=_infer_status_filter(lowered),
     )
 
 
@@ -527,6 +515,42 @@ def _group_and_aggregate(
     return rows
 
 
+def _execute_scalar_query(
+    intent: QueryIntent,
+    tasks: list[dict[str, object]],
+) -> QueryResult:
+    """Execute a non-grouped scalar query."""
+    if intent.aggregation == "count":
+        count = float(len(tasks))
+        return QueryResult(
+            query="",
+            intent=intent,
+            value=count,
+            rows=(),
+            summary=f"Count: {int(count)} tasks",
+        )
+
+    values = [v for t in tasks if (v := _extract_numeric(t, intent.metric)) is not None]
+
+    if not values:
+        return QueryResult(
+            query="",
+            intent=intent,
+            value=0.0,
+            rows=(),
+            summary=f"No numeric {intent.metric} data found in {len(tasks)} tasks.",
+        )
+
+    agg_value = _aggregate(values, intent.aggregation)
+    return QueryResult(
+        query="",
+        intent=intent,
+        value=agg_value,
+        rows=(),
+        summary=f"{intent.aggregation} {intent.metric}: {agg_value:.4f} (from {len(values)} records)",
+    )
+
+
 def execute_query(intent: QueryIntent, archive_path: Path) -> QueryResult:
     """Execute a parsed query intent against a JSONL task archive.
 
@@ -539,11 +563,8 @@ def execute_query(intent: QueryIntent, archive_path: Path) -> QueryResult:
     """
     tasks = _read_tasks_jsonl(archive_path)
 
-    # Apply time filter
     start, end = _resolve_time_range(intent.time_range)
     tasks = _filter_by_time(tasks, start, end)
-
-    # Apply field filters
     tasks = _filter_by_fields(tasks, intent.filter_by)
 
     if not tasks:
@@ -555,7 +576,6 @@ def execute_query(intent: QueryIntent, archive_path: Path) -> QueryResult:
             summary="No matching tasks found.",
         )
 
-    # Grouped query
     if intent.group_by is not None:
         rows = _group_and_aggregate(tasks, intent.metric, intent.aggregation, intent.group_by)
         return QueryResult(
@@ -566,41 +586,7 @@ def execute_query(intent: QueryIntent, archive_path: Path) -> QueryResult:
             summary=f"{intent.aggregation} of {intent.metric} grouped by {intent.group_by} ({len(rows)} groups)",
         )
 
-    # Scalar query
-    if intent.aggregation == "count":
-        count = float(len(tasks))
-        return QueryResult(
-            query="",
-            intent=intent,
-            value=count,
-            rows=(),
-            summary=f"Count: {int(count)} tasks",
-        )
-
-    values: list[float] = []
-    for task in tasks:
-        val = _extract_numeric(task, intent.metric)
-        if val is not None:
-            values.append(val)
-
-    if not values:
-        return QueryResult(
-            query="",
-            intent=intent,
-            value=0.0,
-            rows=(),
-            summary=f"No numeric {intent.metric} data found in {len(tasks)} tasks.",
-        )
-
-    agg_value = _aggregate(values, intent.aggregation)
-
-    return QueryResult(
-        query="",
-        intent=intent,
-        value=agg_value,
-        rows=(),
-        summary=f"{intent.aggregation} {intent.metric}: {agg_value:.4f} (from {len(values)} records)",
-    )
+    return _execute_scalar_query(intent, tasks)
 
 
 # ---------------------------------------------------------------------------

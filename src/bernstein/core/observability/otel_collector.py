@@ -391,32 +391,42 @@ def render_config_yaml(config_dict: dict[str, Any]) -> str:
 _YamlValue = str | int | float | bool | None | dict[str, Any] | list[Any]
 
 
+def _dict_to_yaml_mapping(obj: dict[str, _YamlValue], lines: list[str], indent: int) -> None:
+    """Serialise a dict to YAML lines."""
+    prefix = "  " * indent
+    for key, value in obj.items():
+        if isinstance(value, (dict, list)):
+            lines.append(f"{prefix}{key}:")
+            _dict_to_yaml(value, lines, indent + 1)
+        else:
+            lines.append(f"{prefix}{key}: {_scalar_to_yaml(value)}")
+
+
+def _dict_to_yaml_sequence(obj: list[_YamlValue], lines: list[str], indent: int) -> None:
+    """Serialise a list to YAML lines."""
+    prefix = "  " * indent
+    for item in obj:
+        if isinstance(item, dict):
+            typed_item: dict[str, _YamlValue] = item
+            items_iter = iter(typed_item.items())
+            first_key, first_val = next(items_iter)
+            lines.append(f"{prefix}- {first_key}: {_scalar_to_yaml(first_val)}")
+            for k, v in items_iter:
+                lines.append(f"{prefix}  {k}: {_scalar_to_yaml(v)}")
+        else:
+            lines.append(f"{prefix}- {_scalar_to_yaml(item)}")
+
+
 def _dict_to_yaml(
     obj: dict[str, _YamlValue] | list[_YamlValue],
     lines: list[str],
     indent: int,
 ) -> None:
     """Recursively serialise a nested dict/list/scalar to YAML lines."""
-    prefix = "  " * indent
     if isinstance(obj, dict):
-        for key, value in obj.items():
-            if isinstance(value, (dict, list)):
-                lines.append(f"{prefix}{key}:")
-                _dict_to_yaml(value, lines, indent + 1)
-            else:
-                lines.append(f"{prefix}{key}: {_scalar_to_yaml(value)}")
+        _dict_to_yaml_mapping(obj, lines, indent)
     else:
-        for item in obj:
-            if isinstance(item, dict):
-                # First key on the ``- `` line, rest indented
-                typed_item: dict[str, _YamlValue] = item
-                items_iter = iter(typed_item.items())
-                first_key, first_val = next(items_iter)
-                lines.append(f"{prefix}- {first_key}: {_scalar_to_yaml(first_val)}")
-                for k, v in items_iter:
-                    lines.append(f"{prefix}  {k}: {_scalar_to_yaml(v)}")
-            else:
-                lines.append(f"{prefix}- {_scalar_to_yaml(item)}")
+        _dict_to_yaml_sequence(obj, lines, indent)
 
 
 def _scalar_to_yaml(value: Any) -> str:

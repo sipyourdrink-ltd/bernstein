@@ -345,22 +345,7 @@ def plan_split(
             needs_split=False,
         )
 
-    # Greedy chunking
-    raw_chunks: list[tuple[list[str], int]] = []  # (files, line_count)
-    current_files: list[str] = []
-    current_lines = 0
-
-    for filepath in ordered:
-        file_lines = lines_map[filepath]
-        if current_files and current_lines + file_lines > max_lines:
-            raw_chunks.append((current_files, current_lines))
-            current_files = []
-            current_lines = 0
-        current_files.append(filepath)
-        current_lines += file_lines
-
-    if current_files:
-        raw_chunks.append((current_files, current_lines))
+    raw_chunks = _greedy_chunk(ordered, lines_map, max_lines)
 
     # Build PRChunk objects with chained base branches
     chunks: list[PRChunk] = []
@@ -378,6 +363,26 @@ def plan_split(
         )
 
     return SplitPlan(chunks=chunks, total_lines=total_lines, needs_split=True)
+
+
+def _greedy_chunk(ordered: list[str], lines_map: dict[str, int], max_lines: int) -> list[tuple[list[str], int]]:
+    """Split ordered files into chunks of at most max_lines each."""
+    raw_chunks: list[tuple[list[str], int]] = []
+    current_files: list[str] = []
+    current_lines = 0
+
+    for filepath in ordered:
+        file_lines = lines_map[filepath]
+        if current_files and current_lines + file_lines > max_lines:
+            raw_chunks.append((current_files, current_lines))
+            current_files = []
+            current_lines = 0
+        current_files.append(filepath)
+        current_lines += file_lines
+
+    if current_files:
+        raw_chunks.append((current_files, current_lines))
+    return raw_chunks
 
 
 # ---------------------------------------------------------------------------

@@ -145,6 +145,36 @@ def _read_archive(archive_path: Path) -> list[dict[str, object]]:
     return records
 
 
+def _extract_resource_id(record: dict[str, object]) -> str:
+    """Extract resource_id from task_id or id fields."""
+    for key in ("task_id", "id"):
+        val = record.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return ""
+
+
+def _build_allocation_labels(record: dict[str, object], config: CostExportConfig) -> dict[str, str]:
+    """Build label dict from record fields and config defaults."""
+    labels: dict[str, str] = {}
+    for label_key in ("role", "model", "assigned_model", "status", "scope", "complexity"):
+        val = record.get(label_key)
+        if isinstance(val, str) and val:
+            labels[label_key] = val
+    if config.cost_center:
+        labels["cost_center"] = config.cost_center
+    if config.project_tag:
+        labels["project"] = config.project_tag
+    return labels
+
+
+def _format_epoch_timestamp(raw: object) -> str:
+    """Format a numeric epoch to ISO string, or empty string."""
+    if isinstance(raw, (int, float)) and raw > 0:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(raw))
+    return ""
+
+
 def _record_to_allocation(
     record: dict[str, object],
     config: CostExportConfig,
@@ -165,40 +195,12 @@ def _record_to_allocation(
     if not isinstance(cost_raw, (int, float)) or cost_raw < 0:
         return None
 
-    # Build resource_id from task_id or id field
-    resource_id = ""
-    for key in ("task_id", "id"):
-        val = record.get(key)
-        if isinstance(val, str) and val:
-            resource_id = val
-            break
+    resource_id = _extract_resource_id(record)
     if not resource_id:
         return None
 
-    # Build labels
-    labels: dict[str, str] = {}
-    for label_key in ("role", "model", "assigned_model", "status", "scope", "complexity"):
-        val = record.get(label_key)
-        if isinstance(val, str) and val:
-            labels[label_key] = val
-
-    if config.cost_center:
-        labels["cost_center"] = config.cost_center
-    if config.project_tag:
-        labels["project"] = config.project_tag
-
-    # Timestamps
-    ts = record.get("timestamp")
-    if isinstance(ts, (int, float)) and ts > 0:
-        period_start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
-    else:
-        period_start = ""
-
-    completed_at = record.get("completed_at")
-    if isinstance(completed_at, (int, float)) and completed_at > 0:
-        period_end = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(completed_at))
-    else:
-        period_end = period_start  # same as start if no end timestamp
+    period_start = _format_epoch_timestamp(record.get("timestamp"))
+    period_end = _format_epoch_timestamp(record.get("completed_at")) or period_start
 
     return CostAllocation(
         resource_id=resource_id,
@@ -206,7 +208,7 @@ def _record_to_allocation(
         currency="USD",
         period_start=period_start,
         period_end=period_end,
-        labels=labels,
+        labels=_build_allocation_labels(record, config),
         namespace=config.namespace,
         account_id=None,
     )
@@ -500,6 +502,43 @@ def aggregate_costs_by_model(archive_path: Path) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
+def _group_allocations_by_label(
+    allocations: list[CostAllocation],
+    label_key: str,
+    fallback_key: str | None = None,
+) -> dict[str, float]:
+    """Group allocations by a label key and sum costs."""
+    totals: dict[str, float] = {}
+    for alloc in allocations:
+        value = alloc.labels.get(label_key)
+        if value is None and fallback_key is not None:
+            value = alloc.labels.get(fallback_key)
+        value = value or "unknown"
+        totals[value] = totals.get(value, 0.0) + alloc.cost_usd
+    return totals
+
+
+def _render_grouped_table(
+    header: str,
+    column_name: str,
+    totals: dict[str, float],
+    grand_total: float,
+) -> list[str]:
+    """Render a grouped summary table section."""
+    if not totals:
+        return []
+    lines = [
+        f"### {header}",
+        "",
+        f"| {column_name} | Cost (USD) | % of Total |",
+        f"|{'---' * (len(column_name) // 3 + 1)}|-----------|------------|",
+    ]
+    for name, cost in sorted(totals.items(), key=lambda x: -x[1]):
+        pct = (cost / grand_total * 100) if grand_total > 0 else 0.0
+        lines.append(f"| {name} | ${cost:.4f} | {pct:.1f}% |")
+    return lines
+
+
 def render_cost_allocation_report(allocations: list[CostAllocation]) -> str:
     """Render a Markdown breakdown of cost allocations.
 
@@ -512,19 +551,20 @@ def render_cost_allocation_report(allocations: list[CostAllocation]) -> str:
     Returns:
         Markdown-formatted report string.
     """
-    lines: list[str] = []
-    lines.append("## Cost Allocation Report")
-    lines.append("")
+    lines: list[str] = ["## Cost Allocation Report", ""]
 
     if not allocations:
         lines.append("No allocations to report.")
         return "\n".join(lines)
 
-    # Detail table
-    lines.append("### Allocations")
-    lines.append("")
-    lines.append("| Resource | Cost (USD) | Period Start | Role | Model |")
-    lines.append("|----------|-----------|--------------|------|-------|")
+    lines.extend(
+        [
+            "### Allocations",
+            "",
+            "| Resource | Cost (USD) | Period Start | Role | Model |",
+            "|----------|-----------|--------------|------|-------|",
+        ]
+    )
 
     total = 0.0
     for alloc in allocations:
@@ -535,39 +575,14 @@ def render_cost_allocation_report(allocations: list[CostAllocation]) -> str:
         )
         total += alloc.cost_usd
 
-    lines.append("")
-    lines.append(f"**Total: ${total:.4f}**")
-    lines.append("")
+    lines.extend(["", f"**Total: ${total:.4f}**", ""])
 
-    # Summary by role
-    role_totals: dict[str, float] = {}
-    for alloc in allocations:
-        role = alloc.labels.get("role", "unknown")
-        role_totals[role] = role_totals.get(role, 0.0) + alloc.cost_usd
+    role_totals = _group_allocations_by_label(allocations, "role")
+    lines.extend(_render_grouped_table("By Role", "Role", role_totals, total))
 
-    if role_totals:
-        lines.append("### By Role")
-        lines.append("")
-        lines.append("| Role | Cost (USD) | % of Total |")
-        lines.append("|------|-----------|------------|")
-        for role, cost in sorted(role_totals.items(), key=lambda x: -x[1]):
-            pct = (cost / total * 100) if total > 0 else 0.0
-            lines.append(f"| {role} | ${cost:.4f} | {pct:.1f}% |")
-
-    # Summary by model
-    model_totals: dict[str, float] = {}
-    for alloc in allocations:
-        model = alloc.labels.get("model", alloc.labels.get("assigned_model", "unknown"))
-        model_totals[model] = model_totals.get(model, 0.0) + alloc.cost_usd
-
+    model_totals = _group_allocations_by_label(allocations, "model", fallback_key="assigned_model")
     if model_totals:
         lines.append("")
-        lines.append("### By Model")
-        lines.append("")
-        lines.append("| Model | Cost (USD) | % of Total |")
-        lines.append("|-------|-----------|------------|")
-        for model, cost in sorted(model_totals.items(), key=lambda x: -x[1]):
-            pct = (cost / total * 100) if total > 0 else 0.0
-            lines.append(f"| {model} | ${cost:.4f} | {pct:.1f}% |")
+    lines.extend(_render_grouped_table("By Model", "Model", model_totals, total))
 
     return "\n".join(lines)

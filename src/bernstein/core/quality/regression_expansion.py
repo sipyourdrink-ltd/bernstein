@@ -80,6 +80,11 @@ _SKIP_FUNCTIONS: frozenset[str] = frozenset(
 )
 
 
+def _is_extractable_func(node: ast.AST) -> bool:
+    """Check if a node is a function definition that should be extracted."""
+    return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name not in _SKIP_FUNCTIONS
+
+
 def _extract_functions(source: str) -> list[str]:
     """Return top-level and class-method function names from *source*.
 
@@ -93,14 +98,31 @@ def _extract_functions(source: str) -> list[str]:
 
     names: list[str] = []
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name not in _SKIP_FUNCTIONS:
-                names.append(node.name)
+        if _is_extractable_func(node):
+            names.append(node.name)  # type: ignore[union-attr]
         elif isinstance(node, ast.ClassDef):
             for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name not in _SKIP_FUNCTIONS:
-                    names.append(child.name)
+                if _is_extractable_func(child):
+                    names.append(child.name)  # type: ignore[union-attr]
     return names
+
+
+def _collect_refs_from_body(body: list[ast.stmt]) -> set[str]:
+    """Collect identifier references from a function body."""
+    refs: set[str] = set()
+    for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+        if isinstance(node, ast.Name):
+            refs.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            refs.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            refs.add(node.value)
+    return refs
+
+
+def _is_test_func(node: ast.AST) -> bool:
+    """Check if an AST node is a test function definition."""
+    return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
 
 
 def _extract_test_references(source: str) -> set[str]:
@@ -116,23 +138,13 @@ def _extract_test_references(source: str) -> set[str]:
         return set()
 
     refs: set[str] = set()
-
-    def _walk_test_body(body: list[ast.stmt]) -> None:
-        for node in ast.walk(ast.Module(body=body, type_ignores=[])):
-            if isinstance(node, ast.Name):
-                refs.add(node.id)
-            elif isinstance(node, ast.Attribute):
-                refs.add(node.attr)
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-                refs.add(node.value)
-
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-            _walk_test_body(node.body)
+        if _is_test_func(node):
+            refs.update(_collect_refs_from_body(node.body))  # type: ignore[union-attr]
         elif isinstance(node, ast.ClassDef):
             for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name.startswith("test_"):
-                    _walk_test_body(child.body)
+                if _is_test_func(child):
+                    refs.update(_collect_refs_from_body(child.body))  # type: ignore[union-attr]
 
     return refs
 
@@ -243,6 +255,16 @@ def analyze_function_coverage(
     return covered, uncovered
 
 
+def _is_analyzable_source(rel_path: str, root: Path) -> bool:
+    """Check if a file is a Python source file suitable for analysis."""
+    p = Path(rel_path)
+    if p.suffix != ".py":
+        return False
+    if p.name.startswith("test_") or p.name in {"__init__.py", "conftest.py"}:
+        return False
+    return (root / rel_path).is_file()
+
+
 def detect_test_gaps(
     changed_files: list[str],
     test_dir: str | Path,
@@ -273,21 +295,12 @@ def detect_test_gaps(
     total_existing_tests = 0
 
     for rel_path in changed_files:
-        p = Path(rel_path)
-
-        # Only analyse Python source files; skip tests and boilerplate.
-        if p.suffix != ".py":
-            continue
-        if p.name.startswith("test_") or p.name in {"__init__.py", "conftest.py"}:
-            continue
-
-        abs_path = root / rel_path
-        if not abs_path.is_file():
+        if not _is_analyzable_source(rel_path, root):
             continue
 
         test_match = match_test_file(rel_path, tdir)
         covered, uncovered = analyze_function_coverage(
-            abs_path,
+            root / rel_path,
             test_match if test_match is not None else Path("/dev/null"),
         )
 
@@ -295,18 +308,16 @@ def detect_test_gaps(
         total_covered += len(covered)
 
         if test_match is not None:
-            test_text = test_match.read_text(encoding="utf-8")
-            total_existing_tests += _count_test_functions(test_text)
+            total_existing_tests += _count_test_functions(test_match.read_text(encoding="utf-8"))
 
+        reason = "no test reference found" if test_match is not None else "no test file exists"
         for fn in uncovered:
-            priority = _assign_priority(fn)
-            reason = "no test reference found" if test_match is not None else "no test file exists"
             gaps.append(
                 TestGap(
                     file_path=rel_path,
                     function_name=fn,
                     reason=reason,
-                    priority=priority,
+                    priority=_assign_priority(fn),
                 )
             )
 

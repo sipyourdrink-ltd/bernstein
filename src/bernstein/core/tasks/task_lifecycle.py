@@ -1635,6 +1635,57 @@ def claim_and_spawn_batches(
                         )
 
 
+def _fail_verification(result: Any, task_id: str, failed: list[str]) -> None:
+    """Mark a task as failed verification in the tick result."""
+    with contextlib.suppress(ValueError):
+        result.verified.remove(task_id)
+    result.verification_failures.append((task_id, failed))
+
+
+def _run_quality_gates(
+    orch: Any,
+    task: Task,
+    session: AgentSession,
+    result: Any,
+) -> tuple[bool, Any]:
+    """Run quality gate checks. Returns (passed, qg_result)."""
+    qg_config = getattr(orch, "_quality_gate_config", None)
+    if qg_config is None:
+        return True, None
+
+    worktree = orch._spawner.get_worktree_path(session.id)
+    gate_run_dir = worktree if worktree is not None else orch._workdir
+    qg_result = orch._gate_coalescer.run(task, gate_run_dir, orch._workdir, qg_config)
+    if not qg_result.passed:
+        failed = [f"quality_gate:{r.gate}" for r in qg_result.gate_results if r.blocked and not r.passed]
+        _fail_verification(result, task.id, failed)
+        logger.info("Quality gates blocked merge for task %s: %s", task.id, ", ".join(failed))
+        return False, qg_result
+    return True, qg_result
+
+
+def _run_rule_enforcement(
+    orch: Any,
+    task: Task,
+    session: AgentSession,
+    result: Any,
+) -> bool:
+    """Run organizational rule enforcement. Returns True if passed."""
+    rules_config: RulesConfig | None = load_rules_config(orch._workdir)
+    if rules_config is None:
+        return True
+
+    worktree = orch._spawner.get_worktree_path(session.id)
+    run_dir = worktree if worktree is not None else orch._workdir
+    re_result = run_rule_enforcement(task, run_dir, orch._workdir, rules_config)
+    if not re_result.passed:
+        failed = [f"rule:{v.rule_id}: {v.fix_hint}" for v in re_result.violations if v.blocked]
+        _fail_verification(result, task.id, failed)
+        logger.info("Rule enforcement blocked merge for task %s: %s", task.id, ", ".join(failed))
+        return False
+    return True
+
+
 def _run_verification_gates(
     orch: Any,
     task: Task,
@@ -1648,36 +1699,12 @@ def _run_verification_gates(
     """
     qg_result: Any = None
 
-    # Quality gates: lint/type/test checks run after janitor, before approval.
-    qg_config = getattr(orch, "_quality_gate_config", None)
-    if janitor_passed and qg_config is not None:
-        worktree = orch._spawner.get_worktree_path(session.id)
-        gate_run_dir = worktree if worktree is not None else orch._workdir
-        qg_result = orch._gate_coalescer.run(task, gate_run_dir, orch._workdir, qg_config)
-        if not qg_result.passed:
-            janitor_passed = False
-            failed = [f"quality_gate:{r.gate}" for r in qg_result.gate_results if r.blocked and not r.passed]
-            with contextlib.suppress(ValueError):
-                result.verified.remove(task.id)
-            result.verification_failures.append((task.id, failed))
-            logger.info("Quality gates blocked merge for task %s: %s", task.id, ", ".join(failed))
-
-    # Organizational rule enforcement: .bernstein/rules.yaml checks.
     if janitor_passed:
-        rules_config: RulesConfig | None = load_rules_config(orch._workdir)
-        if rules_config is not None:
-            worktree = orch._spawner.get_worktree_path(session.id)
-            run_dir = worktree if worktree is not None else orch._workdir
-            re_result = run_rule_enforcement(task, run_dir, orch._workdir, rules_config)
-            if not re_result.passed:
-                janitor_passed = False
-                failed = [f"rule:{v.rule_id}: {v.fix_hint}" for v in re_result.violations if v.blocked]
-                with contextlib.suppress(ValueError):
-                    result.verified.remove(task.id)
-                result.verification_failures.append((task.id, failed))
-                logger.info("Rule enforcement blocked merge for task %s: %s", task.id, ", ".join(failed))
+        janitor_passed, qg_result = _run_quality_gates(orch, task, session, result)
 
-    # Cross-model verification: route diff to a different model for review.
+    if janitor_passed:
+        janitor_passed = _run_rule_enforcement(orch, task, session, result)
+
     if janitor_passed:
         janitor_passed = _run_cross_model_check(orch, task, session, result)
 
@@ -1996,23 +2023,15 @@ def _record_bandit_outcome(
     bandit.save()
 
 
-def _record_completion_metrics(
+def _record_cost_and_convergence(
     orch: Any,
     task: Task,
     session: AgentSession | None,
+    task_m: Any,
+    cost_usd: float,
     janitor_passed: bool,
-    qg_result: Any,
-    completion_data: CompletionData | None,
-    agent_just_reaped: bool,
-) -> tuple[Any, float]:
-    """Record task completion in metrics, cost tracker, convergence guard.
-
-    Returns (task_metrics, cost_usd) for use by callers.
-    """
-    collector = get_collector(orch._workdir / ".sdd" / "metrics")
-    task_m = collector.task_metrics.get(task.id)
-    cost_usd = task_m.cost_usd if task_m else 0.0
-
+) -> None:
+    """Record cost tracking, convergence, and completion budget."""
     agent_id = session.id if session else "unknown"
     model = session.model_config.model if session else "unknown"
     tokens_in = task_m.tokens_prompt if task_m else 0
@@ -2031,8 +2050,6 @@ def _record_completion_metrics(
     except OSError as exc:
         logger.warning("Failed to persist cost tracker: %s", exc)
 
-    collector.complete_task(task.id, success=janitor_passed, janitor_passed=janitor_passed, cost_usd=cost_usd)
-
     convergence = getattr(orch, "_convergence_guard", None)
     if convergence is not None:
         convergence.record_success() if janitor_passed else convergence.record_failure()
@@ -2046,6 +2063,27 @@ def _record_completion_metrics(
         )
     except Exception as exc:
         logger.debug("Completion budget update failed for task %s: %s", task.id, exc)
+
+
+def _record_completion_metrics(
+    orch: Any,
+    task: Task,
+    session: AgentSession | None,
+    janitor_passed: bool,
+    qg_result: Any,
+    completion_data: CompletionData | None,
+    agent_just_reaped: bool,
+) -> tuple[Any, float]:
+    """Record task completion in metrics, cost tracker, convergence guard.
+
+    Returns (task_metrics, cost_usd) for use by callers.
+    """
+    collector = get_collector(orch._workdir / ".sdd" / "metrics")
+    task_m = collector.task_metrics.get(task.id)
+    cost_usd = task_m.cost_usd if task_m else 0.0
+
+    _record_cost_and_convergence(orch, task, session, task_m, cost_usd, janitor_passed)
+    collector.complete_task(task.id, success=janitor_passed, janitor_passed=janitor_passed, cost_usd=cost_usd)
 
     if session is not None:
         collector.complete_agent_task(session.id, success=janitor_passed)
@@ -2146,38 +2184,23 @@ def _cache_task_result(orch: Any, task: Task, verified: bool, diff_lines: int) -
         logger.warning("Response cache store failed for task %s: %s", task.id, exc)
 
 
-def _record_evolution_completion(
-    orch: Any,
-    task: Task,
+def _compute_task_duration(
     session: AgentSession | None,
     task_m: Any,
-    cost_usd: float,
-    janitor_passed: bool,
-) -> None:
-    """Record task completion in evolution tracker and set agent affinity."""
-    if orch._evolution is not None:
-        model = session.model_config.model if session else None
-        provider = session.provider if session else None
-        if task_m and task_m.end_time:
-            duration = task_m.end_time - task_m.start_time
-        elif session and session.spawn_ts > 0:
-            duration = time.time() - session.spawn_ts
-        else:
-            duration = 0.0
-        try:
-            orch._evolution.record_task_completion(
-                task=task,
-                duration_seconds=round(duration, 2),
-                cost_usd=cost_usd,
-                janitor_passed=janitor_passed,
-                model=model,
-                provider=provider,
-            )
-        except Exception as exc:
-            logger.warning("Evolution record_task_completion failed: %s", exc)
+) -> float:
+    """Compute task duration from metrics or session spawn time."""
+    if task_m and task_m.end_time:
+        return task_m.end_time - task_m.start_time
+    if session and session.spawn_ts > 0:
+        return time.time() - session.spawn_ts
+    return 0.0
 
-    if not (janitor_passed and task.assigned_agent):
-        return
+
+def _set_downstream_affinity(
+    orch: Any,
+    task: Task,
+) -> None:
+    """Propagate agent affinity to downstream open tasks."""
     affinity: dict[str, str] | None = getattr(orch, "_agent_affinity", None)
     if affinity is None:
         return
@@ -2191,6 +2214,33 @@ def _record_evolution_completion(
                 task.assigned_agent,
                 task.id,
             )
+
+
+def _record_evolution_completion(
+    orch: Any,
+    task: Task,
+    session: AgentSession | None,
+    task_m: Any,
+    cost_usd: float,
+    janitor_passed: bool,
+) -> None:
+    """Record task completion in evolution tracker and set agent affinity."""
+    if orch._evolution is not None:
+        duration = _compute_task_duration(session, task_m)
+        try:
+            orch._evolution.record_task_completion(
+                task=task,
+                duration_seconds=round(duration, 2),
+                cost_usd=cost_usd,
+                janitor_passed=janitor_passed,
+                model=session.model_config.model if session else None,
+                provider=session.provider if session else None,
+            )
+        except Exception as exc:
+            logger.warning("Evolution record_task_completion failed: %s", exc)
+
+    if janitor_passed and task.assigned_agent:
+        _set_downstream_affinity(orch, task)
 
 
 def process_completed_tasks(

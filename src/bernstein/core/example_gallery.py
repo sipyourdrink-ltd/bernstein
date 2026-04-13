@@ -235,6 +235,37 @@ class ExampleGallery:
 # ---------------------------------------------------------------------------
 
 
+def _parse_plan_yaml(yaml_file: Path) -> ExamplePlan | None:
+    """Try to parse a single YAML file into an ExamplePlan. Returns None on failure."""
+    try:
+        with open(yaml_file, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except (yaml.YAMLError, OSError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        name = yaml_file.stem.replace("-", " ").title()
+
+    description = data.get("description", "")
+    if isinstance(description, str):
+        description = description.strip().split("\n")[0][:200]
+
+    return ExamplePlan(
+        name=name,
+        description=description,
+        category=_infer_category(data),
+        difficulty=_infer_difficulty(data),
+        estimated_cost_usd=_parse_budget(data.get("budget", 0)),
+        agent_count=_count_agents(data),
+        plan_path=yaml_file,
+        raw=data,
+    )
+
+
 def discover_examples(examples_dir: Path) -> ExampleGallery:
     """Scan the examples directory and build a gallery index.
 
@@ -255,8 +286,6 @@ def discover_examples(examples_dir: Path) -> ExampleGallery:
         raise FileNotFoundError(f"Examples directory not found: {examples_dir}")
 
     plans: list[ExamplePlan] = []
-
-    # Search in examples_dir itself and examples_dir/plans/
     search_dirs = [examples_dir, examples_dir / "plans"]
     seen: set[str] = set()
 
@@ -267,40 +296,106 @@ def discover_examples(examples_dir: Path) -> ExampleGallery:
             if yaml_file.name in seen:
                 continue
             seen.add(yaml_file.name)
-
-            try:
-                with open(yaml_file, encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
-            except (yaml.YAMLError, OSError):
-                continue
-
-            if not isinstance(data, dict):
-                continue
-
-            # Only include files that look like plans (have a name field)
-            name = data.get("name")
-            if not isinstance(name, str) or not name.strip():
-                # For simple YAMLs without a name, use filename
-                name = yaml_file.stem.replace("-", " ").title()
-
-            description = data.get("description", "")
-            if isinstance(description, str):
-                description = description.strip().split("\n")[0][:200]
-
-            plans.append(
-                ExamplePlan(
-                    name=name,
-                    description=description,
-                    category=_infer_category(data),
-                    difficulty=_infer_difficulty(data),
-                    estimated_cost_usd=_parse_budget(data.get("budget", 0)),
-                    agent_count=_count_agents(data),
-                    plan_path=yaml_file,
-                    raw=data,
-                )
-            )
+            plan = _parse_plan_yaml(yaml_file)
+            if plan is not None:
+                plans.append(plan)
 
     return ExampleGallery(tuple(plans))
+
+
+def _validate_step_signals(
+    errors: list[str],
+    stage_idx: int,
+    step_idx: int,
+    step: dict[str, object],
+) -> None:
+    """Validate completion_signals within a single step."""
+    signals = step.get("completion_signals")
+    if signals is None:
+        return
+    if not isinstance(signals, list):
+        errors.append(f"Stage {stage_idx}, step {step_idx}: 'completion_signals' must be a list")
+        return
+    for k, signal in enumerate(signals):
+        if not isinstance(signal, dict):
+            errors.append(f"Stage {stage_idx}, step {step_idx}, signal {k}: must be a mapping")
+            continue
+        if "type" not in signal:
+            errors.append(f"Stage {stage_idx}, step {step_idx}, signal {k}: missing 'type'")
+        elif signal["type"] not in VALID_SIGNAL_TYPES:
+            errors.append(f"Stage {stage_idx}, step {step_idx}, signal {k}: unknown signal type '{signal['type']}'")
+
+
+def _validate_step(
+    errors: list[str],
+    stage_idx: int,
+    stage_name: str,
+    step_idx: int,
+    step: object,
+) -> None:
+    """Validate a single step within a stage."""
+    if not isinstance(step, dict):
+        errors.append(f"Stage {stage_idx}, step {step_idx}: must be a mapping")
+        return
+
+    for sf in REQUIRED_STEP_FIELDS:
+        if sf not in step:
+            errors.append(
+                f"Stage {stage_idx} ({stage_name}), "
+                f"step {step_idx} ({step.get('title', '?')}): "
+                f"missing required field '{sf}'"
+            )
+
+    role = step.get("role")
+    if isinstance(role, str) and role not in VALID_ROLES:
+        errors.append(f"Stage {stage_idx}, step {step_idx}: unknown role '{role}'")
+
+    complexity = step.get("complexity")
+    if isinstance(complexity, str) and complexity not in VALID_COMPLEXITY:
+        errors.append(f"Stage {stage_idx}, step {step_idx}: unknown complexity '{complexity}'")
+
+    scope = step.get("scope")
+    if isinstance(scope, str) and scope not in VALID_SCOPE:
+        errors.append(f"Stage {stage_idx}, step {step_idx}: unknown scope '{scope}'")
+
+    _validate_step_signals(errors, stage_idx, step_idx, step)
+
+
+def _validate_stage(errors: list[str], stage_idx: int, stage: object) -> None:
+    """Validate a single stage and its steps."""
+    if not isinstance(stage, dict):
+        errors.append(f"Stage {stage_idx}: must be a mapping")
+        return
+
+    if "name" not in stage:
+        errors.append(f"Stage {stage_idx}: missing 'name'")
+
+    stage_name = stage.get("name", "?")
+
+    depends = stage.get("depends_on")
+    if depends is not None and not isinstance(depends, list):
+        errors.append(f"Stage {stage_idx} ({stage_name}): 'depends_on' must be a list")
+
+    steps = stage.get("steps")
+    if steps is None:
+        return
+    if not isinstance(steps, list):
+        errors.append(f"Stage {stage_idx} ({stage_name}): 'steps' must be a list")
+        return
+    for j, step in enumerate(steps):
+        _validate_step(errors, stage_idx, str(stage_name), j, step)
+
+
+def _validate_stages(errors: list[str], data: dict[str, object]) -> None:
+    """Validate the stages list within a plan."""
+    stages = data.get("stages")
+    if stages is None:
+        return
+    if not isinstance(stages, list):
+        errors.append("'stages' must be a list")
+        return
+    for i, stage in enumerate(stages):
+        _validate_stage(errors, i, stage)
 
 
 def validate_example_plan(plan_path: Path) -> list[str]:
@@ -315,8 +410,6 @@ def validate_example_plan(plan_path: Path) -> list[str]:
     Returns:
         A list of validation error messages.  Empty list means valid.
     """
-    errors: list[str] = []
-
     if not plan_path.is_file():
         return [f"File not found: {plan_path}"]
 
@@ -329,95 +422,22 @@ def validate_example_plan(plan_path: Path) -> list[str]:
     if not isinstance(data, dict):
         return ["Plan file does not contain a YAML mapping"]
 
-    # Check required top-level fields
+    errors: list[str] = []
+
     for field in REQUIRED_PLAN_FIELDS:
         if field not in data:
             errors.append(f"Missing required field: {field}")
 
-    # Validate name
     name = data.get("name")
     if name is not None and not isinstance(name, str):
         errors.append("Field 'name' must be a string")
 
-    # Validate budget
     budget = data.get("budget")
-    if budget is not None:
-        cost = _parse_budget(budget)
-        if cost < 0:
-            errors.append("Budget must be non-negative")
+    if budget is not None and _parse_budget(budget) < 0:
+        errors.append("Budget must be non-negative")
 
-    # Validate stages
-    stages = data.get("stages")
-    if stages is not None:
-        if not isinstance(stages, list):
-            errors.append("'stages' must be a list")
-        else:
-            for i, stage in enumerate(stages):
-                if not isinstance(stage, dict):
-                    errors.append(f"Stage {i}: must be a mapping")
-                    continue
+    _validate_stages(errors, data)
 
-                if "name" not in stage:
-                    errors.append(f"Stage {i}: missing 'name'")
-
-                # Validate depends_on
-                depends = stage.get("depends_on")
-                if depends is not None and not isinstance(depends, list):
-                    errors.append(f"Stage {i} ({stage.get('name', '?')}): 'depends_on' must be a list")
-
-                # Validate steps
-                steps = stage.get("steps")
-                if steps is not None:
-                    if not isinstance(steps, list):
-                        errors.append(f"Stage {i} ({stage.get('name', '?')}): 'steps' must be a list")
-                    else:
-                        for j, step in enumerate(steps):
-                            if not isinstance(step, dict):
-                                errors.append(f"Stage {i}, step {j}: must be a mapping")
-                                continue
-
-                            for sf in REQUIRED_STEP_FIELDS:
-                                if sf not in step:
-                                    errors.append(
-                                        f"Stage {i} ({stage.get('name', '?')}), "
-                                        f"step {j} ({step.get('title', '?')}): "
-                                        f"missing required field '{sf}'"
-                                    )
-
-                            # Validate role
-                            role = step.get("role")
-                            if isinstance(role, str) and role not in VALID_ROLES:
-                                errors.append(f"Stage {i}, step {j}: unknown role '{role}'")
-
-                            # Validate complexity
-                            complexity = step.get("complexity")
-                            if isinstance(complexity, str) and complexity not in VALID_COMPLEXITY:
-                                errors.append(f"Stage {i}, step {j}: unknown complexity '{complexity}'")
-
-                            # Validate scope
-                            scope = step.get("scope")
-                            if isinstance(scope, str) and scope not in VALID_SCOPE:
-                                errors.append(f"Stage {i}, step {j}: unknown scope '{scope}'")
-
-                            # Validate completion signals
-                            signals = step.get("completion_signals")
-                            if signals is not None:
-                                if not isinstance(signals, list):
-                                    errors.append(f"Stage {i}, step {j}: 'completion_signals' must be a list")
-                                else:
-                                    for k, signal in enumerate(signals):
-                                        if not isinstance(signal, dict):
-                                            errors.append(f"Stage {i}, step {j}, signal {k}: must be a mapping")
-                                            continue
-                                        if "type" not in signal:
-                                            errors.append(f"Stage {i}, step {j}, signal {k}: missing 'type'")
-                                        elif signal["type"] not in VALID_SIGNAL_TYPES:
-                                            errors.append(
-                                                f"Stage {i}, step {j}, signal {k}: "
-                                                f"unknown signal type '{signal['type']}'"
-                                            )
-
-    # Validate constraints
     constraints = data.get("constraints")
     if constraints is not None and not isinstance(constraints, list):
         errors.append("'constraints' must be a list")

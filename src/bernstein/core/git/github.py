@@ -841,6 +841,27 @@ def _collect_existing_issue_numbers(workdir: Path, backlog_open: Path) -> set[in
     return numbers
 
 
+def _extract_title_from_frontmatter(path: Path) -> str | None:
+    """Extract normalized title from a YAML frontmatter file. Returns None on failure."""
+    import yaml as _yaml
+
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+        if not raw_text.startswith("---"):
+            return None
+        end = raw_text.find("\n---", 3)
+        if end == -1:
+            return None
+        fm_parsed: dict[str, object] = dict(_yaml.safe_load(raw_text[3:end]) or {})
+        title_val = fm_parsed.get("title")
+        if not title_val:
+            return None
+        t = re.sub(r"^\[GH#\d+\]\s*", "", str(title_val))
+        return t.lower().strip()
+    except Exception:
+        return None
+
+
 def _collect_existing_titles(workdir: Path, backlog_open: Path) -> set[str]:
     """Build a title dedup set from YAML/md files in open/ and issues/.
 
@@ -851,30 +872,16 @@ def _collect_existing_titles(workdir: Path, backlog_open: Path) -> set[str]:
     Returns:
         Set of normalized (lowered, stripped) titles.
     """
-    import yaml as _yaml
-
     titles: set[str] = set()
     for src_dir in (backlog_open, workdir / ".sdd" / "backlog" / "issues"):
         if not src_dir.is_dir():
             continue
         for path in [*src_dir.glob("*.yaml"), *src_dir.glob("*.md")]:
-            # Skip gh-* files - we always regenerate those from GitHub
             if path.name.startswith("gh-"):
                 continue
-            try:
-                raw_text = path.read_text(encoding="utf-8")
-                if not raw_text.startswith("---"):
-                    continue
-                end = raw_text.find("\n---", 3)
-                if end == -1:
-                    continue
-                fm_parsed: dict[str, object] = dict(_yaml.safe_load(raw_text[3:end]) or {})
-                title_val = fm_parsed.get("title")
-                if title_val:
-                    t = re.sub(r"^\[GH#\d+\]\s*", "", str(title_val))
-                    titles.add(t.lower().strip())
-            except Exception:
-                continue
+            title = _extract_title_from_frontmatter(path)
+            if title:
+                titles.add(title)
     return titles
 
 

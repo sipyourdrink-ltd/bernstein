@@ -283,6 +283,21 @@ def _extract_referenced_names(node: ast.AST) -> list[str]:
     return names
 
 
+def _process_import_node(node: ast.Import, imports: dict[str, str]) -> None:
+    """Add entries from an ``import x`` statement to the imports dict."""
+    for alias in node.names:
+        local_name = alias.asname or alias.name.split(".")[-1]
+        imports[local_name] = alias.name
+
+
+def _process_import_from_node(node: ast.ImportFrom, imports: dict[str, str]) -> None:
+    """Add entries from a ``from x import y`` statement to the imports dict."""
+    module = node.module or ""
+    for alias in node.names:
+        local_name = alias.asname or alias.name
+        imports[local_name] = f"{module}.{alias.name}" if module else alias.name
+
+
 def _extract_imports_from_tree(tree: ast.Module) -> dict[str, str]:
     """Extract import mappings from an AST module.
 
@@ -295,14 +310,9 @@ def _extract_imports_from_tree(tree: ast.Module) -> dict[str, str]:
     imports: dict[str, str] = {}
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                local_name = alias.asname or alias.name.split(".")[-1]
-                imports[local_name] = alias.name
+            _process_import_node(node, imports)
         elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            for alias in node.names:
-                local_name = alias.asname or alias.name
-                imports[local_name] = f"{module}.{alias.name}" if module else alias.name
+            _process_import_from_node(node, imports)
     return imports
 
 

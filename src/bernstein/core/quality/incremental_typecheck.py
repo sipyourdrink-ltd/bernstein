@@ -289,6 +289,21 @@ def _is_project_import(module_name: str) -> bool:
     return top not in _STDLIB_TOP_LEVEL
 
 
+def _collect_project_imports(tree: ast.Module) -> set[str]:
+    """Extract project import module names from an AST tree."""
+    imports: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_project_import(alias.name):
+                    imports.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module and _is_project_import(module):
+                imports.add(module)
+    return imports
+
+
 def _extract_imports_from_file(filepath: Path) -> set[str]:
     """Parse a Python file and return the set of dotted module names it imports.
 
@@ -305,17 +320,19 @@ def _extract_imports_from_file(filepath: Path) -> set[str]:
     except SyntaxError:
         return set()
 
-    imports: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if _is_project_import(alias.name):
-                    imports.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            if module and _is_project_import(module):
-                imports.add(module)
-    return imports
+    return _collect_project_imports(tree)
+
+
+def _build_module_candidates(parts: list[str], project_root: Path) -> list[Path]:
+    """Build candidate file paths for a dotted module name."""
+    candidates: list[Path] = []
+    for prefix in (project_root / "src", project_root):
+        if len(parts) > 1:
+            candidates.append(prefix / Path(*parts[:-1]) / f"{parts[-1]}.py")
+        else:
+            candidates.append(prefix / f"{parts[0]}.py")
+        candidates.append(prefix / Path(*parts) / "__init__.py")
+    return candidates
 
 
 def _module_to_filepath(module_name: str, project_root: Path) -> str | None:
@@ -325,24 +342,7 @@ def _module_to_filepath(module_name: str, project_root: Path) -> str | None:
     as well as top-level paths without the ``src/`` prefix.
     """
     parts = module_name.split(".")
-    candidates: list[Path] = []
-
-    # src/<parts>/<last>.py
-    if len(parts) > 1:
-        candidates.append(project_root / "src" / Path(*parts[:-1]) / f"{parts[-1]}.py")
-    else:
-        candidates.append(project_root / "src" / f"{parts[0]}.py")
-    # src/<parts>/__init__.py
-    candidates.append(project_root / "src" / Path(*parts) / "__init__.py")
-    # <parts>/<last>.py  (no src/ prefix)
-    if len(parts) > 1:
-        candidates.append(project_root / Path(*parts[:-1]) / f"{parts[-1]}.py")
-    else:
-        candidates.append(project_root / f"{parts[0]}.py")
-    # <parts>/__init__.py (no src/ prefix)
-    candidates.append(project_root / Path(*parts) / "__init__.py")
-
-    for candidate in candidates:
+    for candidate in _build_module_candidates(parts, project_root):
         if candidate.is_file():
             try:
                 return str(candidate.relative_to(project_root))

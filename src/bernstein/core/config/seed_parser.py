@@ -945,6 +945,16 @@ def _parse_secrets(raw: object) -> SecretsConfig | None:
     )
 
 
+def _parse_optional_str(d: dict[str, object], key: str, section: str) -> str | None:
+    """Parse an optional string field from a dict, raising SeedError on type mismatch."""
+    val = d.get(key)
+    if val is None:
+        return None
+    if not isinstance(val, str):
+        raise SeedError(f"{section}.{key} must be a string")
+    return val
+
+
 def _parse_key_rotation(raw: object) -> KeyRotationConfig | None:
     """Parse the optional ``key_rotation`` section."""
     if raw is None:
@@ -967,20 +977,6 @@ def _parse_key_rotation(raw: object) -> KeyRotationConfig | None:
     if not isinstance(kr_on_leak_raw, str) or kr_on_leak_raw not in _valid_policies:
         raise SeedError(f"key_rotation.on_leak must be one of {list(_valid_policies)}, got: {kr_on_leak_raw!r}")
 
-    kr_provider_raw: object = kr_dict.get("secrets_provider")
-    kr_provider: str | None = None
-    if kr_provider_raw is not None:
-        if not isinstance(kr_provider_raw, str):
-            raise SeedError("key_rotation.secrets_provider must be a string")
-        kr_provider = kr_provider_raw
-
-    kr_path_raw: object = kr_dict.get("secrets_path")
-    kr_path: str | None = None
-    if kr_path_raw is not None:
-        if not isinstance(kr_path_raw, str):
-            raise SeedError("key_rotation.secrets_path must be a string")
-        kr_path = kr_path_raw
-
     kr_patterns_raw: object = kr_dict.get("leak_patterns")
     kr_patterns: list[str] = []
     if kr_patterns_raw is not None:
@@ -991,8 +987,8 @@ def _parse_key_rotation(raw: object) -> KeyRotationConfig | None:
     return KeyRotationConfig(
         interval_seconds=kr_interval,
         on_leak=kr_on_leak_raw,  # type: ignore[arg-type]
-        secrets_provider=kr_provider,
-        secrets_path=kr_path,
+        secrets_provider=_parse_optional_str(kr_dict, "secrets_provider", "key_rotation"),
+        secrets_path=_parse_optional_str(kr_dict, "secrets_path", "key_rotation"),
         leak_patterns=kr_patterns,
     )
 
@@ -1133,38 +1129,38 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
     )
 
 
+def _parse_single_pipeline_step(index: int, entry: object) -> GatePipelineStep:
+    """Parse a single pipeline step entry."""
+    if not isinstance(entry, dict):
+        raise SeedError(f"quality_gates.pipeline[{index}] must be a mapping")
+    name = entry.get("name")
+    if not isinstance(name, str):
+        raise SeedError(f"quality_gates.pipeline[{index}].name must be a string")
+    if name not in VALID_GATE_NAMES:
+        raise SeedError(f"quality_gates.pipeline[{index}].name is unsupported: {name!r}")
+    required = entry.get("required", True)
+    if not isinstance(required, bool):
+        raise SeedError(f"quality_gates.pipeline[{index}].required must be a bool")
+    condition_raw = entry.get("condition", "always")
+    if not isinstance(condition_raw, str):
+        raise SeedError(f"quality_gates.pipeline[{index}].condition must be a string")
+    command_override = entry.get("command_override")
+    if command_override is not None and not isinstance(command_override, str):
+        raise SeedError(f"quality_gates.pipeline[{index}].command_override must be a string")
+    try:
+        condition = normalize_gate_condition(condition_raw)
+    except ValueError as exc:
+        raise SeedError(str(exc)) from exc
+    return GatePipelineStep(name=name, required=required, condition=condition, command_override=command_override)
+
+
 def _parse_quality_gate_pipeline(raw: object) -> list[GatePipelineStep] | None:
     """Parse the quality_gates.pipeline list."""
     if raw is None:
         return None
     if not isinstance(raw, list):
         raise SeedError(f"quality_gates.pipeline must be a list, got: {type(raw).__name__}")
-    pipeline: list[GatePipelineStep] = []
-    for index, entry in enumerate(raw):
-        if not isinstance(entry, dict):
-            raise SeedError(f"quality_gates.pipeline[{index}] must be a mapping")
-        name = entry.get("name")
-        if not isinstance(name, str):
-            raise SeedError(f"quality_gates.pipeline[{index}].name must be a string")
-        if name not in VALID_GATE_NAMES:
-            raise SeedError(f"quality_gates.pipeline[{index}].name is unsupported: {name!r}")
-        required = entry.get("required", True)
-        if not isinstance(required, bool):
-            raise SeedError(f"quality_gates.pipeline[{index}].required must be a bool")
-        condition_raw = entry.get("condition", "always")
-        if not isinstance(condition_raw, str):
-            raise SeedError(f"quality_gates.pipeline[{index}].condition must be a string")
-        command_override = entry.get("command_override")
-        if command_override is not None and not isinstance(command_override, str):
-            raise SeedError(f"quality_gates.pipeline[{index}].command_override must be a string")
-        try:
-            condition = normalize_gate_condition(condition_raw)
-        except ValueError as exc:
-            raise SeedError(str(exc)) from exc
-        pipeline.append(
-            GatePipelineStep(name=name, required=required, condition=condition, command_override=command_override)
-        )
-    return pipeline
+    return [_parse_single_pipeline_step(i, entry) for i, entry in enumerate(raw)]
 
 
 def _parse_quality_gate_benchmark(raw: object) -> BenchmarkConfig:
@@ -1189,39 +1185,37 @@ def _parse_quality_gate_benchmark(raw: object) -> BenchmarkConfig:
     return BenchmarkConfig(enabled=bm_enabled, command=bm_command, threshold=float(bm_threshold))
 
 
+def _parse_single_formal_property(idx: int, entry: object) -> FormalProperty:
+    """Parse a single formal verification property entry."""
+    from typing import Literal as _Literal
+
+    if not isinstance(entry, dict):
+        raise SeedError(f"formal_verification.properties[{idx}] must be a mapping")
+    prop_name = entry.get("name", f"property_{idx}")
+    if not isinstance(prop_name, str):
+        raise SeedError(f"formal_verification.properties[{idx}].name must be a string")
+    prop_invariant = entry.get("invariant", "True")
+    if not isinstance(prop_invariant, str):
+        raise SeedError(f"formal_verification.properties[{idx}].invariant must be a string")
+    prop_checker = entry.get("checker", "z3")
+    if not isinstance(prop_checker, str) or prop_checker not in ("z3", "lean4"):
+        raise SeedError(f"formal_verification.properties[{idx}].checker must be 'z3' or 'lean4', got: {prop_checker!r}")
+    prop_lemmas = entry.get("lemmas_file")
+    if prop_lemmas is not None and not isinstance(prop_lemmas, str):
+        raise SeedError(f"formal_verification.properties[{idx}].lemmas_file must be a string")
+    return FormalProperty(
+        name=prop_name,
+        invariant=prop_invariant,
+        checker=cast("_Literal['z3', 'lean4']", prop_checker),
+        lemmas_file=prop_lemmas if isinstance(prop_lemmas, str) else None,
+    )
+
+
 def _parse_formal_properties(raw: object) -> list[FormalProperty]:
     """Parse the ``formal_verification.properties`` list."""
     if not isinstance(raw, list):
         raise SeedError("formal_verification.properties must be a list")
-    properties: list[FormalProperty] = []
-    for idx, entry in enumerate(raw):
-        if not isinstance(entry, dict):
-            raise SeedError(f"formal_verification.properties[{idx}] must be a mapping")
-        prop_name = entry.get("name", f"property_{idx}")
-        if not isinstance(prop_name, str):
-            raise SeedError(f"formal_verification.properties[{idx}].name must be a string")
-        prop_invariant = entry.get("invariant", "True")
-        if not isinstance(prop_invariant, str):
-            raise SeedError(f"formal_verification.properties[{idx}].invariant must be a string")
-        prop_checker = entry.get("checker", "z3")
-        if not isinstance(prop_checker, str) or prop_checker not in ("z3", "lean4"):
-            raise SeedError(
-                f"formal_verification.properties[{idx}].checker must be 'z3' or 'lean4', got: {prop_checker!r}"
-            )
-        prop_lemmas = entry.get("lemmas_file")
-        if prop_lemmas is not None and not isinstance(prop_lemmas, str):
-            raise SeedError(f"formal_verification.properties[{idx}].lemmas_file must be a string")
-        from typing import Literal as _Literal
-
-        properties.append(
-            FormalProperty(
-                name=prop_name,
-                invariant=prop_invariant,
-                checker=cast("_Literal['z3', 'lean4']", prop_checker),
-                lemmas_file=prop_lemmas if isinstance(prop_lemmas, str) else None,
-            )
-        )
-    return properties
+    return [_parse_single_formal_property(i, entry) for i, entry in enumerate(raw)]
 
 
 def parse_seed(path: Path) -> SeedConfig:

@@ -3733,35 +3733,36 @@ class Orchestrator:
             except Exception as exc:
                 logger.debug("Summary card render failed (non-critical): %s", exc)
 
-    def _record_tick_events(self, result: TickResult, _tasks_by_status: dict[str, list[Task]]) -> None:
-        """Record replay events from a completed tick for deterministic replay."""
-        # Record spawned agents
+    def _record_spawned_events(self, result: TickResult) -> None:
+        """Record spawn and claim events for new agents."""
         for session_id in result.spawned:
             session = self._agents.get(session_id)
-            if session is not None:
+            if session is None:
+                continue
+            self._recorder.record(
+                "agent_spawned",
+                agent_id=session.id,
+                role=session.role,
+                model=session.model_config.model if session.model_config else None,
+                provider=session.provider,
+                task_ids=session.task_ids,
+                agent_source=session.agent_source,
+            )
+            for tid in session.task_ids:
                 self._recorder.record(
-                    "agent_spawned",
+                    "task_claimed",
+                    task_id=tid,
                     agent_id=session.id,
-                    role=session.role,
                     model=session.model_config.model if session.model_config else None,
-                    provider=session.provider,
-                    task_ids=session.task_ids,
-                    agent_source=session.agent_source,
                 )
-                for tid in session.task_ids:
-                    self._recorder.record(
-                        "task_claimed",
-                        task_id=tid,
-                        agent_id=session.id,
-                        model=session.model_config.model if session.model_config else None,
-                    )
 
-        # Record verified (completed) tasks
+    def _record_tick_events(self, result: TickResult, _tasks_by_status: dict[str, list[Task]]) -> None:
+        """Record replay events from a completed tick for deterministic replay."""
+        self._record_spawned_events(result)
+
         for task_id in result.verified:
             session = self._find_session_for_task(task_id)
-            cost = 0.0
-            if session is not None:
-                cost = self._cost_tracker.status().spent_usd
+            cost = self._cost_tracker.status().spent_usd if session is not None else 0.0
             self._recorder.record(
                 "task_completed",
                 task_id=task_id,
@@ -3769,19 +3770,12 @@ class Orchestrator:
                 cost_usd=round(cost, 4),
             )
 
-        # Record verification failures
         for task_id, failed_signals in result.verification_failures:
-            self._recorder.record(
-                "task_verification_failed",
-                task_id=task_id,
-                failed_signals=failed_signals,
-            )
+            self._recorder.record("task_verification_failed", task_id=task_id, failed_signals=failed_signals)
 
-        # Record reaped agents
         for agent_id in result.reaped:
             self._recorder.record("agent_reaped", agent_id=agent_id)
 
-        # Record retried tasks
         for task_id in result.retried:
             self._recorder.record("task_retried", task_id=task_id)
 

@@ -56,6 +56,13 @@ def _resolve_provider_config(provider: str, settings: LLMSettings) -> tuple[str,
     Raises:
         ValueError: If the provider is unknown or unconfigured.
     """
+    _PROVIDER_MAP: dict[str, tuple[str, str | None, str]] = {
+        "openrouter": ("https://openrouter.ai/api/v1", None, "OPENROUTER_API_KEY_PAID"),
+        "oxen": ("", None, "OXEN_API_KEY"),
+        "together": ("https://api.together.xyz/v1", None, "TOGETHERAI_USER_KEY"),
+        "g4f": ("", None, "G4F_API_KEY"),
+    }
+
     if provider == "openrouter":
         if not settings.openrouter_api_key_paid:
             raise ValueError("Missing OPENROUTER_API_KEY_PAID")
@@ -67,20 +74,17 @@ def _resolve_provider_config(provider: str, settings: LLMSettings) -> tuple[str,
             raise ValueError("Missing Free OpenRouter API key")
         return "https://openrouter.ai/api/v1", api_key
 
-    if provider == "oxen":
-        if not settings.oxen_api_key:
-            raise ValueError("Missing OXEN_API_KEY")
-        return settings.oxen_base_url, settings.oxen_api_key
+    key_configs: dict[str, tuple[str, str | None, str]] = {
+        "oxen": (settings.oxen_base_url, settings.oxen_api_key, "OXEN_API_KEY"),
+        "together": ("https://api.together.xyz/v1", settings.togetherai_user_key, "TOGETHERAI_USER_KEY"),
+        "g4f": (settings.g4f_base_url, settings.g4f_api_key, "G4F_API_KEY"),
+    }
 
-    if provider == "together":
-        if not settings.togetherai_user_key:
-            raise ValueError("Missing TOGETHERAI_USER_KEY")
-        return "https://api.together.xyz/v1", settings.togetherai_user_key
-
-    if provider == "g4f":
-        if not settings.g4f_api_key:
-            raise ValueError("Missing G4F_API_KEY")
-        return settings.g4f_base_url, settings.g4f_api_key
+    if provider in key_configs:
+        base_url, api_key, env_name = key_configs[provider]
+        if not api_key:
+            raise ValueError(f"Missing {env_name}")
+        return base_url, api_key
 
     if settings.openai_api_key:
         return settings.openai_base_url or "https://api.openai.com/v1", settings.openai_api_key

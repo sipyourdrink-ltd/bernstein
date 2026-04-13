@@ -199,6 +199,100 @@ def _detect_level(line: str) -> str:
     return "info"
 
 
+_JSONL_KNOWN_KEYS = frozenset(
+    {
+        "timestamp",
+        "ts",
+        "time",
+        "level",
+        "levelname",
+        "message",
+        "msg",
+        "agent_id",
+        "agentId",
+        "task_id",
+        "taskId",
+    }
+)
+
+
+def _resolve_timestamp_value(ts_val: object) -> float:
+    """Convert a raw timestamp value to a float."""
+    if isinstance(ts_val, (int, float)):
+        return float(ts_val)
+    if isinstance(ts_val, str):
+        return _parse_iso_timestamp(ts_val)
+    return 0.0
+
+
+def _parse_jsonl_line(stripped: str, source: str) -> LogEntry | None:
+    """Try to parse a line as JSONL. Returns None on failure."""
+    if not stripped.startswith("{"):
+        return None
+    try:
+        data: dict[str, Any] = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return None
+
+    ts_val = data.get("timestamp", data.get("ts", data.get("time", 0.0)))
+    ts = _resolve_timestamp_value(ts_val)
+
+    raw_level = str(data.get("level", data.get("levelname", "info")))
+    message = str(data.get("message", data.get("msg", stripped)))
+    agent_id = data.get("agent_id") or data.get("agentId")
+    task_id = data.get("task_id") or data.get("taskId")
+    metadata = {k: v for k, v in data.items() if k not in _JSONL_KNOWN_KEYS}
+
+    return LogEntry(
+        timestamp=ts,
+        level=_normalise_level(raw_level),
+        source=data.get("source", source) if isinstance(data.get("source"), str) else source,
+        agent_id=str(agent_id) if agent_id is not None else None,
+        task_id=str(task_id) if task_id is not None else None,
+        message=message,
+        metadata=metadata,
+    )
+
+
+def _parse_pylog_line(stripped: str, source: str) -> LogEntry | None:
+    """Try to parse a line as Python logging format. Returns None on failure."""
+    pylog_m = _PYLOG_RE.match(stripped)
+    if not pylog_m:
+        return None
+    ts_norm = pylog_m.group("ts").replace(",", ".")
+    return LogEntry(
+        timestamp=_parse_iso_timestamp(ts_norm),
+        level=_normalise_level(pylog_m.group("level")),
+        source=source,
+        agent_id=None,
+        task_id=None,
+        message=pylog_m.group("msg"),
+        metadata={"logger": pylog_m.group("name")},
+    )
+
+
+def _parse_plain_text_line(stripped: str, source: str) -> LogEntry:
+    """Parse a plain text line with optional timestamp prefix."""
+    ts_m = _TS_ISO_RE.match(stripped)
+    ts_plain = _parse_iso_timestamp(stripped) if ts_m else 0.0
+    msg = stripped
+    if ts_m:
+        end = ts_m.end()
+        while end < len(msg) and msg[end] in " \t]-:":
+            end += 1
+        msg = msg[end:] if end < len(msg) else stripped
+
+    return LogEntry(
+        timestamp=ts_plain,
+        level=_detect_level(stripped),
+        source=source,
+        agent_id=None,
+        task_id=None,
+        message=msg,
+        metadata={},
+    )
+
+
 def parse_log_line(line: str, *, source: str = "") -> LogEntry:
     """Parse a single log line into a ``LogEntry``.
 
@@ -226,90 +320,15 @@ def parse_log_line(line: str, *, source: str = "") -> LogEntry:
             metadata={},
         )
 
-    # --- JSONL attempt ---
-    if stripped.startswith("{"):
-        try:
-            data: dict[str, Any] = json.loads(stripped)
-            ts_val = data.get("timestamp", data.get("ts", data.get("time", 0.0)))
-            ts: float
-            if isinstance(ts_val, (int, float)):
-                ts = float(ts_val)
-            elif isinstance(ts_val, str):
-                ts = _parse_iso_timestamp(ts_val)
-            else:
-                ts = 0.0
+    jsonl_result = _parse_jsonl_line(stripped, source)
+    if jsonl_result is not None:
+        return jsonl_result
 
-            raw_level = str(data.get("level", data.get("levelname", "info")))
-            level = _normalise_level(raw_level)
-            message = str(data.get("message", data.get("msg", stripped)))
-            agent_id = data.get("agent_id") or data.get("agentId")
-            task_id = data.get("task_id") or data.get("taskId")
+    pylog_result = _parse_pylog_line(stripped, source)
+    if pylog_result is not None:
+        return pylog_result
 
-            # Everything else goes into metadata
-            known_keys = {
-                "timestamp",
-                "ts",
-                "time",
-                "level",
-                "levelname",
-                "message",
-                "msg",
-                "agent_id",
-                "agentId",
-                "task_id",
-                "taskId",
-            }
-            metadata = {k: v for k, v in data.items() if k not in known_keys}
-
-            return LogEntry(
-                timestamp=ts,
-                level=level,
-                source=data.get("source", source) if isinstance(data.get("source"), str) else source,
-                agent_id=str(agent_id) if agent_id is not None else None,
-                task_id=str(task_id) if task_id is not None else None,
-                message=message,
-                metadata=metadata,
-            )
-        except (json.JSONDecodeError, TypeError, KeyError):
-            pass  # Fall through to other parsers
-
-    # --- Python logging format ---
-    pylog_m = _PYLOG_RE.match(stripped)
-    if pylog_m:
-        ts_str = pylog_m.group("ts")
-        # Normalise comma to dot for ISO parsing
-        ts_norm = ts_str.replace(",", ".")
-        return LogEntry(
-            timestamp=_parse_iso_timestamp(ts_norm),
-            level=_normalise_level(pylog_m.group("level")),
-            source=source,
-            agent_id=None,
-            task_id=None,
-            message=pylog_m.group("msg"),
-            metadata={"logger": pylog_m.group("name")},
-        )
-
-    # --- Plain text with optional timestamp prefix ---
-    ts_m = _TS_ISO_RE.match(stripped)
-    ts_plain = _parse_iso_timestamp(stripped) if ts_m else 0.0
-    # Remove the timestamp prefix from the message if present
-    msg = stripped
-    if ts_m:
-        end = ts_m.end()
-        # Skip any separator characters after the timestamp
-        while end < len(msg) and msg[end] in " \t]-:":
-            end += 1
-        msg = msg[end:] if end < len(msg) else stripped
-
-    return LogEntry(
-        timestamp=ts_plain,
-        level=_detect_level(stripped),
-        source=source,
-        agent_id=None,
-        task_id=None,
-        message=msg,
-        metadata={},
-    )
+    return _parse_plain_text_line(stripped, source)
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +389,46 @@ class LogIndex:
 
     # -- search -------------------------------------------------------------
 
+    @staticmethod
+    def _compile_text_pattern(text_pattern: str | None) -> re.Pattern[str] | None:
+        """Compile a text pattern to regex, or None if empty/invalid."""
+        if not text_pattern:
+            return None
+        try:
+            return re.compile(text_pattern, re.IGNORECASE)
+        except re.error:
+            return None
+
+    @staticmethod
+    def _matches_entry(
+        entry: LogEntry,
+        query: SearchQuery,
+        compiled_pattern: re.Pattern[str] | None,
+        level_lower: str | None,
+        source_lower: str | None,
+        role_lower: str | None,
+    ) -> bool:
+        """Return True if an entry passes all query filters."""
+        if query.time_start is not None and entry.timestamp < query.time_start:
+            return False
+        if query.time_end is not None and entry.timestamp > query.time_end:
+            return False
+        if level_lower is not None and entry.level != level_lower:
+            return False
+        if source_lower is not None and source_lower not in entry.source.lower():
+            return False
+        if role_lower is not None:
+            entry_role = entry.metadata.get("role", "")
+            if not isinstance(entry_role, str) or role_lower not in entry_role.lower():
+                return False
+        if query.text_pattern:
+            if compiled_pattern is not None:
+                if not compiled_pattern.search(entry.message):
+                    return False
+            elif query.text_pattern.lower() not in entry.message.lower():
+                return False
+        return True
+
     def search(self, query: SearchQuery) -> SearchResult:
         """Execute a structured search over all indexed entries.
 
@@ -386,47 +445,14 @@ class LogIndex:
         matches: list[LogEntry] = []
         total = 0
 
-        compiled_pattern: re.Pattern[str] | None = None
-        if query.text_pattern:
-            try:
-                compiled_pattern = re.compile(query.text_pattern, re.IGNORECASE)
-            except re.error:
-                # Fall back to literal substring match on regex error
-                compiled_pattern = None
-
+        compiled_pattern = self._compile_text_pattern(query.text_pattern)
         level_lower = query.level.lower() if query.level else None
         source_lower = query.source.lower() if query.source else None
         role_lower = query.agent_role.lower() if query.agent_role else None
 
         for entry in self._entries:
-            # Time range filter
-            if query.time_start is not None and entry.timestamp < query.time_start:
+            if not self._matches_entry(entry, query, compiled_pattern, level_lower, source_lower, role_lower):
                 continue
-            if query.time_end is not None and entry.timestamp > query.time_end:
-                continue
-
-            # Level filter
-            if level_lower is not None and entry.level != level_lower:
-                continue
-
-            # Source filter
-            if source_lower is not None and source_lower not in entry.source.lower():
-                continue
-
-            # Agent role filter (checks metadata for role field)
-            if role_lower is not None:
-                entry_role = entry.metadata.get("role", "")
-                if not isinstance(entry_role, str) or role_lower not in entry_role.lower():
-                    continue
-
-            # Text pattern filter
-            if query.text_pattern:
-                if compiled_pattern is not None:
-                    if not compiled_pattern.search(entry.message):
-                        continue
-                elif query.text_pattern.lower() not in entry.message.lower():
-                    continue
-
             total += 1
             if len(matches) < query.limit:
                 matches.append(entry)

@@ -162,6 +162,42 @@ class TenantIsolationVerifier:
 
     # -- cost / metrics isolation -------------------------------------------
 
+    @staticmethod
+    def _check_metrics_cross_contamination(
+        metrics_dir: Path,
+        owner_tenant: str,
+        foreign_tenant: str,
+    ) -> tuple[bool, list[str]]:
+        """Scan JSONL files in metrics_dir for records belonging to foreign_tenant.
+
+        Returns (contaminated, details) tuple.
+        """
+        contamination_details: list[str] = []
+        for fpath in metrics_dir.iterdir():
+            if not fpath.is_file():
+                continue
+            try:
+                for line in fpath.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    record = json.loads(line)
+                    rec_tenant = record.get("tenant_id") or record.get("tenant", "")
+                    if rec_tenant and normalize_tenant_id(str(rec_tenant)) == foreign_tenant:
+                        contamination_details.append(
+                            f"{fpath.name}: record with tenant={rec_tenant} found in {owner_tenant} dir"
+                        )
+            except (json.JSONDecodeError, OSError):
+                pass
+        return bool(contamination_details), contamination_details
+
+    @staticmethod
+    def _check_dirs_overlap(dir_a: Path, dir_b: Path) -> bool:
+        """Check if either directory is a parent of the other."""
+        overlap = False
+        with contextlib.suppress(ValueError, TypeError):
+            overlap = dir_a.is_relative_to(dir_b) or dir_b.is_relative_to(dir_a)
+        return overlap
+
     def verify_cost_isolation(
         self,
         metrics_path: Path,
@@ -184,70 +220,44 @@ class TenantIsolationVerifier:
         """
         norm_a = normalize_tenant_id(tenant_a)
         norm_b = normalize_tenant_id(tenant_b)
-        results: list[IsolationTest] = []
 
         paths_a = tenant_data_paths(metrics_path, norm_a)
         paths_b = tenant_data_paths(metrics_path, norm_b)
 
-        # Check: metrics directories are distinct
-        results.append(
+        dirs_distinct = paths_a.metrics_dir != paths_b.metrics_dir
+        overlap = self._check_dirs_overlap(paths_a.metrics_dir, paths_b.metrics_dir)
+
+        results: list[IsolationTest] = [
             IsolationTest(
                 name="cost_dirs_distinct",
                 description=f"Metrics dirs for '{norm_a}' and '{norm_b}' must be distinct paths",
-                passed=paths_a.metrics_dir != paths_b.metrics_dir,
+                passed=dirs_distinct,
                 details=(
                     f"a={paths_a.metrics_dir}, b={paths_b.metrics_dir}"
-                    if paths_a.metrics_dir != paths_b.metrics_dir
+                    if dirs_distinct
                     else "DUPLICATE metrics directory detected"
                 ),
-            )
-        )
-
-        # Check: metrics dirs do not overlap (parent/child)
-        overlap = False
-        with contextlib.suppress(ValueError, TypeError):
-            overlap = paths_a.metrics_dir.is_relative_to(paths_b.metrics_dir) or paths_b.metrics_dir.is_relative_to(
-                paths_a.metrics_dir
-            )
-        results.append(
+            ),
             IsolationTest(
                 name="cost_dirs_no_overlap",
                 description="Neither tenant's metrics dir is a subdirectory of the other",
                 passed=not overlap,
                 details="directories are independent" if not overlap else "overlapping directory hierarchy detected",
-            )
-        )
+            ),
+        ]
 
-        # Check: if both metrics dirs exist on disk, files don't leak across
         if paths_a.metrics_dir.is_dir() and paths_b.metrics_dir.is_dir():
-            files_a = {f.name for f in paths_a.metrics_dir.iterdir() if f.is_file()}
-
-            # Having the same filename is fine (e.g. cost.jsonl) — what matters
-            # is that the *content* belongs to the right tenant.  Verify by
-            # checking tenant_id fields inside JSONL files.
-            cross_contaminated = False
-            contamination_details: list[str] = []
-            for fname in files_a:
-                fpath = paths_a.metrics_dir / fname
-                try:
-                    for line in fpath.read_text(encoding="utf-8").splitlines():
-                        if not line.strip():
-                            continue
-                        record = json.loads(line)
-                        rec_tenant = record.get("tenant_id") or record.get("tenant", "")
-                        if rec_tenant and normalize_tenant_id(str(rec_tenant)) == norm_b:
-                            cross_contaminated = True
-                            contamination_details.append(
-                                f"{fname}: record with tenant={rec_tenant} found in {norm_a} dir"
-                            )
-                except (json.JSONDecodeError, OSError):
-                    pass
+            contaminated, details = self._check_metrics_cross_contamination(
+                paths_a.metrics_dir,
+                norm_a,
+                norm_b,
+            )
             results.append(
                 IsolationTest(
                     name="cost_content_not_cross_contaminated",
                     description=f"No '{norm_b}' cost records appear in '{norm_a}' metrics dir",
-                    passed=not cross_contaminated,
-                    details="; ".join(contamination_details) if cross_contaminated else "no cross-contamination",
+                    passed=not contaminated,
+                    details="; ".join(details) if contaminated else "no cross-contamination",
                 )
             )
         else:
@@ -286,38 +296,27 @@ class TenantIsolationVerifier:
         """
         norm_a = normalize_tenant_id(tenant_a)
         norm_b = normalize_tenant_id(tenant_b)
-        results: list[IsolationTest] = []
 
         paths_a = tenant_data_paths(wal_dir, norm_a)
         paths_b = tenant_data_paths(wal_dir, norm_b)
 
-        # Check: WAL directories are distinct
-        results.append(
+        overlap = self._check_dirs_overlap(paths_a.wal_dir, paths_b.wal_dir)
+        a_rooted = paths_a.wal_dir.is_relative_to(paths_a.root)
+        b_rooted = paths_b.wal_dir.is_relative_to(paths_b.root)
+
+        results: list[IsolationTest] = [
             IsolationTest(
                 name="wal_dirs_distinct",
                 description=f"WAL dirs for '{norm_a}' and '{norm_b}' must be distinct",
                 passed=paths_a.wal_dir != paths_b.wal_dir,
                 details=f"a={paths_a.wal_dir}, b={paths_b.wal_dir}",
-            )
-        )
-
-        # Check: WAL dirs do not share a parent-child relationship
-        overlap = False
-        with contextlib.suppress(ValueError, TypeError):
-            overlap = paths_a.wal_dir.is_relative_to(paths_b.wal_dir) or paths_b.wal_dir.is_relative_to(paths_a.wal_dir)
-        results.append(
+            ),
             IsolationTest(
                 name="wal_dirs_no_overlap",
                 description="Neither tenant's WAL dir is a subdirectory of the other",
                 passed=not overlap,
                 details="directories are independent" if not overlap else "overlapping WAL hierarchy detected",
-            )
-        )
-
-        # Check: WAL dirs are rooted under their respective tenant namespaces
-        a_rooted = paths_a.wal_dir.is_relative_to(paths_a.root)
-        b_rooted = paths_b.wal_dir.is_relative_to(paths_b.root)
-        results.append(
+            ),
             IsolationTest(
                 name="wal_dirs_rooted_in_tenant",
                 description="WAL directories must be inside their tenant's root",
@@ -327,10 +326,9 @@ class TenantIsolationVerifier:
                     if a_rooted and b_rooted
                     else f"a_rooted={a_rooted}, b_rooted={b_rooted}"
                 ),
-            )
-        )
+            ),
+        ]
 
-        # Check: if both WAL dirs exist, files written for tenant_a do not appear in tenant_b's dir
         if paths_a.wal_dir.is_dir() and paths_b.wal_dir.is_dir():
             cross_leak = self._check_wal_content_leak(paths_a.wal_dir, norm_b)
             results.append(
@@ -354,6 +352,13 @@ class TenantIsolationVerifier:
         return results
 
     @staticmethod
+    def _wal_record_belongs_to_tenant(record: dict[str, Any], tenant: str) -> bool:
+        """Check if a WAL record belongs to the given tenant."""
+        actor = record.get("actor", "")
+        tenant_field = record.get("tenant_id") or record.get("tenant", "")
+        return any(val and normalize_tenant_id(str(val)) == tenant for val in (actor, tenant_field))
+
+    @staticmethod
     def _check_wal_content_leak(wal_dir: Path, foreign_tenant: str) -> str:
         """Scan WAL JSONL files in *wal_dir* for entries belonging to *foreign_tenant*.
 
@@ -369,16 +374,133 @@ class TenantIsolationVerifier:
                         record = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    actor = record.get("actor", "")
-                    tenant = record.get("tenant_id") or record.get("tenant", "")
-                    for val in (actor, tenant):
-                        if val and normalize_tenant_id(str(val)) == foreign_tenant:
-                            return f"{wal_file.name}: entry belongs to foreign tenant '{foreign_tenant}'"
+                    if TenantIsolationVerifier._wal_record_belongs_to_tenant(record, foreign_tenant):
+                        return f"{wal_file.name}: entry belongs to foreign tenant '{foreign_tenant}'"
             except OSError:
                 continue
         return ""
 
     # -- archive isolation --------------------------------------------------
+
+    @staticmethod
+    def _resolve_archive_paths(archive_path: Path) -> tuple[Path | None, Path | None]:
+        """Resolve archive_path to (archive_file, sdd_dir) tuple."""
+        archive_file: Path | None = None
+        sdd_dir: Path | None = None
+        if archive_path.is_file():
+            archive_file = archive_path
+            sdd_dir = archive_path.parent.parent if archive_path.parent.name == "archive" else None
+        elif archive_path.is_dir():
+            sdd_dir = archive_path
+            candidate = archive_path / "archive" / "tasks.jsonl"
+            if candidate.is_file():
+                archive_file = candidate
+        return archive_file, sdd_dir
+
+    @staticmethod
+    def _check_shared_archive_overlap(
+        archive_file: Path | None,
+        norm_a: str,
+        norm_b: str,
+    ) -> IsolationTest:
+        """Check shared archive for task_id overlap between tenants."""
+        if archive_file is None or not archive_file.is_file():
+            return IsolationTest(
+                name="archive_no_shared_task_ids",
+                description="No task_id appears in both tenants' archive records",
+                passed=True,
+                details="shared archive file does not exist; no overlap possible",
+            )
+
+        a_records: list[dict[str, Any]] = []
+        b_records: list[dict[str, Any]] = []
+        try:
+            for line in archive_file.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rec_tenant = normalize_tenant_id(str(record.get("tenant_id", "")))
+                if rec_tenant == norm_a:
+                    a_records.append(record)
+                elif rec_tenant == norm_b:
+                    b_records.append(record)
+        except OSError:
+            pass
+
+        a_task_ids = {r.get("task_id", "") for r in a_records}
+        b_task_ids = {r.get("task_id", "") for r in b_records}
+        shared_ids = a_task_ids & b_task_ids - {""}
+        return IsolationTest(
+            name="archive_no_shared_task_ids",
+            description="No task_id appears in both tenants' archive records",
+            passed=len(shared_ids) == 0,
+            details=(
+                f"shared task_ids: {sorted(shared_ids)}"
+                if shared_ids
+                else f"a_records={len(a_records)}, b_records={len(b_records)}, no overlap"
+            ),
+        )
+
+    def _check_tenant_scoped_archives(
+        self,
+        sdd_dir: Path | None,
+        norm_a: str,
+        norm_b: str,
+    ) -> list[IsolationTest]:
+        """Check tenant-scoped archive directories and content."""
+        if sdd_dir is None:
+            return [
+                IsolationTest(
+                    name="archive_tenant_paths_distinct",
+                    description="Tenant-scoped archive paths must be in separate directories",
+                    passed=True,
+                    details="sdd_dir not resolvable from archive_path; skipped",
+                ),
+                IsolationTest(
+                    name="archive_tenant_content_isolated",
+                    description=f"Tenant '{norm_a}' archive must not contain '{norm_b}' records",
+                    passed=True,
+                    details="sdd_dir not resolvable from archive_path; skipped",
+                ),
+            ]
+
+        paths_a = tenant_data_paths(sdd_dir, norm_a)
+        paths_b = tenant_data_paths(sdd_dir, norm_b)
+        tenant_archive_a = paths_a.root / "backlog" / "archive.jsonl"
+        tenant_archive_b = paths_b.root / "backlog" / "archive.jsonl"
+
+        results: list[IsolationTest] = [
+            IsolationTest(
+                name="archive_tenant_paths_distinct",
+                description="Tenant-scoped archive paths must be in separate directories",
+                passed=tenant_archive_a.parent != tenant_archive_b.parent,
+                details=f"a={tenant_archive_a.parent}, b={tenant_archive_b.parent}",
+            ),
+        ]
+
+        if tenant_archive_a.is_file() and tenant_archive_b.is_file():
+            leak = self._check_archive_content_leak(tenant_archive_a, norm_b)
+            results.append(
+                IsolationTest(
+                    name="archive_tenant_content_isolated",
+                    description=f"Tenant '{norm_a}' archive must not contain '{norm_b}' records",
+                    passed=not leak,
+                    details=leak if leak else "no cross-tenant archive records",
+                )
+            )
+        else:
+            results.append(
+                IsolationTest(
+                    name="archive_tenant_content_isolated",
+                    description=f"Tenant '{norm_a}' archive must not contain '{norm_b}' records",
+                    passed=True,
+                    details="one or both tenant archive files do not exist",
+                )
+            )
+        return results
 
     def verify_archive_isolation(
         self,
@@ -402,123 +524,13 @@ class TenantIsolationVerifier:
         """
         norm_a = normalize_tenant_id(tenant_a)
         norm_b = normalize_tenant_id(tenant_b)
-        results: list[IsolationTest] = []
 
-        # Determine whether archive_path is a file or a directory
-        archive_file: Path | None = None
-        sdd_dir: Path | None = None
-        if archive_path.is_file():
-            archive_file = archive_path
-            # Walk up to find the .sdd root (archive lives under .sdd/archive/)
-            sdd_dir = archive_path.parent.parent if archive_path.parent.name == "archive" else None
-        elif archive_path.is_dir():
-            sdd_dir = archive_path
-            candidate = archive_path / "archive" / "tasks.jsonl"
-            if candidate.is_file():
-                archive_file = candidate
+        archive_file, sdd_dir = self._resolve_archive_paths(archive_path)
 
-        # Check: shared archive (if present) tags records with correct tenant_id
-        if archive_file is not None and archive_file.is_file():
-            a_records: list[dict[str, Any]] = []
-            b_records: list[dict[str, Any]] = []
-
-            try:
-                for line in archive_file.read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
-                        continue
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    rec_tenant = normalize_tenant_id(str(record.get("tenant_id", "")))
-                    if rec_tenant == norm_a:
-                        a_records.append(record)
-                    elif rec_tenant == norm_b:
-                        b_records.append(record)
-            except OSError:
-                pass
-
-            # Verify no task_id appears in both tenant's record sets
-            a_task_ids = {r.get("task_id", "") for r in a_records}
-            b_task_ids = {r.get("task_id", "") for r in b_records}
-            shared_ids = a_task_ids & b_task_ids - {""}
-            results.append(
-                IsolationTest(
-                    name="archive_no_shared_task_ids",
-                    description="No task_id appears in both tenants' archive records",
-                    passed=len(shared_ids) == 0,
-                    details=(
-                        f"shared task_ids: {sorted(shared_ids)}"
-                        if shared_ids
-                        else f"a_records={len(a_records)}, b_records={len(b_records)}, no overlap"
-                    ),
-                )
-            )
-        else:
-            results.append(
-                IsolationTest(
-                    name="archive_no_shared_task_ids",
-                    description="No task_id appears in both tenants' archive records",
-                    passed=True,
-                    details="shared archive file does not exist; no overlap possible",
-                )
-            )
-
-        # Check: tenant-scoped archive files are in separate directories
-        if sdd_dir is not None:
-            paths_a = tenant_data_paths(sdd_dir, norm_a)
-            paths_b = tenant_data_paths(sdd_dir, norm_b)
-
-            tenant_archive_a = paths_a.root / "backlog" / "archive.jsonl"
-            tenant_archive_b = paths_b.root / "backlog" / "archive.jsonl"
-
-            results.append(
-                IsolationTest(
-                    name="archive_tenant_paths_distinct",
-                    description="Tenant-scoped archive paths must be in separate directories",
-                    passed=tenant_archive_a.parent != tenant_archive_b.parent,
-                    details=f"a={tenant_archive_a.parent}, b={tenant_archive_b.parent}",
-                )
-            )
-
-            # If both exist, verify content isolation
-            if tenant_archive_a.is_file() and tenant_archive_b.is_file():
-                leak = self._check_archive_content_leak(tenant_archive_a, norm_b)
-                results.append(
-                    IsolationTest(
-                        name="archive_tenant_content_isolated",
-                        description=f"Tenant '{norm_a}' archive must not contain '{norm_b}' records",
-                        passed=not leak,
-                        details=leak if leak else "no cross-tenant archive records",
-                    )
-                )
-            else:
-                results.append(
-                    IsolationTest(
-                        name="archive_tenant_content_isolated",
-                        description=f"Tenant '{norm_a}' archive must not contain '{norm_b}' records",
-                        passed=True,
-                        details="one or both tenant archive files do not exist",
-                    )
-                )
-        else:
-            results.append(
-                IsolationTest(
-                    name="archive_tenant_paths_distinct",
-                    description="Tenant-scoped archive paths must be in separate directories",
-                    passed=True,
-                    details="sdd_dir not resolvable from archive_path; skipped",
-                )
-            )
-            results.append(
-                IsolationTest(
-                    name="archive_tenant_content_isolated",
-                    description=f"Tenant '{norm_a}' archive must not contain '{norm_b}' records",
-                    passed=True,
-                    details="sdd_dir not resolvable from archive_path; skipped",
-                )
-            )
-
+        results: list[IsolationTest] = [
+            self._check_shared_archive_overlap(archive_file, norm_a, norm_b),
+        ]
+        results.extend(self._check_tenant_scoped_archives(sdd_dir, norm_a, norm_b))
         return results
 
     @staticmethod

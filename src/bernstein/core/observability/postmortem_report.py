@@ -170,6 +170,56 @@ def _load_replay_events(archive_path: Path, run_id: str) -> list[dict[str, Any]]
     return _read_jsonl(replay_path)
 
 
+def _load_task_json_files(metrics_dir: Path) -> list[dict[str, Any]]:
+    """Load per-task metrics from dedicated task_*.json files."""
+    results: list[dict[str, Any]] = []
+    for f in sorted(metrics_dir.glob("task_*.json")):
+        try:
+            raw: Any = json.loads(f.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                results.append(cast(_CAST_DICT_STR_ANY, raw))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return results
+
+
+def _jsonl_entry_to_task_metric(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert a JSONL completion-time entry to a task metric dict."""
+    if entry.get("metric_type") != "task_completion_time":
+        return None
+    labels: dict[str, Any] = entry.get("labels") or {}
+    return {
+        "task_id": str(labels.get("task_id", "")),
+        "role": str(labels.get("role", "")),
+        "model": str(labels.get("model", "")),
+        "success": str(labels.get("success", "false")).lower() == "true",
+        "session_id": str(labels.get("session_id", "")),
+        "start_time": 0.0,
+        "end_time": float(entry.get("timestamp", 0.0)),
+        "cost_usd": 0.0,
+    }
+
+
+def _load_task_metrics_from_jsonl(metrics_dir: Path) -> list[dict[str, Any]]:
+    """Scan JSONL files for task_completion_time entries."""
+    results: list[dict[str, Any]] = []
+    for f in sorted(metrics_dir.glob("*.jsonl")):
+        try:
+            for raw_line in f.read_text(encoding="utf-8").splitlines():
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                entry_raw: Any = json.loads(stripped)
+                if not isinstance(entry_raw, dict):
+                    continue
+                metric = _jsonl_entry_to_task_metric(cast(_CAST_DICT_STR_ANY, entry_raw))
+                if metric is not None:
+                    results.append(metric)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return results
+
+
 def _load_task_metrics(archive_path: Path) -> list[dict[str, Any]]:
     """Load per-task metrics from ``.sdd/metrics/task_*.json``.
 
@@ -186,46 +236,11 @@ def _load_task_metrics(archive_path: Path) -> list[dict[str, Any]]:
     if not metrics_dir.is_dir():
         return []
 
-    results: list[dict[str, Any]] = []
-    for f in sorted(metrics_dir.glob("task_*.json")):
-        try:
-            raw: Any = json.loads(f.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                results.append(cast(_CAST_DICT_STR_ANY, raw))
-        except (OSError, json.JSONDecodeError):
-            continue
+    results = _load_task_json_files(metrics_dir)
     if results:
         return results
 
-    # Fallback: scan JSONL for task_completion_time entries
-    for f in sorted(metrics_dir.glob("*.jsonl")):
-        try:
-            for raw_line in f.read_text(encoding="utf-8").splitlines():
-                stripped = raw_line.strip()
-                if not stripped:
-                    continue
-                entry_raw: Any = json.loads(stripped)
-                if not isinstance(entry_raw, dict):
-                    continue
-                entry = cast(_CAST_DICT_STR_ANY, entry_raw)
-                if entry.get("metric_type") != "task_completion_time":
-                    continue
-                labels: dict[str, Any] = entry.get("labels") or {}
-                results.append(
-                    {
-                        "task_id": str(labels.get("task_id", "")),
-                        "role": str(labels.get("role", "")),
-                        "model": str(labels.get("model", "")),
-                        "success": str(labels.get("success", "false")).lower() == "true",
-                        "session_id": str(labels.get("session_id", "")),
-                        "start_time": 0.0,
-                        "end_time": float(entry.get("timestamp", 0.0)),
-                        "cost_usd": 0.0,
-                    }
-                )
-        except (OSError, json.JSONDecodeError):
-            continue
-    return results
+    return _load_task_metrics_from_jsonl(metrics_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -233,44 +248,31 @@ def _load_task_metrics(archive_path: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def build_timeline(archive_path: Path, run_id: str) -> tuple[TimelineEvent, ...]:
-    """Reconstruct the event timeline for a run from archive data.
-
-    Reads both the replay log (``replay.jsonl``) and per-task metric files
-    to assemble a chronological sequence of events.
-
-    Args:
-        archive_path: Path to the ``.sdd`` directory.
-        run_id: Run identifier.
-
-    Returns:
-        Tuple of :class:`TimelineEvent` ordered by timestamp.
-    """
+def _replay_events_to_timeline(archive_path: Path, run_id: str) -> list[TimelineEvent]:
+    """Convert replay records into TimelineEvent list."""
     events: list[TimelineEvent] = []
-
-    # -- replay events -------------------------------------------------------
     for rec in _load_replay_events(archive_path, run_id):
         ts = float(rec.get("ts", 0.0))
         event_name = str(rec.get("event", ""))
         if not event_name:
             continue
-
         agent_id = rec.get("agent_id")
         task_id = rec.get("task_id")
-
-        description = _describe_replay_event(event_name, rec)
-
         events.append(
             TimelineEvent(
                 timestamp=ts,
                 event_type=event_name,
-                description=description,
+                description=_describe_replay_event(event_name, rec),
                 agent_id=str(agent_id) if agent_id is not None else None,
                 task_id=str(task_id) if task_id is not None else None,
             )
         )
+    return events
 
-    # -- task metric events --------------------------------------------------
+
+def _task_metrics_to_timeline(archive_path: Path) -> list[TimelineEvent]:
+    """Convert task metrics into start/complete/fail TimelineEvents."""
+    events: list[TimelineEvent] = []
     for tm in _load_task_metrics(archive_path):
         task_id = str(tm.get("task_id", ""))
         start = float(tm.get("start_time", 0.0))
@@ -297,7 +299,24 @@ def build_timeline(archive_path: Path, run_id: str) -> tuple[TimelineEvent, ...]
                     task_id=task_id,
                 )
             )
+    return events
 
+
+def build_timeline(archive_path: Path, run_id: str) -> tuple[TimelineEvent, ...]:
+    """Reconstruct the event timeline for a run from archive data.
+
+    Reads both the replay log (``replay.jsonl``) and per-task metric files
+    to assemble a chronological sequence of events.
+
+    Args:
+        archive_path: Path to the ``.sdd`` directory.
+        run_id: Run identifier.
+
+    Returns:
+        Tuple of :class:`TimelineEvent` ordered by timestamp.
+    """
+    events = _replay_events_to_timeline(archive_path, run_id)
+    events.extend(_task_metrics_to_timeline(archive_path))
     events.sort(key=lambda e: e.timestamp)
     return tuple(events)
 
@@ -749,6 +768,62 @@ def _extract_contributing_factors(
     return tuple(factors)
 
 
+def _render_pm_header(pm: PostMortem) -> list[str]:
+    """Render the post-mortem header section."""
+    import datetime
+
+    duration = pm.end_time - pm.start_time
+    duration_str = _format_duration(duration) if duration > 0 else "N/A"
+    return [
+        f"# Post-Mortem Report: Run `{pm.run_id}`",
+        "",
+        f"**Start:** {_format_timestamp(pm.start_time)}",
+        f"**End:** {_format_timestamp(pm.end_time)}",
+        f"**Duration:** {duration_str}",
+        f"**Generated:** {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        "",
+    ]
+
+
+def _render_pm_timeline(pm: PostMortem) -> list[str]:
+    """Render the timeline section."""
+    lines = ["## Event Timeline", ""]
+    if not pm.timeline:
+        lines.append("No timeline events recorded.")
+        lines.append("")
+        return lines
+
+    lines.append("| Time | Event Type | Description | Agent | Task |")
+    lines.append("|------|-----------|-------------|-------|------|")
+    for ev in pm.timeline:
+        t_str = _format_timestamp(ev.timestamp) if ev.timestamp > 0 else "--"
+        lines.append(
+            f"| {t_str} | `{ev.event_type}` | {ev.description} | {ev.agent_id or '--'} | {ev.task_id or '--'} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _render_pm_root_causes(pm: PostMortem) -> list[str]:
+    """Render the root causes section."""
+    lines = ["## Root Causes", ""]
+    if not pm.root_causes:
+        lines.extend(["No specific failure patterns detected.", ""])
+        return lines
+
+    for pattern in pm.root_causes:
+        lines.append(f"### {pattern.pattern_name.replace('_', ' ').title()}")
+        lines.append("")
+        lines.append(pattern.description)
+        lines.append("")
+        lines.append(f"- **Occurrences:** {pattern.occurrences}")
+        if pattern.affected_tasks:
+            task_list = ", ".join(f"`{t}`" for t in pattern.affected_tasks)
+            lines.append(f"- **Affected tasks:** {task_list}")
+        lines.append("")
+    return lines
+
+
 def render_postmortem_markdown(pm: PostMortem) -> str:
     """Render a :class:`PostMortem` as a Markdown report.
 
@@ -762,80 +837,24 @@ def render_postmortem_markdown(pm: PostMortem) -> str:
     Returns:
         Multi-line Markdown string.
     """
-    import datetime
+    lines: list[str] = _render_pm_header(pm)
 
-    lines: list[str] = []
+    lines.extend(["## Summary", "", pm.summary, ""])
+    lines.extend(_render_pm_timeline(pm))
+    lines.extend(_render_pm_root_causes(pm))
 
-    # -- Header --------------------------------------------------------------
-    lines.append(f"# Post-Mortem Report: Run `{pm.run_id}`")
-    lines.append("")
-
-    start_str = _format_timestamp(pm.start_time)
-    end_str = _format_timestamp(pm.end_time)
-    duration = pm.end_time - pm.start_time
-    duration_str = _format_duration(duration) if duration > 0 else "N/A"
-
-    lines.append(f"**Start:** {start_str}")
-    lines.append(f"**End:** {end_str}")
-    lines.append(f"**Duration:** {duration_str}")
-    lines.append(f"**Generated:** {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    lines.append("")
-
-    # -- Summary -------------------------------------------------------------
-    lines.append("## Summary")
-    lines.append("")
-    lines.append(pm.summary)
-    lines.append("")
-
-    # -- Timeline ------------------------------------------------------------
-    lines.append("## Event Timeline")
-    lines.append("")
-    if pm.timeline:
-        lines.append("| Time | Event Type | Description | Agent | Task |")
-        lines.append("|------|-----------|-------------|-------|------|")
-        for ev in pm.timeline:
-            t_str = _format_timestamp(ev.timestamp) if ev.timestamp > 0 else "--"
-            lines.append(
-                f"| {t_str} | `{ev.event_type}` | {ev.description} | {ev.agent_id or '--'} | {ev.task_id or '--'} |"
-            )
-    else:
-        lines.append("No timeline events recorded.")
-    lines.append("")
-
-    # -- Root causes ---------------------------------------------------------
-    lines.append("## Root Causes")
-    lines.append("")
-    if pm.root_causes:
-        for pattern in pm.root_causes:
-            lines.append(f"### {pattern.pattern_name.replace('_', ' ').title()}")
-            lines.append("")
-            lines.append(pattern.description)
-            lines.append("")
-            lines.append(f"- **Occurrences:** {pattern.occurrences}")
-            if pattern.affected_tasks:
-                task_list = ", ".join(f"`{t}`" for t in pattern.affected_tasks)
-                lines.append(f"- **Affected tasks:** {task_list}")
-            lines.append("")
-    else:
-        lines.append("No specific failure patterns detected.")
-    lines.append("")
-
-    # -- Contributing factors ------------------------------------------------
     lines.append("## Contributing Factors")
     lines.append("")
     if pm.contributing_factors:
-        for factor in pm.contributing_factors:
-            lines.append(f"- {factor}")
+        lines.extend(f"- {factor}" for factor in pm.contributing_factors)
     else:
         lines.append("No additional contributing factors identified.")
     lines.append("")
 
-    # -- Recommendations -----------------------------------------------------
     lines.append("## Recommendations")
     lines.append("")
     if pm.recommendations:
-        for i, rec in enumerate(pm.recommendations, 1):
-            lines.append(f"{i}. {rec}")
+        lines.extend(f"{i}. {rec}" for i, rec in enumerate(pm.recommendations, 1))
     else:
         lines.append("No specific recommendations at this time.")
     lines.append("")

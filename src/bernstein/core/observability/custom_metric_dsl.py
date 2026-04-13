@@ -113,6 +113,25 @@ class FormulaEvalError(Exception):
     """Raised when formula evaluation fails at runtime."""
 
 
+def _eval_constant(node: ast.Constant) -> float:
+    """Evaluate a constant node."""
+    if not isinstance(node.value, (int, float)):
+        raise FormulaEvalError(f"Only numeric constants allowed, got {type(node.value).__name__}")
+    return float(node.value)
+
+
+def _eval_binop(node: ast.BinOp, variables: dict[str, float]) -> float:
+    """Evaluate a binary operation node."""
+    op_type = type(node.op)
+    if op_type not in _BINOP_MAP:
+        raise FormulaEvalError(f"Unsupported operator {op_type.__name__}")
+    left = _eval_node(node.left, variables)
+    right = _eval_node(node.right, variables)
+    if op_type is ast.Div and abs(right) < 1e-15:
+        return 0.0
+    return float(_BINOP_MAP[op_type](left, right))
+
+
 def _eval_node(node: ast.AST, variables: dict[str, float]) -> float:
     """Recursively evaluate an AST node using only safe arithmetic.
 
@@ -130,9 +149,7 @@ def _eval_node(node: ast.AST, variables: dict[str, float]) -> float:
         return _eval_node(node.body, variables)
 
     if isinstance(node, ast.Constant):
-        if not isinstance(node.value, (int, float)):
-            raise FormulaEvalError(f"Only numeric constants allowed, got {type(node.value).__name__}")
-        return float(node.value)
+        return _eval_constant(node)
 
     if isinstance(node, ast.Name):
         if node.id not in variables:
@@ -140,21 +157,13 @@ def _eval_node(node: ast.AST, variables: dict[str, float]) -> float:
         return variables[node.id]
 
     if isinstance(node, ast.BinOp):
-        op_type = type(node.op)
-        if op_type not in _BINOP_MAP:
-            raise FormulaEvalError(f"Unsupported operator {op_type.__name__}")
-        left = _eval_node(node.left, variables)
-        right = _eval_node(node.right, variables)
-        if op_type is ast.Div and abs(right) < 1e-15:
-            return 0.0
-        return float(_BINOP_MAP[op_type](left, right))
+        return _eval_binop(node, variables)
 
     if isinstance(node, ast.UnaryOp):
         op_type = type(node.op)
         if op_type not in _UNARYOP_MAP:
             raise FormulaEvalError(f"Unsupported unary operator {op_type.__name__}")
-        operand = _eval_node(node.operand, variables)
-        return float(_UNARYOP_MAP[op_type](operand))
+        return float(_UNARYOP_MAP[op_type](_eval_node(node.operand, variables)))
 
     raise FormulaEvalError(
         f"Unsupported AST node {type(node).__name__}. "
