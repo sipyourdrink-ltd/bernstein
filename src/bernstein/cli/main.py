@@ -57,6 +57,7 @@ from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.config_path_cmd import config_path_cmd
 from bernstein.cli.cost import cost_cmd, estimate_cmd
+from bernstein.cli.debug_cmd import debug_cmd
 from bernstein.cli.dep_impact_cmd import dep_impact_cmd
 from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.disaster_recovery_cmd import dr_group
@@ -149,6 +150,7 @@ __all__ = [
     "config_group",
     "console",
     "dashboard",
+    "debug_cmd",
     "detect_available_adapter",
     "diff_cmd",
     "doctor",
@@ -798,3 +800,4 @@ cli.add_command(explain_help_cmd, "explain")
 cli.add_command(config_path_cmd, "config-path")
 cli.add_command(init_wizard_cmd, "init-wizard")
 cli.add_command(aliases_cmd, "aliases")
+cli.add_command(debug_cmd, "debug")

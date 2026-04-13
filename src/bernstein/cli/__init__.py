@@ -43,6 +43,7 @@ _CLI_REDIRECT_MAP: dict[str, str] = {
     "cost": "bernstein.cli.commands.cost",
     "cost_estimate": "bernstein.cli.utils.cost_estimate",
     "crt_effects": "bernstein.cli.display.crt_effects",
+    "debug_cmd": "bernstein.cli.commands.debug_cmd",
     "delegate_cmd": "bernstein.cli.commands.delegate_cmd",
     "dep_impact_cmd": "bernstein.cli.commands.dep_impact_cmd",
     "diff_cmd": "bernstein.cli.commands.diff_cmd",
