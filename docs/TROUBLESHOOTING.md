@@ -398,9 +398,9 @@ python3 -c "from bernstein.templates.renderer import render_role_prompt; print(r
 ```
 
 **Resolution:**
-- Ensure the role name in the task matches a file in `templates/roles/`.
+- Ensure the role name in the task matches a directory in `templates/roles/`. Each role directory contains `system_prompt.md`, `task_prompt.md`, and `config.yaml`.
 - Check Jinja2 syntax in the template (unclosed `{% %}` blocks, undefined `{{ var }}`).
-- Custom roles need a corresponding template file.
+- Custom roles need a corresponding template directory with the required files.
 
 ---
 

@@ -14,24 +14,24 @@ Model cost is typically the dominant expense. Bernstein selects models per-task 
 | Sonnet / GPT-4o | Standard features, bug fixes, moderate complexity | 5-10x |
 | Opus / o1 | Architecture decisions, complex multi-file changes | 20-50x |
 
-### Configuring model policy
+### Configuring model routing
 
-```yaml
-# bernstein.yaml
-model_policy:
-  simple: "haiku"
-  medium: "sonnet"
-  complex: "opus"
-```
+The orchestrator maps task complexity to models automatically. Default mapping (from `src/bernstein/core/defaults.py`, `PLAN.model_by_complexity`):
 
-The orchestrator classifies tasks by complexity using file count, scope breadth, and dependency depth. Override per-task in plan files:
+| Complexity | Default model |
+|-----------|---------------|
+| `low` | `haiku` |
+| `medium` | `sonnet` |
+| `high` | `opus` |
+
+Override per-task in plan files:
 
 ```yaml
 steps:
-  - goal: "Fix typo in README"
-    complexity: simple    # Forces haiku
-  - goal: "Redesign auth system"
-    complexity: complex   # Forces opus
+  - title: "Fix typo in README"
+    complexity: low       # Routes to haiku
+  - title: "Redesign auth system"
+    complexity: high      # Routes to opus
 ```
 
 ### Cost impact of model choice
@@ -100,20 +100,24 @@ When a task fails or exceeds budget on an expensive model, retry it with a cheap
 
 ## Context window optimization
 
-### Scope isolation
+### Scope and file isolation
 
-Narrow task scopes reduce the amount of context each agent needs:
+Use `scope` (`small`, `medium`, `large`) and `files` to limit context per task:
 
 ```yaml
 steps:
-  - goal: "Add validation to User model"
-    scope: ["src/models/user.py", "tests/test_user.py"]
+  - title: "Add validation to User model"
+    scope: small
+    files:
+      - "src/models/user.py"
+      - "tests/test_user.py"
 ```
 
-Precise scopes mean:
+Narrow scopes and explicit file lists mean:
 - Fewer files loaded into context
 - Fewer tokens consumed
 - Lower cost per task
+- Better conflict detection (via `files` field)
 
 ### Context compression
 
@@ -126,19 +130,47 @@ context:
   summary_depth: "shallow"  # shallow | medium | deep
 ```
 
-## Spend forecasting
+## Spend visibility
 
-Bernstein tracks token usage and projects future costs:
+Bernstein tracks token usage and provides cost breakdowns via `bernstein cost`:
 
 ```bash
 # View current run cost
-bernstein status --cost
+bernstein cost
 
 # View cost breakdown by model
-bernstein status --cost --by-model
+bernstein cost --by model
 
-# View cost forecast
-bernstein status --forecast
+# View cost breakdown by agent
+bernstein cost --by agent
+
+# View cost for last 24 hours
+bernstein cost --last 24h
+
+# JSON output for scripting
+bernstein cost --json
+```
+
+Cost forecasting is handled by `src/bernstein/core/cost/spend_forecast.py` and `src/bernstein/core/cost/cost_forecast.py`.
+
+## Peak-hour routing
+
+Route non-urgent tasks to off-peak windows to reduce costs:
+
+```yaml
+# Configured in bernstein.yaml or via src/bernstein/core/cost/peak_hour_router.py
+peak_hour_routing:
+  enabled: true
+```
+
+## Quota tracking
+
+Monitor per-provider spend limits to avoid surprise bills:
+
+```yaml
+# src/bernstein/core/cost/quota_tracker.py tracks provider quotas
+quota_tracking:
+  enabled: true
 ```
 
 ## Cost monitoring and alerts

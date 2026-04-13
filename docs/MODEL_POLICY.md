@@ -198,7 +198,7 @@ model_policy:
 ### Python API
 
 ```python
-from bernstein.core.router import ModelPolicy, TierAwareRouter
+from bernstein.core.routing.router import ModelPolicy, TierAwareRouter
 
 # Create policy
 policy = ModelPolicy(
@@ -226,7 +226,7 @@ router_issues = router.validate_policy()
 Load from file:
 
 ```python
-from bernstein.core.router import load_model_policy_from_yaml
+from bernstein.core.routing.router import load_model_policy_from_yaml
 
 load_model_policy_from_yaml(Path("model_policy.yaml"), router)
 ```
@@ -336,18 +336,25 @@ for name, info in summary.items():
     print(f"{name}: {'allowed' if allowed else 'blocked by policy'}")
 ```
 
+## Peak-Hour Routing
+
+Peak-hour routing (`src/bernstein/core/cost/peak_hour_router.py`) extends model policy with time-based constraints. It can automatically shift non-urgent tasks to cheaper providers or off-peak windows, complementing the static allow/deny policy.
+
+## Quota Tracking
+
+Provider quota tracking (`src/bernstein/core/cost/quota_tracker.py`) monitors per-provider spend and request counts. When a provider approaches its quota, the router can automatically shift traffic to other allowed providers within the model policy.
+
 ## Future: Dynamic Policy Updates
 
 Model Policy is currently static (loaded at startup). Future versions may support:
 
 - **Hot reload**: Update policy without restarting
-- **Time-based constraints**: "Deny expensive providers during peak hours"
 - **Task-specific constraints**: "Role=security must use opus-only"
 - **A/B testing**: "50% requests to anthropic, 50% to ollama"
 
 ## Related
 
-- **Router** — `src/bernstein/core/router.py` — Core routing engine
+- **Router** — `src/bernstein/core/routing/router.py` (re-exports from `router_core.py` and `router_policies.py`) — Core routing engine
 - **TierAwareRouter** — Handles provider selection
 - **Config Validation** — `bernstein config validate` command
 - **DESIGN.md** — Overall architecture

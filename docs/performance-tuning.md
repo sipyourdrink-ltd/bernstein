@@ -2,6 +2,8 @@
 
 This guide covers the key parameters that affect Bernstein's throughput, latency, and cost. Start with the quick-reference tables, then read the sections that apply to your workload.
 
+All configurable constants (timeouts, thresholds, budget caps, tick intervals, etc.) are centralized in `src/bernstein/core/defaults.py`. Override them via the `tuning:` section in `bernstein.yaml`.
+
 ## Quick reference
 
 | Workload size | Recommended `max_agents` | RAM needed | Typical cost/run |
@@ -123,8 +125,10 @@ rm .sdd/metrics/bandit_state.json
 
 ```yaml
 batch_size: 3        # tasks dispatched per orchestrator tick
-tick_interval: 5     # seconds between orchestrator cycles
+tick_interval: 3     # seconds between orchestrator cycles (default from defaults.py)
 ```
+
+Default tick interval is 3 seconds (`ORCHESTRATOR.tick_interval_s` in `src/bernstein/core/defaults.py`).
 
 - `batch_size ≤ max_agents / 2`: prevents a spike of unclaimable tasks when agents are busy.
 - Low `tick_interval` (1–3s) improves responsiveness but adds CPU overhead from polling.
@@ -180,7 +184,7 @@ context_files:
 ### Reading cache metrics
 
 ```bash
-bernstein cost --breakdown      # shows cache hit rate and savings
+bernstein cost --by model       # shows cost breakdown including cache savings
 curl http://127.0.0.1:8052/status | jq '.metrics.cache_hit_rate'
 ```
 
@@ -321,12 +325,12 @@ Lower priority number = dispatched first. Set priorities based on dependency cha
 stages:
   - name: foundation
     steps:
-      - goal: "Set up database schema"
+      - title: "Set up database schema"
         priority: 1
   - name: features
     depends_on: [foundation]
     steps:
-      - goal: "Implement user API"
+      - title: "Implement user API"
         priority: 3
 ```
 
@@ -418,6 +422,26 @@ uv run python -m cProfile -o profile.out -m bernstein run
 uv run python -c "import pstats; pstats.Stats('profile.out').sort_stats('cumulative').print_stats(20)"
 ```
 
+### Debug bundle
+
+Generate a comprehensive diagnostic archive:
+
+```bash
+bernstein debug    # collects logs, config, metrics, git state into a shareable bundle
+```
+
+Source: `src/bernstein/core/observability/debug_bundle.py`
+
+### Running tests
+
+Use the isolated test runner to avoid memory leaks:
+
+```bash
+uv run python scripts/run_tests.py -x
+```
+
+**Never** run `uv run pytest tests/` directly — it leaks 100+ GB RAM across 2000+ tests.
+
 ---
 
 ## Common bottlenecks
@@ -431,5 +455,5 @@ uv run python -c "import pstats; pstats.Stats('profile.out').sort_stats('cumulat
 | High memory usage | Large context windows | Use smaller models; enable context compaction |
 | Slow task dispatch | High `tick_interval` | Lower `tick_interval` to 2–5s |
 | WAL write latency spikes | Slow disk | Move `.sdd/` to SSD or mount WAL on tmpfs |
-| Stale worktrees filling disk | Orphaned agents after crash | Run `bernstein cleanup` |
+| Stale worktrees filling disk | Orphaned agents after crash | Run `bernstein cleanup` or `git worktree prune` |
 | Zero cache hits | Dynamic content in system prompt | Remove timestamps; fix `context_files` |

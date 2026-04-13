@@ -211,7 +211,7 @@ The plan loader is available as a Python module:
 
 ```python
 from pathlib import Path
-from bernstein.core.plan_loader import load_plan, load_plan_from_yaml, PlanLoadError
+from bernstein.core.planning.plan_loader import load_plan, load_plan_from_yaml, PlanLoadError
 
 # Full API — returns (PlanConfig, list[Task])
 config, tasks = load_plan(Path("my-project.yaml"))
@@ -228,7 +228,7 @@ tasks = load_plan_from_yaml(Path("my-project.yaml"))
 ### Error handling
 
 ```python
-from bernstein.core.plan_loader import PlanLoadError
+from bernstein.core.planning.plan_loader import PlanLoadError
 
 try:
     config, tasks = load_plan(Path("plan.yaml"))

@@ -4,7 +4,7 @@ Bernstein's hook system lets you run custom code in response to orchestration ev
 
 ## Event taxonomy
 
-All events are defined in `bernstein.core.hook_events.HookEvent`:
+All events are defined in `bernstein.core.config.hook_events.HookEvent` (also accessible via `bernstein.core.hook_events` through the lazy redirect in `core/__init__.py`):
 
 ### Task lifecycle
 
@@ -52,25 +52,17 @@ All events are defined in `bernstein.core.hook_events.HookEvent`:
 
 ### In code
 
+Hooks are dispatched via webhook or script execution, not via a Python event emitter. For blocking hooks that run inline, see `bernstein.core.security.blocking_hooks`. For webhook dispatch, see `bernstein.core.server.webhook_handler`.
+
+Event types are defined in `bernstein.core.config.hook_events`:
+
 ```python
-from bernstein.core.hook_events import HookEvent
-from bernstein.core.hooks_receiver import HooksReceiver
+from bernstein.core.config.hook_events import HookEvent
 
-receiver = HooksReceiver()
-
-@receiver.on(HookEvent.TASK_COMPLETED)
-def on_task_completed(event_data: dict) -> None:
-    """Called when any task completes."""
-    task_id = event_data["task_id"]
-    summary = event_data.get("summary", "")
-    print(f"Task {task_id} completed: {summary}")
-
-@receiver.on(HookEvent.AGENT_KILLED)
-def on_agent_killed(event_data: dict) -> None:
-    """Called when an agent is killed."""
-    agent_id = event_data["agent_id"]
-    reason = event_data.get("reason", "unknown")
-    print(f"Agent {agent_id} killed: {reason}")
+# Available events:
+HookEvent.TASK_COMPLETED   # "task.completed"
+HookEvent.AGENT_KILLED     # "agent.killed"
+# ... see full list in hook_events.py
 ```
 
 ### In configuration
@@ -283,24 +275,34 @@ if __name__ == "__main__":
 
 ## Testing hooks
 
+Test webhook and script hooks by sending a manual HTTP POST to your hook endpoint, or by invoking the script directly with a JSON payload on stdin:
+
+```bash
+echo '{"event": "task.completed", "timestamp": 1712345678.0, "data": {"task_id": "t1"}}' \
+  | python scripts/notify_slack.py
+```
+
+For blocking hooks, verify they return the correct exit code:
+
 ```python
 # tests/test_my_hook.py
-from bernstein.core.hook_events import HookEvent
-from bernstein.core.hooks_receiver import HooksReceiver
+import json
+import subprocess
 
-
-def test_my_hook_fires() -> None:
-    received = []
-    receiver = HooksReceiver()
-
-    @receiver.on(HookEvent.TASK_COMPLETED)
-    def handler(data: dict) -> None:
-        received.append(data)
-
-    receiver.emit(HookEvent.TASK_COMPLETED, {"task_id": "t1"})
-    assert len(received) == 1
-    assert received[0]["task_id"] == "t1"
+def test_validate_task_blocks_missing_scope() -> None:
+    payload = json.dumps({
+        "event": "task.created",
+        "timestamp": 1712345678.0,
+        "data": {"task_id": "t1", "goal": "Short"}
+    })
+    result = subprocess.run(
+        ["python", "scripts/validate_task.py"],
+        input=payload, capture_output=True, text=True
+    )
+    assert result.returncode == 1  # blocked
 ```
+
+Hook payload validation is available via `bernstein.core.config.hook_protocol.validate_hook_payload()`. Blocking hook enforcement is in `bernstein.core.security.blocking_hooks`.
 
 ## Debugging hooks
 
