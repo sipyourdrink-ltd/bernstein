@@ -1,0 +1,79 @@
+name: Cleanup Action Runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      delete_failed:
+        description: "Delete failed runs"
+        type: boolean
+        default: true
+      delete_cancelled:
+        description: "Delete cancelled runs"
+        type: boolean
+        default: true
+      delete_skipped:
+        description: "Delete skipped runs"
+        type: boolean
+        default: true
+      keep_days:
+        description: "Keep runs newer than N days (0 = delete all)"
+        type: number
+        default: 0
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Delete junk runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DELETE_FAILED: ${{ inputs.delete_failed }}
+          DELETE_CANCELLED: ${{ inputs.delete_cancelled }}
+          DELETE_SKIPPED: ${{ inputs.delete_skipped }}
+          KEEP_DAYS: ${{ inputs.keep_days }}
+        run: |
+          set -euo pipefail
+
+          deleted=0
+
+          delete_by_status() {
+            local status="$1"
+            local page=1
+            while true; do
+              ids=$(gh api "repos/$REPO/actions/runs?status=$status&per_page=100&page=$page" --jq '.workflow_runs[].id' 2>/dev/null || true)
+              [ -z "$ids" ] && break
+              count=$(echo "$ids" | wc -l)
+              echo "Deleting $count $status runs (page $page)..."
+              echo "$ids" | xargs -P 20 -I {} gh api "repos/$REPO/actions/runs/{}" -X DELETE 2>/dev/null || true
+              deleted=$((deleted + count))
+              # Stay on page 1 since we're deleting from front
+              # But if we get the same results, move on
+              if [ "$page" -gt 50 ]; then break; fi
+            done
+          }
+
+          if [ "$DELETE_FAILED" = "true" ]; then
+            echo "=== Cleaning failed runs ==="
+            delete_by_status "failure"
+          fi
+
+          if [ "$DELETE_CANCELLED" = "true" ]; then
+            echo "=== Cleaning cancelled runs ==="
+            delete_by_status "cancelled"
+          fi
+
+          if [ "$DELETE_SKIPPED" = "true" ]; then
+            echo "=== Cleaning skipped runs ==="
+            delete_by_status "skipped"
+          fi
+
+          echo ""
+          echo "=== Done ==="
+          remaining=$(gh api "repos/$REPO/actions/runs?per_page=1" --jq '.total_count')
+          echo "Deleted: ~$deleted runs"
+          echo "Remaining: $remaining runs"
