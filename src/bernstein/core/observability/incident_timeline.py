@@ -156,9 +156,7 @@ def _trace_step_to_event(
     """Convert a single trace step dict to a TimelineEvent."""
     step_type = step.get("type", "?")
     detail = step.get("detail", "")
-    summary = (
-        f"[{agent_role}/{model}] {step_type}: {detail[:120]}" if detail else f"[{agent_role}/{model}] {step_type}"
-    )
+    summary = f"[{agent_role}/{model}] {step_type}: {detail[:120]}" if detail else f"[{agent_role}/{model}] {step_type}"
     return TimelineEvent(
         timestamp=step.get("timestamp", 0),
         kind=_classify_trace_step(step_type),

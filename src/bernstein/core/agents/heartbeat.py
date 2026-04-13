@@ -197,8 +197,12 @@ def _check_stale_agents_simple(orch: Any) -> None:
         age = now - hb.timestamp
         elapsed = now - session.spawn_ts
         _escalate_heartbeat(
-            orch._signal_mgr, session, age, elapsed,
-            AGENT.escalation_sigterm_s, AGENT.escalation_warn_s,
+            orch._signal_mgr,
+            session,
+            age,
+            elapsed,
+            AGENT.escalation_sigterm_s,
+            AGENT.escalation_warn_s,
             "no_heartbeat_120s",
         )
 
@@ -228,8 +232,12 @@ def check_stale_agents(orch: Any) -> None:
 
         elapsed = time.time() - session.spawn_ts
         _escalate_heartbeat(
-            orch._signal_mgr, session, hb_status.age_seconds, elapsed,
-            timeout_s, wakeup_after_s,
+            orch._signal_mgr,
+            session,
+            hb_status.age_seconds,
+            elapsed,
+            timeout_s,
+            wakeup_after_s,
             "no_heartbeat",
         )
 
@@ -300,7 +308,10 @@ def _escalate_stall_simple(
     elif count >= AGENT.escalation_med_count:
         with contextlib.suppress(OSError):
             orch._signal_mgr.write_wakeup(
-                session.id, task_title=task_id, elapsed_s=elapsed, last_activity_ago_s=elapsed,
+                session.id,
+                task_title=task_id,
+                elapsed_s=elapsed,
+                last_activity_ago_s=elapsed,
             )
 
 
@@ -316,7 +327,10 @@ def _escalate_stall_profiled(
     if count >= profile.kill_threshold:
         logger.warning(
             "Stall-killing agent %s (task %s): %d identical snapshots (%s)",
-            session.id, task_id, count, profile.reason,
+            session.id,
+            task_id,
+            count,
+            profile.reason,
         )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
@@ -324,20 +338,31 @@ def _escalate_stall_profiled(
     elif count >= profile.shutdown_threshold:
         logger.warning(
             "Stall-shutdown agent %s (task %s): %d identical snapshots (%s)",
-            session.id, task_id, count, profile.reason,
+            session.id,
+            task_id,
+            count,
+            profile.reason,
         )
         with contextlib.suppress(OSError):
             orch._signal_mgr.write_shutdown(
-                session.id, reason=f"stalled:{profile.reason}", task_title=task_id,
+                session.id,
+                reason=f"stalled:{profile.reason}",
+                task_title=task_id,
             )
     elif count >= profile.wakeup_threshold:
         logger.info(
             "Stall-wakeup agent %s (task %s): %d identical snapshots (%s)",
-            session.id, task_id, count, profile.reason,
+            session.id,
+            task_id,
+            count,
+            profile.reason,
         )
         with contextlib.suppress(OSError):
             orch._signal_mgr.write_wakeup(
-                session.id, task_title=task_id, elapsed_s=elapsed, last_activity_ago_s=elapsed,
+                session.id,
+                task_title=task_id,
+                elapsed_s=elapsed,
+                last_activity_ago_s=elapsed,
             )
 
 

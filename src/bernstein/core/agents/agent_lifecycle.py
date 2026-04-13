@@ -1191,7 +1191,10 @@ def _recover_loops(orch: Any, detector: Any, lock_mgr: Any) -> None:
             continue
         logger.warning(
             "Loop detected: agent %s edited '%s' %d times in %.0fs — killing agent",
-            loop.agent_id, loop.file_path, loop.edit_count, loop.window_seconds,
+            loop.agent_id,
+            loop.file_path,
+            loop.edit_count,
+            loop.window_seconds,
         )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)

@@ -438,8 +438,12 @@ class EvolutionLoop:
         risk_route = self._proposal_scorer.classify_risk_route(composite_risk)
         logger.info(
             "Proposal %s: %s (risk=%s, confidence=%.2f, composite_risk=%.2f, route=%s)",
-            proposal.id, proposal.title, proposal.risk_assessment.level,
-            proposal.confidence, composite_risk, risk_route,
+            proposal.id,
+            proposal.title,
+            proposal.risk_assessment.level,
+            proposal.confidence,
+            composite_risk,
+            risk_route,
         )
 
         if self._github_sync:
@@ -450,9 +454,14 @@ class EvolutionLoop:
         if not can_evolve:
             logger.warning("Circuit breaker blocked %s: %s", proposal.id, breaker_reason)
             return self._make_rejected_result(
-                proposal.id, proposal.title, risk_level.value,
-                baseline_score, baseline_score, 0.0,
-                f"Circuit breaker: {breaker_reason}", cycle_start,
+                proposal.id,
+                proposal.title,
+                risk_level.value,
+                baseline_score,
+                baseline_score,
+                0.0,
+                f"Circuit breaker: {breaker_reason}",
+                cycle_start,
             )
 
         # Step 6 — Approval gate routing.
@@ -462,9 +471,14 @@ class EvolutionLoop:
             self._log_deferred(proposal, decision.reason)
             self._github_unclaim_current()
             return self._make_rejected_result(
-                proposal.id, proposal.title, risk_level.value,
-                baseline_score, baseline_score, 0.0,
-                f"Deferred for human review: {decision.reason}", cycle_start,
+                proposal.id,
+                proposal.title,
+                risk_level.value,
+                baseline_score,
+                baseline_score,
+                0.0,
+                f"Deferred for human review: {decision.reason}",
+                cycle_start,
             )
 
         # Step 7 — Sandbox validation.
@@ -472,20 +486,31 @@ class EvolutionLoop:
         if not sandbox_result.passed:
             self._breaker.record_sandbox_failure(proposal.id)
             return self._make_rejected_result(
-                proposal.id, proposal.title, risk_level.value,
-                baseline_score, sandbox_result.candidate_score, sandbox_result.delta,
-                f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}", cycle_start,
+                proposal.id,
+                proposal.title,
+                risk_level.value,
+                baseline_score,
+                sandbox_result.candidate_score,
+                sandbox_result.delta,
+                f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}",
+                cycle_start,
             )
 
         # Step 7b — Eval gate.
         eval_result = self._eval_gate.evaluate(
-            proposal=_to_types_proposal(proposal, risk_level), risk_level=risk_level,
+            proposal=_to_types_proposal(proposal, risk_level),
+            risk_level=risk_level,
         )
         if not eval_result.skipped and not eval_result.accepted:
             return self._make_rejected_result(
-                proposal.id, proposal.title, risk_level.value,
-                eval_result.baseline_score, eval_result.score, eval_result.delta,
-                f"Eval gate rejected: {eval_result.reason}", cycle_start,
+                proposal.id,
+                proposal.title,
+                risk_level.value,
+                eval_result.baseline_score,
+                eval_result.score,
+                eval_result.delta,
+                f"Eval gate rejected: {eval_result.reason}",
+                cycle_start,
             )
 
         # Step 8 — Apply the proposal.

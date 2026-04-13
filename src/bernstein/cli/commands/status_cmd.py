@@ -528,26 +528,39 @@ def _doctor_check_auth(checks: list[dict[str, Any]]) -> bool:
             claude_detail = _NOT_AUTHENTICATED_MSG
     if claude_authed:
         any_key = True
-    _add_check(checks, "Auth: claude", claude_authed, claude_detail,
-               "export ANTHROPIC_API_KEY=key or: claude login" if not claude_authed else "")
+    _add_check(
+        checks,
+        "Auth: claude",
+        claude_authed,
+        claude_detail,
+        "export ANTHROPIC_API_KEY=key or: claude login" if not claude_authed else "",
+    )
 
     # Codex
     codex_authed, codex_method = _codex_has_auth()
     if codex_authed:
         any_key = True
-    _add_check(checks, "Auth: codex", codex_authed,
-               codex_method if codex_authed else _NOT_AUTHENTICATED_MSG,
-               "export OPENAI_API_KEY=key or: codex login" if not codex_authed else "",
-               fix_id="codex_login" if not codex_authed else "")
+    _add_check(
+        checks,
+        "Auth: codex",
+        codex_authed,
+        codex_method if codex_authed else _NOT_AUTHENTICATED_MSG,
+        "export OPENAI_API_KEY=key or: codex login" if not codex_authed else "",
+        fix_id="codex_login" if not codex_authed else "",
+    )
 
     # Gemini
     gemini_authed, gemini_method = gemini_has_auth()
     if gemini_authed:
         any_key = True
-    _add_check(checks, "Auth: gemini", gemini_authed,
-               gemini_method if gemini_authed else _NOT_AUTHENTICATED_MSG,
-               "export GOOGLE_API_KEY=key, or: gcloud auth login" if not gemini_authed else "",
-               fix_id="gemini_auth" if not gemini_authed else "")
+    _add_check(
+        checks,
+        "Auth: gemini",
+        gemini_authed,
+        gemini_method if gemini_authed else _NOT_AUTHENTICATED_MSG,
+        "export GOOGLE_API_KEY=key, or: gcloud auth login" if not gemini_authed else "",
+        fix_id="gemini_auth" if not gemini_authed else "",
+    )
 
     return any_key
 
@@ -659,8 +672,13 @@ def _doctor_check_context_and_plugins(checks: list[dict[str, Any]], workdir: Pat
     plugin_errors = get_plugin_errors().get_errors()
     if plugin_errors:
         for pe in plugin_errors:
-            _add_check(checks, f"Plugin: {pe.plugin_name}", False,
-                       f"[{pe.phase}] {pe.message}", f"Check plugin {pe.plugin_name} configuration")
+            _add_check(
+                checks,
+                f"Plugin: {pe.plugin_name}",
+                False,
+                f"[{pe.phase}] {pe.message}",
+                f"Check plugin {pe.plugin_name} configuration",
+            )
     else:
         _add_check(checks, "Plugin loading", True, "no errors")
 
@@ -671,8 +689,13 @@ def _doctor_check_commit_attribution(checks: list[dict[str, Any]], workdir: Path
 
     commit_result = collect_commit_stats(repo_dir=str(workdir))
     if commit_result.error:
-        _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, False,
-                   f"git log error: {commit_result.error}", "Ensure this is a git repository with git installed")
+        _add_check(
+            checks,
+            _COMMIT_ATTRIBUTION_LABEL,
+            False,
+            f"git log error: {commit_result.error}",
+            "Ensure this is a git repository with git installed",
+        )
     elif not commit_result.roles:
         _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, True, "no commits found in this repository")
     else:
@@ -680,8 +703,7 @@ def _doctor_check_commit_attribution(checks: list[dict[str, Any]], workdir: Path
             f"{role}: {rs.commits} commits, +{rs.lines_added}/-{rs.lines_deleted}"
             for role, rs in commit_result.roles.items()
         )
-        _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, True,
-                   f"{commit_result.total_commits} commits: {role_parts}")
+        _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, True, f"{commit_result.total_commits} commits: {role_parts}")
 
 
 def _doctor_check_compliance(checks: list[dict[str, Any]], workdir: Path) -> None:
@@ -699,8 +721,13 @@ def _doctor_check_compliance(checks: list[dict[str, Any]], workdir: Path) -> Non
         preset_label = compliance_cfg.preset.value if compliance_cfg.preset else "custom"
         prereq_warnings = compliance_cfg.check_prerequisites()
         if prereq_warnings:
-            _add_check(checks, f"Compliance ({preset_label})", False,
-                       f"{len(prereq_warnings)} issue(s): {prereq_warnings[0]}", "; ".join(prereq_warnings))
+            _add_check(
+                checks,
+                f"Compliance ({preset_label})",
+                False,
+                f"{len(prereq_warnings)} issue(s): {prereq_warnings[0]}",
+                "; ".join(prereq_warnings),
+            )
         else:
             _add_check(checks, f"Compliance ({preset_label})", True, "all prerequisites met")
 
@@ -717,8 +744,13 @@ def _doctor_check_secrets_yaml(checks: list[dict[str, Any]], workdir: Path) -> N
                 from bernstein.core.secrets import check_secrets_connectivity
 
                 ok, detail = check_secrets_connectivity(seed.secrets)
-                _add_check(checks, f"Secrets: {seed.secrets.provider}", ok, detail,
-                           f"Check {seed.secrets.provider} credentials and path {seed.secrets.path}" if not ok else "")
+                _add_check(
+                    checks,
+                    f"Secrets: {seed.secrets.provider}",
+                    ok,
+                    detail,
+                    f"Check {seed.secrets.provider} credentials and path {seed.secrets.path}" if not ok else "",
+                )
             else:
                 _add_check(checks, "Secrets", True, "none (using environment variables)")
         else:
@@ -793,6 +825,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     stale_pid_paths = _doctor_check_stale_pids(checks, workdir)
     _doctor_check_guardrails(checks, workdir)
     _doctor_check_ci_tools(checks)
+
     def _check_fn(name: str, ok: bool, detail: str, fix: str = "", fix_id: str = "") -> None:
         _add_check(checks, name, ok, detail, fix, fix_id)
 

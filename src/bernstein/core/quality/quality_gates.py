@@ -744,10 +744,24 @@ def run_agent_test_mutation_gate_sync(
 # ---------------------------------------------------------------------------
 
 
-_PII_BINARY_SUFFIXES = frozenset({
-    ".pyc", ".pyo", ".so", ".dylib", ".whl", ".egg",
-    ".gz", ".zip", ".tar", ".png", ".jpg", ".gif", ".ico", ".pdf",
-})
+_PII_BINARY_SUFFIXES = frozenset(
+    {
+        ".pyc",
+        ".pyo",
+        ".so",
+        ".dylib",
+        ".whl",
+        ".egg",
+        ".gz",
+        ".zip",
+        ".tar",
+        ".png",
+        ".jpg",
+        ".gif",
+        ".ico",
+        ".pdf",
+    }
+)
 
 
 def _resolve_pii_scan_targets(
