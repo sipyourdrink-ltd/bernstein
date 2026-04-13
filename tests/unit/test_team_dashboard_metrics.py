@@ -110,7 +110,7 @@ class TestDataclasses:
         assert um.total_runs == 3
         assert um.tasks_completed == 2
         assert um.tasks_failed == 1
-        assert um.total_cost_usd == 1.0
+        assert um.total_cost_usd == pytest.approx(1.0)
         assert um.code_lines_merged == 5
         assert um.quality_gate_pass_rate == pytest.approx(0.6667)
 
@@ -133,9 +133,9 @@ class TestAggregateUserMetrics:
         assert result.total_runs == 0
         assert result.tasks_completed == 0
         assert result.tasks_failed == 0
-        assert result.total_cost_usd == 0.0
+        assert result.total_cost_usd == pytest.approx(0.0)
         assert result.code_lines_merged == 0
-        assert result.quality_gate_pass_rate == 0.0
+        assert result.quality_gate_pass_rate == pytest.approx(0.0)
 
     def test_nonexistent_file(self, tmp_path: Path) -> None:
         archive = tmp_path / "does_not_exist.jsonl"
@@ -208,7 +208,7 @@ class TestAggregateUserMetrics:
             ],
         )
         result = aggregate_user_metrics(archive, "alice")
-        assert result.total_cost_usd == 0.0
+        assert result.total_cost_usd == pytest.approx(0.0)
 
     def test_malformed_line_skipped(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -257,9 +257,9 @@ class TestAggregateTeamMetrics:
         assert result.team_name == "squad"
         assert result.users == ()
         assert result.total_runs == 0
-        assert result.total_cost_usd == 0.0
-        assert result.avg_quality_score == 0.0
-        assert result.adoption_score == 0.0
+        assert result.total_cost_usd == pytest.approx(0.0)
+        assert result.avg_quality_score == pytest.approx(0.0)
+        assert result.adoption_score == pytest.approx(0.0)
 
     def test_two_users(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -309,7 +309,7 @@ class TestAggregateTeamMetrics:
 class TestComputeAdoptionScore:
     def test_empty_team_returns_zero(self) -> None:
         tm = TeamMetrics("empty", (), 0, 0.0, 0.0, 0.0)
-        assert compute_adoption_score(tm) == 0.0
+        assert compute_adoption_score(tm) == pytest.approx(0.0)
 
     def test_fully_active_high_quality_team(self) -> None:
         users = tuple(UserMetrics(f"u{i}", 50, 50, 0, 0.0, 0, 1.0) for i in range(5))
@@ -322,7 +322,7 @@ class TestComputeAdoptionScore:
         users = tuple(UserMetrics(f"u{i}", 0, 0, 0, 0.0, 0, 0.0) for i in range(3))
         tm = TeamMetrics("idle", users, 0, 0.0, 0.0, 0.0)
         score = compute_adoption_score(tm)
-        assert score == 0.0
+        assert score == pytest.approx(0.0)
 
     def test_partial_adoption(self) -> None:
         users = (
@@ -388,9 +388,9 @@ class TestRenderTeamDashboardData:
         data = render_team_dashboard_data(tm)
         assert data["team_name"] == "team"
         assert data["total_runs"] == 0
-        assert data["total_cost_usd"] == 0.0
-        assert data["avg_quality_score"] == 0.0
-        assert data["adoption_score"] == 0.0
+        assert data["total_cost_usd"] == pytest.approx(0.0)
+        assert data["avg_quality_score"] == pytest.approx(0.0)
+        assert data["adoption_score"] == pytest.approx(0.0)
         assert data["users"] == []
         assert "timestamp" in data
 
@@ -403,7 +403,7 @@ class TestRenderTeamDashboardData:
         data = render_team_dashboard_data(tm)
         assert data["team_name"] == "squad"
         assert data["total_runs"] == 8
-        assert data["total_cost_usd"] == 3.0
+        assert data["total_cost_usd"] == pytest.approx(3.0)
         assert len(data["users"]) == 2  # type: ignore[arg-type]
 
         alice_data = data["users"][0]  # type: ignore[index]
@@ -411,9 +411,9 @@ class TestRenderTeamDashboardData:
         assert alice_data["total_runs"] == 5
         assert alice_data["tasks_completed"] == 4
         assert alice_data["tasks_failed"] == 1
-        assert alice_data["total_cost_usd"] == 2.0
+        assert alice_data["total_cost_usd"] == pytest.approx(2.0)
         assert alice_data["code_lines_merged"] == 10
-        assert alice_data["quality_gate_pass_rate"] == 0.8
+        assert alice_data["quality_gate_pass_rate"] == pytest.approx(0.8)
 
     def test_json_serialisable(self) -> None:
         users = (UserMetrics("u", 1, 1, 0, 0.1, 1, 1.0),)

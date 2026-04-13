@@ -53,7 +53,7 @@ class TestQualitySnapshot:
         snap = _snap()
         assert snap.run_id == "run-1"
         assert snap.lint_errors == 0
-        assert snap.avg_complexity == 5.0
+        assert snap.avg_complexity == pytest.approx(5.0)
 
     def test_frozen(self) -> None:
         snap = _snap()
@@ -104,7 +104,7 @@ class TestRegressionAlert:
             baseline_value=2.0,
         )
         assert alert.severity == "warning"
-        assert alert.recent_value == 3.0
+        assert alert.recent_value == pytest.approx(3.0)
 
     def test_frozen(self) -> None:
         alert = RegressionAlert(
@@ -185,7 +185,7 @@ class TestDetectTrends:
         assert len(trends) == 4
         for trend in trends:
             assert trend.trend_direction == "stable"
-            assert trend.change_pct == 0.0
+            assert trend.change_pct == pytest.approx(0.0)
 
     def test_improving_lint(self) -> None:
         history = [
@@ -216,7 +216,7 @@ class TestDetectTrends:
         trends = detect_trends(history)
         lint_trend = next(t for t in trends if t.metric_name == "lint_errors")
         assert lint_trend.trend_direction == "stable"
-        assert lint_trend.change_pct == 0.0
+        assert lint_trend.change_pct == pytest.approx(0.0)
 
     def test_all_metrics_present(self) -> None:
         history = [_snap(run_id="r1"), _snap(run_id="r2")]
@@ -256,8 +256,8 @@ class TestGenerateAlerts:
         lint_alerts = [a for a in alerts if a.metric_name == "lint_errors"]
         assert len(lint_alerts) == 1
         assert lint_alerts[0].severity == "warning"
-        assert lint_alerts[0].baseline_value == 10.0
-        assert lint_alerts[0].recent_value == 12.0
+        assert lint_alerts[0].baseline_value == pytest.approx(10.0)
+        assert lint_alerts[0].recent_value == pytest.approx(12.0)
 
     def test_lint_regression_critical(self) -> None:
         history = [

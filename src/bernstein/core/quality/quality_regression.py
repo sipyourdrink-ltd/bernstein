@@ -201,7 +201,7 @@ def _linear_slope(values: tuple[float, ...]) -> float:
     mean_y = sum(values) / n
     numerator = sum((x - mean_x) * (y - mean_y) for x, y in zip(x_vals, values, strict=False))
     denominator = sum((x - mean_x) ** 2 for x in x_vals)
-    if denominator == 0.0:
+    if abs(denominator) < 1e-15:
         return 0.0
     return numerator / denominator
 
@@ -211,8 +211,8 @@ def _pct_change(first: float, last: float) -> float:
 
     Returns 0.0 when *first* is zero.
     """
-    if first == 0.0:
-        return 0.0 if last == 0.0 else 100.0
+    if abs(first) < 1e-15:
+        return 0.0 if abs(last) < 1e-15 else 100.0
     return ((last - first) / abs(first)) * 100.0
 
 

@@ -320,7 +320,7 @@ class TestEstimateCost:
             target_files=(),
         )
         cost = estimate_cost(plan, "sonnet")
-        assert cost == 0.15
+        assert cost == pytest.approx(0.15)
 
     def test_opus_costs_more(self) -> None:
         plan = GeneratedPlan(
@@ -388,7 +388,7 @@ class TestEstimateCost:
             total_estimated_cost_usd=0.0,
             target_files=(),
         )
-        assert estimate_cost(plan) == 0.0
+        assert estimate_cost(plan) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

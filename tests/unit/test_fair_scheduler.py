@@ -17,7 +17,7 @@ class TestTenantQuota:
     def test_defaults(self) -> None:
         q = TenantQuota(tenant_id="t1")
         assert q.tenant_id == "t1"
-        assert q.weight == 1.0
+        assert q.weight == pytest.approx(1.0)
         assert q.max_concurrent == 0
         assert q.current_active == 0
 
@@ -28,7 +28,7 @@ class TestTenantQuota:
 
     def test_custom_values(self) -> None:
         q = TenantQuota(tenant_id="x", weight=3.5, max_concurrent=10, current_active=2)
-        assert q.weight == 3.5
+        assert q.weight == pytest.approx(3.5)
         assert q.max_concurrent == 10
         assert q.current_active == 2
 
@@ -47,7 +47,7 @@ class TestSchedulingDecision:
         assert d.task_id == "T-1"
         assert d.tenant_id == "t1"
         assert d.priority == 3
-        assert d.wait_time_s == 0.0
+        assert d.wait_time_s == pytest.approx(0.0)
         assert d.reason == "r"
 
 
@@ -323,14 +323,14 @@ class TestRegisterTenant:
         st = s.stats()
         assert len(st) == 1
         assert st[0].tenant_id == "X"
-        assert st[0].weight == 2.5
+        assert st[0].weight == pytest.approx(2.5)
         assert st[0].max_concurrent == 3
 
     def test_update_existing_tenant(self) -> None:
         s = FairScheduler(quotas=[TenantQuota(tenant_id="X", weight=1.0)])
         s.register_tenant("X", weight=5.0, max_concurrent=10)
         st = s.stats()
-        assert st[0].weight == 5.0
+        assert st[0].weight == pytest.approx(5.0)
         assert st[0].max_concurrent == 10
 
     def test_invalid_weight_raises(self) -> None:
@@ -346,7 +346,7 @@ class TestRegisterTenant:
         st = s.stats()
         assert len(st) == 1
         assert st[0].tenant_id == "auto-tenant"
-        assert st[0].weight == 1.0
+        assert st[0].weight == pytest.approx(1.0)
 
 
 # ---- stats ----

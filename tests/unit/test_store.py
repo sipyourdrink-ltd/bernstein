@@ -21,11 +21,11 @@ class TestRoleSummary:
         assert rs.claimed == 3
         assert rs.done == 10
         assert rs.failed == 1
-        assert rs.cost_usd == 0.0
+        assert rs.cost_usd == pytest.approx(0.0)
 
     def test_custom_cost(self) -> None:
         rs = RoleSummary(role="frontend", open=2, claimed=1, done=4, failed=0, cost_usd=1.25)
-        assert rs.cost_usd == 1.25
+        assert rs.cost_usd == pytest.approx(1.25)
 
     def test_zero_counts(self) -> None:
         rs = RoleSummary(role="qa", open=0, claimed=0, done=0, failed=0)
@@ -43,7 +43,7 @@ class TestStatusSummary:
         ss = StatusSummary(total=20, open=5, claimed=3, done=10, failed=2)
         assert ss.total == 20
         assert ss.per_role == []
-        assert ss.total_cost_usd == 0.0
+        assert ss.total_cost_usd == pytest.approx(0.0)
 
     def test_with_per_role(self) -> None:
         roles = [
@@ -56,7 +56,7 @@ class TestStatusSummary:
 
     def test_with_custom_cost(self) -> None:
         ss = StatusSummary(total=10, open=2, claimed=1, done=6, failed=1, total_cost_usd=5.50)
-        assert ss.total_cost_usd == 5.50
+        assert ss.total_cost_usd == pytest.approx(5.50)
 
 
 # --- BaseTaskStore tests ---
