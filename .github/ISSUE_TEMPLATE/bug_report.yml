@@ -41,3 +41,24 @@ body:
       render: shell
     validations:
       required: false
+  - type: textarea
+    id: debug-bundle
+    attributes:
+      label: Debug bundle
+      description: |
+        Run `bernstein debug` and attach the generated zip file. This collects
+        logs, config (secrets redacted), and runtime state in one file.
+        If the command isn't available yet, attach any relevant files from `.sdd/runtime/`.
+      placeholder: "Drag and drop the bernstein-debug-*.zip file here"
+    validations:
+      required: false
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Crash / data loss
+        - Feature broken
+        - Minor / cosmetic
+    validations:
+      required: false
