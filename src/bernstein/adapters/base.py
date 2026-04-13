@@ -88,7 +88,7 @@ def build_worker_cmd(
     return [
         sys.executable,
         "-m",
-        "bernstein.core.worker",
+        "bernstein.core.orchestration.worker",
         "--role",
         role,
         "--session",

@@ -96,9 +96,18 @@ class AdaptiveParallelism:
             CPU usage percentage (0-100+).
         """
         try:
-            _, load5, _ = os.getloadavg()
-            cpu_count = os.cpu_count() or 1
-            return (load5 / cpu_count) * 100.0
+            if hasattr(os, "getloadavg"):
+                # Unix: use 5-minute load average
+                _, load5, _ = os.getloadavg()
+                cpu_count = os.cpu_count() or 1
+                return (load5 / cpu_count) * 100.0
+            else:
+                # Windows: use psutil if available, otherwise return 0
+                try:
+                    import psutil
+                    return psutil.cpu_percent(interval=None)
+                except ImportError:
+                    return 0.0
         except OSError:
             return 0.0
 

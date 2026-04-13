@@ -35,6 +35,22 @@ _BASE_ALLOWLIST: frozenset[str] = frozenset(
         # --- User home directory ---
         # Claude Code, aider, gemini CLI etc. read ~/.config, ~/.claude, ~/.cache
         "HOME",
+        # --- Windows system variables ---
+        # Without SYSTEMROOT/WINDIR, Windows processes fail to locate system DLLs
+        # and exit with code -1 (0xFFFFFFFF) before even starting
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",  # Path to cmd.exe, needed for shell operations
+        "APPDATA",
+        "LOCALAPPDATA",
+        "USERPROFILE",  # Windows equivalent of HOME
+        "SystemDrive",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramData",
+        "CommonProgramFiles",
+        "CommonProgramFiles(x86)",
+        "USERNAME",  # Windows equivalent of USER
         # --- Locale / text encoding ---
         # Many CLIs break on non-UTF-8 terminals without these
         "LANG",

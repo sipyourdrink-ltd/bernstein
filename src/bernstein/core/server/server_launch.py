@@ -405,7 +405,7 @@ def _start_spawner(
         [
             sys.executable,
             "-m",
-            "bernstein.core.orchestrator",
+            "bernstein.core.orchestration.orchestrator",
             "--port",
             str(port),
             "--cells",

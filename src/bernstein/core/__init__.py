@@ -598,6 +598,10 @@ class _CoreRedirectLoader:
         # Also register real module under old name for subsequent imports
         sys.modules[fullname] = real
 
+    def get_code(self, fullname: str) -> None:
+        """Return None — redirect loaders don't provide code objects."""
+        return None
+
 
 # Register the finder once at import time
 if not any(isinstance(f, _CoreRedirectFinder) for f in sys.meta_path):
