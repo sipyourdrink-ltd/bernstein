@@ -114,13 +114,15 @@ def _python_type(schema: dict[str, Any]) -> str:
     return type_map.get(schema.get("type", ""), "Any")
 
 
-def _generate_method(method: str, path: str, operation: dict[str, Any]) -> str:
-    """Generate a Python method for a single API operation."""
-    name = _method_name_from_operation(method, path, operation)
-    summary = operation.get("summary", operation.get("description", ""))
-    http_method = method.upper()
+def _collect_operation_params(
+    operation: dict[str, Any],
+    http_method: str,
+) -> tuple[list[str], list[str], list[str], bool]:
+    """Collect parameter lists from an OpenAPI operation.
 
-    # Collect path parameters
+    Returns:
+        Tuple of (params, path_params, query_params, has_body).
+    """
     params: list[str] = ["self"]
     path_params: list[str] = []
     query_params: list[str] = []
@@ -139,7 +141,6 @@ def _generate_method(method: str, path: str, operation: dict[str, Any]) -> str:
                 params.append(f"{param_name}: {param_type} | None = None")
             query_params.append(param_name)
 
-    # Body parameter
     has_body = http_method in ("POST", "PUT", "PATCH")
     request_body = operation.get("requestBody", {})
     if has_body and request_body:
@@ -147,20 +148,25 @@ def _generate_method(method: str, path: str, operation: dict[str, Any]) -> str:
     elif has_body:
         params.append("body: dict[str, Any] | None = None")
 
+    return params, path_params, query_params, has_body
+
+
+def _generate_method(method: str, path: str, operation: dict[str, Any]) -> str:
+    """Generate a Python method for a single API operation."""
+    name = _method_name_from_operation(method, path, operation)
+    summary = operation.get("summary", operation.get("description", ""))
+    http_method = method.upper()
+
+    params, path_params, query_params, has_body = _collect_operation_params(operation, http_method)
     params_str = ", ".join(params)
 
-    # Build path with f-string substitution
     py_path = path
     for p in path_params:
         py_path = py_path.replace(f"{{{p}}}", f"{{{p}}}")
 
-    # Build method body
     lines: list[str] = []
     lines.append(f"    def {name}({params_str}) -> Any:")
-    if summary:
-        lines.append(f'        """{summary}"""')
-    else:
-        lines.append(f'        """{http_method} {path}"""')
+    lines.append(f'        """{summary or (http_method + " " + path)}"""')
 
     if query_params:
         lines.append("        _query_parts: list[str] = []")
@@ -335,15 +341,18 @@ def _ts_method_name(method: str, path: str, operation: dict[str, Any]) -> str:
     return combined
 
 
-def _generate_ts_method(method: str, path: str, operation: dict[str, Any]) -> str:
-    """Generate a TypeScript method for a single API operation."""
-    name = _ts_method_name(method, path, operation)
-    summary = operation.get("summary", operation.get("description", ""))
-    http_method = method.upper()
+def _collect_ts_operation_params(
+    operation: dict[str, Any],
+    http_method: str,
+) -> tuple[list[str], list[str], list[tuple[str, bool]], bool]:
+    """Collect TypeScript parameter lists from an OpenAPI operation.
 
+    Returns:
+        Tuple of (ts_params, path_params, query_params, has_body).
+    """
     ts_params: list[str] = []
     path_params: list[str] = []
-    query_params: list[tuple[str, bool]] = []  # (name, required)
+    query_params: list[tuple[str, bool]] = []
 
     for param in operation.get("parameters", []):
         param_name = param.get("name", "")
@@ -364,6 +373,16 @@ def _generate_ts_method(method: str, path: str, operation: dict[str, Any]) -> st
     elif has_body:
         ts_params.append("body?: Record<string, unknown>")
 
+    return ts_params, path_params, query_params, has_body
+
+
+def _generate_ts_method(method: str, path: str, operation: dict[str, Any]) -> str:
+    """Generate a TypeScript method for a single API operation."""
+    name = _ts_method_name(method, path, operation)
+    summary = operation.get("summary", operation.get("description", ""))
+    http_method = method.upper()
+
+    ts_params, _path_params, query_params, has_body = _collect_ts_operation_params(operation, http_method)
     params_str = ", ".join(ts_params)
     doc = f"/** {summary} */" if summary else f"/** {http_method} {path} */"
 

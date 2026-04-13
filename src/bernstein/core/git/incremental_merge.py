@@ -41,7 +41,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.git.git_basic import run_git
 
@@ -342,86 +342,122 @@ def incremental_merge_files(
 
         # Perform the checkout under the external merge_lock (if provided)
         def _do_merge() -> IncrementalMergeResult:
-            failed_files = _checkout_files_from_branch(workdir, branch, to_checkout)
-            conflicting = failed_files
-            merged = [f for f in to_checkout if f not in failed_files]
-
-            if not merged:
-                return IncrementalMergeResult(
-                    success=False,
-                    merged_files=[],
-                    skipped_already_merged=already_merged_requested,
-                    uncommitted_files=uncommitted,
-                    conflicting_files=conflicting,
-                    commit_sha="",
-                    error="All files conflicted during checkout",
-                )
-
-            # Stage the merged files
-            run_git(["add", "--", *merged], workdir)
-
-            # Build commit message
-            commit_msg = message or (
-                f"Incremental merge from {branch}: " + (", ".join(merged[:3]) + (" …" if len(merged) > 3 else ""))
-            )
-            commit_result = run_git(["commit", "-m", commit_msg], workdir)
-            if not commit_result.ok:
-                # Nothing to commit (files were already identical) — still a success
-                if "nothing to commit" in commit_result.stdout or "nothing to commit" in commit_result.stderr:
-                    logger.info(
-                        "Incremental merge for %s: no changes to commit (files identical in both branches)",
-                        session_id,
-                    )
-                    return IncrementalMergeResult(
-                        success=True,
-                        merged_files=merged,
-                        skipped_already_merged=already_merged_requested,
-                        uncommitted_files=uncommitted,
-                        conflicting_files=conflicting,
-                        commit_sha="",
-                        error="",
-                    )
-                logger.warning(
-                    "Incremental merge commit failed for %s: %s",
-                    session_id,
-                    commit_result.stderr.strip(),
-                )
-                return IncrementalMergeResult(
-                    success=False,
-                    merged_files=[],
-                    skipped_already_merged=already_merged_requested,
-                    uncommitted_files=uncommitted,
-                    conflicting_files=conflicting,
-                    commit_sha="",
-                    error=f"git commit failed: {commit_result.stderr.strip()}",
-                )
-
-            commit_sha = _rev_parse(workdir, "HEAD")
-            logger.info(
-                "Incremental merge for session %s: %d file(s) merged, commit %s",
+            return _execute_incremental_merge(
+                workdir,
+                branch,
+                to_checkout,
+                message,
                 session_id,
-                len(merged),
-                commit_sha[:8] if commit_sha else "?",
-            )
-
-            # Persist updated state
-            state.merged_files = sorted(set(state.merged_files) | set(merged))
-            if commit_sha:
-                state.merge_commits.append(commit_sha)
-            state.last_merged_ts = time.time()
-            _save_state(runtime_dir, state)
-
-            return IncrementalMergeResult(
-                success=True,
-                merged_files=merged,
-                skipped_already_merged=already_merged_requested,
-                uncommitted_files=uncommitted,
-                conflicting_files=conflicting,
-                commit_sha=commit_sha,
-                error="",
+                already_merged_requested,
+                uncommitted,
+                state,
+                runtime_dir,
             )
 
         if merge_lock is not None:
             with merge_lock:
                 return _do_merge()
         return _do_merge()
+
+
+def _execute_incremental_merge(
+    workdir: Path,
+    branch: str,
+    to_checkout: list[str],
+    message: str,
+    session_id: str,
+    already_merged_requested: list[str],
+    uncommitted: list[str],
+    state: Any,
+    runtime_dir: Path,
+) -> IncrementalMergeResult:
+    """Checkout files from branch, commit, and persist merge state."""
+    failed_files = _checkout_files_from_branch(workdir, branch, to_checkout)
+    conflicting = failed_files
+    merged = [f for f in to_checkout if f not in failed_files]
+
+    if not merged:
+        return IncrementalMergeResult(
+            success=False,
+            merged_files=[],
+            skipped_already_merged=already_merged_requested,
+            uncommitted_files=uncommitted,
+            conflicting_files=conflicting,
+            commit_sha="",
+            error="All files conflicted during checkout",
+        )
+
+    run_git(["add", "--", *merged], workdir)
+    commit_msg = message or (
+        f"Incremental merge from {branch}: " + (", ".join(merged[:3]) + (" …" if len(merged) > 3 else ""))
+    )
+    commit_result = run_git(["commit", "-m", commit_msg], workdir)
+
+    if not commit_result.ok:
+        return _handle_failed_commit(
+            commit_result,
+            session_id,
+            merged,
+            already_merged_requested,
+            uncommitted,
+            conflicting,
+        )
+
+    commit_sha = _rev_parse(workdir, "HEAD")
+    logger.info(
+        "Incremental merge for session %s: %d file(s) merged, commit %s",
+        session_id,
+        len(merged),
+        commit_sha[:8] if commit_sha else "?",
+    )
+
+    state.merged_files = sorted(set(state.merged_files) | set(merged))
+    if commit_sha:
+        state.merge_commits.append(commit_sha)
+    state.last_merged_ts = time.time()
+    _save_state(runtime_dir, state)
+
+    return IncrementalMergeResult(
+        success=True,
+        merged_files=merged,
+        skipped_already_merged=already_merged_requested,
+        uncommitted_files=uncommitted,
+        conflicting_files=conflicting,
+        commit_sha=commit_sha,
+        error="",
+    )
+
+
+def _handle_failed_commit(
+    commit_result: Any,
+    session_id: str,
+    merged: list[str],
+    already_merged_requested: list[str],
+    uncommitted: list[str],
+    conflicting: list[str],
+) -> IncrementalMergeResult:
+    """Handle a failed git commit during incremental merge."""
+    if "nothing to commit" in commit_result.stdout or "nothing to commit" in commit_result.stderr:
+        logger.info(
+            "Incremental merge for %s: no changes to commit (files identical in both branches)",
+            session_id,
+        )
+        return IncrementalMergeResult(
+            success=True,
+            merged_files=merged,
+            skipped_already_merged=already_merged_requested,
+            uncommitted_files=uncommitted,
+            conflicting_files=conflicting,
+            commit_sha="",
+            error="",
+        )
+    logger.warning("Incremental merge commit failed for %s: %s", session_id, commit_result.stderr.strip())
+    return IncrementalMergeResult(
+        success=False,
+        merged_files=[],
+        skipped_already_merged=already_merged_requested,
+        uncommitted_files=uncommitted,
+        conflicting_files=conflicting,
+        commit_sha="",
+        error=f"git commit failed: {commit_result.stderr.strip()}",
+    )

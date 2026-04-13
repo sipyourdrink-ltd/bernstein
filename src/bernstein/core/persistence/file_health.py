@@ -247,25 +247,27 @@ def _compute_coverage_score(file_path: Path, metrics_dir: Path) -> int:
         if not isinstance(files_raw, dict):
             return 70
         files = cast(_CAST_DICT_STR_OBJ, files_raw)
-
-        # Match by path suffix — coverage.json paths may be absolute
-        rel = str(file_path)
-        for cov_path_raw, info in files.items():
-            cov_path = str(cov_path_raw)
-            if cov_path.endswith(rel) or rel.endswith(cov_path):
-                if not isinstance(info, dict):
-                    continue
-                info_typed = cast(_CAST_DICT_STR_OBJ, info)
-                summary_raw = info_typed.get("summary", {})
-                if not isinstance(summary_raw, dict):
-                    continue
-                summary = cast(_CAST_DICT_STR_OBJ, summary_raw)
-                pct_raw = summary.get("percent_covered", 70)
-                if isinstance(pct_raw, (int, float)):
-                    return min(100, max(0, int(pct_raw)))
+        return _find_file_coverage(files, str(file_path))
     except (OSError, ValueError):
-        pass
+        return 70
 
+
+def _find_file_coverage(files: dict[str, object], rel: str) -> int:
+    """Look up coverage percentage for a file path by suffix matching."""
+    for cov_path_raw, info in files.items():
+        cov_path = str(cov_path_raw)
+        if not (cov_path.endswith(rel) or rel.endswith(cov_path)):
+            continue
+        if not isinstance(info, dict):
+            continue
+        info_typed = cast(_CAST_DICT_STR_OBJ, info)
+        summary_raw = info_typed.get("summary", {})
+        if not isinstance(summary_raw, dict):
+            continue
+        summary = cast(_CAST_DICT_STR_OBJ, summary_raw)
+        pct_raw = summary.get("percent_covered", 70)
+        if isinstance(pct_raw, (int, float)):
+            return min(100, max(0, int(pct_raw)))
     return 70
 
 

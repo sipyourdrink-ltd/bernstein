@@ -188,91 +188,100 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
     )
 
     tasks: list[Task] = []
-    # Map stage name -> list of task titles produced by that stage
     stage_tasks: dict[str, list[str]] = {}
 
     for i, stage in enumerate(stages):
-        if not isinstance(stage, dict):
-            raise PlanLoadError(f"Stage {i} must be a mapping")
-
-        stage_name = stage.get("name")
-        if not stage_name:
-            raise PlanLoadError(f"Stage {i} is missing a name")
-
-        steps = stage.get("steps")
-        if not steps:
-            logger.warning("Stage %r has no steps", stage_name)
-            stage_tasks[str(stage_name)] = []
-            continue
-
-        stage_tasks[str(stage_name)] = []
-        stage_deps: list[str] = [str(d) for d in (stage.get("depends_on") or [])]
-
-        # Stage-level repo routing: steps inherit the stage repo unless overridden
-        stage_repo: str | None = str(stage["repo"]) if stage.get("repo") else None
-
-        for j, step in enumerate(steps):
-            if not isinstance(step, dict):
-                raise PlanLoadError(f"Step {j} in stage {stage_name!r} must be a mapping")
-
-            title = _step_title(step, str(stage_name), j)
-
-            # Resolve cross-stage dependencies to the *titles* of upstream tasks
-            depends_on: list[str] = []
-            for dep_stage in stage_deps:
-                if dep_stage in stage_tasks:
-                    depends_on.extend(stage_tasks[dep_stage])
-                else:
-                    logger.warning("Stage %r depends on unknown stage %r", stage_name, dep_stage)
-
-            # Parse completion signals if present
-            raw_signals: list[object] = list(step.get("completion_signals") or [])
-            signals = _parse_completion_signals(raw_signals)
-
-            # Map 'files' → owned_files
-            owned_files: list[str] = [str(f) for f in (step.get("files") or [])]
-
-            # Optional routing overrides
-            model_raw = step.get("model")
-            effort_raw = step.get("effort")
-            estimated_minutes_raw = step.get("estimated_minutes")
-
-            # Execution mode: "batch" delegates to Claude Code /batch skill
-            mode_raw = step.get("mode")
-            execution_mode: str | None = str(mode_raw) if mode_raw else None
-
-            # Repo routing: step-level overrides stage-level
-            step_repo_raw = step.get("repo")
-            task_repo: str | None = str(step_repo_raw) if step_repo_raw else stage_repo
-
-            # Cross-repo dependency: which repo must complete first
-            depends_on_repo_raw = step.get("depends_on_repo")
-            task_depends_on_repo: str | None = str(depends_on_repo_raw) if depends_on_repo_raw else None
-
-            task = Task(
-                id=f"plan-{i}-{j}",
-                title=title,
-                description=str(step.get("description", title)),
-                role=str(step.get("role", "backend")),
-                priority=int(step.get("priority", 2)),
-                scope=Scope(step.get("scope", "medium")),
-                complexity=Complexity(step.get("complexity", "medium")),
-                estimated_minutes=int(estimated_minutes_raw) if estimated_minutes_raw is not None else 30,
-                status=TaskStatus.OPEN,
-                task_type=TaskType.STANDARD,
-                depends_on=depends_on,
-                owned_files=owned_files,
-                completion_signals=signals,
-                model=str(model_raw) if model_raw else None,
-                effort=str(effort_raw) if effort_raw else None,
-                execution_mode=execution_mode,
-                repo=task_repo,
-                depends_on_repo=task_depends_on_repo,
-            )
-            tasks.append(task)
-            stage_tasks[str(stage_name)].append(title)
+        _parse_stage(stage, i, stage_tasks, tasks)
 
     return config, tasks
+
+
+def _parse_stage(
+    stage: object,
+    stage_index: int,
+    stage_tasks: dict[str, list[str]],
+    tasks: list[Task],
+) -> None:
+    """Parse a single stage and append its tasks to *tasks*."""
+    if not isinstance(stage, dict):
+        raise PlanLoadError(f"Stage {stage_index} must be a mapping")
+
+    stage_name = stage.get("name")
+    if not stage_name:
+        raise PlanLoadError(f"Stage {stage_index} is missing a name")
+
+    steps = stage.get("steps")
+    if not steps:
+        logger.warning("Stage %r has no steps", stage_name)
+        stage_tasks[str(stage_name)] = []
+        return
+
+    stage_tasks[str(stage_name)] = []
+    stage_deps: list[str] = [str(d) for d in (stage.get("depends_on") or [])]
+    stage_repo: str | None = str(stage["repo"]) if stage.get("repo") else None
+
+    for j, step in enumerate(steps):
+        task = _parse_step(step, stage_index, j, str(stage_name), stage_deps, stage_tasks, stage_repo)
+        tasks.append(task)
+        stage_tasks[str(stage_name)].append(task.title)
+
+
+def _parse_step(
+    step: object,
+    stage_index: int,
+    step_index: int,
+    stage_name: str,
+    stage_deps: list[str],
+    stage_tasks: dict[str, list[str]],
+    stage_repo: str | None,
+) -> Task:
+    """Parse a single step dict into a Task."""
+    if not isinstance(step, dict):
+        raise PlanLoadError(f"Step {step_index} in stage {stage_name!r} must be a mapping")
+
+    title = _step_title(step, stage_name, step_index)
+
+    depends_on: list[str] = []
+    for dep_stage in stage_deps:
+        if dep_stage in stage_tasks:
+            depends_on.extend(stage_tasks[dep_stage])
+        else:
+            logger.warning("Stage %r depends on unknown stage %r", stage_name, dep_stage)
+
+    raw_signals: list[object] = list(step.get("completion_signals") or [])
+    signals = _parse_completion_signals(raw_signals)
+    owned_files: list[str] = [str(f) for f in (step.get("files") or [])]
+
+    model_raw = step.get("model")
+    effort_raw = step.get("effort")
+    estimated_minutes_raw = step.get("estimated_minutes")
+    mode_raw = step.get("mode")
+    execution_mode: str | None = str(mode_raw) if mode_raw else None
+    step_repo_raw = step.get("repo")
+    task_repo: str | None = str(step_repo_raw) if step_repo_raw else stage_repo
+    depends_on_repo_raw = step.get("depends_on_repo")
+    task_depends_on_repo: str | None = str(depends_on_repo_raw) if depends_on_repo_raw else None
+
+    return Task(
+        id=f"plan-{stage_index}-{step_index}",
+        title=title,
+        description=str(step.get("description", title)),
+        role=str(step.get("role", "backend")),
+        priority=int(step.get("priority", 2)),
+        scope=Scope(step.get("scope", "medium")),
+        complexity=Complexity(step.get("complexity", "medium")),
+        estimated_minutes=int(estimated_minutes_raw) if estimated_minutes_raw is not None else 30,
+        status=TaskStatus.OPEN,
+        task_type=TaskType.STANDARD,
+        depends_on=depends_on,
+        owned_files=owned_files,
+        completion_signals=signals,
+        model=str(model_raw) if model_raw else None,
+        effort=str(effort_raw) if effort_raw else None,
+        execution_mode=execution_mode,
+        repo=task_repo,
+        depends_on_repo=task_depends_on_repo,
+    )
 
 
 def load_plan_from_yaml(path: Path) -> list[Task]:

@@ -417,32 +417,33 @@ def preflight_checks(cli: str, port: int) -> None:
         SystemExit: On any pre-flight failure, with an actionable message.
     """
     if cli == "mock":
-        # Mock adapter: no binary or API key needed (built-in simulation)
         console.print(f"[green]{_CHECK}[/green] Mock adapter ready (no API key needed)")
     elif cli == "auto":
-        # Auto mode: use agent_discovery for rich detection with auth + model info
-        from bernstein.core.agent_discovery import discover_agents_cached, short_model
-
-        discovery = discover_agents_cached()
-        if not discovery.agents:
-            console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
-            for name, hint in _CLI_INSTALL_HINT.items():
-                console.print(f"  {name}: {hint}")
-            raise SystemExit(1)
-
-        # Build "Claude (sonnet/opus), Codex (o4-mini)" description
-        agent_parts: list[str] = []
-        for agent in discovery.agents:
-            short_models = [short_model(m) for m in agent.available_models[:2]]
-            auth_note = "" if agent.logged_in else " [dim](not authenticated)[/dim]"
-            agent_parts.append(f"{agent.name.capitalize()} ({'/'.join(short_models)}){auth_note}")
-        routing_note = "Using auto-routing." if len(discovery.agents) > 1 else "Using as primary."
-        console.print(f"[green]{_CHECK}[/green] Found: {', '.join(agent_parts)}. {routing_note}")
-
-        # Surface any auth warnings as hints
-        for w in discovery.warnings:
-            console.print(f"  [yellow]{_ARROW}[/yellow] {w}")
+        _preflight_auto_mode()
     else:
         _check_binary(cli)
         _check_api_key(cli)
     _check_port_free(port)
+
+
+def _preflight_auto_mode() -> None:
+    """Run auto-discovery preflight for multi-agent mode."""
+    from bernstein.core.agent_discovery import discover_agents_cached, short_model
+
+    discovery = discover_agents_cached()
+    if not discovery.agents:
+        console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
+        for name, hint in _CLI_INSTALL_HINT.items():
+            console.print(f"  {name}: {hint}")
+        raise SystemExit(1)
+
+    agent_parts: list[str] = []
+    for agent in discovery.agents:
+        short_models = [short_model(m) for m in agent.available_models[:2]]
+        auth_note = "" if agent.logged_in else " [dim](not authenticated)[/dim]"
+        agent_parts.append(f"{agent.name.capitalize()} ({'/'.join(short_models)}){auth_note}")
+    routing_note = "Using auto-routing." if len(discovery.agents) > 1 else "Using as primary."
+    console.print(f"[green]{_CHECK}[/green] Found: {', '.join(agent_parts)}. {routing_note}")
+
+    for w in discovery.warnings:
+        console.print(f"  [yellow]{_ARROW}[/yellow] {w}")

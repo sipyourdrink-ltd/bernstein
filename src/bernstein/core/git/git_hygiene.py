@@ -72,40 +72,53 @@ def _rmtree_windows_safe(path: Path, max_attempts: int = 3) -> bool:
     is_windows = sys.platform == "win32"
     attempts = max_attempts if is_windows else 1
 
-    for attempt in range(attempts):
-        try:
-            shutil.rmtree(path, onerror=_onerror)
-            return True
-        except OSError as exc:
-            if attempt < attempts - 1:
-                # Wait for file locks to release (antivirus, processes exiting)
-                time.sleep(1.0)
-                logger.debug("Retry %d/%d removing %s: %s", attempt + 1, attempts, path, exc)
-            # Continue to PowerShell fallback
+    if _rmtree_with_retries(path, _onerror, attempts):
+        return True
 
-    # Final fallback on Windows: PowerShell Remove-Item -Force
-    if is_windows and path.exists():
-        try:
-            subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-Command",
-                    f"Remove-Item -LiteralPath '{path}' -Recurse -Force -ErrorAction SilentlyContinue",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if not path.exists():
-                return True
-        except Exception as exc:
-            logger.debug("PowerShell Remove-Item failed for %s: %s", path, exc)
+    if is_windows and path.exists() and _rmtree_powershell_fallback(path):
+        return True
 
     if path.exists():
         logger.warning("Failed to remove %s after %d attempts", path, attempts)
         return False
     return True
+
+
+def _rmtree_with_retries(
+    path: Path,
+    onerror: Callable[[Callable[[str], object], str, object], None],
+    attempts: int,
+) -> bool:
+    """Try shutil.rmtree up to *attempts* times, sleeping between retries."""
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path, onerror=onerror)
+            return True
+        except OSError as exc:
+            if attempt < attempts - 1:
+                time.sleep(1.0)
+                logger.debug("Retry %d/%d removing %s: %s", attempt + 1, attempts, path, exc)
+    return False
+
+
+def _rmtree_powershell_fallback(path: Path) -> bool:
+    """Last-resort removal via PowerShell on Windows."""
+    try:
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"Remove-Item -LiteralPath '{path}' -Recurse -Force -ErrorAction SilentlyContinue",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return not path.exists()
+    except Exception as exc:
+        logger.debug("PowerShell Remove-Item failed for %s: %s", path, exc)
+        return False
 
 
 def run_hygiene(workdir: Path, *, full: bool = False) -> dict[str, int]:

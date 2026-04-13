@@ -36,6 +36,13 @@ def run(orch: Any) -> None:
     Args:
         orch: The orchestrator instance.
     """
+    _run_startup(orch)
+    _run_loop(orch)
+    _run_shutdown(orch)
+
+
+def _run_startup(orch: Any) -> None:
+    """Initialise the orchestrator before the first tick."""
     orch._running = True
     logger.info(
         "Orchestrator started (poll=%ds, max_agents=%d, server=%s)",
@@ -43,20 +50,24 @@ def run(orch: Any) -> None:
         orch._config.max_agents,
         orch._config.server_url,
     )
-    # Start cluster heartbeat client (registers this node with central server)
     if orch._heartbeat_client is not None:
         orch._heartbeat_client.start()
         logger.info("Cluster heartbeat client started")
     orch._post_bulletin("status", "run started")
     orch._notify("run.started", "Bernstein run started", "Agents are being spawned.")
-    # Reconcile tasks left in "claimed" from a previous run whose agents no
-    # longer exist.  Must happen after the server is confirmed reachable but
-    # before the first tick.
     orch._reconcile_claimed_tasks()
-    _run_started_extra: dict[str, object] = {}
+    _record_run_started(orch)
+    _recover_wal(orch)
+    _verify_audit_integrity(orch)
+    _cleanup_zombies(orch)
+
+
+def _record_run_started(orch: Any) -> None:
+    """Record the run_started event."""
+    extra: dict[str, object] = {}
     if orch._workflow_executor is not None:
-        _run_started_extra["workflow_name"] = orch._workflow_executor.definition.name
-        _run_started_extra["workflow_hash"] = orch._workflow_executor.definition_hash
+        extra["workflow_name"] = orch._workflow_executor.definition.name
+        extra["workflow_hash"] = orch._workflow_executor.definition_hash
     orch._recorder.record(
         "run_started",
         run_id=orch._run_id,
@@ -65,16 +76,20 @@ def run(orch: Any) -> None:
         git_sha=orch._replay_metadata.git_sha,
         git_branch=orch._replay_metadata.git_branch,
         config_hash=orch._replay_metadata.config_hash,
-        **_run_started_extra,
+        **extra,
     )
-    # WAL recovery: detect uncommitted entries from crashed previous runs.
-    # Must run after WAL writer is initialized (in __init__) so that
-    # acknowledgement entries are written to the current run's WAL.
+
+
+def _recover_wal(orch: Any) -> None:
+    """WAL recovery: detect uncommitted entries from crashed previous runs."""
     try:
         orch._recover_from_wal()
     except Exception:
         logger.exception("WAL recovery failed (non-fatal) — continuing startup")
-    # Audit log integrity check: verify the last N HMAC-chained entries.
+
+
+def _verify_audit_integrity(orch: Any) -> None:
+    """Audit log integrity check: verify the last N HMAC-chained entries."""
     try:
         from bernstein.core.audit_integrity import verify_on_startup
 
@@ -92,7 +107,10 @@ def run(orch: Any) -> None:
             )
     except Exception:
         logger.exception("Audit integrity check failed (non-fatal) — continuing startup")
-    # Zombie cleanup: terminate orphaned agent processes from prior crashed runs.
+
+
+def _cleanup_zombies(orch: Any) -> None:
+    """Terminate orphaned agent processes from prior crashed runs."""
     try:
         from bernstein.core.zombie_cleanup import scan_and_cleanup_zombies
 
@@ -107,6 +125,10 @@ def run(orch: Any) -> None:
             )
     except Exception:
         logger.exception("Zombie cleanup failed (non-fatal) — continuing startup")
+
+
+def _run_loop(orch: Any) -> None:
+    """Execute the main tick loop."""
     consecutive_failures = 0
     max_consecutive_failures = 10
 
@@ -125,46 +147,51 @@ def run(orch: Any) -> None:
                 consecutive_failures,
             )
             if consecutive_failures >= max_consecutive_failures:
-                logger.error(
-                    "Stopping after %d consecutive tick failures",
-                    consecutive_failures,
-                )
+                logger.error("Stopping after %d consecutive tick failures", consecutive_failures)
                 break
         if orch._config.dry_run:
             break
-        # Adaptive backoff: double sleep when idle, reset when work is found.
-        # On server failure: sleep longer to give supervisor time to restart.
-        server_failures = getattr(orch, "_consecutive_server_failures", 0)
-        if server_failures > 0:
-            # Backoff: 5s, 10s, 15s, 20s, 30s (capped)
-            time.sleep(min(5.0 * server_failures, 30.0))
-        elif tick_result is not None and (
-            tick_result.spawned or tick_result.verified or tick_result.retried or tick_result.open_tasks > 0
-        ):
-            orch._idle_multiplier = 1
-            time.sleep(orch._config.poll_interval_s)
-        else:
-            orch._idle_multiplier = min(orch._idle_multiplier * 2, 8)
-            time.sleep(min(orch._config.poll_interval_s * orch._idle_multiplier, 30.0))
-
-        # Hot-reload bernstein.yaml config (mutable fields only)
+        _adaptive_sleep(orch, tick_result)
         orch._maybe_reload_config()
+        if _check_restart_needed(orch):
+            return
 
-        # Check if a restart was requested (own source code changed)
-        restart_flag = orch._workdir / ".sdd" / "runtime" / "restart_requested"
-        needs_restart = False
-        if restart_flag.exists():
-            restart_flag.unlink(missing_ok=True)
-            needs_restart = True
-        elif orch._config.evolve_mode and orch._check_source_changed():
-            needs_restart = True
 
-        if needs_restart:
-            logger.info("Restarting orchestrator (own code updated)")
-            orch._save_session_state()
-            orch._restart()
-            return  # _restart calls os.execv, but just in case
+def _adaptive_sleep(orch: Any, tick_result: Any) -> None:
+    """Sleep with adaptive backoff based on tick activity."""
+    server_failures = getattr(orch, "_consecutive_server_failures", 0)
+    if server_failures > 0:
+        time.sleep(min(5.0 * server_failures, 30.0))
+    elif tick_result is not None and (
+        tick_result.spawned or tick_result.verified or tick_result.retried or tick_result.open_tasks > 0
+    ):
+        orch._idle_multiplier = 1
+        time.sleep(orch._config.poll_interval_s)
+    else:
+        orch._idle_multiplier = min(orch._idle_multiplier * 2, 8)
+        time.sleep(min(orch._config.poll_interval_s * orch._idle_multiplier, 30.0))
 
+
+def _check_restart_needed(orch: Any) -> bool:
+    """Check if the orchestrator should restart (code change or flag file)."""
+    restart_flag = orch._workdir / ".sdd" / "runtime" / "restart_requested"
+    needs_restart = False
+    if restart_flag.exists():
+        restart_flag.unlink(missing_ok=True)
+        needs_restart = True
+    elif orch._config.evolve_mode and orch._check_source_changed():
+        needs_restart = True
+
+    if needs_restart:
+        logger.info("Restarting orchestrator (own code updated)")
+        orch._save_session_state()
+        orch._restart()
+        return True
+    return False
+
+
+def _run_shutdown(orch: Any) -> None:
+    """Drain active agents and clean up."""
     orch._drain_before_cleanup()
     orch._cleanup()
     orch._post_bulletin("status", "run stopped")

@@ -839,40 +839,54 @@ class DrainCoordinator:
 
     def _find_pid_by_port(self, port: int) -> int | None:
         """Find PID of process listening on a port (Windows/Unix)."""
-        import subprocess
         import sys
 
         try:
             if sys.platform == "win32":
-                # Windows: netstat -ano | findstr :port | findstr LISTENING
-                result = subprocess.run(
-                    ["netstat", "-ano"],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=5,
-                )
-                for line in result.stdout.splitlines():
-                    if f":{port}" in line and "LISTENING" in line:
-                        parts = line.split()
-                        if parts:
-                            try:
-                                return int(parts[-1])
-                            except ValueError:
-                                pass
-            else:
-                # Unix: lsof -ti :port
-                result = subprocess.run(
-                    ["lsof", "-ti", f":{port}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    return int(result.stdout.strip().split()[0])
+                return self._find_pid_by_port_windows(port)
+            return self._find_pid_by_port_unix(port)
         except Exception as exc:
             logger.debug("Port scan for %d failed: %s", port, exc)
+        return None
+
+    @staticmethod
+    def _find_pid_by_port_windows(port: int) -> int | None:
+        """Find PID listening on *port* using Windows netstat."""
+        import subprocess
+
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if f":{port}" not in line or "LISTENING" not in line:
+                continue
+            parts = line.split()
+            if not parts:
+                continue
+            try:
+                return int(parts[-1])
+            except ValueError:
+                pass
+        return None
+
+    @staticmethod
+    def _find_pid_by_port_unix(port: int) -> int | None:
+        """Find PID listening on *port* using lsof."""
+        import subprocess
+
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return int(result.stdout.strip().split()[0])
         return None
 
     def _read_runtime_pid(self, filename: str) -> int | None:

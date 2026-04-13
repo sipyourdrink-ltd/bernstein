@@ -20,6 +20,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _topological_sort(
+    repo_names: list[str],
+    adjacency: dict[str, set[str]],
+    indegree: dict[str, int],
+) -> list[str]:
+    """Kahn's algorithm for topological sort of repo names."""
+    queue = [name for name in repo_names if indegree[name] == 0]
+    ordered: list[str] = []
+    while queue:
+        current = queue.pop(0)
+        ordered.append(current)
+        for neighbour in sorted(adjacency[current]):
+            indegree[neighbour] -= 1
+            if indegree[neighbour] == 0:
+                queue.append(neighbour)
+    if len(ordered) != len(repo_names):
+        raise ValueError("Workspace repo dependencies contain a cycle")
+    return ordered
+
+
 @dataclass(frozen=True)
 class RepoConfig:
     """Configuration for a single repository in the workspace.
@@ -226,6 +246,15 @@ class Workspace:
             ValueError: If repo dependencies contain a cycle.
         """
         repo_names = [repo.name for repo in self.repos]
+        adjacency, indegree = self._build_repo_graph(repo_names, tasks)
+        return _topological_sort(repo_names, adjacency, indegree)
+
+    @staticmethod
+    def _build_repo_graph(
+        repo_names: list[str],
+        tasks: list[Task],
+    ) -> tuple[dict[str, set[str]], dict[str, int]]:
+        """Build a dependency graph from repo tasks."""
         repo_set = set(repo_names)
         adjacency: dict[str, set[str]] = {name: set() for name in repo_names}
         indegree: dict[str, int] = dict.fromkeys(repo_names, 0)
@@ -239,22 +268,7 @@ class Workspace:
             if repo not in adjacency[dep]:
                 adjacency[dep].add(repo)
                 indegree[repo] += 1
-
-        queue = [name for name in repo_names if indegree[name] == 0]
-        ordered: list[str] = []
-
-        while queue:
-            current = queue.pop(0)
-            ordered.append(current)
-            for neighbour in sorted(adjacency[current]):
-                indegree[neighbour] -= 1
-                if indegree[neighbour] == 0:
-                    queue.append(neighbour)
-
-        if len(ordered) != len(repo_names):
-            raise ValueError("Workspace repo dependencies contain a cycle")
-
-        return ordered
+        return adjacency, indegree
 
     # -- private git helpers --------------------------------------------------
 
