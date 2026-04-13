@@ -12,10 +12,17 @@ from __future__ import annotations
 
 import datetime
 import os
-import select
 import sys
-import termios
-import tty
+
+# Platform-specific imports for terminal handling
+if sys.platform == "win32":
+    import msvcrt
+    _IS_WINDOWS = True
+else:
+    import select
+    import termios
+    import tty
+    _IS_WINDOWS = False
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -111,6 +118,11 @@ def _raw_mode() -> Iterator[None]:
         yield
         return
 
+    if _IS_WINDOWS:
+        # Windows does not need raw mode setup - msvcrt handles it
+        yield
+        return
+
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
@@ -128,6 +140,19 @@ def _read_key() -> str:
     """
     if not sys.stdin.isatty():
         return "y"  # auto-approve for non-TTY
+
+    if _IS_WINDOWS:
+        # Use msvcrt for Windows keypress detection
+        ch = msvcrt.getch()
+        if ch == b"\r" or ch == b"\n":
+            return "enter"
+        if ch == b"\x1b":
+            return "escape"
+        try:
+            decoded = ch.decode("utf-8", errors="replace").lower()
+        except Exception:
+            return ""
+        return decoded
 
     fd = sys.stdin.fileno()
     # Wait for input
@@ -150,8 +175,13 @@ def _drain_input() -> None:
     if not sys.stdin.isatty():
         return
     try:
-        while select.select([sys.stdin], [], [], 0.0)[0]:
-            sys.stdin.read(1)
+        if _IS_WINDOWS:
+            # Drain buffered input on Windows using msvcrt
+            while msvcrt.kbhit():
+                msvcrt.getch()
+        else:
+            while select.select([sys.stdin], [], [], 0.0)[0]:
+                sys.stdin.read(1)
     except (OSError, ValueError):
         pass
 
