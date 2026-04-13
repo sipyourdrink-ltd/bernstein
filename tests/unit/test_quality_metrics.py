@@ -13,9 +13,9 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from bernstein.core.metric_collector import MetricsCollector
 from fastapi.testclient import TestClient
 
-from bernstein.core.metric_collector import MetricsCollector
 from bernstein.core.routes.quality import (
     _compute_gate_stats,
     _compute_per_model,
@@ -274,7 +274,7 @@ def test_quality_endpoint_with_completion_data(tmp_path: Path) -> None:
     metrics_dir = tmp_path / ".sdd" / "metrics"
     metrics_dir.mkdir(parents=True)
 
-    today = time.strftime("%Y-%m-%d")
+    today = time.strftime("%Y-%m-%d", time.gmtime())
     completion_file = metrics_dir / f"task_completion_time_{today}.jsonl"
     records = [
         {
@@ -407,7 +407,7 @@ def test_quality_trend_endpoint_with_data(tmp_path: Path) -> None:
     metrics_dir.mkdir(parents=True)
 
     # Write completion records for two different days
-    today = time.strftime("%Y-%m-%d")
+    today = time.strftime("%Y-%m-%d", time.gmtime())
     completion_file = metrics_dir / f"task_completion_time_{today}.jsonl"
     records = [
         {
@@ -469,7 +469,7 @@ def test_quality_trend_week_granularity(tmp_path: Path) -> None:
     metrics_dir = tmp_path / ".sdd" / "metrics"
     metrics_dir.mkdir(parents=True)
 
-    today = time.strftime("%Y-%m-%d")
+    today = time.strftime("%Y-%m-%d", time.gmtime())
     completion_file = metrics_dir / f"task_completion_time_{today}.jsonl"
     records = [
         {
