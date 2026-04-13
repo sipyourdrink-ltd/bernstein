@@ -83,7 +83,7 @@ _STRATEGY_MAP: dict[str, list[str]] = {
 def dry_run_merge(
     source: str,
     target: str,
-    workdir: Path,
+    _workdir: Path,
     *,
     task_id: str = "",
 ) -> MergeCheckResult:

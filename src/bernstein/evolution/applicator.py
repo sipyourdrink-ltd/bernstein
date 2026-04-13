@@ -64,7 +64,7 @@ class FileUpgradeExecutor:
             logger.exception("Failed to execute upgrade %s: %s", proposal.category, exc)
             return False
 
-    def rollback_upgrade(self, proposal: UpgradeProposal) -> bool:
+    def rollback_upgrade(self, _proposal: UpgradeProposal) -> bool:
         """Rollback an upgrade by restoring backup files."""
         try:
             for backup_key, backup_path in self._backup_files.items():

@@ -443,30 +443,34 @@ class PostgresTaskStore(BaseTaskStore):
 
             assert self._pool is not None
             async with self._pool.acquire() as conn:
-                if expected_version is not None:
-                    row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version)
-                    if row is None:
-                        # Check whether the task exists at all
-                        exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
-                        if not exists:
-                            raise KeyError(task_id)
-                        ver = await conn.fetchval("SELECT version FROM tasks WHERE id=$1", task_id)
-                        raise ValueError(
-                            f"Version conflict: task {task_id} is at version {ver}, expected {expected_version}"
-                        )
-                else:
-                    row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id)
-                    if row is None:
-                        exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
-                        if not exists:
-                            raise KeyError(task_id)
-                        # Task exists but not open — return as-is
-                        row = await conn.fetchrow("SELECT * FROM tasks WHERE id=$1", task_id)
-                        assert row is not None
+                row = await self._claim_row(conn, task_id, expected_version)
             return _row_to_task(row)
         finally:
             if self._redis is not None and lock_token is not None:
                 await self._redis.release(task_id, lock_token)
+
+    @staticmethod
+    async def _claim_row(conn: Any, task_id: str, expected_version: int | None) -> Any:
+        """Execute the claim query and handle missing/conflicting tasks."""
+        if expected_version is not None:
+            row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version)
+            if row is None:
+                exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
+                if not exists:
+                    raise KeyError(task_id)
+                ver = await conn.fetchval("SELECT version FROM tasks WHERE id=$1", task_id)
+                raise ValueError(
+                    f"Version conflict: task {task_id} is at version {ver}, expected {expected_version}"
+                )
+            return row
+        row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id)
+        if row is None:
+            exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
+            if not exists:
+                raise KeyError(task_id)
+            row = await conn.fetchrow("SELECT * FROM tasks WHERE id=$1", task_id)
+            assert row is not None
+        return row
 
     async def claim_batch(
         self,

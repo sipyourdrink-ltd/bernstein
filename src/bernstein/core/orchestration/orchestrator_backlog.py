@@ -230,7 +230,7 @@ def ingest_backlog(orch: Any) -> int:
     return count
 
 
-def _claim_backlog_file(orch: Any, backlog_file: Path, open_dir: Path, claimed_dir: Path) -> None:
+def _claim_backlog_file(_orch: Any, backlog_file: Path, open_dir: Path, claimed_dir: Path) -> None:
     """Mark a backlog file as claimed.
 
     Files from ``open/`` are moved into ``claimed/``.

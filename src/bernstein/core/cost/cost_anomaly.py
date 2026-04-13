@@ -132,7 +132,7 @@ class CostAnomalyDetector:
 
     def check_tick(
         self,
-        agents: Sequence[AgentSession],  # reserved for future per-agent checks
+        _agents: Sequence[AgentSession],  # reserved for future per-agent checks
         cost_tracker: CostTracker,
     ) -> list[AnomalySignal]:
         """Run per-tick checks (burn rate).

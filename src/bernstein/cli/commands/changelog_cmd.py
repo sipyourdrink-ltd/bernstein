@@ -150,7 +150,7 @@ def _format_keepachangelog(
     entries: list[CommitEntry],
     version: str,
     since_ref: str | None,
-    until_ref: str,
+    _until_ref: str,
     repo_url: str | None,
 ) -> str:
     """Render entries in Keep a Changelog format."""
@@ -203,8 +203,8 @@ def _format_keepachangelog(
 def _format_simple(
     entries: list[CommitEntry],
     version: str,
-    since_ref: str | None,
-    until_ref: str,
+    _since_ref: str | None,
+    _until_ref: str,
 ) -> str:
     """Render a simple plain-text changelog."""
     from collections import defaultdict

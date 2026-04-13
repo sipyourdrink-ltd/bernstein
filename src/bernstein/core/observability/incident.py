@@ -236,7 +236,7 @@ class IncidentManager:
         total_task_count: int,
         consecutive_failures: int,
         error_budget_depleted: bool,
-        recent_errors: list[str] | None = None,
+        _recent_errors: list[str] | None = None,
     ) -> Incident | None:
         """Auto-detect incident conditions and create incidents."""
         # SEV1: >75% failure rate with 10+ tasks

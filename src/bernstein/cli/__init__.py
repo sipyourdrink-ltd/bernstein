@@ -145,7 +145,7 @@ class _CLIRedirectFinder(MetaPathFinder):
 
 
 class _CLIRedirectLoader:
-    def create_module(self, spec: ModuleSpec) -> ModuleType | None:
+    def create_module(self, _spec: ModuleSpec) -> ModuleType | None:
         return None
 
     def exec_module(self, module: ModuleType) -> None:
@@ -158,7 +158,7 @@ class _CLIRedirectLoader:
         module.__file__ = getattr(real, "__file__", None)
         sys.modules[fullname] = real
 
-    def get_code(self, fullname: str) -> None:
+    def get_code(self, _fullname: str) -> None:
         """Return None — redirect loaders don't provide code objects."""
         return None
 

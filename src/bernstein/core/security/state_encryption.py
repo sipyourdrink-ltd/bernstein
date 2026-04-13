@@ -161,7 +161,7 @@ class EncryptedFile:
 
     # -- Read operations ----------------------------------------------------
 
-    def read(self, size: int = -1) -> bytes:
+    def read(self, _size: int = -1) -> bytes:
         """Read and decrypt file contents.
 
         Args:

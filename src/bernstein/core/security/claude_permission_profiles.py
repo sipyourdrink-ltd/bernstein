@@ -178,7 +178,7 @@ class PermissionProfileManager:
         """Clear all per-task overrides."""
         self.overrides.clear()
 
-    def build_settings(self, role: str, workdir: Path | None = None) -> dict[str, Any]:
+    def build_settings(self, role: str, _workdir: Path | None = None) -> dict[str, Any]:
         """Build Claude Code settings dict for a role.
 
         Args:

@@ -895,7 +895,7 @@ class GateRunnerCommandsMixin:
     def _run_test_expansion_gate_sync(
         self: Any,
         step: GatePipelineStep,
-        task: Any,
+        _task: Any,
         run_dir: Path,
         changed_files: list[str],
     ) -> GateResult:

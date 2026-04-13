@@ -450,7 +450,7 @@ class SafetyCheck:
     def name(self) -> str:
         return self.__class__.__name__
 
-    def pre_hijack_check(self, opportunities: list[HijackOpportunity]) -> bool:
+    def pre_hijack_check(self, _opportunities: list[HijackOpportunity]) -> bool:
         """
         Check if hijacking is safe.
 

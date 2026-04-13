@@ -262,29 +262,35 @@ class EffectivenessScorer:
             return (0.0, 50)
 
         report = cast("Any", gate_report)
+        total = self._extract_quality_total(report)
+        pass_rate = self._extract_pass_rate(report, total)
+        return (pass_rate, total)
 
+    @staticmethod
+    def _extract_quality_total(report: Any) -> int:
+        """Extract numeric quality total from a gate report."""
         if hasattr(report, "quality_score") and report.quality_score is not None:
-            quality_score = report.quality_score
-            total = int(getattr(quality_score, "total", 50))
-        elif hasattr(report, "overall_pass"):
-            total = 100 if bool(report.overall_pass) else 0
-        elif hasattr(report, "passed"):
-            total = 100 if bool(report.passed) else 0
-        else:
-            total = 50
+            return int(getattr(report.quality_score, "total", 50))
+        if hasattr(report, "overall_pass"):
+            return 100 if bool(report.overall_pass) else 0
+        if hasattr(report, "passed"):
+            return 100 if bool(report.passed) else 0
+        return 50
 
-        results: list[Any] = []
+    @staticmethod
+    def _extract_pass_rate(report: Any, total: int) -> float:
+        """Extract pass rate from a gate report's results list."""
         if hasattr(report, "results"):
             results = list(cast("list[Any]", report.results))
             passes = sum(
                 1 for result in results if str(getattr(result, "status", "")) in {"pass", "skipped", "bypassed"}
             )
-            return ((passes / len(results)) if results else 0.0, total)
+            return (passes / len(results)) if results else 0.0
         if hasattr(report, "gate_results"):
             results = list(cast("list[Any]", report.gate_results))
             passes = sum(1 for result in results if bool(getattr(result, "passed", False)))
-            return ((passes / len(results)) if results else 0.0, total)
-        return (1.0 if total == 100 else 0.0, total)
+            return (passes / len(results)) if results else 0.0
+        return 1.0 if total == 100 else 0.0
 
     def _retry_count(self, title: str) -> int:
         """Extract retry count markers from the task title."""

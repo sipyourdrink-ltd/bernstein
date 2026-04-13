@@ -324,7 +324,7 @@ class _OnePasswordInjector:
         logger.info("1Password credential fetched: item=%s fields=%d", config.path, len(env_vars))
         return env_vars, lease
 
-    def revoke(self, lease: CredentialLease) -> None:
+    def revoke(self, _lease: CredentialLease) -> None:
         """1Password has no credential revocation API."""
         logger.debug("1Password credentials are static; no revocation available")
 

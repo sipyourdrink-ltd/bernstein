@@ -147,7 +147,7 @@ def generate_mutants(source_code: str, module_name: str) -> list[_Mutant]:
     return mutants
 
 
-def _compare_mutants(source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mutant]:
+def _compare_mutants(_source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mutant]:
     """Generate comparison-operator swap mutants."""
     if not isinstance(node, ast.Compare):
         return []
@@ -175,7 +175,7 @@ def _compare_mutants(source_code: str, tree: ast.Module, node: ast.AST) -> list[
     return results
 
 
-def _binop_mutants(source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mutant]:
+def _binop_mutants(_source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mutant]:
     """Generate binary-operator swap mutants."""
     if not isinstance(node, ast.BinOp):
         return []
@@ -200,7 +200,7 @@ def _binop_mutants(source_code: str, tree: ast.Module, node: ast.AST) -> list[_M
     ]
 
 
-def _bool_mutants(source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mutant]:
+def _bool_mutants(_source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mutant]:
     """Generate boolean constant negation mutants."""
     if not isinstance(node, ast.Constant) or not isinstance(node.value, bool):
         return []
@@ -223,7 +223,7 @@ def _bool_mutants(source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mu
     ]
 
 
-def _return_mutants(source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mutant]:
+def _return_mutants(_source_code: str, tree: ast.Module, node: ast.AST) -> list[_Mutant]:
     """Generate return-removal mutants (``return expr`` -> ``return None``)."""
     if not isinstance(node, ast.Return) or node.value is None:
         return []

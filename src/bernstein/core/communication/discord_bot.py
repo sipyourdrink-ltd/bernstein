@@ -113,7 +113,7 @@ class CommandResult:
 # ---------------------------------------------------------------------------
 
 
-def handle_demo(args: str) -> CommandResult:
+def handle_demo(_args: str) -> CommandResult:
     """Return a formatted demo showing a sample orchestration run.
 
     Args:

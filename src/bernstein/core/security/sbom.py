@@ -544,7 +544,7 @@ def _osv_parse_package_entry(pkg_entry: dict[str, Any]) -> list[SBOMVulnFinding]
     return findings
 
 
-def _parse_osv_scanner_output(stdout: str, sbom_serial: str) -> list[SBOMVulnFinding]:
+def _parse_osv_scanner_output(stdout: str, _sbom_serial: str) -> list[SBOMVulnFinding]:
     """Parse JSON output from ``osv-scanner --format=json``."""
     if not stdout.strip():
         return []
@@ -565,7 +565,7 @@ def _parse_osv_scanner_output(stdout: str, sbom_serial: str) -> list[SBOMVulnFin
     return findings
 
 
-def _parse_grype_output(stdout: str, sbom_serial: str) -> list[SBOMVulnFinding]:
+def _parse_grype_output(stdout: str, _sbom_serial: str) -> list[SBOMVulnFinding]:
     """Parse JSON output from ``grype -o json``."""
     findings: list[SBOMVulnFinding] = []
     if not stdout.strip():

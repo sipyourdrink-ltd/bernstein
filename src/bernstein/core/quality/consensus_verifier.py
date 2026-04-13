@@ -119,20 +119,16 @@ def select_diverse_verifier_models(writer_model: str, n: int) -> list[str]:
     for family, model in _REVIEWER_POOL:
         if len(selected) >= n:
             break
-        if family == excluded_family:
-            continue
-        if family in used_families:
-            continue
-        selected.append(model)
-        used_families.add(family)
+        if family != excluded_family and family not in used_families:
+            selected.append(model)
+            used_families.add(family)
 
     # Second pass: fill remaining slots from any family (including excluded)
-    if len(selected) < n:
-        for _family, model in _REVIEWER_POOL:
-            if len(selected) >= n:
-                break
-            if model not in selected:
-                selected.append(model)
+    for _family, model in _REVIEWER_POOL:
+        if len(selected) >= n:
+            break
+        if model not in selected:
+            selected.append(model)
 
     return selected[:n]
 

@@ -84,7 +84,7 @@ class SlackReporter:
     # Internal
     # ------------------------------------------------------------------
 
-    def _post(self, text: str, *, urgent: bool = False) -> None:
+    def _post(self, text: str, *, _urgent: bool = False) -> None:
         """Send a Slack message via incoming webhook."""
         if not self._webhook_url:
             log.debug("SlackReporter: no webhook configured, skipping: %s", text[:100])

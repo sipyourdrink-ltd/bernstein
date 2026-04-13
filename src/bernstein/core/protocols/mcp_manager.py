@@ -790,7 +790,7 @@ class OAuthRefreshHandler:
         self.refresh_callbacks[server_name] = refresh_callback
         logger.info(f"Registered OAuth refresh callback for MCP server: {server_name}")
 
-    def handle_auth_error(self, server_name: str, error_code: int, error_message: str) -> bool:
+    def handle_auth_error(self, server_name: str, error_code: int, _error_message: str) -> bool:
         """Handle 401/403 errors by attempting OAuth refresh."""
         if error_code not in (401, 403):
             return False

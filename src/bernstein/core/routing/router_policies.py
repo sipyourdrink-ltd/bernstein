@@ -237,7 +237,7 @@ def get_free_tier_providers(providers: list[ProviderConfig]) -> list[ProviderCon
 
 
 def select_with_free_tier_priority(
-    task: Task,
+    _task: Task,
     candidates: list[ProviderConfig],
 ) -> ProviderConfig | None:
     """Select provider with free tier priority.
@@ -264,7 +264,7 @@ def select_with_free_tier_priority(
 
 def select_round_robin_agent(
     agents: list[Any],
-    task: Task,
+    _task: Task,
 ) -> Any | None:
     """Select agent using round-robin distribution.
 

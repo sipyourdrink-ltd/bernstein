@@ -91,7 +91,7 @@ def _extract_steps(clean_log: str) -> list[GitLabCIStep]:
     return steps
 
 
-def _extract_job_name(clean_log: str) -> str:
+def _extract_job_name(_clean_log: str) -> str:
     """Attempt to extract the job name from the log.
 
     Args:
