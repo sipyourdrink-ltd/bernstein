@@ -77,6 +77,8 @@ class TestRunGit:
             cwd=REPO,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             input=None,
         )
@@ -103,6 +105,8 @@ class TestRunGit:
             cwd=REPO,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             input="diff content",
         )
@@ -847,8 +851,9 @@ class TestCreateGithubPr:
             labels=["bernstein", "auto-generated"],
         )
         cmd = mock_run.call_args[0][0]
-        assert "--label" in cmd
-        label_idx = cmd.index("--label")
+        assert "--add-label" in cmd or "--label" in cmd
+        label_flag = "--add-label" if "--add-label" in cmd else "--label"
+        label_idx = cmd.index(label_flag)
         assert "bernstein" in cmd[label_idx + 1]
         assert "auto-generated" in cmd[label_idx + 1]
 

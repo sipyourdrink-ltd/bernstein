@@ -139,7 +139,7 @@ def render_queue_review_prompt(
     open_tasks: list[Task],
     claimed_tasks: list[Task],
     failed_tasks: list[Task],
-    _server_url: str,
+    server_url: str,
 ) -> str:
     """Build the queue review prompt for the manager.
 

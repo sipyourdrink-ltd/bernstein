@@ -240,7 +240,7 @@ class TestGetClient:
             mock_cls.return_value = MagicMock()
             get_client("openai")
             mock_cls.assert_called_once_with(
-                base_url=None,
+                base_url="https://api.openai.com/v1",
                 api_key="sk-test",
             )
 

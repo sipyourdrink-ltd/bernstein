@@ -711,7 +711,7 @@ class MetricsCollector:
         passed: bool,
         role: str,
         model: str,
-        _provider: str,
+        provider: str,
         *,
         tenant_id: str = "default",
     ) -> None:
