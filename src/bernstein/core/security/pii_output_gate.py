@@ -85,7 +85,7 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     # --- Platform tokens ---
     (
         "github_token",
-        re.compile(r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,255}\b"),
+        re.compile(r"\b(ghp|gho|ghu|ghs|ghr)_\w{36,255}\b"),
         "high",
         "GitHub personal access token or app token",
     ),

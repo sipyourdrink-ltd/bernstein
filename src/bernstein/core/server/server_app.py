@@ -220,7 +220,7 @@ class SSEBus:
         subscriber to prevent unbounded memory growth.
         """
         message = f"event: {event_type}\ndata: {data}\n\n"
-        for queue in list(self._subscribers):
+        for queue in self._subscribers:
             with contextlib.suppress(asyncio.QueueFull):
                 queue.put_nowait(message)
 
@@ -232,7 +232,7 @@ class SSEBus:
         """
         now = time.time()
         stale: list[asyncio.Queue[str]] = []
-        for queue in list(self._subscribers):
+        for queue in self._subscribers:
             last_read = self._subscriber_last_read.get(id(queue), 0.0)
             if (now - last_read) > self._stale_timeout_s:
                 stale.append(queue)
