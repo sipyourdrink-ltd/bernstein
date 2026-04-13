@@ -12,7 +12,6 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "requirements*.txt"
-  schedule:
 
 concurrency:
   group: license-${{ github.ref }}
