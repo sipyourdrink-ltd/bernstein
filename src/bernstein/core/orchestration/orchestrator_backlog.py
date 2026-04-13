@@ -98,6 +98,14 @@ def ingest_backlog(orch: Any) -> int:
             backlog_files.extend(src_dir.glob("*.yml"))
     backlog_files.sort()
 
+    # Filter by task pattern if BERNSTEIN_TASK_FILTER is set (e.g. "gh-62" or "mutant-fish")
+    import os
+    task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
+    if task_filter:
+        task_filter_lower = task_filter.lower()
+        backlog_files = [f for f in backlog_files if task_filter_lower in f.name.lower()]
+        logger.info("Task filter '%s' matched %d backlog file(s)", task_filter, len(backlog_files))
+
     if not backlog_files:
         return 0
 
