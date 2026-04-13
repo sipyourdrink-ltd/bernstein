@@ -48,7 +48,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (data.live_costs.should_stop) {
         if (!hasShownCostStop) {
           hasShownCostStop = true;
-          void vscode.window.showErrorMessage(
+          vscode.window.showErrorMessage(
             `Bernstein: Cost budget exceeded — $${data.live_costs.spent_usd.toFixed(2)} / $${data.live_costs.budget_usd.toFixed(2)} (${data.live_costs.percentage_used.toFixed(0)}%). Agents should be stopped.`,
           );
         }
@@ -59,7 +59,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (data.live_costs.should_warn) {
         if (!hasShownCostWarning) {
           hasShownCostWarning = true;
-          void vscode.window.showWarningMessage(
+          vscode.window.showWarningMessage(
             `Bernstein: Cost budget warning — $${data.live_costs.spent_usd.toFixed(2)} / $${data.live_costs.budget_usd.toFixed(2)} (${data.live_costs.percentage_used.toFixed(0)}% used).`,
           );
         }
@@ -143,7 +143,7 @@ export function activate(context: vscode.ExtensionContext): void {
             );
             if (data.live_costs.per_model) {
               const rows = Object.entries(data.live_costs.per_model)
-                .map(([m, c]) => `- ${m}: $${(c as number).toFixed(4)}`)
+                .map(([m, c]) => `- ${m}: $${c.toFixed(4)}`)
                 .join('\n');
               stream.markdown(`\n\n**By model:**\n${rows}`);
             }

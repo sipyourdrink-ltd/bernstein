@@ -12,10 +12,10 @@ function getNonce(): string {
 
 function escapeHtml(text: string): string {
   return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 }
 
 /** Build a 100x24 SVG sparkline from a rolling cost history array. */
@@ -193,7 +193,7 @@ function buildBodyContent(options: {
   if (!data) {
     return `${buildSkeletonGrid()}${buildOfflineState(baseUrl)}`;
   }
-  if (stats && stats.agents === 0 && total === 0) {
+  if (stats?.agents === 0 && total === 0) {
     return `<div class="header-bar"><h2>Overview</h2>${refreshDotHtml}</div>
 <div class="stats-grid">${statsHtml}</div>
 ${buildIdleState()}
@@ -516,7 +516,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage((message: { command?: string }) => {
       if (message.command === 'bernstein.start') {
-        void vscode.commands.executeCommand('bernstein.start');
+        vscode.commands.executeCommand('bernstein.start');
       }
     });
   }
@@ -553,6 +553,6 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
    * so we open externally.
    */
   static openInBrowser(baseUrl: string): void {
-    void vscode.env.openExternal(vscode.Uri.parse(`${baseUrl}/dashboard`));
+    vscode.env.openExternal(vscode.Uri.parse(`${baseUrl}/dashboard`));
   }
 }

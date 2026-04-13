@@ -34,10 +34,8 @@ COPY templates/demo/ /workspace/project/
 
 # Copy the demo-cycle script
 COPY docker/demo/demo-cycle.sh /usr/local/bin/demo-cycle
-RUN chmod +x /usr/local/bin/demo-cycle
-
-# Non-root user
-RUN useradd -m -u 1000 bernstein && \
+RUN chmod +x /usr/local/bin/demo-cycle && \
+    useradd -m -u 1000 bernstein && \
     chown -R bernstein:bernstein /workspace
 USER bernstein
 

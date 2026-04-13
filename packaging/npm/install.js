@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-const { execSync } = require("child_process");
+const { execSync } = require("node:child_process");
 
 function which(cmd) {
   try {

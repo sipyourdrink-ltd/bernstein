@@ -75,7 +75,7 @@ async def review(
         model=model,
         latency_ms=review_duration * 1000,
         tokens=0,
-        cost_usd=0.0,
+        _cost_usd=0.0,
         success=review_success,
     )
 
@@ -156,7 +156,7 @@ async def review_queue(
         open_tasks=open_tasks,
         claimed_tasks=claimed_tasks,
         failed_tasks=failed_tasks,
-        server_url=server_url,
+        _server_url=server_url,
     )
 
     try:
@@ -277,7 +277,7 @@ async def execute_upgrade(
             model=model,
             latency_ms=upgrade_duration * 1000,
             tokens=0,
-            cost_usd=task.upgrade_details.cost_estimate_usd,
+            _cost_usd=task.upgrade_details.cost_estimate_usd,
             success=transaction.status.value == "completed",
         )
 

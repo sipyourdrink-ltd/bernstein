@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table

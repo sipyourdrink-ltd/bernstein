@@ -110,16 +110,18 @@ class CompletionBudget:
                     total_cost_usd=float(entry.get("total_cost_usd", 0.0)),
                     budget_remaining=max(self.MAX_TOTAL_ATTEMPTS - total_attempts, 0),
                     is_exhausted=total_attempts >= self.MAX_TOTAL_ATTEMPTS or fix_count >= self.MAX_FIX_TASKS,
-                    recommendation=(
-                        "abandon"
-                        if total_attempts >= self.MAX_TOTAL_ATTEMPTS
-                        else "escalate_human"
-                        if fix_count >= self.MAX_FIX_TASKS
-                        else "continue"
-                    ),
+                    recommendation=self._compute_recommendation(total_attempts, fix_count),
                 )
             )
         return statuses
+
+    def _compute_recommendation(self, total_attempts: int, fix_count: int) -> str:
+        """Return the recommendation string for a budget status."""
+        if total_attempts >= self.MAX_TOTAL_ATTEMPTS:
+            return "abandon"
+        if fix_count >= self.MAX_FIX_TASKS:
+            return "escalate_human"
+        return "continue"
 
     def _read(self) -> dict[str, dict[str, Any]]:
         """Read budget state from disk."""

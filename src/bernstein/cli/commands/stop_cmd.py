@@ -276,12 +276,13 @@ def soft_stop(timeout: int) -> None:
         if number != _last_phase["number"]:
             if _last_phase["number"] > 0:
                 print()  # newline after previous phase
-            if status == "running":
-                icon = _running
-            elif status == "done":
-                icon = _done
-            else:
-                icon = _failed
+            match status:
+                case "running":
+                    icon = _running
+                case "done":
+                    icon = _done
+                case _:
+                    icon = _failed
             print(f"  {icon} Phase {number}/6: {name}", flush=True)
             _last_phase["number"] = number
 

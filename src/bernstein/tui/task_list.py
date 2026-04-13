@@ -408,7 +408,12 @@ class TaskListWidget(DataTable[Text]):
             dot = status_dot(row.status)
             status_text = accessible_status_label(row.status, accessibility)
             prefix = replace_unicode(f"{dot} ", accessibility)
-            priority_style = "magenta" if row.priority == 1 else "yellow" if row.priority == 2 else "dim"
+            if row.priority == 1:
+                priority_style = "magenta"
+            elif row.priority == 2:
+                priority_style = "yellow"
+            else:
+                priority_style = "dim"
             blocker_text = row.blocked_reason[:24] if row.blocked_reason else "—"
             blocker_style = "red" if row.blocked_reason else "dim"
             # TUI-010: render compact progress bar for in-progress tasks

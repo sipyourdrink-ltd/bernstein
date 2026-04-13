@@ -567,13 +567,23 @@ def build_slo_burndown_text(burndown: dict[str, object]) -> Text:
     # SLO compliance row
     slo_pct = slo_current * 100
     target_pct = slo_target * 100
-    slo_color = "green" if slo_current >= slo_target else ("yellow" if slo_current >= slo_target * 0.95 else "red")
+    if slo_current >= slo_target:
+        slo_color = "green"
+    elif slo_current >= slo_target * 0.95:
+        slo_color = "yellow"
+    else:
+        slo_color = "red"
     text.append("  Compliance: ", style="dim")
     text.append(f"{slo_pct:.1f}%", style=f"bold {slo_color}")
     text.append(f" / {target_pct:.0f}% target\n", style="dim")
 
     # Burn rate row
-    burn_color = "green" if burn_rate <= 1.0 else ("yellow" if burn_rate <= 2.0 else "red")
+    if burn_rate <= 1.0:
+        burn_color = "green"
+    elif burn_rate <= 2.0:
+        burn_color = "yellow"
+    else:
+        burn_color = "red"
     text.append("  Burn rate:  ", style="dim")
     text.append(f"{burn_rate:.2f}x", style=f"bold {burn_color}")
     text.append(" (1.0 = on-target)\n", style="dim")
@@ -582,7 +592,12 @@ def build_slo_burndown_text(burndown: dict[str, object]) -> Text:
     bar_width = 20
     consumed_chars = int((1.0 - budget_fraction) * bar_width)
     remaining_chars = bar_width - consumed_chars
-    bar_color = "green" if budget_fraction > 0.5 else ("yellow" if budget_fraction > 0.1 else "red")
+    if budget_fraction > 0.5:
+        bar_color = "green"
+    elif budget_fraction > 0.1:
+        bar_color = "yellow"
+    else:
+        bar_color = "red"
     bar = "\u2588" * consumed_chars + "\u2591" * remaining_chars
     text.append("  Budget:     ", style="dim")
     text.append(f"[{bar}]", style=bar_color)

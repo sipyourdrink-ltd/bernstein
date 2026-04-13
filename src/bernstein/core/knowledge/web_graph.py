@@ -130,7 +130,7 @@ def build_graph_data(tasks: list[dict[str, object]]) -> GraphData:
 
 
 def _topological_sort(
-    node_ids: set[str],
+    _node_ids: set[str],
     adjacency: dict[str, list[str]],
     in_degree: dict[str, int],
 ) -> list[str]:

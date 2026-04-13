@@ -1,5 +1,5 @@
-import * as http from 'http';
-import * as https from 'https';
+import * as http from 'node:http';
+import * as https from 'node:https';
 
 export interface BernsteinStatus {
   total: number;

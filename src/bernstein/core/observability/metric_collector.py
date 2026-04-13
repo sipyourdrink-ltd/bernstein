@@ -957,7 +957,7 @@ class MetricsCollector:
         model: str,
         latency_ms: float,
         tokens: int,
-        cost_usd: float,
+        _cost_usd: float,
         success: bool,
         *,
         tenant_id: str = "default",
@@ -969,7 +969,7 @@ class MetricsCollector:
             model: Model used.
             latency_ms: Request latency.
             tokens: Tokens consumed.
-            cost_usd: Cost in USD.
+            _cost_usd: Cost in USD (part of interface, tracked by CostTracker).
             success: Whether the call succeeded.
         """
         # Write API usage metric

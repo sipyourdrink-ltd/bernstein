@@ -139,7 +139,7 @@ def render_queue_review_prompt(
     open_tasks: list[Task],
     claimed_tasks: list[Task],
     failed_tasks: list[Task],
-    server_url: str,
+    _server_url: str,
 ) -> str:
     """Build the queue review prompt for the manager.
 
@@ -152,7 +152,7 @@ def render_queue_review_prompt(
         open_tasks: Tasks waiting to be claimed.
         claimed_tasks: Tasks currently being worked on.
         failed_tasks: Tasks that failed (recent).
-        server_url: Task server URL (shown in prompt for curl examples).
+        _server_url: Task server URL (part of interface).
 
     Returns:
         Rendered prompt string.

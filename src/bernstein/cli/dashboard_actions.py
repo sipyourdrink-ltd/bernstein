@@ -70,7 +70,12 @@ class QualityPanel(Static):
         t.append(" guardrails", style="dim")
         t.append("\n")
 
-        rj_color = "bright_red" if rejection_rate > 0.1 else ("bright_yellow" if rejection_rate > 0.05 else "dim")
+        if rejection_rate > 0.1:
+            rj_color = "bright_red"
+        elif rejection_rate > 0.05:
+            rj_color = "bright_yellow"
+        else:
+            rj_color = "dim"
         t.append(f" \u2717 {rejection_rate * 100:.1f}%", style=f"bold {rj_color}")
         t.append(" rejection", style="dim")
         t.append("\n")
@@ -305,7 +310,12 @@ class ExpertBanditPanel(Static):
             mean = float(stats.get("mean", 0.0) or 0.0)
             last = float(stats.get("last", 0.0) or 0.0)
             short = model.replace("claude-", "").replace("-2025", "")[:18]
-            mean_color = "bright_green" if mean <= 0.15 else ("bright_yellow" if mean <= 0.35 else "bright_red")
+            if mean <= 0.15:
+                mean_color = "bright_green"
+            elif mean <= 0.35:
+                mean_color = "bright_yellow"
+            else:
+                mean_color = "bright_red"
             t.append(f"  {short:<18}", style="bold")
             t.append(f" {pulls:>3d} sel", style="dim")
             t.append(f"  \u03bc={mean:.3f}", style=f"bold {mean_color}")

@@ -1125,9 +1125,15 @@ class GateRunner:
             metadata[dim.name] = dim.score
         if result.errors:
             metadata["errors"] = result.errors[:3]
+        if result.passed:
+            gate_status = "pass"
+        elif not step.required:
+            gate_status = "warn"
+        else:
+            gate_status = "fail"
         return GateResult(
             name=step.name,
-            status="pass" if result.passed else ("warn" if not step.required else "fail"),
+            status=gate_status,
             required=step.required,
             blocked=result.blocked,
             cached=False,

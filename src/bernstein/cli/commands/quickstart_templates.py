@@ -235,11 +235,12 @@ def generate_example_plan(template: LanguageTemplate) -> str:
     ]
 
     for i, task in enumerate(template.example_tasks, start=1):
-        role = (
-            template.roles[0]
-            if i < len(template.example_tasks)
-            else (template.roles[1] if len(template.roles) > 1 else template.roles[0])
-        )
+        if i < len(template.example_tasks):
+            role = template.roles[0]
+        elif len(template.roles) > 1:
+            role = template.roles[1]
+        else:
+            role = template.roles[0]
         lines.extend(
             [
                 f'      - goal: "{task["goal"]}"',

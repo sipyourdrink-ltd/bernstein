@@ -104,13 +104,10 @@ on:
       - "scripts/gen_roadmap_*.py"
       - "scripts/generate_benchmark_docs.py"
 
-# Single concurrency group: new push cancels in-progress run.
-# NOTE: cancel-in-progress disabled temporarily so CI can complete
-# while external decomposition agents are pushing frequently.
-# Re-enable after stabilization.
+# New push cancels in-progress run — always tests the latest code.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   # ─── Fast checks (never cancelled, <2 min each) ───────────────────────

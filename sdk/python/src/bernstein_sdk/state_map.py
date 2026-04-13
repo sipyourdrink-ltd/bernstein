@@ -12,6 +12,14 @@ from __future__ import annotations
 
 from bernstein_sdk.models import TaskStatus
 
+# Shared status label constants used in both Jira and Linear mappings.
+_STATUS_IN_PROGRESS = "In Progress"
+_STATUS_DONE = "Done"
+_STATUS_BLOCKED = "Blocked"
+_STATUS_CANCELLED = "Cancelled"
+_STATUS_TODO = "Todo"
+_STATUS_TO_DO = "To Do"
+
 # ---------------------------------------------------------------------------
 # Jira ↔ Bernstein
 # ---------------------------------------------------------------------------
@@ -47,14 +55,14 @@ _JIRA_TO_BERNSTEIN: dict[str, TaskStatus] = {
 }
 
 _BERNSTEIN_TO_JIRA: dict[TaskStatus, str] = {
-    TaskStatus.OPEN: "To Do",
-    TaskStatus.CLAIMED: "In Progress",
-    TaskStatus.IN_PROGRESS: "In Progress",
-    TaskStatus.DONE: "Done",
-    TaskStatus.FAILED: "Done",  # fallback — Jira has no native "Failed"
-    TaskStatus.BLOCKED: "Blocked",
+    TaskStatus.OPEN: _STATUS_TO_DO,
+    TaskStatus.CLAIMED: _STATUS_IN_PROGRESS,
+    TaskStatus.IN_PROGRESS: _STATUS_IN_PROGRESS,
+    TaskStatus.DONE: _STATUS_DONE,
+    TaskStatus.FAILED: _STATUS_DONE,  # fallback — Jira has no native "Failed"
+    TaskStatus.BLOCKED: _STATUS_BLOCKED,
     TaskStatus.CANCELLED: "Won't Do",
-    TaskStatus.ORPHANED: "To Do",  # re-open for retry
+    TaskStatus.ORPHANED: _STATUS_TO_DO,  # re-open for retry
 }
 
 
@@ -101,7 +109,7 @@ class BernsteinToJira:
     _overrides: dict[TaskStatus, str] = {}
 
     @classmethod
-    def map(cls, status: TaskStatus, fallback: str = "To Do") -> str:
+    def map(cls, status: TaskStatus, fallback: str = _STATUS_TO_DO) -> str:
         """Return the Jira status name for *status*."""
         return cls._overrides.get(status) or _BERNSTEIN_TO_JIRA.get(status, fallback)
 
@@ -137,14 +145,14 @@ _LINEAR_TO_BERNSTEIN: dict[str, TaskStatus] = {
 }
 
 _BERNSTEIN_TO_LINEAR: dict[TaskStatus, str] = {
-    TaskStatus.OPEN: "Todo",
-    TaskStatus.CLAIMED: "In Progress",
-    TaskStatus.IN_PROGRESS: "In Progress",
-    TaskStatus.DONE: "Done",
-    TaskStatus.FAILED: "Cancelled",  # Linear has no native "Failed"
-    TaskStatus.BLOCKED: "Blocked",
-    TaskStatus.CANCELLED: "Cancelled",
-    TaskStatus.ORPHANED: "Todo",
+    TaskStatus.OPEN: _STATUS_TODO,
+    TaskStatus.CLAIMED: _STATUS_IN_PROGRESS,
+    TaskStatus.IN_PROGRESS: _STATUS_IN_PROGRESS,
+    TaskStatus.DONE: _STATUS_DONE,
+    TaskStatus.FAILED: _STATUS_CANCELLED,  # Linear has no native "Failed"
+    TaskStatus.BLOCKED: _STATUS_BLOCKED,
+    TaskStatus.CANCELLED: _STATUS_CANCELLED,
+    TaskStatus.ORPHANED: _STATUS_TODO,
 }
 
 
@@ -188,7 +196,7 @@ class BernsteinToLinear:
     _overrides: dict[TaskStatus, str] = {}
 
     @classmethod
-    def map(cls, status: TaskStatus, fallback: str = "Todo") -> str:
+    def map(cls, status: TaskStatus, fallback: str = _STATUS_TODO) -> str:
         """Return the Linear state name for *status*."""
         return cls._overrides.get(status) or _BERNSTEIN_TO_LINEAR.get(status, fallback)
 

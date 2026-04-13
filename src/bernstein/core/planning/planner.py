@@ -242,7 +242,7 @@ async def plan(
                 model=model,
                 latency_ms=plan_duration * 1000,
                 tokens=0,
-                cost_usd=0.0,
+                _cost_usd=0.0,
                 success=True,
             )
         else:
@@ -268,7 +268,7 @@ async def plan(
                 model=model,
                 latency_ms=plan_duration * 1000,
                 tokens=0,  # Would need to parse from LLM response
-                cost_usd=0.0,
+                _cost_usd=0.0,
                 success=plan_success,
             )
 

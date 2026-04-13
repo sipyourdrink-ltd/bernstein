@@ -369,7 +369,7 @@ def build_metrics_bar(data: DemoDashboardData) -> Panel:
 
 def compose_dashboard(
     data: DemoDashboardData,
-    config: CaptureConfig,
+    _config: CaptureConfig,
 ) -> Layout:
     """Compose all panels into a single Rich Layout.
 
@@ -381,7 +381,7 @@ def compose_dashboard(
 
     Args:
         data: Dashboard demo data.
-        config: Capture configuration (used for sizing context).
+        _config: Capture configuration (part of interface).
 
     Returns:
         A ``rich.layout.Layout`` ready to be rendered by a Console.

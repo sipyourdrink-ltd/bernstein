@@ -131,7 +131,12 @@ def _resolve_tasks(parsed: ParsedQuery, store: Any) -> list[dict[str, Any]]:
 
     results: list[dict[str, Any]] = []
     for t in tasks:
-        task = t if isinstance(t, dict) else (t.__dict__ if hasattr(t, "__dict__") else {})
+        if isinstance(t, dict):
+            task = t
+        elif hasattr(t, "__dict__"):
+            task = t.__dict__
+        else:
+            task = {}
         # Normalize status to a string for comparison: handles both
         # plain strings (mock stores) and TaskStatus enum instances
         # (real TaskStore).
@@ -191,18 +196,19 @@ def execute_graphql(
     if not parsed.operation:
         return {"errors": [{"message": "Could not parse query"}]}
 
-    if parsed.operation == "tasks":
-        data = _resolve_tasks(parsed, store)
-        return {"data": {"tasks": data}}
-    elif parsed.operation == "status":
-        data_status = _resolve_status(parsed, store)
-        return {"data": {"status": data_status}}
-    elif parsed.operation == "agents":
-        return {"data": {"agents": []}}
-    elif parsed.operation == "costs":
-        return {"data": {"costs": {"total_usd": 0.0, "per_model": []}}}
-    else:
-        return {"errors": [{"message": f"Unknown operation: {parsed.operation}"}]}
+    match parsed.operation:
+        case "tasks":
+            data = _resolve_tasks(parsed, store)
+            return {"data": {"tasks": data}}
+        case "status":
+            data_status = _resolve_status(parsed, store)
+            return {"data": {"status": data_status}}
+        case "agents":
+            return {"data": {"agents": []}}
+        case "costs":
+            return {"data": {"costs": {"total_usd": 0.0, "per_model": []}}}
+        case _:
+            return {"errors": [{"message": f"Unknown operation: {parsed.operation}"}]}
 
 
 @router.post("/graphql")

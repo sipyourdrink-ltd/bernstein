@@ -313,7 +313,7 @@ def _build_daily_history(
 # ---------------------------------------------------------------------------
 
 
-def compute_burn_rate(history: list[tuple[float, float]], window_days: int) -> float:
+def compute_burn_rate(history: list[tuple[float, float]], _window_days: int) -> float:
     """Compute the daily error budget burn rate from a time series.
 
     The burn rate is defined as the average daily decrease in the
@@ -323,7 +323,7 @@ def compute_burn_rate(history: list[tuple[float, float]], window_days: int) -> f
 
     Args:
         history: List of ``(timestamp, pct)`` tuples, ordered by time.
-        window_days: The SLO window in days (used to normalise).
+        _window_days: The SLO window in days (part of interface).
 
     Returns:
         Error budget consumption in percentage points per day.

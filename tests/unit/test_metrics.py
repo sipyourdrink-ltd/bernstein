@@ -108,7 +108,7 @@ class TestCompleteTask:
 
     def test_sets_success_and_tokens(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
-        m = collector.complete_task("t1", success=True, tokens_used=500, cost_usd=0.01)
+        m = collector.complete_task("t1", success=True, tokens_used=500, _cost_usd=0.01)
         assert m is not None
         assert m.success is True
         assert m.tokens_used == 500
@@ -136,7 +136,7 @@ class TestCompleteTask:
 
     def test_also_writes_cost_efficiency_file(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
-        collector.complete_task("t1", success=True, cost_usd=0.05)
+        collector.complete_task("t1", success=True, _cost_usd=0.05)
         today = datetime.now().strftime("%Y-%m-%d")
         cost_file = collector._metrics_dir / f"cost_efficiency_{today}.jsonl"
         assert cost_file.exists()
@@ -183,7 +183,7 @@ class TestAgentMetrics:
 
     def test_complete_agent_task_success(self, collector: MetricsCollector) -> None:
         collector.start_agent("a1", "backend", "sonnet", "claude")
-        collector.complete_agent_task("a1", success=True, tokens_used=100, cost_usd=0.01)
+        collector.complete_agent_task("a1", success=True, tokens_used=100, _cost_usd=0.01)
         m = collector._agent_metrics["a1"]
         assert m.tasks_completed == 1
         assert m.tasks_failed == 0
@@ -440,18 +440,18 @@ class TestJsonlFileWriting:
 
 class TestRecordApiCall:
     def test_writes_api_usage_metric(self, collector: MetricsCollector) -> None:
-        collector.record_api_call("claude", "sonnet", latency_ms=200, tokens=300, cost_usd=0.01, success=True)
+        collector.record_api_call("claude", "sonnet", latency_ms=200, tokens=300, _cost_usd=0.01, success=True)
         today = datetime.now().strftime("%Y-%m-%d")
         f = collector._metrics_dir / f"api_usage_{today}.jsonl"
         assert f.exists()
 
     def test_updates_avg_latency(self, collector: MetricsCollector) -> None:
-        collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, cost_usd=0.0, success=True)
+        collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, _cost_usd=0.0, success=True)
         h = collector.get_provider_health("claude")
         assert h.avg_latency_ms > 0
 
     def test_exponential_moving_average(self, collector: MetricsCollector) -> None:
-        collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, cost_usd=0.0, success=True)
+        collector.record_api_call("claude", "sonnet", latency_ms=100, tokens=0, _cost_usd=0.0, success=True)
         h = collector.get_provider_health("claude")
         # alpha=0.3: 0.3*100 + 0.7*0 = 30
         assert h.avg_latency_ms == pytest.approx(30.0)
@@ -503,15 +503,15 @@ class TestQueryMethods:
 
     def test_get_total_cost(self, collector: MetricsCollector) -> None:
         collector.start_agent("a1", "backend", "sonnet", "claude")
-        collector.complete_agent_task("a1", success=True, cost_usd=0.05)
-        collector.complete_agent_task("a1", success=True, cost_usd=0.10)
+        collector.complete_agent_task("a1", success=True, _cost_usd=0.05)
+        collector.complete_agent_task("a1", success=True, _cost_usd=0.10)
         assert collector.get_total_cost() == pytest.approx(0.15)
 
     def test_get_total_cost_by_agent(self, collector: MetricsCollector) -> None:
         collector.start_agent("a1", "backend", "sonnet", "claude")
-        collector.complete_agent_task("a1", success=True, cost_usd=0.05)
+        collector.complete_agent_task("a1", success=True, _cost_usd=0.05)
         collector.start_agent("a2", "qa", "sonnet", "claude")
-        collector.complete_agent_task("a2", success=True, cost_usd=0.20)
+        collector.complete_agent_task("a2", success=True, _cost_usd=0.20)
         assert collector.get_total_cost(agent_id="a1") == pytest.approx(0.05)
 
 

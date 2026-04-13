@@ -122,15 +122,15 @@ class TestBuildVariables:
 class TestValidateFormula:
     def test_valid_formula_returns_no_errors(self) -> None:
         errors = validate_formula("tasks_completed / (tasks_failed + 0.001)")
-        assert errors == []
+        assert not errors
 
     def test_empty_formula_is_invalid(self) -> None:
         errors = validate_formula("")
-        assert len(errors) > 0
+        assert errors
 
     def test_blank_formula_is_invalid(self) -> None:
         errors = validate_formula("   ")
-        assert len(errors) > 0
+        assert errors
 
     def test_syntax_error_detected(self) -> None:
         errors = validate_formula("1 +* 2")
@@ -138,11 +138,11 @@ class TestValidateFormula:
 
     def test_function_call_detected(self) -> None:
         errors = validate_formula("abs(-1)")
-        assert len(errors) > 0
+        assert errors
 
     def test_arithmetic_only_is_valid(self) -> None:
         errors = validate_formula("2 + 3 * (4 - 1)")
-        assert errors == []
+        assert not errors
 
 
 class TestCustomMetricsEvaluator:
@@ -162,7 +162,7 @@ class TestCustomMetricsEvaluator:
         assert results[0].name == "success_rate"
         assert results[0].value == pytest.approx(9.0 / 10.001, rel=1e-4)
         assert results[0].unit == "ratio"
-        assert results[0].error is None
+        assert not results[0].error
 
     def test_evaluates_multiple_metrics(self) -> None:
         evaluator = CustomMetricsEvaluator(
@@ -179,7 +179,7 @@ class TestCustomMetricsEvaluator:
         results = evaluator.evaluate_all()
         assert len(results) == 1
         assert results[0].value == pytest.approx(0.0)
-        assert results[0].error is not None
+        assert results[0].error
         assert "Unknown variable" in results[0].error
 
     def test_missing_formula_captured(self) -> None:
@@ -189,7 +189,7 @@ class TestCustomMetricsEvaluator:
 
     def test_empty_definitions_returns_empty(self) -> None:
         evaluator = CustomMetricsEvaluator(definitions=[])
-        assert evaluator.evaluate_all() == []
+        assert not evaluator.evaluate_all()
 
     def test_to_dict_serializes_cleanly(self) -> None:
         evaluator = CustomMetricsEvaluator(
@@ -221,7 +221,7 @@ class TestSeedMetricsParsing:
 
         path = self._write_seed(tmp_path, 'goal: "test"\n')
         cfg = parse_seed(path)
-        assert cfg.metrics == {}
+        assert not cfg.metrics
 
     def test_single_metric_parsed(self, tmp_path: Path) -> None:
         from bernstein.core.seed import MetricSchema, parse_seed
@@ -242,8 +242,8 @@ class TestSeedMetricsParsing:
         assert schema.formula == "lines_changed / total_cost"
         assert schema.unit == "lines/$"
         assert schema.description == "Code produced per dollar spent"
-        assert schema.alert_above is None
-        assert schema.alert_below is None
+        assert not schema.alert_above
+        assert not schema.alert_below
 
     def test_multiple_metrics_parsed(self, tmp_path: Path) -> None:
         from bernstein.core.seed import parse_seed

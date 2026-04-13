@@ -220,12 +220,13 @@ def history_cmd(file_path: Path, workdir: Path, limit: int, as_json: bool) -> No
 
     for row in rows:
         status = row["status"]
-        if status == "done":
-            status_color = "green"
-        elif status == "failed":
-            status_color = "red"
-        else:
-            status_color = "yellow"
+        match status:
+            case "done":
+                status_color = "green"
+            case "failed":
+                status_color = "red"
+            case _:
+                status_color = "yellow"
         table.add_row(
             _format_relative_age(row["completed_at"]),
             f"[{status_color}]{status}[/{status_color}]",

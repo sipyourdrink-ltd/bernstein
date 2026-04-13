@@ -24,10 +24,8 @@ WORKDIR /workspace
 
 COPY --from=build /app/dist/*.whl /tmp/
 
-RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
-
-# Create non-root user
-RUN useradd -m -u 1000 bernstein && chown bernstein:bernstein /workspace
+RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl && \
+    useradd -m -u 1000 bernstein && chown bernstein:bernstein /workspace
 USER bernstein
 
 # Bernstein state directory (mount a volume here for persistence)

@@ -174,12 +174,13 @@ def generate_agent_icon(role: str, status: str, size: int = 64) -> Image.Image:
     """Generate a circular agent icon with role fill and status ring."""
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    if status == "active":
-        status_pct = 0.0
-    elif status == "busy":
-        status_pct = 0.85
-    else:
-        status_pct = 1.0
+    match status:
+        case "active":
+            status_pct = 0.0
+        case "busy":
+            status_pct = 0.85
+        case _:
+            status_pct = 1.0
     ring = hex_to_rgb(budget_color(status_pct))
     fill = hex_to_rgb(ROLE_COLORS.get(role.lower(), PALETTE.cyan))
     inner_margin = max(4, size // 10)

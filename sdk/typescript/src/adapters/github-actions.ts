@@ -16,10 +16,15 @@
 
 import type { TaskCreate } from '../models.js';
 
+/** Priority level: 1 = critical, 2 = normal, 3 = low. */
+type Priority = Priority;
+
 /** Safely extract a string from a Record entry (avoids [object Object] from `String()`). */
 function str(obj: Record<string, unknown>, key: string, fallback = ''): string {
   const v = obj[key];
-  return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return String(v);
+  return fallback;
 }
 
 export interface CIRunInfo {
@@ -32,7 +37,7 @@ export interface CIRunInfo {
   runUrl: string;
 }
 
-const CONCLUSION_PRIORITY: Record<string, 1 | 2 | 3> = {
+const CONCLUSION_PRIORITY: Record<string, Priority> = {
   failure: 1,
   action_required: 1,
   timed_out: 2,
@@ -41,11 +46,11 @@ const CONCLUSION_PRIORITY: Record<string, 1 | 2 | 3> = {
 
 export class CITaskFactory {
   private readonly defaultRole: string;
-  private readonly conclusionPriority: Record<string, 1 | 2 | 3>;
+  private readonly conclusionPriority: Record<string, Priority>;
 
   constructor(options: {
     defaultRole?: string;
-    conclusionPriority?: Record<string, 1 | 2 | 3>;
+    conclusionPriority?: Record<string, Priority>;
   } = {}) {
     this.defaultRole = options.defaultRole ?? 'qa';
     this.conclusionPriority = options.conclusionPriority ?? CONCLUSION_PRIORITY;
@@ -128,10 +133,12 @@ export class CITaskFactory {
 
   /** Convert a {@link CIRunInfo} to a {@link TaskCreate}. */
   taskFromRun(run: CIRunInfo): TaskCreate {
-    const priority: 1 | 2 | 3 = this.conclusionPriority[run.conclusion] ?? 1;
-    const conclusionLabel = run.conclusion.replace(/_/g, ' ');
+    const priority: Priority = this.conclusionPriority[run.conclusion] ?? 1;
+    const conclusionLabel = run.conclusion.replaceAll('_', ' ');
     const shortSha = run.commitSha.slice(0, 7);
-    const branchName = run.branch.replace(/^refs\/heads\//, '');
+    const branchName = run.branch.startsWith('refs/heads/')
+      ? run.branch.slice('refs/heads/'.length)
+      : run.branch;
 
     const descParts = [
       `Workflow **${run.workflowName}** ${conclusionLabel} on branch \`${branchName}\`.`,

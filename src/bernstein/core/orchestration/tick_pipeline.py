@@ -341,10 +341,14 @@ def prioritize_starving_roles(
     """
     if not alive_per_role:
         return batches
-    return sorted(
-        batches,
-        key=lambda b: 1 if not b else (0 if alive_per_role.get(b[0].role, 0) == 0 else 1),
-    )
+    def _starving_sort_key(b: list[Task]) -> int:
+        if not b:
+            return 1
+        if alive_per_role.get(b[0].role, 0) == 0:
+            return 0
+        return 1
+
+    return sorted(batches, key=_starving_sort_key)
 
 
 def group_by_role(
@@ -684,18 +688,19 @@ def check_nudges_during_tick() -> None:
         logger.info(f"Processing orchestrator nudge: {nudge.nudge_type} - {nudge.message}")
 
         # Process different nudge types
-        if nudge.nudge_type == "increase_parallelism":
-            logger.info("Nudge: Increasing parallelism for better throughput")
-            # Implementation would adjust parallelism settings
-        elif nudge.nudge_type == "reduce_cost":
-            logger.info("Nudge: Reducing cost by using cheaper models")
-            # Implementation would adjust model selection
-        elif nudge.nudge_type == "improve_quality":
-            logger.info("Nudge: Improving quality with more thorough verification")
-            # Implementation would adjust quality gates
-        elif nudge.nudge_type == "speed_up":
-            logger.info("Nudge: Speeding up with faster models")
-            # Implementation would adjust speed/quality tradeoff
+        match nudge.nudge_type:
+            case "increase_parallelism":
+                logger.info("Nudge: Increasing parallelism for better throughput")
+                # Implementation would adjust parallelism settings
+            case "reduce_cost":
+                logger.info("Nudge: Reducing cost by using cheaper models")
+                # Implementation would adjust model selection
+            case "improve_quality":
+                logger.info("Nudge: Improving quality with more thorough verification")
+                # Implementation would adjust quality gates
+            case "speed_up":
+                logger.info("Nudge: Speeding up with faster models")
+                # Implementation would adjust speed/quality tradeoff
 
         # Acknowledge the nudge
         from bernstein.core.orchestration.orchestrator import nudge_manager

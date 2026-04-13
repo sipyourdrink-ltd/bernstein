@@ -22,6 +22,17 @@ from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
+# Block type constants from Claude Code stream-json format.
+_BLOCK_TEXT = "text"
+_BLOCK_TOOL_USE = "tool_use"
+_BLOCK_TOOL_RESULT = "tool_result"
+_BLOCK_THINKING = "thinking"
+
+# Top-level event type constants.
+_EVENT_ASSISTANT = "assistant"
+_EVENT_RESULT = "result"
+_EVENT_SYSTEM = "system"
+
 
 class StreamEventType(StrEnum):
     """Types of events extracted from Claude Code's stream-json output."""
@@ -124,12 +135,13 @@ class ClaudeStreamParser:
         event_type = str(msg.get("type", ""))
         events: list[StreamEvent] = []
 
-        if event_type == "assistant":
-            events.extend(self._parse_assistant(msg))
-        elif event_type == "result":
-            events.extend(self._parse_result(msg))
-        elif event_type == "system":
-            events.append(self._parse_system(msg))
+        match event_type:
+            case "assistant":
+                events.extend(self._parse_assistant(msg))
+            case "result":
+                events.extend(self._parse_result(msg))
+            case "system":
+                events.append(self._parse_system(msg))
 
         return events
 
@@ -174,68 +186,69 @@ class ClaudeStreamParser:
 
             block_type = str(block.get("type", ""))
 
-            if block_type == "text":
-                text = str(block.get("text", ""))
-                if text and text not in self._seen_text:
-                    self._seen_text.add(text)
-                    self.state.text_blocks.append(text)
+            match block_type:
+                case "text":
+                    text = str(block.get("text", ""))
+                    if text and text not in self._seen_text:
+                        self._seen_text.add(text)
+                        self.state.text_blocks.append(text)
+                        events.append(
+                            StreamEvent(
+                                event_type=StreamEventType.TEXT,
+                                data={"text": text},
+                                raw=msg,
+                            )
+                        )
+
+                case "tool_use":
+                    tool_name = str(block.get("name", ""))
+                    tool_input = block.get("input", {})
+                    tool_id = str(block.get("id", ""))
+                    preview = str(tool_input)[:200] if tool_input else ""
+                    tool_record: dict[str, Any] = {
+                        "name": tool_name,
+                        "id": tool_id,
+                        "input_preview": preview,
+                    }
+                    self.state.tool_uses.append(tool_record)
                     events.append(
                         StreamEvent(
-                            event_type=StreamEventType.TEXT,
-                            data={"text": text},
+                            event_type=StreamEventType.TOOL_USE_START,
+                            data=tool_record,
                             raw=msg,
                         )
                     )
 
-            elif block_type == "tool_use":
-                tool_name = str(block.get("name", ""))
-                tool_input = block.get("input", {})
-                tool_id = str(block.get("id", ""))
-                preview = str(tool_input)[:200] if tool_input else ""
-                tool_record: dict[str, Any] = {
-                    "name": tool_name,
-                    "id": tool_id,
-                    "input_preview": preview,
-                }
-                self.state.tool_uses.append(tool_record)
-                events.append(
-                    StreamEvent(
-                        event_type=StreamEventType.TOOL_USE_START,
-                        data=tool_record,
-                        raw=msg,
-                    )
-                )
-
-            elif block_type == "tool_result":
-                tool_use_id = str(block.get("tool_use_id", ""))
-                is_error = bool(block.get("is_error", False))
-                result_content = str(block.get("content", ""))
-                preview = result_content[:200] if result_content else ""
-                result_record: dict[str, Any] = {
-                    "tool_use_id": tool_use_id,
-                    "is_error": is_error,
-                    "content_preview": preview,
-                }
-                self.state.tool_results.append(result_record)
-                events.append(
-                    StreamEvent(
-                        event_type=StreamEventType.TOOL_RESULT,
-                        data=result_record,
-                        raw=msg,
-                    )
-                )
-
-            elif block_type == "thinking":
-                thinking_text = str(block.get("thinking", ""))
-                if thinking_text:
-                    self.state.thinking_blocks.append(thinking_text)
+                case "tool_result":
+                    tool_use_id = str(block.get("tool_use_id", ""))
+                    is_error = bool(block.get("is_error", False))
+                    result_content = str(block.get("content", ""))
+                    preview = result_content[:200] if result_content else ""
+                    result_record: dict[str, Any] = {
+                        "tool_use_id": tool_use_id,
+                        "is_error": is_error,
+                        "content_preview": preview,
+                    }
+                    self.state.tool_results.append(result_record)
                     events.append(
                         StreamEvent(
-                            event_type=StreamEventType.THINKING,
-                            data={"thinking": thinking_text},
+                            event_type=StreamEventType.TOOL_RESULT,
+                            data=result_record,
                             raw=msg,
                         )
                     )
+
+                case "thinking":
+                    thinking_text = str(block.get("thinking", ""))
+                    if thinking_text:
+                        self.state.thinking_blocks.append(thinking_text)
+                        events.append(
+                            StreamEvent(
+                                event_type=StreamEventType.THINKING,
+                                data={"thinking": thinking_text},
+                                raw=msg,
+                            )
+                        )
 
         return events
 

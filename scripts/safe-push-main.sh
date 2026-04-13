@@ -12,6 +12,9 @@ BLU='\033[0;34m'; CYN='\033[0;36m'; MAG='\033[0;35m'
 BOLD='\033[1m'; DIM='\033[2m'; RST='\033[0m'
 CHECK="${GRN}✓${RST}"; CROSS="${RED}✗${RST}"; ARROW="${CYN}→${RST}"
 
+# Constants for repeated string literals
+readonly STATUS_IN_PROGRESS="in_progress"
+
 REMOTE="${REMOTE:-origin}"
 BRANCH="${BRANCH:-main}"
 CI_WORKFLOW="${CI_WORKFLOW:-ci.yml}"
@@ -21,18 +24,19 @@ CI_TIMEOUT="${CI_TIMEOUT:-900}"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 _header() {
+  local title="$1"
   local cols; cols=$(tput cols 2>/dev/null || echo 72)
   local line; line=$(printf '─%.0s' $(seq 1 "$cols"))
   echo -e "\n${DIM}${line}${RST}"
-  echo -e "${BOLD}${BLU}  ◆ $1${RST}"
+  echo -e "${BOLD}${BLU}  ◆ ${title}${RST}"
   echo -e "${DIM}${line}${RST}"
   return 0
 }
 
-_ok()   { echo -e "  ${CHECK} $1"; return 0; }
-_warn() { echo -e "  ${YEL}⚠${RST}  $1"; return 0; }
-_err()  { echo -e "  ${CROSS} $1" >&2; return 0; }
-_step() { echo -e "  ${ARROW} ${DIM}$1${RST}"; return 0; }
+_ok()   { local msg="$1"; echo -e "  ${CHECK} ${msg}"; return 0; }
+_warn() { local msg="$1"; echo -e "  ${YEL}⚠${RST}  ${msg}"; return 0; }
+_err()  { local msg="$1"; echo -e "  ${CROSS} ${msg}" >&2; return 0; }
+_step() { local msg="$1"; echo -e "  ${ARROW} ${DIM}${msg}${RST}"; return 0; }
 
 _branch() { git rev-parse --abbrev-ref HEAD; return 0; }
 _is_dirty() { ! git diff --quiet || ! git diff --cached --quiet; }
@@ -229,12 +233,12 @@ do_monitor_ci() {
   _ok "CI run ${run_id} started"
 
   local elapsed=0
-  local status="in_progress"
+  local status="${STATUS_IN_PROGRESS}"
   local conclusion=""
   local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
   local spin_idx=0
 
-  while [[ "$status" == "in_progress" || "$status" == "queued" || "$status" == "waiting" ]]; do
+  while [[ "$status" == "${STATUS_IN_PROGRESS}" || "$status" == "queued" || "$status" == "waiting" ]]; do
     if [[ "$elapsed" -ge "$CI_TIMEOUT" ]]; then
       _err "CI timed out after ${CI_TIMEOUT}s"
       return 1
@@ -293,7 +297,7 @@ do_monitor_release() {
     if [[ "$run_status" == "completed" ]] && [[ "$waited" -gt 10 ]]; then
       break
     fi
-    if [[ -n "$release_run_id" ]] && [[ "$run_status" == "in_progress" || "$run_status" == "queued" ]]; then
+    if [[ -n "$release_run_id" ]] && [[ "$run_status" == "${STATUS_IN_PROGRESS}" || "$run_status" == "queued" ]]; then
       break
     fi
     sleep 5
@@ -308,9 +312,9 @@ do_monitor_release() {
   _ok "auto-release run ${release_run_id} detected"
 
   local elapsed=0
-  local status="in_progress"
+  local status="${STATUS_IN_PROGRESS}"
   local conclusion=""
-  while [[ "$status" == "in_progress" || "$status" == "queued" || "$status" == "waiting" ]]; do
+  while [[ "$status" == "${STATUS_IN_PROGRESS}" || "$status" == "queued" || "$status" == "waiting" ]]; do
     if [[ "$elapsed" -ge 300 ]]; then
       _err "auto-release timed out after 300s"
       return 1
@@ -449,6 +453,7 @@ do_ci_status() {
       failure)     color="$RED"; icon="✗" ;;
       in_progress) color="$YEL"; icon="↻" ;;
       cancelled)   color="$DIM"; icon="⊘" ;;
+      *)           color="$DIM"; icon="?" ;;
     esac
     printf "  ${color}${icon}${RST} %-12s ${color}%-12s %-12s${RST} %-57s %s\n" \
       "$id" "$status" "$conclusion" "$title" "$date"

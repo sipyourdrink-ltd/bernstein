@@ -149,7 +149,7 @@ export function registerCommands(
           `Cost: $${a.cost_usd.toFixed(4)}`,
           `Tasks: ${taskList}`,
         ].join(' | ');
-        void vscode.window.showInformationMessage(msg);
+        vscode.window.showInformationMessage(msg);
       },
     ),
 

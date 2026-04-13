@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
 import { registerCommands } from '../commands';
-import type { BernsteinClient } from '../BernsteinClient';
+import type { BernsteinClient, BernsteinAgent, BernsteinTask } from '../BernsteinClient';
 import type { OutputManager } from '../OutputManager';
 import type { AgentItem } from '../AgentTreeProvider';
 import type { TaskItem } from '../TaskTreeProvider';
-import type { BernsteinAgent, BernsteinTask } from '../BernsteinClient';
 
 const BASE_AGENT: BernsteinAgent = {
   id: 'backend-abc123def456',

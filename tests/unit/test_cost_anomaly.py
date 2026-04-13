@@ -189,7 +189,7 @@ def test_burn_rate_no_signal_without_budget(tmp_path: Path) -> None:
     detector = _make_detector(tmp_path)
     tracker = _MockCostTracker(spent=50.0, budget=0.0)
 
-    signals = detector.check_tick(agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
+    signals = detector.check_tick(_agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
 
     burn_signals = [s for s in signals if s.rule == "burn_rate"]
     assert burn_signals == []
@@ -200,7 +200,7 @@ def test_burn_rate_warning_at_60pct(tmp_path: Path) -> None:
     detector = _make_detector(tmp_path, budget_warn_pct=60.0)
     tracker = _MockCostTracker(spent=6.5, budget=10.0)
 
-    signals = detector.check_tick(agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
+    signals = detector.check_tick(_agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
 
     burn_signals = [s for s in signals if s.rule == "burn_rate"]
     assert len(burn_signals) == 1
@@ -213,7 +213,7 @@ def test_burn_rate_critical_stops_spawning_at_90pct(tmp_path: Path) -> None:
     detector = _make_detector(tmp_path, budget_stop_pct=90.0)
     tracker = _MockCostTracker(spent=9.2, budget=10.0)
 
-    signals = detector.check_tick(agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
+    signals = detector.check_tick(_agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
 
     burn_signals = [s for s in signals if s.rule == "burn_rate"]
     assert len(burn_signals) == 1
@@ -226,7 +226,7 @@ def test_burn_rate_below_threshold_no_signal(tmp_path: Path) -> None:
     detector = _make_detector(tmp_path, budget_warn_pct=60.0)
     tracker = _MockCostTracker(spent=4.0, budget=10.0)
 
-    signals = detector.check_tick(agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
+    signals = detector.check_tick(_agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
 
     burn_signals = [s for s in signals if s.rule == "burn_rate"]
     assert burn_signals == []
@@ -547,8 +547,8 @@ def test_log_signals_deduplicated_within_cooldown(tmp_path: Path) -> None:
     detector = _make_detector(tmp_path, budget_warn_pct=60.0)
     tracker = _MockCostTracker(spent=7.0, budget=10.0)
 
-    first = detector.check_tick(agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
-    second = detector.check_tick(agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
+    first = detector.check_tick(_agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
+    second = detector.check_tick(_agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
 
     burn_first = [s for s in first if s.rule == "burn_rate"]
     burn_second = [s for s in second if s.rule == "burn_rate"]
@@ -595,7 +595,7 @@ def test_disabled_detector_returns_no_signals(tmp_path: Path) -> None:
     detector = _make_detector(tmp_path, enabled=False)
     tracker = _MockCostTracker(spent=9.5, budget=10.0)
 
-    tick_signals = detector.check_tick(agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
+    tick_signals = detector.check_tick(_agents=[], cost_tracker=tracker)  # type: ignore[arg-type]
     completion_signals = detector.check_task_completion(
         task_id="task-1",
         complexity="medium",

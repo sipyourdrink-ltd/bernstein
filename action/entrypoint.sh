@@ -20,11 +20,19 @@ POST_COMMENT="${INPUT_POST_COMMENT:-true}"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-gha_group()    { echo "::group::$1"; return 0; }
+# Assign positional parameters to local variables for clarity
+gha_group()    { local msg="$1"; echo "::group::${msg}"; return 0; }
 gha_endgroup() { echo "::endgroup::"; return 0; }
-gha_notice()   { echo "::notice::$1"; return 0; }
-gha_warning()  { echo "::warning::$1"; return 0; }
-gha_error()    { echo "::error::$1" >&2; return 0; }
+gha_notice()   { local msg="$1"; echo "::notice::${msg}"; return 0; }
+gha_warning()  { local msg="$1"; echo "::warning::${msg}"; return 0; }
+gha_error()    { local msg="$1"; echo "::error::${msg}" >&2; return 0; }
+
+# Constants for repeated string literals
+readonly STATUS_SUCCESS="success"
+readonly STATUS_FAILURE="failure"
+readonly RUN_SUMMARY_PATH=".sdd/run-summary.json"
+readonly JQ_TASKS_COMPLETED='.tasks_completed // 0'
+readonly JQ_TOTAL_COST='.total_cost    // "0.00"'
 
 ensure_config() {
     if [[ ! -f bernstein.yaml ]]; then
@@ -49,10 +57,10 @@ emit_outputs() {
     local pr_url=""
     local evidence_path=""
 
-    if [[ -f ".sdd/run-summary.json" ]]; then
-        tasks_completed=$(jq -r '.tasks_completed // 0'        .sdd/run-summary.json 2>/dev/null || echo 0)
-        total_cost=$(jq -r      '.total_cost    // "0.00"'     .sdd/run-summary.json 2>/dev/null || echo "0.00")
-        pr_url=$(jq -r          '.pr_url        // ""'         .sdd/run-summary.json 2>/dev/null || echo "")
+    if [[ -f "${RUN_SUMMARY_PATH}" ]]; then
+        tasks_completed=$(jq -r "${JQ_TASKS_COMPLETED}" "${RUN_SUMMARY_PATH}" 2>/dev/null || echo 0)
+        total_cost=$(jq -r      "${JQ_TOTAL_COST}"      "${RUN_SUMMARY_PATH}" 2>/dev/null || echo "0.00")
+        pr_url=$(jq -r          '.pr_url        // ""'  "${RUN_SUMMARY_PATH}" 2>/dev/null || echo "")
     fi
 
     if [[ -d ".sdd/evidence" ]]; then
@@ -104,6 +112,9 @@ post_pr_comment() {
             fi
             return 0
             ;;
+        *)
+            # Unknown event type — no PR comment target available.
+            ;;
     esac
 
     if [[ -n "$pr_number" ]] && [[ "$pr_number" != "null" ]]; then
@@ -118,7 +129,7 @@ build_comment() {
     local total_cost="${3:-0.00}"
 
     local icon="✅"
-    [[ "$status" = "failure" ]] && icon="❌"
+    [[ "$status" = "${STATUS_FAILURE}" ]] && icon="❌"
 
     cat <<MARKDOWN
 ## ${icon} Bernstein Orchestration Summary
@@ -185,7 +196,7 @@ ${truncated_logs}
 --- END LOGS ---"
     fi
 
-    local status="success"
+    local status="${STATUS_SUCCESS}"
     while [[ "$attempt" -lt "$MAX_RETRIES" ]]; do
         attempt=$((attempt + 1))
         gha_group "fix-ci: attempt ${attempt}/${MAX_RETRIES}"
@@ -194,7 +205,7 @@ ${truncated_logs}
         if bernstein -g "$goal" --budget "$BUDGET" --headless; then
             echo "Bernstein completed on attempt ${attempt}."
             gha_endgroup
-            status="success"
+            status="${STATUS_SUCCESS}"
             break
         fi
 
@@ -204,20 +215,20 @@ ${truncated_logs}
             gha_warning "Attempt ${attempt} failed. Retrying…"
         else
             gha_error "Bernstein failed after ${MAX_RETRIES} attempts."
-            status="failure"
+            status="${STATUS_FAILURE}"
         fi
     done
 
     emit_outputs
 
     local tasks_completed=0 total_cost="0.00"
-    [[ -f ".sdd/run-summary.json" ]] && {
-        tasks_completed=$(jq -r '.tasks_completed // 0'    .sdd/run-summary.json 2>/dev/null || echo 0)
-        total_cost=$(jq -r      '.total_cost    // "0.00"' .sdd/run-summary.json 2>/dev/null || echo "0.00")
+    [[ -f "${RUN_SUMMARY_PATH}" ]] && {
+        tasks_completed=$(jq -r "${JQ_TASKS_COMPLETED}" "${RUN_SUMMARY_PATH}" 2>/dev/null || echo 0)
+        total_cost=$(jq -r      "${JQ_TOTAL_COST}"      "${RUN_SUMMARY_PATH}" 2>/dev/null || echo "0.00")
     }
     post_pr_comment "$(build_comment "$status" "$tasks_completed" "$total_cost")"
 
-    if [[ "$status" = "success" ]]; then
+    if [[ "$status" = "${STATUS_SUCCESS}" ]]; then
         return 0
     fi
     return 1
@@ -238,21 +249,21 @@ run_plan() {
         return 1
     fi
 
-    local status="success"
-    bernstein run "$PLAN" --budget "$BUDGET" --headless || status="failure"
+    local status="${STATUS_SUCCESS}"
+    bernstein run "$PLAN" --budget "$BUDGET" --headless || status="${STATUS_FAILURE}"
 
     gha_endgroup
 
     emit_outputs
 
     local tasks_completed=0 total_cost="0.00"
-    [[ -f ".sdd/run-summary.json" ]] && {
-        tasks_completed=$(jq -r '.tasks_completed // 0'    .sdd/run-summary.json 2>/dev/null || echo 0)
-        total_cost=$(jq -r      '.total_cost    // "0.00"' .sdd/run-summary.json 2>/dev/null || echo "0.00")
+    [[ -f "${RUN_SUMMARY_PATH}" ]] && {
+        tasks_completed=$(jq -r "${JQ_TASKS_COMPLETED}" "${RUN_SUMMARY_PATH}" 2>/dev/null || echo 0)
+        total_cost=$(jq -r      "${JQ_TOTAL_COST}"      "${RUN_SUMMARY_PATH}" 2>/dev/null || echo "0.00")
     }
     post_pr_comment "$(build_comment "$status" "$tasks_completed" "$total_cost")"
 
-    if [[ "$status" = "success" ]]; then
+    if [[ "$status" = "${STATUS_SUCCESS}" ]]; then
         return 0
     fi
     return 1
@@ -267,21 +278,21 @@ run_normal() {
     echo "Budget: \$${BUDGET}"
     echo "CLI:    ${CLI}"
 
-    local status="success"
-    bernstein -g "$TASK" --budget "$BUDGET" --headless || status="failure"
+    local status="${STATUS_SUCCESS}"
+    bernstein -g "$TASK" --budget "$BUDGET" --headless || status="${STATUS_FAILURE}"
 
     gha_endgroup
 
     emit_outputs
 
     local tasks_completed=0 total_cost="0.00"
-    [[ -f ".sdd/run-summary.json" ]] && {
-        tasks_completed=$(jq -r '.tasks_completed // 0'    .sdd/run-summary.json 2>/dev/null || echo 0)
-        total_cost=$(jq -r      '.total_cost    // "0.00"' .sdd/run-summary.json 2>/dev/null || echo "0.00")
+    [[ -f "${RUN_SUMMARY_PATH}" ]] && {
+        tasks_completed=$(jq -r "${JQ_TASKS_COMPLETED}" "${RUN_SUMMARY_PATH}" 2>/dev/null || echo 0)
+        total_cost=$(jq -r      "${JQ_TOTAL_COST}"      "${RUN_SUMMARY_PATH}" 2>/dev/null || echo "0.00")
     }
     post_pr_comment "$(build_comment "$status" "$tasks_completed" "$total_cost")"
 
-    if [[ "$status" = "success" ]]; then
+    if [[ "$status" = "${STATUS_SUCCESS}" ]]; then
         return 0
     fi
     return 1

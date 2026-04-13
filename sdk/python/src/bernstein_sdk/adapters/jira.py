@@ -50,6 +50,8 @@ from bernstein_sdk.state_map import BernsteinToJira, JiraToBernstein
 
 log = logging.getLogger(__name__)
 
+_CONTENT_TYPE_JSON = "application/json"
+
 # Jira priority name → Bernstein priority integer
 _JIRA_PRIORITY_MAP: dict[str, int] = {
     "highest": 1,
@@ -245,7 +247,7 @@ class JiraAdapter:
         requests = _import_requests()
         url = f"{self._base_url}/rest/api/3/issue/{issue_key}"
         resp = requests.get(
-            url, auth=self._auth, headers={"Accept": "application/json"}, timeout=10
+            url, auth=self._auth, headers={"Accept": _CONTENT_TYPE_JSON}, timeout=10
         )
         resp.raise_for_status()
         return JiraIssueRef.from_api_response(resp.json())
@@ -277,7 +279,7 @@ class JiraAdapter:
         resp = requests.get(
             transitions_url,
             auth=self._auth,
-            headers={"Accept": "application/json"},
+            headers={"Accept": _CONTENT_TYPE_JSON},
             timeout=10,
         )
         resp.raise_for_status()
@@ -303,7 +305,7 @@ class JiraAdapter:
         resp = requests.post(
             transitions_url,
             auth=self._auth,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": _CONTENT_TYPE_JSON},
             json={"transition": {"id": transition_id}},
             timeout=10,
         )

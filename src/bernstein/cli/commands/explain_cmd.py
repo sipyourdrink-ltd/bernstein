@@ -254,10 +254,11 @@ def explain_cmd(task_id: str, as_json: bool, traces_dir: str) -> None:
     result = task.get("result_summary")
     if result:
         status = task.get("status", "unknown")
-        if status == "done":
-            border = "green"
-        elif status == "failed":
-            border = "red"
-        else:
-            border = "dim"
+        match status:
+            case "done":
+                border = "green"
+            case "failed":
+                border = "red"
+            case _:
+                border = "dim"
         console.print(Panel(result, title="[bold]Result Summary[/bold]", border_style=border))

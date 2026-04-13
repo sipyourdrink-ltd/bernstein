@@ -30,6 +30,10 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+_FACT_TASK_ID = "Task ID"
+_FACT_ROLE = "Role"
+_TYPE_TEXT_BLOCK = "TextBlock"
+
 
 class TeamsAdapter:
     """Send Bernstein task events to Microsoft Teams via Incoming Webhooks.
@@ -137,8 +141,8 @@ def _completed_card(
     task_id: str, title: str, role: str, summary: str
 ) -> dict[str, Any]:
     facts = [
-        {"title": "Task ID", "value": task_id},
-        {"title": "Role", "value": role},
+        {"title": _FACT_TASK_ID, "value": task_id},
+        {"title": _FACT_ROLE, "value": role},
     ]
     if summary:
         facts.append({"title": "Result", "value": summary[:400]})
@@ -152,8 +156,8 @@ def _completed_card(
 
 def _failed_card(task_id: str, title: str, role: str, error: str) -> dict[str, Any]:
     facts = [
-        {"title": "Task ID", "value": task_id},
-        {"title": "Role", "value": role},
+        {"title": _FACT_TASK_ID, "value": task_id},
+        {"title": _FACT_ROLE, "value": role},
     ]
     if error:
         facts.append({"title": "Error", "value": error[:400]})
@@ -172,8 +176,8 @@ def _created_card(task_id: str, title: str, role: str, priority: int) -> dict[st
         subtitle=title,
         color="Accent",
         facts=[
-            {"title": "Task ID", "value": task_id},
-            {"title": "Role", "value": role},
+            {"title": _FACT_TASK_ID, "value": task_id},
+            {"title": _FACT_ROLE, "value": role},
             {"title": "Priority", "value": priority_label},
         ],
     )
@@ -190,7 +194,7 @@ def _text_card(text: str) -> dict[str, Any]:
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
                     "version": "1.4",
-                    "body": [{"type": "TextBlock", "text": text, "wrap": True}],
+                    "body": [{"type": _TYPE_TEXT_BLOCK, "text": text, "wrap": True}],
                 },
             }
         ],
@@ -216,14 +220,14 @@ def _adaptive_card(
                     "version": "1.4",
                     "body": [
                         {
-                            "type": "TextBlock",
+                            "type": _TYPE_TEXT_BLOCK,
                             "size": "Large",
                             "weight": "Bolder",
                             "text": title,
                             "color": color,
                         },
                         {
-                            "type": "TextBlock",
+                            "type": _TYPE_TEXT_BLOCK,
                             "text": subtitle,
                             "wrap": True,
                         },

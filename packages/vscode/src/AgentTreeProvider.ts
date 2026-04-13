@@ -35,9 +35,7 @@ export class AgentItem extends vscode.TreeItem {
     if (agent.agent_source) {
       parts.push(`[${agent.agent_source}]`);
     }
-    parts.push(model);
-    parts.push(runtime);
-    parts.push(cost);
+    parts.push(model, runtime, cost);
     if (agent.owned_files && agent.owned_files.length > 0) {
       parts.push(`(${agent.owned_files.length} files)`);
     }

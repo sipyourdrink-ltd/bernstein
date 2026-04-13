@@ -232,16 +232,17 @@ def _build_recommendations(metrics: list[SecurityMetric]) -> list[str]:
     for m in metrics:
         if m.score >= 80.0:
             continue
-        if m.name == "permissions":
-            recs.append("Reduce permission escalations by tightening agent scopes.")
-        elif m.name == "secrets":
-            recs.append("Ensure all detected secrets are blocked before they leak.")
-        elif m.name == "sandbox":
-            recs.append("Investigate sandbox violations and harden isolation.")
-        elif m.name == "audit_integrity":
-            recs.append("Repair audit log gaps and re-verify integrity chain.")
-        elif m.name == "policy_compliance":
-            recs.append("Review and fix failing policy checks.")
+        match m.name:
+            case "permissions":
+                recs.append("Reduce permission escalations by tightening agent scopes.")
+            case "secrets":
+                recs.append("Ensure all detected secrets are blocked before they leak.")
+            case "sandbox":
+                recs.append("Investigate sandbox violations and harden isolation.")
+            case "audit_integrity":
+                recs.append("Repair audit log gaps and re-verify integrity chain.")
+            case "policy_compliance":
+                recs.append("Review and fix failing policy checks.")
     return recs
 
 
@@ -324,7 +325,12 @@ def format_posture_report(report: PostureReport) -> str:
     table.add_column("Weight", justify="right")
     table.add_column("Details")
     for m in report.metrics:
-        score_style = "green" if m.score >= 80 else ("yellow" if m.score >= 60 else "red")
+        if m.score >= 80:
+            score_style = "green"
+        elif m.score >= 60:
+            score_style = "yellow"
+        else:
+            score_style = "red"
         table.add_row(
             m.name,
             f"[{score_style}]{m.score:.1f}[/{score_style}]",

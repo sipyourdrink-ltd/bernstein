@@ -160,14 +160,15 @@ class QualityGatePanel(DataTable):
         self.clear()
         for result in results:
             # Format status with pass/fail badge
-            if result.status == "pass":
-                status_markup = "[green]\u2713 PASS[/green]"
-            elif result.status == "fail":
-                status_markup = "[red]\u2717 FAIL[/red]"
-            elif result.status == "warn":
-                status_markup = "[yellow]\u26a0 WARN[/yellow]"
-            else:
-                status_markup = f"[dim]{result.status.upper()}[/dim]"
+            match result.status:
+                case "pass":
+                    status_markup = "[green]\u2713 PASS[/green]"
+                case "fail":
+                    status_markup = "[red]\u2717 FAIL[/red]"
+                case "warn":
+                    status_markup = "[yellow]\u26a0 WARN[/yellow]"
+                case _:
+                    status_markup = f"[dim]{result.status.upper()}[/dim]"
 
             # Format duration
             duration_str = f"{result.duration_ms:.0f}ms"

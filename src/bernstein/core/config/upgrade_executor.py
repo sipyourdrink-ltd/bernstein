@@ -392,20 +392,19 @@ class UpgradeExecutor:
         for change in transaction.file_changes:
             file_path = self._workdir / change.path
 
-            if change.operation == "create":
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(change.new_content or "", encoding="utf-8")
-                logger.debug("Created %s", change.path)
-
-            elif change.operation == "modify":
-                if change.new_content is not None:
-                    file_path.write_text(change.new_content, encoding="utf-8")
-                    logger.debug("Modified %s", change.path)
-
-            elif change.operation == "delete":
-                if file_path.exists():
-                    file_path.unlink()
-                    logger.debug("Deleted %s", change.path)
+            match change.operation:
+                case "create":
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_text(change.new_content or "", encoding="utf-8")
+                    logger.debug("Created %s", change.path)
+                case "modify":
+                    if change.new_content is not None:
+                        file_path.write_text(change.new_content, encoding="utf-8")
+                        logger.debug("Modified %s", change.path)
+                case "delete":
+                    if file_path.exists():
+                        file_path.unlink()
+                        logger.debug("Deleted %s", change.path)
 
     def _commit_changes(self, transaction: UpgradeTransaction) -> str | None:
         """Commit changes to git via centralized git_ops."""

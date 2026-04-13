@@ -158,12 +158,12 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
 
 
 def _show_dry_run_plan(
-    workdir: Path,
+    _workdir: Path,
     plan_file: Path | None,
-    goal: str | None,
-    seed_file: str | None,
+    _goal: str | None,
+    _seed_file: str | None,
     model_override: str | None,
-    cli: str | None,
+    _cli: str | None,
 ) -> None:
     """Show scheduling plan without executing.
 
@@ -172,12 +172,12 @@ def _show_dry_run_plan(
     running task server.
 
     Args:
-        workdir: Project root directory.
+        _workdir: Project root directory.
         plan_file: Optional plan file path.
-        goal: Optional goal string.
-        seed_file: Optional seed file path.
+        _goal: Optional goal string.
+        _seed_file: Optional seed file path.
         model_override: Optional model override.
-        cli: Optional CLI override.
+        _cli: Optional CLI override.
     """
     from rich.table import Table
 
@@ -749,12 +749,12 @@ def run(
     # --dry-run: show scheduling plan without executing
     if dry_run:
         _show_dry_run_plan(
-            workdir=Path.cwd(),
+            _workdir=Path.cwd(),
             plan_file=plan_file,
-            goal=goal,
-            seed_file=seed_file,
+            _goal=goal,
+            _seed_file=seed_file,
             model_override=model,
-            cli=cli,
+            _cli=cli,
         )
         return
 

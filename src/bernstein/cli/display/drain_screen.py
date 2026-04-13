@@ -195,13 +195,14 @@ class DrainScreen(Screen[DrainReport | None]):
         # Agent list.
         lines: list[str] = []
         for agent in agents:
-            if agent.status == "exited":
-                files_note = f" ({agent.committed_files} files committed)" if agent.committed_files else ""
-                lines.append(f"[green]\u2713 {agent.session_id} exited{files_note}[/green]")
-            elif agent.status == "killed":
-                lines.append(f"[red]\u2717 {agent.session_id} killed[/red]")
-            else:
-                lines.append(f"[yellow]\u25c9 {agent.session_id} {agent.status}...[/yellow]")
+            match agent.status:
+                case "exited":
+                    files_note = f" ({agent.committed_files} files committed)" if agent.committed_files else ""
+                    lines.append(f"[green]\u2713 {agent.session_id} exited{files_note}[/green]")
+                case "killed":
+                    lines.append(f"[red]\u2717 {agent.session_id} killed[/red]")
+                case _:
+                    lines.append(f"[yellow]\u25c9 {agent.session_id} {agent.status}...[/yellow]")
 
         self.query_one("#agent-list-content", Static).update("\n".join(lines) if lines else "")
 
