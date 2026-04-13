@@ -601,6 +601,14 @@ def exec_restart() -> None:
         "Profile orchestrator execution with cProfile. Writes .prof binary and .txt report to .sdd/runtime/profiles/."
     ),
 )
+@click.option(
+    "--task",
+    "-t",
+    "task_filter",
+    default=None,
+    metavar="PATTERN",
+    help="Run only backlog tasks matching PATTERN (e.g. 'gh-62' or 'mutant-fish').",
+)
 def run(
     plan_file: Path | None,
     goal: str | None,
@@ -627,6 +635,7 @@ def run(
     ab_test: bool = False,
     dry_run: bool = False,
     profile: bool = False,
+    task_filter: str | None = None,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -697,6 +706,10 @@ def run(
     # Propagate quiet flag so the orchestrator suppresses the live summary card
     if quiet:
         os.environ["BERNSTEIN_QUIET"] = "1"
+
+    # Propagate task filter so the orchestrator only ingests matching backlog tasks
+    if task_filter:
+        os.environ["BERNSTEIN_TASK_FILTER"] = task_filter
 
     _configure_quality_gate_bypass(
         goal=goal,
