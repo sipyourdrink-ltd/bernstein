@@ -104,10 +104,11 @@ on:
       - "scripts/gen_roadmap_*.py"
       - "scripts/generate_benchmark_docs.py"
 
-# New push cancels in-progress run — always tests the latest code.
+# Concurrency: let runs finish even when new pushes arrive.
+# Re-enable cancel-in-progress once external agents stop pushing frequently.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # ─── Fast checks (never cancelled, <2 min each) ───────────────────────
