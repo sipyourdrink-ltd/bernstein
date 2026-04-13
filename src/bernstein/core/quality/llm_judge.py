@@ -210,8 +210,7 @@ def build_judge_prompt(
     _validate_dimensions(dims)
 
     dimensions_block = "\n".join(
-        _DIMENSION_ENTRY.format(name=d.name, weight=d.weight, description=d.description)
-        for d in dims
+        _DIMENSION_ENTRY.format(name=d.name, weight=d.weight, description=d.description) for d in dims
     )
     scores_schema = ",\n".join(_SCORE_ENTRY.format(name=d.name) for d in dims)
 
@@ -293,9 +292,7 @@ def parse_judge_response(
         score = max(0.0, min(1.0, float(raw_score)))
         reasoning = str(entry_dict.get("reasoning", ""))
 
-        results.append(
-            DimensionScore(dimension=dim, score=score, reasoning=reasoning)
-        )
+        results.append(DimensionScore(dimension=dim, score=score, reasoning=reasoning))
 
     return results
 
@@ -339,8 +336,7 @@ def score_output(
 
     # Placeholder dimension scores -- real scoring requires an LLM call
     dim_scores = tuple(
-        DimensionScore(dimension=d, score=0.0, reasoning="Placeholder -- no LLM call made.")
-        for d in dims
+        DimensionScore(dimension=d, score=0.0, reasoning="Placeholder -- no LLM call made.") for d in dims
     )
 
     return JudgeResult(
@@ -389,8 +385,7 @@ def render_judge_report(result: JudgeResult) -> str:
     lines: list[str] = [
         f"# Judge Report -- Task `{result.task_id}`",
         "",
-        f"**Overall Score:** {result.overall_score:.2f} / 1.00 "
-        f"({_grade(result.overall_score)})",
+        f"**Overall Score:** {result.overall_score:.2f} / 1.00 ({_grade(result.overall_score)})",
         f"**Model:** `{result.model_used}`",
         f"**Cost:** ${result.cost_usd:.4f}",
         "",
@@ -400,15 +395,12 @@ def render_judge_report(result: JudgeResult) -> str:
         "|-----------|--------|-------|-------|-----|",
     ]
 
-    weights = _normalise_weights(
-        tuple(ds.dimension for ds in result.dimensions)
-    ) if result.dimensions else {}
+    weights = _normalise_weights(tuple(ds.dimension for ds in result.dimensions)) if result.dimensions else {}
 
     for ds in result.dimensions:
         w = weights.get(ds.dimension.name, 0.0)
         lines.append(
-            f"| {ds.dimension.name} | {w:.0%} | {ds.score:.2f} | "
-            f"{_grade(ds.score)} | `{_score_bar(ds.score, 10)}` |"
+            f"| {ds.dimension.name} | {w:.0%} | {ds.score:.2f} | {_grade(ds.score)} | `{_score_bar(ds.score, 10)}` |"
         )
 
     lines.extend(["", "## Reasoning", ""])
