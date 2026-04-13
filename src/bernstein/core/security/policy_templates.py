@@ -18,6 +18,10 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 @dataclass
 class OrgPolicyTemplate:
     """A single organizational policy template.
@@ -57,8 +61,8 @@ def load_org_policies(paths: list[str]) -> list[OrgPolicyTemplate]:
             if not isinstance(raw, dict):
                 logger.warning("Org policy file is not a YAML mapping: %s", p)
                 continue
-            data = cast("dict[str, Any]", raw)
-            overrides = cast("dict[str, Any]", data.get("overrides", {}))
+            data = cast(_CAST_DICT_STR_ANY, raw)
+            overrides = cast(_CAST_DICT_STR_ANY, data.get("overrides", {}))
             templates.append(
                 OrgPolicyTemplate(
                     name=str(data.get("name", p.stem)),
@@ -81,8 +85,8 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     for key, value in override.items():
         if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = _deep_merge(
-                cast("dict[str, Any]", merged[key]),
-                cast("dict[str, Any]", value),
+                cast(_CAST_DICT_STR_ANY, merged[key]),
+                cast(_CAST_DICT_STR_ANY, value),
             )
         else:
             merged[key] = value

@@ -19,6 +19,10 @@ _SECRET_PATTERNS = ("secret", "token", "password", "key", "credential", "cert")
 _EXPORT_META_KEY = "__bernstein_export__"
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 @dataclass(frozen=True, slots=True)
 class ExportMeta:
     exported_at: str
@@ -71,7 +75,7 @@ def _redact_value(data: object, *, key_name: str = "") -> object:
     if _looks_secret(key_name) and isinstance(data, str) and data:
         return _REDACTED_MARKER
     if isinstance(data, dict):
-        raw = cast("dict[str, Any]", data)
+        raw = cast(_CAST_DICT_STR_ANY, data)
         return {k: _redact_value(v, key_name=k) for k, v in raw.items()}
     if isinstance(data, list):
         raw_list = cast("list[Any]", data)
@@ -92,10 +96,10 @@ def export_config(
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raw = {}
-    config = cast("dict[str, Any]", raw)
+    config = cast(_CAST_DICT_STR_ANY, raw)
     checksum = _compute_checksum(config)
     if redact_secrets:
-        config = cast("dict[str, Any]", _redact_value(config))
+        config = cast(_CAST_DICT_STR_ANY, _redact_value(config))
     from datetime import UTC, datetime
 
     meta = ExportMeta(exported_at=datetime.now(tz=UTC).isoformat(), source_path=str(config_path), checksum=checksum)
@@ -119,7 +123,7 @@ def import_config(import_path: Path, target_path: Path, *, mode: Literal["replac
             imported = yaml.safe_load(raw_text)
         if not isinstance(imported, dict):
             return ImportResult(success=False, error="Imported file must be a YAML/JSON mapping")
-        imported_config = cast("dict[str, Any]", imported)
+        imported_config = cast(_CAST_DICT_STR_ANY, imported)
     except Exception as exc:
         return ImportResult(success=False, error=f"Failed to parse import file: {exc}")
     imported_config.pop(_EXPORT_META_KEY, None)
@@ -134,7 +138,7 @@ def import_config(import_path: Path, target_path: Path, *, mode: Literal["replac
             return None
         if isinstance(data, dict):
             result: dict[str, Any] = {}
-            for k, v in cast("dict[str, Any]", data).items():
+            for k, v in cast(_CAST_DICT_STR_ANY, data).items():
                 cleaned = _count_redacted(v, f"{path}.{k}" if path else k)
                 if cleaned is not None or not isinstance(v, str) or v != _REDACTED_MARKER:
                     result[k] = cleaned if cleaned is not None else v
@@ -145,7 +149,7 @@ def import_config(import_path: Path, target_path: Path, *, mode: Literal["replac
 
     cleaned = _count_redacted(imported_config)
     if isinstance(cleaned, dict):
-        imported_config = cast("dict[str, Any]", cleaned)
+        imported_config = cast(_CAST_DICT_STR_ANY, cleaned)
     if mode == "replace":
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(yaml.dump(imported_config, default_flow_style=False, sort_keys=False), encoding="utf-8")
@@ -155,7 +159,7 @@ def import_config(import_path: Path, target_path: Path, *, mode: Literal["replac
         if target_path.exists():
             loaded = yaml.safe_load(target_path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
-                existing = cast("dict[str, Any]", loaded)
+                existing = cast(_CAST_DICT_STR_ANY, loaded)
         existing.update(imported_config)
         keys_imported = len(imported_config)
         target_path.parent.mkdir(parents=True, exist_ok=True)

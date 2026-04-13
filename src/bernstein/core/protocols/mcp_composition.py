@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 @dataclass(frozen=True)
 class ToolStep:
     """A single step in a composite tool workflow.
@@ -248,7 +252,7 @@ def load_compositions(yaml_path: Path | None = None) -> list[CompositeToolDef]:
         if not isinstance(data, dict):
             continue
 
-        data_typed = cast("dict[str, Any]", data)
+        data_typed = cast(_CAST_DICT_STR_ANY, data)
         raw_comps: Any = data_typed.get("mcp_compositions")
         if not isinstance(raw_comps, list):
             continue
@@ -265,13 +269,13 @@ def _parse_compositions(raw_list: list[Any]) -> list[CompositeToolDef]:
         if not isinstance(entry, dict):
             logger.warning("Skipping non-dict mcp_compositions entry: %r", entry)
             continue
-        entry_d = cast("dict[str, Any]", entry)
+        entry_d = cast(_CAST_DICT_STR_ANY, entry)
         steps: list[ToolStep] = []
         raw_steps: Any = entry_d.get("steps", [])
         for raw_step_item in cast("list[Any]", raw_steps) if isinstance(raw_steps, list) else []:
             if not isinstance(raw_step_item, dict):
                 continue
-            raw_step = cast("dict[str, Any]", raw_step_item)
+            raw_step = cast(_CAST_DICT_STR_ANY, raw_step_item)
             on_failure: str = str(raw_step.get("on_failure", "stop"))
             if on_failure not in ("stop", "skip", "retry"):
                 on_failure = "stop"

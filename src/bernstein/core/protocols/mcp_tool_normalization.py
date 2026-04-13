@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+_CAST_STR_NONE = "str | None"
+
+
 @dataclass(frozen=True)
 class McpToolError:
     """Consistent error format for MCP tool failures.
@@ -165,15 +170,15 @@ def validate_tool_schema(schema: dict[str, Any]) -> list[SchemaValidationError]:
         if not isinstance(properties, dict):
             errors.append(SchemaValidationError(path="/properties", message="'properties' must be an object"))
         else:
-            props_dict: dict[str, Any] = cast("dict[str, Any]", properties)
+            props_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, properties)
             for prop_name_raw, prop_schema_raw in props_dict.items():
                 prop_name: str = str(prop_name_raw)
                 prop_path = f"/properties/{prop_name}"
                 if not isinstance(prop_schema_raw, dict):
                     errors.append(SchemaValidationError(path=prop_path, message="Property schema must be an object"))
                     continue
-                prop_dict: dict[str, Any] = cast("dict[str, Any]", prop_schema_raw)
-                prop_type: str | None = cast("str | None", prop_dict.get("type"))
+                prop_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, prop_schema_raw)
+                prop_type: str | None = cast(_CAST_STR_NONE, prop_dict.get("type"))
                 if prop_type is not None and prop_type not in _VALID_TYPES:
                     errors.append(
                         SchemaValidationError(
@@ -204,8 +209,8 @@ def validate_tool_schema(schema: dict[str, Any]) -> list[SchemaValidationError]:
         if not isinstance(items, dict):
             errors.append(SchemaValidationError(path="/items", message="'items' must be an object"))
         else:
-            items_dict: dict[str, Any] = cast("dict[str, Any]", items)
-            items_type: str | None = cast("str | None", items_dict.get("type"))
+            items_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, items)
+            items_type: str | None = cast(_CAST_STR_NONE, items_dict.get("type"))
             if items_type is not None and items_type not in _VALID_TYPES:
                 errors.append(
                     SchemaValidationError(
@@ -249,15 +254,15 @@ def validate_tool_params(params: dict[str, Any], schema: dict[str, Any]) -> list
     # Check types of provided parameters
     properties_raw: Any = schema.get("properties", {})
     if isinstance(properties_raw, dict):
-        props_dict: dict[str, Any] = cast("dict[str, Any]", properties_raw)
+        props_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, properties_raw)
         for param_name, param_value in params.items():
             if param_name not in props_dict:
                 continue
             prop_schema_raw: Any = props_dict[param_name]
             if not isinstance(prop_schema_raw, dict):
                 continue
-            prop_schema: dict[str, Any] = cast("dict[str, Any]", prop_schema_raw)
-            expected_type: str | None = cast("str | None", prop_schema.get("type"))
+            prop_schema: dict[str, Any] = cast(_CAST_DICT_STR_ANY, prop_schema_raw)
+            expected_type: str | None = cast(_CAST_STR_NONE, prop_schema.get("type"))
             if expected_type is not None and not _type_matches(param_value, expected_type):
                 errors.append(
                     SchemaValidationError(

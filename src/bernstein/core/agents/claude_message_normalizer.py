@@ -17,6 +17,11 @@ from typing import Any, Literal, cast
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 @dataclass(frozen=True, slots=True)
 class NormalizedMessage:
     """A Claude message normalized to a consistent format.
@@ -97,7 +102,7 @@ def _normalize_stream_json(data: dict[str, Any]) -> NormalizedMessage | None:
     if msg_type == "assistant":
         content_raw: object = data.get("message", data.get("content", ""))
         if isinstance(content_raw, dict):
-            content_dict = cast("dict[str, object]", content_raw)
+            content_dict = cast(_CAST_DICT_STR_OBJ, content_raw)
             content_text: object = content_dict.get("text", str(content_dict))
             content_raw = content_text
         return NormalizedMessage(role="assistant", content=str(content_raw), raw_type=msg_type)
@@ -131,7 +136,7 @@ def _normalize_stream_json(data: dict[str, Any]) -> NormalizedMessage | None:
         tokens = 0
         usage_raw: object = data.get("usage", {})
         if isinstance(usage_raw, dict):
-            usage = cast("dict[str, object]", usage_raw)
+            usage = cast(_CAST_DICT_STR_OBJ, usage_raw)
             inp: int = int(str(usage.get("input_tokens", 0)))
             outp: int = int(str(usage.get("output_tokens", 0)))
             tokens = inp + outp
@@ -158,7 +163,7 @@ def _normalize_legacy_json(data: dict[str, Any]) -> NormalizedMessage | None:
         tool_use: dict[str, Any] | None = None
         for block_item in content_list:
             if isinstance(block_item, dict):
-                block = cast("dict[str, object]", block_item)
+                block = cast(_CAST_DICT_STR_OBJ, block_item)
                 if block.get("type") == "text":
                     text_parts.append(str(block.get("text", "")))
                 elif block.get("type") == "tool_use":
@@ -229,7 +234,7 @@ class MessageNormalizer:
         if not isinstance(data, dict):
             return None
 
-        typed_data = cast("dict[str, Any]", data)
+        typed_data = cast(_CAST_DICT_STR_ANY, data)
 
         # Try stream-json format first.
         msg = _normalize_stream_json(typed_data)
@@ -277,10 +282,10 @@ class MessageNormalizer:
             try:
                 data = json.loads(stripped)
                 if isinstance(data, dict):
-                    typed_data = cast("dict[str, Any]", data)
+                    typed_data = cast(_CAST_DICT_STR_ANY, data)
                     usage_raw: object = typed_data.get("usage", {})
                     if isinstance(usage_raw, dict):
-                        usage_dict: dict[str, Any] = cast("dict[str, Any]", usage_raw)
+                        usage_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, usage_raw)
                         info["input_tokens"] = max(
                             int(info["input_tokens"]),
                             int(usage_dict.get("input_tokens", 0)),

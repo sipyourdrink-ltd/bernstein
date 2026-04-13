@@ -85,6 +85,11 @@ _DEFAULT_RATE_LIMIT_PATHS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+_CAST_STR_INT_FLOAT_NONE = "str | int | float | None"
+
+
 def _parse_budget(raw: str | int | float | None) -> float | None:
     """Extract a numeric dollar amount from a budget value.
 
@@ -422,7 +427,7 @@ def _parse_tenants(raw: object) -> tuple[TenantConfig, ...]:
         if tenant_id in seen:
             raise SeedError(f"Duplicate tenant id: {tenant_id!r}")
         seen.add(tenant_id)
-        budget_usd = _parse_budget(cast("str | int | float | None", entry.get("budget")))
+        budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, entry.get("budget")))
         allowed_agents_raw = entry.get("allowed_agents", entry.get("agents"))
         allowed_agents = _parse_string_list(allowed_agents_raw, f"tenants[{index}].allowed_agents")
         parsed.append(TenantConfig(id=tenant_id, budget_usd=budget_usd, allowed_agents=allowed_agents))
@@ -830,7 +835,7 @@ def _parse_workspace(
     if workspace_raw is not None:
         if not isinstance(workspace_raw, dict):
             raise SeedError(f"workspace must be a mapping, got: {type(workspace_raw).__name__}")
-        workspace_dict: dict[str, Any] = cast("dict[str, Any]", workspace_raw)
+        workspace_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, workspace_raw)
         try:
             return Workspace.from_config(workspace_dict, root=root)
         except ValueError as exc:
@@ -1002,7 +1007,7 @@ def _parse_compliance(raw: object) -> ComplianceConfig | None:
             raise SeedError(f"compliance must be one of {list(_valid_presets)} or a mapping, got: {raw!r}")
         return ComplianceConfig.from_preset(CompliancePreset(raw.lower()))
     if isinstance(raw, dict):
-        return ComplianceConfig.from_dict(cast("dict[str, Any]", raw))
+        return ComplianceConfig.from_dict(cast(_CAST_DICT_STR_ANY, raw))
     raise SeedError(f"compliance must be a string or mapping, got: {type(raw).__name__}")
 
 
@@ -1255,7 +1260,7 @@ def parse_seed(path: Path) -> SeedConfig:
         raise SeedError("Seed file must contain a non-empty 'goal' string.")
 
     # --- Optional fields ---
-    budget_usd = _parse_budget(cast("str | int | float | None", data.get("budget")))
+    budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, data.get("budget")))
     team = _parse_team(data.get("team"))
 
     cli_raw: object = data.get("cli", "auto")
@@ -1273,7 +1278,7 @@ def parse_seed(path: Path) -> SeedConfig:
     max_cost_per_agent_raw: object = data.get("max_cost_per_agent")
     max_cost_per_agent = 0.0
     if max_cost_per_agent_raw is not None:
-        max_cost_per_agent = _parse_budget(cast("str | int | float | None", max_cost_per_agent_raw)) or 0.0
+        max_cost_per_agent = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, max_cost_per_agent_raw)) or 0.0
         if max_cost_per_agent < 0:
             raise SeedError(f"max_cost_per_agent must be >= 0, got: {max_cost_per_agent_raw!r}")
 
@@ -1325,7 +1330,7 @@ def parse_seed(path: Path) -> SeedConfig:
     if model_policy_raw is not None:
         if not isinstance(model_policy_raw, dict):
             raise SeedError(f"model_policy must be a mapping, got: {type(model_policy_raw).__name__}")
-        model_policy = cast("dict[str, Any]", model_policy_raw)
+        model_policy = cast(_CAST_DICT_STR_ANY, model_policy_raw)
 
     quality_gates = _parse_quality_gates(data.get("quality_gates"))
     formal_verification = _parse_formal_verification(data.get("formal_verification"))

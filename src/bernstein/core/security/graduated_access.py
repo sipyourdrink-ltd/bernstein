@@ -99,6 +99,12 @@ class AccessPolicy:
     allowed_directories: tuple[str, ...]
 
 
+# Shared directory path constants to avoid duplication (Sonar S1192).
+_DIR_DOCS = "docs/"
+_DIR_SRC = "src/"
+_DIR_TESTS = "tests/"
+_DIR_SCRIPTS = "scripts/"
+
 # ---------------------------------------------------------------------------
 # Default policies per trust level
 # ---------------------------------------------------------------------------
@@ -109,21 +115,21 @@ _DEFAULT_POLICIES: dict[TrustLevel, AccessPolicy] = {
         can_write_files=False,
         can_access_network=False,
         max_files_per_task=0,
-        allowed_directories=("docs/",),
+        allowed_directories=(_DIR_DOCS,),
     ),
     TrustLevel.PROBATIONARY: AccessPolicy(
         trust_level=TrustLevel.PROBATIONARY,
         can_write_files=True,
         can_access_network=False,
         max_files_per_task=5,
-        allowed_directories=("src/", "tests/", "docs/"),
+        allowed_directories=(_DIR_SRC, _DIR_TESTS, _DIR_DOCS),
     ),
     TrustLevel.TRUSTED: AccessPolicy(
         trust_level=TrustLevel.TRUSTED,
         can_write_files=True,
         can_access_network=True,
         max_files_per_task=20,
-        allowed_directories=("src/", "tests/", "docs/", "scripts/"),
+        allowed_directories=(_DIR_SRC, _DIR_TESTS, _DIR_DOCS, _DIR_SCRIPTS),
     ),
     TrustLevel.ELEVATED: AccessPolicy(
         trust_level=TrustLevel.ELEVATED,

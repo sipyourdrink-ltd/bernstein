@@ -35,6 +35,11 @@ _STYLE_BOLD_CYAN = "bold cyan"
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 def _task_sort_key(task: dict[str, Any]) -> tuple[int, int, str]:
     """Sort tasks with urgent/problematic items first."""
     status = str(task.get("status", "open"))
@@ -163,13 +168,13 @@ def _build_provider_table(provider_status: dict[str, Any]) -> Table | None:
     table.add_column("Model", min_width=20)
     table.add_column("Quota", min_width=18)
 
-    providers = cast("dict[str, object]", providers_obj)
+    providers = cast(_CAST_DICT_STR_OBJ, providers_obj)
     for provider_name, payload_obj in sorted(providers.items(), key=lambda item: item[0]):
         if not isinstance(payload_obj, dict):
             continue
-        payload = cast("dict[str, object]", payload_obj)
+        payload = cast(_CAST_DICT_STR_OBJ, payload_obj)
         snapshot_obj = payload.get("quota_snapshot")
-        snapshot = cast("dict[str, object]", snapshot_obj) if isinstance(snapshot_obj, dict) else {}
+        snapshot = cast(_CAST_DICT_STR_OBJ, snapshot_obj) if isinstance(snapshot_obj, dict) else {}
         quota = "unknown"
         rpm_obj = snapshot.get("requests_per_minute")
         tpm_obj = snapshot.get("tokens_per_minute")
@@ -218,12 +223,12 @@ def _dict_items_list(payload: object, key: str = "items") -> list[dict[str, Any]
     if isinstance(payload, list):
         raw_items = cast("list[object]", payload)
     elif isinstance(payload, dict):
-        section = cast("dict[str, Any]", payload)
+        section = cast(_CAST_DICT_STR_ANY, payload)
         nested = section.get(key, [])
         raw_items = cast("list[object]", nested) if isinstance(nested, list) else []
     else:
         raw_items = []
-    return [cast("dict[str, Any]", item) for item in raw_items if isinstance(item, dict)]
+    return [cast(_CAST_DICT_STR_ANY, item) for item in raw_items if isinstance(item, dict)]
 
 
 def _extract_spent_cost(data: dict[str, Any]) -> float:
@@ -233,7 +238,7 @@ def _extract_spent_cost(data: dict[str, Any]) -> float:
         return total_cost
     costs_obj = data.get("costs", {})
     if isinstance(costs_obj, dict):
-        costs = cast("dict[str, Any]", costs_obj)
+        costs = cast(_CAST_DICT_STR_ANY, costs_obj)
         return float(costs.get("spent_usd", 0.0) or 0.0)
     return 0.0
 
@@ -255,13 +260,13 @@ def _extract_run_stats(
     tasks = _dict_items_list(data.get("tasks", []))
     agents_raw = _dict_items_list(data.get("agents", []))
     summary_obj = data.get("summary", {})
-    summary_raw = cast("dict[str, Any]", summary_obj) if isinstance(summary_obj, dict) else {}
+    summary_raw = cast(_CAST_DICT_STR_ANY, summary_obj) if isinstance(summary_obj, dict) else {}
     per_role_obj = data.get("per_role", [])
     per_role = _dict_items_list(per_role_obj, key="unused")
     provider_status_obj = data.get("provider_status", {})
-    provider_status = cast("dict[str, Any]", provider_status_obj) if isinstance(provider_status_obj, dict) else {}
+    provider_status = cast(_CAST_DICT_STR_ANY, provider_status_obj) if isinstance(provider_status_obj, dict) else {}
     dependency_scan_obj = data.get("dependency_scan", {})
-    dependency_scan = cast("dict[str, Any]", dependency_scan_obj) if isinstance(dependency_scan_obj, dict) else {}
+    dependency_scan = cast(_CAST_DICT_STR_ANY, dependency_scan_obj) if isinstance(dependency_scan_obj, dict) else {}
 
     summary = TaskSummary.from_dict(
         {
@@ -294,7 +299,7 @@ def _render_verification_nudge(
 ) -> None:
     """Render the verification nudge alert if unverified tasks exist."""
     raw_nudge = data.get("verification_nudge")
-    nudge_data: dict[str, Any] = cast("dict[str, Any]", raw_nudge) if isinstance(raw_nudge, dict) else {}
+    nudge_data: dict[str, Any] = cast(_CAST_DICT_STR_ANY, raw_nudge) if isinstance(raw_nudge, dict) else {}
     if nudge_data.get("unverified_count", 0) <= 0:
         return
     con.print()
@@ -426,7 +431,7 @@ def render_status_plain(data: dict[str, Any]) -> str:
     """
     tasks = _dict_items_list(data.get("tasks", []))
     summary_obj = data.get("summary", {})
-    summary_raw = cast("dict[str, Any]", summary_obj) if isinstance(summary_obj, dict) else {}
+    summary_raw = cast(_CAST_DICT_STR_ANY, summary_obj) if isinstance(summary_obj, dict) else {}
     agents_raw = _dict_items_list(data.get("agents", []))
 
     summary = TaskSummary.from_dict(
@@ -441,7 +446,7 @@ def render_status_plain(data: dict[str, Any]) -> str:
     elapsed = float(data.get("elapsed_seconds", 0))
     total_cost = _extract_spent_cost(data)
     dependency_scan_obj = data.get("dependency_scan", {})
-    dependency_scan = cast("dict[str, Any]", dependency_scan_obj) if isinstance(dependency_scan_obj, dict) else {}
+    dependency_scan = cast(_CAST_DICT_STR_ANY, dependency_scan_obj) if isinstance(dependency_scan_obj, dict) else {}
 
     stats = RunStats(
         summary=summary,

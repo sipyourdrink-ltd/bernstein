@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 @dataclass
 class PostMortemEvent:
     """A single event in the chronological timeline.
@@ -825,7 +829,7 @@ class PostMortemGenerator:
         try:
             raw: Any = json.loads(summary_path.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
-                return cast("dict[str, Any]", raw)
+                return cast(_CAST_DICT_STR_ANY, raw)
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to load summary.json: %s", exc)
         return {}
@@ -841,7 +845,7 @@ class PostMortemGenerator:
             try:
                 raw: Any = json.loads(f.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
-                    results.append(cast("dict[str, Any]", raw))
+                    results.append(cast(_CAST_DICT_STR_ANY, raw))
             except (OSError, json.JSONDecodeError):
                 continue
         if results:
@@ -857,7 +861,7 @@ class PostMortemGenerator:
                     entry_raw: Any = json.loads(stripped)
                     if not isinstance(entry_raw, dict):
                         continue
-                    entry = cast("dict[str, Any]", entry_raw)
+                    entry = cast(_CAST_DICT_STR_ANY, entry_raw)
                     if entry.get("metric_type") != "task_completion_time":
                         continue
                     labels: dict[str, Any] = entry.get("labels") or {}

@@ -30,6 +30,10 @@ MessageType = Literal["alert", "blocker", "finding", "status", "dependency"]
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_STR_NONE = "str | None"
+
+
 @dataclass
 class AgentStatusNotification:
     """Structured terminal status report from an agent.
@@ -161,10 +165,10 @@ class Delegation:
             description=str(d.get("description", "")),
             deadline=float(d.get("deadline", 0.0) or 0.0),
             status=status,
-            claimed_by=cast("str | None", d.get("claimed_by")),
-            result=cast("str | None", d.get("result")),
+            claimed_by=cast(_CAST_STR_NONE, d.get("claimed_by")),
+            result=cast(_CAST_STR_NONE, d.get("result")),
             created_at=float(d.get("created_at", 0.0) or 0.0),
-            cell_id=cast("str | None", d.get("cell_id")),
+            cell_id=cast(_CAST_STR_NONE, d.get("cell_id")),
         )
 
 
@@ -620,7 +624,7 @@ class BulletinBoard:
                 type=cast("MessageType", data.get("type", "status")),
                 content=str(data.get("content", "")),
                 timestamp=ts,
-                cell_id=cast("str | None", data.get("cell_id")),
+                cell_id=cast(_CAST_STR_NONE, data.get("cell_id")),
             )
             with self._lock:
                 self._messages.append(msg)
@@ -743,8 +747,8 @@ class ChannelQuery:
             sender_agent=str(d.get("sender_agent", "")),
             topic=str(d.get("topic", "")),
             content=str(d.get("content", "")),
-            target_agent=cast("str | None", d.get("target_agent")),
-            target_role=cast("str | None", d.get("target_role")),
+            target_agent=cast(_CAST_STR_NONE, d.get("target_agent")),
+            target_role=cast(_CAST_STR_NONE, d.get("target_role")),
             timestamp=float(d.get("timestamp", 0.0) or 0.0),
             expires_at=float(d.get("expires_at", 0.0) or 0.0),
             resolved=bool(d.get("resolved", False)),

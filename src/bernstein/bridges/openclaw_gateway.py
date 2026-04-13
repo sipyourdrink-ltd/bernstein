@@ -28,6 +28,10 @@ _KEYPAIR_FILE = "keypair.json"
 _DEVICE_TOKEN_FILE = "device-token"
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 def _b64url_encode(raw: bytes) -> str:
     """Encode bytes using unpadded base64url."""
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
@@ -114,7 +118,7 @@ class _IdentityStore:
                 raise BridgeError(f"Cannot read OpenClaw identity store: {exc}") from exc
             if not isinstance(data_raw, dict):
                 raise BridgeError("Malformed OpenClaw identity store")
-            data = cast("dict[str, object]", data_raw)
+            data = cast(_CAST_DICT_STR_OBJ, data_raw)
             seed_raw = data.get("privateKey")
             public_raw = data.get("publicKey")
             if not isinstance(seed_raw, str) or not isinstance(public_raw, str):
@@ -331,7 +335,7 @@ class OpenClawGatewayClient:
         payload_raw = challenge.get("payload")
         if not isinstance(payload_raw, dict):
             raise BridgeError("OpenClaw connect.challenge payload missing")
-        payload = cast("dict[str, object]", payload_raw)
+        payload = cast(_CAST_DICT_STR_OBJ, payload_raw)
         nonce = payload.get("nonce")
         if not isinstance(nonce, str) or not nonce:
             raise BridgeError("OpenClaw connect.challenge nonce missing")
@@ -375,10 +379,10 @@ class OpenClawGatewayClient:
         )
         response = await self._await_response(websocket, request_id)
         payload_raw = response.get("payload")
-        payload_dict = cast("dict[str, object]", payload_raw) if isinstance(payload_raw, dict) else {}
+        payload_dict = cast(_CAST_DICT_STR_OBJ, payload_raw) if isinstance(payload_raw, dict) else {}
         auth_payload = payload_dict.get("auth")
         if isinstance(auth_payload, dict):
-            auth_dict = cast("dict[str, object]", auth_payload)
+            auth_dict = cast(_CAST_DICT_STR_OBJ, auth_payload)
             device_token = auth_dict.get("deviceToken")
             if isinstance(device_token, str) and device_token:
                 self._identity_store.save_device_token(device_token)
@@ -428,7 +432,7 @@ class OpenClawGatewayClient:
             raise BridgeError(f"OpenClaw gateway sent malformed JSON: {exc}") from exc
         if not isinstance(data_raw, dict):
             raise BridgeError("OpenClaw gateway frame must be a JSON object")
-        return cast("dict[str, object]", data_raw)
+        return cast(_CAST_DICT_STR_OBJ, data_raw)
 
     def _build_device_payload(self, *, nonce: str, token: str, signed_at_ms: int) -> dict[str, object]:
         """Build the v2 device-auth payload expected by the gateway."""
@@ -449,13 +453,13 @@ class OpenClawGatewayClient:
     def _rpc_error(self, raw: object) -> BridgeError:
         """Convert a gateway RPC error payload into a BridgeError."""
         if isinstance(raw, dict):
-            error_dict = cast("dict[str, object]", raw)
+            error_dict = cast(_CAST_DICT_STR_OBJ, raw)
             message_raw = error_dict.get("message") or error_dict.get("code") or "OpenClaw gateway request failed"
             message = str(message_raw)
             details = error_dict.get("details")
             detail_text = ""
             if isinstance(details, dict):
-                detail_dict = cast("dict[str, object]", details)
+                detail_dict = cast(_CAST_DICT_STR_OBJ, details)
                 code = detail_dict.get("code")
                 reason = detail_dict.get("reason")
                 detail_text = " ".join(str(part) for part in (code, reason) if part)
@@ -468,7 +472,7 @@ class OpenClawGatewayClient:
     def _format_error(self, raw: object) -> str:
         """Render a compact error string for ``agent.wait`` payloads."""
         if isinstance(raw, dict):
-            error_dict = cast("dict[str, object]", raw)
+            error_dict = cast(_CAST_DICT_STR_OBJ, raw)
             message = error_dict.get("message") or error_dict.get("code") or error_dict.get("reason")
             return str(message) if message else ""
         if raw is None:

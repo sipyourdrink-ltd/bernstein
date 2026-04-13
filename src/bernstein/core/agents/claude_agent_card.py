@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 AGENT_CARD_FILENAME = "agent.json"
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_LIST_OBJ = "list[object]"
+
+
 @dataclass(frozen=True, slots=True)
 class AgentCapability:
     """A single declared agent capability.
@@ -176,7 +180,7 @@ def parse_agent_card(data: dict[str, Any], *, source_path: str = "") -> AgentCar
     raw_caps: object = data.get("capabilities", [])
     capabilities: list[AgentCapability] = []
     if isinstance(raw_caps, list):
-        caps_list = cast("list[object]", raw_caps)
+        caps_list = cast(_CAST_LIST_OBJ, raw_caps)
         for cap_item in caps_list:
             if isinstance(cap_item, dict):
                 cap_dict = cast("dict[str, object]", cap_item)
@@ -194,12 +198,12 @@ def parse_agent_card(data: dict[str, Any], *, source_path: str = "") -> AgentCar
     raw_skills: object = data.get("skills", [])
     skills: list[AgentSkill] = []
     if isinstance(raw_skills, list):
-        skills_list = cast("list[object]", raw_skills)
+        skills_list = cast(_CAST_LIST_OBJ, raw_skills)
         for skill_item in skills_list:
             if isinstance(skill_item, dict):
                 skill_dict = cast("dict[str, object]", skill_item)
                 tags_raw: object = skill_dict.get("tags", [])
-                tag_tuple = tuple(str(t) for t in cast("list[object]", tags_raw)) if isinstance(tags_raw, list) else ()
+                tag_tuple = tuple(str(t) for t in cast(_CAST_LIST_OBJ, tags_raw)) if isinstance(tags_raw, list) else ()
                 skills.append(
                     AgentSkill(
                         id=str(skill_dict.get("id", "")),
@@ -211,18 +215,18 @@ def parse_agent_card(data: dict[str, Any], *, source_path: str = "") -> AgentCar
 
     # Parse models.
     raw_models: object = data.get("supported_models", data.get("models", []))
-    models: list[str] = [str(m) for m in cast("list[object]", raw_models)] if isinstance(raw_models, list) else []
+    models: list[str] = [str(m) for m in cast(_CAST_LIST_OBJ, raw_models)] if isinstance(raw_models, list) else []
 
     # Parse tools.
     raw_tools: object = data.get("supported_tools", data.get("tools", []))
-    tools: list[str] = [str(t) for t in cast("list[object]", raw_tools)] if isinstance(raw_tools, list) else []
+    tools: list[str] = [str(t) for t in cast(_CAST_LIST_OBJ, raw_tools)] if isinstance(raw_tools, list) else []
 
     # Parse input/output modes.
     raw_input: object = data.get("input_modes", data.get("defaultInputModes", []))
-    input_modes: list[str] = [str(m) for m in cast("list[object]", raw_input)] if isinstance(raw_input, list) else []
+    input_modes: list[str] = [str(m) for m in cast(_CAST_LIST_OBJ, raw_input)] if isinstance(raw_input, list) else []
 
     raw_output: object = data.get("output_modes", data.get("defaultOutputModes", []))
-    output_modes: list[str] = [str(m) for m in cast("list[object]", raw_output)] if isinstance(raw_output, list) else []
+    output_modes: list[str] = [str(m) for m in cast(_CAST_LIST_OBJ, raw_output)] if isinstance(raw_output, list) else []
 
     return AgentCard(
         name=str(data.get("name", "")),

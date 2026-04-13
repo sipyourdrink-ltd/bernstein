@@ -43,6 +43,10 @@ _RESULT_SCHEMA = json.dumps(
 )
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 def load_mcp_config(
     project_servers: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
@@ -66,10 +70,10 @@ def load_mcp_config(
             global_cfg = json.loads(global_path.read_text(encoding="utf-8"))
             if isinstance(global_cfg, dict):
                 # mcp.json has {"mcpServers": {...}} structure
-                cfg = cast("dict[str, Any]", global_cfg)
+                cfg = cast(_CAST_DICT_STR_ANY, global_cfg)
                 servers = cfg.get("mcpServers", cfg)
                 if isinstance(servers, dict):
-                    merged.update(cast("dict[str, Any]", servers))
+                    merged.update(cast(_CAST_DICT_STR_ANY, servers))
         except (OSError, json.JSONDecodeError):
             pass  # Global MCP config unreadable; skip
 
@@ -92,7 +96,7 @@ def _resolve_env_vars(obj: Any) -> Any:
         var_name = obj[2:-1]
         return os.environ.get(var_name, obj)
     if isinstance(obj, dict):
-        d = cast("dict[str, Any]", obj)
+        d = cast(_CAST_DICT_STR_ANY, obj)
         return {k: _resolve_env_vars(v) for k, v in d.items()}
     if isinstance(obj, list):
         lst = cast("list[Any]", obj)
@@ -530,7 +534,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             try:
                 raw = json.loads(settings_path.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
-                    existing = cast("dict[str, Any]", raw)
+                    existing = cast(_CAST_DICT_STR_ANY, raw)
             except (json.JSONDecodeError, OSError):
                 pass  # Settings file missing or corrupt; start fresh
 

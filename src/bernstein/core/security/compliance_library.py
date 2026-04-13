@@ -528,6 +528,11 @@ _CHECK_FUNCTIONS: dict[str, Any] = {
     "check_consent_management": check_consent_management,
 }
 
+# Shared policy rule title constants to avoid duplication (Sonar S1192).
+_TITLE_VULNERABILITY_SCANNING = "Vulnerability Scanning"
+_TITLE_ENCRYPTION_AT_REST = "Encryption at Rest"
+_TITLE_ENCRYPTION_IN_TRANSIT = "Encryption in Transit"
+_TITLE_ACCESS_CONTROLS = "Access Controls"
 
 # ---------------------------------------------------------------------------
 # Rule definitions per framework
@@ -578,7 +583,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="soc2-monitor-01",
         framework=ComplianceFramework.SOC2,
-        title="Vulnerability Scanning",
+        title=_TITLE_VULNERABILITY_SCANNING,
         description="CC7.1: Verify that vulnerability scanning is enabled.",
         check_function_name="check_vulnerability_scanning",
         severity=Severity.MEDIUM,
@@ -595,7 +600,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="iso27001-crypto-01",
         framework=ComplianceFramework.ISO27001,
-        title="Encryption at Rest",
+        title=_TITLE_ENCRYPTION_AT_REST,
         description="A.10.1.1: Verify that state data is encrypted at rest.",
         check_function_name="check_encryption_at_rest",
         severity=Severity.HIGH,
@@ -676,7 +681,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="pci-crypto-01",
         framework=ComplianceFramework.PCI_DSS,
-        title="Encryption at Rest",
+        title=_TITLE_ENCRYPTION_AT_REST,
         description="Req 3: Verify that stored data is encrypted at rest.",
         check_function_name="check_encryption_at_rest",
         severity=Severity.CRITICAL,
@@ -708,7 +713,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="pci-access-01",
         framework=ComplianceFramework.PCI_DSS,
-        title="Access Controls",
+        title=_TITLE_ACCESS_CONTROLS,
         description="Req 7: Verify that role-based access controls restrict data access.",
         check_function_name="check_access_controls",
         severity=Severity.HIGH,
@@ -732,7 +737,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="pci-scan-01",
         framework=ComplianceFramework.PCI_DSS,
-        title="Vulnerability Scanning",
+        title=_TITLE_VULNERABILITY_SCANNING,
         description="Req 11: Verify that vulnerability scanning is configured.",
         check_function_name="check_vulnerability_scanning",
         severity=Severity.HIGH,
@@ -797,7 +802,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="nist-sc-01",
         framework=ComplianceFramework.NIST_800_53,
-        title="Encryption in Transit",
+        title=_TITLE_ENCRYPTION_IN_TRANSIT,
         description="SC-8: Verify that data in transit is encrypted.",
         check_function_name="check_tls_enforced",
         severity=Severity.HIGH,
@@ -805,7 +810,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="nist-sc-02",
         framework=ComplianceFramework.NIST_800_53,
-        title="Encryption at Rest",
+        title=_TITLE_ENCRYPTION_AT_REST,
         description="SC-28: Verify that data at rest is encrypted.",
         check_function_name="check_encryption_at_rest",
         severity=Severity.HIGH,
@@ -837,7 +842,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="nist-ra-01",
         framework=ComplianceFramework.NIST_800_53,
-        title="Vulnerability Scanning",
+        title=_TITLE_VULNERABILITY_SCANNING,
         description="RA-5: Verify that vulnerability scanning is configured.",
         check_function_name="check_vulnerability_scanning",
         severity=Severity.MEDIUM,
@@ -862,7 +867,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="hipaa-access-01",
         framework=ComplianceFramework.HIPAA,
-        title="Access Controls",
+        title=_TITLE_ACCESS_CONTROLS,
         description="164.312(a): Verify that access controls limit PHI access.",
         check_function_name="check_access_controls",
         severity=Severity.CRITICAL,
@@ -886,7 +891,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="hipaa-encrypt-01",
         framework=ComplianceFramework.HIPAA,
-        title="Encryption at Rest",
+        title=_TITLE_ENCRYPTION_AT_REST,
         description="164.312(a)(2)(iv): Verify that PHI is encrypted at rest.",
         check_function_name="check_encryption_at_rest",
         severity=Severity.CRITICAL,
@@ -894,7 +899,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="hipaa-encrypt-02",
         framework=ComplianceFramework.HIPAA,
-        title="Encryption in Transit",
+        title=_TITLE_ENCRYPTION_IN_TRANSIT,
         description="164.312(e): Verify that PHI is encrypted during transmission.",
         check_function_name="check_tls_enforced",
         severity=Severity.CRITICAL,
@@ -959,7 +964,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="gdpr-encrypt-01",
         framework=ComplianceFramework.GDPR,
-        title="Encryption at Rest",
+        title=_TITLE_ENCRYPTION_AT_REST,
         description="Art. 32: Verify appropriate encryption of personal data at rest.",
         check_function_name="check_encryption_at_rest",
         severity=Severity.HIGH,
@@ -967,7 +972,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="gdpr-encrypt-02",
         framework=ComplianceFramework.GDPR,
-        title="Encryption in Transit",
+        title=_TITLE_ENCRYPTION_IN_TRANSIT,
         description="Art. 32: Verify appropriate encryption of personal data in transit.",
         check_function_name="check_tls_enforced",
         severity=Severity.HIGH,
@@ -975,7 +980,7 @@ _ALL_RULES: list[PolicyRule] = [
     PolicyRule(
         rule_id="gdpr-access-01",
         framework=ComplianceFramework.GDPR,
-        title="Access Controls",
+        title=_TITLE_ACCESS_CONTROLS,
         description="Art. 32: Verify access controls protect personal data.",
         check_function_name="check_access_controls",
         severity=Severity.HIGH,

@@ -11,6 +11,10 @@ import httpx
 from bernstein.cli.helpers import SERVER_URL, console
 from bernstein.core.knowledge_graph import query_impact
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_LIST_DICT_STR_ANY = "list[dict[str, Any]]"
+_CAST_LIST_OBJ = "list[object]"
+
 
 @click.group("graph")
 def graph_group() -> None:
@@ -57,12 +61,12 @@ def _fetch_task_graph() -> dict[str, Any]:
 
 def _render_ascii_graph(data: dict[str, Any]) -> str:
     """Render a task graph as Rich-friendly ASCII text."""
-    nodes = cast("list[dict[str, Any]]", data.get("nodes", []))
+    nodes = cast(_CAST_LIST_DICT_STR_ANY, data.get("nodes", []))
     if not nodes:
         return "(no tasks)"
 
     node_by_id = {str(node["id"]): node for node in nodes}
-    critical_path = [str(task_id) for task_id in cast("list[object]", data.get("critical_path", []))]
+    critical_path = [str(task_id) for task_id in cast(_CAST_LIST_OBJ, data.get("critical_path", []))]
     blocked_ids = {str(node["id"]) for node in nodes if str(node.get("status", "")).lower() == "blocked"}
     ordered_nodes = nodes
     lines: list[str] = []
@@ -74,7 +78,7 @@ def _render_ascii_graph(data: dict[str, Any]) -> str:
         blocked_suffix = " [BLOCKED]" if task_id in blocked_ids else ""
         lines.append(f"[{status}] {task_id[:8]} {title}{marker}{blocked_suffix}")
 
-    edges = cast("list[dict[str, Any]]", data.get("edges", []))
+    edges = cast(_CAST_LIST_DICT_STR_ANY, data.get("edges", []))
     if edges:
         lines.append("")
         lines.append("Dependencies:")
@@ -93,7 +97,7 @@ def _render_ascii_graph(data: dict[str, Any]) -> str:
         if minutes > 0:
             lines.append(f"  Estimated duration: {minutes} min")
 
-    bottlenecks = cast("list[object]", data.get("bottlenecks", []))
+    bottlenecks = cast(_CAST_LIST_OBJ, data.get("bottlenecks", []))
     if bottlenecks:
         lines.append("")
         lines.append("Bottlenecks:")
@@ -104,9 +108,9 @@ def _render_ascii_graph(data: dict[str, Any]) -> str:
 
 def _render_mermaid_graph(data: dict[str, Any]) -> str:
     """Render the task graph as Mermaid flowchart markup."""
-    nodes = cast("list[dict[str, Any]]", data.get("nodes", []))
-    edges = cast("list[dict[str, Any]]", data.get("edges", []))
-    critical_path = [str(task_id) for task_id in cast("list[object]", data.get("critical_path", []))]
+    nodes = cast(_CAST_LIST_DICT_STR_ANY, data.get("nodes", []))
+    edges = cast(_CAST_LIST_DICT_STR_ANY, data.get("edges", []))
+    critical_path = [str(task_id) for task_id in cast(_CAST_LIST_OBJ, data.get("critical_path", []))]
     critical_set = set(critical_path)
     lines = ["flowchart TD"]
     for node in nodes:

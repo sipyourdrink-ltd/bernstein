@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_NO_BLAME_DATA = "(no blame data available)"
+
 
 # ------------------------------------------------------------------
 # Low-level helper
@@ -153,15 +155,15 @@ def blame_summary(
 
     out = _run_git(cmd, cwd, timeout=15)
     if not out:
-        return "(no blame data available)"
+        return _NO_BLAME_DATA
 
     changes = _parse_blame_porcelain(out)
     if not changes:
-        return "(no blame data available)"
+        return _NO_BLAME_DATA
 
     entries = _dedup_blame_entries(changes, max_entries)
     lines = [f"- {_epoch_to_relative(ts)}: {summary} ({author})" for author, summary, ts in entries]
-    return "\n".join(lines) if lines else "(no blame data available)"
+    return "\n".join(lines) if lines else _NO_BLAME_DATA
 
 
 # ------------------------------------------------------------------

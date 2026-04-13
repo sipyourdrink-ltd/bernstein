@@ -103,6 +103,11 @@ _LANGUAGE_BY_SUFFIX: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+_CAST_LIST_OBJ = "list[object]"
+
+
 @dataclass
 class TaskContext:
     """Feature vector extracted from a Task for bandit routing.
@@ -312,7 +317,7 @@ def _load_arms(value: object, fallback: list[str]) -> list[str]:
     """Load model arms from JSON, falling back when the payload is invalid."""
     if not isinstance(value, list):
         return list(fallback)
-    raw_items = cast("list[object]", value)
+    raw_items = cast(_CAST_LIST_OBJ, value)
     arms = [item for item in raw_items if isinstance(item, str) and item]
     return arms or list(fallback)
 
@@ -321,7 +326,7 @@ def _is_vector(value: object, dim: int) -> TypeGuard[list[float]]:
     """Return whether ``value`` is a numeric vector of length ``dim``."""
     if not isinstance(value, list):
         return False
-    raw_items = cast("list[object]", value)
+    raw_items = cast(_CAST_LIST_OBJ, value)
     return len(raw_items) == dim and all(isinstance(item, int | float) for item in raw_items)
 
 
@@ -329,7 +334,7 @@ def _is_matrix(value: object, dim: int) -> TypeGuard[list[list[float]]]:
     """Return whether ``value`` is a numeric ``dim`` x ``dim`` matrix."""
     if not isinstance(value, list):
         return False
-    raw_rows = cast("list[object]", value)
+    raw_rows = cast(_CAST_LIST_OBJ, value)
     return len(raw_rows) == dim and all(_is_vector(row, dim) for row in raw_rows)
 
 
@@ -337,7 +342,7 @@ def _coerce_int_mapping(value: object) -> dict[str, int]:
     """Coerce a JSON mapping into ``dict[str, int]``."""
     if not isinstance(value, dict):
         return {}
-    raw_mapping = cast("dict[str, object]", value)
+    raw_mapping = cast(_CAST_DICT_STR_OBJ, value)
     coerced: dict[str, int] = {}
     for key, raw_item in raw_mapping.items():
         if isinstance(raw_item, bool):
@@ -353,12 +358,12 @@ def _load_exploration_history(value: object, arms: list[str]) -> dict[str, list[
     history: dict[str, list[float]] = {arm: [] for arm in arms}
     if not isinstance(value, dict):
         return history
-    raw_mapping = cast("dict[str, object]", value)
+    raw_mapping = cast(_CAST_DICT_STR_OBJ, value)
     for arm in arms:
         raw_samples: object = raw_mapping.get(arm, [])
         if not isinstance(raw_samples, list):
             continue
-        samples: list[float] = [float(v) for v in cast("list[object]", raw_samples) if isinstance(v, (int, float))]
+        samples: list[float] = [float(v) for v in cast(_CAST_LIST_OBJ, raw_samples) if isinstance(v, (int, float))]
         history[arm] = samples[-_EXPLORATION_HISTORY_LIMIT:]
     return history
 
@@ -367,7 +372,7 @@ def _load_shadow_pending(value: object) -> dict[str, dict[str, Any]]:
     """Load pending shadow decisions keyed by task ID."""
     if not isinstance(value, dict):
         return {}
-    raw_mapping = cast("dict[str, object]", value)
+    raw_mapping = cast(_CAST_DICT_STR_OBJ, value)
     pending: dict[str, dict[str, Any]] = {}
     for task_id, raw_payload in raw_mapping.items():
         if isinstance(raw_payload, dict):
@@ -389,7 +394,7 @@ def _load_shadow_counters(value: object) -> dict[str, float]:
     }
     if not isinstance(value, dict):
         return defaults
-    raw_mapping = cast("dict[str, object]", value)
+    raw_mapping = cast(_CAST_DICT_STR_OBJ, value)
     for key in tuple(defaults):
         raw_item = raw_mapping.get(key)
         if isinstance(raw_item, bool):
@@ -468,9 +473,9 @@ def _validate_raw_matrices(
         return None
 
     return (
-        cast("dict[str, object]", raw_inv or {}),
-        cast("dict[str, object]", raw_mat or {}),
-        cast("dict[str, object]", raw_vec),
+        cast(_CAST_DICT_STR_OBJ, raw_inv or {}),
+        cast(_CAST_DICT_STR_OBJ, raw_mat or {}),
+        cast(_CAST_DICT_STR_OBJ, raw_vec),
     )
 
 
@@ -642,7 +647,7 @@ class BanditPolicy:
             data = json.loads(path.read_text())
             if not isinstance(data, dict):
                 return cls(arms=default_arms)
-            raw_data = cast("dict[str, object]", data)
+            raw_data = cast(_CAST_DICT_STR_OBJ, data)
             if not _schema_version_matches(raw_data, path):
                 return cls(arms=default_arms)
             raw_alpha = raw_data.get("alpha", _DEFAULT_ALPHA)

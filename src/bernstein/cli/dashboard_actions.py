@@ -19,6 +19,10 @@ _STYLE_BOLD_BRIGHT_CYAN = "bold bright_cyan"
 # -- Quality metrics panel -----------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 class QualityPanel(Static):
     """Quality metrics: success rates, tokens, guardrails, latency."""
 
@@ -290,9 +294,9 @@ class ExpertBanditPanel(Static):
             t.append("\n \u2014routing bandit to enable", style="dim")
             return t
 
-        selection_frequency = cast("dict[str, Any]", b.get("selection_frequency", {}) or {})
-        exploration_stats = cast("dict[str, Any]", b.get("exploration_stats", {}) or {})
-        shadow_stats = cast("dict[str, Any]", b.get("shadow_stats", {}) or {})
+        selection_frequency = cast(_CAST_DICT_STR_ANY, b.get("selection_frequency", {}) or {})
+        exploration_stats = cast(_CAST_DICT_STR_ANY, b.get("exploration_stats", {}) or {})
+        shadow_stats = cast(_CAST_DICT_STR_ANY, b.get("shadow_stats", {}) or {})
 
         total_completions = int(b.get("total_completions", 0) or 0)
         exploration_rate = float(b.get("exploration_rate", 0.0) or 0.0)

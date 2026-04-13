@@ -19,6 +19,10 @@ from bernstein.core.git_basic import run_git
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 @dataclass(frozen=True)
 class BenchmarkMetrics:
     """Performance metrics extracted from a single benchmark."""
@@ -170,12 +174,12 @@ class BenchmarkGate:
         """Load the cached baseline when compatible, else re-measure it."""
         canonical = self._load_cached_baseline(self._baseline_path)
         if canonical is not None:
-            return self._deserialize_metrics(cast("dict[str, object]", canonical["metrics"]))
+            return self._deserialize_metrics(cast(_CAST_DICT_STR_OBJ, canonical["metrics"]))
 
         legacy = self._load_cached_baseline(self._legacy_baseline_path)
         if legacy is not None:
             self._persist_baseline_payload(legacy)
-            return self._deserialize_metrics(cast("dict[str, object]", legacy["metrics"]))
+            return self._deserialize_metrics(cast(_CAST_DICT_STR_OBJ, legacy["metrics"]))
 
         baseline = self.measure_baseline()
         self._persist_baseline(baseline)
@@ -208,7 +212,7 @@ class BenchmarkGate:
             raise RuntimeError(f"Failed to read benchmark results: {exc}") from exc
         if not isinstance(raw, dict):
             raise RuntimeError("Benchmark results have invalid structure")
-        return self._extract_metrics(cast("dict[str, object]", raw))
+        return self._extract_metrics(cast(_CAST_DICT_STR_OBJ, raw))
 
     def _extract_metrics(self, data: dict[str, object]) -> dict[str, BenchmarkMetrics]:
         """Extract BenchmarkMetrics from pytest-benchmark JSON format."""
@@ -221,14 +225,14 @@ class BenchmarkGate:
         for bench_item in benchmarks_list:
             if not isinstance(bench_item, dict):
                 continue
-            bench_map = cast("dict[str, object]", bench_item)
+            bench_map = cast(_CAST_DICT_STR_OBJ, bench_item)
             name = bench_map.get("name")
             if not isinstance(name, str):
                 continue
             stats_raw = bench_map.get("stats")
             if not isinstance(stats_raw, dict):
                 continue
-            stats = cast("dict[str, object]", stats_raw)
+            stats = cast(_CAST_DICT_STR_OBJ, stats_raw)
             mean_raw = stats.get("mean")
             if not isinstance(mean_raw, (int, float)):
                 continue
@@ -341,7 +345,7 @@ class BenchmarkGate:
         for name, raw in data.items():
             if not isinstance(raw, dict):
                 continue
-            entry = cast("dict[str, object]", raw)
+            entry = cast(_CAST_DICT_STR_OBJ, raw)
             mean_s_raw = entry.get("mean_s")
             if not isinstance(mean_s_raw, (int, float)):
                 continue
@@ -366,14 +370,14 @@ class BenchmarkGate:
             return None
         if not isinstance(raw, dict):
             return None
-        payload = cast("dict[str, object]", raw)
+        payload = cast(_CAST_DICT_STR_OBJ, raw)
         if payload.get("base_ref") != self._base_ref or payload.get("benchmark_command") != self._benchmark_command:
             return None
         metrics_raw = payload.get("metrics")
         if not isinstance(metrics_raw, dict):
             return None
         try:
-            self._deserialize_metrics(cast("dict[str, object]", metrics_raw))
+            self._deserialize_metrics(cast(_CAST_DICT_STR_OBJ, metrics_raw))
         except (KeyError, TypeError, ValueError):
             return None
         return payload

@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 @dataclass(frozen=True)
 class TimelineEvent:
     """A single event in the chronological run timeline.
@@ -122,7 +126,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
             try:
                 parsed: Any = json.loads(line)
                 if isinstance(parsed, dict):
-                    records.append(cast("dict[str, Any]", parsed))
+                    records.append(cast(_CAST_DICT_STR_ANY, parsed))
             except json.JSONDecodeError:
                 continue
     except OSError:
@@ -146,7 +150,7 @@ def _load_summary(archive_path: Path, run_id: str) -> dict[str, Any]:
     try:
         raw: Any = json.loads(summary_path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
-            return cast("dict[str, Any]", raw)
+            return cast(_CAST_DICT_STR_ANY, raw)
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("Failed to load summary.json for run %s: %s", run_id, exc)
     return {}
@@ -187,7 +191,7 @@ def _load_task_metrics(archive_path: Path) -> list[dict[str, Any]]:
         try:
             raw: Any = json.loads(f.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
-                results.append(cast("dict[str, Any]", raw))
+                results.append(cast(_CAST_DICT_STR_ANY, raw))
         except (OSError, json.JSONDecodeError):
             continue
     if results:
@@ -203,7 +207,7 @@ def _load_task_metrics(archive_path: Path) -> list[dict[str, Any]]:
                 entry_raw: Any = json.loads(stripped)
                 if not isinstance(entry_raw, dict):
                     continue
-                entry = cast("dict[str, Any]", entry_raw)
+                entry = cast(_CAST_DICT_STR_ANY, entry_raw)
                 if entry.get("metric_type") != "task_completion_time":
                     continue
                 labels: dict[str, Any] = entry.get("labels") or {}

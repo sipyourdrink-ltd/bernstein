@@ -30,6 +30,10 @@ WatchdogSeverity = Literal["medium", "high", "critical"]
 WatchdogSource = Literal["heartbeat", "log_growth", "progress_stall"]
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 @dataclass(frozen=True)
 class WatchdogFinding:
     """A mechanical incident detected for a live agent/task pair."""
@@ -86,7 +90,7 @@ def collect_watchdog_findings(orch: Any) -> list[WatchdogFinding]:
     if not isinstance(log_state_raw, dict):
         log_state_raw = {}
         cast("dict[str, Any]", orch.__dict__)["_watchdog_log_state"] = log_state_raw
-    log_state = cast("dict[str, object]", log_state_raw)
+    log_state = cast(_CAST_DICT_STR_OBJ, log_state_raw)
 
     stall_counts_raw = getattr(orch, "_stall_counts", {})
     stall_counts = cast("dict[str, int]", stall_counts_raw) if isinstance(stall_counts_raw, dict) else {}
@@ -336,7 +340,7 @@ class WatchdogManager:
         if not isinstance(raw, dict):
             return {}
         incidents: dict[str, WatchdogIncident] = {}
-        for key, value in cast("dict[str, object]", raw).items():
+        for key, value in cast(_CAST_DICT_STR_OBJ, raw).items():
             incident = _incident_from_raw(key, value)
             if incident is not None:
                 incidents[key] = incident
@@ -379,7 +383,7 @@ def _coerce_log_state(raw: object) -> tuple[int, int]:
 def _incident_from_raw(key: str, raw: object) -> WatchdogIncident | None:
     if not isinstance(raw, dict):
         return None
-    data = cast("dict[str, object]", raw)
+    data = cast(_CAST_DICT_STR_OBJ, raw)
     session_id = data.get("session_id")
     task_id = data.get("task_id")
     source = data.get("source")

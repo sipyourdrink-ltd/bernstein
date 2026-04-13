@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 class DecisionType(StrEnum):
     """Permission decision types in order of precedence (highest first)."""
 
@@ -280,15 +284,15 @@ def _load_yaml_policy_file(path: Path) -> list[PolicyRule]:
 
     items: object
     if isinstance(raw, dict):
-        mapping = cast("dict[str, object]", raw)
+        mapping = cast(_CAST_DICT_STR_OBJ, raw)
         items = mapping.get("policies") if "policies" in mapping else mapping
     else:
         items = raw
 
     if isinstance(items, dict):
-        entries: list[dict[str, object]] = [cast("dict[str, object]", items)]
+        entries: list[dict[str, object]] = [cast(_CAST_DICT_STR_OBJ, items)]
     elif isinstance(items, list):
-        entries = [cast("dict[str, object]", entry) for entry in cast("list[object]", items) if isinstance(entry, dict)]
+        entries = [cast(_CAST_DICT_STR_OBJ, entry) for entry in cast("list[object]", items) if isinstance(entry, dict)]
     else:
         return []
 

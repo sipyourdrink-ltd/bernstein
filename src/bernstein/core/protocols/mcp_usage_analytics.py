@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 @dataclass(frozen=True)
 class _UsageRow:
     """Normalized historical MCP tool call extracted from the WAL."""
@@ -326,7 +330,7 @@ def _load_tool_inventory(sdd_dir: Path) -> dict[str, _ToolInventory]:
             continue
         if not isinstance(raw_obj, dict):
             continue
-        raw = cast("dict[str, object]", raw_obj)
+        raw = cast(_CAST_DICT_STR_OBJ, raw_obj)
         server_name = str(raw.get("server_name", "")).strip()
         tools_raw_obj = raw.get("tools", [])
         if not isinstance(tools_raw_obj, list):
@@ -338,7 +342,7 @@ def _load_tool_inventory(sdd_dir: Path) -> dict[str, _ToolInventory]:
         for tool in tools_raw:
             if not isinstance(tool, dict):
                 continue
-            tool_dict = cast("dict[str, object]", tool)
+            tool_dict = cast(_CAST_DICT_STR_OBJ, tool)
             tool_name = str(tool_dict.get("name", "")).strip()
             if tool_name:
                 tool_names.append(tool_name)
@@ -371,15 +375,15 @@ def _load_usage_rows(sdd_dir: Path) -> list[_UsageRow]:
                 continue
             if not isinstance(raw_obj, dict):
                 continue
-            raw = cast("dict[str, object]", raw_obj)
+            raw = cast(_CAST_DICT_STR_OBJ, raw_obj)
             if raw.get("decision_type") != "mcp_tool_call":
                 continue
             inputs_obj = raw.get("inputs", {})
             output_obj = raw.get("output", {})
             if not isinstance(inputs_obj, dict) or not isinstance(output_obj, dict):
                 continue
-            inputs = cast("dict[str, object]", inputs_obj)
-            output = cast("dict[str, object]", output_obj)
+            inputs = cast(_CAST_DICT_STR_OBJ, inputs_obj)
+            output = cast(_CAST_DICT_STR_OBJ, output_obj)
             server_name = str(inputs.get("server_name", "unknown")).strip() or "unknown"
             tool_name = str(inputs.get("tool_name", "")).strip()
             if not tool_name:

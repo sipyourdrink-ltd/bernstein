@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_STR_NONE = "str | None"
+
+
 @dataclass(frozen=True)
 class RuleSpec:
     """A single organizational rule loaded from .bernstein/rules.yaml.
@@ -169,11 +173,11 @@ def load_rules_config(workdir: Path) -> RulesConfig | None:
             continue
         exclude_raw: object = rule_raw.get("exclude", [])
         exclude: list[str] = list(cast("list[str]", exclude_raw)) if isinstance(exclude_raw, list) else []
-        pattern_val: str | None = cast("str | None", rule_raw.get("pattern"))
-        files_val: str | None = cast("str | None", rule_raw.get("files"))
-        path_val: str | None = cast("str | None", rule_raw.get("path"))
-        command_val: str | None = cast("str | None", rule_raw.get("command"))
-        message_val: str | None = cast("str | None", rule_raw.get("message"))
+        pattern_val: str | None = cast(_CAST_STR_NONE, rule_raw.get("pattern"))
+        files_val: str | None = cast(_CAST_STR_NONE, rule_raw.get("files"))
+        path_val: str | None = cast(_CAST_STR_NONE, rule_raw.get("path"))
+        command_val: str | None = cast(_CAST_STR_NONE, rule_raw.get("command"))
+        message_val: str | None = cast(_CAST_STR_NONE, rule_raw.get("message"))
         rules.append(
             RuleSpec(
                 id=rule_id,

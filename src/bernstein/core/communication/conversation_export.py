@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 @dataclass(frozen=True)
 class ConversationMessage:
     """A single message in an agent conversation.
@@ -83,7 +87,7 @@ def _extract_text_from_content(content: Any) -> str:
     parts: list[str] = []
     for block in cast("list[Any]", content):
         if isinstance(block, dict):
-            block_dict = cast("dict[str, Any]", block)
+            block_dict = cast(_CAST_DICT_STR_ANY, block)
             block_type = str(block_dict.get("type", ""))
             if block_type == "text":
                 parts.append(str(block_dict.get("text", "")))
@@ -102,7 +106,7 @@ def _extract_tool_uses(content: Any) -> list[tuple[str, str]]:
     results: list[tuple[str, str]] = []
     for block in cast("list[Any]", content):
         if isinstance(block, dict):
-            block_dict = cast("dict[str, Any]", block)
+            block_dict = cast(_CAST_DICT_STR_ANY, block)
             if str(block_dict.get("type", "")) == "tool_use":
                 name = str(block_dict.get("name", ""))
                 tool_input = block_dict.get("input", {})
@@ -149,7 +153,7 @@ def parse_ndjson_log(log_path: Path) -> list[ConversationMessage]:
         if not isinstance(raw, dict):
             continue
 
-        msg = cast("dict[str, Any]", raw)
+        msg = cast(_CAST_DICT_STR_ANY, raw)
         event_type = str(msg.get("type", ""))
         ts_raw = msg.get("timestamp")
         ts: float | None = float(ts_raw) if ts_raw is not None else None
@@ -201,7 +205,7 @@ def _process_assistant_event(
     """Process assistant event type including tool_use blocks."""
     message_data = msg.get("message", {})
     if isinstance(message_data, dict):
-        content_raw = cast("dict[str, Any]", message_data).get("content", "")
+        content_raw = cast(_CAST_DICT_STR_ANY, message_data).get("content", "")
     else:
         content_raw = msg.get("content", "")
 

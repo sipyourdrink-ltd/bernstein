@@ -18,6 +18,8 @@ import ast
 import sys
 from pathlib import Path
 
+_INIT_PY = "__init__.py"
+
 # ---------------------------------------------------------------------------
 # Package metadata — human-curated package descriptions (not auto-derived)
 # ---------------------------------------------------------------------------
@@ -147,7 +149,7 @@ def _collect_package(package: str) -> list[tuple[str, str]]:
             and f.suffix == ".py"
             and f.name not in pinned
             and f.name not in SKIP_FILES
-            and (package != "core" or f.name != "__init__.py")
+            and (package != "core" or f.name != _INIT_PY)
         )
         all_files = [pkg_dir / name for name in (pinned + rest)]
     else:
@@ -157,7 +159,7 @@ def _collect_package(package: str) -> list[tuple[str, str]]:
 
     for py_file in all_files:
         fname = py_file.name
-        if fname == "__init__.py" and package in SKIP_INIT:
+        if fname == _INIT_PY and package in SKIP_INIT:
             continue
         if fname in SKIP_IN_MULTI:
             continue
@@ -180,7 +182,7 @@ def _collect_package(package: str) -> list[tuple[str, str]]:
             continue
         seen_subdirs.add(subdir.name)
         # Collect a one-liner from __init__.py if it exists
-        init = subdir / "__init__.py"
+        init = subdir / _INIT_PY
         desc = _first_docstring_line(init) if init.exists() else f"{subdir.name}/ sub-package"
         # List contents inline if small
         py_names = sorted(f.stem for f in subdir.glob("*.py") if not f.name.startswith("_"))

@@ -46,6 +46,10 @@ MIN_HEALTHY_SCORE: int = 60  # files below this are "unhealthy"
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 @dataclass
 class FileHealthScore:
     """Per-file code health score."""
@@ -242,7 +246,7 @@ def _compute_coverage_score(file_path: Path, metrics_dir: Path) -> int:
         files_raw = raw.get("files", {})
         if not isinstance(files_raw, dict):
             return 70
-        files = cast("dict[str, object]", files_raw)
+        files = cast(_CAST_DICT_STR_OBJ, files_raw)
 
         # Match by path suffix — coverage.json paths may be absolute
         rel = str(file_path)
@@ -251,11 +255,11 @@ def _compute_coverage_score(file_path: Path, metrics_dir: Path) -> int:
             if cov_path.endswith(rel) or rel.endswith(cov_path):
                 if not isinstance(info, dict):
                     continue
-                info_typed = cast("dict[str, object]", info)
+                info_typed = cast(_CAST_DICT_STR_OBJ, info)
                 summary_raw = info_typed.get("summary", {})
                 if not isinstance(summary_raw, dict):
                     continue
-                summary = cast("dict[str, object]", summary_raw)
+                summary = cast(_CAST_DICT_STR_OBJ, summary_raw)
                 pct_raw = summary.get("percent_covered", 70)
                 if isinstance(pct_raw, (int, float)):
                     return min(100, max(0, int(pct_raw)))

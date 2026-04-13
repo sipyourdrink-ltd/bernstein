@@ -48,6 +48,10 @@ __all__ = [
 ]
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 def _get_store(request: Request) -> TaskStore:
     return request.app.state.store  # type: ignore[no-any-return]
 
@@ -89,7 +93,7 @@ def _read_provider_status(request: Request) -> dict[str, Any] | None:
         return None
 
     try:
-        return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+        return cast(_CAST_DICT_STR_ANY, json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -104,7 +108,7 @@ def _read_agents_snapshot(sdd_dir: Path | None) -> dict[str, dict[str, Any]]:
         return {}
 
     try:
-        payload = cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+        payload = cast(_CAST_DICT_STR_ANY, json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -689,11 +693,11 @@ def _read_merge_queue(request: Request) -> dict[str, Any]:
         if isinstance(raw, list):
             # Legacy format: plain list of job dicts
             raw_list = cast("list[Any]", raw)
-            jobs: list[dict[str, Any]] = [cast("dict[str, Any]", item) for item in raw_list if isinstance(item, dict)]
+            jobs: list[dict[str, Any]] = [cast(_CAST_DICT_STR_ANY, item) for item in raw_list if isinstance(item, dict)]
             return {"jobs": jobs, "depth": len(jobs), "is_merging": False}
         if isinstance(raw, dict):
-            raw_dict = cast("dict[str, Any]", raw)
-            jobs = [cast("dict[str, Any]", item) for item in raw_dict.get("jobs", []) if isinstance(item, dict)]
+            raw_dict = cast(_CAST_DICT_STR_ANY, raw)
+            jobs = [cast(_CAST_DICT_STR_ANY, item) for item in raw_dict.get("jobs", []) if isinstance(item, dict)]
             return {
                 "jobs": jobs,
                 "depth": int(raw_dict.get("depth", len(jobs))),

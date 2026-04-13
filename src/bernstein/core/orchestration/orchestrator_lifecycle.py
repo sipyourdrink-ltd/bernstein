@@ -14,6 +14,10 @@ from typing import Any, cast
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_LIST_DICT_STR_ANY = "list[dict[str, Any]]"
+
+
 def drain_before_cleanup(orch: Any, timeout_s: float = 10.0) -> None:
     """Stop new work, wait briefly for active agents, then drain executor.
 
@@ -61,10 +65,10 @@ def save_session_state(orch: Any) -> None:
         tasks_data: Any = resp.json()
         task_list: list[dict[str, Any]] = []
         if isinstance(tasks_data, list):
-            task_list = cast("list[dict[str, Any]]", tasks_data)
+            task_list = cast(_CAST_LIST_DICT_STR_ANY, tasks_data)
         elif isinstance(tasks_data, dict):
             typed_data: dict[str, Any] = cast("dict[str, Any]", tasks_data)
-            task_list = cast("list[dict[str, Any]]", typed_data.get("tasks", []))
+            task_list = cast(_CAST_LIST_DICT_STR_ANY, typed_data.get("tasks", []))
 
         done_ids: list[str] = [str(t["id"]) for t in task_list if t.get("status") == "done"]
         pending_ids: list[str] = [str(t["id"]) for t in task_list if t.get("status") in ("claimed", "in_progress")]

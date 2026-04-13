@@ -521,12 +521,7 @@ class PostgresTaskStore(BaseTaskStore):
             task = _row_to_task(row)
             completed_at = time.time()
             await conn.execute(
-                """
-                INSERT INTO task_archive
-                    (task_id, title, role, status, created_at, completed_at,
-                     duration_seconds, result_summary, cost_usd)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-                """,
+                _ARCHIVE_INSERT_SQL,
                 task.id,
                 task.title,
                 task.role,
@@ -560,12 +555,7 @@ class PostgresTaskStore(BaseTaskStore):
             task = _row_to_task(row)
             completed_at = time.time()
             await conn.execute(
-                """
-                INSERT INTO task_archive
-                    (task_id, title, role, status, created_at, completed_at,
-                     duration_seconds, result_summary, cost_usd)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-                """,
+                _ARCHIVE_INSERT_SQL,
                 task.id,
                 task.title,
                 task.role,
@@ -647,12 +637,7 @@ class PostgresTaskStore(BaseTaskStore):
             task = _row_to_task(row)
             completed_at = time.time()
             await conn.execute(
-                """
-                INSERT INTO task_archive
-                    (task_id, title, role, status, created_at, completed_at,
-                     duration_seconds, result_summary, cost_usd)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-                """,
+                _ARCHIVE_INSERT_SQL,
                 task.id,
                 task.title,
                 task.role,

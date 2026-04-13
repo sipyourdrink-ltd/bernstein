@@ -59,6 +59,10 @@ from bernstein.tui.worktree_status import RuntimeHealthPanel
 _AGENTS_JSON_PATH = ".sdd/runtime/agents.json"
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 def _build_app_bindings() -> list[BindingType]:
     """Build BINDINGS from the keybinding_config system (TUI-004).
 
@@ -433,7 +437,7 @@ class BernsteinApp(App[None]):
             transition_reasons = cast("dict[str, dict[str, float]]", transition_reasons_raw)
         # TUI-010: compute aggregate run-level progress percentage
         run_pct: float | None = None
-        summary = cast("dict[str, Any]", data.get("summary", {})) if isinstance(data.get("summary"), dict) else {}
+        summary = cast(_CAST_DICT_STR_ANY, data.get("summary", {})) if isinstance(data.get("summary"), dict) else {}
         if tasks_total := int(summary.get("total", data.get("total", 0))):
             tasks_done_count = int(summary.get("done", data.get("completed", 0)))
             run_pct = (tasks_done_count / tasks_total) * 100.0
@@ -451,24 +455,24 @@ class BernsteinApp(App[None]):
         task_dicts: list[dict[str, Any]]
         tasks_section = data.get("tasks")
         if isinstance(tasks_section, dict):
-            tasks_payload = cast("dict[str, Any]", tasks_section)
+            tasks_payload = cast(_CAST_DICT_STR_ANY, tasks_section)
             items = tasks_payload.get("items")
             if isinstance(items, list):
                 items_list = cast("list[object]", items)
-                task_dicts = [cast("dict[str, Any]", item) for item in items_list if isinstance(item, dict)]
+                task_dicts = [cast(_CAST_DICT_STR_ANY, item) for item in items_list if isinstance(item, dict)]
             else:
                 task_dicts = []
         else:
             fallback = _get("/tasks")
             fallback_items = fallback if isinstance(fallback, list) else []
-            task_dicts = [cast("dict[str, Any]", item) for item in fallback_items if isinstance(item, dict)]
+            task_dicts = [cast(_CAST_DICT_STR_ANY, item) for item in fallback_items if isinstance(item, dict)]
         rows = [TaskRow.from_api(item) for item in task_dicts]
         self._all_rows = rows
         self._task_lookup = {row.task_id: row for row in rows}
         self._apply_task_filter()
         runtime_snapshot = data.get("runtime")
         if isinstance(runtime_snapshot, dict):
-            runtime = cast("dict[str, Any]", runtime_snapshot)
+            runtime = cast(_CAST_DICT_STR_ANY, runtime_snapshot)
             self.query_one(_TASK_CONTEXT_SELECTOR, TaskContextPanel).set_runtime_snapshot(runtime)
             self.query_one("#runtime-health", RuntimeHealthPanel).set_snapshot(runtime)
 
@@ -884,11 +888,11 @@ class BernsteinApp(App[None]):
         if data and isinstance(data, dict):
             entries = [
                 ApprovalEntry(
-                    task_id=cast("dict[str, Any]", item)["task_id"],
-                    task_title=cast("dict[str, Any]", item).get("task_title", ""),
-                    session_id=cast("dict[str, Any]", item).get("session_id", ""),
-                    diff_preview=cast("dict[str, Any]", item).get("diff", ""),
-                    test_summary=cast("dict[str, Any]", item).get("test_summary", ""),
+                    task_id=cast(_CAST_DICT_STR_ANY, item)["task_id"],
+                    task_title=cast(_CAST_DICT_STR_ANY, item).get("task_title", ""),
+                    session_id=cast(_CAST_DICT_STR_ANY, item).get("session_id", ""),
+                    diff_preview=cast(_CAST_DICT_STR_ANY, item).get("diff", ""),
+                    test_summary=cast(_CAST_DICT_STR_ANY, item).get("test_summary", ""),
                 )
                 for item in data.get("pending", [])
                 if isinstance(item, dict) and "task_id" in item

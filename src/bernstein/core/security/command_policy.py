@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+_CAST_LIST_OBJ = "list[object]"
+
+
 @dataclass(frozen=True)
 class RoleCommandPolicy:
     """Command allowlist/denylist for a single role.
@@ -184,31 +189,31 @@ def load_command_policies(sdd_dir: Path) -> CommandPoliciesConfig | None:
         )
         return None
 
-    data = cast("dict[str, Any]", raw)
+    data = cast(_CAST_DICT_STR_ANY, raw)
     version = int(data.get("version", 1))
     enabled = bool(data.get("enabled", True))
 
     # Global deny patterns
     raw_global_deny: object = data.get("global_deny", [])
     global_deny: list[str] = (
-        [str(p) for p in cast("list[object]", raw_global_deny)] if isinstance(raw_global_deny, list) else []
+        [str(p) for p in cast(_CAST_LIST_OBJ, raw_global_deny)] if isinstance(raw_global_deny, list) else []
     )
 
     # Per-role policies
     roles: dict[str, RoleCommandPolicy] = {}
     raw_roles: object = data.get("roles", {})
     if isinstance(raw_roles, dict):
-        for role_name, role_cfg in cast("dict[str, Any]", raw_roles).items():
+        for role_name, role_cfg in cast(_CAST_DICT_STR_ANY, raw_roles).items():
             if not isinstance(role_cfg, dict):
                 logger.warning("Skipping non-mapping role entry: %r", role_name)
                 continue
-            rc = cast("dict[str, Any]", role_cfg)
+            rc = cast(_CAST_DICT_STR_ANY, role_cfg)
 
             raw_allow: object = rc.get("allow", [])
-            allow = [str(p) for p in cast("list[object]", raw_allow)] if isinstance(raw_allow, list) else []
+            allow = [str(p) for p in cast(_CAST_LIST_OBJ, raw_allow)] if isinstance(raw_allow, list) else []
 
             raw_deny: object = rc.get("deny", [])
-            deny = [str(p) for p in cast("list[object]", raw_deny)] if isinstance(raw_deny, list) else []
+            deny = [str(p) for p in cast(_CAST_LIST_OBJ, raw_deny)] if isinstance(raw_deny, list) else []
 
             # Optional per-pattern deny messages
             raw_msgs: object = rc.get("deny_messages", {})

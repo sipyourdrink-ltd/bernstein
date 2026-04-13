@@ -22,6 +22,10 @@ _ANALYZER_CACHE_VERSION = "2"
 _COMPAT_CACHE_VERSION = "1"
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 class AnalyzerCacheData(TypedDict):
     """Typed payload for persisted analyzer cache data."""
 
@@ -156,8 +160,8 @@ def compat_cache_is_fresh(
     source_imports_raw = cached.get("source_imports")
     if cached.get("version") != _COMPAT_CACHE_VERSION:
         return False
-    test_deps = cast("dict[str, object]", test_deps_raw) if isinstance(test_deps_raw, dict) else {}
-    source_imports = cast("dict[str, object]", source_imports_raw) if isinstance(source_imports_raw, dict) else {}
+    test_deps = cast(_CAST_DICT_STR_OBJ, test_deps_raw) if isinstance(test_deps_raw, dict) else {}
+    source_imports = cast(_CAST_DICT_STR_OBJ, source_imports_raw) if isinstance(source_imports_raw, dict) else {}
 
     for test_dir in test_dirs:
         if not test_dir.exists():
@@ -167,7 +171,7 @@ def compat_cache_is_fresh(
             entry = test_deps.get(rel)
             if not isinstance(entry, dict):
                 return False
-            entry_dict = cast("dict[str, object]", entry)
+            entry_dict = cast(_CAST_DICT_STR_OBJ, entry)
             if entry_dict.get("hash") != _file_hash(test_file):
                 return False
 
@@ -177,7 +181,7 @@ def compat_cache_is_fresh(
             entry = source_imports.get(module)
             if not isinstance(entry, dict):
                 return False
-            entry_dict = cast("dict[str, object]", entry)
+            entry_dict = cast(_CAST_DICT_STR_OBJ, entry)
             if entry_dict.get("hash") != _file_hash(src_file):
                 return False
 
@@ -194,8 +198,8 @@ def compat_get_affected_tests(
     """Return affected test file paths for the legacy script contract."""
     test_deps_raw = dep_map.get("test_deps")
     source_imports_raw = dep_map.get("source_imports")
-    test_deps = cast("dict[str, object]", test_deps_raw) if isinstance(test_deps_raw, dict) else {}
-    source_imports = cast("dict[str, object]", source_imports_raw) if isinstance(source_imports_raw, dict) else {}
+    test_deps = cast(_CAST_DICT_STR_OBJ, test_deps_raw) if isinstance(test_deps_raw, dict) else {}
+    source_imports = cast(_CAST_DICT_STR_OBJ, source_imports_raw) if isinstance(source_imports_raw, dict) else {}
 
     if any("conftest.py" in changed for changed in changed_files):
         return sorted(root / rel for rel in test_deps)
@@ -204,7 +208,7 @@ def compat_get_affected_tests(
     for test_rel, entry in test_deps.items():
         if not isinstance(entry, dict):
             continue
-        entry_dict = cast("dict[str, object]", entry)
+        entry_dict = cast(_CAST_DICT_STR_OBJ, entry)
         for module in _normalize_string_list(entry_dict.get("imports", [])):
             module_to_tests.setdefault(module, set()).add(str(test_rel))
 
@@ -221,7 +225,7 @@ def compat_get_affected_tests(
         for module, info in source_imports.items():
             if not isinstance(info, dict):
                 continue
-            info_dict = cast("dict[str, object]", info)
+            info_dict = cast(_CAST_DICT_STR_OBJ, info)
             imports = _normalize_string_list(info_dict.get("imports", []))
             if current in imports and module not in all_affected:
                 all_affected.add(str(module))
@@ -471,7 +475,7 @@ class TestImpactAnalyzer:
             return None
         if not isinstance(raw, dict):
             return None
-        data = cast("dict[str, object]", raw)
+        data = cast(_CAST_DICT_STR_OBJ, raw)
         if data.get("version") != _ANALYZER_CACHE_VERSION:
             return None
         snapshot = data.get("snapshot")

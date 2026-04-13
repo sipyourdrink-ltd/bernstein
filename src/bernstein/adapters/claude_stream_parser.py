@@ -18,6 +18,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
+from collections.abc import Callable
 from typing import Any, cast
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,10 @@ _BLOCK_THINKING = "thinking"
 _EVENT_ASSISTANT = "assistant"
 _EVENT_RESULT = "result"
 _EVENT_SYSTEM = "system"
+
+
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
 
 
 class StreamEventType(StrEnum):
@@ -131,7 +136,7 @@ class ClaudeStreamParser:
         if not isinstance(raw, dict):
             return []
 
-        msg = cast("dict[str, Any]", raw)
+        msg = cast(_CAST_DICT_STR_ANY, raw)
         event_type = str(msg.get("type", ""))
         events: list[StreamEvent] = []
 
@@ -159,6 +164,45 @@ class ClaudeStreamParser:
             all_events.extend(self.feed_line(line))
         return all_events
 
+    def _handle_text_block(self, block: dict[str, Any], msg: dict[str, Any]) -> StreamEvent | None:
+        """Handle a ``text`` content block, deduplicating by value."""
+        text = str(block.get("text", ""))
+        if not text or text in self._seen_text:
+            return None
+        self._seen_text.add(text)
+        self.state.text_blocks.append(text)
+        return StreamEvent(event_type=StreamEventType.TEXT, data={"text": text}, raw=msg)
+
+    def _handle_tool_use_block(self, block: dict[str, Any], msg: dict[str, Any]) -> StreamEvent:
+        """Handle a ``tool_use`` content block."""
+        tool_input = block.get("input", {})
+        record: dict[str, Any] = {
+            "name": str(block.get("name", "")),
+            "id": str(block.get("id", "")),
+            "input_preview": str(tool_input)[:200] if tool_input else "",
+        }
+        self.state.tool_uses.append(record)
+        return StreamEvent(event_type=StreamEventType.TOOL_USE_START, data=record, raw=msg)
+
+    def _handle_tool_result_block(self, block: dict[str, Any], msg: dict[str, Any]) -> StreamEvent:
+        """Handle a ``tool_result`` content block."""
+        result_content = str(block.get("content", ""))
+        record: dict[str, Any] = {
+            "tool_use_id": str(block.get("tool_use_id", "")),
+            "is_error": bool(block.get("is_error", False)),
+            "content_preview": result_content[:200] if result_content else "",
+        }
+        self.state.tool_results.append(record)
+        return StreamEvent(event_type=StreamEventType.TOOL_RESULT, data=record, raw=msg)
+
+    def _handle_thinking_block(self, block: dict[str, Any], msg: dict[str, Any]) -> StreamEvent | None:
+        """Handle a ``thinking`` content block."""
+        thinking_text = str(block.get("thinking", ""))
+        if not thinking_text:
+            return None
+        self.state.thinking_blocks.append(thinking_text)
+        return StreamEvent(event_type=StreamEventType.THINKING, data={"thinking": thinking_text}, raw=msg)
+
     def _parse_assistant(self, msg: dict[str, Any]) -> list[StreamEvent]:
         """Extract text and tool_use blocks from an assistant message.
 
@@ -168,88 +212,32 @@ class ClaudeStreamParser:
         Returns:
             List of events from the content blocks.
         """
-        events: list[StreamEvent] = []
         message_raw = msg.get("message", {})
         if not isinstance(message_raw, dict):
-            return events
-        message = cast("dict[str, Any]", message_raw)
+            return []
+        message = cast(_CAST_DICT_STR_ANY, message_raw)
 
         content_raw = message.get("content", [])
         if not isinstance(content_raw, list):
-            return events
-        content = cast("list[Any]", content_raw)
+            return []
 
-        for block_raw in content:
+        _BLOCK_HANDLERS: dict[str, Callable[[dict[str, Any], dict[str, Any]], StreamEvent | None]] = {
+            "text": self._handle_text_block,
+            "tool_use": self._handle_tool_use_block,
+            "tool_result": self._handle_tool_result_block,
+            "thinking": self._handle_thinking_block,
+        }
+
+        events: list[StreamEvent] = []
+        for block_raw in cast("list[Any]", content_raw):
             if not isinstance(block_raw, dict):
                 continue
-            block = cast("dict[str, Any]", block_raw)
-
-            block_type = str(block.get("type", ""))
-
-            match block_type:
-                case "text":
-                    text = str(block.get("text", ""))
-                    if text and text not in self._seen_text:
-                        self._seen_text.add(text)
-                        self.state.text_blocks.append(text)
-                        events.append(
-                            StreamEvent(
-                                event_type=StreamEventType.TEXT,
-                                data={"text": text},
-                                raw=msg,
-                            )
-                        )
-
-                case "tool_use":
-                    tool_name = str(block.get("name", ""))
-                    tool_input = block.get("input", {})
-                    tool_id = str(block.get("id", ""))
-                    preview = str(tool_input)[:200] if tool_input else ""
-                    tool_record: dict[str, Any] = {
-                        "name": tool_name,
-                        "id": tool_id,
-                        "input_preview": preview,
-                    }
-                    self.state.tool_uses.append(tool_record)
-                    events.append(
-                        StreamEvent(
-                            event_type=StreamEventType.TOOL_USE_START,
-                            data=tool_record,
-                            raw=msg,
-                        )
-                    )
-
-                case "tool_result":
-                    tool_use_id = str(block.get("tool_use_id", ""))
-                    is_error = bool(block.get("is_error", False))
-                    result_content = str(block.get("content", ""))
-                    preview = result_content[:200] if result_content else ""
-                    result_record: dict[str, Any] = {
-                        "tool_use_id": tool_use_id,
-                        "is_error": is_error,
-                        "content_preview": preview,
-                    }
-                    self.state.tool_results.append(result_record)
-                    events.append(
-                        StreamEvent(
-                            event_type=StreamEventType.TOOL_RESULT,
-                            data=result_record,
-                            raw=msg,
-                        )
-                    )
-
-                case "thinking":
-                    thinking_text = str(block.get("thinking", ""))
-                    if thinking_text:
-                        self.state.thinking_blocks.append(thinking_text)
-                        events.append(
-                            StreamEvent(
-                                event_type=StreamEventType.THINKING,
-                                data={"thinking": thinking_text},
-                                raw=msg,
-                            )
-                        )
-
+            block = cast(_CAST_DICT_STR_ANY, block_raw)
+            handler = _BLOCK_HANDLERS.get(str(block.get("type", "")))
+            if handler is not None:
+                event = handler(block, msg)
+                if event is not None:
+                    events.append(event)
         return events
 
     def _parse_result(self, msg: dict[str, Any]) -> list[StreamEvent]:

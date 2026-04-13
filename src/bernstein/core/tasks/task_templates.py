@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 @dataclass(frozen=True)
 class TaskTemplate:
     """Immutable specification for a reusable task pattern.
@@ -204,7 +208,7 @@ def load_custom_templates(yaml_path: Path) -> dict[str, TaskTemplate]:
         logger.warning("Custom templates file is not a YAML mapping: %s", yaml_path)
         return {}
 
-    raw_dict = cast("dict[str, Any]", raw)
+    raw_dict = cast(_CAST_DICT_STR_ANY, raw)
 
     # Support both top-level `task_templates:` key and bare mapping.
     templates_section = raw_dict.get("task_templates", raw_dict)
@@ -212,14 +216,14 @@ def load_custom_templates(yaml_path: Path) -> dict[str, TaskTemplate]:
         logger.warning("task_templates section is not a mapping in %s", yaml_path)
         return {}
 
-    templates_section = cast("dict[str, Any]", templates_section)
+    templates_section = cast(_CAST_DICT_STR_ANY, templates_section)
     result: dict[str, TaskTemplate] = {}
     for tid, fields in templates_section.items():
         tid = str(tid)
         if not isinstance(fields, dict):
             logger.warning("Skipping non-mapping template entry %r in %s", tid, yaml_path)
             continue
-        fields = cast("dict[str, Any]", fields)
+        fields = cast(_CAST_DICT_STR_ANY, fields)
         try:
             result[tid] = TaskTemplate(
                 template_id=tid,

@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+
+
 def normalize_region(region: str | None) -> str:
     """Normalize a provider or policy region into a comparable token."""
     if not region:
@@ -146,8 +150,8 @@ class ProviderConfig:
     tier: Tier
     cost_per_1k_tokens: float
     available: bool = True
-    quota_remaining: int | None = None  # None = unlimited
-    rate_limit_rpm: int | None = None  # requests per minute
+    quota_remaining: int | None = None
+    rate_limit_rpm: int | None = None
     routing_weight: float = 1.0  # Learned weight based on outcomes
 
     # Health and cost tracking
@@ -979,7 +983,7 @@ def load_model_policy_from_yaml(path: Path, router: TierAwareRouter) -> None:
         logger.warning("model_policy YAML at %s is not a dict, skipping", path)
         return
 
-    data: dict[str, Any] = cast("dict[str, Any]", data_raw)
+    data: dict[str, Any] = cast(_CAST_DICT_STR_ANY, data_raw)
 
     policy_data = data.get("model_policy", data)
 
@@ -987,7 +991,7 @@ def load_model_policy_from_yaml(path: Path, router: TierAwareRouter) -> None:
         logger.warning("model_policy section at %s is not a dict, skipping", path)
         return
 
-    policy_dict: dict[str, Any] = cast("dict[str, Any]", policy_data)
+    policy_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, policy_data)
 
     try:
         policy = ModelPolicy.from_dict(policy_dict)
@@ -1034,25 +1038,25 @@ def load_providers_from_yaml(path: Path, router: TierAwareRouter) -> None:
         logger.warning("providers.yaml at %s has no 'providers' key, skipping", path)
         return
 
-    data: dict[str, Any] = cast("dict[str, Any]", data_raw)
+    data: dict[str, Any] = cast(_CAST_DICT_STR_ANY, data_raw)
     providers_data: Any = data["providers"]
     if not isinstance(providers_data, dict):
         return
 
-    providers_dict: dict[str, Any] = cast("dict[str, Any]", providers_data)
+    providers_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, providers_data)
     for name, cfg_raw in providers_dict.items():
         if not isinstance(cfg_raw, dict):
             continue
-        cfg: dict[str, Any] = cast("dict[str, Any]", cfg_raw)
+        cfg: dict[str, Any] = cast(_CAST_DICT_STR_ANY, cfg_raw)
         try:
             tier = Tier(str(cfg.get("tier", "standard")))
             raw_models: object = cfg.get("models", {})
             models: dict[str, ModelConfig] = {}
             if isinstance(raw_models, dict):
-                raw_models_dict: dict[str, Any] = cast("dict[str, Any]", raw_models)
+                raw_models_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, raw_models)
                 for model_id, mc_raw in raw_models_dict.items():
                     if isinstance(mc_raw, dict):
-                        mc: dict[str, Any] = cast("dict[str, Any]", mc_raw)
+                        mc: dict[str, Any] = cast(_CAST_DICT_STR_ANY, mc_raw)
                         models[str(model_id)] = ModelConfig(
                             model=str(mc.get("model", model_id)),
                             effort=str(mc.get("effort", "high")),

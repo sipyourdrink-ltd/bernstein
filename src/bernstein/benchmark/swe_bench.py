@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_LIST_ANY = "list[Any]"
+
+
 @dataclass(frozen=True)
 class SWEInstance:
     """A single SWE-Bench evaluation instance.
@@ -78,13 +82,13 @@ class SWEInstance:
 
         def _parse_tests(value: Any) -> list[str]:
             if isinstance(value, list):
-                lst = cast("list[Any]", value)
+                lst = cast(_CAST_LIST_ANY, value)
                 return [str(v) for v in lst]
             if isinstance(value, str):
                 try:
                     parsed: Any = json.loads(value)
                     if isinstance(parsed, list):
-                        plst = cast("list[Any]", parsed)
+                        plst = cast(_CAST_LIST_ANY, parsed)
                         return [str(v) for v in plst]
                 except json.JSONDecodeError:
                     pass  # Not a JSON list; treat as plain string
@@ -420,7 +424,7 @@ class SWEBenchRunner:
             from datasets import load_dataset as hf_load  # type: ignore[import-untyped]
 
             dataset_name = "princeton-nlp/SWE-bench_Lite" if self.subset == "lite" else "princeton-nlp/SWE-bench"
-            raw_dataset: list[Any] = cast("list[Any]", hf_load(dataset_name, split="test"))
+            raw_dataset: list[Any] = cast(_CAST_LIST_ANY, hf_load(dataset_name, split="test"))
             instances = [SWEInstance.from_dict(dict(row)) for row in raw_dataset]
             return self.filter_instances(instances)
         except ImportError:

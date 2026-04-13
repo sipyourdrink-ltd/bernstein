@@ -35,6 +35,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_OBJ = "dict[str, object]"
+
+
 class TaskLevel(Enum):
     """Task complexity level for fast-path routing."""
 
@@ -473,12 +477,12 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
     if not isinstance(data, dict):
         return False
 
-    data_dict: dict[str, object] = cast("dict[str, object]", data)
+    data_dict: dict[str, object] = cast(_CAST_DICT_STR_OBJ, data)
     fp_cfg_raw: object = data_dict.get("fast_path")
     if not isinstance(fp_cfg_raw, dict):
         return False
 
-    fp_cfg: dict[str, object] = cast("dict[str, object]", fp_cfg_raw)
+    fp_cfg: dict[str, object] = cast(_CAST_DICT_STR_OBJ, fp_cfg_raw)
 
     if not fp_cfg.get("enabled", True):
         logger.info("Fast-path disabled via routing.yaml")
@@ -494,7 +498,7 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
         for entry_obj in l0_items:
             if not isinstance(entry_obj, dict):
                 continue
-            entry: dict[str, object] = cast("dict[str, object]", entry_obj)
+            entry: dict[str, object] = cast(_CAST_DICT_STR_OBJ, entry_obj)
             pat_str: str = str(entry.get("pattern", ""))
             action_str: str = str(entry.get("action", ""))
             label: str = str(entry.get("label", action_str))
@@ -518,7 +522,7 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
         for entry_obj in l1_items:
             if not isinstance(entry_obj, dict):
                 continue
-            entry_l1: dict[str, object] = cast("dict[str, object]", entry_obj)
+            entry_l1: dict[str, object] = cast(_CAST_DICT_STR_OBJ, entry_obj)
             pat_str_l1: str = str(entry_l1.get("pattern", ""))
             label_l1: str = str(entry_l1.get("label", ""))
             if not pat_str_l1:

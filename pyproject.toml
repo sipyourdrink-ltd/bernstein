@@ -175,6 +175,9 @@ line-ending = "lf"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "RUF"]
+# TC006: We use module-level string constants for cast() type args (Sonar S1192).
+# Ruff cannot see through the indirection and flags them as "unquoted".
+ignore = ["TC006"]
 
 [tool.ruff.lint.per-file-ignores]
 # HTML/CSS template strings that cannot be wrapped without breaking structure

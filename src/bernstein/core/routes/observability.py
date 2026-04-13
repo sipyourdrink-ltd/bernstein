@@ -26,6 +26,11 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+_CAST_LIST_DICT_STR_ANY = "list[dict[str, Any]]"
+
+
 def _get_store(request: Request) -> TaskStore:
     """Return the task store mounted on application state."""
     return cast("TaskStore", request.app.state.store)
@@ -45,7 +50,7 @@ def _get_workdir(request: Request) -> Path:
 def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     """Read a JSON file with a default on missing or malformed content."""
     try:
-        return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+        return cast(_CAST_DICT_STR_ANY, json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError):
         return default
 
@@ -80,7 +85,7 @@ def observability_agents(request: Request) -> dict[str, Any]:
     active = 0
     stalled = 0
     idle = 0
-    for raw in cast("list[dict[str, Any]]", snapshot.get("agents", [])):
+    for raw in cast(_CAST_LIST_DICT_STR_ANY, snapshot.get("agents", [])):
         session_id = str(raw.get("id", ""))
         task_ids = [str(task_id) for task_id in cast("list[Any]", raw.get("task_ids", []))]
         heartbeat = monitor.check(session_id)
@@ -455,11 +460,11 @@ def _get_cost_breakdown(workdir: Path) -> dict[str, Any]:
     latest_cost_file = max(cost_files, key=lambda p: p.stat().st_mtime)
 
     try:
-        data = cast("dict[str, Any]", json.loads(latest_cost_file.read_text(encoding="utf-8")))
+        data = cast(_CAST_DICT_STR_ANY, json.loads(latest_cost_file.read_text(encoding="utf-8")))
         total_cost = cast("float", data.get("total_spent_usd", 0.0))
 
         # Per-model breakdown
-        per_model = cast("list[dict[str, Any]]", data.get("per_model", []))
+        per_model = cast(_CAST_LIST_DICT_STR_ANY, data.get("per_model", []))
         model_summary = [
             {
                 "model": m.get("model", "unknown"),
@@ -472,7 +477,7 @@ def _get_cost_breakdown(workdir: Path) -> dict[str, Any]:
 
         # Per-role breakdown (from per_agent)
         per_role: dict[str, float] = {}
-        per_agent = cast("list[dict[str, Any]]", data.get("per_agent", []))
+        per_agent = cast(_CAST_LIST_DICT_STR_ANY, data.get("per_agent", []))
         for agent in per_agent:
             role = cast("str", agent.get("agent_id", "unknown"))
             role_cost = cast("float", agent.get("total_cost_usd", 0.0))
@@ -514,10 +519,10 @@ def token_histogram(request: Request) -> dict[str, Any]:
     if traces_dir.exists():
         for trace_file in traces_dir.glob("*.json"):
             try:
-                data = cast("dict[str, Any]", json.loads(trace_file.read_text(encoding="utf-8")))
+                data = cast(_CAST_DICT_STR_ANY, json.loads(trace_file.read_text(encoding="utf-8")))
                 complexity = data.get("complexity", "medium")
                 if isinstance(complexity, dict):
-                    complexity = cast("dict[str, Any]", complexity).get("value", "medium")
+                    complexity = cast(_CAST_DICT_STR_ANY, complexity).get("value", "medium")
 
                 input_tokens = data.get("input_tokens", 0) or 0
                 output_tokens = data.get("output_tokens", 0) or 0
@@ -856,7 +861,7 @@ def token_breakdown(request: Request) -> dict[str, Any]:
     tasks_by_id = {task.id: task for task in store.list_tasks()}
 
     session_info: dict[str, dict[str, Any]] = {}
-    for raw in cast("list[dict[str, Any]]", snapshot.get("agents", [])):
+    for raw in cast(_CAST_LIST_DICT_STR_ANY, snapshot.get("agents", [])):
         sid = str(raw.get("id", ""))
         if sid:
             session_info[sid] = {

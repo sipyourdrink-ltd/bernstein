@@ -27,6 +27,11 @@ _STYLE_BOLD_MAGENTA = "bold magenta"
 # ---------------------------------------------------------------------------
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+_CAST_LIST_OBJ = "list[object]"
+
+
 @dataclass(frozen=True)
 class RecipeStage:
     """Stage metadata extracted from a recipe/plan file."""
@@ -43,32 +48,32 @@ def _extract_recipe_stages(recipe_path: Path) -> list[RecipeStage]:
     raw_data = yaml.safe_load(recipe_path.read_text(encoding="utf-8"))
     if not isinstance(raw_data, dict):
         return []
-    data = cast("dict[str, Any]", raw_data)
+    data = cast(_CAST_DICT_STR_ANY, raw_data)
     raw_stages = data.get("stages")
     if not isinstance(raw_stages, list):
         return []
-    stages_raw = cast("list[object]", raw_stages)
+    stages_raw = cast(_CAST_LIST_OBJ, raw_stages)
 
     stages: list[RecipeStage] = []
     for idx, raw_stage in enumerate(stages_raw):
         if not isinstance(raw_stage, dict):
             continue
-        stage_map = cast("dict[str, Any]", raw_stage)
+        stage_map = cast(_CAST_DICT_STR_ANY, raw_stage)
         stage_name_raw = stage_map.get("name")
         stage_name = str(stage_name_raw).strip() if stage_name_raw else f"Stage {idx + 1}"
         deps_raw = stage_map.get("depends_on")
         depends_on: list[str] = []
         if isinstance(deps_raw, list):
-            for dep in cast("list[object]", deps_raw):
+            for dep in cast(_CAST_LIST_OBJ, deps_raw):
                 depends_on.append(str(dep).strip())
 
         step_titles: list[str] = []
         steps_raw = stage_map.get("steps")
         if isinstance(steps_raw, list):
-            for step in cast("list[object]", steps_raw):
+            for step in cast(_CAST_LIST_OBJ, steps_raw):
                 if not isinstance(step, dict):
                     continue
-                step_map = cast("dict[str, Any]", step)
+                step_map = cast(_CAST_DICT_STR_ANY, step)
                 title = step_map.get("title") or step_map.get("goal")
                 if title:
                     step_titles.append(str(title))

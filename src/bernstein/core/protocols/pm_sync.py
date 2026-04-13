@@ -136,6 +136,11 @@ _API_BASE_URLS: dict[PMProvider, str] = {
     PMProvider.SHORTCUT: "https://api.app.shortcut.com/api/v3",
 }
 
+# Shared string constants to avoid duplication (Sonar S1192).
+_CONTENT_TYPE_JSON = "application/json"
+_GRAPHQL_ENDPOINT = "/graphql"
+_CAST_DICT_STR_ANY = "dict[str, Any]"
+_CAST_LIST_DICT_STR_ANY = "list[dict[str, Any]]"
 
 # ---------------------------------------------------------------------------
 # PMClient
@@ -186,17 +191,17 @@ class PMClient:
         if config.provider == PMProvider.LINEAR:
             return {
                 "Authorization": key_placeholder,
-                "Content-Type": "application/json",
+                "Content-Type": _CONTENT_TYPE_JSON,
             }
         if config.provider == PMProvider.ASANA:
             return {
                 "Authorization": f"Bearer {key_placeholder}",
-                "Content-Type": "application/json",
+                "Content-Type": _CONTENT_TYPE_JSON,
             }
         # Shortcut
         return {
             "Shortcut-Token": key_placeholder,
-            "Content-Type": "application/json",
+            "Content-Type": _CONTENT_TYPE_JSON,
         }
 
     # -- request builders --------------------------------------------------
@@ -225,7 +230,7 @@ class PMClient:
             )
             return {
                 "method": "POST",
-                "url": self.get_api_url(PMProvider.LINEAR, "/graphql"),
+                "url": self.get_api_url(PMProvider.LINEAR, _GRAPHQL_ENDPOINT),
                 "headers": headers,
                 "body": {"query": query},
             }
@@ -280,7 +285,7 @@ class PMClient:
             )
             return {
                 "method": "POST",
-                "url": self.get_api_url(PMProvider.LINEAR, "/graphql"),
+                "url": self.get_api_url(PMProvider.LINEAR, _GRAPHQL_ENDPOINT),
                 "headers": headers,
                 "body": {"query": mutation},
             }
@@ -342,7 +347,7 @@ class PMClient:
             )
             return {
                 "method": "POST",
-                "url": self.get_api_url(PMProvider.LINEAR, "/graphql"),
+                "url": self.get_api_url(PMProvider.LINEAR, _GRAPHQL_ENDPOINT),
                 "headers": headers,
                 "body": {"query": mutation},
             }
@@ -380,23 +385,23 @@ class PMClient:
         state_name = ""
         state_raw: object = data.get("state")
         if isinstance(state_raw, dict):
-            state_dict = cast("dict[str, Any]", state_raw)
+            state_dict = cast(_CAST_DICT_STR_ANY, state_raw)
             state_name = str(state_dict.get("name", ""))
         status = _linear_state_to_status(state_name)
 
         assignee_raw: object = data.get("assignee")
         assignee: str | None = None
         if isinstance(assignee_raw, dict):
-            assignee_dict = cast("dict[str, Any]", assignee_raw)
+            assignee_dict = cast(_CAST_DICT_STR_ANY, assignee_raw)
             assignee = str(assignee_dict.get("name", "")) or None
 
         labels_raw: object = data.get("labels")
         label_names: tuple[str, ...] = ()
         if isinstance(labels_raw, dict):
-            labels_dict = cast("dict[str, Any]", labels_raw)
+            labels_dict = cast(_CAST_DICT_STR_ANY, labels_raw)
             nodes_raw: object = labels_dict.get("nodes")
             if isinstance(nodes_raw, list):
-                nodes_list = cast("list[dict[str, Any]]", nodes_raw)
+                nodes_list = cast(_CAST_LIST_DICT_STR_ANY, nodes_raw)
                 label_names = tuple(str(n.get("name", "")) for n in nodes_list)
 
         priority_val: object = data.get("priorityLabel")
@@ -427,11 +432,11 @@ class PMClient:
         section_name = ""
         memberships_raw: object = data.get("memberships")
         if isinstance(memberships_raw, list):
-            memberships_list = cast("list[dict[str, Any]]", memberships_raw)
+            memberships_list = cast(_CAST_LIST_DICT_STR_ANY, memberships_raw)
             for m_entry in memberships_list:
                 sec_raw: object = m_entry.get("section")
                 if isinstance(sec_raw, dict):
-                    sec_dict = cast("dict[str, Any]", sec_raw)
+                    sec_dict = cast(_CAST_DICT_STR_ANY, sec_raw)
                     section_name = str(sec_dict.get("name", ""))
                     break
 
@@ -445,13 +450,13 @@ class PMClient:
         assignee_raw: object = data.get("assignee")
         assignee: str | None = None
         if isinstance(assignee_raw, dict):
-            asn_dict = cast("dict[str, Any]", assignee_raw)
+            asn_dict = cast(_CAST_DICT_STR_ANY, assignee_raw)
             assignee = str(asn_dict.get("name", "")) or None
 
         tags_raw: object = data.get("tags")
         labels: tuple[str, ...] = ()
         if isinstance(tags_raw, list):
-            tags_list = cast("list[dict[str, Any]]", tags_raw)
+            tags_list = cast(_CAST_LIST_DICT_STR_ANY, tags_raw)
             labels = tuple(str(t.get("name", "")) for t in tags_list)
 
         gid = str(data.get("gid", ""))
@@ -491,7 +496,7 @@ class PMClient:
         sc_labels_raw: object = data.get("labels")
         labels: tuple[str, ...] = ()
         if isinstance(sc_labels_raw, list):
-            sc_labels_list = cast("list[dict[str, Any]]", sc_labels_raw)
+            sc_labels_list = cast(_CAST_LIST_DICT_STR_ANY, sc_labels_raw)
             labels = tuple(str(lbl.get("name", "")) for lbl in sc_labels_list)
 
         owner_ids_raw: object = data.get("owner_ids")
