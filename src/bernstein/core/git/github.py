@@ -617,7 +617,7 @@ class GitHubClient:
             result = subprocess.run(
                 args,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=30,
             )
             if result.returncode != 0:
@@ -806,7 +806,7 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
                 "500",
             ],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
             cwd=str(workdir),
         )
@@ -893,6 +893,15 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
         title: str = issue.get("title", "Untitled issue")
         if title.lower().strip() in existing_titles:
             continue  # Already covered by an existing backlog file
+
+        # Task filter: skip issues that don't match the pattern (e.g., "gh-62")
+        task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
+        if task_filter:
+            slug_preview = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+            filename_preview = f"gh-{number}-{slug_preview}"
+            if task_filter.lower() not in filename_preview.lower():
+                logger.debug("Skipping issue #%d - does not match filter '%s'", number, task_filter)
+                continue
 
         title: str = issue.get("title", "Untitled issue")
         body: str = (issue.get("body") or "")[:500]

@@ -469,6 +469,14 @@ class _RichGroup(click.Group):
 )
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Show debug-level output.")
 @click.option("--quiet", "-q", is_flag=True, default=False, help="Suppress all non-error output.")
+@click.option(
+    "--task",
+    "-t",
+    "task_filter",
+    default=None,
+    metavar="PATTERN",
+    help="Run only backlog tasks matching PATTERN (e.g. 'gh-62' or 'mutant-fish').",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -494,6 +502,7 @@ def cli(
     auto_approve: bool,
     verbose: bool,
     quiet: bool,
+    task_filter: str | None,
 ) -> None:
     """Declarative agent orchestration for engineering teams."""
     setup_json_logging()
@@ -661,6 +670,7 @@ def cli(
         ab_test=False,
         dry_run=False,
         profile=False,
+        task_filter=task_filter,
     )
 
 
