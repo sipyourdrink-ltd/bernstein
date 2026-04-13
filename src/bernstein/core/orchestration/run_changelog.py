@@ -19,6 +19,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+_CORE_ENGINE_CATEGORY = "Core Engine"
+
 # ---------------------------------------------------------------------------
 # Component detection
 # ---------------------------------------------------------------------------
@@ -27,7 +29,7 @@ from pathlib import Path
 _COMPONENT_MAP: list[tuple[str, str]] = [
     ("src/bernstein/cli/", "CLI"),
     ("src/bernstein/core/routes/", "API Routes"),
-    ("src/bernstein/core/", "Core Engine"),
+    ("src/bernstein/core/", _CORE_ENGINE_CATEGORY),
     ("src/bernstein/adapters/", "Adapters"),
     ("src/bernstein/", "Bernstein Package"),
     ("templates/roles/", "Role Templates"),
@@ -492,13 +494,13 @@ def _component_for_role(role: str) -> str:
     """Fallback component from agent role when no files are available."""
     role_map: dict[str, str] = {
         "cli": "CLI",
-        "backend": "Core Engine",
+        "backend": _CORE_ENGINE_CATEGORY,
         "frontend": "CLI",
         "qa": "Tests",
         "devops": "CI/CD",
         "docs": "Documentation",
-        "security": "Core Engine",
-        "architect": "Core Engine",
+        "security": _CORE_ENGINE_CATEGORY,
+        "architect": _CORE_ENGINE_CATEGORY,
     }
     return role_map.get(role.lower(), _DEFAULT_COMPONENT)
 

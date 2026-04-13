@@ -17,6 +17,8 @@ from bernstein.core.team_state import TeamStateStore
 if TYPE_CHECKING:
     from bernstein.core.task_store import TaskStore
 
+_JSON_GLOB = "*.json"
+
 router = APIRouter()
 
 
@@ -60,7 +62,7 @@ def _aggregate_costs(sdd_dir: Path) -> dict[str, Any]:
             "run_count": 0,
         }
 
-    for cost_file in costs_dir.glob("*.json"):
+    for cost_file in costs_dir.glob(_JSON_GLOB):
         data = _read_json(cost_file)
         if not data:
             continue
@@ -91,7 +93,7 @@ def _aggregate_quality(sdd_dir: Path) -> dict[str, Any]:
     failed = 0
 
     if metrics_dir.exists():
-        for metrics_file in metrics_dir.glob("*.json"):
+        for metrics_file in metrics_dir.glob(_JSON_GLOB):
             data = _read_json(metrics_file)
             for gate in data.get("quality_gates", []):
                 if gate.get("passed", False):
@@ -102,7 +104,7 @@ def _aggregate_quality(sdd_dir: Path) -> dict[str, Any]:
     # Also check runtime quality results
     quality_dir = sdd_dir / "runtime" / "quality"
     if quality_dir.exists():
-        for qf in quality_dir.glob("*.json"):
+        for qf in quality_dir.glob(_JSON_GLOB):
             data = _read_json(qf)
             if data.get("passed", False):
                 passed += 1
@@ -156,7 +158,7 @@ def _merge_stats(sdd_dir: Path) -> dict[str, Any]:
     files_changed_total = 0
 
     if merge_dir.exists():
-        for mf in merge_dir.glob("*.json"):
+        for mf in merge_dir.glob(_JSON_GLOB):
             data = _read_json(mf)
             if data.get("status") == "merged":
                 merged_count += 1
@@ -165,7 +167,7 @@ def _merge_stats(sdd_dir: Path) -> dict[str, Any]:
     # Also check completed task progress reports for files_changed
     progress_dir = sdd_dir / "runtime" / "progress"
     if progress_dir.exists():
-        for pf in progress_dir.glob("*.json"):
+        for pf in progress_dir.glob(_JSON_GLOB):
             data = _read_json(pf)
             fc = data.get("files_changed")
             if isinstance(fc, list):

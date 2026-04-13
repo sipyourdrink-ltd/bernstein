@@ -18,6 +18,8 @@ from bernstein.core.mcp_usage_analytics import (
     write_tool_inventory_snapshot,
 )
 
+_STYLE_BOLD_CYAN = "bold cyan"
+
 
 def _catalog_path() -> Path:
     """Return the project-local MCP catalog path."""
@@ -62,7 +64,7 @@ def list_marketplace() -> None:
     from rich.table import Table
 
     installed = {entry.name for entry in load_catalog_entries(_catalog_path()) if entry.name}
-    table = Table(title="MCP Marketplace", show_header=True, header_style="bold cyan")
+    table = Table(title="MCP Marketplace", show_header=True, header_style=_STYLE_BOLD_CYAN)
     table.add_column("Name")
     table.add_column("Package")
     table.add_column("Capabilities")
@@ -183,7 +185,7 @@ def _print_protocol_report(report: Any) -> None:
     )
     console.print(f"Duration: [dim]{report.duration_seconds:.2f}s[/dim]")
 
-    table = Table(title="Validated Tools", show_header=True, header_style="bold cyan")
+    table = Table(title="Validated Tools", show_header=True, header_style=_STYLE_BOLD_CYAN)
     table.add_column("Tool")
     table.add_column("Required args")
     table.add_column("Input schema")
@@ -234,7 +236,7 @@ def _print_usage_report(report: MCPUsageAnalyticsReport) -> None:
         f"Installed servers: [bold]{len(report.installed_servers)}[/bold]"
     )
 
-    servers_table = Table(title="Server Summary", show_header=True, header_style="bold cyan")
+    servers_table = Table(title="Server Summary", show_header=True, header_style=_STYLE_BOLD_CYAN)
     servers_table.add_column("Server")
     servers_table.add_column("Installed")
     servers_table.add_column("Calls")
@@ -256,7 +258,7 @@ def _print_usage_report(report: MCPUsageAnalyticsReport) -> None:
 
     console.print(servers_table)
 
-    top_tools_table = Table(title="Top Tools", show_header=True, header_style="bold cyan")
+    top_tools_table = Table(title="Top Tools", show_header=True, header_style=_STYLE_BOLD_CYAN)
     top_tools_table.add_column("Server")
     top_tools_table.add_column("Tool")
     top_tools_table.add_column("Calls")

@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+_JSON_GLOB = "*.json"
+
 logger = logging.getLogger(__name__)
 
 _ISO_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -604,7 +606,7 @@ def _build_merkle_attestation(merkle_dir: Path | None) -> dict[str, Any] | None:
         return None
 
     seals: list[dict[str, Any]] = []
-    for seal_file in sorted(merkle_dir.glob("*.json")):
+    for seal_file in sorted(merkle_dir.glob(_JSON_GLOB)):
         try:
             seal_data = json.loads(seal_file.read_text())
             seals.append(
@@ -841,7 +843,7 @@ def export_soc2_package(
     if merkle_dir.is_dir():
         dest = bundle_dir / "merkle_seals"
         dest.mkdir()
-        for seal_file in sorted(merkle_dir.glob("*.json")):
+        for seal_file in sorted(merkle_dir.glob(_JSON_GLOB)):
             shutil.copy2(seal_file, dest / seal_file.name)
         copied = list(dest.iterdir())
         if copied:
@@ -894,7 +896,7 @@ def export_soc2_package(
     if sbom_dir.is_dir():
         dest = bundle_dir / "sbom"
         dest.mkdir()
-        for sbom_file in sorted(sbom_dir.glob("*.json")):
+        for sbom_file in sorted(sbom_dir.glob(_JSON_GLOB)):
             shutil.copy2(sbom_file, dest / sbom_file.name)
         copied = list(dest.iterdir())
         if copied:

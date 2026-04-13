@@ -28,6 +28,8 @@ if TYPE_CHECKING:
         TestResults,
     )
 
+_TESTS_DIR = "tests/"
+
 logger = logging.getLogger(__name__)
 
 # Priority rotation for evolve mode -- each cycle emphasizes a different area
@@ -329,7 +331,7 @@ def run_pytest(orch: Any) -> TestResults:
 
     info: TestResults = {"passed": 0, "failed": 0, "summary": ""}
     proc = subprocess.Popen(
-        ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+        ["uv", "run", "pytest", _TESTS_DIR, "-x", "-q", "--tb=line"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -410,7 +412,7 @@ def generate_evolve_commit_msg(staged_files: list[str]) -> str:
         ("src/bernstein/adapters/", "refactor adapters"),
         ("src/bernstein/evolution/", "tune evolution"),
         ("src/bernstein/agents/", "update agents"),
-        ("tests/", "update tests"),
+        (_TESTS_DIR, "update tests"),
         ("docs/", "update docs"),
         ("README", "update README"),
         ("CONTRIBUTING", "update CONTRIBUTING"),
@@ -461,7 +463,7 @@ def evolve_auto_commit(orch: Any) -> bool:
         stage_all_except(orch._workdir, exclude=[".sdd/runtime/", ".sdd/metrics/"])
 
         test_result = subprocess.run(
-            ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+            ["uv", "run", "pytest", _TESTS_DIR, "-x", "-q", "--tb=line"],
             capture_output=True,
             text=True,
             encoding="utf-8",

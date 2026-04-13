@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+_ISO_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_VERIFY_COUNT = 100
@@ -159,7 +161,7 @@ def verify_audit_integrity(
             entries_checked=0,
             entries_total=0,
             warnings=["Audit directory does not exist; skipping integrity check"],
-            checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            checked_at=time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
             duration_ms=0.0,
         )
 
@@ -171,7 +173,7 @@ def verify_audit_integrity(
             entries_checked=0,
             entries_total=0,
             warnings=["HMAC key not found; cannot verify audit integrity"],
-            checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            checked_at=time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
             duration_ms=0.0,
         )
 
@@ -184,7 +186,7 @@ def verify_audit_integrity(
             entries_checked=0,
             entries_total=total,
             warnings=["No audit entries found to verify"],
-            checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            checked_at=time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
             duration_ms=(time.monotonic() - start) * 1000,
         )
 
@@ -244,7 +246,7 @@ def verify_audit_integrity(
         entries_total=total,
         errors=errors,
         warnings=warnings,
-        checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        checked_at=time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
         duration_ms=duration_ms,
     )
 

@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from bernstein.core.agent_identity import AgentIdentityStore
     from bernstein.core.security.auth import AuthService
 
+_PERM_TASKS_WRITE = "tasks:write"
+
 logger = logging.getLogger(__name__)
 
 # Regex to extract task ID from paths like /tasks/{id}/complete
@@ -78,7 +80,7 @@ _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 # Route → required permission mapping for write operations
 _ROUTE_PERMISSIONS: dict[str, str] = {
-    "/tasks": "tasks:write",
+    "/tasks": _PERM_TASKS_WRITE,
     "/agents": "agents:write",
     "/cluster": "cluster:write",
     "/bulletin": "bulletin:write",
@@ -106,13 +108,13 @@ def _get_required_permission(path: str, method: str) -> str | None:
 
     # Write operations — check specific action paths before prefix
     if "/complete" in path or "/fail" in path or "/cancel" in path or "/block" in path:
-        return "tasks:write"
+        return _PERM_TASKS_WRITE
 
     for prefix, perm in _ROUTE_PERMISSIONS.items():
         if path.startswith(prefix):
             return perm
 
-    return "tasks:write"  # Default write permission
+    return _PERM_TASKS_WRITE  # Default write permission
 
 
 class SSOAuthMiddleware(BaseHTTPMiddleware):

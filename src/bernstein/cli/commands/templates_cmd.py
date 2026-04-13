@@ -11,6 +11,10 @@ from rich.table import Table
 from bernstein.cli.helpers import console
 from bernstein.core.hook_templates import list_hook_templates, scaffold_hook_template
 
+_YAML_GLOB = "*.yaml"
+
+_TEMPLATES_NOT_FOUND_MSG = "[red]Templates directory not found.[/red]"
+
 # Templates ship alongside the bernstein package.
 _TEMPLATES_DIR = Path(__file__).parent.parent.parent.parent / "plans" / "templates"
 
@@ -49,10 +53,10 @@ def templates_list() -> None:
     """List available plan templates."""
     tdir = _templates_dir()
     if tdir is None:
-        console.print("[red]Templates directory not found.[/red]")
+        console.print(_TEMPLATES_NOT_FOUND_MSG)
         raise SystemExit(1)
 
-    yamls = sorted(tdir.glob("*.yaml"))
+    yamls = sorted(tdir.glob(_YAML_GLOB))
     if not yamls:
         console.print("[yellow]No templates found.[/yellow]")
         return
@@ -96,12 +100,12 @@ def templates_use(template_name: str, output: str | None) -> None:
     """
     tdir = _templates_dir()
     if tdir is None:
-        console.print("[red]Templates directory not found.[/red]")
+        console.print(_TEMPLATES_NOT_FOUND_MSG)
         raise SystemExit(1)
 
     src = tdir / f"{template_name}.yaml"
     if not src.exists():
-        available = [p.stem for p in tdir.glob("*.yaml")]
+        available = [p.stem for p in tdir.glob(_YAML_GLOB)]
         console.print(f"[red]Unknown template: {template_name!r}[/red]")
         if available:
             console.print(f"Available: {', '.join(available)}")
@@ -127,12 +131,12 @@ def templates_show(template_name: str) -> None:
     """Print the contents of a template to stdout."""
     tdir = _templates_dir()
     if tdir is None:
-        console.print("[red]Templates directory not found.[/red]")
+        console.print(_TEMPLATES_NOT_FOUND_MSG)
         raise SystemExit(1)
 
     src = tdir / f"{template_name}.yaml"
     if not src.exists():
-        available = [p.stem for p in tdir.glob("*.yaml")]
+        available = [p.stem for p in tdir.glob(_YAML_GLOB)]
         console.print(f"[red]Unknown template: {template_name!r}[/red]")
         if available:
             console.print(f"Available: {', '.join(available)}")

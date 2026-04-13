@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
     from bernstein.core.task_store import TaskStore
 
+_FIRE_LOG_FILENAME = "fire_log.jsonl"
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -491,13 +493,13 @@ class TriggerManager:
 
     def _record_fire(self, record: TriggerFireRecord) -> None:
         """Append a fire record to the fire log."""
-        path = self._runtime_dir / "fire_log.jsonl"
+        path = self._runtime_dir / _FIRE_LOG_FILENAME
         with open(path, "a") as f:
             f.write(json.dumps(asdict(record)) + "\n")
 
     def _last_fire_time(self, trigger_name: str) -> float | None:
         """Return the most recent fire timestamp for a trigger, or None."""
-        path = self._runtime_dir / "fire_log.jsonl"
+        path = self._runtime_dir / _FIRE_LOG_FILENAME
         if not path.exists():
             return None
         last: float | None = None
@@ -514,7 +516,7 @@ class TriggerManager:
 
     def get_fire_history(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the most recent fire log entries."""
-        path = self._runtime_dir / "fire_log.jsonl"
+        path = self._runtime_dir / _FIRE_LOG_FILENAME
         if not path.exists():
             return []
         entries: list[dict[str, Any]] = []

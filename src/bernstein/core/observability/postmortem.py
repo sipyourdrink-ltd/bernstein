@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from pathlib import Path
 
+_BADGE_STYLE = "padding:2px 6px;border-radius:3px;font-size:0.8em"
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -193,7 +195,7 @@ def _html_badge(label: str, color: str) -> str:
     """Render a small colored badge span."""
     import html as _html
 
-    _badge_css = "padding:2px 6px;border-radius:3px;font-size:0.8em"
+    _badge_css = _BADGE_STYLE
     return f'<span style="background:{color};color:#fff;{_badge_css}">{_html.escape(label)}</span>'
 
 
@@ -484,7 +486,7 @@ class PostMortemGenerator:
         import datetime
         import html
 
-        _badge_css = "padding:2px 6px;border-radius:3px;font-size:0.8em"
+        _badge_css = _BADGE_STYLE
 
         def _status_badge(kind: str) -> str:
             colors = {
@@ -579,7 +581,7 @@ class PostMortemGenerator:
         """Render the recommended actions section of the HTML report."""
         import html
 
-        _badge_css = "padding:2px 6px;border-radius:3px;font-size:0.8em"
+        _badge_css = _BADGE_STYLE
 
         def _priority_badge(priority: str) -> str:
             colors = {"high": "#F44336", "medium": "#FF9800", "low": "#4CAF50"}

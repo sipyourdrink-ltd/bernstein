@@ -20,6 +20,8 @@ from bernstein.cli.helpers import (
 from bernstein.core.manager_parsing import _resolve_depends_on  # pyright: ignore[reportPrivateUsage]
 from bernstein.core.plan_loader import PlanLoadError, load_plan
 
+_STYLE_BOLD_MAGENTA = "bold magenta"
+
 # ---------------------------------------------------------------------------
 # Recipe helpers
 # ---------------------------------------------------------------------------
@@ -117,7 +119,7 @@ def _print_cook_dry_run(
     console.print(f"[bold cyan]Goal:[/bold cyan] {goal}")
     console.print("[bold cyan]Mode:[/bold cyan] dry-run (no execution)\n")
 
-    stage_table = Table(show_header=True, header_style="bold magenta")
+    stage_table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     stage_table.add_column("Sprint")
     stage_table.add_column("Depends On")
     stage_table.add_column("Tasks", justify="right")
@@ -129,7 +131,7 @@ def _print_cook_dry_run(
         )
     console.print(stage_table)
 
-    task_table = Table(show_header=True, header_style="bold magenta")
+    task_table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     task_table.add_column("Sprint")
     task_table.add_column("Role")
     task_table.add_column("Model")
@@ -436,7 +438,7 @@ def _print_demo_summary(project_dir: Path, server_url: str, elapsed_secs: float 
     ruler = "\u2500" * 42
     console.print(f"\n[bold cyan]\u2500\u2500 Demo Summary {ruler}[/bold cyan]")
 
-    table = Table(show_header=True, header_style="bold magenta", show_lines=False)
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA, show_lines=False)
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
     table.add_row("Bugs fixed", f"[green]{done}[/green] / {total}")
@@ -600,7 +602,7 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
         console.print("\n[bold cyan][DRY RUN] What would happen:[/bold cyan]\n")
         from rich.table import Table
 
-        plan_table = Table(show_header=True, header_style="bold magenta")
+        plan_table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
         plan_table.add_column("Step")
         plan_table.add_column("Action")
         plan_table.add_column("Detail")

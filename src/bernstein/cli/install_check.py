@@ -12,6 +12,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+_INSTALLATIONS_LABEL = "Bernstein installations"
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +41,7 @@ def check_installations() -> list[InstallWarning]:
         paths_str = ", ".join(str(p) for p in bernstein_paths)
         results.append(
             InstallWarning(
-                name="Bernstein installations",
+                name=_INSTALLATIONS_LABEL,
                 ok=False,
                 detail=f"found {len(bernstein_paths)} installations: {paths_str}",
                 fix="Uninstall duplicates or adjust PATH to prioritize one installation",
@@ -49,7 +51,7 @@ def check_installations() -> list[InstallWarning]:
         if bernstein_paths:
             results.append(
                 InstallWarning(
-                    name="Bernstein installations",
+                    name=_INSTALLATIONS_LABEL,
                     ok=True,
                     detail=f"single installation at {bernstein_paths[0]}",
                 )
@@ -57,7 +59,7 @@ def check_installations() -> list[InstallWarning]:
         else:
             results.append(
                 InstallWarning(
-                    name="Bernstein installations",
+                    name=_INSTALLATIONS_LABEL,
                     ok=False,
                     detail="bernstein not found in PATH",
                     fix="Install Bernstein: pip install bernstein or uv tool install bernstein",

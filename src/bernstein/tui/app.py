@@ -56,6 +56,8 @@ from bernstein.tui.widgets import (
 )
 from bernstein.tui.worktree_status import RuntimeHealthPanel
 
+_AGENTS_JSON_PATH = ".sdd/runtime/agents.json"
+
 
 def _build_app_bindings() -> list[BindingType]:
     """Build BINDINGS from the keybinding_config system (TUI-004).
@@ -1075,7 +1077,7 @@ class BernsteinApp(App[None]):
         Returns:
             Number of active agent entries with a PID in `.sdd/runtime/agents.json`.
         """
-        agents_file = Path(".sdd/runtime/agents.json")
+        agents_file = Path(_AGENTS_JSON_PATH)
         if not agents_file.exists():
             return 0
 
@@ -1105,7 +1107,7 @@ def _kill_agent(session_id: str) -> bool:  # type: ignore[reportUnusedFunction]
     Returns:
         True if the agent was found and a kill signal was sent.
     """
-    agents_file = Path(".sdd/runtime/agents.json")
+    agents_file = Path(_AGENTS_JSON_PATH)
     if not agents_file.exists():
         return False
 
@@ -1131,7 +1133,7 @@ def _kill_all_agents() -> int:  # type: ignore[reportUnusedFunction]
     """
     from bernstein.core.platform_compat import kill_process
 
-    agents_file = Path(".sdd/runtime/agents.json")
+    agents_file = Path(_AGENTS_JSON_PATH)
     if not agents_file.exists():
         return 0
 

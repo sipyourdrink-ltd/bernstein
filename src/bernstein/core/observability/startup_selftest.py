@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
     import httpx
 
+_NO_WORKDIR_MSG = "No workdir provided"
+
 logger = logging.getLogger(__name__)
 
 # Minimum disk space in MB to operate
@@ -233,7 +235,7 @@ def _check_config(workdir: Path | None) -> CheckResult:
             name="config_valid",
             status=CheckStatus.SKIP,
             critical=False,
-            message="No workdir provided",
+            message=_NO_WORKDIR_MSG,
         )
 
     config_path = workdir / "bernstein.yaml"
@@ -279,7 +281,7 @@ def _check_disk_space(workdir: Path | None) -> CheckResult:
             name="disk_space",
             status=CheckStatus.SKIP,
             critical=False,
-            message="No workdir provided",
+            message=_NO_WORKDIR_MSG,
         )
 
     try:
@@ -380,7 +382,7 @@ def _check_sdd_dir(workdir: Path | None) -> CheckResult:
             name="sdd_dir",
             status=CheckStatus.SKIP,
             critical=False,
-            message="No workdir provided",
+            message=_NO_WORKDIR_MSG,
         )
 
     sdd = workdir / ".sdd"

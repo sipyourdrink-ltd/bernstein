@@ -10,6 +10,11 @@ import click
 
 from bernstein.cli.helpers import console
 
+_SDD_NOT_FOUND_MSG = (
+    "[red].sdd directory not found.[/red]"
+    " Run [bold]bernstein[/bold] first to initialise the workspace."
+)
+
 # ---------------------------------------------------------------------------
 # Duration parser
 # ---------------------------------------------------------------------------
@@ -130,7 +135,7 @@ def evolve_run(
 
     if not state_dir.is_dir():
         console.print(
-            "[red].sdd directory not found.[/red] Run [bold]bernstein[/bold] first to initialise the workspace."
+            _SDD_NOT_FOUND_MSG
         )
         raise SystemExit(1)
 
@@ -349,7 +354,7 @@ def evolve_status(workdir: str) -> None:
 
     if not state_dir.is_dir():
         console.print(
-            "[red].sdd directory not found.[/red] Run [bold]bernstein[/bold] first to initialise the workspace."
+            _SDD_NOT_FOUND_MSG
         )
         raise SystemExit(1)
 
@@ -393,7 +398,7 @@ def evolve_export(output: str, fmt: str, workdir: str) -> None:
 
     if not state_dir.is_dir():
         console.print(
-            "[red].sdd directory not found.[/red] Run [bold]bernstein[/bold] first to initialise the workspace."
+            _SDD_NOT_FOUND_MSG
         )
         raise SystemExit(1)
 

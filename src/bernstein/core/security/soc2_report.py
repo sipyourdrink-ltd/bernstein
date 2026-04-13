@@ -19,6 +19,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+_CC9_2 = "CC9.2"
+
+_CC9_1 = "CC9.1"
+
+_CC7_1 = "CC7.1"
+
 logger = logging.getLogger(__name__)
 
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -81,7 +87,7 @@ SOC2_CONTROLS: tuple[SOC2Control, ...] = (
         evidence_types=("audit_log", "permission_config"),
     ),
     SOC2Control(
-        control_id="CC7.1",
+        control_id=_CC7_1,
         category="Security",
         title="Change Management",
         description=(
@@ -105,14 +111,14 @@ SOC2_CONTROLS: tuple[SOC2Control, ...] = (
         evidence_types=("metrics", "sla_monitoring"),
     ),
     SOC2Control(
-        control_id="CC9.1",
+        control_id=_CC9_1,
         category="Processing Integrity",
         title="Processing Accuracy",
         description=("The entity implements quality assurance procedures to verify processing integrity."),
         evidence_types=("merkle_seal", "hmac_verification"),
     ),
     SOC2Control(
-        control_id="CC9.2",
+        control_id=_CC9_2,
         category="Processing Integrity",
         title="Data Integrity",
         description=(
@@ -319,7 +325,7 @@ def generate_soc2_report(
             )
             evidence.append(
                 EvidenceSummary(
-                    control_id="CC7.1",
+                    control_id=_CC7_1,
                     evidence_type="audit_log",
                     description="Change management audit trail",
                     file_count=file_count,
@@ -338,7 +344,7 @@ def generate_soc2_report(
             hmac_valid = valid
             evidence.append(
                 EvidenceSummary(
-                    control_id="CC9.1",
+                    control_id=_CC9_1,
                     evidence_type="hmac_verification",
                     description="HMAC chain integrity verification",
                     integrity_verified=valid,
@@ -349,7 +355,7 @@ def generate_soc2_report(
             hmac_valid = False
             evidence.append(
                 EvidenceSummary(
-                    control_id="CC9.1",
+                    control_id=_CC9_1,
                     evidence_type="hmac_verification",
                     description="HMAC chain verification failed",
                     integrity_verified=False,
@@ -377,7 +383,7 @@ def generate_soc2_report(
             )
             evidence.append(
                 EvidenceSummary(
-                    control_id="CC9.2",
+                    control_id=_CC9_2,
                     evidence_type="merkle_seal",
                     description="Merkle tree integrity attestation",
                     integrity_verified=True,
@@ -400,7 +406,7 @@ def generate_soc2_report(
         if wal_files:
             evidence.append(
                 EvidenceSummary(
-                    control_id="CC7.1",
+                    control_id=_CC7_1,
                     evidence_type="wal",
                     description="Write-ahead log decision records",
                     file_count=len(wal_files),
@@ -409,7 +415,7 @@ def generate_soc2_report(
             )
             evidence.append(
                 EvidenceSummary(
-                    control_id="CC9.2",
+                    control_id=_CC9_2,
                     evidence_type="wal",
                     description="Decision integrity via hash-chained WAL",
                     file_count=len(wal_files),

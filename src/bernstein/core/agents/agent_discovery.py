@@ -15,7 +15,9 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Final, cast
+
+_CONFIG_TOML_FILENAME = "config.toml"
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +163,7 @@ def _parse_codex_config() -> tuple[str | None, list[str]]:
         Tuple of (configured_model, list_of_available_models).
         If config not found or unparseable, returns (None, []).
     """
-    config_path = Path.home() / ".codex" / "config.toml"
+    config_path = Path.home() / ".codex" / _CONFIG_TOML_FILENAME
     if not config_path.exists():
         return None, []
 
@@ -180,62 +182,25 @@ def _parse_codex_config() -> tuple[str | None, list[str]]:
     except Exception:
         return None, []
 
+    # Get the default model from top-level config
     default_model = config.get("model")
     if not isinstance(default_model, str):
         default_model = None
 
-    models = _collect_codex_models(config, default_model)
-    return default_model, models
-
-
-def _collect_codex_models(config: dict[str, Any], default_model: str | None) -> list[str]:
-    """Collect available models from Codex config and its profiles."""
+    # Collect models from profiles
     models: list[str] = []
     if default_model:
         models.append(default_model)
 
     profiles = config.get("profiles", {})
-    if not isinstance(profiles, dict):
-        return models
+    if isinstance(profiles, dict):
+        for profile_data in profiles.values():
+            if isinstance(profile_data, dict):
+                profile_model = profile_data.get("model")
+                if isinstance(profile_model, str) and profile_model not in models:
+                    models.append(profile_model)
 
-    for profile_data in profiles.values():
-        if not isinstance(profile_data, dict):
-            continue
-        profile_model = profile_data.get("model")
-        if isinstance(profile_model, str) and profile_model not in models:
-            models.append(profile_model)
-
-    return models
-
-
-def _detect_codex_auth(config_model: str | None) -> tuple[bool, str]:
-    """Determine Codex login status and method.
-
-    Returns:
-        Tuple of (logged_in, login_method).
-    """
-    login_result = _run_probe(["codex", "login", "status"])
-    if login_result is not None:
-        combined = login_result.stdout + login_result.stderr
-        combined_lower = combined.lower()
-        is_positive = (
-            "logged in" in combined_lower and "not logged in" not in combined_lower and login_result.returncode == 0
-        )
-        if is_positive:
-            method = "CLI auth"
-            if "chatgpt" in combined_lower:
-                method = "ChatGPT"
-            elif "api" in combined_lower:
-                method = _LOGIN_API_KEY
-            return True, method
-
-    if os.environ.get("OPENAI_API_KEY"):
-        return True, _LOGIN_API_KEY
-
-    if config_model and (Path.home() / ".codex" / "config.toml").exists():
-        return True, "config.toml"
-
-    return False, ""
+    return default_model, models
 
 
 def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
@@ -245,9 +210,44 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
     if binary is None:
         return None, []
 
+    # Version
     version = _extract_version(_run_probe(["codex", "--version"]))
+
+    # Read model config from ~/.codex/config.toml
     config_model, config_models = _parse_codex_config()
-    logged_in, login_method = _detect_codex_auth(config_model)
+
+    # Login check: `codex login status`
+    logged_in = False
+    login_method = ""
+    login_result = _run_probe(["codex", "login", "status"])
+    if login_result is not None:
+        combined = login_result.stdout + login_result.stderr
+        combined_lower = combined.lower()
+        # "Not logged in" also contains "logged in", so check returncode
+        # and exclude explicit "not logged in" matches.
+        is_positive = (
+            "logged in" in combined_lower and "not logged in" not in combined_lower and login_result.returncode == 0
+        )
+        if is_positive:
+            logged_in = True
+            if "chatgpt" in combined_lower:
+                login_method = "ChatGPT"
+            elif "api" in combined_lower:
+                login_method = _LOGIN_API_KEY
+            else:
+                login_method = "CLI auth"
+    # Also accept OPENAI_API_KEY as auth
+    if not logged_in and os.environ.get("OPENAI_API_KEY"):
+        logged_in = True
+        login_method = _LOGIN_API_KEY
+
+    # Check for codex proxy auth (custom model_provider with local base_url)
+    if not logged_in and config_model:
+        # If config.toml exists with a model, assume proxy/custom setup is valid
+        config_path = Path.home() / ".codex" / _CONFIG_TOML_FILENAME
+        if config_path.exists():
+            logged_in = True
+            login_method = _CONFIG_TOML_FILENAME
 
     if binary and not logged_in:
         warnings.append("codex found but not logged in — run: codex login")

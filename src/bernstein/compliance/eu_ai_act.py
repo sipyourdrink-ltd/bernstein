@@ -22,6 +22,8 @@ from enum import StrEnum
 from pathlib import Path  # noqa: TC003
 from typing import Any
 
+_NOT_APPLICABLE = "Not applicable"
+
 logger = logging.getLogger(__name__)
 
 _NOT_DOCUMENTED = "Not documented"
@@ -1132,7 +1134,7 @@ def bernstein_descriptor(
             "(Anthropic Claude, OpenAI Codex, Google Gemini, etc.)"
         ),
         "training_data": "Not applicable — Bernstein is orchestration software, not a trained model",
-        "training_process": "Not applicable",
+        "training_process": _NOT_APPLICABLE,
         "validation_methodology": "Automated test suite (pytest), ruff lint, Pyright strict type checking",
         "performance_metrics": "Task throughput, agent success rate, wall-clock time per task",
         "known_limitations": (
@@ -1157,11 +1159,11 @@ def bernstein_descriptor(
         ),
         "accuracy_metrics": "Not applicable — Bernstein orchestrates; accuracy is assessed per-agent",
         "bias_assessment": "Not applicable — orchestration layer; bias risk is in the underlying LLM agents",
-        "bias_mitigation": "Not applicable",
+        "bias_mitigation": _NOT_APPLICABLE,
         "adversarial_testing": "Pending; planned for post-v1.0 security audit",
-        "training_data_sources": "Not applicable",
-        "data_preprocessing": "Not applicable",
-        "data_quality_measures": "Not applicable",
+        "training_data_sources": _NOT_APPLICABLE,
+        "data_preprocessing": _NOT_APPLICABLE,
+        "data_quality_measures": _NOT_APPLICABLE,
         "personal_data_handling": (
             "Bernstein logs task metadata only. API keys are managed via secrets vault integration "
             "(not stored in plaintext). No PII is intentionally collected."

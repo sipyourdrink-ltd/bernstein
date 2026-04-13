@@ -21,6 +21,10 @@ from bernstein.cli.helpers import (
     server_get,
 )
 
+_NO_WORKSPACE_MSG = "[dim]No workspace section in bernstein.yaml.[/dim]"
+
+_STYLE_BOLD_MAGENTA = "bold magenta"
+
 
 # Create standalone groups that will be registered with main CLI in main.py
 @click.group("workspace", invoke_without_command=True)
@@ -54,13 +58,13 @@ def workspace_group(ctx: click.Context) -> None:
             return
 
         if cfg.workspace is None:
-            console.print("[dim]No workspace section in bernstein.yaml.[/dim]")
+            console.print(_NO_WORKSPACE_MSG)
             return
 
         ws = cfg.workspace
         repo_statuses = ws.status()
 
-        table = Table(title="Workspace repos", show_header=True, header_style="bold magenta")
+        table = Table(title="Workspace repos", show_header=True, header_style=_STYLE_BOLD_MAGENTA)
         table.add_column("Repo", style="cyan")
         table.add_column("Path")
         table.add_column("Branch", justify="center")
@@ -82,7 +86,7 @@ def workspace_group(ctx: click.Context) -> None:
     # Server is running — render from API response
     from rich.table import Table as RichTable
 
-    table = RichTable(title="Workspace repos", show_header=True, header_style="bold magenta")
+    table = RichTable(title="Workspace repos", show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Repo", style="cyan")
     table.add_column("Path")
     table.add_column("Branch", justify="center")
@@ -125,7 +129,7 @@ def workspace_clone() -> None:
         return
 
     if cfg.workspace is None:
-        console.print("[dim]No workspace section in bernstein.yaml.[/dim]")
+        console.print(_NO_WORKSPACE_MSG)
         return
 
     cloned = cfg.workspace.clone_missing()
@@ -157,7 +161,7 @@ def workspace_validate() -> None:
         return
 
     if cfg.workspace is None:
-        console.print("[dim]No workspace section in bernstein.yaml.[/dim]")
+        console.print(_NO_WORKSPACE_MSG)
         return
 
     issues = cfg.workspace.validate()
@@ -224,7 +228,7 @@ def config_list(project_dir: str) -> None:
     from bernstein.core.home import _DEFAULTS, BernsteinHome, resolve_config  # type: ignore[reportPrivateUsage]
 
     home = BernsteinHome.default()
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Key")
     table.add_column("Value")
     table.add_column("Source")

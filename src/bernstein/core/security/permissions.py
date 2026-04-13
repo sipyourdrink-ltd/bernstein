@@ -19,6 +19,20 @@ from pathlib import Path
 
 from bernstein.core.security.policy_engine import DecisionType, PermissionDecision
 
+_PATTERN_GITHUB = ".github/*"
+
+_PATTERN_ROLES = "templates/roles/*"
+
+_PATTERN_SDD = ".sdd/*"
+
+_PATTERN_SCRIPTS = "scripts/*"
+
+_PATTERN_DOCS = "docs/*"
+
+_PATTERN_TESTS = "tests/*"
+
+_PATTERN_SRC = "src/*"
+
 logger = logging.getLogger(__name__)
 
 
@@ -138,37 +152,37 @@ _UNRESTRICTED_PATHS: tuple[str, ...] = ()
 
 DEFAULT_ROLE_PERMISSIONS: dict[str, AgentPermissions] = {
     "backend": AgentPermissions(
-        allowed_paths=("src/*", "tests/*", "docs/*", "pyproject.toml", "scripts/*"),
-        denied_paths=(".github/*", ".sdd/*", "templates/roles/*"),
+        allowed_paths=(_PATTERN_SRC, _PATTERN_TESTS, _PATTERN_DOCS, "pyproject.toml", _PATTERN_SCRIPTS),
+        denied_paths=(_PATTERN_GITHUB, _PATTERN_SDD, _PATTERN_ROLES),
     ),
     "frontend": AgentPermissions(
-        allowed_paths=("src/*", "tests/*", "docs/*", "public/*", "static/*", "package.json"),
-        denied_paths=(".github/*", ".sdd/*", "templates/roles/*"),
+        allowed_paths=(_PATTERN_SRC, _PATTERN_TESTS, _PATTERN_DOCS, "public/*", "static/*", "package.json"),
+        denied_paths=(_PATTERN_GITHUB, _PATTERN_SDD, _PATTERN_ROLES),
     ),
     "qa": AgentPermissions(
-        allowed_paths=("tests/*", "src/*", "docs/*", "scripts/*"),
-        denied_paths=(".github/*", ".sdd/*", "templates/roles/*"),
+        allowed_paths=(_PATTERN_TESTS, _PATTERN_SRC, _PATTERN_DOCS, _PATTERN_SCRIPTS),
+        denied_paths=(_PATTERN_GITHUB, _PATTERN_SDD, _PATTERN_ROLES),
     ),
     "security": AgentPermissions(
-        allowed_paths=("src/*", "tests/*", ".github/workflows/*", "docs/*", "scripts/*"),
-        denied_paths=(".sdd/*", "templates/roles/*"),
+        allowed_paths=(_PATTERN_SRC, _PATTERN_TESTS, ".github/workflows/*", _PATTERN_DOCS, _PATTERN_SCRIPTS),
+        denied_paths=(_PATTERN_SDD, _PATTERN_ROLES),
     ),
     "devops": AgentPermissions(
-        allowed_paths=(".github/*", "Dockerfile", "docker-compose.yml", "scripts/*", "Makefile"),
-        denied_paths=(".sdd/*", "src/*", "templates/roles/*"),
+        allowed_paths=(_PATTERN_GITHUB, "Dockerfile", "docker-compose.yml", _PATTERN_SCRIPTS, "Makefile"),
+        denied_paths=(_PATTERN_SDD, _PATTERN_SRC, _PATTERN_ROLES),
     ),
     "docs": AgentPermissions(
-        allowed_paths=("docs/*", "README.md", "CHANGELOG.md", "CONTRIBUTING.md"),
-        denied_paths=(".github/*", ".sdd/*", "src/*", "tests/*", "templates/roles/*"),
+        allowed_paths=(_PATTERN_DOCS, "README.md", "CHANGELOG.md", "CONTRIBUTING.md"),
+        denied_paths=(_PATTERN_GITHUB, _PATTERN_SDD, _PATTERN_SRC, _PATTERN_TESTS, _PATTERN_ROLES),
     ),
     "manager": AgentPermissions(
         # Managers can read everything but should only modify plans and docs
-        allowed_paths=("docs/*", ".sdd/backlog/*", "plans/*"),
-        denied_paths=("src/*", "tests/*", ".github/*"),
+        allowed_paths=(_PATTERN_DOCS, ".sdd/backlog/*", "plans/*"),
+        denied_paths=(_PATTERN_SRC, _PATTERN_TESTS, _PATTERN_GITHUB),
     ),
     "architect": AgentPermissions(
-        allowed_paths=("src/*", "tests/*", "docs/*", "scripts/*"),
-        denied_paths=(".github/*", ".sdd/*", "templates/roles/*"),
+        allowed_paths=(_PATTERN_SRC, _PATTERN_TESTS, _PATTERN_DOCS, _PATTERN_SCRIPTS),
+        denied_paths=(_PATTERN_GITHUB, _PATTERN_SDD, _PATTERN_ROLES),
     ),
 }
 
@@ -221,7 +235,7 @@ def path_matches_any(filepath: str, patterns: tuple[str, ...]) -> bool:
     for pattern in patterns:
         if fnmatch.fnmatch(filepath, pattern):
             return True
-        # "src/*" should also match "src/sub/deep/file.py"
+        # _PATTERN_SRC should also match "src/sub/deep/file.py"
         if pattern.endswith("/*"):
             prefix = pattern[:-1]  # "src/"
             if filepath.startswith(prefix):

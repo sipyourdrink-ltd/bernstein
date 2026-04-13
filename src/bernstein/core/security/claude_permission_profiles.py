@@ -17,6 +17,14 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+_PATTERN_KEY = "*.key"
+
+_PATTERN_ENV = "*.env"
+
+_PATTERN_PEM = "*.pem"
+
+_PATTERN_SECRETS = "**/secrets/**"
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,34 +86,34 @@ _PROFILES: dict[str, PermissionProfile] = {
     "backend": PermissionProfile(
         role="backend",
         allowed_tools=("Bash", "Read", "Write", "Edit", "Grep", "Glob", "Agent"),
-        deny_patterns=("*.env", "*.pem", "*.key", "**/secrets/**"),
+        deny_patterns=(_PATTERN_ENV, _PATTERN_PEM, _PATTERN_KEY, _PATTERN_SECRETS),
         description="Full code editing with secret file protection.",
     ),
     "frontend": PermissionProfile(
         role="frontend",
         allowed_tools=("Bash", "Read", "Write", "Edit", "Grep", "Glob"),
-        deny_patterns=("*.env", "*.pem", "*.key", "**/backend/**", "**/secrets/**"),
+        deny_patterns=(_PATTERN_ENV, _PATTERN_PEM, _PATTERN_KEY, "**/backend/**", _PATTERN_SECRETS),
         description="Frontend development with backend isolation.",
     ),
     "qa": PermissionProfile(
         role="qa",
         allowed_tools=("Bash", "Read", "Grep", "Glob", "Agent"),
         disallowed_tools=("Write", "Edit"),
-        deny_patterns=("*.env", "*.pem", "*.key"),
+        deny_patterns=(_PATTERN_ENV, _PATTERN_PEM, _PATTERN_KEY),
         description="Read-only code access for testing and review.",
     ),
     "security": PermissionProfile(
         role="security",
         allowed_tools=("Bash", "Read", "Grep", "Glob"),
         disallowed_tools=("Write", "Edit"),
-        deny_patterns=("*.env", "*.pem", "*.key"),
+        deny_patterns=(_PATTERN_ENV, _PATTERN_PEM, _PATTERN_KEY),
         description="Read-only access for security auditing.",
     ),
     "docs": PermissionProfile(
         role="docs",
         allowed_tools=("Read", "Write", "Edit", "Grep", "Glob"),
         allow_patterns=("*.md", "*.rst", "*.txt", "docs/**"),
-        deny_patterns=("*.env", "*.pem", "*.key", "**/secrets/**"),
+        deny_patterns=(_PATTERN_ENV, _PATTERN_PEM, _PATTERN_KEY, _PATTERN_SECRETS),
         description="Documentation files only.",
     ),
     "reviewer": PermissionProfile(
@@ -118,7 +126,7 @@ _PROFILES: dict[str, PermissionProfile] = {
         role="devops",
         allowed_tools=("Bash", "Read", "Write", "Edit", "Grep", "Glob"),
         allow_patterns=("Dockerfile*", "*.yaml", "*.yml", "*.toml", ".github/**", "scripts/**"),
-        deny_patterns=("*.env", "*.pem", "*.key"),
+        deny_patterns=(_PATTERN_ENV, _PATTERN_PEM, _PATTERN_KEY),
         description="Infrastructure and CI/CD configuration.",
     ),
 }

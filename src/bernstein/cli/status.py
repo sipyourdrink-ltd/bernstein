@@ -28,6 +28,8 @@ from bernstein.cli.ui import (
 )
 from bernstein.core.view_mode import ViewConfig, ViewMode, get_view_config
 
+_STYLE_BOLD_CYAN = "bold cyan"
+
 # ---------------------------------------------------------------------------
 # Task table
 # ---------------------------------------------------------------------------
@@ -71,7 +73,7 @@ def _build_task_table(tasks: list[dict[str, Any]]) -> Table:
     table = Table(
         title="Tasks",
         show_lines=False,
-        header_style="bold cyan",
+        header_style=_STYLE_BOLD_CYAN,
     )
     table.add_column("ID", style="dim", min_width=10)
     table.add_column("Title", min_width=30)
@@ -132,7 +134,7 @@ def _build_cost_table(per_role: list[dict[str, Any]]) -> Table | None:
     table = Table(
         title="Cost by Role",
         show_lines=False,
-        header_style="bold cyan",
+        header_style=_STYLE_BOLD_CYAN,
     )
     table.add_column("Role", min_width=12)
     table.add_column("Tasks", justify="right")
@@ -154,7 +156,7 @@ def _build_provider_table(provider_status: dict[str, Any]) -> Table | None:
     if not isinstance(providers_obj, dict) or not providers_obj:
         return None
 
-    table = Table(title="Providers", show_lines=False, header_style="bold cyan")
+    table = Table(title="Providers", show_lines=False, header_style=_STYLE_BOLD_CYAN)
     table.add_column("Provider", min_width=12)
     table.add_column("Health", min_width=12)
     table.add_column("Tier", min_width=10)

@@ -37,6 +37,8 @@ from bernstein.core.runtime_state import read_session_replay_metadata
 from bernstein.core.traces import TraceStore, build_replay_task_request, render_replay_diff
 from bernstein.core.visual_config import VisualConfig, resolve_visual_config
 
+_STYLE_BOLD_CYAN = "bold cyan"
+
 # ---------------------------------------------------------------------------
 # live
 # ---------------------------------------------------------------------------
@@ -491,7 +493,7 @@ def plugins_cmd(workdir: str) -> None:
 
     from rich.table import Table
 
-    table = Table(title="Installed Plugins", show_header=True, header_style="bold cyan")
+    table = Table(title="Installed Plugins", show_header=True, header_style=_STYLE_BOLD_CYAN)
     table.add_column("Name")
     table.add_column("Version")
     table.add_column("Type")
@@ -586,7 +588,7 @@ def recap(archive: str, as_json: bool) -> None:
     success_rate = summary.get("success_rate", 0.0)
 
     # Main recap table
-    table = Table(title="Recap", show_header=True, header_style="bold cyan")
+    table = Table(title="Recap", show_header=True, header_style=_STYLE_BOLD_CYAN)
     table.add_column("Metric")
     table.add_column("Value")
 
@@ -839,7 +841,7 @@ def replay_cmd(
             return
         from rich.table import Table
 
-        table = Table(title="Available Runs", show_header=True, header_style="bold cyan")
+        table = Table(title="Available Runs", show_header=True, header_style=_STYLE_BOLD_CYAN)
         table.add_column("Run ID")
         table.add_column("Started")
         table.add_column("Branch")
@@ -931,7 +933,7 @@ def replay_cmd(
     console.print(Panel(header_text, title="Deterministic Replay", border_style="cyan"))
 
     # Event table
-    table = Table(show_header=True, header_style="bold cyan", expand=True)
+    table = Table(show_header=True, header_style=_STYLE_BOLD_CYAN, expand=True)
     table.add_column("TIME", style="dim", width=8)
     table.add_column("EVENT", width=24)
     table.add_column("AGENT", width=16)

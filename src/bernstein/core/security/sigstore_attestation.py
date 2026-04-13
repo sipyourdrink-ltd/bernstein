@@ -42,6 +42,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+_ISO_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -169,7 +171,7 @@ def _attest_with_sigstore(
     entry = result.transparency_log_entry
     log_id: str = getattr(entry, "uuid", "") or getattr(entry, "log_id", "")
     log_index: int = int(getattr(entry, "log_index", -1))
-    signed_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    signed_at = datetime.now(tz=UTC).strftime(_ISO_TIMESTAMP_FMT)
 
     logger.info(
         "Sigstore attestation recorded: task=%s rekor_index=%d",
@@ -267,7 +269,7 @@ def _attest_with_ed25519_fallback(
 
     payload_bytes = payload.canonical_json().encode()
     signature = private_key.sign(payload_bytes)
-    signed_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    signed_at = datetime.now(tz=UTC).strftime(_ISO_TIMESTAMP_FMT)
 
     bundle: dict[str, Any] = {
         "schema": "bernstein-local-attestation/v1",
@@ -344,7 +346,7 @@ def attest_task_completion(
 
         config = AttestationConfig(attestation_dir=_Path(attestation_dir))
 
-    timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(tz=UTC).strftime(_ISO_TIMESTAMP_FMT)
     payload = AttestationPayload(
         task_id=task_id,
         agent_id=agent_id,

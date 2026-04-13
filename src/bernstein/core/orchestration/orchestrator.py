@@ -860,7 +860,7 @@ class Orchestrator:
         """Fire a notification event if a NotificationManager is configured.
 
         Args:
-            event: Notification event name (e.g. ``"run.completed"``).
+            event: Notification event name (e.g. ``_EVENT_RUN_COMPLETED``).
             title: Short human-readable title.
             body: Longer description / summary.
             **metadata: Arbitrary key-value pairs attached to the payload.
@@ -2776,7 +2776,7 @@ class Orchestrator:
 
         info: TestResults = {"passed": 0, "failed": 0, "summary": ""}
         proc = subprocess.Popen(
-            ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+            ["uv", "run", "pytest", _TESTS_DIR, "-x", "-q", "--tb=line"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -2842,7 +2842,7 @@ class Orchestrator:
             ("src/bernstein/adapters/", "refactor adapters"),
             ("src/bernstein/evolution/", "tune evolution"),
             ("src/bernstein/agents/", "update agents"),
-            ("tests/", "update tests"),
+            (_TESTS_DIR, "update tests"),
             ("docs/", "update docs"),
             ("README", "update README"),
             ("CONTRIBUTING", "update CONTRIBUTING"),
@@ -2885,7 +2885,7 @@ class Orchestrator:
             stage_all_except(self._workdir, exclude=[".sdd/runtime/", ".sdd/metrics/"])
 
             test_result = subprocess.run(
-                ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+                ["uv", "run", "pytest", _TESTS_DIR, "-x", "-q", "--tb=line"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -3448,7 +3448,7 @@ class Orchestrator:
             f"${total_cost:.4f} spent, {duration_str} elapsed",
         )
         self._notify(
-            "run.completed",
+            _EVENT_RUN_COMPLETED,
             "Bernstein run complete",
             f"{total_completed} tasks done, {total_failed} failed in {duration_str}.",
             tasks_completed=total_completed,
@@ -3867,9 +3867,9 @@ def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
     if notify_cfg is not None and getattr(notify_cfg, "webhook_url", None):
         events: list[str] = []
         if bool(getattr(notify_cfg, "on_complete", True)):
-            events.append("run.completed")
+            events.append(_EVENT_RUN_COMPLETED)
         if bool(getattr(notify_cfg, "on_failure", True)):
-            events.append("task.failed")
+            events.append(_EVENT_TASK_FAILED)
         if events:
             targets.append(
                 NotificationTarget(
@@ -3884,7 +3884,7 @@ def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
             NotificationTarget(
                 type="desktop",
                 url="",
-                events=["task.completed", "task.failed"],
+                events=["task.completed", _EVENT_TASK_FAILED],
             )
         )
 
@@ -3901,7 +3901,7 @@ def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
             NotificationTarget(
                 type="email",
                 url="",
-                events=["task.completed", "task.failed", "approval.needed", "run.completed"],
+                events=["task.completed", _EVENT_TASK_FAILED, "approval.needed", _EVENT_RUN_COMPLETED],
             )
         )
 
@@ -4401,5 +4401,11 @@ from bernstein.core.orchestration.nudge_manager import (  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import get_orchestrator_nudges as get_orchestrator_nudges  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import nudge_manager as nudge_manager  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import nudge_orchestrator as nudge_orchestrator  # noqa: E402
+
+_EVENT_RUN_COMPLETED = "run.completed"
+
+_EVENT_TASK_FAILED = "task.failed"
+
+_TESTS_DIR = "tests/"
 
 _nudge_manager = nudge_manager  # backward-compat alias
