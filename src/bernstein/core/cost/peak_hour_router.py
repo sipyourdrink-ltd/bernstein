@@ -101,9 +101,7 @@ def get_current_slot(
         hour_utc=now.hour,
         is_peak=False,
         recommended_model=config.offpeak_model,
-        reason=(
-            f"Off-peak hours — using {config.offpeak_model} for higher quality"
-        ),
+        reason=(f"Off-peak hours — using {config.offpeak_model} for higher quality"),
     )
 
 
@@ -157,10 +155,7 @@ def get_optimal_schedule(
     peak = _is_peak(now, config)
 
     def _is_expensive(task: dict[str, Any]) -> bool:
-        return (
-            str(task.get("complexity", "")).lower() == "high"
-            or str(task.get("scope", "")).lower() == "large"
-        )
+        return str(task.get("complexity", "")).lower() == "high" or str(task.get("scope", "")).lower() == "large"
 
     expensive: list[dict[str, Any]] = []
     cheap: list[dict[str, Any]] = []

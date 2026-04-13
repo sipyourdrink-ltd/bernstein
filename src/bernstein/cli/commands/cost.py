@@ -60,6 +60,7 @@ def _filter_by_time(records: list[dict[str, Any]], cutoff: float) -> list[dict[s
     """
     return [r for r in records if float(r.get("timestamp", 0) or 0) >= cutoff]
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -202,9 +203,7 @@ def _compute_cache_hit_rate(sdd_dir: Path) -> float | None:
 
 def _aggregate_by_agent(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Aggregate task records grouped by agent_id."""
-    rows: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"tasks": 0, "cost_usd": 0.0}
-    )
+    rows: dict[str, dict[str, Any]] = defaultdict(lambda: {"tasks": 0, "cost_usd": 0.0})
     for rec in records:
         agent = str(rec.get("agent_id", "") or rec.get("role", "unknown"))
         rows[agent]["tasks"] += 1
@@ -214,9 +213,7 @@ def _aggregate_by_agent(records: list[dict[str, Any]]) -> dict[str, dict[str, An
 
 def _aggregate_by_task(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Aggregate task records grouped by task_id."""
-    rows: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"tasks": 0, "cost_usd": 0.0, "model": ""}
-    )
+    rows: dict[str, dict[str, Any]] = defaultdict(lambda: {"tasks": 0, "cost_usd": 0.0, "model": ""})
     for rec in records:
         tid = str(rec.get("task_id", "unknown"))
         rows[tid]["tasks"] += 1
@@ -229,9 +226,7 @@ def _aggregate_by_day(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     """Aggregate task records grouped by date (YYYY-MM-DD)."""
     import datetime as _dt
 
-    rows: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"tasks": 0, "cost_usd": 0.0}
-    )
+    rows: dict[str, dict[str, Any]] = defaultdict(lambda: {"tasks": 0, "cost_usd": 0.0})
     for rec in records:
         ts = float(rec.get("timestamp", 0) or 0)
         day = _dt.datetime.fromtimestamp(ts, tz=_dt.UTC).strftime("%Y-%m-%d") if ts > 0 else "unknown"
@@ -267,10 +262,7 @@ def _compute_downgrade_tip(records: list[dict[str, Any]]) -> tuple[str, float] |
     savings = opus_simple_cost * 0.40
     pct = int((opus_simple / opus_total) * 100)
 
-    tip = (
-        f"{pct}% of opus tasks could have used sonnet "
-        f"(simple scope, low complexity)"
-    )
+    tip = f"{pct}% of opus tasks could have used sonnet (simple scope, low complexity)"
     return tip, round(savings, 2)
 
 
@@ -642,9 +634,7 @@ def cost_cmd(metrics_dir: str, last: str | None, group_by: str | None, as_json: 
         for label, v in sorted_grouped:
             pct = int((v["cost_usd"] / total_cost) * 100) if total_cost > 0 else 0
             bar = _ascii_bar(v["cost_usd"], max_cost, 16)
-            console.print(
-                f"    {label:<22s} ${v['cost_usd']:>7.2f}  ({pct:>2d}%)  {bar}  {v['tasks']:,} tasks"
-            )
+            console.print(f"    {label:<22s} ${v['cost_usd']:>7.2f}  ({pct:>2d}%)  {bar}  {v['tasks']:,} tasks")
 
         console.print(f"\n  Total: ${total_cost:.2f} across {total_tasks:,} tasks")
         if total_tasks > 0:
