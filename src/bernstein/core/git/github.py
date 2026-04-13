@@ -877,22 +877,22 @@ def _collect_existing_titles(workdir: Path, backlog_open: Path) -> set[str]:
 
 def _should_skip_issue(
     issue: dict[str, Any],
-    existing_numbers: set[int],
     existing_titles: set[str],
 ) -> tuple[bool, bool]:
     """Determine if an issue should be skipped for backlog creation.
 
     Args:
         issue: Issue dict from ``gh issue list``.
-        existing_numbers: Already-synced issue numbers.
-        existing_titles: Already-existing backlog titles.
+        existing_titles: Already-existing backlog titles (non-GitHub sources).
 
     Returns:
         (skip, is_assigned) — True to skip, is_assigned indicates assignee skip.
     """
     number: int = issue.get("number", 0)
-    if not number or number in existing_numbers:
+    if not number:
         return True, False
+    # Note: We always regenerate existing gh-* backlog files to ensure
+    # they have the full GitHub issue content (not truncated).
 
     assignees_raw: list[dict[str, Any]] = issue.get("assignees", []) or []
     if any(a.get("login") for a in assignees_raw):
@@ -930,7 +930,7 @@ def _write_backlog_yaml(backlog_open: Path, issue: dict[str, Any]) -> str:
     """
     number: int = issue["number"]
     title: str = issue.get("title", "Untitled issue")
-    body: str = (issue.get("body") or "")[:500]
+    body: str = issue.get("body") or ""
     labels_raw: list[dict[str, Any]] = issue.get("labels", [])
     labels: list[str] = [str(lbl.get("name", "")).lower() for lbl in labels_raw if lbl.get("name")]
 
@@ -960,12 +960,11 @@ def _write_backlog_yaml(backlog_open: Path, issue: dict[str, Any]) -> str:
 
 
 def sync_github_issues_to_backlog(workdir: Path) -> int:
-    """Fetch open GitHub Issues and create backlog YAML files for new ones.
+    """Fetch open GitHub Issues and create/update backlog YAML files.
 
-    Runs ``gh issue list --state open`` and, for each issue that does not
-    already have a corresponding ``.sdd/backlog/open/gh-{number}-*.yaml``
-    file, writes a YAML-frontmatter backlog file that the orchestrator's
-    ``ingest_backlog()`` / ``sync_backlog_to_server()`` will pick up.
+    Runs ``gh issue list --state open`` and writes YAML-frontmatter backlog
+    files for each issue. Existing gh-* backlog files are always regenerated
+    to ensure they have the full GitHub issue content.
 
     This is intentionally cheap: one ``gh`` call, pure file I/O, no server
     dependency.  Safe to call on every startup.
@@ -974,7 +973,7 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
         workdir: Project root directory (parent of ``.sdd/``).
 
     Returns:
-        Number of new backlog files created.
+        Number of backlog files created or updated.
     """
     backlog_open = workdir / ".sdd" / "backlog" / "open"
     backlog_open.mkdir(parents=True, exist_ok=True)
@@ -983,13 +982,12 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
     if issues is None:
         return 0
 
-    existing_numbers = _collect_existing_issue_numbers(workdir, backlog_open)
     existing_titles = _collect_existing_titles(workdir, backlog_open)
 
     created = 0
     skipped_assigned = 0
     for issue in issues:
-        skip, is_assigned = _should_skip_issue(issue, existing_numbers, existing_titles)
+        skip, is_assigned = _should_skip_issue(issue, existing_titles)
         if is_assigned:
             skipped_assigned += 1
         if skip:
