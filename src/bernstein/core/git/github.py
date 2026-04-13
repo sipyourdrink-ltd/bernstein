@@ -858,6 +858,9 @@ def _collect_existing_titles(workdir: Path, backlog_open: Path) -> set[str]:
         if not src_dir.is_dir():
             continue
         for path in [*src_dir.glob("*.yaml"), *src_dir.glob("*.md")]:
+            # Skip gh-* files - we always regenerate those from GitHub
+            if path.name.startswith("gh-"):
+                continue
             try:
                 raw_text = path.read_text(encoding="utf-8")
                 if not raw_text.startswith("---"):
