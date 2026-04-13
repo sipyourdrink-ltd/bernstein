@@ -721,7 +721,7 @@ class DrainCoordinator:
                         removed = True
                         break
                     if attempt < max_git_attempts - 1:
-                        time.sleep(1.0)  # Wait for file locks to release
+                        await asyncio.sleep(1.0)  # Wait for file locks to release
 
                 if not removed:  # noqa: SIM102
                     # Fallback: rm -rf with Windows file-lock handling

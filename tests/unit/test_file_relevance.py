@@ -71,7 +71,7 @@ class TestDataclasses:
     def test_file_relevance_score_frozen(self) -> None:
         score = FileRelevanceScore(file_path="src/foo.py", score=0.75, match_reason="keyword=0.50")
         assert score.file_path == "src/foo.py"
-        assert score.score == 0.75
+        assert score.score == pytest.approx(0.75)
         with pytest.raises(AttributeError):
             score.score = 0.5  # type: ignore[misc]
 
@@ -123,7 +123,7 @@ class TestScoreFileRelevance:
 
     def test_missing_file_returns_zero(self, tmp_path: Path) -> None:
         score = score_file_relevance("anything", "nonexistent.py", tmp_path)
-        assert score.score == 0.0
+        assert score.score == pytest.approx(0.0)
         assert score.match_reason == "unreadable"
 
     def test_score_clamped_0_to_1(self, tmp_path: Path) -> None:

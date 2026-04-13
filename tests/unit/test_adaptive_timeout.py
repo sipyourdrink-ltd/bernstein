@@ -90,17 +90,17 @@ class TestScopeBaseTimeout:
         task = _make_task(scope=Scope.SMALL, complexity=Complexity.MEDIUM)
         est = estimate_timeout(task, model="sonnet")
         # small base = 900, complexity 1.0, model 1.0 → 900
-        assert est.timeout_s == 900.0
+        assert est.timeout_s == pytest.approx(900.0)
 
     def test_medium_scope(self) -> None:
         task = _make_task(scope=Scope.MEDIUM, complexity=Complexity.MEDIUM)
         est = estimate_timeout(task, model="sonnet")
-        assert est.timeout_s == 1800.0
+        assert est.timeout_s == pytest.approx(1800.0)
 
     def test_large_scope(self) -> None:
         task = _make_task(scope=Scope.LARGE, complexity=Complexity.MEDIUM)
         est = estimate_timeout(task, model="sonnet")
-        assert est.timeout_s == 3600.0
+        assert est.timeout_s == pytest.approx(3600.0)
 
 
 # ---------------------------------------------------------------------------
@@ -113,13 +113,13 @@ class TestComplexityMultiplier:
         task = _make_task(scope=Scope.MEDIUM, complexity=Complexity.LOW)
         est = estimate_timeout(task, model="sonnet")
         # 1800 * 0.7 = 1260
-        assert est.timeout_s == 1260.0
+        assert est.timeout_s == pytest.approx(1260.0)
 
     def test_high_complexity(self) -> None:
         task = _make_task(scope=Scope.MEDIUM, complexity=Complexity.HIGH)
         est = estimate_timeout(task, model="sonnet")
         # 1800 * 1.5 = 2700
-        assert est.timeout_s == 2700.0
+        assert est.timeout_s == pytest.approx(2700.0)
 
 
 # ---------------------------------------------------------------------------
@@ -132,28 +132,28 @@ class TestModelSpeedFactor:
         task = _make_task(scope=Scope.MEDIUM, complexity=Complexity.MEDIUM)
         est = estimate_timeout(task, model="haiku")
         # 1800 * 1.0 * 0.5 = 900
-        assert est.timeout_s == 900.0
+        assert est.timeout_s == pytest.approx(900.0)
 
     def test_opus_slower(self) -> None:
         task = _make_task(scope=Scope.MEDIUM, complexity=Complexity.MEDIUM)
         est = estimate_timeout(task, model="opus")
         # 1800 * 1.0 * 1.5 = 2700
-        assert est.timeout_s == 2700.0
+        assert est.timeout_s == pytest.approx(2700.0)
 
     def test_unknown_model_defaults_to_1(self) -> None:
         task = _make_task(scope=Scope.MEDIUM, complexity=Complexity.MEDIUM)
         est = estimate_timeout(task, model="gemini-pro")
-        assert est.timeout_s == 1800.0
+        assert est.timeout_s == pytest.approx(1800.0)
 
     def test_model_from_task(self) -> None:
         task = _make_task(scope=Scope.MEDIUM, complexity=Complexity.MEDIUM, model="opus")
         est = estimate_timeout(task)
-        assert est.timeout_s == 2700.0
+        assert est.timeout_s == pytest.approx(2700.0)
 
     def test_explicit_model_overrides_task(self) -> None:
         task = _make_task(scope=Scope.MEDIUM, complexity=Complexity.MEDIUM, model="opus")
         est = estimate_timeout(task, model="haiku")
-        assert est.timeout_s == 900.0
+        assert est.timeout_s == pytest.approx(900.0)
 
 
 # ---------------------------------------------------------------------------
@@ -170,13 +170,13 @@ class TestFileCount:
         )
         est = estimate_timeout(task, model="sonnet")
         # 900 * 1.0 * 1.0 + 3*30 = 990
-        assert est.timeout_s == 990.0
+        assert est.timeout_s == pytest.approx(990.0)
 
     def test_no_files(self) -> None:
         task = _make_task(scope=Scope.SMALL, complexity=Complexity.MEDIUM)
         est = estimate_timeout(task, model="sonnet")
         assert est.factors.file_count == 0
-        assert est.timeout_s == 900.0
+        assert est.timeout_s == pytest.approx(900.0)
 
 
 # ---------------------------------------------------------------------------
@@ -189,20 +189,20 @@ class TestHistoricalCalibration:
         task = _make_task(scope=Scope.SMALL, complexity=Complexity.LOW)
         # computed: 900 * 0.7 = 630, historical: 1000 * 1.5 = 1500
         est = estimate_timeout(task, model="sonnet", historical_data=1000.0)
-        assert est.timeout_s == 1500.0
-        assert est.confidence == 0.8
+        assert est.timeout_s == pytest.approx(1500.0)
+        assert est.confidence == pytest.approx(0.8)
 
     def test_historical_does_not_override_when_smaller(self) -> None:
         task = _make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         # computed: 3600 * 1.5 = 5400, historical: 100 * 1.5 = 150
         est = estimate_timeout(task, model="sonnet", historical_data=100.0)
-        assert est.timeout_s == 5400.0
-        assert est.confidence == 0.8
+        assert est.timeout_s == pytest.approx(5400.0)
+        assert est.confidence == pytest.approx(0.8)
 
     def test_no_historical_gives_lower_confidence(self, tmp_path: Path) -> None:
         task = _make_task()
         est = estimate_timeout(task, model="sonnet", historical_data=None, archive_path=tmp_path / "nonexistent.jsonl")
-        assert est.confidence == 0.5
+        assert est.confidence == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +229,7 @@ class TestGetHistoricalAverage:
             ],
         )
         avg = get_historical_average("backend", "medium", "medium", archive)
-        assert avg == 150.0
+        assert avg == pytest.approx(150.0)
 
     def test_skips_zero_duration(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -241,7 +241,7 @@ class TestGetHistoricalAverage:
             ],
         )
         avg = get_historical_average("qa", "small", "low", archive)
-        assert avg == 300.0
+        assert avg == pytest.approx(300.0)
 
     def test_returns_none_when_no_matches(self, tmp_path: Path) -> None:
         archive = tmp_path / "tasks.jsonl"
@@ -258,7 +258,7 @@ class TestGetHistoricalAverage:
             fh.write("not-json\n")
             fh.write(json.dumps({"role": "qa", "status": "done", "duration_seconds": 200}) + "\n")
         avg = get_historical_average("qa", "small", "low", archive)
-        assert avg == 200.0
+        assert avg == pytest.approx(200.0)
 
     def test_archive_from_estimate(self, tmp_path: Path) -> None:
         """estimate_timeout reads the archive when historical_data is None."""
@@ -272,8 +272,8 @@ class TestGetHistoricalAverage:
         task = _make_task(scope=Scope.SMALL, complexity=Complexity.LOW)
         est = estimate_timeout(task, model="sonnet", archive_path=archive)
         # historical: 5000 * 1.5 = 7500 → clamped to max 7200
-        assert est.timeout_s == 7200.0
-        assert est.confidence == 0.8
+        assert est.timeout_s == pytest.approx(7200.0)
+        assert est.confidence == pytest.approx(0.8)
 
 
 # ---------------------------------------------------------------------------
@@ -294,21 +294,21 @@ class TestClampTimeout:
 
     def test_clamp_below_min(self) -> None:
         est = clamp_timeout(self._make_estimate(100.0), min_s=300.0, max_s=7200.0)
-        assert est.timeout_s == 300.0
+        assert est.timeout_s == pytest.approx(300.0)
 
     def test_clamp_above_max(self) -> None:
         est = clamp_timeout(self._make_estimate(99999.0), min_s=300.0, max_s=7200.0)
-        assert est.timeout_s == 7200.0
+        assert est.timeout_s == pytest.approx(7200.0)
 
     def test_within_bounds_unchanged(self) -> None:
         est = clamp_timeout(self._make_estimate(1500.0), min_s=300.0, max_s=7200.0)
-        assert est.timeout_s == 1500.0
+        assert est.timeout_s == pytest.approx(1500.0)
 
     def test_custom_bounds(self) -> None:
         est = clamp_timeout(self._make_estimate(50.0), min_s=100.0, max_s=200.0)
-        assert est.timeout_s == 100.0
-        assert est.min_timeout_s == 100.0
-        assert est.max_timeout_s == 200.0
+        assert est.timeout_s == pytest.approx(100.0)
+        assert est.min_timeout_s == pytest.approx(100.0)
+        assert est.max_timeout_s == pytest.approx(200.0)
 
     def test_preserves_factors(self) -> None:
         raw = self._make_estimate(1500.0)
@@ -330,10 +330,10 @@ class TestFactorsBreakdown:
         )
         est = estimate_timeout(task, model="opus", historical_data=500.0)
         f = est.factors
-        assert f.complexity_score == 1.0
-        assert f.scope_multiplier == 3600.0
-        assert f.model_speed_factor == 1.5
-        assert f.historical_avg_s == 500.0
+        assert f.complexity_score == pytest.approx(1.0)
+        assert f.scope_multiplier == pytest.approx(3600.0)
+        assert f.model_speed_factor == pytest.approx(1.5)
+        assert f.historical_avg_s == pytest.approx(500.0)
         assert f.file_count == 1
 
 
@@ -348,13 +348,13 @@ class TestEdgeCases:
         task = _make_task(scope=Scope.SMALL, complexity=Complexity.LOW)
         est = estimate_timeout(task, model="haiku")
         # 900 * 0.7 * 0.5 = 315 — above 300, so not clamped
-        assert est.timeout_s == 315.0
+        assert est.timeout_s == pytest.approx(315.0)
 
     def test_maximum_cap_enforced(self) -> None:
         """Large + high + opus = 3600*1.5*1.5 = 8100 → clamped to 7200."""
         task = _make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         est = estimate_timeout(task, model="opus")
-        assert est.timeout_s == 7200.0
+        assert est.timeout_s == pytest.approx(7200.0)
 
     def test_combined_file_count_and_complexity(self) -> None:
         task = _make_task(
@@ -364,4 +364,4 @@ class TestEdgeCases:
         )
         est = estimate_timeout(task, model="sonnet")
         # 1800 * 1.5 + 10*30 = 2700 + 300 = 3000
-        assert est.timeout_s == 3000.0
+        assert est.timeout_s == pytest.approx(3000.0)

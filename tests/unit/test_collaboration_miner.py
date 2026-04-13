@@ -87,7 +87,7 @@ class TestCollaborationPattern:
         )
         assert pat.roles == ("backend", "frontend")
         assert pat.ordering == "parallel"
-        assert pat.success_rate == 0.75
+        assert pat.success_rate == pytest.approx(0.75)
         assert pat.sample_size == 5
 
 

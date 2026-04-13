@@ -217,17 +217,17 @@ class TestAnalyzeHistorical:
 class TestScoreDecomposition:
     def test_zero_subtasks_returns_zero(self) -> None:
         result = score_decomposition(0, [])
-        assert result.score == 0.0
-        assert result.confidence == 1.0
+        assert result.score == pytest.approx(0.0)
+        assert result.confidence == pytest.approx(1.0)
 
     def test_negative_subtasks_returns_zero(self) -> None:
         result = score_decomposition(-1, [])
-        assert result.score == 0.0
+        assert result.score == pytest.approx(0.0)
 
     def test_no_history_uses_heuristic(self) -> None:
         result = score_decomposition(4, [])
         assert 0.0 < result.score <= 1.0
-        assert result.confidence == 0.0
+        assert result.confidence == pytest.approx(0.0)
         assert result.stats is None
 
     def test_with_history_matches_bucket(self, tmp_path: Path) -> None:
@@ -265,7 +265,7 @@ class TestRecommendGranularity:
     def test_no_history_uses_heuristic(self) -> None:
         result = recommend_granularity("medium", "medium", [])
         assert result.subtask_count == 4
-        assert result.confidence == 0.0
+        assert result.confidence == pytest.approx(0.0)
         assert "heuristic" in result.recommendation.lower() or "no sufficient" in result.recommendation.lower()
 
     def test_with_sufficient_history(self, tmp_path: Path) -> None:
@@ -297,7 +297,7 @@ class TestRecommendGranularity:
         buckets = _build_history(tmp_path, [(2, 4, 1.0)])
         result = recommend_granularity("medium", "medium", buckets)
         # Should fall back to heuristic
-        assert result.confidence == 0.0
+        assert result.confidence == pytest.approx(0.0)
 
     def test_case_insensitive_inputs(self) -> None:
         r1 = recommend_granularity("MEDIUM", "LARGE", [])

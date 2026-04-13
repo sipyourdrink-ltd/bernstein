@@ -7,6 +7,8 @@ import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.core.quality.code_health import (
     FileHealthScore,
     HealthDelta,
@@ -31,7 +33,7 @@ def test_file_health_score_is_frozen() -> None:
         coupling_score=0.9,
         last_updated="2026-01-01T00:00:00+00:00",
     )
-    assert score.overall_score == 0.85
+    assert score.overall_score == pytest.approx(0.85)
     try:
         score.overall_score = 0.5  # type: ignore[misc]
         raise AssertionError("Expected FrozenInstanceError")
@@ -100,7 +102,7 @@ def test_bug_density_perfect_without_archive(tmp_path: Path) -> None:
     _stub_git(tmp_path)
 
     score = compute_file_health("src/bernstein/clean.py", tmp_path)
-    assert score.bug_density_score == 1.0
+    assert score.bug_density_score == pytest.approx(1.0)
 
 
 def test_bug_density_degrades_with_failures(tmp_path: Path) -> None:
@@ -116,7 +118,7 @@ def test_bug_density_degrades_with_failures(tmp_path: Path) -> None:
 
     _stub_git(tmp_path)
     score = compute_file_health("src/bernstein/buggy.py", tmp_path)
-    assert score.bug_density_score == 0.75  # 1.0 - 5/20
+    assert score.bug_density_score == pytest.approx(0.75)  # 1.0 - 5/20
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +134,7 @@ def test_coverage_score_with_test_file(tmp_path: Path) -> None:
 
     _stub_git(tmp_path)
     score = compute_file_health("src/bernstein/widget.py", tmp_path)
-    assert score.test_coverage_score == 1.0
+    assert score.test_coverage_score == pytest.approx(1.0)
 
 
 def test_coverage_score_without_test_file(tmp_path: Path) -> None:
@@ -140,7 +142,7 @@ def test_coverage_score_without_test_file(tmp_path: Path) -> None:
 
     _stub_git(tmp_path)
     score = compute_file_health("src/bernstein/orphan.py", tmp_path)
-    assert score.test_coverage_score == 0.0
+    assert score.test_coverage_score == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +158,7 @@ def test_churn_score_with_no_git(tmp_path: Path) -> None:
         score = compute_file_health("src/bernstein/no_git.py", tmp_path)
 
     # No git → neutral score (0.5)
-    assert score.churn_score == 0.5
+    assert score.churn_score == pytest.approx(0.5)
 
 
 def test_churn_score_low_for_high_churn(tmp_path: Path) -> None:
@@ -167,7 +169,7 @@ def test_churn_score_low_for_high_churn(tmp_path: Path) -> None:
         mock_run.return_value = _mock_subprocess_result(returncode=0, stdout=commit_lines)
         score = compute_file_health("src/bernstein/hot.py", tmp_path)
 
-    assert score.churn_score == 0.2  # 1.0 - 80/100
+    assert score.churn_score == pytest.approx(0.2)  # 1.0 - 80/100
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +209,7 @@ def test_check_health_delta_detects_degradation(tmp_path: Path) -> None:
     delta = check_health_delta("src/bernstein/mod.py", before, tmp_path)
 
     assert isinstance(delta, HealthDelta)
-    assert delta.before == 0.9
+    assert delta.before == pytest.approx(0.9)
     # After is computed fresh (lower due to no test file → 0.0 coverage)
     assert delta.after < 0.9
     assert delta.delta < 0

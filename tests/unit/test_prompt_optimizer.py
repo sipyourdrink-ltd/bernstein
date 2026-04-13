@@ -312,7 +312,7 @@ class TestPromptOptimizer:
         opt.assign_variant(role="backend", task_id="seed")
         status = opt.get_status("backend")
         challenger_ver = status["challenger_version"]
-        status["active_version"]
+        _active = status["active_version"]
 
         # Simulate recording many outcomes: challenger almost always passes,
         # control fails often.  We bypass assignment tracking by directly

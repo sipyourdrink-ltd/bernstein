@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.planning.semantic_dedup import (
     DeduplicationResult,
     DuplicatePair,
@@ -18,12 +20,12 @@ from bernstein.core.planning.semantic_dedup import (
 
 def test_identical_strings_have_perfect_similarity() -> None:
     """Identical strings yield a score of 1.0."""
-    assert compute_text_similarity("add unit tests", "add unit tests") == 1.0
+    assert compute_text_similarity("add unit tests", "add unit tests") == pytest.approx(1.0)
 
 
 def test_empty_strings_have_zero_similarity() -> None:
     """Two empty strings yield 0.0."""
-    assert compute_text_similarity("", "") == 0.0
+    assert compute_text_similarity("", "") == pytest.approx(0.0)
 
 
 def test_completely_different_strings_are_low() -> None:
@@ -43,7 +45,7 @@ def test_similar_rephrasing_scores_high() -> None:
 
 def test_case_insensitive() -> None:
     """Similarity is case-insensitive."""
-    assert compute_text_similarity("Add Tests", "add tests") == 1.0
+    assert compute_text_similarity("Add Tests", "add tests") == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +92,7 @@ def test_find_duplicates_identical_tasks() -> None:
     ]
     pairs = find_duplicate_tasks(tasks, threshold=0.75)
     assert len(pairs) == 1
-    assert pairs[0].similarity_score == 1.0
+    assert pairs[0].similarity_score == pytest.approx(1.0)
     assert pairs[0].stage_a == "testing"
     assert pairs[0].stage_b == "qa"
 

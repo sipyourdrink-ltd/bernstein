@@ -7,6 +7,8 @@ import sys
 import types
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.core.plugins_core.plugin_hotreload import (
     PluginHotReloader,
     PluginVersionHistory,
@@ -72,8 +74,8 @@ class TestRollbackTrigger:
             triggered=True,
         )
         assert trigger.triggered is True
-        assert trigger.current_value == 0.5
-        assert trigger.threshold == 0.7
+        assert trigger.current_value == pytest.approx(0.5)
+        assert trigger.threshold == pytest.approx(0.7)
 
     def test_immutable(self) -> None:
         trigger = RollbackTrigger(
@@ -188,7 +190,7 @@ class TestDetectDegradation:
         reloader = PluginHotReloader()
         trigger = reloader.detect_degradation("unknown-plugin")
         assert trigger.triggered is False
-        assert trigger.current_value == 1.0
+        assert trigger.current_value == pytest.approx(1.0)
 
     def test_all_passes_no_degradation(self) -> None:
         reloader = PluginHotReloader()
@@ -196,7 +198,7 @@ class TestDetectDegradation:
             reloader.record_quality_gate("p", passed=True)
         trigger = reloader.detect_degradation("p")
         assert trigger.triggered is False
-        assert trigger.current_value == 1.0
+        assert trigger.current_value == pytest.approx(1.0)
 
     def test_all_failures_triggers(self) -> None:
         reloader = PluginHotReloader()
@@ -204,7 +206,7 @@ class TestDetectDegradation:
             reloader.record_quality_gate("p", passed=False)
         trigger = reloader.detect_degradation("p")
         assert trigger.triggered is True
-        assert trigger.current_value == 0.0
+        assert trigger.current_value == pytest.approx(0.0)
 
     def test_below_threshold_triggers(self) -> None:
         """Pass rate below threshold triggers rollback."""
@@ -229,7 +231,7 @@ class TestDetectDegradation:
 
         trigger = reloader.detect_degradation("p")
         assert trigger.triggered is False
-        assert trigger.current_value == 0.8
+        assert trigger.current_value == pytest.approx(0.8)
 
     def test_trigger_includes_metric_name(self) -> None:
         reloader = PluginHotReloader()
@@ -240,7 +242,7 @@ class TestDetectDegradation:
     def test_threshold_from_constructor(self) -> None:
         reloader = PluginHotReloader(default_pass_rate_threshold=0.9)
         trigger = reloader.detect_degradation("p")
-        assert trigger.threshold == 0.9
+        assert trigger.threshold == pytest.approx(0.9)
 
 
 # ---------------------------------------------------------------------------
@@ -366,11 +368,11 @@ class TestRecordQualityGate:
         reloader = PluginHotReloader()
         reloader.record_quality_gate("p", passed=True)
         trigger = reloader.detect_degradation("p")
-        assert trigger.current_value == 1.0
+        assert trigger.current_value == pytest.approx(1.0)
 
     def test_record_fail(self) -> None:
         reloader = PluginHotReloader()
         reloader.record_quality_gate("p", passed=False)
         trigger = reloader.detect_degradation("p")
-        assert trigger.current_value == 0.0
+        assert trigger.current_value == pytest.approx(0.0)
         assert trigger.triggered is True

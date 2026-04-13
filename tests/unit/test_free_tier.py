@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.cost.free_tier import (
     FREE_TIER_LIMITS,
     FreeTierMaximizer,
@@ -25,7 +27,7 @@ class TestFreeTierStatus:
             remaining_minute=15,
             limit_minute=15,
         )
-        assert status.utilization_pct == 50.0
+        assert status.utilization_pct == pytest.approx(50.0)
 
     def test_utilization_pct_zero_limit(self) -> None:
         status = FreeTierStatus(
@@ -35,7 +37,7 @@ class TestFreeTierStatus:
             remaining_minute=0,
             limit_minute=0,
         )
-        assert status.utilization_pct == 0.0
+        assert status.utilization_pct == pytest.approx(0.0)
 
     def test_is_available_true(self) -> None:
         status = FreeTierStatus(

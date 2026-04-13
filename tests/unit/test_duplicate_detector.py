@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from bernstein.core.models import Task, TaskStatus
 
 from bernstein.core.quality.duplicate_detector import (
@@ -69,21 +70,21 @@ class TestComputeWordOverlap:
     """Tests for compute_word_overlap()."""
 
     def test_identical_texts(self) -> None:
-        assert compute_word_overlap("hello world", "hello world") == 1.0
+        assert compute_word_overlap("hello world", "hello world") == pytest.approx(1.0)
 
     def test_completely_different(self) -> None:
-        assert compute_word_overlap("foo bar", "baz qux") == 0.0
+        assert compute_word_overlap("foo bar", "baz qux") == pytest.approx(0.0)
 
     def test_partial_overlap(self) -> None:
         sim = compute_word_overlap("add auth module", "add auth tests")
         assert 0.0 < sim < 1.0
 
     def test_empty_string(self) -> None:
-        assert compute_word_overlap("", "hello") == 0.0
-        assert compute_word_overlap("hello", "") == 0.0
+        assert compute_word_overlap("", "hello") == pytest.approx(0.0)
+        assert compute_word_overlap("hello", "") == pytest.approx(0.0)
 
     def test_both_empty(self) -> None:
-        assert compute_word_overlap("", "") == 0.0
+        assert compute_word_overlap("", "") == pytest.approx(0.0)
 
 
 # --- detect_duplicates ---

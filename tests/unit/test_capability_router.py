@@ -349,14 +349,17 @@ class TestCapabilityLevelOrdering:
         assert CapabilityLevel.BASIC < CapabilityLevel.EXPERT
 
     def test_same_level_ge(self) -> None:
-        assert CapabilityLevel.ADVANCED >= CapabilityLevel.ADVANCED
+        level = CapabilityLevel.ADVANCED
+        assert level >= CapabilityLevel.ADVANCED
 
     def test_same_level_not_gt(self) -> None:
-        assert not (CapabilityLevel.ADVANCED > CapabilityLevel.ADVANCED)
+        level = CapabilityLevel.ADVANCED
+        assert not (level > CapabilityLevel.ADVANCED)
 
     def test_le_ordering(self) -> None:
         assert CapabilityLevel.BASIC <= CapabilityLevel.ADVANCED
-        assert CapabilityLevel.ADVANCED <= CapabilityLevel.ADVANCED
+        level = CapabilityLevel.ADVANCED
+        assert level <= CapabilityLevel.ADVANCED
         assert not (CapabilityLevel.EXPERT <= CapabilityLevel.BASIC)
 
 
@@ -453,7 +456,7 @@ class TestRegistryFindAgents:
         reg.register("claude", "opus", frozenset({_expert("python"), _expert("testing")}))
         results = reg.find_agents([_basic("python"), _basic("testing")])
         assert len(results) == 1
-        assert results[0].score == 1.0
+        assert results[0].score == pytest.approx(1.0)
         assert len(results[0].missing_capabilities) == 0
 
     def test_partial_match(self) -> None:
@@ -461,7 +464,7 @@ class TestRegistryFindAgents:
         reg.register("claude", "opus", frozenset({_expert("python")}))
         results = reg.find_agents([_basic("python"), _basic("testing")])
         assert len(results) == 1
-        assert results[0].score == 0.5
+        assert results[0].score == pytest.approx(0.5)
         assert len(results[0].matched_capabilities) == 1
         assert len(results[0].missing_capabilities) == 1
 
@@ -469,14 +472,14 @@ class TestRegistryFindAgents:
         reg = CapabilityRegistry()
         reg.register("claude", "haiku", frozenset({_basic("python")}))
         results = reg.find_agents([_expert("python")])
-        assert results[0].score == 0.0
+        assert results[0].score == pytest.approx(0.0)
         assert len(results[0].missing_capabilities) == 1
 
     def test_higher_level_satisfies_lower_requirement(self) -> None:
         reg = CapabilityRegistry()
         reg.register("claude", "opus", frozenset({_expert("python")}))
         results = reg.find_agents([_basic("python")])
-        assert results[0].score == 1.0
+        assert results[0].score == pytest.approx(1.0)
 
     def test_ranking_by_score(self) -> None:
         reg = CapabilityRegistry()
@@ -488,7 +491,7 @@ class TestRegistryFindAgents:
         reg.register("codex", "gpt-4", frozenset({_advanced("python")}))
         results = reg.find_agents([_basic("python"), _basic("testing"), _basic("security")])
         assert results[0].agent.adapter_name == "claude"
-        assert results[0].score == 1.0
+        assert results[0].score == pytest.approx(1.0)
         assert results[1].agent.adapter_name == "codex"
 
     def test_deterministic_tiebreak_by_adapter_name(self) -> None:
@@ -516,7 +519,7 @@ class TestRegistryFindAgents:
         reg.register("codex", "gpt-4", frozenset())
         results = reg.find_agents([])
         assert len(results) == 2
-        assert all(m.score == 1.0 for m in results)
+        assert all(m.score == pytest.approx(1.0) for m in results)
 
     def test_empty_registry_returns_empty(self) -> None:
         reg = CapabilityRegistry()
@@ -527,7 +530,7 @@ class TestRegistryFindAgents:
         reg = CapabilityRegistry()
         reg.register("claude", "opus", frozenset({_expert("python")}))
         results = reg.find_agents([_basic("quantum-computing")])
-        assert results[0].score == 0.0
+        assert results[0].score == pytest.approx(0.0)
         assert len(results[0].missing_capabilities) == 1
 
     def test_multi_capability_scoring(self) -> None:
@@ -546,7 +549,7 @@ class TestRegistryFindAgents:
             ]
         )
         # 2 of 4 match (python + testing), devops is advanced but expert required
-        assert results[0].score == 0.5
+        assert results[0].score == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------

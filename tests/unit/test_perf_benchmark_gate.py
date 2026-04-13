@@ -122,7 +122,7 @@ def test_run_benchmark_captures_peak_memory(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
     result = run_benchmark("echo mem", name="mem_test", iterations=2)
-    assert result.peak_memory_mb == 42.5
+    assert result.peak_memory_mb == pytest.approx(42.5)
 
 
 def test_run_benchmark_computes_throughput(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -155,7 +155,7 @@ def test_compare_no_regression() -> None:
     assert not result.regressed
     assert result.wall_clock_delta_pct == pytest.approx(5.0, abs=0.1)
     assert result.memory_delta_pct == pytest.approx(4.0, abs=0.1)
-    assert result.threshold_pct == 10.0
+    assert result.threshold_pct == pytest.approx(10.0)
 
 
 def test_compare_wall_clock_regression() -> None:
@@ -208,7 +208,7 @@ def test_compare_zero_baseline_wall_clock() -> None:
 
     result = compare_benchmarks(before, after, threshold=10.0)
 
-    assert result.wall_clock_delta_pct == 0.0
+    assert result.wall_clock_delta_pct == pytest.approx(0.0)
     assert not result.regressed
 
 
