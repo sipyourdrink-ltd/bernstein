@@ -1209,7 +1209,7 @@ def claim_and_spawn_batches(
             and should_auto_decompose(
                 batch[0],
                 orch._decomposed_task_ids,
-                workdir=orch._workdir,
+                _workdir=orch._workdir,
                 force_parallel=orch._config.force_parallel,
             )
         ):
