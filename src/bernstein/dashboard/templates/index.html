@@ -62,7 +62,7 @@
     .skeleton-row { height: 32px; width: 100%; margin-bottom: 4px; }
     /* Filter chip */
     .chip { transition: all 0.15s ease; user-select: none; }
-    .chip-active { background: rgba(79, 70, 229, 0.25); color: #818cf8; border-color: rgba(79, 70, 229, 0.4); }
+    .chip-active { background: rgba(79, 70, 229, 0.25); color: #a5b4fc; border-color: rgba(79, 70, 229, 0.4); }
     .chip-inactive { background: transparent; color: #737373; border-color: #2a2a2d; }
     .chip-inactive:hover { color: #a3a3a3; border-color: #3a3a3d; }
     /* Sort indicator */
@@ -459,7 +459,7 @@
       <div class="bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="flex: 1 1 45%;">
         <div class="px-3 py-2 border-b border-border flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <h2 class="text-xs font-semibold text-text" x-text="selectedAgent ? 'Agent Output' : 'Activity Log'"></h2>
+            <h2 class="text-xs font-semibold text-text" x-text="selectedAgent ? 'Agent Output' : 'Activity Log'">Activity Log</h2>
             <template x-if="selectedAgent">
               <button @click="selectedAgent = ''; logLines = []; closeAgentStream()"
                       class="text-[10px] text-muted hover:text-text transition-colors">Clear</button>
@@ -935,8 +935,8 @@
           return [...list].sort((a, b) => {
             const av = (a[col] ?? '').toString().toLowerCase();
             const bv = (b[col] ?? '').toString().toLowerCase();
-            const an = parseFloat(av), bn = parseFloat(bv);
-            if (!isNaN(an) && !isNaN(bn)) return (an - bn) * dir;
+            const an = Number.parseFloat(av), bn = Number.parseFloat(bv);
+            if (!Number.isNaN(an) && !Number.isNaN(bn)) return (an - bn) * dir;
             return av.localeCompare(bv) * dir;
           });
         },
@@ -979,7 +979,8 @@
           const byLevel = {};
           for (const t of tasks) {
             const l = levels[t.id] ?? 0;
-            (byLevel[l] = byLevel[l] || []).push(t);
+            if (!byLevel[l]) byLevel[l] = [];
+            byLevel[l].push(t);
           }
           const NW = 140, NH = 34, colGap = 56, rowGap = 8, pad = 8;
           const positions = {};
@@ -1052,7 +1053,8 @@
 
             this.lastUpdate = new Date().toLocaleTimeString();
             if (!this.connected) this.connected = true;
-          } catch (e) {
+          } catch (_fetchErr) {
+            // Fetch failed — mark disconnected and fall back to polling
             this.connected = false;
             if (!this.pollTimer) {
               this.startPolling();
@@ -1066,7 +1068,7 @@
             if (!resp.ok) return;
             const data = await resp.json();
             this.workers = Array.isArray(data) ? data : (data.nodes || []);
-          } catch (e) {
+          } catch (_clusterErr) {
             // Cluster endpoints may not be available in single-node mode
           }
         },
@@ -1124,7 +1126,9 @@
                 } else if (msg.event === 'heartbeat') {
                   this.connected = true;
                 }
-              } catch (_) {}
+              } catch (_wsParseErr) {
+                // Malformed WebSocket message — ignore
+              }
             };
 
             ws.onerror = () => {
@@ -1145,7 +1149,8 @@
                 if (!this.wsSocket) this.connectWS();
               }, 10000);
             };
-          } catch (e) {
+          } catch (_wsConnErr) {
+            // WebSocket not supported — fall back to SSE
             this.wsActive = false;
             this.connectSSE();
           }
@@ -1198,11 +1203,13 @@
                 } else {
                   this.fetchData();
                 }
-              } catch (_) {
+              } catch (_sseParseErr) {
+                // Non-JSON SSE message — refresh data anyway
                 this.fetchData();
               }
             };
-          } catch (e) {
+          } catch (_sseConnErr) {
+            // SSE not available — fall back to polling
             this.connected = false;
             this.startPolling();
           }
@@ -1247,7 +1254,9 @@
                     });
                   }
                 }
-              } catch (_) {}
+              } catch (_logParseErr) {
+                // Malformed agent log message — skip
+              }
             };
 
             es.onerror = () => {
@@ -1258,7 +1267,8 @@
                 this.fetchAgentLogs();
               }
             };
-          } catch (e) {
+          } catch (_agentStreamErr) {
+            // Agent stream unavailable — fall back to polling
             this._logPollTimer = setInterval(() => this.fetchAgentLogs(), 2000);
             this.fetchAgentLogs();
           }
@@ -1291,7 +1301,9 @@
                 });
               }
             }
-          } catch (e) { /* agent may not have logs yet */ }
+          } catch (_logFetchErr) {
+            // Agent may not have logs yet
+          }
         },
 
         // ---- Actions ----
@@ -1304,7 +1316,9 @@
             });
             this.addActivity('failed', 'Killed agent ' + agentId.slice(0, 12));
             await this.fetchData();
-          } catch (e) { /* ignore */ }
+          } catch (_killErr) {
+            // Kill request failed — best-effort action
+          }
         },
 
         async spawnTask(taskId) {
@@ -1315,7 +1329,9 @@
               body: '{}'
             });
             await this.fetchData();
-          } catch (e) { /* ignore */ }
+          } catch (_spawnErr) {
+            // Spawn request failed — best-effort action
+          }
         },
 
         async adjustAgents(delta) {
@@ -1329,7 +1345,9 @@
             if (resp.ok) {
               this.stats.max_agents = newVal;
             }
-          } catch (e) { /* ignore */ }
+          } catch (_configErr) {
+            // Config update failed — best-effort action
+          }
         },
 
         async cancelTask(taskId) {
@@ -1340,7 +1358,9 @@
               body: JSON.stringify({ reason: 'cancelled via dashboard' })
             });
             await this.fetchData();
-          } catch (e) { /* ignore */ }
+          } catch (_cancelErr) {
+            // Cancel request failed — best-effort action
+          }
         },
 
         // ---- Timer ----

@@ -27,14 +27,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /workspace
 
 COPY --from=build /app/dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 
 # Copy the demo project template into a fixed location
 COPY templates/demo/ /workspace/project/
 
 # Copy the demo-cycle script
 COPY docker/demo/demo-cycle.sh /usr/local/bin/demo-cycle
-RUN chmod +x /usr/local/bin/demo-cycle && \
+RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl && \
+    chmod +x /usr/local/bin/demo-cycle && \
     useradd -m -u 1000 bernstein && \
     chown -R bernstein:bernstein /workspace
 USER bernstein

@@ -12,8 +12,6 @@
  * ```
  */
 
-import type { TaskStatus } from '../models.js';
-
 export interface SlackAdapterOptions {
   webhookUrl?: string;
   botToken?: string;
@@ -177,8 +175,14 @@ function taskCreatedBlocks(
   role: string,
   priority: number,
 ): SlackBlock[] {
-  const emoji =
-    priority === 1 ? ':rotating_light:' : priority === 3 ? ':white_circle:' : ':blue_circle:';
+  let emoji: string;
+  if (priority === 1) {
+    emoji = ':rotating_light:';
+  } else if (priority === 3) {
+    emoji = ':white_circle:';
+  } else {
+    emoji = ':blue_circle:';
+  }
   return [
     {
       type: 'section',
@@ -219,4 +223,4 @@ async function fetchJson(
 }
 
 // Re-export TaskStatus so callers can build notify calls from task data
-export type { TaskStatus };
+export type { TaskStatus } from '../models.js';

@@ -162,7 +162,7 @@
 <script>
   (function () {
     // Determine color scheme for Redoc theming
-    var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var prefersDark = globalThis.matchMedia && globalThis.matchMedia('(prefers-color-scheme: dark)').matches;
     var storedTheme = localStorage.getItem('theme');
     var isDark = storedTheme === 'dark' || (!storedTheme && prefersDark);
 

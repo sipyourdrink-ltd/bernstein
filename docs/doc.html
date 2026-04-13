@@ -90,10 +90,29 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
+function renderMermaidBlock(block, i) {
+  var id = 'mermaid-diagram-' + i;
+  var code = block.textContent;
+  var container = document.createElement('div');
+  container.className = 'mermaid';
+  container.id = id;
+  block.parentNode.replaceWith(container);
+  mermaid.render(id + '-svg', code).then(function (result) {
+    container.innerHTML = result.svg;
+  }).catch(function (err) {
+    container.textContent = 'Diagram render error: ' + err.message;
+  });
+}
+
+function renderMermaidBlocks(blocks) {
+  mermaid.initialize({ startOnLoad: false, theme: 'default' });
+  blocks.forEach(renderMermaidBlock);
+}
+
 (function () {
   'use strict';
 
-  var params = new URLSearchParams(window.location.search);
+  var params = new URLSearchParams(globalThis.location.search);
   var path = params.get('path');
 
   if (!path) {
@@ -104,7 +123,7 @@
 
   // Breadcrumb
   var breadcrumb = document.getElementById('page-breadcrumb');
-  breadcrumb.innerHTML = '<a href="docs-index.html">All Docs</a> / ' + path.replace(/</g, '&lt;');
+  breadcrumb.innerHTML = '<a href="docs-index.html">All Docs</a> / ' + path.replaceAll('<', '&lt;');
 
   fetch(path)
     .then(function (res) {
@@ -149,7 +168,7 @@
         document.getElementById('page-title').textContent = firstH1.textContent;
         firstH1.remove();
       } else {
-        var name = path.split('/').pop().replace(/\.md$/, '').replace(/[-_]/g, ' ');
+        var name = path.split('/').pop().replace(/\.md$/, '').replaceAll(/[-_]/g, ' ');
         document.title = name + ' — Bernstein';
         document.getElementById('page-title').textContent = name;
       }
@@ -158,7 +177,7 @@
       var tocList = document.getElementById('toc-list');
       document.getElementById('doc-content').querySelectorAll('h2').forEach(function (h2) {
         if (!h2.id) {
-          h2.id = h2.textContent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+          h2.id = h2.textContent.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/^-|-$/g, '');
         }
         var li = document.createElement('li');
         var a = document.createElement('a');
@@ -180,22 +199,7 @@
       if (mermaidBlocks.length > 0) {
         var script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
-        script.onload = function () {
-          mermaid.initialize({ startOnLoad: false, theme: 'default' });
-          mermaidBlocks.forEach(function (block, i) {
-            var id = 'mermaid-diagram-' + i;
-            var code = block.textContent;
-            var container = document.createElement('div');
-            container.className = 'mermaid';
-            container.id = id;
-            block.parentNode.replaceWith(container);
-            mermaid.render(id + '-svg', code).then(function (result) {
-              container.innerHTML = result.svg;
-            }).catch(function (err) {
-              container.textContent = 'Diagram render error: ' + err.message;
-            });
-          });
-        };
+        script.onload = renderMermaidBlocks.bind(null, mermaidBlocks);
         document.head.appendChild(script);
       }
 
