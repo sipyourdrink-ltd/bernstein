@@ -3460,6 +3460,10 @@ class Orchestrator:
             run_start_ts=self._run_start_ts,
         )
 
+        # Auto-PR: create a GitHub PR if BERNSTEIN_AUTO_PR is set
+        if os.environ.get("BERNSTEIN_AUTO_PR") == "1":
+            self._create_auto_pr(done_tasks, total_cost, duration_str)
+
         self._emit_summary_card(
             done_tasks=done_tasks,
             failed_tasks=failed_tasks,
@@ -3467,6 +3471,109 @@ class Orchestrator:
             wall_clock_s=wall_clock_s,
             total_cost=total_cost,
         )
+
+    def _create_auto_pr(
+        self,
+        done_tasks: list[Task],
+        total_cost: float,
+        duration_str: str,
+    ) -> None:
+        """Create a GitHub PR with the completed work.
+
+        Called when BERNSTEIN_AUTO_PR=1 is set and all tasks complete.
+        """
+        import subprocess
+
+        from bernstein.core.git.git_pr import create_github_pr
+
+        # Get current branch name
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            current_branch = result.stdout.strip()
+        except Exception as exc:
+            logger.warning("Auto-PR: failed to get current branch: %s", exc)
+            return
+
+        if current_branch in ("main", "master"):
+            logger.info("Auto-PR: skipping - already on %s branch", current_branch)
+            return
+
+        # Check if there are commits to push
+        try:
+            result = subprocess.run(
+                ["git", "log", "origin/main..HEAD", "--oneline"],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if not result.stdout.strip():
+                logger.info("Auto-PR: skipping - no commits ahead of main")
+                return
+        except Exception:
+            pass  # Continue anyway
+
+        # Push the branch
+        try:
+            subprocess.run(
+                ["git", "push", "-u", "origin", current_branch],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+        except Exception as exc:
+            logger.warning("Auto-PR: failed to push branch: %s", exc)
+            return
+
+        # Build PR title and body
+        if len(done_tasks) == 1:
+            pr_title = done_tasks[0].title
+        else:
+            pr_title = f"Bernstein: {len(done_tasks)} tasks completed"
+
+        body_lines = [
+            "## Summary",
+            "",
+            f"Completed {len(done_tasks)} task(s) in {duration_str} (${total_cost:.4f}).",
+            "",
+            "### Tasks",
+            "",
+        ]
+        for task in done_tasks:
+            body_lines.append(f"- [x] {task.title}")
+        body_lines.append("")
+
+        pr_result = create_github_pr(
+            cwd=self._workdir,
+            title=pr_title,
+            body="\n".join(body_lines),
+            head=current_branch,
+            base="main",
+        )
+
+        if pr_result.success:
+            logger.info("Auto-PR created: %s", pr_result.pr_url)
+            self._notify(
+                "pr.created",
+                "Pull request created",
+                f"PR for {len(done_tasks)} task(s): {pr_result.pr_url}",
+                pr_url=pr_result.pr_url,
+            )
+        else:
+            logger.warning("Auto-PR failed: %s", pr_result.error)
 
     def _emit_summary_card(
         self,

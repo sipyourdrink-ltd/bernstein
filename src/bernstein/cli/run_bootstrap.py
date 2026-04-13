@@ -609,6 +609,12 @@ def exec_restart() -> None:
     metavar="PATTERN",
     help="Run only backlog tasks matching PATTERN (e.g. 'gh-62' or 'mutant-fish').",
 )
+@click.option(
+    "--auto-pr",
+    is_flag=True,
+    default=False,
+    help="Automatically create a GitHub PR when all tasks complete.",
+)
 def run(
     plan_file: Path | None,
     goal: str | None,
@@ -636,6 +642,7 @@ def run(
     dry_run: bool = False,
     profile: bool = False,
     task_filter: str | None = None,
+    auto_pr: bool = False,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -710,6 +717,10 @@ def run(
     # Propagate task filter so the orchestrator only ingests matching backlog tasks
     if task_filter:
         os.environ["BERNSTEIN_TASK_FILTER"] = task_filter
+
+    # Propagate auto-PR flag so the orchestrator creates a PR when all tasks complete
+    if auto_pr:
+        os.environ["BERNSTEIN_AUTO_PR"] = "1"
 
     _configure_quality_gate_bypass(
         goal=goal,

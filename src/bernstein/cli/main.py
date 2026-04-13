@@ -477,6 +477,12 @@ class _RichGroup(click.Group):
     metavar="PATTERN",
     help="Run only backlog tasks matching PATTERN (e.g. 'gh-62' or 'mutant-fish').",
 )
+@click.option(
+    "--auto-pr",
+    is_flag=True,
+    default=False,
+    help="Automatically create a GitHub PR when all tasks complete.",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -503,6 +509,7 @@ def cli(
     verbose: bool,
     quiet: bool,
     task_filter: str | None,
+    auto_pr: bool,
 ) -> None:
     """Declarative agent orchestration for engineering teams."""
     setup_json_logging()
@@ -671,6 +678,7 @@ def cli(
         dry_run=False,
         profile=False,
         task_filter=task_filter,
+        auto_pr=auto_pr,
     )
 
 
