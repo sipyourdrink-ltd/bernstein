@@ -85,10 +85,10 @@ def test_create_pr_uses_injected_push_and_create(tmp_path: Path, make_task: Any)
     pr_url = gate.create_pr(
         task,
         worktree_path=tmp_path,
-        _session_id="S-4",
+        session_id="S-4",
         _role="backend",
-        _model="sonnet",
-        _cost_usd=0.5,
+        model="sonnet",
+        cost_usd=0.5,
         test_summary="12 passed",
     )
 

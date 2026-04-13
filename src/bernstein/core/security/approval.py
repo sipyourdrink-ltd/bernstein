@@ -219,12 +219,12 @@ class ApprovalGate:
         task: Task,
         *,
         worktree_path: Path,
-        _session_id: str,
+        session_id: str,
         base_branch: str = "main",
         labels: list[str] | None = None,
         _role: str = "",
-        _model: str = "",
-        _cost_usd: float = 0.0,
+        model: str = "",
+        cost_usd: float = 0.0,
         test_summary: str = "",
     ) -> str:
         """Push the agent branch and open a GitHub PR.
