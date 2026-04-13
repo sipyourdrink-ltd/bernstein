@@ -180,8 +180,8 @@ def _drain_input() -> None:
             while msvcrt.kbhit():
                 msvcrt.getch()
         else:
-                while select.select([sys.stdin], [], [], 0.0)[0]:
-                    sys.stdin.read(1)
+            while select.select([sys.stdin], [], [], 0.0)[0]:
+                sys.stdin.read(1)
     except (OSError, ValueError):
         pass
 
