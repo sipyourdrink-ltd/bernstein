@@ -1,0 +1,54 @@
+name: "Copilot Setup Steps"
+
+# Required triggers for GitHub Copilot coding agent environment setup.
+# The agent uses this workflow to prepare its ephemeral dev environment.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install project dependencies
+        run: uv sync --frozen
+
+      - name: Verify environment
+        run: |
+          echo "Python: $(python --version)"
+          echo "uv: $(uv --version)"
+          echo "Ruff: $(uv run ruff --version)"
+          echo "Pyright: $(uv run pyright --version)"
+          echo "Bernstein: $(uv run python -c 'import bernstein; print(bernstein.__version__)')"
+
+      - name: Pre-warm type stubs
+        run: uv run pyright --version
+
+      # Agent should use the isolated test runner — NOT bare pytest
+      - name: Verify test runner
+        run: |
+          echo "Test runner available: scripts/run_tests.py"
+          echo "NEVER run 'uv run pytest tests/' — it leaks 100GB+ RAM"
+          echo "ALWAYS use: uv run python scripts/run_tests.py -x"
