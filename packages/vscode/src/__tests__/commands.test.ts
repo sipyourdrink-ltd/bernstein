@@ -5,6 +5,14 @@ import type { OutputManager } from '../OutputManager';
 import type { AgentItem } from '../AgentTreeProvider';
 import type { TaskItem } from '../TaskTreeProvider';
 
+function makeAgentItem(agent: BernsteinAgent): AgentItem {
+  return { agent } as unknown as AgentItem;
+}
+
+function makeTaskItem(task: BernsteinTask): TaskItem {
+  return { task } as unknown as TaskItem;
+}
+
 const BASE_AGENT: BernsteinAgent = {
   id: 'backend-abc123def456',
   role: 'backend',
@@ -15,10 +23,6 @@ const BASE_AGENT: BernsteinAgent = {
   tasks: [{ id: 't1', title: 'Write tests', status: 'in_progress', progress: 50 }],
 };
 
-function makeAgentItem(agent: BernsteinAgent): AgentItem {
-  return { agent } as unknown as AgentItem;
-}
-
 const BASE_TASK: BernsteinTask = {
   id: 'task-001',
   title: 'Implement login',
@@ -26,10 +30,6 @@ const BASE_TASK: BernsteinTask = {
   status: 'pending_approval',
   priority: 1,
 };
-
-function makeTaskItem(task: BernsteinTask): TaskItem {
-  return { task } as unknown as TaskItem;
-}
 
 describe('bernstein.inspectAgent', () => {
   let registeredCommands: Record<string, (...args: unknown[]) => unknown>;

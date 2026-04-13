@@ -19,7 +19,9 @@ import { linearToBernstein, bernsteinToLinear } from '../state-map.js';
 /** Safely extract a string from a Record entry (avoids [object Object] from `String()`). */
 function str(obj: Record<string, unknown>, key: string, fallback = ''): string {
   const v = obj[key];
-  return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return String(v);
+  return fallback;
 }
 
 export interface LinearIssueRef {
@@ -69,10 +71,11 @@ export class LinearAdapter {
     const issue = parseLinearIssue(payload['data'] as Record<string, unknown> | undefined);
     if (!issue) return null;
 
+    const stateTypeMapping = linearToBernstein(issue.stateType);
     const mapped =
-      linearToBernstein(issue.stateType) !== 'open'
-        ? linearToBernstein(issue.stateType)
-        : linearToBernstein(issue.stateName);
+      stateTypeMapping === 'open'
+        ? linearToBernstein(issue.stateName)
+        : stateTypeMapping;
     if (mapped === 'done' || mapped === 'cancelled') return null;
 
     return this.taskFromIssue(issue);

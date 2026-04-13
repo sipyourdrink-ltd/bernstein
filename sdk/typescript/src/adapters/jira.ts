@@ -24,7 +24,9 @@ import { jiraToBernstein, bernsteinToJira } from '../state-map.js';
 /** Safely extract a string from a Record entry (avoids [object Object] from `String()`). */
 function str(obj: Record<string, unknown>, key: string, fallback = ''): string {
   const v = obj[key];
-  return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return String(v);
+  return fallback;
 }
 
 export interface JiraIssueRef {
@@ -129,12 +131,21 @@ function extractIssue(payload: Record<string, unknown>): JiraIssueRef | null {
   const priorityObj = (fields['priority'] ?? {}) as Record<string, unknown>;
   const assigneeObj = (fields['assignee'] ?? {}) as Record<string, unknown>;
   const descRaw = fields['description'];
-  const description =
-    typeof descRaw === 'string'
-      ? descRaw
-      : descRaw && typeof descRaw === 'object'
-        ? extractAdfText(descRaw as Record<string, unknown>)
-        : '';
+  let description: string;
+  if (typeof descRaw === 'string') {
+    description = descRaw;
+  } else if (descRaw && typeof descRaw === 'object') {
+    description = extractAdfText(descRaw as Record<string, unknown>);
+  } else {
+    description = '';
+  }
+
+  let storyPoints: number | null = null;
+  if (typeof fields['story_points'] === 'number') {
+    storyPoints = fields['story_points'];
+  } else if (typeof fields['customfield_10016'] === 'number') {
+    storyPoints = fields['customfield_10016'];
+  }
 
   return {
     key,
@@ -142,12 +153,7 @@ function extractIssue(payload: Record<string, unknown>): JiraIssueRef | null {
     description,
     status: str(statusObj, 'name', 'open'),
     priority: str(priorityObj, 'name', 'medium'),
-    storyPoints:
-      typeof fields['story_points'] === 'number'
-        ? fields['story_points']
-        : typeof fields['customfield_10016'] === 'number'
-          ? fields['customfield_10016']
-          : null,
+    storyPoints,
     labels: Array.isArray(fields['labels'])
       ? (fields['labels'] as unknown[]).map(String)
       : [],

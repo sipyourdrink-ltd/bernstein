@@ -72,15 +72,15 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   // Initial fetch + polling fallback
-  void refresh();
-  const timer = setInterval(() => void refresh(), refreshIntervalSecs * 1000);
+  refresh().catch(() => { /* handled in refresh() */ });
+  const timer = setInterval(() => { refresh().catch(() => { /* handled in refresh() */ }); }, refreshIntervalSecs * 1000);
   context.subscriptions.push({ dispose: () => clearInterval(timer) });
 
   // Debounced refresh — max 2 updates per second from SSE events
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   const debouncedRefresh = (): void => {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => void refresh(), 500);
+    debounceTimer = setTimeout(() => { refresh().catch(() => { /* handled in refresh() */ }); }, 500);
   };
   context.subscriptions.push({ dispose: () => clearTimeout(debounceTimer) });
 
@@ -105,7 +105,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push({ dispose: () => stopSse?.() });
 
-  registerCommands(context, client, outputManager, () => void refresh());
+  registerCommands(context, client, outputManager, () => { refresh().catch(() => { /* handled in refresh() */ }); });
 
   // @bernstein chat participant — guarded for older VS Code versions
   const vscodeAny = vscode as unknown as {

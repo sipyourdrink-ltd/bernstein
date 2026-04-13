@@ -17,7 +17,7 @@
 import type { TaskCreate } from '../models.js';
 
 /** Priority level: 1 = critical, 2 = normal, 3 = low. */
-type Priority = Priority;
+type Priority = 1 | 2 | 3;
 
 /** Safely extract a string from a Record entry (avoids [object Object] from `String()`). */
 function str(obj: Record<string, unknown>, key: string, fallback = ''): string {
@@ -118,7 +118,7 @@ export class CITaskFactory {
     const runId = process.env['GITHUB_RUN_ID'] ?? '';
     const serverUrl = process.env['GITHUB_SERVER_URL'] ?? 'https://github.com';
     const runUrl = repo && runId ? `${serverUrl}/${repo}/actions/runs/${runId}` : '';
-    const branch = (process.env['GITHUB_REF'] ?? '').replace(/^refs\/heads\//, '');
+    const branch = (process.env['GITHUB_REF'] ?? '').replaceAll(/^refs\/heads\//g, '');
 
     return this.taskFromRun({
       workflowName: process.env['GITHUB_WORKFLOW'] ?? 'CI',

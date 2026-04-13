@@ -157,8 +157,14 @@ function createdCard(
   role: string,
   priority: number,
 ): unknown {
-  const priorityLabel =
-    priority === 1 ? 'Critical' : priority === 3 ? 'Low' : 'Normal';
+  let priorityLabel: string;
+  if (priority === 1) {
+    priorityLabel = 'Critical';
+  } else if (priority === 3) {
+    priorityLabel = 'Low';
+  } else {
+    priorityLabel = 'Normal';
+  }
   return adaptiveCard('🆕 New Task', title, 'Accent', [
     { title: 'Task ID', value: taskId },
     { title: 'Role', value: role },
