@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    os.environ.get("CI") == "true",
+    reason="TUI tests hang in headless CI (no terminal)",
+)
+
 from bernstein.cli.terminal_caps import TerminalCaps
+
 from bernstein.tui.fallback import FallbackDisplay
 
 # ---------------------------------------------------------------------------
