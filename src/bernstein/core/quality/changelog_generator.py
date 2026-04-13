@@ -160,41 +160,45 @@ def detect_breaking_changes(diff: str) -> list[str]:
         List of human-readable descriptions of detected breaking changes.
     """
     breaking: list[str] = []
-    lines = diff.splitlines()
-
     removed_defs: dict[str, str] = {}  # name -> params
 
-    for _i, line in enumerate(lines):
-        # Track removed public defs with their parameters
-        m_rem = _RE_REMOVED_DEF_PARAMS.match(line)
-        if m_rem:
-            name = m_rem.group(1)
-            params = m_rem.group(2)
-            if not name.startswith("_"):
-                removed_defs[name] = params
-
-        # Removed class
-        m_cls = _RE_REMOVED_CLASS.match(line)
-        if m_cls:
-            name = m_cls.group(1)
-            if not name.startswith("_"):
-                breaking.append(f"Removed public class `{name}`")
-
-        # Added def — check if it replaces a removed one with different params
-        m_add = _RE_ADDED_DEF.match(line)
-        if m_add:
-            name = m_add.group(1)
-            new_params = m_add.group(2)
-            if name in removed_defs:
-                old_params = removed_defs.pop(name)
-                if old_params.strip() != new_params.strip():
-                    breaking.append(f"Changed signature of `{name}`")
+    for line in diff.splitlines():
+        _process_diff_line(line, removed_defs, breaking)
 
     # Any remaining removed defs without a corresponding add are removals
     for name in removed_defs:
         breaking.append(f"Removed public function `{name}`")
 
     return breaking
+
+
+def _process_diff_line(
+    line: str,
+    removed_defs: dict[str, str],
+    breaking: list[str],
+) -> None:
+    """Process a single diff line for breaking-change detection."""
+    m_rem = _RE_REMOVED_DEF_PARAMS.match(line)
+    if m_rem:
+        name, params = m_rem.group(1), m_rem.group(2)
+        if not name.startswith("_"):
+            removed_defs[name] = params
+        return
+
+    m_cls = _RE_REMOVED_CLASS.match(line)
+    if m_cls:
+        name = m_cls.group(1)
+        if not name.startswith("_"):
+            breaking.append(f"Removed public class `{name}`")
+        return
+
+    m_add = _RE_ADDED_DEF.match(line)
+    if m_add:
+        name, new_params = m_add.group(1), m_add.group(2)
+        if name in removed_defs:
+            old_params = removed_defs.pop(name)
+            if old_params.strip() != new_params.strip():
+                breaking.append(f"Changed signature of `{name}`")
 
 
 # ---------------------------------------------------------------------------
@@ -341,41 +345,63 @@ def render_markdown(changelog: Changelog) -> str:
     """
     lines: list[str] = []
 
-    # Header
     version_label = changelog.version if changelog.version else changelog.run_id
-    lines.append(f"# Changelog — {version_label}")
-    lines.append("")
-    lines.append(f"**Date:** {changelog.date}")
-    lines.append(f"**Run ID:** {changelog.run_id}")
-    lines.append("")
+    lines.extend([
+        f"# Changelog — {version_label}",
+        "",
+        f"**Date:** {changelog.date}",
+        f"**Run ID:** {changelog.run_id}",
+        "",
+    ])
 
-    # Breaking changes section
-    if changelog.breaking_changes:
-        lines.append("## Breaking Changes")
-        lines.append("")
-        for entry in changelog.breaking_changes:
-            lines.append(f"- **{entry.component}:** {entry.summary} (`{entry.task_id}`)")
-        lines.append("")
-
-    # Grouped changes
-    if changelog.entries:
-        lines.append("## Changes")
-        lines.append("")
-        grouped = group_by_component(changelog.entries)
-        for component, entries in grouped.items():
-            lines.append(f"### {component}")
-            lines.append("")
-            for entry in entries:
-                prefix = "**BREAKING** " if entry.is_breaking else ""
-                lines.append(f"- {prefix}{entry.summary} (`{entry.task_id}`)")
-                if entry.files_changed:
-                    file_list = ", ".join(f"`{f}`" for f in entry.files_changed[:5])
-                    if len(entry.files_changed) > 5:
-                        file_list += f" (+{len(entry.files_changed) - 5} more)"
-                    lines.append(f"  Files: {file_list}")
-            lines.append("")
-    else:
-        lines.append("*No changes recorded.*")
-        lines.append("")
+    _render_breaking_section(lines, changelog.breaking_changes)
+    _render_changes_section(lines, changelog.entries)
 
     return "\n".join(lines)
+
+
+def _render_breaking_section(
+    lines: list[str],
+    breaking_changes: tuple[ChangelogEntry, ...],
+) -> None:
+    """Render the breaking changes section if any exist."""
+    if not breaking_changes:
+        return
+    lines.append("## Breaking Changes")
+    lines.append("")
+    for entry in breaking_changes:
+        lines.append(f"- **{entry.component}:** {entry.summary} (`{entry.task_id}`)")
+    lines.append("")
+
+
+def _render_entry_files(lines: list[str], files_changed: tuple[str, ...]) -> None:
+    """Render the files list for a changelog entry."""
+    if not files_changed:
+        return
+    file_list = ", ".join(f"`{f}`" for f in files_changed[:5])
+    if len(files_changed) > 5:
+        file_list += f" (+{len(files_changed) - 5} more)"
+    lines.append(f"  Files: {file_list}")
+
+
+def _render_changes_section(
+    lines: list[str],
+    entries: tuple[ChangelogEntry, ...],
+) -> None:
+    """Render the grouped changes section."""
+    if not entries:
+        lines.append("*No changes recorded.*")
+        lines.append("")
+        return
+
+    lines.append("## Changes")
+    lines.append("")
+    grouped = group_by_component(entries)
+    for component, component_entries in grouped.items():
+        lines.append(f"### {component}")
+        lines.append("")
+        for entry in component_entries:
+            prefix = "**BREAKING** " if entry.is_breaking else ""
+            lines.append(f"- {prefix}{entry.summary} (`{entry.task_id}`)")
+            _render_entry_files(lines, entry.files_changed)
+        lines.append("")

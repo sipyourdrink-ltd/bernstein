@@ -219,60 +219,73 @@ def raw_dicts_to_tasks(raw_tasks: list[dict[str, Any]], id_prefix: str = "task")
     tasks: list[Task] = []
     for i, raw in enumerate(raw_tasks):
         try:
-            title = raw.get("title", "")
-            if not title:
-                logger.warning("Skipping task %d: missing title", i)
-                continue
-
-            # Parse completion signals
-            signals: list[CompletionSignal] = []
-            for sig_raw in raw.get("completion_signals", []):
-                try:
-                    signals.append(_parse_completion_signal(sig_raw))
-                except ValueError as exc:
-                    logger.warning("Skipping invalid signal in task %d: %s", i, exc)
-
-            # Parse depends_on — LLM may output titles instead of IDs.
-            depends_on_raw: Any = raw.get("depends_on", [])
-            depends_on: list[Any] = cast("list[Any]", depends_on_raw) if isinstance(depends_on_raw, list) else []
-
-            # Parse task type
-            task_type_raw = raw.get("task_type", "standard")
-            try:
-                task_type = TaskType(task_type_raw)
-            except ValueError:
-                logger.warning("Invalid task_type %r in task %d, defaulting to standard", task_type_raw, i)
-                task_type = TaskType.STANDARD
-
-            # Parse upgrade details if present
-            upgrade_details = None
-            if task_type == TaskType.UPGRADE_PROPOSAL and "upgrade_details" in raw:
-                try:
-                    upgrade_details = _parse_upgrade_details(raw["upgrade_details"])
-                except (ValueError, KeyError) as exc:
-                    logger.warning("Failed to parse upgrade_details in task %d: %s", i, exc)
-
-            task = Task(
-                id=f"{id_prefix}-{i + 1:03d}",
-                title=title,
-                description=raw.get("description", title),
-                role=raw.get("role", "backend"),
-                priority=int(raw.get("priority", 2)),
-                scope=Scope(raw.get("scope", "medium")),
-                complexity=Complexity(raw.get("complexity", "medium")),
-                estimated_minutes=int(raw.get("estimated_minutes", 60)),
-                status=TaskStatus.OPEN,
-                task_type=task_type,
-                upgrade_details=upgrade_details,
-                depends_on=[str(d) for d in depends_on],
-                owned_files=raw.get("owned_files", []),
-                completion_signals=signals,
-            )
-            tasks.append(task)
+            task = _parse_single_task(raw, i, id_prefix)
+            if task is not None:
+                tasks.append(task)
         except (ValueError, KeyError) as exc:
             logger.warning("Skipping task %d due to parse error: %s", i, exc)
 
     return tasks
+
+
+def _parse_completion_signals_safe(raw: dict[str, Any], index: int) -> list[CompletionSignal]:
+    """Parse completion signals from a raw task dict, skipping invalid ones."""
+    signals: list[CompletionSignal] = []
+    for sig_raw in raw.get("completion_signals", []):
+        try:
+            signals.append(_parse_completion_signal(sig_raw))
+        except ValueError as exc:
+            logger.warning("Skipping invalid signal in task %d: %s", index, exc)
+    return signals
+
+
+def _parse_task_type_safe(raw: dict[str, Any], index: int) -> TaskType:
+    """Parse task type with fallback to STANDARD."""
+    task_type_raw = raw.get("task_type", "standard")
+    try:
+        return TaskType(task_type_raw)
+    except ValueError:
+        logger.warning("Invalid task_type %r in task %d, defaulting to standard", task_type_raw, index)
+        return TaskType.STANDARD
+
+
+def _parse_single_task(raw: dict[str, Any], index: int, id_prefix: str) -> Task | None:
+    """Parse a single raw dict into a Task, or return None if invalid."""
+    title = raw.get("title", "")
+    if not title:
+        logger.warning("Skipping task %d: missing title", index)
+        return None
+
+    signals = _parse_completion_signals_safe(raw, index)
+
+    depends_on_raw: Any = raw.get("depends_on", [])
+    depends_on: list[Any] = cast("list[Any]", depends_on_raw) if isinstance(depends_on_raw, list) else []
+
+    task_type = _parse_task_type_safe(raw, index)
+
+    upgrade_details = None
+    if task_type == TaskType.UPGRADE_PROPOSAL and "upgrade_details" in raw:
+        try:
+            upgrade_details = _parse_upgrade_details(raw["upgrade_details"])
+        except (ValueError, KeyError) as exc:
+            logger.warning("Failed to parse upgrade_details in task %d: %s", index, exc)
+
+    return Task(
+        id=f"{id_prefix}-{index + 1:03d}",
+        title=title,
+        description=raw.get("description", title),
+        role=raw.get("role", "backend"),
+        priority=int(raw.get("priority", 2)),
+        scope=Scope(raw.get("scope", "medium")),
+        complexity=Complexity(raw.get("complexity", "medium")),
+        estimated_minutes=int(raw.get("estimated_minutes", 60)),
+        status=TaskStatus.OPEN,
+        task_type=task_type,
+        upgrade_details=upgrade_details,
+        depends_on=[str(d) for d in depends_on],
+        owned_files=raw.get("owned_files", []),
+        completion_signals=signals,
+    )
 
 
 def _resolve_depends_on(tasks: list[Task]) -> None:

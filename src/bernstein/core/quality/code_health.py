@@ -21,7 +21,10 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +393,24 @@ def _path_to_module(relative_path: str) -> str:
     return ".".join(parts)
 
 
+def _parse_file_safe(py_file: Path) -> ast.Module | None:
+    """Parse a Python file, returning None on failure."""
+    try:
+        source = py_file.read_text(encoding="utf-8", errors="replace")
+        return ast.parse(source, filename=str(py_file))
+    except (SyntaxError, OSError):
+        return None
+
+
+def _import_matches(node: ast.Import | ast.ImportFrom, predicate: Callable[[str], bool]) -> bool:
+    """Check if any imported module name satisfies the predicate."""
+    if isinstance(node, ast.Import):
+        return any(predicate(alias.name) for alias in node.names)
+    # ast.ImportFrom
+    module = node.module or ""
+    return predicate(module)
+
+
 def _file_imports_module(py_file: Path, target_module: str, target_stem: str) -> bool:
     """Return True if *py_file* imports *target_module* or its stem.
 
@@ -401,23 +422,18 @@ def _file_imports_module(py_file: Path, target_module: str, target_stem: str) ->
     Returns:
         True if any import statement references the target.
     """
-    try:
-        source = py_file.read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source, filename=str(py_file))
-    except (SyntaxError, OSError):
+    tree = _parse_file_safe(py_file)
+    if tree is None:
         return False
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == target_module or alias.name.endswith(f".{target_stem}"):
-                    return True
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            if module == target_module or module.endswith(f".{target_stem}"):
-                return True
+    def _matches(name: str) -> bool:
+        return name == target_module or name.endswith(f".{target_stem}")
 
-    return False
+    return any(
+        _import_matches(node, _matches)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    )
 
 
 def _count_project_imports(py_file: Path) -> int:
@@ -429,21 +445,19 @@ def _count_project_imports(py_file: Path) -> int:
     Returns:
         Number of distinct project-internal imports.
     """
-    try:
-        source = py_file.read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source, filename=str(py_file))
-    except (SyntaxError, OSError):
+    tree = _parse_file_safe(py_file)
+    if tree is None:
         return 0
+
+    def _is_project(name: str) -> bool:
+        return name.startswith("bernstein.")
 
     count = 0
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith("bernstein."):
-                    count += 1
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            if module.startswith("bernstein."):
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and _import_matches(node, _is_project):
+            if isinstance(node, ast.Import):
+                count += sum(1 for alias in node.names if _is_project(alias.name))
+            else:
                 count += 1
 
     return count

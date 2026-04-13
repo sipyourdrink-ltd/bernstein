@@ -439,20 +439,22 @@ class UpgradeExecutor:
     def _verify_changes(self, transaction: UpgradeTransaction) -> None:
         """Verify that changes were applied correctly."""
         for change in transaction.file_changes:
-            file_path = self._workdir / change.path
+            self._verify_single_change(change)
 
-            if change.operation == "create":
-                if not file_path.exists():
-                    raise ValueError(f"Verification failed: {change.path} was not created")
+    def _verify_single_change(self, change: FileChange) -> None:
+        """Verify a single file change was applied correctly."""
+        file_path = self._workdir / change.path
 
-            elif change.operation == "modify":
-                if change.new_content:
-                    actual = file_path.read_text(encoding="utf-8")
-                    if actual != change.new_content:
-                        raise ValueError(f"Verification failed: {change.path} content mismatch")
+        if change.operation == "create" and not file_path.exists():
+            raise ValueError(f"Verification failed: {change.path} was not created")
 
-            elif change.operation == "delete" and file_path.exists():
-                raise ValueError(f"Verification failed: {change.path} was not deleted")
+        if change.operation == "modify" and change.new_content:
+            actual = file_path.read_text(encoding="utf-8")
+            if actual != change.new_content:
+                raise ValueError(f"Verification failed: {change.path} content mismatch")
+
+        if change.operation == "delete" and file_path.exists():
+            raise ValueError(f"Verification failed: {change.path} was not deleted")
 
     def _rollback_upgrade(self, transaction: UpgradeTransaction) -> None:
         """Rollback an upgrade using git or backups."""

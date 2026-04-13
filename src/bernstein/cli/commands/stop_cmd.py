@@ -521,43 +521,51 @@ def _collect_repo_processes(killed: set[int]) -> None:
 def _kill_port_holder(port: int, killed: set[int]) -> None:
     """Kill whatever process is holding a port (last resort)."""
     try:
-        if sys.platform == "win32":
-            # Windows: use netstat to find the PID
-            result = subprocess.run(
-                ["netstat", "-ano"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-            )
-            for line in result.stdout.splitlines():
-                # Match lines like: TCP    127.0.0.1:8052    0.0.0.0:0    LISTENING    12345
-                if f":{port}" in line and "LISTENING" in line:
-                    parts = line.split()
-                    if parts:
-                        try:
-                            pid = int(parts[-1])
-                            if pid not in killed:
-                                _kill_named_pid(pid, f"Port {port} holder", killed)
-                        except ValueError:
-                            continue
-        else:
-            # Unix: use lsof
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-            )
-            for line in result.stdout.strip().splitlines():
-                pid = int(line.strip())
-                if pid not in killed:
-                    _kill_named_pid(pid, f"Port {port} holder", killed)
+        pids = _find_port_pids_win32(port) if sys.platform == "win32" else _find_port_pids_unix(port)
+        for pid in pids:
+            if pid not in killed:
+                _kill_named_pid(pid, f"Port {port} holder", killed)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
+
+
+def _find_port_pids_win32(port: int) -> list[int]:
+    """Find PIDs holding a port on Windows via netstat."""
+    result = subprocess.run(
+        ["netstat", "-ano"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=5,
+    )
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        if f":{port}" not in line or "LISTENING" not in line:
+            continue
+        parts = line.split()
+        if parts:
+            try:
+                pids.append(int(parts[-1]))
+            except ValueError:
+                continue
+    return pids
+
+
+def _find_port_pids_unix(port: int) -> list[int]:
+    """Find PIDs holding a port on Unix via lsof."""
+    result = subprocess.run(
+        ["lsof", "-ti", f":{port}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=5,
+    )
+    pids: list[int] = []
+    for line in result.stdout.strip().splitlines():
+        pids.append(int(line.strip()))
+    return pids
 
 
 def _cleanup_runtime_artifacts() -> None:
