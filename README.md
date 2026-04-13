@@ -117,7 +117,7 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
 | Feature | Bernstein | CrewAI | AutoGen | LangGraph |
 |---------|-----------|--------|---------|-----------|
 | Orchestrator | Deterministic code | LLM-driven | LLM-driven | Graph + LLM |
-| Works with | Any CLI agent (18 built-in) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (29 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
 | Verification | Janitor + quality gates | No | No | Conditional edges |
 | Cost tracking | Built-in | No | No | No |
@@ -131,7 +131,7 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
 | Cloud hosted option | No | Yes | No | Yes |
 | Built-in RAG/retrieval | No | Yes | Yes | Yes |
 
-*Last verified: 2026-04-07. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
+*Last verified: 2026-04-14. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
 
 ## Monitoring
 
