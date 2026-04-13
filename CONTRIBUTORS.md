@@ -18,7 +18,7 @@ We are grateful to everyone who has contributed to Bernstein.
 | **Pedro Gabriel** ([@pplanel](https://github.com/pplanel)) | Test data generators ([#715](https://github.com/chernistry/bernstein/pull/715)) |
 | **Vaibhav Singh** ([@vbhavh](https://github.com/vbhavh)) | Adapter contributions (Goose, Cody) |
 | **Luka Stanisljevic** ([@Whatsonyourmind](https://github.com/Whatsonyourmind)) | Issue feedback and testing |
-| **formatme** ([@oldschoola](https://github.com/oldschoola)) | Port-based PID fallback, Windows-safe rmtree, task filter ([#737](https://github.com/chernistry/bernstein/pull/737)), full GitHub issue body sync, parameter fix ([#738](https://github.com/chernistry/bernstein/pull/738)) |
+| **formatme** ([@oldschoola](https://github.com/oldschoola)) | Port-based PID fallback, Windows-safe rmtree, task filter ([#737](https://github.com/chernistry/bernstein/pull/737)), full GitHub issue body sync, parameter fix ([#738](https://github.com/chernistry/bernstein/pull/738)), title dedup fix ([#739](https://github.com/chernistry/bernstein/pull/739)) |
 | **Alokik Singh** ([@alokiksingh676](https://github.com/alokiksingh676)) | Issue feedback |
 | **Ilia** ([@Ilia01](https://github.com/Ilia01)) | Issue feedback |
 | **OyaAI** ([@OyaAIProd](https://github.com/OyaAIProd)) | Security assessment review |
