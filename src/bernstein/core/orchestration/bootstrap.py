@@ -417,7 +417,8 @@ def bootstrap_from_seed(
         stale_minutes=_stale_minutes,
     )
 
-    sync_result = sync_backlog_to_server(workdir, server_url=server_url)
+    task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
+    sync_result = sync_backlog_to_server(workdir, server_url=server_url, task_filter=task_filter)
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
 
     # Import unchecked items from TODO.md / TASKS.md / .plan if present.
@@ -781,8 +782,9 @@ def bootstrap_from_goal(
 
     prior_session = check_resume_session(workdir, force_fresh=force_fresh)
 
+    task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
     with Status("[bold]Loading tasks...[/bold]", console=console):
-        sync_result = sync_backlog_to_server(workdir, server_url=server_url)
+        sync_result = sync_backlog_to_server(workdir, server_url=server_url, task_filter=task_filter)
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
 
     # Import unchecked items from TODO.md / TASKS.md / .plan if present.

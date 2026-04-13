@@ -283,6 +283,7 @@ def sync_backlog_to_server(
     server_url: str = "http://127.0.0.1:8052",
     *,
     client: httpx.Client | None = None,
+    task_filter: str | None = None,
 ) -> SyncResult:
     """Sync ``.sdd/backlog/open/`` and ``issues/`` files with the task server.
 
@@ -298,6 +299,7 @@ def sync_backlog_to_server(
         workdir: Project root directory (parent of ``.sdd/``).
         server_url: Base URL of the task server.
         client: Optional httpx client for testing (created if not given).
+        task_filter: Optional pattern to filter backlog files by name (case-insensitive substring match).
 
     Returns:
         SyncResult with counts and errors.
@@ -330,6 +332,11 @@ def sync_backlog_to_server(
                 md_files.extend(src_dir.glob(_YAML_GLOB))
                 md_files.extend(src_dir.glob("*.md"))
         md_files.sort()
+
+        # Apply task filter if provided (case-insensitive substring match on filename)
+        if task_filter:
+            task_filter_lower = task_filter.lower()
+            md_files = [f for f in md_files if task_filter_lower in f.name.lower()]
 
         # --- Step 1: create new tasks (batched) ---
         batch_payloads: list[dict[str, Any]] = []
