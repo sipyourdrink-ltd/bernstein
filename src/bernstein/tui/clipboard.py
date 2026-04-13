@@ -15,6 +15,8 @@ import sys
 from dataclasses import dataclass
 from enum import Enum
 
+_CLIP_EXE = "clip.exe"
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,7 +27,7 @@ class ClipboardMethod(Enum):
     PBCOPY = "pbcopy"
     XCLIP = "xclip"
     XSEL = "xsel"
-    CLIP_EXE = "clip.exe"
+    CLIP_EXE = _CLIP_EXE
     NONE = "none"
 
 
@@ -58,7 +60,7 @@ def detect_clipboard_method() -> ClipboardMethod:
     # Linux / WSL
     if sys.platform == "linux":
         # WSL detection
-        if shutil.which("clip.exe"):
+        if shutil.which(_CLIP_EXE):
             return ClipboardMethod.CLIP_EXE
         if shutil.which("xclip"):
             return ClipboardMethod.XCLIP
@@ -146,7 +148,7 @@ def copy_to_clipboard(text: str, method: ClipboardMethod | None = None) -> Clipb
     if method == ClipboardMethod.XSEL:
         return _copy_subprocess(text, ["xsel", "--clipboard", "--input"], method)
     if method == ClipboardMethod.CLIP_EXE:
-        return _copy_subprocess(text, ["clip.exe"], method)
+        return _copy_subprocess(text, [_CLIP_EXE], method)
     if method == ClipboardMethod.OSC52:
         return _copy_osc52(text)
 

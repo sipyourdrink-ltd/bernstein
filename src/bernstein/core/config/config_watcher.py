@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+_CONFIG_YAML_FILENAME = "config.yaml"
+
 logger = logging.getLogger(__name__)
 
 DriftSeverity = Literal["info", "warning", "error"]
@@ -155,11 +157,11 @@ def discover_config_paths(workdir: Path) -> list[tuple[str, Path]]:
         List of (label, path) tuples covering every cascade layer.
     """
     paths: list[tuple[str, Path]] = [
-        ("user", Path.home() / ".bernstein" / "config.yaml"),
+        ("user", Path.home() / ".bernstein" / _CONFIG_YAML_FILENAME),
         ("project", workdir / "bernstein.yaml"),
         ("project_alt", workdir / "bernstein.yml"),
-        ("local", workdir / ".bernstein" / "config.yaml"),
-        ("sdd_project", workdir / ".sdd" / "config.yaml"),
+        ("local", workdir / ".bernstein" / _CONFIG_YAML_FILENAME),
+        ("sdd_project", workdir / ".sdd" / _CONFIG_YAML_FILENAME),
         ("cli_overrides", workdir / ".sdd" / "config" / "cli_overrides.json"),
         ("managed", workdir / ".sdd" / "config" / "managed_settings.json"),
     ]

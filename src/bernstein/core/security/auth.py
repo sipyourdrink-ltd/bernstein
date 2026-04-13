@@ -27,6 +27,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 if TYPE_CHECKING:
     from pathlib import Path
 
+_PERM_BULLETIN_READ = "bulletin:read"
+
+_PERM_COSTS_READ = "costs:read"
+
+_PERM_CLUSTER_READ = "cluster:read"
+
+_PERM_STATUS_READ = "status:read"
+
+_PERM_AGENTS_READ = "agents:read"
+
+_PERM_TASKS_READ = "tasks:read"
+
+_JSON_GLOB = "*.json"
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,46 +61,46 @@ class AuthRole(StrEnum):
 _ROLE_PERMISSIONS: dict[AuthRole, frozenset[str]] = {
     AuthRole.ADMIN: frozenset(
         {
-            "tasks:read",
+            _PERM_TASKS_READ,
             "tasks:write",
             "tasks:delete",
-            "agents:read",
+            _PERM_AGENTS_READ,
             "agents:write",
             "agents:kill",
-            "status:read",
-            "cluster:read",
+            _PERM_STATUS_READ,
+            _PERM_CLUSTER_READ,
             "cluster:write",
             "auth:manage",
             "config:read",
             "config:write",
-            "costs:read",
+            _PERM_COSTS_READ,
             "webhooks:manage",
-            "bulletin:read",
+            _PERM_BULLETIN_READ,
             "bulletin:write",
         }
     ),
     AuthRole.OPERATOR: frozenset(
         {
-            "tasks:read",
+            _PERM_TASKS_READ,
             "tasks:write",
-            "agents:read",
+            _PERM_AGENTS_READ,
             "agents:write",
             "agents:kill",
-            "status:read",
-            "cluster:read",
-            "costs:read",
-            "bulletin:read",
+            _PERM_STATUS_READ,
+            _PERM_CLUSTER_READ,
+            _PERM_COSTS_READ,
+            _PERM_BULLETIN_READ,
             "bulletin:write",
         }
     ),
     AuthRole.VIEWER: frozenset(
         {
-            "tasks:read",
-            "agents:read",
-            "status:read",
-            "cluster:read",
-            "costs:read",
-            "bulletin:read",
+            _PERM_TASKS_READ,
+            _PERM_AGENTS_READ,
+            _PERM_STATUS_READ,
+            _PERM_CLUSTER_READ,
+            _PERM_COSTS_READ,
+            _PERM_BULLETIN_READ,
         }
     ),
 }
@@ -545,7 +559,7 @@ class AuthStore:
             return None
 
     def find_user_by_email(self, email: str) -> AuthUser | None:
-        for path in self._users_dir.glob("*.json"):
+        for path in self._users_dir.glob(_JSON_GLOB):
             try:
                 data = json.loads(path.read_text())
                 if data.get("email") == email:
@@ -555,7 +569,7 @@ class AuthStore:
         return None
 
     def find_user_by_sso_subject(self, provider: str, subject: str) -> AuthUser | None:
-        for path in self._users_dir.glob("*.json"):
+        for path in self._users_dir.glob(_JSON_GLOB):
             try:
                 data = json.loads(path.read_text())
                 if data.get("sso_provider") == provider and data.get("sso_subject") == subject:
@@ -566,7 +580,7 @@ class AuthStore:
 
     def list_users(self) -> list[AuthUser]:
         users: list[AuthUser] = []
-        for path in self._users_dir.glob("*.json"):
+        for path in self._users_dir.glob(_JSON_GLOB):
             try:
                 users.append(AuthUser.from_dict(json.loads(path.read_text())))
             except (json.JSONDecodeError, KeyError):
@@ -598,7 +612,7 @@ class AuthStore:
 
     def revoke_user_sessions(self, user_id: str) -> int:
         count = 0
-        for path in self._sessions_dir.glob("*.json"):
+        for path in self._sessions_dir.glob(_JSON_GLOB):
             try:
                 data = json.loads(path.read_text())
                 if data.get("user_id") == user_id and not data.get("revoked", False):
@@ -613,7 +627,7 @@ class AuthStore:
         """Remove expired session files. Returns count removed."""
         now = time.time()
         count = 0
-        for path in self._sessions_dir.glob("*.json"):
+        for path in self._sessions_dir.glob(_JSON_GLOB):
             try:
                 data = json.loads(path.read_text())
                 if data.get("expires_at", 0) < now:
@@ -661,7 +675,7 @@ class AuthStore:
             return None
 
     def find_device_by_user_code(self, user_code: str) -> DeviceAuthRequest | None:
-        for path in self._devices_dir.glob("*.json"):
+        for path in self._devices_dir.glob(_JSON_GLOB):
             try:
                 data = json.loads(path.read_text())
                 if data.get("user_code") == user_code:
@@ -686,7 +700,7 @@ class AuthStore:
     def cleanup_expired_devices(self) -> int:
         now = time.time()
         count = 0
-        for path in self._devices_dir.glob("*.json"):
+        for path in self._devices_dir.glob(_JSON_GLOB):
             try:
                 data = json.loads(path.read_text())
                 if data.get("expires_at", 0) < now:

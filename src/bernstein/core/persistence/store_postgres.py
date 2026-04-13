@@ -46,6 +46,13 @@ if TYPE_CHECKING:
     from bernstein.core.persistence.store_redis import RedisCoordinator
     from bernstein.core.server import ArchiveRecord, TaskCreate
 
+_ARCHIVE_INSERT_SQL = """
+                INSERT INTO task_archive
+                    (task_id, title, role, status, created_at, completed_at,
+                     duration_seconds, result_summary, cost_usd)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                """
+
 logger = logging.getLogger(__name__)
 
 # ``asyncpg`` is an optional dependency — only required for postgres mode.

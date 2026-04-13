@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+_JSONL_GLOB = "*.jsonl"
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -415,7 +417,7 @@ class TraceStore:
                 pass
 
         # Fallback: scan all task JSONL files
-        for jsonl in self._dir.glob("*.jsonl"):
+        for jsonl in self._dir.glob(_JSONL_GLOB):
             for line in jsonl.read_text().splitlines():
                 line = line.strip()
                 if not line:
@@ -1019,7 +1021,7 @@ def build_crash_bundle(
     if include_traces:
         traces_dir = workdir / ".sdd" / "traces"
         if traces_dir.exists():
-            trace_files = sorted(traces_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+            trace_files = sorted(traces_dir.glob(_JSONL_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
             total_bytes = 0
             for tf in trace_files[:10]:
                 if total_bytes >= max_trace_bytes:
@@ -1034,7 +1036,7 @@ def build_crash_bundle(
     if include_metrics:
         metrics_dir = workdir / ".sdd" / "metrics"
         if metrics_dir.exists():
-            metric_files = list(metrics_dir.glob("*.jsonl"))
+            metric_files = list(metrics_dir.glob(_JSONL_GLOB))
             bundle["metrics_summary"] = {
                 "file_count": len(metric_files),
                 "files": [f.name for f in metric_files[:20]],

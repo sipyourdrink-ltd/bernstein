@@ -10,6 +10,10 @@ import click
 
 from bernstein.cli.helpers import console
 
+_AGENCY_DIR = ".sdd/agents/agency"
+
+_STYLE_BOLD_CYAN = "bold cyan"
+
 # ---------------------------------------------------------------------------
 # agents group
 # ---------------------------------------------------------------------------
@@ -63,7 +67,7 @@ def agents_sync(definitions_dir: str, force: bool) -> None:
             console.print(f"    [dim]{defn.name}[/dim] v{defn.version} ({defn.role})")
 
     # Provider: agency catalog (legacy YAML format — .sdd/agents/agency/)
-    agency_dir = Path(".sdd/agents/agency")
+    agency_dir = Path(_AGENCY_DIR)
     console.print(f"\n[cyan]→ agency (local YAML)[/cyan] {agency_dir}")
     if not agency_dir.exists():
         console.print(f"  [dim]Directory not found — skipping (place Agency YAML files in {agency_dir})[/dim]")
@@ -118,7 +122,7 @@ def _list_identities(status_filter: str) -> None:
     table = Table(
         title="Agent Identities",
         show_lines=False,
-        header_style="bold cyan",
+        header_style=_STYLE_BOLD_CYAN,
     )
     table.add_column("ID", style="dim", min_width=20)
     table.add_column("ROLE", min_width=10)
@@ -202,7 +206,7 @@ def agents_list(source: str, definitions_dir: str, identities: bool, identity_st
 
     # Agency catalog — legacy YAML format (.sdd/agents/agency/)
     if source in ("agency", "all"):
-        agency_dir = Path(".sdd/agents/agency")
+        agency_dir = Path(_AGENCY_DIR)
         if agency_dir.exists():
             from bernstein.core.agency_loader import load_agency_catalog
 
@@ -229,7 +233,7 @@ def agents_list(source: str, definitions_dir: str, identities: bool, identity_st
     table = Table(
         title="Available Agents",
         show_lines=False,
-        header_style="bold cyan",
+        header_style=_STYLE_BOLD_CYAN,
     )
     table.add_column("NAME", style="dim", min_width=22)
     table.add_column("ROLE", min_width=12)
@@ -300,7 +304,7 @@ def agents_validate(definitions_dir: str) -> None:
                 console.print(f"  [red]✗[/red] {yaml_file.name}: {exc}")
 
     # --- Agency catalog ---
-    agency_dir = Path(".sdd/agents/agency")
+    agency_dir = Path(_AGENCY_DIR)
     console.print(f"\n[cyan]→ agency[/cyan] {agency_dir}")
     if not agency_dir.exists():
         console.print("  [dim]Not configured — skipping[/dim]")
@@ -370,7 +374,7 @@ def agents_showcase(definitions_dir: str) -> None:
             rows.append((defn.name, defn.role, defn.description[:60], "local", assigned, rate))
 
     # Agency catalog
-    agency_dir = Path(".sdd/agents/agency")
+    agency_dir = Path(_AGENCY_DIR)
     if agency_dir.exists():
         from bernstein.core.agency_loader import load_agency_catalog
 
@@ -415,7 +419,7 @@ def agents_showcase(definitions_dir: str) -> None:
     table = Table(
         title="Agent Showcase",
         show_lines=False,
-        header_style="bold cyan",
+        header_style=_STYLE_BOLD_CYAN,
         expand=False,
     )
     table.add_column("Name", min_width=22)
@@ -468,7 +472,7 @@ def agents_match(role: str, task_description: str) -> None:
 
     # Load from agency catalog if available
     registry = CatalogRegistry.default()
-    agency_dir = Path(".sdd/agents/agency")
+    agency_dir = Path(_AGENCY_DIR)
     if agency_dir.exists():
         from bernstein.core.agency_loader import load_agency_catalog
 
@@ -488,7 +492,7 @@ def agents_match(role: str, task_description: str) -> None:
     t.append("  Role      ", style="dim")
     t.append(f"{match.role}\n", style="bold")
     t.append("  Name      ", style="dim")
-    t.append(f"{match.name}\n", style="bold cyan")
+    t.append(f"{match.name}\n", style=_STYLE_BOLD_CYAN)
     t.append("  ID        ", style="dim")
     t.append(f"{match.id or '—'}\n")
     t.append("  Source    ", style="dim")

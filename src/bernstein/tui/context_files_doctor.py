@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+_CLAUDE_DIR = ".claude"
+
 logger = logging.getLogger(__name__)
 
 
@@ -153,9 +155,9 @@ def check_mcp_servers(workdir: Path) -> list[DoctorWarning]:
     results: list[DoctorWarning] = []
 
     mcp_paths = [
-        workdir / ".claude" / "settings.json",
-        workdir / ".claude" / "settings.local.json",
-        workdir / ".claude" / "mcp_settings.json",
+        workdir / _CLAUDE_DIR / "settings.json",
+        workdir / _CLAUDE_DIR / "settings.local.json",
+        workdir / _CLAUDE_DIR / "mcp_settings.json",
     ]
 
     mcp_servers: dict[str, dict[str, Any]] = {}
@@ -246,8 +248,8 @@ def check_permission_rules(workdir: Path) -> list[DoctorWarning]:
     results: list[DoctorWarning] = []
 
     settings_paths = [
-        workdir / ".claude" / "settings.json",
-        workdir / ".claude" / "settings.local.json",
+        workdir / _CLAUDE_DIR / "settings.json",
+        workdir / _CLAUDE_DIR / "settings.local.json",
     ]
 
     for settings_path in settings_paths:

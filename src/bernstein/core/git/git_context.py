@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+_NO_BLAME_DATA = "(no blame data available)"
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,7 +107,7 @@ def blame_summary(
 
     out = _run_git(cmd, cwd, timeout=15)
     if not out:
-        return "(no blame data available)"
+        return _NO_BLAME_DATA
 
     # Parse porcelain output for unique (author, summary) pairs
     changes: list[tuple[str, str, str]] = []
@@ -124,7 +126,7 @@ def blame_summary(
                 changes.append((current_author, current_summary, current_time))
 
     if not changes:
-        return "(no blame data available)"
+        return _NO_BLAME_DATA
 
     # Deduplicate by summary and pick most recent entries
     seen: set[str] = set()
@@ -143,7 +145,7 @@ def blame_summary(
         rel_time = _epoch_to_relative(ts)
         lines.append(f"- {rel_time}: {summary} ({author})")
 
-    return "\n".join(lines) if lines else "(no blame data available)"
+    return "\n".join(lines) if lines else _NO_BLAME_DATA
 
 
 # ------------------------------------------------------------------

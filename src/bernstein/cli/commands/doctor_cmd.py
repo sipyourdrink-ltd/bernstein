@@ -22,6 +22,10 @@ import click
 
 from bernstein.cli.helpers import SERVER_URL
 
+_TASK_SERVER_LABEL = "Task server"
+
+_CONFIG_FILE_LABEL = "Config file"
+
 # ---------------------------------------------------------------------------
 # Health check dataclass
 # ---------------------------------------------------------------------------
@@ -99,7 +103,7 @@ def check_config_valid() -> dict[str, Any]:
     yaml_path = Path.cwd() / "bernstein.yaml"
     if not yaml_path.exists():
         return {
-            "name": "Config file",
+            "name": _CONFIG_FILE_LABEL,
             "status": _CHECK_WARN,
             "detail": "bernstein.yaml not found",
             "fix": "Run 'bernstein init' to create one",
@@ -110,14 +114,14 @@ def check_config_valid() -> dict[str, Any]:
         with open(yaml_path) as f:
             yaml.safe_load(f)
         return {
-            "name": "Config file",
+            "name": _CONFIG_FILE_LABEL,
             "status": _CHECK_PASS,
             "detail": f"bernstein.yaml valid ({yaml_path})",
             "fix": "",
         }
     except Exception as exc:
         return {
-            "name": "Config file",
+            "name": _CONFIG_FILE_LABEL,
             "status": _CHECK_FAIL,
             "detail": f"bernstein.yaml parse error: {exc}",
             "fix": "Fix YAML syntax in bernstein.yaml",
@@ -188,20 +192,20 @@ def check_server_reachable() -> dict[str, Any]:
         resp = httpx.get(f"{SERVER_URL}/health", timeout=2.0)
         if resp.status_code == 200:
             return {
-                "name": "Task server",
+                "name": _TASK_SERVER_LABEL,
                 "status": _CHECK_PASS,
                 "detail": f"reachable at {SERVER_URL}",
                 "fix": "",
             }
         return {
-            "name": "Task server",
+            "name": _TASK_SERVER_LABEL,
             "status": _CHECK_WARN,
             "detail": f"returned {resp.status_code}",
             "fix": "Start with 'bernstein run'",
         }
     except Exception:
         return {
-            "name": "Task server",
+            "name": _TASK_SERVER_LABEL,
             "status": _CHECK_WARN,
             "detail": "not running",
             "fix": "Start with 'bernstein run'",

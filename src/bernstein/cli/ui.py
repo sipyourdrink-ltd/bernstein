@@ -17,6 +17,12 @@ from rich.text import Text
 
 from bernstein.cli.icons import get_agent_icon, get_status_icon
 
+_STYLE_BOLD_CYAN = "bold cyan"
+
+_STYLE_BOLD_GREEN = "bold green"
+
+_STYLE_BOLD_YELLOW = "bold yellow"
+
 # ---------------------------------------------------------------------------
 # Status colors — single source of truth
 # ---------------------------------------------------------------------------
@@ -294,11 +300,11 @@ class CostBurnPanel:
             if pct >= 0.95:
                 cost_style = "bold red"
             elif pct >= 0.80:
-                cost_style = "bold yellow"
+                cost_style = _STYLE_BOLD_YELLOW
             else:
-                cost_style = "bold green"
+                cost_style = _STYLE_BOLD_GREEN
         else:
-            cost_style = "bold green"
+            cost_style = _STYLE_BOLD_GREEN
 
         text.append(f"${total_cost_usd:.4f}", style=cost_style)
 
@@ -310,9 +316,9 @@ class CostBurnPanel:
             if pct_int >= 95:
                 bar_style = "bold red"
             elif pct_int >= 80:
-                bar_style = "bold yellow"
+                bar_style = _STYLE_BOLD_YELLOW
             else:
-                bar_style = "bold green"
+                bar_style = _STYLE_BOLD_GREEN
             text.append(f"  [{pct_int}%]  ", style=bar_style)
             text.append("\u2590", style="dim")
             for i in range(bar_w):
@@ -341,7 +347,7 @@ class CostBurnPanel:
                 if i > 0:
                     text.append("  ", style="")
                 text.append(f"{model}:", style="dim")
-                text.append(f"${cost:.4f}", style="bold cyan")
+                text.append(f"${cost:.4f}", style=_STYLE_BOLD_CYAN)
 
         # Per-agent breakdown (top 5 by spend)
         if per_agent:
@@ -352,7 +358,7 @@ class CostBurnPanel:
                     text.append("  ", style="")
                 short_id = agent_id[-8:] if len(agent_id) > 8 else agent_id
                 text.append(f"{short_id}:", style="dim")
-                text.append(f"${cost:.4f}", style="bold yellow")
+                text.append(f"${cost:.4f}", style=_STYLE_BOLD_YELLOW)
 
         return Panel(text, title="Cost", border_style="green")
 
@@ -385,10 +391,10 @@ class TaskProgressBar:
 
         bar = Text()
         bar.append("[", style="dim")
-        bar.append("=" * filled, style="bold green")
+        bar.append("=" * filled, style=_STYLE_BOLD_GREEN)
         bar.append(" " * (self._width - filled), style="dim")
         bar.append("]", style="dim")
-        bar.append(f" {pct}%", style="bold green" if pct == 100 else "bold")
+        bar.append(f" {pct}%", style=_STYLE_BOLD_GREEN if pct == 100 else "bold")
         bar.append(f" ({summary.done}/{summary.total})", style="dim")
         return bar
 
@@ -429,7 +435,7 @@ class AgentStatusTable:
         table = Table(
             title="Active Agents",
             show_lines=False,
-            header_style="bold cyan",
+            header_style=_STYLE_BOLD_CYAN,
             expand=True,
         )
         table.add_column("Agent", min_width=18)
@@ -541,7 +547,7 @@ def create_summary_table(stats: RunStats) -> Table:
     table = Table(
         title="Run Summary",
         show_lines=False,
-        header_style="bold cyan",
+        header_style=_STYLE_BOLD_CYAN,
     )
     table.add_column("Metric", min_width=20)
     table.add_column("Value", justify="right", min_width=15)

@@ -17,6 +17,8 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 
+_GREEN_ZERO = "[green]0[/green]"
+
 SDD_DIR = Path(".sdd")
 
 
@@ -250,11 +252,11 @@ def _verify_memory_provenance() -> int:
         table2.add_row("Total entries", str(len(trail)))
         table2.add_row(
             "Hash-tampered",
-            f"[red]{len(tampered)}[/red]" if tampered else "[green]0[/green]",
+            f"[red]{len(tampered)}[/red]" if tampered else _GREEN_ZERO,
         )
         table2.add_row(
             "Chain-mispositioned",
-            f"[red]{len(mispositioned)}[/red]" if mispositioned else "[green]0[/green]",
+            f"[red]{len(mispositioned)}[/red]" if mispositioned else _GREEN_ZERO,
         )
         console.print(table2)
 
@@ -336,7 +338,7 @@ def _verify_formal(task_id: str) -> int:
         table.add_row("Task ID", task_id)
         table.add_row("Task", task.title[:60])
         table.add_row("Properties checked", str(fv_result.properties_checked))
-        table.add_row("Violations", "[green]0[/green]")
+        table.add_row("Violations", _GREEN_ZERO)
         console.print(table)
     else:
         console.print(

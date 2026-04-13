@@ -21,6 +21,8 @@ from bernstein.core.container import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+_AGENT_IMAGE = "bernstein-agent:latest"
+
 SandboxRuntime = Literal["docker", "podman"]
 
 _VALID_RUNTIMES = {"docker", "podman"}
@@ -48,7 +50,7 @@ class DockerSandbox:
 
     enabled: bool = False
     runtime: SandboxRuntime = "docker"
-    default_image: str = "bernstein-agent:latest"
+    default_image: str = _AGENT_IMAGE
     adapter_images: dict[str, str] = field(default_factory=dict[str, str])
     cpu_cores: float | None = 2.0
     memory_mb: int | None = 4096
@@ -128,7 +130,7 @@ def parse_docker_sandbox(raw: object | None) -> DockerSandbox | None:
     if not isinstance(network_raw, str) or network_raw not in _VALID_NETWORKS:
         raise ValueError("sandbox.network_mode must be one of none, bridge, host")
 
-    image_raw = data.get("image", "bernstein-agent:latest")
+    image_raw = data.get("image", _AGENT_IMAGE)
     default_image: str
     adapter_images: dict[str, str]
     if isinstance(image_raw, str):
@@ -136,7 +138,7 @@ def parse_docker_sandbox(raw: object | None) -> DockerSandbox | None:
         adapter_images = {}
     elif isinstance(image_raw, Mapping):
         image_map = cast("Mapping[str, object]", image_raw)
-        default_raw = image_map.get("default", "bernstein-agent:latest")
+        default_raw = image_map.get("default", _AGENT_IMAGE)
         if not isinstance(default_raw, str):
             raise ValueError("sandbox.image.default must be a string")
         default_image = default_raw

@@ -64,13 +64,14 @@ class QwenAdapter(CLIAdapter):
 
     # Model name mapping: Bernstein abstract names and aliases → real Qwen API model IDs.
     # "coder-model" is a qwen settings.json display alias, not a valid API model ID.
+    _QWEN_PLUS_MODEL: ClassVar[str] = "qwen3.6-plus"
     _MODEL_MAP: ClassVar[dict[str, str]] = {
-        "opus": "qwen3.6-plus",
-        "sonnet": "qwen3.6-plus",
+        "opus": _QWEN_PLUS_MODEL,
+        "sonnet": _QWEN_PLUS_MODEL,
         "haiku": "qwen3-coder-plus",
-        "coder-model": "qwen3.6-plus",  # settings.json alias
-        "default": "qwen3.6-plus",
-        "auto": "qwen3.6-plus",
+        "coder-model": _QWEN_PLUS_MODEL,  # settings.json alias
+        "default": _QWEN_PLUS_MODEL,
+        "auto": _QWEN_PLUS_MODEL,
     }
 
     def _build_command(self, model_name: str, provider: str, settings: LLMSettings) -> list[str]:

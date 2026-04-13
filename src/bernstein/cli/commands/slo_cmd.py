@@ -20,6 +20,8 @@ import click
 
 from bernstein.cli.helpers import console, server_get
 
+_STYLE_RED_BOLD = "red bold"
+
 
 def _render_burndown(data: dict[str, Any], *, compact: bool = False) -> None:
     """Render a burn-down dashboard dict to the console using Rich."""
@@ -40,7 +42,7 @@ def _render_burndown(data: dict[str, Any], *, compact: bool = False) -> None:
     sparkline: list[dict[str, Any]] = list(data.get("sparkline") or [])
 
     # --- Status colour ---
-    status_colors = {"green": "green", "yellow": "yellow", "red": "red bold"}
+    status_colors = {"green": "green", "yellow": "yellow", "red": _STYLE_RED_BOLD}
     status_style = status_colors.get(status, "white")
     status_icon = {"green": "●", "yellow": "◑", "red": "●"}.get(status, "○")
 
@@ -49,7 +51,7 @@ def _render_burndown(data: dict[str, Any], *, compact: bool = False) -> None:
     table.add_column("Metric", style="bold", no_wrap=True, width=28)
     table.add_column("Value", no_wrap=True)
 
-    slo_style = "green" if slo_current >= slo_target else "red bold"
+    slo_style = "green" if slo_current >= slo_target else _STYLE_RED_BOLD
     table.add_row("SLO Target", f"{slo_target * 100:.1f}%")
     table.add_row(
         "SLO Current",
@@ -76,7 +78,7 @@ def _render_burndown(data: dict[str, Any], *, compact: bool = False) -> None:
         spark_text = "  " + "".join(spark_chars) + "  [dim](error budget over time)[/dim]"
 
     # --- Projection line ---
-    proj_style = "red bold" if status == "red" else "yellow" if status == "yellow" else "green"
+    proj_style = _STYLE_RED_BOLD if status == "red" else "yellow" if status == "yellow" else "green"
     projection_line = f"\n[{proj_style}]{status_icon} {breach_projection}[/{proj_style}]"
     if spark_text:
         projection_line += f"\n{spark_text}"

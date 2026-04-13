@@ -14,6 +14,8 @@ from textual.widgets import Static
 
 from bernstein.cli.dashboard_polling import ROLE_COLORS
 
+_STYLE_BOLD_BRIGHT_CYAN = "bold bright_cyan"
+
 # -- Quality metrics panel -----------------------------------------
 
 
@@ -55,7 +57,7 @@ class QualityPanel(Static):
 
         # -- Header --
         total = int(overall.get("total_tasks", 0))
-        t.append(" QUALITY", style="bold bright_cyan")
+        t.append(" QUALITY", style=_STYLE_BOLD_BRIGHT_CYAN)
         t.append(f"  {total} tasks", style="dim")
         t.append("\n")
 
@@ -128,7 +130,7 @@ class DelegationTreePanel(Static):
     def render(self) -> Text:
         agents: list[dict[str, Any]] = self.agents
         t = Text()
-        t.append(" DELEGATION", style="bold bright_cyan")
+        t.append(" DELEGATION", style=_STYLE_BOLD_BRIGHT_CYAN)
         t.append("\n")
 
         alive = [a for a in agents if a.get("status") != "dead"]
@@ -234,7 +236,7 @@ class ExpertCostPanel(Static):
 
     def render(self) -> Text:
         t = Text()
-        t.append(" COST DETAIL", style="bold bright_cyan")
+        t.append(" COST DETAIL", style=_STYLE_BOLD_BRIGHT_CYAN)
         t.append("\n")
         c = self.costs
         if not c:
@@ -275,7 +277,7 @@ class ExpertBanditPanel(Static):
 
     def render(self) -> Text:
         t = Text()
-        t.append(" BANDIT ROUTING", style="bold bright_cyan")
+        t.append(" BANDIT ROUTING", style=_STYLE_BOLD_BRIGHT_CYAN)
         t.append("\n")
         b = self.bandit
         if not b or b.get("active") is False:
@@ -311,7 +313,7 @@ class ExpertBanditPanel(Static):
 
         matched = int(shadow_stats.get("matched_outcomes", 0) or 0)
         if matched > 0 or int(shadow_stats.get("pending_outcomes", 0) or 0) > 0:
-            t.append("\n shadow ", style="bold bright_cyan")
+            t.append("\n shadow ", style=_STYLE_BOLD_BRIGHT_CYAN)
             t.append(
                 f"agree={float(shadow_stats.get('agreement_rate', 0.0) or 0.0):.0%} "
                 f"disagree={int(shadow_stats.get('disagreement_count', 0) or 0)} "
@@ -331,7 +333,7 @@ class ExpertDepsPanel(Static):
 
     def render(self) -> Text:
         t = Text()
-        t.append(" DEPENDENCIES", style="bold bright_cyan")
+        t.append(" DEPENDENCIES", style=_STYLE_BOLD_BRIGHT_CYAN)
         t.append("\n")
         all_tasks: list[dict[str, Any]] = self.tasks
 

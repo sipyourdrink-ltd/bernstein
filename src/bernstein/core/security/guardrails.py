@@ -29,6 +29,8 @@ from bernstein.core.security.policy_engine import DecisionGraph, DecisionType, P
 if TYPE_CHECKING:
     from bernstein.core.security.permission_rules import PermissionRuleEngine
 
+_DIFF_GIT_PREFIX = "diff --git "
+
 logger = logging.getLogger(__name__)
 
 
@@ -297,7 +299,7 @@ def _parse_diff_files(diff: str) -> list[str]:
     """Extract modified file paths from a git diff (a/ prefix stripped)."""
     files: list[str] = []
     for line in diff.splitlines():
-        if line.startswith("diff --git "):
+        if line.startswith(_DIFF_GIT_PREFIX):
             # "diff --git a/path/to/file b/path/to/file"
             parts = line.split(" ", 3)
             if len(parts) >= 3:
@@ -322,7 +324,7 @@ def _parse_new_files(diff: str) -> list[str]:
     new_files: list[str] = []
     current_file: str | None = None
     for line in diff.splitlines():
-        if line.startswith("diff --git "):
+        if line.startswith(_DIFF_GIT_PREFIX):
             parts = line.split(" ", 3)
             if len(parts) >= 3:
                 path = parts[2]
@@ -339,7 +341,7 @@ def _is_file_deleted(diff: str, filepath: str) -> bool:
     header_prefix = f"diff --git a/{filepath}"
     in_file = False
     for line in diff.splitlines():
-        if line.startswith("diff --git "):
+        if line.startswith(_DIFF_GIT_PREFIX):
             in_file = line.startswith(header_prefix)
         elif in_file and line.startswith("deleted file mode"):
             return True
@@ -360,7 +362,7 @@ def _parse_deletion_pct_per_file(diff: str) -> dict[str, int]:
     added = removed = 0
 
     for line in diff.splitlines():
-        if line.startswith("diff --git "):
+        if line.startswith(_DIFF_GIT_PREFIX):
             # Flush previous file stats
             if current_file is not None and (added + removed) > 0:
                 pct[current_file] = int(removed / (added + removed) * 100)

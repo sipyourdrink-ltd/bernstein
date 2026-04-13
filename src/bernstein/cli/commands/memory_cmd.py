@@ -11,6 +11,8 @@ from rich.table import Table
 
 from bernstein.core.memory.sqlite_store import MemoryType, SQLiteMemoryStore
 
+_MEMORY_DB_PATH = ".sdd/memory/memory.db"
+
 console = Console()
 
 
@@ -36,7 +38,7 @@ def _coerce_memory_type(value: str | None) -> MemoryType | None:
 @click.option("--limit", default=20, help="Max entries to show.")
 def list_memory(memory_type: str | None, tag: list[str], limit: int) -> None:
     """List stored memories."""
-    db_path = Path(".sdd/memory/memory.db")
+    db_path = Path(_MEMORY_DB_PATH)
     if not db_path.exists():
         console.print("[dim]No memory database found.[/dim]")
         return
@@ -83,7 +85,7 @@ def list_memory(memory_type: str | None, tag: list[str], limit: int) -> None:
 @click.option("--tag", multiple=True, help="Tags for this memory.")
 def add_memory(content: str, memory_type: str, tag: list[str]) -> None:
     """Add a new persistent memory entry."""
-    db_path = Path(".sdd/memory/memory.db")
+    db_path = Path(_MEMORY_DB_PATH)
     store = SQLiteMemoryStore(db_path)
     entry_id = store.add(type=cast("MemoryType", memory_type), content=content, tags=list(tag))
     console.print(f"[green]✓[/green] Added memory entry [bold]#{entry_id}[/bold]")
@@ -93,7 +95,7 @@ def add_memory(content: str, memory_type: str, tag: list[str]) -> None:
 @click.argument("entry_id", type=int)
 def remove_memory(entry_id: int) -> None:
     """Remove a memory entry by ID."""
-    db_path = Path(".sdd/memory/memory.db")
+    db_path = Path(_MEMORY_DB_PATH)
     if not db_path.exists():
         return
     store = SQLiteMemoryStore(db_path)

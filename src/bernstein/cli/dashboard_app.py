@@ -64,6 +64,12 @@ from bernstein.cli.dashboard_polling import (
 from bernstein.cli.icons import get_icons
 from bernstein.cli.visual_theme import role_color
 
+_HEADER_BAR_SELECTOR = "#header-bar"
+
+_TASKS_TABLE_SELECTOR = "#tasks-table"
+
+_ACTIVITY_LOG_SELECTOR = "#activity-log"
+
 logger = logging.getLogger(__name__)
 
 
@@ -272,7 +278,7 @@ class BernsteinApp(App[None]):
         """Write an activity line to the RichLog and optionally to a file."""
         formatted = _format_activity_line(role, line)
         try:
-            log = self.query_one("#activity-log", RichLog)
+            log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
             log.write(formatted)
         except Exception:
             pass  # Widget may not exist yet during startup
@@ -347,7 +353,7 @@ class BernsteinApp(App[None]):
         if sp.exists():
             self._spawner_size = sp.stat().st_size
 
-        t: DataTable[Any] = self.query_one("#tasks-table", DataTable)  # pyright: ignore[reportUnknownVariableType]
+        t: DataTable[Any] = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)  # pyright: ignore[reportUnknownVariableType]
         t.add_columns("", "P", "ROLE", "TASK")
         t.cursor_type = "row"
         t.zebra_stripes = True
@@ -451,7 +457,7 @@ class BernsteinApp(App[None]):
             return
         # Save focus + cursor state before data update
         focused = self.focused
-        table = self.query_one("#tasks-table", DataTable)
+        table = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)
         saved_cursor = table.cursor_coordinate
 
         self._apply_data(data)
@@ -480,7 +486,7 @@ class BernsteinApp(App[None]):
     def _apply_data(self, data: dict[str, Any]) -> None:
         """Apply fetched data to widgets (main thread, non-blocking)."""
         # Log phase transitions to activity
-        log = self.query_one("#activity-log", RichLog)
+        log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
         status = data.get("status") or {}
 
         agents_list = data.get("agents") or []
@@ -664,7 +670,7 @@ class BernsteinApp(App[None]):
     # -- Tasks --
 
     def _update_tasks(self, data: Any) -> None:
-        table: DataTable[Any] = self.query_one("#tasks-table", DataTable)  # pyright: ignore[reportUnknownVariableType]
+        table: DataTable[Any] = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)  # pyright: ignore[reportUnknownVariableType]
         if not isinstance(data, list):
             return
 
@@ -749,7 +755,7 @@ class BernsteinApp(App[None]):
         monitoring: dict[str, Any] | None = None,
     ) -> None:
         bar = self.query_one("#stats-row", BigStats)
-        header = self.query_one("#header-bar", DashboardHeader)
+        header = self.query_one(_HEADER_BAR_SELECTOR, DashboardHeader)
 
         if sd:
             bar.total = sd.get("total", 0)
@@ -888,7 +894,7 @@ class BernsteinApp(App[None]):
             return
         self._last_config_diff_fingerprint = fingerprint  # type: ignore[attr-defined]
 
-        log = self.query_one("#activity-log", RichLog)
+        log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
         modified = int(diff.get("modified", 0) or 0)
         added = int(diff.get("added", 0) or 0)
         removed = int(diff.get("removed", 0) or 0)
@@ -935,7 +941,7 @@ class BernsteinApp(App[None]):
     )
 
     def _update_activity(self, agents: list[dict[str, Any]]) -> None:
-        log = self.query_one("#activity-log", RichLog)
+        log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
 
         new_lines: list[str] = []
         for a in agents:
@@ -968,7 +974,7 @@ class BernsteinApp(App[None]):
         task_id = str(event.row_key.value) if event.row_key.value else ""
         if not task_id:
             return
-        log = self.query_one("#activity-log", RichLog)
+        log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
         data = _get(f"/tasks/{task_id}")
         if data and isinstance(data, dict):
             log.write(f"[bold cyan]\u25b6 Task {task_id}[/bold cyan]")
@@ -985,7 +991,7 @@ class BernsteinApp(App[None]):
 
     def action_inspect_task(self) -> None:
         """Show details of selected task in activity log."""
-        table = self.query_one("#tasks-table", DataTable)
+        table = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)
         try:
             row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
             task_id = str(row_key.value) if row_key.value else ""
@@ -993,7 +999,7 @@ class BernsteinApp(App[None]):
             return
         if not task_id:
             return
-        log = self.query_one("#activity-log", RichLog)
+        log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
         # Fetch task details from server
         data = _get(f"/tasks/{task_id}")
         if data and isinstance(data, dict):
@@ -1011,7 +1017,7 @@ class BernsteinApp(App[None]):
 
     def action_cancel_task(self) -> None:
         """Cancel the selected task."""
-        table = self.query_one("#tasks-table", DataTable)
+        table = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)
         try:
             row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
             task_id = str(row_key.value) if row_key.value else ""
@@ -1023,7 +1029,7 @@ class BernsteinApp(App[None]):
 
     def action_prioritize_task(self) -> None:
         """Bump selected task to priority 0."""
-        table = self.query_one("#tasks-table", DataTable)
+        table = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)
         try:
             row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
             task_id = str(row_key.value) if row_key.value else ""
@@ -1035,7 +1041,7 @@ class BernsteinApp(App[None]):
 
     def action_retry_task(self) -> None:
         """Re-queue a failed task."""
-        table = self.query_one("#tasks-table", DataTable)
+        table = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)
         try:
             row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
             task_id = str(row_key.value) if row_key.value else ""
@@ -1047,7 +1053,7 @@ class BernsteinApp(App[None]):
 
     def action_compare_task(self) -> None:
         """Mark a task for comparison. First press marks, second press opens compare view."""
-        table = self.query_one("#tasks-table", DataTable)
+        table = self.query_one(_TASKS_TABLE_SELECTOR, DataTable)
         try:
             row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
             task_id = str(row_key.value) if row_key.value else ""
@@ -1168,7 +1174,7 @@ class BernsteinApp(App[None]):
 
     def action_agents_up(self) -> None:
         """Increase max_agents by 1 via the config API."""
-        header = self.query_one("#header-bar", DashboardHeader)
+        header = self.query_one(_HEADER_BAR_SELECTOR, DashboardHeader)
         new_val = header.max_agents + 1
         try:
             _post("/config", {"max_agents": new_val})
@@ -1179,7 +1185,7 @@ class BernsteinApp(App[None]):
 
     def action_agents_down(self) -> None:
         """Decrease max_agents by 1 (min 1). Running agents finish gracefully."""
-        header = self.query_one("#header-bar", DashboardHeader)
+        header = self.query_one(_HEADER_BAR_SELECTOR, DashboardHeader)
         new_val = max(1, header.max_agents - 1)
         if new_val == header.max_agents:
             self.notify("Already at minimum (1)", severity="warning", timeout=3)

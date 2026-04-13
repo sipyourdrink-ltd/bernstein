@@ -22,6 +22,8 @@ from bernstein.cli.dashboard_polling import (
 from bernstein.cli.icons import get_agent_icon, get_status_icon
 from bernstein.cli.visual_theme import PALETTE, budget_color, model_color, role_color, sample_gradient, status_color
 
+_STYLE_BOLD_BRIGHT_YELLOW = "bold bright_yellow"
+
 # -- Widgets -------------------------------------------------------
 
 
@@ -270,7 +272,7 @@ class AgentWidget(Static):
         context_window_tokens = int(a.get("context_window_tokens", 0) or 0)
         context_utilization_pct = float(a.get("context_utilization_pct", 0.0) or 0.0)
         if context_window_tokens > 0:
-            context_style = "bold bright_yellow" if a.get("context_utilization_alert") else "bright_cyan"
+            context_style = _STYLE_BOLD_BRIGHT_YELLOW if a.get("context_utilization_alert") else "bright_cyan"
             context_capacity = (
                 f"{context_window_tokens / 1000:.0f}k" if context_window_tokens >= 1000 else str(context_window_tokens)
             )
@@ -432,7 +434,7 @@ class BigStats(Static):
                 t.append("  ", style="")
             # Pending approval
             if self.pending_approval > 0:
-                t.append(f"\u23f3 {self.pending_approval} pending", style="bold bright_yellow")
+                t.append(f"\u23f3 {self.pending_approval} pending", style=_STYLE_BOLD_BRIGHT_YELLOW)
                 t.append("  ", style="")
             # Cache hit rate
             if self.cache_hit_rate > 0:
@@ -459,7 +461,7 @@ class BigStats(Static):
         if self.last_completed_label:
             footer_parts.append((f"last {self.last_completed_label}", "dim"))
         if self.retry_count > 0:
-            footer_parts.append((f"{self.retry_count} retries", "bold bright_yellow"))
+            footer_parts.append((f"{self.retry_count} retries", _STYLE_BOLD_BRIGHT_YELLOW))
         if self.agent_error_count > 0:
             footer_parts.append((f"{self.agent_error_count} agent errors", "bold bright_red"))
         if footer_parts:

@@ -16,6 +16,8 @@ from rich.table import Table
 
 from bernstein.cli.helpers import find_seed_file, server_get
 
+_STYLE_BOLD_RED = "bold red"
+
 console = Console()
 
 
@@ -24,7 +26,7 @@ _KIND_COLORS = {
     "task_failed": "red",
     "task_completed": "green",
     "agent_spawned": "cyan",
-    "agent_crashed": "bold red",
+    "agent_crashed": _STYLE_BOLD_RED,
     "slo_breach": "yellow",
     "incident_created": "bold magenta",
     "incident_mitigated": "yellow",
@@ -125,10 +127,10 @@ def _list_incidents(json_mode: bool) -> None:
 
     for inc in incidents:
         sev = inc.get("severity", "?")
-        sev_style = {"sev1": "bold red", "sev2": "yellow", "sev3": "blue"}.get(sev, "white")
+        sev_style = {"sev1": _STYLE_BOLD_RED, "sev2": "yellow", "sev3": "blue"}.get(sev, "white")
         status = inc.get("status", "?")
         status_style = {
-            "open": "bold red",
+            "open": _STYLE_BOLD_RED,
             "mitigated": "yellow",
             "resolved": "green",
             "post_mortem": "dim",
@@ -170,7 +172,7 @@ def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window
     # Render header
     # Render header
     severity: str = str(data.get("severity", "?"))
-    sev_style: str = {"sev1": "bold red", "sev2": "yellow", "sev3": "blue"}.get(severity, "white")
+    sev_style: str = {"sev1": _STYLE_BOLD_RED, "sev2": "yellow", "sev3": "blue"}.get(severity, "white")
     title: str = str(data.get("title", "?"))
     status: str = str(data.get("status", "?"))
     event_count: int = int(data.get("event_count", 0))

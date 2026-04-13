@@ -28,6 +28,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+_SERVICE_NAME_ATTR = "service.name"
+
 logger = logging.getLogger(__name__)
 
 # Lazy imports for OpenTelemetry to ensure zero overhead when disabled
@@ -203,7 +205,7 @@ def init_telemetry(otlp_endpoint: str | None = None, *, insecure: bool = True) -
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        resource = Resource.create({"service.name": SERVICE_NAME})
+        resource = Resource.create({_SERVICE_NAME_ATTR: SERVICE_NAME})
 
         # 1. Traces
         trace_provider = TracerProvider(resource=resource)
@@ -245,7 +247,7 @@ def _init_console_telemetry(service_name: str = SERVICE_NAME) -> None:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
-        resource = Resource.create({"service.name": service_name})
+        resource = Resource.create({_SERVICE_NAME_ATTR: service_name})
 
         trace_provider = TracerProvider(resource=resource)
         trace_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
@@ -290,7 +292,7 @@ def _init_http_telemetry(
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        resource = Resource.create({"service.name": service_name})
+        resource = Resource.create({_SERVICE_NAME_ATTR: service_name})
 
         trace_provider = TracerProvider(resource=resource)
         trace_exporter = HttpSpanExporter(

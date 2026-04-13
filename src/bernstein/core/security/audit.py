@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+_JSONL_GLOB = "*.jsonl"
+
 logger = logging.getLogger(__name__)
 
 _GENESIS_HMAC = "0" * 64
@@ -122,7 +124,7 @@ class AuditLog:
 
     def _recover_chain_tail(self) -> str:
         """Walk existing logs to find the last HMAC in the chain."""
-        log_files = sorted(self._audit_dir.glob("*.jsonl"))
+        log_files = sorted(self._audit_dir.glob(_JSONL_GLOB))
         if not log_files:
             return _GENESIS_HMAC
         last_file = log_files[-1]
@@ -204,7 +206,7 @@ class AuditLog:
             is intact and *errors* lists any violations found.
         """
         errors: list[str] = []
-        log_files = sorted(self._audit_dir.glob("*.jsonl"))
+        log_files = sorted(self._audit_dir.glob(_JSONL_GLOB))
         if not log_files:
             return True, []
 
@@ -263,7 +265,7 @@ class AuditLog:
         archived: list[str] = []
         skipped: list[str] = []
 
-        for log_path in sorted(self._audit_dir.glob("*.jsonl")):
+        for log_path in sorted(self._audit_dir.glob(_JSONL_GLOB)):
             stem = log_path.stem  # e.g. "2025-12-01"
             try:
                 file_date = datetime.strptime(stem, "%Y-%m-%d").replace(tzinfo=UTC).date()
@@ -315,7 +317,7 @@ class AuditLog:
             List of matching AuditEvent instances (chronological order).
         """
         results: list[AuditEvent] = []
-        log_files = sorted(self._audit_dir.glob("*.jsonl"))
+        log_files = sorted(self._audit_dir.glob(_JSONL_GLOB))
 
         for log_path in log_files:
             for raw in log_path.read_text().splitlines():

@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 from bernstein.core.models import AbortReason, TransitionReason
 
+_TASK_COMPLETED_MSG = "Task completed successfully"
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +52,7 @@ _EXIT_CODE_MAP: dict[int, tuple[TransitionReason, AbortReason | None, bool, str]
         TransitionReason.COMPLETED,
         None,
         False,
-        "Task completed successfully",
+        _TASK_COMPLETED_MSG,
     ),
     1: (
         TransitionReason.ABORTED,
@@ -145,7 +147,7 @@ def interpret_exit_code(exit_code: int) -> ExitInterpretation:
         transition_reason=TransitionReason.COMPLETED,
         abort_reason=None,
         should_retry=False,
-        human_readable="Task completed successfully",
+        human_readable=_TASK_COMPLETED_MSG,
     )
 
 
@@ -168,7 +170,7 @@ def interpret_result_subtype(subtype: str) -> ExitInterpretation:
             TransitionReason.COMPLETED,
             None,
             False,
-            "Task completed successfully",
+            _TASK_COMPLETED_MSG,
         ),
         "error_max_turns": (
             TransitionReason.MAX_TURNS,

@@ -29,6 +29,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+_ZERO_BYTES = "0B / 0B"
+
 logger = logging.getLogger(__name__)
 
 _CONTAINER_CMD_TIMEOUT_S = 30  # Timeout for container management commands
@@ -753,11 +755,11 @@ class ContainerManager:
                 stats: dict[str, Any] = json.loads(result.stdout.strip())
                 return {
                     "cpu_percent": stats.get("CPUPerc", "0%"),
-                    "memory_usage": stats.get("MemUsage", "0B / 0B"),
+                    "memory_usage": stats.get("MemUsage", _ZERO_BYTES),
                     "memory_percent": stats.get("MemPerc", "0%"),
                     "pids": stats.get("PIDs", "0"),
-                    "net_io": stats.get("NetIO", "0B / 0B"),
-                    "block_io": stats.get("BlockIO", "0B / 0B"),
+                    "net_io": stats.get("NetIO", _ZERO_BYTES),
+                    "block_io": stats.get("BlockIO", _ZERO_BYTES),
                 }
         except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
             pass

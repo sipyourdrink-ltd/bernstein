@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from bernstein.core.server import SSEBus
     from bernstein.core.tenanting import TenantRegistry
 
+_JSON_GLOB = "*.json"
+
 router = APIRouter()
 
 
@@ -173,7 +175,7 @@ def get_costs(request: Request, tenant: str | None = None) -> JSONResponse:
     if not costs_dir.exists():
         return JSONResponse(content=empty)
 
-    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
     if not cost_files:
         return JSONResponse(content=empty)
 
@@ -240,7 +242,7 @@ def get_cost_live(request: Request, tenant: str | None = None) -> JSONResponse:
         )
 
     # Find the most recently written cost file
-    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
     if not cost_files:
         return JSONResponse(
             content={"spent_usd": 0.0, "budget_usd": 0.0, "per_agent": {}, "per_model": {}, "tenant_id": tenant_id}
@@ -298,7 +300,7 @@ def get_cost_current(request: Request) -> JSONResponse:
     if not costs_dir.exists():
         return JSONResponse(content=empty)
 
-    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
     if not cost_files:
         return JSONResponse(content=empty)
 
@@ -351,7 +353,7 @@ def get_cost_alerts(request: Request) -> JSONResponse:
     budget_usd = 0.0
     costs_dir = sdd_dir / "runtime" / "costs"
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
         if cost_files:
             tracker = CostTracker.load(sdd_dir, cost_files[0].stem)
             if tracker is not None:
@@ -442,7 +444,7 @@ def export_costs(request: Request, format: str = "json") -> Response:
             )
         return JSONResponse(content={"runs": [], "total_spent_usd": 0.0})
 
-    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime)
 
     all_usages: list[dict[str, Any]] = []
     total_spent = 0.0
@@ -510,7 +512,7 @@ def forecast_costs(request: Request) -> JSONResponse:
             }
         )
 
-    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
 
     # Get most recent run data
     recent_costs: list[tuple[float, float]] = []  # (timestamp, cumulative_cost)
@@ -590,7 +592,7 @@ def compare_model_costs(request: Request) -> JSONResponse:
     )
 
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
         for cost_file in cost_files[:3]:  # Last 3 runs
             from bernstein.core.cost_tracker import CostTracker
 
@@ -644,7 +646,7 @@ def cache_stats(request: Request) -> JSONResponse:
     by_model: dict[str, dict[str, Any]] = {}
 
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime)
         for cost_file in cost_files:
             tracker = CostTracker.load(sdd_dir, cost_file.stem)
             if tracker is None:
@@ -715,7 +717,7 @@ def model_cost_comparison(request: Request) -> JSONResponse:
     model_costs: dict[str, dict[str, Any]] = {}
 
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
         for cost_file in cost_files[:1]:  # Most recent run
             from bernstein.core.cost_tracker import CostTracker
 
@@ -783,7 +785,7 @@ def token_efficiency(request: Request) -> JSONResponse:
     model_stats: dict[str, _EfficiencyStats] = {}
 
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime)
         for cost_file in cost_files:
             tracker = CostTracker.load(sdd_dir, cost_file.stem)
             if tracker is None:
@@ -854,7 +856,7 @@ def get_costs_by_tag(request: Request, tag_key: str | None = None) -> JSONRespon
     by_tag: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime)
         for cost_file in cost_files:
             tracker = CostTracker.load(sdd_dir, cost_file.stem)
             if tracker is None:
@@ -880,7 +882,7 @@ def _find_session_breakdown(
 
     costs_dir = sdd_dir / "runtime" / "costs"
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
         for cost_file in cost_files:
             tracker = CostTracker.load(sdd_dir, cost_file.stem)
             if tracker is None:
@@ -1124,7 +1126,7 @@ def get_cost_efficiency(request: Request) -> JSONResponse:
     if not costs_dir.exists():
         return JSONResponse(content=empty)
 
-    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
     if not cost_files:
         return JSONResponse(content=empty)
 

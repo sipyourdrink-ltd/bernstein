@@ -23,6 +23,8 @@ from bernstein.core.backlog_parser import parse_backlog_path
 if TYPE_CHECKING:
     from pathlib import Path
 
+_YAML_GLOB = "*.yaml"
+
 logger = logging.getLogger(__name__)
 
 
@@ -325,7 +327,7 @@ def sync_backlog_to_server(
         md_files: list[Path] = []
         for src_dir in (backlog_open, backlog_issues):
             if src_dir.exists():
-                md_files.extend(src_dir.glob("*.yaml"))
+                md_files.extend(src_dir.glob(_YAML_GLOB))
                 md_files.extend(src_dir.glob("*.md"))
         md_files.sort()
 
@@ -405,7 +407,7 @@ def sync_backlog_to_server(
 
         metadata_files: list[Path] = []
         if backlog_issues.exists():
-            metadata_files.extend(backlog_issues.glob("*.yaml"))
+            metadata_files.extend(backlog_issues.glob(_YAML_GLOB))
             metadata_files.extend(backlog_issues.glob("*.md"))
         # Also include any open/ or claimed/ file that isn't in issues/, so
         # backlog entries that only live in open/ still get moved.
@@ -413,7 +415,7 @@ def sync_backlog_to_server(
         for extra_dir in (backlog_open, backlog_claimed):
             if not extra_dir.exists():
                 continue
-            for f in extra_dir.glob("*.yaml"):
+            for f in extra_dir.glob(_YAML_GLOB):
                 if f.name not in _seen_names:
                     metadata_files.append(f)
                     _seen_names.add(f.name)

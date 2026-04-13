@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from bernstein.core.orchestration.tick_pipeline import RuffViolation, TestResults
     from bernstein.core.orchestration.tick_pipeline import TickResult as _TickResult
 
+_TESTS_DIR = "tests/"
+
 logger = logging.getLogger(__name__)
 
 
@@ -307,7 +309,7 @@ class EvolveMixin:
 
         info: TestResults = {"passed": 0, "failed": 0, "summary": ""}
         proc = subprocess.Popen(
-            ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+            ["uv", "run", "pytest", _TESTS_DIR, "-x", "-q", "--tb=line"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -373,7 +375,7 @@ class EvolveMixin:
             ("src/bernstein/adapters/", "refactor adapters"),
             ("src/bernstein/evolution/", "tune evolution"),
             ("src/bernstein/agents/", "update agents"),
-            ("tests/", "update tests"),
+            (_TESTS_DIR, "update tests"),
             ("docs/", "update docs"),
             ("README", "update README"),
             ("CONTRIBUTING", "update CONTRIBUTING"),
@@ -416,7 +418,7 @@ class EvolveMixin:
             stage_all_except(self._workdir, exclude=[".sdd/runtime/", ".sdd/metrics/"])  # type: ignore[attr-defined]
 
             test_result = subprocess.run(
-                ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+                ["uv", "run", "pytest", _TESTS_DIR, "-x", "-q", "--tb=line"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

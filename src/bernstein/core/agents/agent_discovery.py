@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, cast
 
+_CONFIG_TOML_FILENAME = "config.toml"
+
 logger = logging.getLogger(__name__)
 
 _LOGIN_API_KEY = "API key"
@@ -161,7 +163,7 @@ def _parse_codex_config() -> tuple[str | None, list[str]]:
         Tuple of (configured_model, list_of_available_models).
         If config not found or unparseable, returns (None, []).
     """
-    config_path = Path.home() / ".codex" / "config.toml"
+    config_path = Path.home() / ".codex" / _CONFIG_TOML_FILENAME
     if not config_path.exists():
         return None, []
 
@@ -242,10 +244,10 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
     # Check for codex proxy auth (custom model_provider with local base_url)
     if not logged_in and config_model:
         # If config.toml exists with a model, assume proxy/custom setup is valid
-        config_path = Path.home() / ".codex" / "config.toml"
+        config_path = Path.home() / ".codex" / _CONFIG_TOML_FILENAME
         if config_path.exists():
             logged_in = True
-            login_method = "config.toml"
+            login_method = _CONFIG_TOML_FILENAME
 
     if binary and not logged_in:
         warnings.append("codex found but not logged in — run: codex login")

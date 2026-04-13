@@ -16,6 +16,8 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+_CONFIG_YAML_FILENAME = "config.yaml"
+
 # Built-in defaults for known keys.
 _DEFAULTS: dict[str, Any] = {
     "cli": "claude",
@@ -177,7 +179,7 @@ class BernsteinHome:
         (self.path / "metrics").mkdir(exist_ok=True)
         (self.path / "mcp").mkdir(exist_ok=True)
 
-        config_path = self.path / "config.yaml"
+        config_path = self.path / _CONFIG_YAML_FILENAME
         if not config_path.exists():
             config_path.write_text(_DEFAULT_CONFIG_YAML)
 
@@ -187,7 +189,7 @@ class BernsteinHome:
 
     def _load(self) -> dict[str, Any]:
         """Load the global config.yaml, returning an empty dict if missing."""
-        config_path = self.path / "config.yaml"
+        config_path = self.path / _CONFIG_YAML_FILENAME
         if not config_path.exists():
             return {}
         try:
@@ -204,7 +206,7 @@ class BernsteinHome:
     def _save(self, data: dict[str, Any]) -> None:
         """Persist data to config.yaml, creating home dir if needed."""
         self.ensure()
-        config_path = self.path / "config.yaml"
+        config_path = self.path / _CONFIG_YAML_FILENAME
         config_path.write_text(yaml.dump(data, default_flow_style=False))
 
     def get(self, key: str) -> Any:
@@ -297,7 +299,7 @@ def _session_overrides_from_env() -> dict[str, object]:
 
 def _load_project_config(project_dir: Path) -> dict[str, object]:
     """Load ``.sdd/config.yaml`` for a project when present."""
-    sdd_config = project_dir / ".sdd" / "config.yaml"
+    sdd_config = project_dir / ".sdd" / _CONFIG_YAML_FILENAME
     if not sdd_config.exists():
         return {}
     try:
@@ -362,7 +364,7 @@ def resolve_config(
                 "source": "project",
                 "value": value,
                 "redacted_value": _redact_config_value(key, value),
-                "path": str(project_dir / ".sdd" / "config.yaml"),
+                "path": str(project_dir / ".sdd" / _CONFIG_YAML_FILENAME),
             }
         )
     if key in global_data:
@@ -372,7 +374,7 @@ def resolve_config(
                 "source": "global",
                 "value": value,
                 "redacted_value": _redact_config_value(key, value),
-                "path": str(home.path / "config.yaml"),
+                "path": str(home.path / _CONFIG_YAML_FILENAME),
             }
         )
 

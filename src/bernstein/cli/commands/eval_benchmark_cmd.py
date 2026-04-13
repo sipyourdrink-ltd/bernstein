@@ -21,6 +21,10 @@ from bernstein.cli.helpers import (
 if TYPE_CHECKING:
     from bernstein.eval.golden import Tier
 
+_NO_EVAL_RUNS_MSG = "[yellow]No eval runs found.[/yellow]"
+
+_STYLE_BOLD_CYAN = "bold cyan"
+
 
 @click.group("benchmark")
 def benchmark_group() -> None:
@@ -63,7 +67,7 @@ def _run_swe_bench_command(
 
     console.print(f"[bold]SWE-Bench evaluation[/bold] — subset={subset} • {len(instances)} instance(s)")
 
-    table = Table(title="SWE-Bench Results", header_style="bold cyan", show_lines=False)
+    table = Table(title="SWE-Bench Results", header_style=_STYLE_BOLD_CYAN, show_lines=False)
     table.add_column("Instance", style="dim", min_width=30)
     table.add_column("Model", min_width=14)
     table.add_column("Resolved", min_width=10)
@@ -207,7 +211,7 @@ def benchmark_run(tier: str, benchmarks_dir: str, save: bool) -> None:
     summary = run_all(bdir) if tier == "all" else run_selected(bdir, tier)  # type: ignore[arg-type]
 
     # ---- Results table ----
-    table = Table(title=f"Benchmarks — tier={tier}", header_style="bold cyan", show_lines=False)
+    table = Table(title=f"Benchmarks — tier={tier}", header_style=_STYLE_BOLD_CYAN, show_lines=False)
     table.add_column("ID", style="dim", min_width=14)
     table.add_column("Tier", min_width=12)
     table.add_column("Goal", min_width=40)
@@ -379,7 +383,7 @@ def benchmark_simulate(
     run, report = bench.run_and_compare()
 
     # --- Summary table ---
-    table = Table(title=f"Benchmark simulation — seed={seed}", header_style="bold cyan", show_lines=False)
+    table = Table(title=f"Benchmark simulation — seed={seed}", header_style=_STYLE_BOLD_CYAN, show_lines=False)
     table.add_column("Metric", min_width=22)
     table.add_column("Value", justify="right", min_width=18)
 
@@ -447,7 +451,7 @@ def eval_golden(workdir: str) -> None:
     # We use asyncio.run because the CLI is synchronous but the runner might be async
     summary = asyncio.run(runner.run_suite())
 
-    table = Table(title=f"Golden Results ({summary['timestamp']})", header_style="bold cyan")
+    table = Table(title=f"Golden Results ({summary['timestamp']})", header_style=_STYLE_BOLD_CYAN)
     table.add_column("Task ID", style="dim")
     table.add_column("Title")
     table.add_column("Status", justify="center")
@@ -550,7 +554,7 @@ def eval_run(tier: str | None, compare_prev: bool, save: bool) -> None:
     run_result = harness.compute_multiplicative_score(task_results)
 
     # Display results
-    table = Table(title="Eval Results", header_style="bold cyan", show_lines=False)
+    table = Table(title="Eval Results", header_style=_STYLE_BOLD_CYAN, show_lines=False)
     table.add_column("Component", min_width=15)
     table.add_column("Score", justify="right", min_width=10)
 
@@ -569,7 +573,7 @@ def eval_run(tier: str | None, compare_prev: bool, save: bool) -> None:
     # Per-tier breakdown
     pt = run_result.per_tier
     if pt:
-        tier_table = Table(title="Per-Tier Scores", header_style="bold cyan")
+        tier_table = Table(title="Per-Tier Scores", header_style=_STYLE_BOLD_CYAN)
         tier_table.add_column("Tier", min_width=15)
         tier_table.add_column("Score", justify="right", min_width=10)
         tier_table.add_row("Smoke", f"{pt.smoke:.2%}")
@@ -606,7 +610,7 @@ def eval_report() -> None:
 
     prev = harness.load_previous_run()
     if not prev:
-        console.print("[yellow]No eval runs found.[/yellow]")
+        console.print(_NO_EVAL_RUNS_MSG)
         raise SystemExit(1)
 
     console.print(f"[bold]Eval Report[/bold] — score: {prev.score:.4f}")
@@ -643,12 +647,12 @@ def eval_failures() -> None:
     runs_dir = workdir / ".sdd" / "eval" / "runs"
 
     if not runs_dir.is_dir():
-        console.print("[yellow]No eval runs found.[/yellow]")
+        console.print(_NO_EVAL_RUNS_MSG)
         raise SystemExit(1)
 
     run_files = sorted(runs_dir.glob("eval_run_*.json"), reverse=True)
     if not run_files:
-        console.print("[yellow]No eval runs found.[/yellow]")
+        console.print(_NO_EVAL_RUNS_MSG)
         raise SystemExit(1)
 
     data = json_mod.loads(run_files[0].read_text(encoding="utf-8"))

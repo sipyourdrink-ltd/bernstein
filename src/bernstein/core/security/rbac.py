@@ -13,10 +13,10 @@ Usage in FastAPI routes::
 
     from bernstein.core.security.rbac import require_role, require_permission
 
-    @router.post("/tasks")
+    @router.post(_PATH_TASKS)
     async def create_task(
         request: Request,
-        _auth: None = Depends(require_permission("tasks:write")),
+        _auth: None = Depends(require_permission(_PERM_TASKS_WRITE)),
     ):
         ...
 """
@@ -31,6 +31,26 @@ from fastapi import HTTPException, Request
 
 if TYPE_CHECKING:
     from bernstein.core.security.auth import AuthUser
+
+_PERM_TASKS_WRITE = "tasks:write"
+
+_PATH_TASKS = "/tasks"
+
+_PATH_AGENTS = "/agents"
+
+_PATH_CLUSTER = "/cluster"
+
+_PATH_WEBHOOKS = "/webhooks"
+
+_PERM_WEBHOOKS_MANAGE = "webhooks:manage"
+
+_PERM_CONFIG_WRITE = "config:write"
+
+_PATH_CONFIG = "/config"
+
+_PERM_AUTH_MANAGE = "auth:manage"
+
+_PATH_AUTH_USERS = "/auth/users"
 
 logger = logging.getLogger(__name__)
 
@@ -58,32 +78,32 @@ class RoutePermission:
 # Default route permission rules.  Order matters: first match wins.
 _DEFAULT_ROUTE_RULES: Final[list[RoutePermission]] = [
     # Auth management — admin only
-    RoutePermission("/auth/users", "POST", "auth:manage"),
-    RoutePermission("/auth/users", "DELETE", "auth:manage"),
-    RoutePermission("/auth/users", "PUT", "auth:manage"),
-    RoutePermission("/auth/roles", "*", "auth:manage"),
+    RoutePermission(_PATH_AUTH_USERS, "POST", _PERM_AUTH_MANAGE),
+    RoutePermission(_PATH_AUTH_USERS, "DELETE", _PERM_AUTH_MANAGE),
+    RoutePermission(_PATH_AUTH_USERS, "PUT", _PERM_AUTH_MANAGE),
+    RoutePermission("/auth/roles", "*", _PERM_AUTH_MANAGE),
     # Config — admin only for writes
-    RoutePermission("/config", "POST", "config:write"),
-    RoutePermission("/config", "PUT", "config:write"),
-    RoutePermission("/config", "DELETE", "config:write"),
-    RoutePermission("/config", "GET", "config:read"),
+    RoutePermission(_PATH_CONFIG, "POST", _PERM_CONFIG_WRITE),
+    RoutePermission(_PATH_CONFIG, "PUT", _PERM_CONFIG_WRITE),
+    RoutePermission(_PATH_CONFIG, "DELETE", _PERM_CONFIG_WRITE),
+    RoutePermission(_PATH_CONFIG, "GET", "config:read"),
     # Webhooks — admin only
-    RoutePermission("/webhooks", "POST", "webhooks:manage"),
-    RoutePermission("/webhooks", "PUT", "webhooks:manage"),
-    RoutePermission("/webhooks", "DELETE", "webhooks:manage"),
+    RoutePermission(_PATH_WEBHOOKS, "POST", _PERM_WEBHOOKS_MANAGE),
+    RoutePermission(_PATH_WEBHOOKS, "PUT", _PERM_WEBHOOKS_MANAGE),
+    RoutePermission(_PATH_WEBHOOKS, "DELETE", _PERM_WEBHOOKS_MANAGE),
     # Cluster management
-    RoutePermission("/cluster", "POST", "cluster:write"),
-    RoutePermission("/cluster", "PUT", "cluster:write"),
-    RoutePermission("/cluster", "GET", "cluster:read"),
+    RoutePermission(_PATH_CLUSTER, "POST", "cluster:write"),
+    RoutePermission(_PATH_CLUSTER, "PUT", "cluster:write"),
+    RoutePermission(_PATH_CLUSTER, "GET", "cluster:read"),
     # Agent management
-    RoutePermission("/agents", "POST", "agents:write"),
-    RoutePermission("/agents", "DELETE", "agents:kill"),
-    RoutePermission("/agents", "GET", "agents:read"),
+    RoutePermission(_PATH_AGENTS, "POST", "agents:write"),
+    RoutePermission(_PATH_AGENTS, "DELETE", "agents:kill"),
+    RoutePermission(_PATH_AGENTS, "GET", "agents:read"),
     # Task management
-    RoutePermission("/tasks", "POST", "tasks:write"),
-    RoutePermission("/tasks", "PUT", "tasks:write"),
-    RoutePermission("/tasks", "DELETE", "tasks:delete"),
-    RoutePermission("/tasks", "GET", "tasks:read"),
+    RoutePermission(_PATH_TASKS, "POST", _PERM_TASKS_WRITE),
+    RoutePermission(_PATH_TASKS, "PUT", _PERM_TASKS_WRITE),
+    RoutePermission(_PATH_TASKS, "DELETE", "tasks:delete"),
+    RoutePermission(_PATH_TASKS, "GET", "tasks:read"),
     # Bulletin board
     RoutePermission("/bulletin", "POST", "bulletin:write"),
     RoutePermission("/bulletin", "GET", "bulletin:read"),
@@ -141,7 +161,7 @@ class RBACEnforcer:
         # Default: read for GET/HEAD, write for others
         if method_upper in ("GET", "HEAD", "OPTIONS"):
             return "status:read"
-        return "tasks:write"
+        return _PERM_TASKS_WRITE
 
     def check_access(
         self,

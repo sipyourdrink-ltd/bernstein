@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from bernstein.core.quality.gate_runner import GatePipelineStep, GateReport
     from bernstein.core.quality.quality_score import QualityScore
 
+_TRUNCATED_SUFFIX = "\n... (truncated)"
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -394,7 +396,7 @@ async def _verify_intent_async(task: Task, worktree_path: Path, config: IntentVe
 
     diff = _get_intent_diff(worktree_path, task.owned_files)
     if len(diff) > config.max_diff_chars:
-        diff = diff[: config.max_diff_chars] + "\n... (truncated)"
+        diff = diff[: config.max_diff_chars] + _TRUNCATED_SUFFIX
 
     result_summary = task.result_summary or "(no result summary provided)"
 
@@ -509,7 +511,7 @@ def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
         )
         output = (proc.stdout + proc.stderr).strip()
         if len(output) > 2000:
-            output = output[:2000] + "\n... (truncated)"
+            output = output[:2000] + _TRUNCATED_SUFFIX
         return proc.returncode == 0, output or "(no output)"
     except subprocess.TimeoutExpired:
         return False, f"Timed out after {timeout_s}s"
@@ -835,7 +837,7 @@ def _run_pii_gate(
     detail = detail + "\n\nFiles:\n" + "\n".join(file_lines)
 
     if len(detail) > 2000:
-        detail = detail[:2000] + "\n... (truncated)"
+        detail = detail[:2000] + _TRUNCATED_SUFFIX
 
     return QualityGateCheckResult(
         gate="pii_scan",
@@ -981,7 +983,7 @@ def _run_dlp_gate(
         )
     detail = "\n".join(lines)
     if len(detail) > 2000:
-        detail = detail[:2000] + "\n... (truncated)"
+        detail = detail[:2000] + _TRUNCATED_SUFFIX
 
     return QualityGateCheckResult(
         gate="dlp_scan",

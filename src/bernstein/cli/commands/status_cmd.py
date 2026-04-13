@@ -24,6 +24,12 @@ from bernstein.cli.ui import make_console
 from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult, discover_agents_cached
 from bernstein.tui.worker_badges import format_worker_badge, get_badge_for_worker
 
+_NOT_AUTHENTICATED_MSG = "not authenticated"
+
+_STORAGE_BACKEND_LABEL = "Storage backend"
+
+_COMMIT_ATTRIBUTION_LABEL = "Commit attribution"
+
 
 def _load_remote_agents_from_snapshot(runtime_dir: Path) -> list[dict[str, Any]]:
     """Load remote bridge-backed sessions from ``agents.json``."""
@@ -296,7 +302,7 @@ def _doctor_check_storage(_check: _CheckFn) -> None:
     """Check storage backend connectivity (memory/postgres/redis)."""
     storage_backend = os.environ.get("BERNSTEIN_STORAGE_BACKEND", "memory")
     if storage_backend == "memory":
-        _check("Storage backend", True, "memory (default, no external dependencies)", "")
+        _check(_STORAGE_BACKEND_LABEL, True, "memory (default, no external dependencies)", "")
         return
     if storage_backend == "postgres":
         _doctor_check_postgres(_check)
@@ -305,7 +311,7 @@ def _doctor_check_storage(_check: _CheckFn) -> None:
         _doctor_check_redis(_check)
         return
     _check(
-        "Storage backend",
+        _STORAGE_BACKEND_LABEL,
         False,
         f"unknown backend: {storage_backend}",
         "Set BERNSTEIN_STORAGE_BACKEND to memory, postgres, or redis",
@@ -317,7 +323,7 @@ def _doctor_check_postgres(_check: _CheckFn) -> None:
     db_url = os.environ.get("BERNSTEIN_DATABASE_URL")
     if not db_url:
         _check(
-            "Storage backend",
+            _STORAGE_BACKEND_LABEL,
             False,
             "postgres — BERNSTEIN_DATABASE_URL not set",
             "export BERNSTEIN_DATABASE_URL=postgresql://user:pass@localhost/bernstein",
@@ -334,17 +340,17 @@ def _doctor_check_postgres(_check: _CheckFn) -> None:
         import asyncio
 
         asyncio.run(_check_pg())
-        _check("Storage backend", True, f"postgres — connected ({db_url[:40]}...)", "")
+        _check(_STORAGE_BACKEND_LABEL, True, f"postgres — connected ({db_url[:40]}...)", "")
     except ImportError:
         _check(
-            "Storage backend",
+            _STORAGE_BACKEND_LABEL,
             False,
             "postgres — asyncpg not installed",
             "pip install bernstein[postgres]",
         )
     except Exception as exc:
         _check(
-            "Storage backend",
+            _STORAGE_BACKEND_LABEL,
             False,
             f"postgres — connection failed: {exc}",
             "Check BERNSTEIN_DATABASE_URL and ensure PostgreSQL is running",
@@ -373,7 +379,7 @@ def _doctor_check_redis(_check: _CheckFn) -> None:
         )
         storage_ok = False
     if storage_ok:
-        _check("Storage backend", True, "redis mode (pg + redis locking)", "")
+        _check(_STORAGE_BACKEND_LABEL, True, "redis mode (pg + redis locking)", "")
 
 
 def _doctor_check_secrets(workdir: Path, _check: _CheckFn) -> None:
@@ -526,7 +532,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             claude_detail = "OAuth active"
             claude_authed = True
         else:
-            claude_detail = "not authenticated"
+            claude_detail = _NOT_AUTHENTICATED_MSG
     if claude_authed:
         any_key = True
     _check(
@@ -542,7 +548,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         any_key = True
         codex_detail = codex_method
     else:
-        codex_detail = "not authenticated"
+        codex_detail = _NOT_AUTHENTICATED_MSG
     _check(
         "Auth: codex",
         codex_authed,
@@ -557,7 +563,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         any_key = True
         gemini_detail = gemini_method
     else:
-        gemini_detail = "not authenticated"
+        gemini_detail = _NOT_AUTHENTICATED_MSG
     _check(
         "Auth: gemini",
         gemini_authed,
@@ -732,14 +738,14 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     commit_result = collect_commit_stats(repo_dir=str(workdir))
     if commit_result.error:
         _check(
-            "Commit attribution",
+            _COMMIT_ATTRIBUTION_LABEL,
             ok=False,
             detail=f"git log error: {commit_result.error}",
             fix="Ensure this is a git repository with git installed",
         )
     elif not commit_result.roles:
         _check(
-            "Commit attribution",
+            _COMMIT_ATTRIBUTION_LABEL,
             ok=True,
             detail="no commits found in this repository",
         )
@@ -749,7 +755,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             for role, rs in commit_result.roles.items()
         )
         _check(
-            "Commit attribution",
+            _COMMIT_ATTRIBUTION_LABEL,
             ok=True,
             detail=f"{commit_result.total_commits} commits: {role_parts}",
         )
