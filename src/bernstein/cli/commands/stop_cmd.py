@@ -406,6 +406,50 @@ class _ProcessSnapshot:
 
 def _list_process_snapshots() -> list[_ProcessSnapshot]:
     """Return a best-effort snapshot of all local processes."""
+    if sys.platform == "win32":
+        return _list_process_snapshots_windows()
+    return _list_process_snapshots_unix()
+
+
+def _list_process_snapshots_windows() -> list[_ProcessSnapshot]:
+    """Windows: use WMIC or PowerShell to list processes."""
+    snapshots: list[_ProcessSnapshot] = []
+    try:
+        # Use PowerShell for better reliability
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "Get-Process | Select-Object Id, @{N='ParentId';E={(Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.Id)\").ParentProcessId}}, Path | ConvertTo-Csv -NoTypeInformation"
+            ],
+            capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            timeout=10,
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+        lines = result.stdout.strip().splitlines()
+        if len(lines) < 2:
+            return []
+        # Skip header: "Id","ParentId","Path"
+        for line in lines[1:]:
+            # Parse CSV: "1234","5678","C:\path\to\exe"
+            parts = line.strip().strip('"').split('","')
+            if len(parts) >= 3:
+                try:
+                    pid = int(parts[0])
+                    ppid = int(parts[1]) if parts[1] else 0
+                    command = parts[2] if parts[2] else ""
+                    snapshots.append(_ProcessSnapshot(pid=pid, ppid=ppid, pgid=0, command=command))
+                except (ValueError, IndexError):
+                    continue
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return snapshots
+
+
+def _list_process_snapshots_unix() -> list[_ProcessSnapshot]:
+    """Unix: use ps to list processes."""
     try:
         result = subprocess.run(
             ["ps", "-ax", "-o", "pid=,ppid=,pgid=,command="],
@@ -473,18 +517,41 @@ def _collect_repo_processes(killed: set[int]) -> None:
 def _kill_port_holder(port: int, killed: set[int]) -> None:
     """Kill whatever process is holding a port (last resort)."""
     try:
-        result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=5,
-        )
-        for line in result.stdout.strip().splitlines():
-            pid = int(line.strip())
-            if pid not in killed:
-                _kill_named_pid(pid, f"Port {port} holder", killed)
+        if sys.platform == "win32":
+            # Windows: use netstat to find the PID
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                # Match lines like: TCP    127.0.0.1:8052    0.0.0.0:0    LISTENING    12345
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    if parts:
+                        try:
+                            pid = int(parts[-1])
+                            if pid not in killed:
+                                _kill_named_pid(pid, f"Port {port} holder", killed)
+                        except ValueError:
+                            continue
+        else:
+            # Unix: use lsof
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            for line in result.stdout.strip().splitlines():
+                pid = int(line.strip())
+                if pid not in killed:
+                    _kill_named_pid(pid, f"Port {port} holder", killed)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
 

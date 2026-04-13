@@ -11,6 +11,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -18,6 +19,19 @@ from rich.console import Console
 logger = logging.getLogger(__name__)
 
 console = Console()
+
+# Use ASCII-safe symbols on Windows with legacy encoding
+def _safe_symbol(unicode_char: str, ascii_fallback: str) -> str:
+    """Return unicode_char if encodable, else ascii_fallback."""
+    if sys.platform == "win32":
+        try:
+            unicode_char.encode(sys.stdout.encoding or "utf-8")
+        except (UnicodeEncodeError, LookupError):
+            return ascii_fallback
+    return unicode_char
+
+_CHECK = _safe_symbol("✓", "+")
+_ARROW = _safe_symbol("↳", "->")
 
 # Binary install hints for each supported CLI adapter.
 _CLI_INSTALL_HINT: dict[str, str] = {
@@ -375,7 +389,7 @@ def preflight_checks(cli: str, port: int) -> None:
     """
     if cli == "mock":
         # Mock adapter: no binary or API key needed (built-in simulation)
-        console.print("[green]✓[/green] Mock adapter ready (no API key needed)")
+        console.print(f"[green]{_CHECK}[/green] Mock adapter ready (no API key needed)")
     elif cli == "auto":
         # Auto mode: use agent_discovery for rich detection with auth + model info
         from bernstein.core.agent_discovery import discover_agents_cached, short_model
@@ -394,11 +408,11 @@ def preflight_checks(cli: str, port: int) -> None:
             auth_note = "" if agent.logged_in else " [dim](not authenticated)[/dim]"
             agent_parts.append(f"{agent.name.capitalize()} ({'/'.join(short_models)}){auth_note}")
         routing_note = "Using auto-routing." if len(discovery.agents) > 1 else "Using as primary."
-        console.print(f"[green]✓[/green] Found: {', '.join(agent_parts)}. {routing_note}")
+        console.print(f"[green]{_CHECK}[/green] Found: {', '.join(agent_parts)}. {routing_note}")
 
         # Surface any auth warnings as hints
         for w in discovery.warnings:
-            console.print(f"  [yellow]↳[/yellow] {w}")
+            console.print(f"  [yellow]{_ARROW}[/yellow] {w}")
     else:
         _check_binary(cli)
         _check_api_key(cli)

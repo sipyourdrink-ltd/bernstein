@@ -16,17 +16,67 @@ Usage::
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any, cast
 
-from prometheus_client import (
-    CollectorRegistry,
-    Counter,
-    Gauge,
-    Histogram,
-    generate_latest,
-)
-
 logger = logging.getLogger(__name__)
+
+# prometheus_client can hang on Windows during import due to multiprocessing issues.
+# Make it optional with stub fallbacks for Windows compatibility.
+_PROMETHEUS_AVAILABLE = False
+try:
+    # Set a short import timeout using threading on Windows
+    if sys.platform == "win32":
+        import threading
+        _import_done = threading.Event()
+        _import_error: Exception | None = None
+        def _try_import() -> None:
+            global _PROMETHEUS_AVAILABLE, _import_error
+            try:
+                global CollectorRegistry, Counter, Gauge, Histogram, generate_latest
+                from prometheus_client import (
+                    CollectorRegistry,
+                    Counter,
+                    Gauge,
+                    Histogram,
+                    generate_latest,
+                )
+                _PROMETHEUS_AVAILABLE = True
+            except Exception as e:
+                _import_error = e
+            finally:
+                _import_done.set()
+        t = threading.Thread(target=_try_import, daemon=True)
+        t.start()
+        if not _import_done.wait(timeout=3.0):
+            logger.warning("prometheus_client import timed out on Windows - metrics disabled")
+        elif _import_error:
+            logger.warning("prometheus_client import failed: %s - metrics disabled", _import_error)
+    else:
+        from prometheus_client import (
+            CollectorRegistry,
+            Counter,
+            Gauge,
+            Histogram,
+            generate_latest,
+        )
+        _PROMETHEUS_AVAILABLE = True
+except ImportError as e:
+    logger.warning("prometheus_client not available: %s - metrics disabled", e)
+
+# Stub classes for when prometheus is unavailable
+if not _PROMETHEUS_AVAILABLE:
+    class CollectorRegistry:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None: pass
+    class _StubMetric:
+        def __init__(self, *args: Any, **kwargs: Any) -> None: pass
+        def labels(self, *args: Any, **kwargs: Any) -> "_StubMetric": return self
+        def inc(self, *args: Any, **kwargs: Any) -> None: pass
+        def dec(self, *args: Any, **kwargs: Any) -> None: pass
+        def set(self, *args: Any, **kwargs: Any) -> None: pass
+        def observe(self, *args: Any, **kwargs: Any) -> None: pass
+    Counter = Gauge = Histogram = _StubMetric  # type: ignore[misc,assignment]
+    def generate_latest(*args: Any, **kwargs: Any) -> bytes: return b""
 
 __all__ = [
     "agent_spawn_duration",

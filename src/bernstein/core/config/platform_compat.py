@@ -383,7 +383,7 @@ def path_separator() -> str:
 
 
 def _win_taskkill(pid: int, *, force: bool = False, tree: bool = False) -> bool:
-    """Kill a process on Windows via ``taskkill``.
+    """Kill a process on Windows via ``taskkill`` with PowerShell fallback.
 
     Args:
         pid: Process ID.
@@ -391,8 +391,9 @@ def _win_taskkill(pid: int, *, force: bool = False, tree: bool = False) -> bool:
         tree: If True, adds ``/T`` (kill child processes).
 
     Returns:
-        True if taskkill exited successfully.
+        True if the process was killed successfully.
     """
+    # Try taskkill first (faster when it works)
     cmd: list[str] = ["taskkill"]
     if force:
         cmd.append("/F")
@@ -406,11 +407,26 @@ def _win_taskkill(pid: int, *, force: bool = False, tree: bool = False) -> bool:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=10,
+            timeout=5,
         )
-        return result.returncode == 0
+        if result.returncode == 0:
+            return True
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("taskkill failed for PID %d: %s", pid, exc)
+
+    # Fallback: PowerShell Stop-Process (more reliable for stubborn processes)
+    try:
+        ps_cmd = f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            timeout=5,
+        )
+        # PowerShell returns 0 even if process doesn't exist, so verify
+        return not _win_process_alive(pid)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("PowerShell Stop-Process failed for PID %d: %s", pid, exc)
         return False
 
 
