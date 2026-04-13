@@ -55,6 +55,42 @@ def _ephemeral(content: str) -> JSONResponse:
     )
 
 
+def _verify_request_signature(request: Request, body: bytes) -> JSONResponse | None:
+    """Verify the Discord Ed25519 signature. Returns an error response or None."""
+    from bernstein.core.trigger_sources.discord import verify_discord_signature
+
+    public_key: str = getattr(request.app.state, "discord_public_key", None) or os.environ.get("DISCORD_PUBLIC_KEY", "")
+    if not public_key:
+        return None
+    timestamp = request.headers.get("x-signature-timestamp", "")
+    signature = request.headers.get("x-signature-ed25519", "")
+    if not timestamp or not signature or not verify_discord_signature(body, timestamp, signature, public_key):
+        return JSONResponse(status_code=401, content={"detail": "Invalid Discord signature"})
+    return None
+
+
+def _extract_command_options(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Extract the effective command name and options map from the payload."""
+    data: dict[str, Any] = payload.get("data", {})
+    command_name: str = data.get("name", "")
+    options: list[dict[str, Any]] = data.get("options", [])
+    sub_name = ""
+    sub_options: list[dict[str, Any]] = []
+    if options and options[0].get("type") == 1:  # SUB_COMMAND
+        sub_name = options[0].get("name", "")
+        sub_options = options[0].get("options", [])
+    option_map: dict[str, Any] = {opt["name"]: opt.get("value", "") for opt in (sub_options or options)}
+    return sub_name or command_name, option_map
+
+
+_COMMAND_HANDLERS: dict[str, str] = {
+    "run": "_handle_run",
+    "status": "_handle_status",
+    "stop": "_handle_stop",
+    "cost": "_handle_cost",
+}
+
+
 @router.post("/webhooks/discord/interactions", status_code=200)
 async def discord_interactions(request: Request) -> JSONResponse:
     """Receive and route Discord Application Command interactions.
@@ -68,20 +104,11 @@ async def discord_interactions(request: Request) -> JSONResponse:
         401 if the signature is invalid.
         400 if the payload cannot be parsed.
     """
-    from bernstein.core.trigger_sources.discord import verify_discord_signature
-
     body = await request.body()
 
-    # Verify Discord request signature
-    public_key: str = getattr(request.app.state, "discord_public_key", None) or os.environ.get("DISCORD_PUBLIC_KEY", "")
-    if public_key:
-        timestamp = request.headers.get("x-signature-timestamp", "")
-        signature = request.headers.get("x-signature-ed25519", "")
-        if not timestamp or not signature or not verify_discord_signature(body, timestamp, signature, public_key):
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid Discord signature"},
-            )
+    sig_error = _verify_request_signature(request, body)
+    if sig_error is not None:
+        return sig_error
 
     try:
         import json as _json
@@ -89,54 +116,31 @@ async def discord_interactions(request: Request) -> JSONResponse:
         payload: dict[str, Any] = _json.loads(body)
     except Exception:
         logger.debug("Bad Discord interaction payload", exc_info=True)
-        return JSONResponse(
-            status_code=400,
-            content={"detail": "Bad interaction payload"},
-        )
+        return JSONResponse(status_code=400, content={"detail": "Bad interaction payload"})
 
     interaction_type = payload.get("type", 0)
-
-    # Discord endpoint verification handshake
-    if interaction_type == _PING:
+    if interaction_type == _PING or interaction_type != _APPLICATION_COMMAND:
         return JSONResponse(status_code=200, content={"type": _PONG})
 
-    if interaction_type != _APPLICATION_COMMAND:
-        return JSONResponse(status_code=200, content={"type": _PONG})
-
-    data: dict[str, Any] = payload.get("data", {})
-    command_name: str = data.get("name", "")
-
-    # Extract sub-command and its options (Discord nested subcommands)
-    options: list[dict[str, Any]] = data.get("options", [])
-    sub_name = ""
-    sub_options: list[dict[str, Any]] = []
-    if options and options[0].get("type") == 1:  # SUB_COMMAND
-        sub_name = options[0].get("name", "")
-        sub_options = options[0].get("options", [])
-    option_map: dict[str, Any] = {opt["name"]: opt.get("value", "") for opt in (sub_options or options)}
+    effective_command, option_map = _extract_command_options(payload)
 
     from bernstein.core.sanitize import sanitize_log
 
     logger.info(
-        "Discord slash command received: command=%r sub=%r options=%r",
-        sanitize_log(command_name),
-        sanitize_log(sub_name),
+        "Discord slash command received: command=%r options=%r",
+        sanitize_log(effective_command),
         {sanitize_log(k): sanitize_log(str(v)) for k, v in option_map.items()},
     )
 
-    # Route to the appropriate sub-command handler
-    effective_command = sub_name or command_name
-
     if effective_command == "run":
         return await _handle_run(request, option_map, payload)
-    elif effective_command == "status":
+    if effective_command == "status":
         return _handle_status(request, payload)
-    elif effective_command == "stop":
+    if effective_command == "stop":
         return _handle_stop(request, payload)
-    elif effective_command == "cost":
+    if effective_command == "cost":
         return _handle_cost(request, payload)
-    else:
-        return _ephemeral(f"Unknown command: `{effective_command}`. Try `/bernstein run`, `status`, `stop`, or `cost`.")
+    return _ephemeral(f"Unknown command: `{effective_command}`. Try `/bernstein run`, `status`, `stop`, or `cost`.")
 
 
 async def _handle_run(request: Request, options: dict[str, Any], payload: dict[str, Any]) -> JSONResponse:

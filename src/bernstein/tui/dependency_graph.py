@@ -29,17 +29,26 @@ def _status_tag(status: str) -> str:
     return f"[{label}]"
 
 
+def _compute_in_degrees(
+    nodes: list[str],
+    forward: dict[str, list[str]],
+) -> dict[str, int]:
+    """Compute in-degree for each node based on forward edges."""
+    in_degree: dict[str, int] = dict.fromkeys(nodes, 0)
+    for node in nodes:
+        for child in forward.get(node, []):
+            if child in in_degree:
+                in_degree[child] += 1
+    return in_degree
+
+
 def _topological_sort(
     nodes: list[str],
     forward: dict[str, list[str]],
     _reverse: dict[str, list[str]],
 ) -> list[str]:
     """Kahn's algorithm. Returns nodes in dependency order."""
-    in_degree: dict[str, int] = dict.fromkeys(nodes, 0)
-    for node in nodes:
-        for child in forward.get(node, []):
-            if child in in_degree:
-                in_degree[child] += 1
+    in_degree = _compute_in_degrees(nodes, forward)
 
     queue: deque[str] = deque(n for n, d in in_degree.items() if d == 0)
     order: list[str] = []
@@ -132,6 +141,20 @@ def _render_children_group(
     return lines
 
 
+def _render_unrendered(
+    topo_order: list[str],
+    by_id: dict[str, dict[str, Any]],
+    rendered: set[str],
+) -> list[str]:
+    """Render any tasks not yet in the rendered set."""
+    lines: list[str] = []
+    for tid in topo_order:
+        if tid not in rendered:
+            lines.append(_render_task_line(by_id[tid]))
+            rendered.add(tid)
+    return lines
+
+
 def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
     """Render an ASCII dependency graph for a list of tasks.
 
@@ -148,7 +171,6 @@ def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
 
     by_id: dict[str, dict[str, Any]] = {t["id"]: t for t in tasks}
     forward, reverse = _build_adjacency(tasks, by_id)
-
     topo_order = _topological_sort(list(by_id.keys()), forward, reverse)
 
     lines: list[str] = []
@@ -157,21 +179,14 @@ def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
     for tid in topo_order:
         if tid in rendered:
             continue
-
         children = forward.get(tid, [])
         if children:
             lines.extend(_render_children_group(children, by_id, reverse, rendered))
-
         if tid not in rendered:
             lines.append(_render_task_line(by_id[tid]))
             rendered.add(tid)
 
-    # Render any remaining unrendered tasks
-    for tid in topo_order:
-        if tid not in rendered:
-            lines.append(_render_task_line(by_id[tid]))
-            rendered.add(tid)
-
+    lines.extend(_render_unrendered(topo_order, by_id, rendered))
     return "\n".join(lines)
 
 

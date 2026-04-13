@@ -127,59 +127,48 @@ class AdaptiveParallelism:
         elif max_agents is None and prev is not None:
             logger.info("Adaptive parallelism: SLO budget cap cleared")
 
-    def effective_max_agents(self) -> int:
-        """Compute the effective max_agents for this tick.
-
-        Applies the adaptive rules in order:
-        1. CPU overload → pause (return 0).
-        2. High error rate → reduce by 1.
-        3. Sustained low error rate → increase by 1.
-
-        Returns:
-            The number of agents allowed to run concurrently.
-        """
-        now = time.time()
-        error_rate = self._error_rate(now)
-        cpu_pct = self._get_cpu_percent()
-        prev = self._current_max
-
-        # Rule 4: CPU overload → halve agents (never fully stop, min 1)
-        # Grace period: ignore CPU spikes in first 2 minutes (startup indexing/ingestion)
+    def _apply_cpu_overload_rule(self, cpu_pct: float, now: float) -> bool:
+        """Apply CPU overload rule. Returns True if this rule triggered."""
         startup_grace = (now - self._created_at) < 120
-        if cpu_pct > _CPU_PAUSE_THRESHOLD and not startup_grace:
-            self._pre_cpu_max = prev  # remember for fast recovery
-            self._current_max = max(1, prev // 2)  # halve, not kill to 1
-            self._low_error_since = None
-            if self._current_max != prev:
-                self._last_adjustment_reason = f"cpu_high ({cpu_pct:.0f}%)"
-                logger.warning(
-                    "Adaptive parallelism: reducing to %d agents (CPU %.0f%% > %.0f%% threshold)",
-                    self._current_max,
-                    cpu_pct,
-                    _CPU_PAUSE_THRESHOLD,
-                )
-            return self._current_max
-
-        # Rule 2: High error rate → reduce by 1 (floor enforced by Rule 5 below)
-        if error_rate > _ERROR_RATE_HIGH and self._current_max > 1:
-            self._current_max -= 1
-            self._low_error_since = None
-            self._last_adjustment_reason = f"error_rate_high ({error_rate:.0%})"
-            logger.info(
-                "Adaptive parallelism: reducing to %d agents (error rate %.0f%% > %.0f%%)",
+        if cpu_pct <= _CPU_PAUSE_THRESHOLD or startup_grace:
+            return False
+        prev = self._current_max
+        self._pre_cpu_max = prev
+        self._current_max = max(1, prev // 2)
+        self._low_error_since = None
+        if self._current_max != prev:
+            self._last_adjustment_reason = f"cpu_high ({cpu_pct:.0f}%)"
+            logger.warning(
+                "Adaptive parallelism: reducing to %d agents (CPU %.0f%% > %.0f%% threshold)",
                 self._current_max,
-                error_rate * 100,
-                _ERROR_RATE_HIGH * 100,
+                cpu_pct,
+                _CPU_PAUSE_THRESHOLD,
             )
-            return self._current_max
+        return True
 
-        # Rule 3: Sustained low error rate → increase by 1
+    def _apply_high_error_rule(self, error_rate: float) -> bool:
+        """Apply high error rate rule. Returns True if this rule triggered."""
+        if error_rate <= _ERROR_RATE_HIGH or self._current_max <= 1:
+            return False
+        self._current_max -= 1
+        self._low_error_since = None
+        self._last_adjustment_reason = f"error_rate_high ({error_rate:.0%})"
+        logger.info(
+            "Adaptive parallelism: reducing to %d agents (error rate %.0f%% > %.0f%%)",
+            self._current_max,
+            error_rate * 100,
+            _ERROR_RATE_HIGH * 100,
+        )
+        return True
+
+    def _apply_low_error_rule(self, error_rate: float, now: float) -> None:
+        """Apply sustained low error rate rule (may increase agents)."""
         if error_rate < _ERROR_RATE_LOW:
             if self._low_error_since is None:
                 self._low_error_since = now
             elif (now - self._low_error_since) >= _LOW_ERROR_SUSTAIN_S and self._current_max < self.configured_max:
                 self._current_max += 1
-                self._low_error_since = now  # reset timer after increase
+                self._low_error_since = now
                 self._last_adjustment_reason = f"error_rate_low ({error_rate:.0%})"
                 logger.info(
                     "Adaptive parallelism: increasing to %d agents (error rate %.0f%% < %.0f%% for 10+ min)",
@@ -188,20 +177,40 @@ class AdaptiveParallelism:
                     _ERROR_RATE_LOW * 100,
                 )
         else:
-            # Error rate between 5% and 20%: reset the low-error timer
             self._low_error_since = None
 
-        # If CPU dropped from overload, restore to pre-spike level
+    def _apply_cpu_recovery_rule(self, cpu_pct: float) -> None:
+        """Restore agents if CPU dropped from overload."""
         pre_cpu = getattr(self, "_pre_cpu_max", 0)
         if pre_cpu > self._current_max and cpu_pct <= _CPU_PAUSE_THRESHOLD:
             self._current_max = min(pre_cpu, self.configured_max)
             self._pre_cpu_max = 0
             self._last_adjustment_reason = "cpu_recovered"
-            logger.info(
-                "Adaptive parallelism: CPU recovered (%.0f%%), restoring to %d agents",
-                cpu_pct,
-                self._current_max,
-            )
+
+    def effective_max_agents(self) -> int:
+        """Compute the effective max_agents for this tick.
+
+        Applies the adaptive rules in order:
+        1. CPU overload → halve agents.
+        2. High error rate → reduce by 1.
+        3. Sustained low error rate → increase by 1.
+        4. CPU recovery → restore to pre-spike level.
+
+        Returns:
+            The number of agents allowed to run concurrently.
+        """
+        now = time.time()
+        error_rate = self._error_rate(now)
+        cpu_pct = self._get_cpu_percent()
+
+        if self._apply_cpu_overload_rule(cpu_pct, now):
+            return self._current_max
+
+        if self._apply_high_error_rule(error_rate):
+            return self._current_max
+
+        self._apply_low_error_rule(error_rate, now)
+        self._apply_cpu_recovery_rule(cpu_pct)
 
         # Rule 0: SLO error-budget hard cap takes precedence over all adaptive rules
         if self._slo_constrained_max is not None:

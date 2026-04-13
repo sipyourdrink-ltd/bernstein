@@ -468,62 +468,55 @@ def _doctor_auto_fix(
 # ---------------------------------------------------------------------------
 
 
-@click.command("doctor")
-@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
-@click.option("--fix", "auto_fix", is_flag=True, default=False, help="Attempt to auto-fix issues.")
-def doctor(as_json: bool, auto_fix: bool) -> None:
-    """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
+def _add_check(checks: list[dict[str, Any]], name: str, ok: bool, detail: str, fix: str = "", fix_id: str = "") -> None:
+    """Append a diagnostic check result."""
+    checks.append({"name": name, "ok": ok, "detail": detail, "fix": fix, "fix_id": fix_id})
 
-    \b
-      bernstein doctor          # print diagnostic report
-      bernstein doctor --json   # machine-readable output
-      bernstein doctor --fix    # attempt to auto-fix issues
-    """
+
+def _doctor_check_python(checks: list[dict[str, Any]]) -> bool:
+    """Check Python version. Returns True if version is adequate."""
+    major, minor = sys.version_info.major, sys.version_info.minor
+    py_ok = (major, minor) >= (3, 12)
+    _add_check(
+        checks,
+        "Python version",
+        py_ok,
+        f"Python {major}.{minor} (need 3.12+)",
+        "Install Python 3.12 or newer" if not py_ok else "",
+    )
+    return py_ok
+
+
+def _doctor_check_adapters(checks: list[dict[str, Any]]) -> bool:
+    """Check CLI adapters in PATH. Returns True if any found."""
     import shutil
-    import socket
 
+    any_adapter = False
+    for adapter_name in ("claude", "codex", "gemini"):
+        found = shutil.which(adapter_name) is not None
+        if found:
+            any_adapter = True
+        _add_check(
+            checks,
+            f"Adapter: {adapter_name}",
+            found,
+            "found in PATH" if found else "not in PATH",
+            f"Install {adapter_name} CLI — see docs" if not found else "",
+        )
+    return any_adapter
+
+
+def _doctor_check_auth(checks: list[dict[str, Any]]) -> bool:
+    """Check adapter authentication. Returns True if any auth found."""
     from bernstein.core.preflight import (
         _claude_has_oauth_session,  # type: ignore[reportPrivateUsage]
         _codex_has_auth,  # type: ignore[reportPrivateUsage]
         gemini_has_auth,  # type: ignore[reportPrivateUsage]
     )
 
-    checks: list[dict[str, Any]] = []
-    # Track auto-fix results: (description, succeeded)
-    fixed: list[str] = []
-    manual_needed: list[str] = []
-
-    def _check(name: str, ok: bool, detail: str, fix: str = "", fix_id: str = "") -> None:
-        checks.append({"name": name, "ok": ok, "detail": detail, "fix": fix, "fix_id": fix_id})
-
-    # 1. Python version
-    major, minor = sys.version_info.major, sys.version_info.minor
-    py_ok = (major, minor) >= (3, 12)
-    _check(
-        "Python version",
-        py_ok,
-        f"Python {major}.{minor} (need 3.12+)",
-        "Install Python 3.12 or newer" if not py_ok else "",
-    )
-
-    # 2. CLI adapters
-    adapter_names = ["claude", "codex", "gemini"]
-    any_adapter = False
-    for adapter_name in adapter_names:
-        found = shutil.which(adapter_name) is not None
-        if found:
-            any_adapter = True
-        _check(
-            f"Adapter: {adapter_name}",
-            found,
-            "found in PATH" if found else "not in PATH",
-            f"Install {adapter_name} CLI — see docs" if not found else "",
-        )
-
-    # 3. Auth checks — detect all auth methods per adapter
     any_key = False
 
-    # Claude: API key or OAuth
+    # Claude
     claude_has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     claude_authed = claude_has_key
     claude_detail = "ANTHROPIC_API_KEY set" if claude_has_key else "ANTHROPIC_API_KEY not set"
@@ -535,45 +528,34 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             claude_detail = _NOT_AUTHENTICATED_MSG
     if claude_authed:
         any_key = True
-    _check(
-        "Auth: claude",
-        claude_authed,
-        claude_detail,
-        "export ANTHROPIC_API_KEY=key or: claude login" if not claude_authed else "",
-    )
+    _add_check(checks, "Auth: claude", claude_authed, claude_detail,
+               "export ANTHROPIC_API_KEY=key or: claude login" if not claude_authed else "")
 
-    # Codex: API key or ChatGPT login
+    # Codex
     codex_authed, codex_method = _codex_has_auth()
     if codex_authed:
         any_key = True
-        codex_detail = codex_method
-    else:
-        codex_detail = _NOT_AUTHENTICATED_MSG
-    _check(
-        "Auth: codex",
-        codex_authed,
-        codex_detail,
-        "export OPENAI_API_KEY=key or: codex login" if not codex_authed else "",
-        fix_id="codex_login" if not codex_authed else "",
-    )
+    _add_check(checks, "Auth: codex", codex_authed,
+               codex_method if codex_authed else _NOT_AUTHENTICATED_MSG,
+               "export OPENAI_API_KEY=key or: codex login" if not codex_authed else "",
+               fix_id="codex_login" if not codex_authed else "")
 
-    # Gemini: API key, gcloud auth, config dir, GOOGLE_APPLICATION_CREDENTIALS
+    # Gemini
     gemini_authed, gemini_method = gemini_has_auth()
     if gemini_authed:
         any_key = True
-        gemini_detail = gemini_method
-    else:
-        gemini_detail = _NOT_AUTHENTICATED_MSG
-    _check(
-        "Auth: gemini",
-        gemini_authed,
-        gemini_detail,
-        "export GOOGLE_API_KEY=key, or: gcloud auth login" if not gemini_authed else "",
-        fix_id="gemini_auth" if not gemini_authed else "",
-    )
+    _add_check(checks, "Auth: gemini", gemini_authed,
+               gemini_method if gemini_authed else _NOT_AUTHENTICATED_MSG,
+               "export GOOGLE_API_KEY=key, or: gcloud auth login" if not gemini_authed else "",
+               fix_id="gemini_auth" if not gemini_authed else "")
 
-    # 4. Port 8052 availability
-    port = 8052
+    return any_key
+
+
+def _doctor_check_port(checks: list[dict[str, Any]], port: int = 8052) -> None:
+    """Check if the task server port is available."""
+    import socket
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(0.5)
@@ -581,7 +563,8 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             port_in_use = result == 0
     except Exception:
         port_in_use = False
-    _check(
+    _add_check(
+        checks,
         f"Port {port}",
         not port_in_use,
         "in use — server may already be running" if port_in_use else "available",
@@ -589,11 +572,13 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         fix_id="port_in_use" if port_in_use else "",
     )
 
-    # 5. .sdd/ structure
-    workdir = Path.cwd()
+
+def _doctor_check_workspace(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Check .sdd/ directory structure."""
     required_dirs = [".sdd", ".sdd/backlog", ".sdd/runtime"]
     sdd_ok = all((workdir / d).exists() for d in required_dirs)
-    _check(
+    _add_check(
+        checks,
         ".sdd workspace",
         sdd_ok,
         "present" if sdd_ok else "missing or incomplete",
@@ -601,166 +586,106 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         fix_id="sdd_missing" if not sdd_ok else "",
     )
 
-    # 6. Stale PID files
+
+def _doctor_check_stale_pids(checks: list[dict[str, Any]], workdir: Path) -> list[Path]:
+    """Check for stale PID files. Returns list of stale PID file paths."""
     stale_pids: list[str] = []
     stale_pid_paths: list[Path] = []
     for pid_name in ("server.pid", "spawner.pid", "watchdog.pid"):
         pid_path = workdir / ".sdd" / "runtime" / pid_name
-        if pid_path.exists():
-            try:
-                pid_val = int(pid_path.read_text().strip())
-                from bernstein.core.platform_compat import process_alive
+        if not pid_path.exists():
+            continue
+        try:
+            pid_val = int(pid_path.read_text().strip())
+            from bernstein.core.platform_compat import process_alive
 
-                if not process_alive(pid_val):
-                    stale_pids.append(pid_name)
-                    stale_pid_paths.append(pid_path)
-            except ValueError:
+            if not process_alive(pid_val):
                 stale_pids.append(pid_name)
                 stale_pid_paths.append(pid_path)
-    _check(
+        except ValueError:
+            stale_pids.append(pid_name)
+            stale_pid_paths.append(pid_path)
+    _add_check(
+        checks,
         "Stale PID files",
         len(stale_pids) == 0,
         f"found: {', '.join(stale_pids)}" if stale_pids else "none",
         "Run 'bernstein stop' to clean up" if stale_pids else "",
         fix_id="stale_pids" if stale_pids else "",
     )
+    return stale_pid_paths
 
-    # 7. Guardrail stats
+
+def _doctor_check_guardrails(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Check guardrail stats."""
     from bernstein.core.guardrails import get_guardrail_stats
 
     guardrail_stats = get_guardrail_stats(workdir)
     g_total = guardrail_stats["total"]
     g_blocked = guardrail_stats["blocked"]
     g_flagged = guardrail_stats["flagged"]
-    if g_total > 0:
-        g_detail = f"{g_total} checked, {g_blocked} blocked, {g_flagged} flagged"
-    else:
-        g_detail = "no events recorded yet"
-    _check("Guardrails", True, g_detail)
+    g_detail = (
+        f"{g_total} checked, {g_blocked} blocked, {g_flagged} flagged" if g_total > 0 else "no events recorded yet"
+    )
+    _add_check(checks, "Guardrails", True, g_detail)
 
-    # 8. CI tool dependencies (ruff, pytest, pyright)
+
+def _doctor_check_ci_tools(checks: list[dict[str, Any]]) -> None:
+    """Check CI tool dependencies (ruff, pytest, pyright)."""
     from bernstein.core.ci_fix import check_test_dependencies
 
-    ci_dep_results = check_test_dependencies()
-    for dep in ci_dep_results:
-        _check(
-            f"CI tool: {dep['name']}",
-            dep["ok"] == "True",
-            dep["detail"],
-            dep["fix"],
-        )
+    for dep in check_test_dependencies():
+        _add_check(checks, f"CI tool: {dep['name']}", dep["ok"] == "True", dep["detail"], dep["fix"])
 
-    # 9. Storage backend connectivity
-    _doctor_check_storage(_check)
 
-    # 10. Secrets manager connectivity
-    _doctor_check_secrets(workdir, _check)
+def _doctor_check_context_and_plugins(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Check context files, MCP servers, permissions, installations, and plugins."""
+    from bernstein.tui.context_files_doctor import check_context_files, check_mcp_servers, check_permission_rules
 
-    # 11. Overall readiness
-    any_adapter_key = any_adapter and any_key
-    _check(
-        "Ready to run",
-        py_ok and any_adapter_key,
-        "yes" if (py_ok and any_adapter_key) else "missing adapter or API key",
-        "Install an adapter (claude/codex/gemini) and set its API key" if not any_adapter_key else "",
-    )
+    for w in check_context_files(workdir):
+        _add_check(checks, w.name, w.ok, w.detail, w.fix)
+    for w in check_mcp_servers(workdir):
+        _add_check(checks, w.name, w.ok, w.detail, w.fix)
+    for w in check_permission_rules(workdir):
+        _add_check(checks, w.name, w.ok, w.detail, w.fix)
 
-    # 12. Context file warnings (CLAUDE.md, AGENTS.md, etc.)
-    from bernstein.tui.context_files_doctor import check_context_files
-
-    context_warnings = check_context_files(workdir)
-    for w in context_warnings:
-        _check(
-            w.name,
-            w.ok,
-            w.detail,
-            w.fix,
-        )
-
-    # 13. MCP server reachability
-    from bernstein.tui.context_files_doctor import check_mcp_servers
-
-    mcp_warnings = check_mcp_servers(workdir)
-    for w in mcp_warnings:
-        _check(
-            w.name,
-            w.ok,
-            w.detail,
-            w.fix,
-        )
-
-    # 14. Permission rule health
-    from bernstein.tui.context_files_doctor import check_permission_rules
-
-    perm_warnings = check_permission_rules(workdir)
-    for w in perm_warnings:
-        _check(
-            w.name,
-            w.ok,
-            w.detail,
-            w.fix,
-        )
-
-    # 15. Installation mismatches
     from bernstein.cli.install_check import check_installations
 
     for w in check_installations():
-        _check(
-            w.name,
-            w.ok,
-            w.detail,
-            w.fix,
-        )
+        _add_check(checks, w.name, w.ok, w.detail, w.fix)
 
-    # 16. Plugin loading errors
     from bernstein.plugins.plugin_errors import get_plugin_errors
 
     plugin_errors = get_plugin_errors().get_errors()
     if plugin_errors:
         for pe in plugin_errors:
-            detail = f"[{pe.phase}] {pe.message}"
-            _check(
-                f"Plugin: {pe.plugin_name}",
-                ok=False,
-                detail=detail,
-                fix=f"Check plugin {pe.plugin_name} configuration",
-            )
+            _add_check(checks, f"Plugin: {pe.plugin_name}", False,
+                       f"[{pe.phase}] {pe.message}", f"Check plugin {pe.plugin_name} configuration")
     else:
-        _check(
-            "Plugin loading",
-            ok=True,
-            detail="no errors",
-        )
+        _add_check(checks, "Plugin loading", True, "no errors")
 
-    # 17. Commit attribution (doctor check — shows agent contribution summary)
+
+def _doctor_check_commit_attribution(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Check git commit attribution stats."""
     from bernstein.cli.commit_stats import collect_commit_stats
 
     commit_result = collect_commit_stats(repo_dir=str(workdir))
     if commit_result.error:
-        _check(
-            _COMMIT_ATTRIBUTION_LABEL,
-            ok=False,
-            detail=f"git log error: {commit_result.error}",
-            fix="Ensure this is a git repository with git installed",
-        )
+        _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, False,
+                   f"git log error: {commit_result.error}", "Ensure this is a git repository with git installed")
     elif not commit_result.roles:
-        _check(
-            _COMMIT_ATTRIBUTION_LABEL,
-            ok=True,
-            detail="no commits found in this repository",
-        )
+        _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, True, "no commits found in this repository")
     else:
         role_parts = ", ".join(
             f"{role}: {rs.commits} commits, +{rs.lines_added}/-{rs.lines_deleted}"
             for role, rs in commit_result.roles.items()
         )
-        _check(
-            _COMMIT_ATTRIBUTION_LABEL,
-            ok=True,
-            detail=f"{commit_result.total_commits} commits: {role_parts}",
-        )
+        _add_check(checks, _COMMIT_ATTRIBUTION_LABEL, True,
+                   f"{commit_result.total_commits} commits: {role_parts}")
 
-    # 18. Compliance mode prerequisites
+
+def _doctor_check_compliance(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Check compliance mode prerequisites."""
     from bernstein.core.compliance import load_compliance_config
 
     compliance_cfg = load_compliance_config(workdir / ".sdd")
@@ -774,22 +699,15 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         preset_label = compliance_cfg.preset.value if compliance_cfg.preset else "custom"
         prereq_warnings = compliance_cfg.check_prerequisites()
         if prereq_warnings:
-            _check(
-                f"Compliance ({preset_label})",
-                False,
-                f"{len(prereq_warnings)} issue(s): {prereq_warnings[0]}",
-                "; ".join(prereq_warnings),
-            )
+            _add_check(checks, f"Compliance ({preset_label})", False,
+                       f"{len(prereq_warnings)} issue(s): {prereq_warnings[0]}", "; ".join(prereq_warnings))
         else:
-            _check(f"Compliance ({preset_label})", True, "all prerequisites met", "")
+            _add_check(checks, f"Compliance ({preset_label})", True, "all prerequisites met")
 
-    # --fix: attempt to auto-fix issues
-    if auto_fix:
-        _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)
 
-    # 10. Secrets provider connectivity
+def _doctor_check_secrets_yaml(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Check secrets provider connectivity from bernstein.yaml."""
     try:
-        # Load config from bernstein.yaml if it exists
         yaml_path = workdir / "bernstein.yaml"
         if yaml_path.exists():
             from bernstein.core.seed import parse_seed
@@ -799,18 +717,105 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
                 from bernstein.core.secrets import check_secrets_connectivity
 
                 ok, detail = check_secrets_connectivity(seed.secrets)
-                _check(
-                    f"Secrets: {seed.secrets.provider}",
-                    ok,
-                    detail,
-                    f"Check {seed.secrets.provider} credentials and path {seed.secrets.path}" if not ok else "",
-                )
+                _add_check(checks, f"Secrets: {seed.secrets.provider}", ok, detail,
+                           f"Check {seed.secrets.provider} credentials and path {seed.secrets.path}" if not ok else "")
             else:
-                _check("Secrets", True, "none (using environment variables)", "")
+                _add_check(checks, "Secrets", True, "none (using environment variables)")
         else:
-            _check("Secrets", True, "no bernstein.yaml (using environment variables)", "")
+            _add_check(checks, "Secrets", True, "no bernstein.yaml (using environment variables)")
     except Exception as exc:
-        _check("Secrets", False, f"configuration error: {exc}", "Check bernstein.yaml syntax")
+        _add_check(checks, "Secrets", False, f"configuration error: {exc}", "Check bernstein.yaml syntax")
+
+
+def _doctor_render_table(
+    checks: list[dict[str, Any]],
+    auto_fix: bool,
+    fixed: list[str],
+    manual_needed: list[str],
+) -> None:
+    """Render the doctor results as a Rich table."""
+    from rich.table import Table
+
+    table = Table(title="Bernstein Doctor", header_style="bold cyan", show_lines=False)
+    table.add_column("Check", min_width=22)
+    table.add_column("Status", min_width=8)
+    table.add_column("Detail", min_width=35)
+    table.add_column("Fix")
+
+    for c in checks:
+        icon = "[green]\u2713[/green]" if c["ok"] else "[red]\u2717[/red]"
+        table.add_row(c["name"], icon, c["detail"], f"[dim]{c['fix']}[/dim]" if c["fix"] else "")
+
+    console.print(table)
+
+    if auto_fix and (fixed or manual_needed):
+        console.print()
+        if fixed:
+            console.print("[bold green]Fixed:[/bold green]")
+            for msg in fixed:
+                console.print(f"  [green]\u2713[/green] {msg}")
+        if manual_needed:
+            console.print("[bold yellow]Manual action needed:[/bold yellow]")
+            for msg in manual_needed:
+                console.print(f"  [yellow]\u2192[/yellow] {msg}")
+
+    failed_checks = [c for c in checks if not c["ok"]]
+    if failed_checks:
+        console.print(f"\n[red]{len(failed_checks)} issue(s) found.[/red]")
+        if not auto_fix:
+            console.print("[dim]Run 'bernstein doctor --fix' to attempt auto-repair.[/dim]")
+        raise SystemExit(1)
+    else:
+        console.print("\n[green]All checks passed.[/green]")
+
+
+@click.command("doctor")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+@click.option("--fix", "auto_fix", is_flag=True, default=False, help="Attempt to auto-fix issues.")
+def doctor(as_json: bool, auto_fix: bool) -> None:
+    """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
+
+    \b
+      bernstein doctor          # print diagnostic report
+      bernstein doctor --json   # machine-readable output
+      bernstein doctor --fix    # attempt to auto-fix issues
+    """
+    checks: list[dict[str, Any]] = []
+    fixed: list[str] = []
+    manual_needed: list[str] = []
+    workdir = Path.cwd()
+
+    py_ok = _doctor_check_python(checks)
+    any_adapter = _doctor_check_adapters(checks)
+    any_key = _doctor_check_auth(checks)
+    _doctor_check_port(checks)
+    _doctor_check_workspace(checks, workdir)
+    stale_pid_paths = _doctor_check_stale_pids(checks, workdir)
+    _doctor_check_guardrails(checks, workdir)
+    _doctor_check_ci_tools(checks)
+    def _check_fn(name: str, ok: bool, detail: str, fix: str = "", fix_id: str = "") -> None:
+        _add_check(checks, name, ok, detail, fix, fix_id)
+
+    _doctor_check_storage(_check_fn)
+    _doctor_check_secrets(workdir, _check_fn)
+
+    any_adapter_key = any_adapter and any_key
+    _add_check(
+        checks,
+        "Ready to run",
+        py_ok and any_adapter_key,
+        "yes" if (py_ok and any_adapter_key) else "missing adapter or API key",
+        "Install an adapter (claude/codex/gemini) and set its API key" if not any_adapter_key else "",
+    )
+
+    _doctor_check_context_and_plugins(checks, workdir)
+    _doctor_check_commit_attribution(checks, workdir)
+    _doctor_check_compliance(checks, workdir)
+
+    if auto_fix:
+        _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)
+
+    _doctor_check_secrets_yaml(checks, workdir)
 
     if as_json or is_json():
         result_dict: dict[str, Any] = {"checks": checks}
@@ -823,45 +828,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             raise SystemExit(1)
         return
 
-    from rich.table import Table
-
-    table = Table(title="Bernstein Doctor", header_style="bold cyan", show_lines=False)
-    table.add_column("Check", min_width=22)
-    table.add_column("Status", min_width=8)
-    table.add_column("Detail", min_width=35)
-    table.add_column("Fix")
-
-    for c in checks:
-        icon = "[green]✓[/green]" if c["ok"] else "[red]✗[/red]"
-        table.add_row(
-            c["name"],
-            icon,
-            c["detail"],
-            f"[dim]{c['fix']}[/dim]" if c["fix"] else "",
-        )
-
-    console.print(table)
-
-    # Show --fix results
-    if auto_fix and (fixed or manual_needed):
-        console.print()
-        if fixed:
-            console.print("[bold green]Fixed:[/bold green]")
-            for msg in fixed:
-                console.print(f"  [green]✓[/green] {msg}")
-        if manual_needed:
-            console.print("[bold yellow]Manual action needed:[/bold yellow]")
-            for msg in manual_needed:
-                console.print(f"  [yellow]→[/yellow] {msg}")
-
-    failed_checks = [c for c in checks if not c["ok"]]
-    if failed_checks:
-        console.print(f"\n[red]{len(failed_checks)} issue(s) found.[/red]")
-        if not auto_fix:
-            console.print("[dim]Run 'bernstein doctor --fix' to attempt auto-repair.[/dim]")
-        raise SystemExit(1)
-    else:
-        console.print("\n[green]All checks passed.[/green]")
+    _doctor_render_table(checks, auto_fix, fixed, manual_needed)
 
 
 # ---------------------------------------------------------------------------

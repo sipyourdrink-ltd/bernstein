@@ -100,6 +100,31 @@ def _count_changes(lines: list[str]) -> tuple[int, int]:
     return added, removed
 
 
+def _finalize_hunk(
+    header: str | None,
+    lines: list[str],
+    start: int,
+    end: int,
+    hunks: list[DiffHunk],
+) -> None:
+    """Append a completed hunk to the hunks list if valid."""
+    if header and lines:
+        added, removed = _count_changes(lines)
+        hunks.append(
+            DiffHunk(header=header, lines=lines, start_line=start, end_line=end, added=added, removed=removed)
+        )
+
+
+def _finalize_file(filename: str | None, hunks: list[DiffHunk], files: list[FileDiff]) -> None:
+    """Append a completed file diff to the files list if valid."""
+    if filename and hunks:
+        total_added = sum(h.added for h in hunks)
+        total_removed = sum(h.removed for h in hunks)
+        files.append(
+            FileDiff(filename=filename, hunks=hunks, total_added=total_added, total_removed=total_removed)
+        )
+
+
 def parse_diff(diff_text: str) -> list[FileDiff]:
     """Parse a unified diff into foldable FileDiff objects.
 
@@ -118,85 +143,32 @@ def parse_diff(diff_text: str) -> list[FileDiff]:
     current_end: int = 0
 
     for line in diff_text.splitlines():
-        # Detect file header
         if line.startswith("diff --git"):
-            # Save previous file
-            if current_file and current_hunks:
-                total_added = sum(h.added for h in current_hunks)
-                total_removed = sum(h.removed for h in current_hunks)
-                files.append(
-                    FileDiff(
-                        filename=current_file,
-                        hunks=current_hunks,
-                        total_added=total_added,
-                        total_removed=total_removed,
-                    )
-                )
+            _finalize_file(current_file, current_hunks, files)
             current_file = None
             current_hunks = []
             current_hunk_lines = []
             current_hunk_header = None
             continue
 
-        # Detect filename
         if line.startswith("--- a/") or line.startswith("+++ b/"):
             if line.startswith("+++ b/"):
                 current_file = line[6:]
             continue
 
-        # Detect hunk header
         hunk_range = _parse_hunk_header(line)
         if hunk_range is not None:
-            # Save previous hunk
-            if current_hunk_header and current_hunk_lines:
-                added, removed = _count_changes(current_hunk_lines)
-                current_hunks.append(
-                    DiffHunk(
-                        header=current_hunk_header,
-                        lines=current_hunk_lines,
-                        start_line=current_start,
-                        end_line=current_end,
-                        added=added,
-                        removed=removed,
-                    )
-                )
-
+            _finalize_hunk(current_hunk_header, current_hunk_lines, current_start, current_end, current_hunks)
             current_hunk_header = line
             current_hunk_lines = [line]
             current_start, current_end = hunk_range
             continue
 
-        # Accumulate hunk content
         if current_hunk_header is not None:
             current_hunk_lines.append(line)
 
-    # Save last hunk
-    if current_hunk_header and current_hunk_lines:
-        added, removed = _count_changes(current_hunk_lines)
-        current_hunks.append(
-            DiffHunk(
-                header=current_hunk_header,
-                lines=current_hunk_lines,
-                start_line=current_start,
-                end_line=current_end,
-                added=added,
-                removed=removed,
-            )
-        )
-
-    # Save last file
-    if current_file and current_hunks:
-        total_added = sum(h.added for h in current_hunks)
-        total_removed = sum(h.removed for h in current_hunks)
-        files.append(
-            FileDiff(
-                filename=current_file,
-                hunks=current_hunks,
-                total_added=total_added,
-                total_removed=total_removed,
-            )
-        )
-
+    _finalize_hunk(current_hunk_header, current_hunk_lines, current_start, current_end, current_hunks)
+    _finalize_file(current_file, current_hunks, files)
     return files
 
 

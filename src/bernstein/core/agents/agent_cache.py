@@ -199,6 +199,34 @@ class AgentCache:
 
         return shared
 
+    def _cleanup_entry(self, entry_file: Path, cutoff: float) -> bool:
+        """Remove a single cache entry if it's older than *cutoff* or broken.
+
+        Returns:
+            True if the entry was removed.
+        """
+        try:
+            data = json.loads(entry_file.read_text(encoding="utf-8"))
+            if data.get("created_at", 0.0) >= cutoff:
+                return False
+            entry_file.unlink()
+            return True
+        except (OSError, json.JSONDecodeError):
+            try:
+                entry_file.unlink()
+                return True
+            except OSError:
+                return False
+
+    @staticmethod
+    def _remove_empty_dir(session_dir: Path) -> None:
+        """Remove a directory if it's empty."""
+        try:
+            if session_dir.is_dir() and not any(session_dir.iterdir()):
+                session_dir.rmdir()
+        except OSError:
+            pass
+
     def cleanup(self, max_age_seconds: float = 3600.0) -> int:
         """Remove entries older than *max_age_seconds*.
 
@@ -220,27 +248,29 @@ class AgentCache:
             for entry_file in list(session_dir.iterdir()):
                 if not entry_file.name.endswith(_JSON_EXT):
                     continue
-                try:
-                    data = json.loads(entry_file.read_text(encoding="utf-8"))
-                    if data.get("created_at", 0.0) < cutoff:
-                        entry_file.unlink()
-                        removed += 1
-                except (OSError, json.JSONDecodeError):
-                    # Broken entry — remove it as well
-                    try:
-                        entry_file.unlink()
-                        removed += 1
-                    except OSError:
-                        pass
-
-            # Remove empty session dirs
-            try:
-                if session_dir.is_dir() and not any(session_dir.iterdir()):
-                    session_dir.rmdir()
-            except OSError:
-                pass
+                if self._cleanup_entry(entry_file, cutoff):
+                    removed += 1
+            self._remove_empty_dir(session_dir)
 
         return removed
+
+    def _count_disk_usage(self) -> tuple[int, int]:
+        """Return (total_size_bytes, entry_count) for real cache entries."""
+        total_size = 0
+        entry_count = 0
+        if not self._cache_dir.exists():
+            return total_size, entry_count
+        for session_dir in self._cache_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+            for entry_file in session_dir.iterdir():
+                if entry_file.name.endswith(_JSON_EXT) and not entry_file.is_symlink():
+                    try:
+                        total_size += entry_file.stat().st_size
+                        entry_count += 1
+                    except OSError:
+                        pass
+        return total_size, entry_count
 
     def stats(self) -> dict[str, Any]:
         """Return cache statistics.
@@ -249,20 +279,7 @@ class AgentCache:
             Dictionary with keys ``hit_count``, ``miss_count``,
             ``hit_rate``, ``total_size_bytes``, and ``entry_count``.
         """
-        total_size = 0
-        entry_count = 0
-        if self._cache_dir.exists():
-            for session_dir in self._cache_dir.iterdir():
-                if not session_dir.is_dir():
-                    continue
-                for entry_file in session_dir.iterdir():
-                    if entry_file.name.endswith(_JSON_EXT) and not entry_file.is_symlink():
-                        try:
-                            total_size += entry_file.stat().st_size
-                            entry_count += 1
-                        except OSError:
-                            pass
-
+        total_size, entry_count = self._count_disk_usage()
         total_lookups = self._hits + self._misses
         hit_rate = self._hits / total_lookups if total_lookups > 0 else 0.0
 
