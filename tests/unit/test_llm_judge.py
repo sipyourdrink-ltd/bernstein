@@ -52,7 +52,7 @@ class TestJudgeDimension:
     def test_construction(self) -> None:
         dim = JudgeDimension(name="accuracy", weight=0.5, description="How accurate")
         assert dim.name == "accuracy"
-        assert dim.weight == 0.5
+        assert dim.weight == pytest.approx(0.5)
         assert dim.description == "How accurate"
 
     def test_frozen(self) -> None:
@@ -78,7 +78,7 @@ class TestDimensionScore:
         dim = JudgeDimension(name="foo", weight=0.5, description="bar")
         ds = DimensionScore(dimension=dim, score=0.75, reasoning="good")
         assert ds.dimension is dim
-        assert ds.score == 0.75
+        assert ds.score == pytest.approx(0.75)
         assert ds.reasoning == "good"
 
     def test_frozen(self) -> None:
@@ -105,10 +105,10 @@ class TestJudgeResult:
             cost_usd=0.01,
         )
         assert result.task_id == "t-1"
-        assert result.overall_score == 0.85
+        assert result.overall_score == pytest.approx(0.85)
         assert result.dimensions == ()
         assert result.model_used == "test-model"
-        assert result.cost_usd == 0.01
+        assert result.cost_usd == pytest.approx(0.01)
 
     def test_frozen(self) -> None:
         result = JudgeResult(
@@ -241,7 +241,7 @@ class TestParseJudgeResponse:
         scores = parse_judge_response(response)
         assert len(scores) == 5
         for ds in scores:
-            assert ds.score == 0.8
+            assert ds.score == pytest.approx(0.8)
 
     def test_response_with_markdown_fences(self) -> None:
         payload = _default_scores_payload(0.7)
@@ -260,14 +260,14 @@ class TestParseJudgeResponse:
         payload["task_completion"] = {"score": 1.5, "reasoning": "too high"}
         scores = parse_judge_response(_make_response(payload))
         tc = next(s for s in scores if s.dimension.name == "task_completion")
-        assert tc.score == 1.0
+        assert tc.score == pytest.approx(1.0)
 
     def test_clamps_score_below_zero(self) -> None:
         payload = _default_scores_payload()
         payload["task_completion"] = {"score": -0.5, "reasoning": "too low"}
         scores = parse_judge_response(_make_response(payload))
         tc = next(s for s in scores if s.dimension.name == "task_completion")
-        assert tc.score == 0.0
+        assert tc.score == pytest.approx(0.0)
 
     def test_raises_on_garbage(self) -> None:
         with pytest.raises(ValueError, match="No JSON"):
@@ -295,14 +295,14 @@ class TestParseJudgeResponse:
         scores = parse_judge_response(_make_response(payload), dims)
         assert len(scores) == 1
         assert scores[0].dimension.name == "custom"
-        assert scores[0].score == 0.9
+        assert scores[0].score == pytest.approx(0.9)
 
     def test_integer_score_accepted(self) -> None:
         payload = _default_scores_payload()
         payload["style"] = {"score": 1, "reasoning": "integer"}
         scores = parse_judge_response(_make_response(payload))
         style = next(s for s in scores if s.dimension.name == "style")
-        assert style.score == 1.0
+        assert style.score == pytest.approx(1.0)
 
     def test_missing_reasoning_defaults_to_empty(self) -> None:
         payload: dict[str, dict[str, object]] = {
@@ -327,9 +327,9 @@ class TestScoreOutput:
 
     def test_placeholder_scores_are_zero(self) -> None:
         result = score_output("task", "output")
-        assert result.overall_score == 0.0
+        assert result.overall_score == pytest.approx(0.0)
         for ds in result.dimensions:
-            assert ds.score == 0.0
+            assert ds.score == pytest.approx(0.0)
 
     def test_default_dimensions_used(self) -> None:
         result = score_output("task", "output")
@@ -349,7 +349,7 @@ class TestScoreOutput:
 
     def test_cost_is_zero(self) -> None:
         result = score_output("task", "output")
-        assert result.cost_usd == 0.0
+        assert result.cost_usd == pytest.approx(0.0)
 
     def test_custom_dimensions(self) -> None:
         dims = (JudgeDimension(name="only_dim", weight=1.0, description="d"),)

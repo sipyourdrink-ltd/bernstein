@@ -91,10 +91,10 @@ class TestQualityDataPoint:
     def test_fields(self) -> None:
         dp = _point(run_id="r-42", lint=2.5, types=1.0, test_pass=0.88, review=72.0)
         assert dp.run_id == "r-42"
-        assert dp.lint_errors_per_task == 2.5
-        assert dp.type_errors_per_task == 1.0
-        assert dp.test_pass_rate == 0.88
-        assert dp.review_score == 72.0
+        assert dp.lint_errors_per_task == pytest.approx(2.5)
+        assert dp.type_errors_per_task == pytest.approx(1.0)
+        assert dp.test_pass_rate == pytest.approx(0.88)
+        assert dp.review_score == pytest.approx(72.0)
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +152,10 @@ class TestLinearSlope:
     """Tests for the linear regression slope helper."""
 
     def test_empty(self) -> None:
-        assert _linear_slope(()) == 0.0
+        assert _linear_slope(()) == pytest.approx(0.0)
 
     def test_single_value(self) -> None:
-        assert _linear_slope((5.0,)) == 0.0
+        assert _linear_slope((5.0,)) == pytest.approx(0.0)
 
     def test_perfect_line(self) -> None:
         slope = _linear_slope((0.0, 1.0, 2.0, 3.0))
@@ -287,7 +287,7 @@ class TestComputeTrends:
         points = [_point(days_ago=2, review=80.0), _point(days_ago=0, review=90.0)]
         trends = compute_trends(points, window_days=30)
         review = next(t for t in trends if t.metric_name == "review_score")
-        assert review.current_value == 90.0
+        assert review.current_value == pytest.approx(90.0)
 
 
 # ---------------------------------------------------------------------------
@@ -361,10 +361,10 @@ class TestPctChange:
     """Tests for percentage change calculation."""
 
     def test_zero_baseline(self) -> None:
-        assert _pct_change(0.0, 5.0) == 100.0
+        assert _pct_change(0.0, 5.0) == pytest.approx(100.0)
 
     def test_both_zero(self) -> None:
-        assert _pct_change(0.0, 0.0) == 0.0
+        assert _pct_change(0.0, 0.0) == pytest.approx(0.0)
 
     def test_normal_increase(self) -> None:
         assert abs(_pct_change(10.0, 15.0) - 50.0) < 1e-10

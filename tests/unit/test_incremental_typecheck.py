@@ -66,7 +66,7 @@ class TestTypeCheckScope:
         assert scope.changed_files == ("x.py",)
         assert scope.dependent_files == ("y.py", "z.py")
         assert scope.total_files == 100
-        assert scope.reduction_pct == 97.0
+        assert scope.reduction_pct == pytest.approx(97.0)
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ class TestTypeCheckResult:
         )
         assert result.errors == ("error: foo",)
         assert result.passed is False
-        assert result.duration_s == 1.5
+        assert result.duration_s == pytest.approx(1.5)
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ class TestComputeTypecheckScope:
             (src / f"mod{i}.py").write_text("")
         scope = compute_typecheck_scope(["src/pkg/mod0.py"], tmp_path)
         assert scope.total_files == 10
-        assert scope.reduction_pct == 90.0
+        assert scope.reduction_pct == pytest.approx(90.0)
         assert scope.changed_files == ("src/pkg/mod0.py",)
 
     def test_empty_changed(self, tmp_path: Path) -> None:
@@ -343,7 +343,7 @@ class TestComputeTypecheckScope:
         (tmp_path / "a.py").write_text("")
         (tmp_path / "b.py").write_text("")
         scope = compute_typecheck_scope(["a.py", "b.py"], tmp_path)
-        assert scope.reduction_pct == 0.0
+        assert scope.reduction_pct == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +406,7 @@ class TestRunIncrementalTypecheck:
         )
         result = run_incremental_typecheck(scope, Path("."))
         assert result.passed is True
-        assert result.duration_s == 0.0
+        assert result.duration_s == pytest.approx(0.0)
 
     @patch("bernstein.core.quality.incremental_typecheck.subprocess.run")
     def test_command_not_found(self, mock_run: patch) -> None:  # type: ignore[type-arg]

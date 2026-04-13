@@ -109,8 +109,8 @@ class TestAgentOutcome:
         assert o.task_id == "t-99"
         assert o.file_path == "b.py"
         assert o.success is False
-        assert o.duration_s == 120.0
-        assert o.cost_usd == 0.50
+        assert o.duration_s == pytest.approx(120.0)
+        assert o.cost_usd == pytest.approx(0.50)
         assert o.retries == 3
 
 
@@ -288,24 +288,24 @@ class TestPearsonR:
         assert abs(r) < 0.9  # not perfectly correlated
 
     def test_single_element(self) -> None:
-        assert _pearson_r([1.0], [2.0]) == 0.0
+        assert _pearson_r([1.0], [2.0]) == pytest.approx(0.0)
 
     def test_constant_input(self) -> None:
         r = _pearson_r([5.0, 5.0, 5.0], [1.0, 2.0, 3.0])
-        assert r == 0.0  # constant → undefined → 0
+        assert r == pytest.approx(0.0)  # constant → undefined → 0
 
 
 class TestPValueApprox:
     def test_small_n_returns_one(self) -> None:
-        assert _p_value_approx(0.5, 2) == 1.0
+        assert _p_value_approx(0.5, 2) == pytest.approx(1.0)
 
     def test_perfect_correlation(self) -> None:
         p = _p_value_approx(1.0, 10)
-        assert p == 0.0
+        assert p == pytest.approx(0.0)
 
     def test_zero_correlation(self) -> None:
         p = _p_value_approx(0.0, 10)
-        assert p == 1.0
+        assert p == pytest.approx(1.0)
 
     def test_moderate_correlation(self) -> None:
         p = _p_value_approx(0.5, 30)
@@ -351,7 +351,7 @@ class TestCorrelateComplexityWithOutcomes:
         results = correlate_complexity_with_outcomes(metrics, outcomes)
         cc_result = next(r for r in results if r.metric_name == "cyclomatic_complexity")
         # All success → ys are constant (0.0) → r = 0.0
-        assert cc_result.correlation_coefficient == 0.0
+        assert cc_result.correlation_coefficient == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
