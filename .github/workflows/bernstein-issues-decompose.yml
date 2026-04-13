@@ -6,6 +6,10 @@ on:
   issues:
     types: [labeled]
 
+concurrency:
+  group: bernstein-decompose-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   issues: write

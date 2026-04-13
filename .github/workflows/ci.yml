@@ -165,9 +165,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv run ruff check src/
-        continue-on-error: true
       - run: uv run ruff format --check src/
-        continue-on-error: true
 
   spelling:
     name: Spelling (typos)
