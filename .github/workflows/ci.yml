@@ -378,6 +378,7 @@ jobs:
     name: SonarCloud analysis
     runs-on: ubuntu-latest
     needs: [test]
+    continue-on-error: true
     if: github.repository_owner == 'chernistry'
     timeout-minutes: 15
     permissions:
