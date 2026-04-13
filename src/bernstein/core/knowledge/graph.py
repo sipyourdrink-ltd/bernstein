@@ -270,10 +270,13 @@ class TaskGraph:
         if not topo:
             return []
 
-        # dist[node] = (longest distance to reach this node, predecessor)
+        dist = self._compute_longest_distances(topo)
+        return self._trace_back_path(dist)
+
+    def _compute_longest_distances(self, topo: list[str]) -> dict[str, tuple[int, str | None]]:
+        """Compute longest-path distances for every node in topological order."""
         dist: dict[str, tuple[int, str | None]] = {tid: (0, None) for tid in topo}
 
-        # Initialise root nodes with their own weight
         for tid in topo:
             if not self._reverse.get(tid):
                 dist[tid] = (self._tasks[tid].estimated_minutes, None)
@@ -286,16 +289,16 @@ class TaskGraph:
                 new_dist = current_dist + self._tasks[child].estimated_minutes
                 if new_dist > dist[child][0]:
                     dist[child] = (new_dist, node)
+        return dist
 
-        # Find the endpoint with the longest distance
+    @staticmethod
+    def _trace_back_path(dist: dict[str, tuple[int, str | None]]) -> list[str]:
+        """Trace the critical path backwards from the farthest node."""
         if not dist:
             return []
-
         end_node = max(dist, key=lambda n: dist[n][0])
         if dist[end_node][0] == 0:
             return []
-
-        # Trace back
         path: list[str] = []
         current: str | None = end_node
         while current is not None:

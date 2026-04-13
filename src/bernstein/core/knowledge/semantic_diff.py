@@ -668,27 +668,48 @@ def format_report(report: SemanticDiffReport) -> str:
     lines.append(f"Files analysed: {', '.join(report.changed_files) or '(none)'}")
     lines.append(f"Behavior preserved: {'YES' if report.behavior_preserved else 'NO'}")
 
-    if report.signature_changes:
-        lines.append(f"\nSignature changes ({len(report.signature_changes)}):")
-        for change in report.signature_changes:
-            marker = {"added": "+", "removed": "-", "modified": "~"}.get(change.change_type, "?")
-            lines.append(f"  [{marker}] {change.qualname} ({change.file})")
-            for issue in change.compatibility_issues:
-                lines.append(f"      ⚠ {issue}")
-
-    if report.call_site_mismatches:
-        lines.append(f"\nCall-site mismatches ({len(report.call_site_mismatches)}):")
-        for m in report.call_site_mismatches:
-            lines.append(f"  {m.caller_file}:{m.lineno}  {m.function_name}: {m.issue}")
-
-    if report.type_incompatibilities:
-        lines.append(f"\nType incompatibilities ({len(report.type_incompatibilities)}):")
-        for issue in report.type_incompatibilities:
-            lines.append(f"  ⚠ {issue}")
-
-    if report.errors:
-        lines.append(f"\nErrors ({len(report.errors)}):")
-        for err in report.errors:
-            lines.append(f"  ! {err}")
+    _format_signature_changes(lines, report.signature_changes)
+    _format_call_site_mismatches(lines, report.call_site_mismatches)
+    _format_type_incompatibilities(lines, report.type_incompatibilities)
+    _format_errors(lines, report.errors)
 
     return "\n".join(lines)
+
+
+def _format_signature_changes(lines: list[str], changes: list[SignatureChange]) -> None:
+    """Append signature change lines to *lines*."""
+    if not changes:
+        return
+    lines.append(f"\nSignature changes ({len(changes)}):")
+    for change in changes:
+        marker = {"added": "+", "removed": "-", "modified": "~"}.get(change.change_type, "?")
+        lines.append(f"  [{marker}] {change.qualname} ({change.file})")
+        for issue in change.compatibility_issues:
+            lines.append(f"      \u26a0 {issue}")
+
+
+def _format_call_site_mismatches(lines: list[str], mismatches: list[CallSiteMismatch]) -> None:
+    """Append call-site mismatch lines to *lines*."""
+    if not mismatches:
+        return
+    lines.append(f"\nCall-site mismatches ({len(mismatches)}):")
+    for m in mismatches:
+        lines.append(f"  {m.caller_file}:{m.lineno}  {m.function_name}: {m.issue}")
+
+
+def _format_type_incompatibilities(lines: list[str], issues: list[str]) -> None:
+    """Append type incompatibility lines to *lines*."""
+    if not issues:
+        return
+    lines.append(f"\nType incompatibilities ({len(issues)}):")
+    for issue in issues:
+        lines.append(f"  \u26a0 {issue}")
+
+
+def _format_errors(lines: list[str], errors: list[str]) -> None:
+    """Append error lines to *lines*."""
+    if not errors:
+        return
+    lines.append(f"\nErrors ({len(errors)}):")
+    for err in errors:
+        lines.append(f"  ! {err}")

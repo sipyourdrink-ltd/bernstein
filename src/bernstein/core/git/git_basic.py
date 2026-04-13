@@ -395,7 +395,6 @@ def safe_push(
     Returns:
         GitResult from the push command.
     """
-    import time as _time
 
     # Guardrail: never push to "master" — auto-correct to "main".
     if branch == "master":
@@ -414,6 +413,19 @@ def safe_push(
         fail = _rebase_or_merge(cwd, remote, branch)
         if fail is not None:
             return fail
+
+    return _push_with_retry(cwd, branch, remote, max_retries, retry_delay)
+
+
+def _push_with_retry(
+    cwd: Path,
+    branch: str,
+    remote: str,
+    max_retries: int,
+    retry_delay: float,
+) -> GitResult:
+    """Push to remote with retry on transient errors."""
+    import time as _time
 
     push_result = GitResult(returncode=1, stdout="", stderr="no push attempted")
     for attempt in range(max_retries + 1):

@@ -336,22 +336,39 @@ def generate_ab_report(workdir: Path) -> ABTestReport:
     stats_a = _compute_model_stats(records, model_a)
     stats_b = _compute_model_stats(records, model_b)
 
-    # Determine winner: higher completion rate wins; on tie, fewer tokens wins.
+    winner = _determine_winner(stats_a, stats_b, model_a, model_b)
+    summary = _build_ab_summary(stats_a, stats_b, model_a, model_b, winner)
+
+    return ABTestReport(model_a=stats_a, model_b=stats_b, winner=winner, summary=summary)
+
+
+def _determine_winner(
+    stats_a: ModelStats,
+    stats_b: ModelStats,
+    model_a: str,
+    model_b: str,
+) -> str:
+    """Compare two model stats and return the winner name."""
     min_tasks = 2
     if stats_a.task_count < min_tasks or stats_b.task_count < min_tasks:
-        winner = "insufficient_data"
-    else:
-        rate_a = stats_a.completed / stats_a.task_count
-        rate_b = stats_b.completed / stats_b.task_count
-        if rate_a > rate_b:
-            winner = model_a
-        elif rate_b > rate_a:
-            winner = model_b
-        elif stats_a.avg_tokens <= stats_b.avg_tokens:
-            winner = model_a
-        else:
-            winner = model_b
+        return "insufficient_data"
+    rate_a = stats_a.completed / stats_a.task_count
+    rate_b = stats_b.completed / stats_b.task_count
+    if rate_a > rate_b:
+        return model_a
+    if rate_b > rate_a:
+        return model_b
+    return model_a if stats_a.avg_tokens <= stats_b.avg_tokens else model_b
 
+
+def _build_ab_summary(
+    stats_a: ModelStats,
+    stats_b: ModelStats,
+    model_a: str,
+    model_b: str,
+    winner: str,
+) -> str:
+    """Build a human-readable A/B test summary string."""
     lines = [
         "## A/B Model Test Report",
         "",
@@ -363,16 +380,11 @@ def generate_ab_report(workdir: Path) -> ABTestReport:
             f"{st.model:<20} {st.task_count:>6} {st.completed:>6} {st.failed:>6} "
             f"{st.avg_tokens:>12.0f} {st.avg_files_changed:>10.1f} {st.avg_duration_s:>11.1f}"
         )
-    lines += [
-        "",
-        f"Winner: **{winner}**",
-    ]
+    lines += ["", f"Winner: **{winner}**"]
     if winner not in ("tie", "insufficient_data"):
         loser = model_b if winner == model_a else model_a
         winner_stats = stats_a if winner == model_a else stats_b
         loser_stats = stats_b if winner == model_a else stats_a
         token_diff_pct = (loser_stats.avg_tokens - winner_stats.avg_tokens) / max(1, loser_stats.avg_tokens) * 100
         lines.append(f"  {winner} used {token_diff_pct:.0f}% fewer tokens on average vs {loser}")
-    summary = "\n".join(lines)
-
-    return ABTestReport(model_a=stats_a, model_b=stats_b, winner=winner, summary=summary)
+    return "\n".join(lines)

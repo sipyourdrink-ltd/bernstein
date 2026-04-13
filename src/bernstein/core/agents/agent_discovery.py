@@ -156,6 +156,42 @@ def _extract_model_names(result: subprocess.CompletedProcess[str] | None) -> lis
 # ---------------------------------------------------------------------------
 
 
+def _load_toml(path: Path) -> dict[str, object] | None:
+    """Load a TOML file, returning None on any failure."""
+    if not path.exists():
+        return None
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found,no-redef]
+        except ImportError:
+            return None
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)  # type: ignore[return-value]
+    except Exception:
+        return None
+
+
+def _collect_models_from_profiles(config: dict[str, object]) -> list[str]:
+    """Extract model names from codex config profiles."""
+    default_model = config.get("model")
+    models: list[str] = []
+    if isinstance(default_model, str):
+        models.append(default_model)
+
+    profiles = config.get("profiles", {})
+    if isinstance(profiles, dict):
+        for profile_data in profiles.values():
+            if not isinstance(profile_data, dict):
+                continue
+            profile_model = profile_data.get("model")
+            if isinstance(profile_model, str) and profile_model not in models:
+                models.append(profile_model)
+    return models
+
+
 def _parse_codex_config() -> tuple[str | None, list[str]]:
     """Parse ~/.codex/config.toml for model configuration.
 
@@ -163,44 +199,44 @@ def _parse_codex_config() -> tuple[str | None, list[str]]:
         Tuple of (configured_model, list_of_available_models).
         If config not found or unparseable, returns (None, []).
     """
-    config_path = Path.home() / ".codex" / _CONFIG_TOML_FILENAME
-    if not config_path.exists():
+    config = _load_toml(Path.home() / ".codex" / _CONFIG_TOML_FILENAME)
+    if config is None:
         return None, []
 
-    try:
-        import tomllib
-    except ImportError:
-        # Python < 3.11 fallback
-        try:
-            import tomli as tomllib  # type: ignore[import-not-found,no-redef]
-        except ImportError:
-            return None, []
-
-    try:
-        with open(config_path, "rb") as f:
-            config = tomllib.load(f)
-    except Exception:
-        return None, []
-
-    # Get the default model from top-level config
     default_model = config.get("model")
     if not isinstance(default_model, str):
         default_model = None
 
-    # Collect models from profiles
-    models: list[str] = []
-    if default_model:
-        models.append(default_model)
-
-    profiles = config.get("profiles", {})
-    if isinstance(profiles, dict):
-        for profile_data in profiles.values():
-            if isinstance(profile_data, dict):
-                profile_model = profile_data.get("model")
-                if isinstance(profile_model, str) and profile_model not in models:
-                    models.append(profile_model)
-
+    models = _collect_models_from_profiles(config)
     return default_model, models
+
+
+def _codex_login_status(config_model: str | None) -> tuple[bool, str]:
+    """Determine codex login status and method.
+
+    Returns:
+        Tuple of (logged_in, login_method).
+    """
+    login_result = _run_probe(["codex", "login", "status"])
+    if login_result is not None:
+        combined_lower = (login_result.stdout + login_result.stderr).lower()
+        is_positive = (
+            "logged in" in combined_lower and "not logged in" not in combined_lower and login_result.returncode == 0
+        )
+        if is_positive:
+            if "chatgpt" in combined_lower:
+                return True, "ChatGPT"
+            if "api" in combined_lower:
+                return True, _LOGIN_API_KEY
+            return True, "CLI auth"
+
+    if os.environ.get("OPENAI_API_KEY"):
+        return True, _LOGIN_API_KEY
+
+    if config_model and (Path.home() / ".codex" / _CONFIG_TOML_FILENAME).exists():
+        return True, _CONFIG_TOML_FILENAME
+
+    return False, ""
 
 
 def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
@@ -216,39 +252,7 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
     # Read model config from ~/.codex/config.toml
     config_model, config_models = _parse_codex_config()
 
-    # Login check: `codex login status`
-    logged_in = False
-    login_method = ""
-    login_result = _run_probe(["codex", "login", "status"])
-    if login_result is not None:
-        combined = login_result.stdout + login_result.stderr
-        combined_lower = combined.lower()
-        # "Not logged in" also contains "logged in", so check returncode
-        # and exclude explicit "not logged in" matches.
-        is_positive = (
-            "logged in" in combined_lower and "not logged in" not in combined_lower and login_result.returncode == 0
-        )
-        if is_positive:
-            logged_in = True
-            if "chatgpt" in combined_lower:
-                login_method = "ChatGPT"
-            elif "api" in combined_lower:
-                login_method = _LOGIN_API_KEY
-            else:
-                login_method = "CLI auth"
-    # Also accept OPENAI_API_KEY as auth
-    if not logged_in and os.environ.get("OPENAI_API_KEY"):
-        logged_in = True
-        login_method = _LOGIN_API_KEY
-
-    # Check for codex proxy auth (custom model_provider with local base_url)
-    if not logged_in and config_model:
-        # If config.toml exists with a model, assume proxy/custom setup is valid
-        config_path = Path.home() / ".codex" / _CONFIG_TOML_FILENAME
-        if config_path.exists():
-            logged_in = True
-            login_method = _CONFIG_TOML_FILENAME
-
+    logged_in, login_method = _codex_login_status(config_model)
     if binary and not logged_in:
         warnings.append("codex found but not logged in — run: codex login")
 

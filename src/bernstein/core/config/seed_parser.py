@@ -459,6 +459,51 @@ def _expand_env_value(raw: object, field_name: str) -> object:
     return env_value
 
 
+def _require_bool(data: dict[str, object], key: str, default: bool, prefix: str) -> bool:
+    """Extract and validate a boolean field from a seed mapping."""
+    raw = data.get(key, default)
+    if not isinstance(raw, bool):
+        raise SeedError(f"{prefix}.{key} must be a bool, got: {type(raw).__name__}")
+    return raw
+
+
+def _require_str(data: dict[str, object], key: str, default: str, prefix: str) -> str:
+    """Extract and validate a string field from a seed mapping."""
+    raw = data.get(key, default)
+    if not isinstance(raw, str):
+        raise SeedError(f"{prefix}.{key} must be a string, got: {type(raw).__name__}")
+    return raw.strip()
+
+
+def _require_positive_number(data: dict[str, object], key: str, default: float, prefix: str) -> float:
+    """Extract and validate a positive numeric field from a seed mapping."""
+    raw = data.get(key, default)
+    if not isinstance(raw, (int, float)) or raw <= 0:
+        raise SeedError(f"{prefix}.{key} must be a positive number")
+    return float(raw)
+
+
+def _require_positive_int(data: dict[str, object], key: str, default: int, prefix: str) -> int:
+    """Extract and validate a positive integer field from a seed mapping."""
+    raw = data.get(key, default)
+    if not isinstance(raw, int) or raw < 1:
+        raise SeedError(f"{prefix}.{key} must be a positive integer")
+    return raw
+
+
+def _validate_openclaw_enabled(url_text: str, api_key: str, agent_id: str) -> None:
+    """Validate fields required when the OpenClaw bridge is enabled."""
+    if not url_text:
+        raise SeedError("bridges.openclaw.url is required when the bridge is enabled")
+    parsed_url = urlparse(url_text)
+    if parsed_url.scheme not in {"ws", "wss"} or not parsed_url.netloc:
+        raise SeedError("bridges.openclaw.url must be a valid ws:// or wss:// URL")
+    if not api_key:
+        raise SeedError("bridges.openclaw.api_key is required when the bridge is enabled")
+    if not agent_id:
+        raise SeedError("bridges.openclaw.agent_id is required when the bridge is enabled")
+
+
 def _parse_openclaw_runtime_config(raw: object) -> OpenClawBridgeConfig | None:
     """Parse the optional ``bridges.openclaw`` seed section.
 
@@ -476,65 +521,43 @@ def _parse_openclaw_runtime_config(raw: object) -> OpenClawBridgeConfig | None:
     if not isinstance(raw, dict):
         raise SeedError(f"bridges.openclaw must be a mapping, got: {type(raw).__name__}")
 
+    _P = "bridges.openclaw"
     data = cast("_StrObjDict", raw)
-    enabled_raw = data.get("enabled", False)
-    if not isinstance(enabled_raw, bool):
-        raise SeedError(f"bridges.openclaw.enabled must be a bool, got: {type(enabled_raw).__name__}")
+    enabled_raw = _require_bool(data, "enabled", False, _P)
 
     url_raw = data.get("url", data.get("endpoint", ""))
-    url_value = _expand_env_value(url_raw, "bridges.openclaw.url")
+    url_value = _expand_env_value(url_raw, f"{_P}.url")
     if not isinstance(url_value, str):
-        raise SeedError(f"bridges.openclaw.url must be a string, got: {type(url_value).__name__}")
+        raise SeedError(f"{_P}.url must be a string, got: {type(url_value).__name__}")
     url_text = url_value.strip()
 
-    api_key_raw = _expand_env_value(data.get("api_key", ""), "bridges.openclaw.api_key")
+    api_key_raw = _expand_env_value(data.get("api_key", ""), f"{_P}.api_key")
     if not isinstance(api_key_raw, str):
-        raise SeedError(f"bridges.openclaw.api_key must be a string, got: {type(api_key_raw).__name__}")
+        raise SeedError(f"{_P}.api_key must be a string, got: {type(api_key_raw).__name__}")
     api_key = api_key_raw.strip()
 
-    agent_id_raw = data.get("agent_id", "")
-    if not isinstance(agent_id_raw, str):
-        raise SeedError(f"bridges.openclaw.agent_id must be a string, got: {type(agent_id_raw).__name__}")
-    agent_id = agent_id_raw.strip()
+    agent_id = _require_str(data, "agent_id", "", _P)
 
     workspace_mode_raw = data.get("workspace_mode", "shared_workspace")
     if workspace_mode_raw != "shared_workspace":
-        raise SeedError("bridges.openclaw.workspace_mode must be 'shared_workspace'")
+        raise SeedError(f"{_P}.workspace_mode must be 'shared_workspace'")
 
-    fallback_raw = data.get("fallback_to_local", True)
-    if not isinstance(fallback_raw, bool):
-        raise SeedError(f"bridges.openclaw.fallback_to_local must be a bool, got: {type(fallback_raw).__name__}")
-
-    connect_timeout_raw = data.get("connect_timeout_s", 10.0)
-    if not isinstance(connect_timeout_raw, (int, float)) or connect_timeout_raw <= 0:
-        raise SeedError("bridges.openclaw.connect_timeout_s must be a positive number")
-
-    request_timeout_raw = data.get("request_timeout_s", 30.0)
-    if not isinstance(request_timeout_raw, (int, float)) or request_timeout_raw <= 0:
-        raise SeedError("bridges.openclaw.request_timeout_s must be a positive number")
+    fallback_raw = _require_bool(data, "fallback_to_local", True, _P)
+    connect_timeout_raw = _require_positive_number(data, "connect_timeout_s", 10.0, _P)
+    request_timeout_raw = _require_positive_number(data, "request_timeout_s", 30.0, _P)
 
     session_prefix_raw = data.get("session_prefix", "bernstein-")
     if not isinstance(session_prefix_raw, str) or not session_prefix_raw.strip():
-        raise SeedError("bridges.openclaw.session_prefix must be a non-empty string")
+        raise SeedError(f"{_P}.session_prefix must be a non-empty string")
 
-    max_log_bytes_raw = data.get("max_log_bytes", 1_048_576)
-    if not isinstance(max_log_bytes_raw, int) or max_log_bytes_raw < 1:
-        raise SeedError("bridges.openclaw.max_log_bytes must be a positive integer")
+    max_log_bytes_raw = _require_positive_int(data, "max_log_bytes", 1_048_576, _P)
 
     model_override_raw = data.get("model_override")
     if model_override_raw is not None and (not isinstance(model_override_raw, str) or not model_override_raw.strip()):
-        raise SeedError("bridges.openclaw.model_override must be a non-empty string when set")
+        raise SeedError(f"{_P}.model_override must be a non-empty string when set")
 
     if enabled_raw:
-        if not url_text:
-            raise SeedError("bridges.openclaw.url is required when the bridge is enabled")
-        parsed_url = urlparse(url_text)
-        if parsed_url.scheme not in {"ws", "wss"} or not parsed_url.netloc:
-            raise SeedError("bridges.openclaw.url must be a valid ws:// or wss:// URL")
-        if not api_key:
-            raise SeedError("bridges.openclaw.api_key is required when the bridge is enabled")
-        if not agent_id:
-            raise SeedError("bridges.openclaw.agent_id is required when the bridge is enabled")
+        _validate_openclaw_enabled(url_text, api_key, agent_id)
 
     return OpenClawBridgeConfig(
         enabled=enabled_raw,
@@ -582,27 +605,31 @@ def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
     for role, settings in raw.items():
         if not isinstance(role, str) or not role:
             raise SeedError("role_model_policy keys must be non-empty role strings")
-        if not isinstance(settings, dict):
-            raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
-
-        normalized: dict[str, str] = {}
-        for key in ("provider", "model", "effort", "cli"):
-            value = settings.get(key)
-            if value is None:
-                continue
-            if not isinstance(value, str) or not value:
-                raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a non-empty string")
-            normalized[key] = value
-
-        # `cli` is an alias for `provider` — map it so the spawner sees it
-        if "cli" in normalized and "provider" not in normalized:
-            normalized["provider"] = normalized["cli"]
-
-        unknown_keys = sorted(set(settings) - {"provider", "model", "effort", "cli"})
-        if unknown_keys:
-            raise SeedError(f"role_model_policy[{role!r}] has unknown keys: {', '.join(unknown_keys)}")
-        parsed[role] = normalized
+        parsed[role] = _parse_single_role_policy(role, settings)
     return parsed
+
+
+def _parse_single_role_policy(role: str, settings: object) -> dict[str, str]:
+    """Parse and validate a single role's model policy settings."""
+    if not isinstance(settings, dict):
+        raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
+
+    normalized: dict[str, str] = {}
+    for key in ("provider", "model", "effort", "cli"):
+        value = settings.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value:
+            raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a non-empty string")
+        normalized[key] = value
+
+    if "cli" in normalized and "provider" not in normalized:
+        normalized["provider"] = normalized["cli"]
+
+    unknown_keys = sorted(set(settings) - {"provider", "model", "effort", "cli"})
+    if unknown_keys:
+        raise SeedError(f"role_model_policy[{role!r}] has unknown keys: {', '.join(unknown_keys)}")
+    return normalized
 
 
 def _normalize_webhook_event(event: str, field_name: str) -> str:
@@ -1218,6 +1245,70 @@ def _parse_formal_properties(raw: object) -> list[FormalProperty]:
     return [_parse_single_formal_property(i, entry) for i, entry in enumerate(raw)]
 
 
+def _parse_catalogs(raw: object) -> CatalogRegistry | None:
+    """Parse the optional ``catalogs`` list."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise SeedError(f"catalogs must be a list, got: {type(raw).__name__}")
+    try:
+        return CatalogRegistry.from_config(cast("list[dict[str, Any]]", raw))
+    except ValueError as exc:
+        raise SeedError(f"Invalid catalogs configuration: {exc}") from exc
+
+
+def _parse_model_policy(raw: object) -> dict[str, Any] | None:
+    """Parse the optional ``model_policy`` mapping."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"model_policy must be a mapping, got: {type(raw).__name__}")
+    return cast(_CAST_DICT_STR_ANY, raw)
+
+
+def _parse_visual(raw: object) -> Any:
+    """Parse the optional ``visual`` config section."""
+    if raw is None:
+        return None
+    try:
+        return parse_visual_config(raw)
+    except ValueError as exc:
+        raise SeedError(str(exc)) from exc
+
+
+def _parse_sandbox(raw: object) -> Any:
+    """Parse the optional ``sandbox`` config section."""
+    if raw is None:
+        return None
+    try:
+        return parse_docker_sandbox(raw)
+    except ValueError as exc:
+        raise SeedError(str(exc)) from exc
+
+
+def _validate_optional_str(data: dict[str, object], key: str, default: str) -> str:
+    """Extract and validate a string field with a default."""
+    raw: object = data.get(key, default)
+    if not isinstance(raw, str):
+        raise SeedError(f"{key} must be a string, got: {type(raw).__name__}")
+    return raw
+
+
+def _validate_optional_bool(data: dict[str, object], key: str, default: bool) -> bool:
+    """Extract and validate a boolean field with a default."""
+    raw: object = data.get(key, default)
+    if not isinstance(raw, bool):
+        raise SeedError(f"{key} must be a boolean, got: {type(raw).__name__}")
+    return raw
+
+
+def _parse_cost_tags(raw: object) -> dict[str, str]:
+    """Parse the optional ``cost_tags`` mapping."""
+    if not isinstance(raw, dict):
+        raise SeedError(f"cost_tags must be a mapping, got: {type(raw).__name__}")
+    return {str(k): str(v) for k, v in raw.items()}
+
+
 def parse_seed(path: Path) -> SeedConfig:
     """Parse a bernstein.yaml seed file into a validated SeedConfig.
 
@@ -1293,17 +1384,7 @@ def parse_seed(path: Path) -> SeedConfig:
         None if mcp_allowlist_raw is None else _parse_string_list(mcp_allowlist_raw, "mcp_allowlist")
     )
 
-    catalogs_raw: object = data.get("catalogs")
-    catalogs: CatalogRegistry | None = None
-    if catalogs_raw is not None:
-        if not isinstance(catalogs_raw, list):
-            raise SeedError(f"catalogs must be a list, got: {type(catalogs_raw).__name__}")
-        catalogs_list: list[dict[str, Any]] = cast("list[dict[str, Any]]", catalogs_raw)
-        try:
-            catalogs = CatalogRegistry.from_config(catalogs_list)
-        except ValueError as exc:
-            raise SeedError(f"Invalid catalogs configuration: {exc}") from exc
-
+    catalogs = _parse_catalogs(data.get("catalogs"))
     notify = _parse_notify(data.get("notify"))
     webhooks = _parse_webhooks(data.get("webhooks"))
     storage = _parse_storage(data.get("storage"))
@@ -1318,81 +1399,34 @@ def parse_seed(path: Path) -> SeedConfig:
     worktree_setup = _parse_worktree_setup(data.get("worktree_setup"))
     batch = _parse_batch(data.get("batch"))
     test_agent = _parse_test_agent(data.get("test_agent"))
-
-    model_policy_raw: object = data.get("model_policy")
-    model_policy: dict[str, Any] | None = None
-    if model_policy_raw is not None:
-        if not isinstance(model_policy_raw, dict):
-            raise SeedError(f"model_policy must be a mapping, got: {type(model_policy_raw).__name__}")
-        model_policy = cast(_CAST_DICT_STR_ANY, model_policy_raw)
-
+    model_policy = _parse_model_policy(data.get("model_policy"))
     quality_gates = _parse_quality_gates(data.get("quality_gates"))
     formal_verification = _parse_formal_verification(data.get("formal_verification"))
     secrets = _parse_secrets(data.get("secrets"))
     key_rotation = _parse_key_rotation(data.get("key_rotation"))
     compliance = _parse_compliance(data.get("compliance"))
-
-    visual_raw: object = data.get("visual")
-    visual = None
-    if visual_raw is not None:
-        try:
-            visual = parse_visual_config(visual_raw)
-        except ValueError as exc:
-            raise SeedError(str(exc)) from exc
-
-    sandbox_raw: object = data.get("sandbox")
-    sandbox = None
-    if sandbox_raw is not None:
-        try:
-            sandbox = parse_docker_sandbox(sandbox_raw)
-        except ValueError as exc:
-            raise SeedError(str(exc)) from exc
-
+    visual = _parse_visual(data.get("visual"))
+    sandbox = _parse_sandbox(data.get("sandbox"))
     bridges = _parse_bridge_settings(data.get("bridges"))
-
     cors = _parse_cors_config(data.get("cors"))
     dashboard_auth = _parse_dashboard_auth(data.get("dashboard_auth"))
     network = _parse_network_config(data.get("network"))
     rate_limit = _parse_rate_limit_config(data.get("rate_limit"))
-
     tenants = _parse_tenants(data.get("tenants"))
 
-    # --- Internal LLM provider / model ---
-    internal_llm_provider_raw: object = data.get("internal_llm_provider", "openrouter_free")
-    if not isinstance(internal_llm_provider_raw, str):
-        raise SeedError(f"internal_llm_provider must be a string, got: {type(internal_llm_provider_raw).__name__}")
-    internal_llm_model_raw: object = data.get("internal_llm_model", "nvidia/nemotron-3-super-120b-a12b")
-    if not isinstance(internal_llm_model_raw, str):
-        raise SeedError(f"internal_llm_model must be a string, got: {type(internal_llm_model_raw).__name__}")
-
+    internal_llm_provider_raw = _validate_optional_str(data, "internal_llm_provider", "openrouter_free")
+    internal_llm_model_raw = _validate_optional_str(data, "internal_llm_model", "nvidia/nemotron-3-super-120b-a12b")
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
+    cost_tags = _parse_cost_tags(data.get("cost_tags", {}))
+    cost_autopilot_raw = _validate_optional_bool(data, "cost_autopilot", False)
+    deployment_strategy_raw = _validate_optional_str(data, "deployment_strategy", "rolling")
 
-    # --- Cost allocation tags ---
-    cost_tags_raw: object = data.get("cost_tags", {})
-    if not isinstance(cost_tags_raw, dict):
-        raise SeedError(f"cost_tags must be a mapping, got: {type(cost_tags_raw).__name__}")
-    cost_tags: dict[str, str] = {str(k): str(v) for k, v in cost_tags_raw.items()}
-
-    # --- Cost autopilot ---
-    cost_autopilot_raw: object = data.get("cost_autopilot", False)
-    if not isinstance(cost_autopilot_raw, bool):
-        raise SeedError(f"cost_autopilot must be a boolean, got: {type(cost_autopilot_raw).__name__}")
-
-    # --- Deployment strategy ---
-    deployment_strategy_raw: object = data.get("deployment_strategy", "rolling")
-    if not isinstance(deployment_strategy_raw, str):
-        raise SeedError(f"deployment_strategy must be a string, got: {type(deployment_strategy_raw).__name__}")
-
-    # --- Org policies ---
     org_policies_raw: object = data.get("org_policies", [])
     if not isinstance(org_policies_raw, list):
         raise SeedError(f"org_policies must be a list of file paths, got: {type(org_policies_raw).__name__}")
     org_policies: list[str] = [str(p) for p in org_policies_raw]
 
-    # --- Custom metrics ---
     metrics = _parse_metrics(data.get("metrics"))
-
-    # --- Tuning overrides (apply to bernstein.core.defaults singletons) ---
     _parse_tuning(data)
 
     return SeedConfig(

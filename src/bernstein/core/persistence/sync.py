@@ -325,133 +325,152 @@ def sync_backlog_to_server(
             result.errors.append("Cannot connect to task server — is it running?")
             return result
 
-        # Collect files from both open/ and issues/
-        md_files: list[Path] = []
-        for src_dir in (backlog_open, backlog_issues):
-            if src_dir.exists():
-                md_files.extend(src_dir.glob(_YAML_GLOB))
-                md_files.extend(src_dir.glob("*.md"))
-        md_files.sort()
-
-        # Apply task filter if provided (case-insensitive substring match on filename)
-        if task_filter:
-            task_filter_lower = task_filter.lower()
-            md_files = [f for f in md_files if task_filter_lower in f.name.lower()]
+        md_files = _collect_backlog_files(backlog_open, backlog_issues, task_filter)
 
         # --- Step 1: create new tasks (batched) ---
-        batch_payloads: list[dict[str, Any]] = []
-        batch_files: list[Path] = []
-
-        for md_file in md_files:
-            task = parse_backlog_file(md_file)
-            if task is None:
-                result.errors.append(f"Could not parse {md_file.name}")
-                continue
-
-            if _task_already_exists(task, existing_slugs):
-                result.skipped.append(md_file.name)
-                logger.debug("Skipping %s — task already on server", md_file.name)
-                continue
-
-            payload = _build_task_payload(task)
-            batch_payloads.append(payload)
-            batch_files.append(md_file)
-            # Track slug immediately so later files in the same batch
-            # with an identical title are deduplicated before sending.
-            existing_slugs.add(normalise_title(task.title))
-
+        batch_payloads, batch_files = _prepare_batch_payloads(
+            md_files,
+            existing_slugs,
+            result,
+        )
         if batch_payloads:
-            try:
-                resp = _client.post(
-                    f"{server_url}/tasks/batch",
-                    json={"tasks": batch_payloads},
-                )
-                resp.raise_for_status()
-                data: dict[str, Any] = resp.json()
-                for created_task in data.get("created", []):
-                    task_id: str = created_task.get("id", "unknown")
-                    result.created.append(task_id)
-                    logger.info("Batch-created task %s", task_id)
-                for title in data.get("skipped_titles", []):
-                    result.skipped.append(title)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
-                    # Server doesn't support batch — fall back to one-by-one
-                    _sync_one_by_one(
-                        batch_payloads,
-                        batch_files,
-                        _client,
-                        server_url,
-                        result,
-                    )
-                else:
-                    result.errors.append(f"Batch create failed: {exc}")
-            except httpx.HTTPError as exc:
-                result.errors.append(f"Batch create failed: {exc}")
+            _submit_batch(batch_payloads, batch_files, _client, server_url, result)
 
         # --- Step 2: move files for completed tasks ---
-        # Terminal statuses are ``done``, ``failed``, and ``cancelled`` — the
-        # task store has no ``closed`` alias, so the previous single-call
-        # approach always returned an empty set and no files ever moved
-        # (regression observed 2026-04-11: 101 stale files in backlog/open/
-        # after the run had already reached 63 done + 23 failed + 16
-        # cancelled in the task store).
-        done_slugs: set[str] = set()
-        for _terminal in ("done", "failed", "cancelled"):
-            for _task in _get_tasks_by_status(_client, server_url, _terminal):
-                _title = _task.get("title", "")
-                if _title:
-                    done_slugs.add(normalise_title(_title))
-
-        # ``issues/`` is the canonical metadata source; ``open/``/``claimed/``
-        # files may be zero-byte placeholders that fail to parse (observed
-        # 2026-04-11 after a crashed run left 101 empty files in open/).
-        # Parse metadata from ``issues/`` when available, then move the
-        # matching file from ``open/`` or ``claimed/`` by filename.
-        backlog_claimed = workdir / ".sdd" / "backlog" / "claimed"
-        _closed_dir = workdir / ".sdd" / "backlog" / "closed"
-        _closed_dir.mkdir(parents=True, exist_ok=True)
-
-        metadata_files: list[Path] = []
-        if backlog_issues.exists():
-            metadata_files.extend(backlog_issues.glob(_YAML_GLOB))
-            metadata_files.extend(backlog_issues.glob("*.md"))
-        # Also include any open/ or claimed/ file that isn't in issues/, so
-        # backlog entries that only live in open/ still get moved.
-        _seen_names = {f.name for f in metadata_files}
-        for extra_dir in (backlog_open, backlog_claimed):
-            if not extra_dir.exists():
-                continue
-            for f in extra_dir.glob(_YAML_GLOB):
-                if f.name not in _seen_names:
-                    metadata_files.append(f)
-                    _seen_names.add(f.name)
-            for f in extra_dir.glob("*.md"):
-                if f.name not in _seen_names:
-                    metadata_files.append(f)
-                    _seen_names.add(f.name)
-
-        for md_file in sorted(metadata_files):
-            task = parse_backlog_file(md_file)
-            if task is None:
-                continue
-            if normalise_title(task.title) not in done_slugs:
-                continue
-            # Found a terminal task — move the live file(s) out of
-            # open/ and claimed/ by matching filename.
-            for live_dir in (backlog_open, backlog_claimed):
-                live_file = live_dir / md_file.name
-                if not live_file.exists():
-                    continue
-                try:
-                    shutil.move(str(live_file), str(_closed_dir / md_file.name))
-                    result.moved.append(md_file.name)
-                    logger.info("Moved %s to backlog/closed/", md_file.name)
-                except OSError as exc:
-                    result.errors.append(f"Failed to move {md_file.name}: {exc}")
+        _move_completed_files(workdir, _client, server_url, backlog_open, backlog_issues, result)
 
     finally:
         if owned_client:
             _client.close()
 
     return result
+
+
+def _collect_backlog_files(
+    backlog_open: Path,
+    backlog_issues: Path,
+    task_filter: str | None,
+) -> list[Path]:
+    """Collect and optionally filter backlog files from open/ and issues/ dirs."""
+    md_files: list[Path] = []
+    for src_dir in (backlog_open, backlog_issues):
+        if src_dir.exists():
+            md_files.extend(src_dir.glob(_YAML_GLOB))
+            md_files.extend(src_dir.glob("*.md"))
+    md_files.sort()
+    if task_filter:
+        task_filter_lower = task_filter.lower()
+        md_files = [f for f in md_files if task_filter_lower in f.name.lower()]
+    return md_files
+
+
+def _prepare_batch_payloads(
+    md_files: list[Path],
+    existing_slugs: set[str],
+    result: SyncResult,
+) -> tuple[list[dict[str, Any]], list[Path]]:
+    """Parse backlog files and build payloads for new tasks."""
+    batch_payloads: list[dict[str, Any]] = []
+    batch_files: list[Path] = []
+    for md_file in md_files:
+        task = parse_backlog_file(md_file)
+        if task is None:
+            result.errors.append(f"Could not parse {md_file.name}")
+            continue
+        if _task_already_exists(task, existing_slugs):
+            result.skipped.append(md_file.name)
+            logger.debug("Skipping %s — task already on server", md_file.name)
+            continue
+        batch_payloads.append(_build_task_payload(task))
+        batch_files.append(md_file)
+        existing_slugs.add(normalise_title(task.title))
+    return batch_payloads, batch_files
+
+
+def _submit_batch(
+    batch_payloads: list[dict[str, Any]],
+    batch_files: list[Path],
+    client: httpx.Client,
+    server_url: str,
+    result: SyncResult,
+) -> None:
+    """Submit task payloads via batch endpoint, falling back to one-by-one."""
+    try:
+        resp = client.post(f"{server_url}/tasks/batch", json={"tasks": batch_payloads})
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        for created_task in data.get("created", []):
+            task_id: str = created_task.get("id", "unknown")
+            result.created.append(task_id)
+            logger.info("Batch-created task %s", task_id)
+        for title in data.get("skipped_titles", []):
+            result.skipped.append(title)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            _sync_one_by_one(batch_payloads, batch_files, client, server_url, result)
+        else:
+            result.errors.append(f"Batch create failed: {exc}")
+    except httpx.HTTPError as exc:
+        result.errors.append(f"Batch create failed: {exc}")
+
+
+def _collect_metadata_files(
+    backlog_issues: Path,
+    backlog_open: Path,
+    backlog_claimed: Path,
+) -> list[Path]:
+    """Collect metadata files from issues/, open/, and claimed/ dirs."""
+    metadata_files: list[Path] = []
+    if backlog_issues.exists():
+        metadata_files.extend(backlog_issues.glob(_YAML_GLOB))
+        metadata_files.extend(backlog_issues.glob("*.md"))
+    seen_names = {f.name for f in metadata_files}
+    for extra_dir in (backlog_open, backlog_claimed):
+        if not extra_dir.exists():
+            continue
+        for f in extra_dir.glob(_YAML_GLOB):
+            if f.name not in seen_names:
+                metadata_files.append(f)
+                seen_names.add(f.name)
+        for f in extra_dir.glob("*.md"):
+            if f.name not in seen_names:
+                metadata_files.append(f)
+                seen_names.add(f.name)
+    return sorted(metadata_files)
+
+
+def _move_completed_files(
+    workdir: Path,
+    client: httpx.Client,
+    server_url: str,
+    backlog_open: Path,
+    backlog_issues: Path,
+    result: SyncResult,
+) -> None:
+    """Move backlog files for completed/failed/cancelled tasks to closed/."""
+    done_slugs: set[str] = set()
+    for terminal in ("done", "failed", "cancelled"):
+        for task in _get_tasks_by_status(client, server_url, terminal):
+            title = task.get("title", "")
+            if title:
+                done_slugs.add(normalise_title(title))
+
+    backlog_claimed = workdir / ".sdd" / "backlog" / "claimed"
+    closed_dir = workdir / ".sdd" / "backlog" / "closed"
+    closed_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata_files = _collect_metadata_files(backlog_issues, backlog_open, backlog_claimed)
+    for md_file in metadata_files:
+        task = parse_backlog_file(md_file)
+        if task is None or normalise_title(task.title) not in done_slugs:
+            continue
+        for live_dir in (backlog_open, backlog_claimed):
+            live_file = live_dir / md_file.name
+            if not live_file.exists():
+                continue
+            try:
+                shutil.move(str(live_file), str(closed_dir / md_file.name))
+                result.moved.append(md_file.name)
+                logger.info("Moved %s to backlog/closed/", md_file.name)
+            except OSError as exc:
+                result.errors.append(f"Failed to move {md_file.name}: {exc}")
