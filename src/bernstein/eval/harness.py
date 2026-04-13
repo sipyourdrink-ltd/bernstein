@@ -78,6 +78,37 @@ _TIER_TO_GOLDEN_TIERS: dict[EvalTier, tuple[Tier, ...]] = {
 }
 
 
+def _run_benchmark_tier(
+    benchmarks_dir: Path,
+    tier: str,
+) -> tuple[int, int, list[dict[str, Any]]]:
+    """Run all benchmarks for a single tier.
+
+    Returns:
+        Tuple of (passed_count, total_count, detail_dicts).
+        When no specs are found, returns ``(0, 0, [])``.
+    """
+    specs = load_benchmarks(benchmarks_dir, tier)  # type: ignore[arg-type]
+    if not specs:
+        return 0, 0, []
+
+    tier_passed = 0
+    details: list[dict[str, Any]] = []
+    for spec in specs:
+        result = run_benchmark(spec)
+        if result.passed:
+            tier_passed += 1
+        details.append(
+            {
+                "benchmark_id": result.benchmark_id,
+                "tier": result.tier,
+                "passed": result.passed,
+                "duration_seconds": result.duration_seconds,
+            }
+        )
+    return tier_passed, len(specs), details
+
+
 # ---------------------------------------------------------------------------
 # Per-task eval result
 # ---------------------------------------------------------------------------
@@ -269,28 +300,13 @@ class EvalHarness:
         total_tasks = 0
 
         for bt in benchmark_tiers:
-            specs = load_benchmarks(benchmarks_dir, bt)  # type: ignore[arg-type]
-            if not specs:
+            tier_passed, tier_total, tier_details = _run_benchmark_tier(benchmarks_dir, bt)
+            if tier_total == 0:
                 continue
-
-            tier_passed = 0
-            for spec in specs:
-                result = run_benchmark(spec)
-                if result.passed:
-                    tier_passed += 1
-                all_details.append(
-                    {
-                        "benchmark_id": result.benchmark_id,
-                        "tier": result.tier,
-                        "passed": result.passed,
-                        "duration_seconds": result.duration_seconds,
-                    }
-                )
-
-            tier_total = len(specs)
+            all_details.extend(tier_details)
             total_passed += tier_passed
             total_tasks += tier_total
-            components[bt] = tier_passed / tier_total if tier_total > 0 else 1.0
+            components[bt] = tier_passed / tier_total
 
         score = total_passed / total_tasks if total_tasks > 0 else 1.0
         duration = time.time() - start

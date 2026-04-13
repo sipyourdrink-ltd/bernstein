@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import httpx
@@ -330,6 +330,20 @@ class TestEvolveDiminishingReturns:
 # ---------------------------------------------------------------------------
 
 
+def _extract_evolve_focus_areas(client: Any) -> list[str]:
+    """Extract evolve focus areas from mock client post calls."""
+    areas: list[str] = []
+    for call in client.post.call_args_list:
+        if not (call.args and "/tasks" in call.args[0] and "json" in call.kwargs):
+            continue
+        title = call.kwargs["json"].get("title", "")
+        if "Evolve" not in title:
+            continue
+        focus = title.split(": ", 1)[1] if ": " in title else ""
+        areas.append(focus)
+    return areas
+
+
 class TestEvolvePriorityRotation:
     """Tests that focus area rotates across cycles."""
 
@@ -346,14 +360,7 @@ class TestEvolvePriorityRotation:
 
             orch.tick()
 
-            # Find the evolve manager task post
-            for call in client.post.call_args_list:
-                if call.args and "/tasks" in call.args[0] and "json" in call.kwargs:
-                    title = call.kwargs["json"].get("title", "")
-                    if "Evolve" in title:
-                        # Extract focus area from title like "Evolve cycle N: focus area"
-                        focus = title.split(": ", 1)[1] if ": " in title else ""
-                        focus_areas_seen.append(focus)
+            focus_areas_seen.extend(_extract_evolve_focus_areas(client))
 
         # Should have 6 different focus areas (one per element in _EVOLVE_FOCUS_AREAS)
         assert len(focus_areas_seen) == 6

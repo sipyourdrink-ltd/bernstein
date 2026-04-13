@@ -222,6 +222,66 @@ class AgentExecutor(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Scenario YAML section parsers
+# ---------------------------------------------------------------------------
+
+
+def _as_dict(raw: object) -> dict[str, object]:
+    """Safely cast a raw YAML value to a string-keyed dict."""
+    return cast(_CAST_DICT_STR_OBJ, raw) if isinstance(raw, dict) else {}
+
+
+def _parse_setup_section(raw: dict[str, object]) -> ScenarioSetup:
+    """Parse the ``setup`` section of a scenario YAML."""
+    setup_dict = _as_dict(raw.get("setup") or {})
+    setup_cmd: object = setup_dict.get("command")
+    return ScenarioSetup(command=str(setup_cmd) if setup_cmd is not None else None)
+
+
+def _parse_task_section(raw: dict[str, object]) -> ScenarioTask:
+    """Parse the ``task`` section of a scenario YAML."""
+    task_dict = _as_dict(raw.get("task") or {})
+    return ScenarioTask(
+        title=str(task_dict.get("title", "")),
+        description=str(task_dict.get("description", "")),
+        role=str(task_dict.get("role", "backend")),
+        effort=str(task_dict.get("effort", "low")),
+        model=str(task_dict.get("model", "sonnet")),
+    )
+
+
+def _parse_signals_section(raw: dict[str, object], filename: str) -> list[ScenarioSignal]:
+    """Parse the ``expected_signals`` section of a scenario YAML."""
+    signals_raw_val: object = raw.get("expected_signals") or []
+    signals_list: list[object] = cast("list[object]", signals_raw_val) if isinstance(signals_raw_val, list) else []
+    signals: list[ScenarioSignal] = []
+    for sig_raw_item in signals_list:
+        sig_dict = _as_dict(sig_raw_item)
+        sig_type = str(sig_dict.get("type", ""))
+        if sig_type not in VALID_SIGNAL_TYPES:
+            raise ValueError(f"{filename}: unknown signal type '{sig_type}'; must be one of {VALID_SIGNAL_TYPES}")
+        sig_path_val: object = sig_dict.get("path")
+        signals.append(
+            ScenarioSignal(
+                type=sig_type,
+                value=str(sig_dict.get("value", "")),
+                path=str(sig_path_val) if sig_path_val is not None else None,
+            )
+        )
+    return signals
+
+
+def _parse_limits_section(raw: dict[str, object]) -> ScenarioLimits:
+    """Parse the ``limits`` section of a scenario YAML."""
+    limits_dict = _as_dict(raw.get("limits") or {})
+    return ScenarioLimits(
+        max_cost_usd=float(str(limits_dict.get("max_cost_usd", 1.00))),
+        max_duration_seconds=int(str(limits_dict.get("max_duration_seconds", 300))),
+        max_retries=int(str(limits_dict.get("max_retries", 0))),
+    )
+
+
+# ---------------------------------------------------------------------------
 # ScenarioRunner
 # ---------------------------------------------------------------------------
 
@@ -543,55 +603,10 @@ class ScenarioRunner:
         if tier not in VALID_TIERS:
             raise ValueError(f"{path.name}: invalid tier '{tier}'; must be one of {VALID_TIERS}")
 
-        # Setup
-        setup_raw_val: object = raw.get("setup") or {}
-        setup_dict: dict[str, object] = (
-            cast(_CAST_DICT_STR_OBJ, setup_raw_val) if isinstance(setup_raw_val, dict) else {}
-        )
-        setup_cmd: object = setup_dict.get("command")
-        setup = ScenarioSetup(command=str(setup_cmd) if setup_cmd is not None else None)
-
-        # Task
-        task_raw_val: object = raw.get("task") or {}
-        task_dict: dict[str, object] = cast(_CAST_DICT_STR_OBJ, task_raw_val) if isinstance(task_raw_val, dict) else {}
-        task = ScenarioTask(
-            title=str(task_dict.get("title", "")),
-            description=str(task_dict.get("description", "")),
-            role=str(task_dict.get("role", "backend")),
-            effort=str(task_dict.get("effort", "low")),
-            model=str(task_dict.get("model", "sonnet")),
-        )
-
-        # Signals
-        signals_raw_val: object = raw.get("expected_signals") or []
-        signals_list: list[object] = cast("list[object]", signals_raw_val) if isinstance(signals_raw_val, list) else []
-        signals: list[ScenarioSignal] = []
-        for sig_raw_item in signals_list:
-            sig_dict: dict[str, object] = (
-                cast(_CAST_DICT_STR_OBJ, sig_raw_item) if isinstance(sig_raw_item, dict) else {}
-            )
-            sig_type = str(sig_dict.get("type", ""))
-            if sig_type not in VALID_SIGNAL_TYPES:
-                raise ValueError(f"{path.name}: unknown signal type '{sig_type}'; must be one of {VALID_SIGNAL_TYPES}")
-            sig_path_val: object = sig_dict.get("path")
-            signals.append(
-                ScenarioSignal(
-                    type=sig_type,
-                    value=str(sig_dict.get("value", "")),
-                    path=str(sig_path_val) if sig_path_val is not None else None,
-                )
-            )
-
-        # Limits
-        limits_raw_val: object = raw.get("limits") or {}
-        limits_dict: dict[str, object] = (
-            cast(_CAST_DICT_STR_OBJ, limits_raw_val) if isinstance(limits_raw_val, dict) else {}
-        )
-        limits = ScenarioLimits(
-            max_cost_usd=float(str(limits_dict.get("max_cost_usd", 1.00))),
-            max_duration_seconds=int(str(limits_dict.get("max_duration_seconds", 300))),
-            max_retries=int(str(limits_dict.get("max_retries", 0))),
-        )
+        setup = _parse_setup_section(raw)
+        task = _parse_task_section(raw)
+        signals = _parse_signals_section(raw, path.name)
+        limits = _parse_limits_section(raw)
 
         return Scenario(
             id=scenario_id,

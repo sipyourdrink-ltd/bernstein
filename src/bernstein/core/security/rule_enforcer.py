@@ -249,22 +249,49 @@ def _parse_diff_additions(diff: str, file_glob: str | None) -> dict[str, list[st
     current_file: str | None = None
 
     for line in diff.splitlines():
-        if line.startswith("diff --git "):
-            parts = line.split(" ", 3)
-            if len(parts) >= 3:
-                raw_path = parts[2]
-                fpath = raw_path[2:] if raw_path.startswith("a/") else raw_path
-                if file_glob is None or fnmatch(fpath, file_glob):
-                    current_file = fpath
-                    additions.setdefault(current_file, [])
-                else:
-                    current_file = None
-            continue
-
-        if current_file is not None and line.startswith("+") and not line.startswith("+++"):
-            additions[current_file].append(line[1:])  # strip leading +
+        current_file = _process_diff_line(line, current_file, additions, file_glob, fnmatch)
 
     return additions
+
+
+def _extract_file_from_diff_header(header: str) -> str | None:
+    """Extract the file path from a ``diff --git`` header line.
+
+    Returns:
+        The cleaned file path, or ``None`` if the header is malformed.
+    """
+    parts = header.split(" ", 3)
+    if len(parts) < 3:
+        return None
+    raw_path = parts[2]
+    return raw_path[2:] if raw_path.startswith("a/") else raw_path
+
+
+def _process_diff_line(
+    line: str,
+    current_file: str | None,
+    additions: dict[str, list[str]],
+    file_glob: str | None,
+    fnmatch: Any,
+) -> str | None:
+    """Process a single diff line, updating *additions* in place.
+
+    Returns:
+        The updated ``current_file`` tracker.
+    """
+    if line.startswith("diff --git "):
+        fpath = _extract_file_from_diff_header(line)
+        if fpath is None:
+            return current_file
+        if file_glob is None or fnmatch(fpath, file_glob):
+            additions.setdefault(fpath, [])
+            return fpath
+        return None
+
+    if current_file is not None and line.startswith("+") and not line.startswith("+++"):
+        additions[current_file].append(line[1:])  # strip leading +
+
+    return current_file
 
 
 # ---------------------------------------------------------------------------
@@ -429,33 +456,46 @@ def run_rule_enforcement(
     violations: list[RuleViolation] = []
 
     for rule in config.rules:
-        violation: RuleViolation | None = None
-
-        if rule.type == "forbidden_pattern":
-            violation = _check_forbidden_pattern(rule, diff)
-        elif rule.type == "required_file":
-            violation = _check_required_file(rule, workdir)
-        elif rule.type == "command":
-            violation = _check_command(rule, run_dir)
-        else:
-            logger.warning("Rule %s: unknown type %r — skipping", rule.id, rule.type)
-            continue
-
+        violation = _evaluate_single_rule(rule, diff, workdir, run_dir)
         if violation is not None:
             violations.append(violation)
             _record_violation_event(task.id, violation, workdir)
-            logger.log(
-                logging.WARNING if violation.blocked else logging.INFO,
-                "Rule [%s] %s for task %s: %s | fix: %s",
-                violation.rule_id,
-                "BLOCKED" if violation.blocked else "FLAGGED",
-                task.id,
-                violation.detail[:200],
-                violation.fix_hint[:200],
-            )
+            _log_violation(task.id, violation)
 
     passed = all(not v.blocked for v in violations)
     return RuleEnforcerResult(task_id=task.id, passed=passed, violations=violations)
+
+
+def _evaluate_single_rule(
+    rule: RuleSpec,
+    diff: str,
+    workdir: Path,
+    run_dir: Path,
+) -> RuleViolation | None:
+    """Dispatch a single rule to its checker and return a violation or ``None``."""
+    _CHECKERS: dict[str, Any] = {
+        "forbidden_pattern": lambda r: _check_forbidden_pattern(r, diff),
+        "required_file": lambda r: _check_required_file(r, workdir),
+        "command": lambda r: _check_command(r, run_dir),
+    }
+    checker = _CHECKERS.get(rule.type)
+    if checker is None:
+        logger.warning("Rule %s: unknown type %r — skipping", rule.id, rule.type)
+        return None
+    return checker(rule)
+
+
+def _log_violation(task_id: str, violation: RuleViolation) -> None:
+    """Log a rule violation at the appropriate level."""
+    logger.log(
+        logging.WARNING if violation.blocked else logging.INFO,
+        "Rule [%s] %s for task %s: %s | fix: %s",
+        violation.rule_id,
+        "BLOCKED" if violation.blocked else "FLAGGED",
+        task_id,
+        violation.detail[:200],
+        violation.fix_hint[:200],
+    )
 
 
 # ---------------------------------------------------------------------------
