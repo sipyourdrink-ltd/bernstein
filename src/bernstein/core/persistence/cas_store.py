@@ -24,6 +24,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -97,10 +98,18 @@ class CASStore:
 
     # -- internal helpers ----------------------------------------------------
 
+    _HEX_RE: re.Pattern[str] = re.compile(r"\A[0-9a-f]{64}\Z")
+
     @staticmethod
     def _digest(content: bytes) -> str:
         """Compute the SHA-256 hex digest of *content*."""
         return hashlib.sha256(content).hexdigest()
+
+    def _validate_digest(self, digest: str) -> None:
+        """Ensure *digest* is a valid SHA-256 hex string (no path traversal)."""
+        if not self._HEX_RE.match(digest):
+            msg = f"Invalid CAS digest (expected 64 hex chars): {digest!r}"
+            raise ValueError(msg)
 
     def _shard_dir(self, digest: str) -> Path:
         """Return the shard directory for *digest* (first two hex chars)."""
@@ -181,7 +190,11 @@ class CASStore:
 
         Returns:
             The stored bytes, or ``None`` when the digest is unknown.
+
+        Raises:
+            ValueError: If *digest* is not a valid 64-char hex string.
         """
+        self._validate_digest(digest)
         blob = self._blob_path(digest)
         if not blob.exists():
             return None
@@ -195,7 +208,11 @@ class CASStore:
 
         Returns:
             ``True`` if the blob and its metadata are both present.
+
+        Raises:
+            ValueError: If *digest* is not a valid 64-char hex string.
         """
+        self._validate_digest(digest)
         return self._blob_path(digest).exists() and self._meta_path(digest).exists()
 
     def delete(self, digest: str) -> bool:
@@ -206,7 +223,11 @@ class CASStore:
 
         Returns:
             ``True`` if the entry was found and deleted, ``False`` otherwise.
+
+        Raises:
+            ValueError: If *digest* is not a valid 64-char hex string.
         """
+        self._validate_digest(digest)
         blob = self._blob_path(digest)
         meta = self._meta_path(digest)
 

@@ -3496,11 +3496,11 @@ class Orchestrator:
             )
             if result.returncode == 0 and result.stdout.strip():
                 text = result.stdout.strip()
-                if m := re.search(r"(\d+) files? changed", text):
+                if m := re.search(r"(\d+) files? changed", text[:500]):
                     stats["files"] = int(m.group(1))
-                if m := re.search(r"(\d+) insertions?", text):
+                if m := re.search(r"(\d+) insertions?", text[:500]):
                     stats["insertions"] = int(m.group(1))
-                if m := re.search(r"(\d+) deletions?", text):
+                if m := re.search(r"(\d+) deletions?", text[:500]):
                     stats["deletions"] = int(m.group(1))
         except Exception:
             pass

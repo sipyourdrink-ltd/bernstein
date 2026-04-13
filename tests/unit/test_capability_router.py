@@ -349,14 +349,17 @@ class TestCapabilityLevelOrdering:
         assert CapabilityLevel.BASIC < CapabilityLevel.EXPERT
 
     def test_same_level_ge(self) -> None:
-        assert CapabilityLevel.ADVANCED >= CapabilityLevel.ADVANCED
+        level = CapabilityLevel.ADVANCED
+        assert level >= CapabilityLevel.ADVANCED
 
     def test_same_level_not_gt(self) -> None:
-        assert not (CapabilityLevel.ADVANCED > CapabilityLevel.ADVANCED)
+        level = CapabilityLevel.ADVANCED
+        assert not (level > CapabilityLevel.ADVANCED)
 
     def test_le_ordering(self) -> None:
         assert CapabilityLevel.BASIC <= CapabilityLevel.ADVANCED
-        assert CapabilityLevel.ADVANCED <= CapabilityLevel.ADVANCED
+        level = CapabilityLevel.ADVANCED
+        assert level <= CapabilityLevel.ADVANCED
         assert not (CapabilityLevel.EXPERT <= CapabilityLevel.BASIC)
 
 

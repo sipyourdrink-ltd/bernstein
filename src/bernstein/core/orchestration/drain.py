@@ -195,6 +195,8 @@ def _rmtree_windows_safe(path: Path, max_attempts: int = 3) -> bool:
     def _onerror(func: object, fpath: str, exc_info: object) -> None:
         """Handle permission errors by making file writable and retrying."""
         try:
+            # Intentional: clear read-only flag on internal worktree files
+            # during cleanup so shutil.rmtree can delete them (Windows).
             os.chmod(fpath, stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
             if callable(func):
                 func(fpath)
@@ -721,7 +723,7 @@ class DrainCoordinator:
                         removed = True
                         break
                     if attempt < max_git_attempts - 1:
-                        time.sleep(1.0)  # Wait for file locks to release
+                        await asyncio.sleep(1.0)  # Wait for file locks to release
 
                 if not removed:  # noqa: SIM102
                     # Fallback: rm -rf with Windows file-lock handling

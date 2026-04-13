@@ -507,6 +507,8 @@ def worktree_remove(cwd: Path, path: Path) -> GitResult:
             def _onerror(func, fpath, _exc_info):  # type: ignore[no-untyped-def]
                 """Clear read-only flag and retry; ignore if still locked."""
                 try:
+                    # Intentional: clear read-only flag on internal worktree files
+                    # during cleanup so shutil.rmtree can delete them (Windows).
                     os.chmod(fpath, stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
                     func(fpath)
                 except OSError:

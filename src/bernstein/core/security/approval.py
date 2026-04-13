@@ -411,11 +411,11 @@ class ApprovalGate:
                 import re
 
                 text = result.stdout.strip()
-                if m := re.search(r"(\d+) files? changed", text):
+                if m := re.search(r"(\d+) files? changed", text[:500]):
                     stats["files"] = int(m.group(1))
-                if m := re.search(r"(\d+) insertions?", text):
+                if m := re.search(r"(\d+) insertions?", text[:500]):
                     stats["insertions"] = int(m.group(1))
-                if m := re.search(r"(\d+) deletions?", text):
+                if m := re.search(r"(\d+) deletions?", text[:500]):
                     stats["deletions"] = int(m.group(1))
         except Exception as exc:
             logger.debug("Failed to get diff stats: %s", exc)

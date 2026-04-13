@@ -222,7 +222,8 @@ def extract_query_terms(text: str) -> list[str]:
     """
     # Split camelCase / PascalCase before lowering.
     expanded = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    expanded = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", expanded)
+    # Bounded quantifier to prevent ReDoS on pathological input
+    expanded = re.sub(r"([A-Z]{1,200})([A-Z][a-z])", r"\1 \2", expanded)
     lowered = expanded.lower()
 
     tokens = _TOKEN_RE.findall(lowered)
