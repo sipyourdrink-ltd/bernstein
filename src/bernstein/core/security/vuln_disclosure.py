@@ -41,6 +41,7 @@ from enum import StrEnum
 # Data models
 # ---------------------------------------------------------------------------
 
+
 class Severity(StrEnum):
     """Standard vulnerability severity levels."""
 
@@ -102,12 +103,14 @@ class BountyScope:
 
     in_scope: tuple[str, ...]
     out_of_scope: tuple[str, ...] = ()
-    rewards: dict[str, float] = field(default_factory=lambda: {
-        "low": 100.0,
-        "medium": 500.0,
-        "high": 1500.0,
-        "critical": 5000.0,
-    })
+    rewards: dict[str, float] = field(
+        default_factory=lambda: {
+            "low": 100.0,
+            "medium": 500.0,
+            "high": 1500.0,
+            "critical": 5000.0,
+        }
+    )
     response_sla_hours: int = 48
     max_reward: float = 10000.0
 
@@ -198,6 +201,7 @@ def generate_security_txt(
 # ---------------------------------------------------------------------------
 # Vulnerability Disclosure Manager
 # ---------------------------------------------------------------------------
+
 
 class VulnerabilityDisclosureManager:
     """Manages the full lifecycle of vulnerability disclosure.
@@ -307,9 +311,7 @@ class VulnerabilityDisclosureManager:
             Severity(severity)
         except ValueError:
             valid = [s.value for s in Severity]
-            raise ValueError(
-                f"Invalid severity {severity!r}; must be one of {valid}"
-            ) from None
+            raise ValueError(f"Invalid severity {severity!r}; must be one of {valid}") from None
 
         updated = VulnReport(
             report_id=report.report_id,
@@ -482,9 +484,11 @@ class VulnerabilityDisclosureManager:
 
         return {
             "triage_within_sla": True,
-            "fix_within_sla": report.status in (
+            "fix_within_sla": report.status
+            in (
                 ReportStatus.RESOLVED.value,
                 ReportStatus.DISCLOSED.value,
-            ) or now <= fix_deadline,
+            )
+            or now <= fix_deadline,
             "disclosure_within_sla": True,  # disclosure is future-dated
         }

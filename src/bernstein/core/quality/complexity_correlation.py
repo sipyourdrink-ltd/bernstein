@@ -400,9 +400,7 @@ def identify_high_risk_files(
     Returns:
         Sorted list of high-risk file paths.
     """
-    return sorted(
-        m.file_path for m in metrics if m.cyclomatic_complexity > threshold
-    )
+    return sorted(m.file_path for m in metrics if m.cyclomatic_complexity > threshold)
 
 
 # ---------------------------------------------------------------------------
@@ -433,25 +431,19 @@ def build_analysis_report(
         readable = c.metric_name.replace("_", " ")
         if c.correlation_coefficient > 0:
             recommendations.append(
-                f"Reduce {readable} to improve agent success rate "
-                f"(r={c.correlation_coefficient:.2f})"
+                f"Reduce {readable} to improve agent success rate (r={c.correlation_coefficient:.2f})"
             )
         else:
             recommendations.append(
-                f"Higher {readable} is associated with better outcomes "
-                f"(r={c.correlation_coefficient:.2f})"
+                f"Higher {readable} is associated with better outcomes (r={c.correlation_coefficient:.2f})"
             )
 
     if high_risk_files:
-        recommendations.append(
-            f"Refactor {len(high_risk_files)} high-complexity file(s) "
-            f"to reduce agent failure risk"
-        )
+        recommendations.append(f"Refactor {len(high_risk_files)} high-complexity file(s) to reduce agent failure risk")
 
     if not recommendations:
         recommendations.append(
-            "No statistically significant correlations found — "
-            "collect more data or review metric coverage"
+            "No statistically significant correlations found — collect more data or review metric coverage"
         )
 
     return AnalysisReport(
@@ -484,8 +476,7 @@ def render_correlation_report(report: AnalysisReport) -> str:
     lines.append("|--------|---|---------|---|---------|")
     for c in report.correlations:
         lines.append(
-            f"| {c.metric_name} | {c.correlation_coefficient:+.3f} "
-            f"| {c.p_value:.4f} | {c.sample_size} | {c.insight} |"
+            f"| {c.metric_name} | {c.correlation_coefficient:+.3f} | {c.p_value:.4f} | {c.sample_size} | {c.insight} |"
         )
     lines.append("")
 
