@@ -45,7 +45,7 @@ class ManagerAdapter(CLIAdapter):
         cmd = [
             sys.executable,
             "-m",
-            "bernstein.core.manager",
+            "bernstein.core.orchestration.manager",
             "--port",
             "8052",
             "--task-id",
