@@ -107,7 +107,7 @@ on:
 # New push cancels in-progress run.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # ─── Fast checks (never cancelled, <2 min each) ───────────────────────
