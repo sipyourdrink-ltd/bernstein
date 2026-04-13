@@ -171,7 +171,7 @@ def _clean_stale_worktrees(workdir: Path) -> int:
     for entry in worktree_dir.iterdir():
         if not entry.is_dir():
             continue
-        if str(entry) not in tracked_paths: # noqa: SIM102
+        if str(entry) not in tracked_paths:  # noqa: SIM102
             # Stale directory — not tracked by git
             if _rmtree_windows_safe(entry):
                 cleaned += 1
