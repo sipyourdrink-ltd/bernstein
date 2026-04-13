@@ -201,7 +201,7 @@ class SpawnRateLimiter:
         with self._lock:
             now = time.monotonic()
             result: dict[str, int] = {}
-            for provider in list(self._spawn_times.keys()):
+            for provider in self._spawn_times:
                 self._prune_old(provider, now)
                 count = len(self._spawn_times[provider])
                 if count > 0:

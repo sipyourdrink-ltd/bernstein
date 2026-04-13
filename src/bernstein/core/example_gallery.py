@@ -77,7 +77,15 @@ def _infer_difficulty(plan: dict[str, Any]) -> str:
     if not complexities:
         return "intermediate"
 
-    avg = sum(1 if c == "low" else 2 if c == "medium" else 3 for c in complexities) / len(complexities)
+    def _complexity_score(c: str) -> int:
+        if c == "low":
+            return 1
+        elif c == "medium":
+            return 2
+        else:
+            return 3
+
+    avg = sum(_complexity_score(c) for c in complexities) / len(complexities)
     if avg <= 1.3:
         return "beginner"
     if avg <= 2.3:

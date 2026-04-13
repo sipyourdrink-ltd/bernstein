@@ -97,6 +97,16 @@ class VersionMetrics:
         )
 
 
+def _ab_winner(m1: VersionMetrics, m2: VersionMetrics, v1: int, v2: int) -> str:
+    """Determine A/B test winner from two version metrics."""
+    if m2.success_rate > m1.success_rate + CONFIDENCE_THRESHOLD:
+        return f"v{v2}"
+    elif m1.success_rate > m2.success_rate + CONFIDENCE_THRESHOLD:
+        return f"v{v1}"
+    else:
+        return "no clear winner"
+
+
 @dataclass
 class PromptVersion:
     """A single versioned prompt."""
@@ -526,11 +536,7 @@ class PromptRegistry:
                 "avg_cost": round(m2.avg_cost, 6),
                 "avg_latency": round(m2.avg_latency, 1),
             },
-            "winner": (
-                f"v{v2}"
-                if m2.success_rate > m1.success_rate + CONFIDENCE_THRESHOLD
-                else (f"v{v1}" if m1.success_rate > m2.success_rate + CONFIDENCE_THRESHOLD else "no clear winner")
-            ),
+            "winner": _ab_winner(m1, m2, v1, v2),
             "ab_active": meta.ab_enabled,
             "active_version": meta.active_version,
         }

@@ -454,7 +454,7 @@ def create_debug_bundle(
     files_included = sorted(entries.keys())
 
     # Final redaction pass over all entries (catches anything collectors missed)
-    for key in list(entries):
+    for key in entries:
         redacted, n = redact_secrets(entries[key])
         total_redactions += n
         entries[key] = redacted

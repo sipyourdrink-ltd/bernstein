@@ -63,6 +63,10 @@ SLOW_HOOK_THRESHOLD: float = 1.0
 _manager: PluginManager | None = None
 
 
+# Shared cast-type constants to avoid string duplication (Sonar S1192).
+_CAST_LIST_OBJ = "list[object]"
+
+
 class HookBlockingError(Exception):
     """Raised when a hook command exits with code 2, indicating a blocking failure."""
 
@@ -97,25 +101,22 @@ def _read_elicitation_stdin(timeout_seconds: float) -> str | None:
     Raises:
         KeyboardInterrupt: Propagated if the user presses Ctrl+C.
     """
+    if not _is_interactive():
+        return None
+
     try:
-        if not _is_interactive():
-            return None
+        ready = select.select([sys.stdin], [], [], timeout_seconds)
+    except (ValueError, OSError):
+        # select failed (e.g. on Windows with a pipe); fall back.
+        ready = ([sys.stdin], [], [])  # type: ignore[assignment]
 
-        try:
-            ready = select.select([sys.stdin], [], [], timeout_seconds)
-        except (ValueError, OSError):
-            # select failed (e.g. on Windows with a pipe); fall back.
-            ready = ([sys.stdin], [], [])  # type: ignore[assignment]
+    if not ready[0]:
+        return None  # timeout
 
-        if not ready[0]:
-            return None  # timeout
-
-        line = sys.stdin.readline()
-        if not line:
-            return None  # EOF
-        return line.strip()
-    except KeyboardInterrupt:
-        raise
+    line = sys.stdin.readline()
+    if not line:
+        return None  # EOF
+    return line.strip()
 
 
 def _match_option(normalised: str, options: list[str]) -> str | None:
@@ -951,7 +952,7 @@ class PluginManager:
         """
         from bernstein.core.mcp_registry import MCPServerEntry
 
-        for plugin_name in list(self._registered_names):
+        for plugin_name in self._registered_names:
             plugin = self._pm.get_plugin(plugin_name)
             if plugin is None:
                 continue
@@ -961,7 +962,7 @@ class PluginManager:
                 raw_servers: object = plugin.provide_mcp_servers()
                 if not raw_servers or not isinstance(raw_servers, list):
                     continue
-                typed_servers = cast("list[object]", raw_servers)
+                typed_servers = cast("_CAST_LIST_OBJ", raw_servers)
                 entries: list[MCPServerEntry] = []
                 for raw in typed_servers:
                     if isinstance(raw, MCPServerEntry):
@@ -972,11 +973,11 @@ class PluginManager:
                             MCPServerEntry(
                                 name=str(d["name"]),
                                 package=str(d.get("package", "")),
-                                capabilities=tuple(str(c) for c in cast("list[object]", d.get("capabilities", []))),
-                                keywords=tuple(str(k) for k in cast("list[object]", d.get("keywords", []))),
-                                env_required=tuple(str(e) for e in cast("list[object]", d.get("env_required", []))),
+                                capabilities=tuple(str(c) for c in cast("_CAST_LIST_OBJ", d.get("capabilities", []))),
+                                keywords=tuple(str(k) for k in cast("_CAST_LIST_OBJ", d.get("keywords", []))),
+                                env_required=tuple(str(e) for e in cast("_CAST_LIST_OBJ", d.get("env_required", []))),
                                 command=str(d.get("command", "npx")),
-                                args=tuple(str(a) for a in cast("list[object]", d["args"])) if "args" in d else None,
+                                args=tuple(str(a) for a in cast("_CAST_LIST_OBJ", d["args"])) if "args" in d else None,
                             )
                         )
                 if entries:

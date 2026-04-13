@@ -2158,11 +2158,12 @@ def _record_evolution_completion(
     if orch._evolution is not None:
         model = session.model_config.model if session else None
         provider = session.provider if session else None
-        duration = (
-            (task_m.end_time - task_m.start_time)
-            if task_m and task_m.end_time
-            else (time.time() - session.spawn_ts if session and session.spawn_ts > 0 else 0.0)
-        )
+        if task_m and task_m.end_time:
+            duration = task_m.end_time - task_m.start_time
+        elif session and session.spawn_ts > 0:
+            duration = time.time() - session.spawn_ts
+        else:
+            duration = 0.0
         try:
             orch._evolution.record_task_completion(
                 task=task,

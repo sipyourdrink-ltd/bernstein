@@ -1720,11 +1720,12 @@ class AgentSpawner:
                         spawn_duration = time.perf_counter() - spawn_start
                         agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
                         self._adapter_health.record_success(adapter_name, latency_ms=spawn_duration * 1000)
-                        session.provider = (
-                            provider_name
-                            if provider_name is not None
-                            else (adapter_name if (self._router and self._router.state.providers) else None)
-                        )
+                        if provider_name is not None:
+                            session.provider = provider_name
+                        elif self._router and self._router.state.providers:
+                            session.provider = adapter_name
+                        else:
+                            session.provider = None
                         session.model_config = model_config
                         break
                     except RateLimitError as exc:
@@ -2113,10 +2114,10 @@ class AgentSpawner:
             handle = self._container_mgr.spawn_in_container(
                 session_id=session_id,
                 cmd=self._adapter_cmd_for_container(
-                    prompt_file=prompt_file,
+                    _prompt_file=prompt_file,
                     model_config=model_config,
                     session_id=session_id,
-                    mcp_config=mcp_config,
+                    _mcp_config=mcp_config,
                     adapter=adapter,
                 ),
                 env=container_env,
@@ -2198,10 +2199,10 @@ class AgentSpawner:
                 session_id=session_id,
                 adapter_name=adapter_name,
                 cmd=self._adapter_cmd_for_container(
-                    prompt_file=prompt_file,
+                    _prompt_file=prompt_file,
                     model_config=model_config,
                     session_id=session_id,
-                    mcp_config=mcp_config,
+                    _mcp_config=mcp_config,
                     adapter=adapter,
                 ),
                 env=sandbox_env,
@@ -2232,10 +2233,10 @@ class AgentSpawner:
     def _adapter_cmd_for_container(
         self,
         *,
-        prompt_file: Path,
+        _prompt_file: Path,
         model_config: ModelConfig,
         session_id: str,
-        mcp_config: dict[str, Any] | None,
+        _mcp_config: dict[str, Any] | None,
         adapter: CLIAdapter,
     ) -> list[str]:
         """Build the CLI command to run inside the container.
@@ -2244,10 +2245,11 @@ class AgentSpawner:
         a command-line argument (which can hit ARG_MAX limits).
 
         Args:
-            prompt_file: Path to the prompt file inside the workspace.
+            _prompt_file: Path to the prompt file (part of interface;
+                the container path is reconstructed from session_id).
             model_config: Model and effort config.
             session_id: Session ID for the worker wrapper.
-            mcp_config: MCP configuration dict.
+            _mcp_config: MCP configuration dict (part of interface).
 
         Returns:
             Command argument list.
