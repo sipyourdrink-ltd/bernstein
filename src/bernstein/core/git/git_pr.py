@@ -501,35 +501,40 @@ def worktree_remove(cwd: Path, path: Path) -> GitResult:
 
         # Final fallback on Windows: manual deletion with permission override
         if sys.platform == "win32" and path.exists():
-            # Extra delay for stubborn file locks (processes fully exiting)
-            time.sleep(2.0)
-
-            def _onerror(func, fpath, _exc_info):  # type: ignore[no-untyped-def]
-                """Clear read-only flag and retry; ignore if still locked."""
-                try:
-                    # Intentional: clear read-only flag on internal worktree files
-                    # during cleanup so shutil.rmtree can delete them (Windows).
-                    os.chmod(fpath, stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
-                    func(fpath)
-                except OSError:
-                    pass  # File still locked, skip it
-
-            try:
-                shutil.rmtree(path, onerror=_onerror)
-                # Prune to clean up git's worktree list after manual deletion
-                run_git(["worktree", "prune"], cwd, timeout=10)
-                logger.debug("Worktree %s removed via manual deletion fallback", path)
-                return GitResult(returncode=0, stdout="", stderr="")
-            except Exception as exc:
-                logger.debug("Manual worktree deletion failed for %s: %s", path, exc)
-                # Check if directory is mostly gone (some locked files may remain)
-                if not path.exists() or not any(path.iterdir()):
-                    run_git(["worktree", "prune"], cwd, timeout=10)
-                    return GitResult(returncode=0, stdout="", stderr="")
+            fallback = _worktree_manual_delete(cwd, path)
+            if fallback is not None:
+                return fallback
 
         return result
 
     return result
+
+
+def _worktree_manual_delete(cwd: Path, path: Path) -> GitResult | None:
+    """Attempt manual worktree deletion on Windows. Returns GitResult on success, None on failure."""
+    # Extra delay for stubborn file locks (processes fully exiting)
+    time.sleep(2.0)
+
+    def _onerror(func, fpath, _exc_info):  # type: ignore[no-untyped-def]
+        """Clear read-only flag and retry; ignore if still locked."""
+        try:
+            os.chmod(fpath, stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            func(fpath)
+        except OSError:
+            pass  # File still locked, skip it
+
+    try:
+        shutil.rmtree(path, onerror=_onerror)
+        run_git(["worktree", "prune"], cwd, timeout=10)
+        logger.debug("Worktree %s removed via manual deletion fallback", path)
+        return GitResult(returncode=0, stdout="", stderr="")
+    except Exception as exc:
+        logger.debug("Manual worktree deletion failed for %s: %s", path, exc)
+        if not path.exists() or not any(path.iterdir()):
+            run_git(["worktree", "prune"], cwd, timeout=10)
+            return GitResult(returncode=0, stdout="", stderr="")
+
+    return None
 
 
 def worktree_list(cwd: Path) -> str:

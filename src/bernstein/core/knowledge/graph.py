@@ -110,27 +110,30 @@ class TaskGraph:
 
     def _build(self, tasks: Sequence[Task]) -> None:
         """Populate edges from explicit deps and file overlaps."""
-        # 1. Explicit depends_on edges
+        self._build_explicit_deps(tasks)
+        self._build_file_overlap_edges(tasks)
+
+    def _build_explicit_deps(self, tasks: Sequence[Task]) -> None:
+        """Add edges for explicit depends_on relationships."""
         for task in tasks:
             for dep_id in task.depends_on:
                 if dep_id in self._tasks:
                     self._add_edge(dep_id, task.id, "depends_on")
 
-        # 2. File-overlap edges (lower-priority task waits for higher)
+    def _build_file_overlap_edges(self, tasks: Sequence[Task]) -> None:
+        """Add edges for tasks that share owned files."""
         file_owners: dict[str, list[Task]] = defaultdict(list)
         for task in tasks:
             for f in task.owned_files:
                 file_owners[f].append(task)
 
-        for _file, owners in file_owners.items():
+        for owners in file_owners.values():
             if len(owners) < 2:
                 continue
-            # Sort by priority (1=critical first), then by id for stability
             sorted_owners = sorted(owners, key=lambda t: (t.priority, t.id))
             for i in range(len(sorted_owners) - 1):
                 src = sorted_owners[i]
                 tgt = sorted_owners[i + 1]
-                # Only add if not already connected via explicit dep
                 if tgt.id not in self._forward.get(src.id, []):
                     self._add_edge(src.id, tgt.id, "file_overlap")
 

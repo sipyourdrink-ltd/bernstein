@@ -49,6 +49,16 @@ class OperatorConfig:
     provider_keys_secret: str = ""
 
 
+@dataclass
+class _RunCounters:
+    """Mutable counters for tracking run advancement."""
+
+    completed: int = 0
+    failed: int = 0
+    active_jobs: int = 0
+    all_done: bool = True
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -282,63 +292,97 @@ class RunReconciler:
         spec = run.get("spec", {})
         max_retries = spec.get("maxRetries", 2)
 
-        active_jobs = 0
-        completed = 0
-        failed = 0
-        all_done = True
+        counters = _RunCounters()
 
         for si, (plan_stage, stage_st) in enumerate(zip(plan_stages, stages_status, strict=False)):
-            deps_met = self._deps_met(plan_stage.get("dependsOn", []), stages_status)
-            if not deps_met:
-                if stage_st["phase"] == "Pending":
-                    all_done = False
-                continue
+            self._advance_stage(
+                ns, name, si, plan_stage, stage_st, plan_stages, plan_spec, spec, max_retries, stages_status, counters
+            )
 
-            stage_done = True
-            stage_failed = False
-
-            for ti, step_st in enumerate(stage_st.get("steps", [])):
-                step_phase = step_st.get("phase", "Pending")
-
-                if step_phase == "Completed":
-                    completed += 1
-                    continue
-                if step_phase == "Failed":
-                    failed += 1
-                    stage_failed = True
-                    continue
-
-                stage_done = False
-                all_done = False
-
-                if step_phase == "Running":
-                    c, f, a, sf = self._process_running_step(ns, step_st, max_retries)
-                    completed += c
-                    failed += f
-                    active_jobs += a
-                    if sf:
-                        stage_failed = True
-                    continue
-
-                if step_phase == "Pending":
-                    self._launch_pending_step(ns, name, si, ti, plan_stages, plan_spec, spec, step_st)
-                    active_jobs += 1
-
-            self._update_stage_phase(stage_st, stage_done, stage_failed, deps_met)
-
-        run_phase = self._determine_run_phase(all_done, failed, active_jobs, stages_status)
+        run_phase = self._determine_run_phase(counters.all_done, counters.failed, counters.active_jobs, stages_status)
 
         patch: dict[str, Any] = {
             "phase": run_phase,
-            "completedSteps": completed,
-            "failedSteps": failed,
-            "activeJobs": active_jobs,
+            "completedSteps": counters.completed,
+            "failedSteps": counters.failed,
+            "activeJobs": counters.active_jobs,
             "stages": stages_status,
         }
         if run_phase in ("Completed", "Failed"):
             patch["completionTime"] = _now_iso()
 
         self._patch_status(ns, name, patch)
+
+    def _advance_stage(
+        self,
+        ns: str,
+        name: str,
+        si: int,
+        plan_stage: dict[str, Any],
+        stage_st: dict[str, Any],
+        plan_stages: list[dict[str, Any]],
+        plan_spec: dict[str, Any],
+        spec: dict[str, Any],
+        max_retries: int,
+        stages_status: list[dict[str, Any]],
+        counters: _RunCounters,
+    ) -> None:
+        """Process a single stage within a run."""
+        deps_met = self._deps_met(plan_stage.get("dependsOn", []), stages_status)
+        if not deps_met:
+            if stage_st["phase"] == "Pending":
+                counters.all_done = False
+            return
+
+        stage_done = True
+        stage_failed = False
+
+        for ti, step_st in enumerate(stage_st.get("steps", [])):
+            sd, sf = self._process_step(ns, name, si, ti, step_st, plan_stages, plan_spec, spec, max_retries, counters)
+            if not sd:
+                stage_done = False
+            if sf:
+                stage_failed = True
+
+        self._update_stage_phase(stage_st, stage_done, stage_failed, deps_met)
+
+    def _process_step(
+        self,
+        ns: str,
+        name: str,
+        si: int,
+        ti: int,
+        step_st: dict[str, Any],
+        plan_stages: list[dict[str, Any]],
+        plan_spec: dict[str, Any],
+        spec: dict[str, Any],
+        max_retries: int,
+        counters: _RunCounters,
+    ) -> tuple[bool, bool]:
+        """Process a single step. Returns (is_done, is_failed)."""
+        step_phase = step_st.get("phase", "Pending")
+
+        if step_phase == "Completed":
+            counters.completed += 1
+            return True, False
+        if step_phase == "Failed":
+            counters.failed += 1
+            return True, True
+
+        counters.all_done = False
+
+        if step_phase == "Running":
+            c, f, a, sf = self._process_running_step(ns, step_st, max_retries)
+            counters.completed += c
+            counters.failed += f
+            counters.active_jobs += a
+            return False, sf
+
+        if step_phase == "Pending":
+            self._launch_pending_step(ns, name, si, ti, plan_stages, plan_spec, spec, step_st)
+            counters.active_jobs += 1
+
+        return False, False
 
     def _deps_met(self, deps: list[str], stages_status: list[dict[str, Any]]) -> bool:
         if not deps:
@@ -490,6 +534,21 @@ class RunReconciler:
         self._crd.patch_namespaced_custom_object_status(CRD_GROUP, CRD_VERSION, ns, RUN_PLURAL, name, body)
 
 
+def _reconcile_resources(
+    crd_api: Any,
+    ns: str,
+    plural: str,
+    reconciler: PlanReconciler | RunReconciler,
+) -> None:
+    """List and reconcile all resources of a given CRD type."""
+    items = crd_api.list_namespaced_custom_object(CRD_GROUP, CRD_VERSION, ns, plural)
+    for item in items.get("items", []):
+        try:
+            reconciler.reconcile(item)
+        except Exception:
+            logger.exception("Failed to reconcile %s %s", plural, item["metadata"]["name"])
+
+
 class BernsteinOperator:
     """Main operator loop — watches CRDs and delegates to reconcilers."""
 
@@ -523,26 +582,8 @@ class BernsteinOperator:
 
         while self._running:
             try:
-                plans = crd_api.list_namespaced_custom_object(CRD_GROUP, CRD_VERSION, ns, PLAN_PLURAL)
-                for plan in plans.get("items", []):
-                    try:
-                        plan_reconciler.reconcile(plan)
-                    except Exception:
-                        logger.exception(
-                            "Failed to reconcile plan %s",
-                            plan["metadata"]["name"],
-                        )
-
-                runs = crd_api.list_namespaced_custom_object(CRD_GROUP, CRD_VERSION, ns, RUN_PLURAL)
-                for run_obj in runs.get("items", []):
-                    try:
-                        run_reconciler.reconcile(run_obj)
-                    except Exception:
-                        logger.exception(
-                            "Failed to reconcile run %s",
-                            run_obj["metadata"]["name"],
-                        )
-
+                _reconcile_resources(crd_api, ns, PLAN_PLURAL, plan_reconciler)
+                _reconcile_resources(crd_api, ns, RUN_PLURAL, run_reconciler)
             except Exception:
                 logger.exception("Reconcile loop error")
 

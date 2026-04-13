@@ -34,50 +34,30 @@ class Documentation:
         """Convert documentation to Markdown format."""
         lines = ["# API Documentation", "", "Auto-generated from source code.", ""]
 
-        # Modules
-        if self.modules:
-            lines.append("## Modules")
-            lines.append("")
-            for module in self.modules:
-                lines.append(f"### `{module.name}`")
-                lines.append("")
-                if module.docstring:
-                    lines.append(module.docstring)
-                    lines.append("")
-
-        # Classes
-        if self.classes:
-            lines.append("## Classes")
-            lines.append("")
-            for cls in self.classes:
-                lines.append(f"### `{cls.name}`")
-                lines.append("")
-                if cls.docstring:
-                    lines.append(cls.docstring)
-                    lines.append("")
-                if cls.signature:
-                    lines.append("```python")
-                    lines.append(cls.signature)
-                    lines.append("```")
-                    lines.append("")
-
-        # Functions
-        if self.functions:
-            lines.append("## Functions")
-            lines.append("")
-            for func in self.functions:
-                lines.append(f"### `{func.name}`")
-                lines.append("")
-                if func.docstring:
-                    lines.append(func.docstring)
-                    lines.append("")
-                if func.signature:
-                    lines.append("```python")
-                    lines.append(func.signature)
-                    lines.append("```")
-                    lines.append("")
+        _render_doc_section(lines, "Modules", self.modules, include_signature=False)
+        _render_doc_section(lines, "Classes", self.classes, include_signature=True)
+        _render_doc_section(lines, "Functions", self.functions, include_signature=True)
 
         return "\n".join(lines)
+
+
+def _render_doc_section(
+    lines: list[str],
+    heading: str,
+    entries: list[DocEntry],
+    *,
+    include_signature: bool,
+) -> None:
+    """Render a documentation section with entries."""
+    if not entries:
+        return
+    lines.extend([f"## {heading}", ""])
+    for entry in entries:
+        lines.extend([f"### `{entry.name}`", ""])
+        if entry.docstring:
+            lines.extend([entry.docstring, ""])
+        if include_signature and entry.signature:
+            lines.extend(["```python", entry.signature, "```", ""])
 
 
 def extract_docs_from_module(module_path: Path) -> Documentation:

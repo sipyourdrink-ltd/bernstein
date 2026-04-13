@@ -181,6 +181,30 @@ def degrade_capabilities(
     return frozenset(full.capabilities - negotiated.capabilities)
 
 
+def _resolve_best_minor(
+    local_minors: dict[int, ProtocolVersion],
+    remote_minors: dict[int, ProtocolVersion],
+) -> ProtocolVersion:
+    """Pick the best negotiated version from two minor-version maps."""
+    common_minors = sorted(set(local_minors) & set(remote_minors), reverse=True)
+    if common_minors:
+        return local_minors[common_minors[0]]
+
+    local_max_minor = max(local_minors)
+    remote_max_minor = max(remote_minors)
+    chosen_minor = min(local_max_minor, remote_max_minor)
+
+    if chosen_minor in local_minors:
+        return local_minors[chosen_minor]
+    if chosen_minor in remote_minors:
+        return remote_minors[chosen_minor]
+
+    # Fall back to highest minor on the side with the lower max.
+    if local_max_minor < remote_max_minor:
+        return local_minors[max(local_minors)]
+    return remote_minors[max(remote_minors)]
+
+
 def negotiate_version(
     local_versions: list[ProtocolVersion],
     remote_versions: list[ProtocolVersion],
@@ -246,33 +270,11 @@ def negotiate_version(
             success=False,
         )
 
-    # Within the best common major, find highest minor both support.
     best_major = common_majors[0]
     local_minors = {v.minor: v for v in local_by_major[best_major]}
     remote_minors = {v.minor: v for v in remote_by_major[best_major]}
 
-    common_minors = sorted(set(local_minors) & set(remote_minors), reverse=True)
-
-    if common_minors:
-        # Exact minor match — pick the highest.
-        negotiated = local_minors[common_minors[0]]
-    else:
-        # No exact minor overlap — pick the minimum of each side's highest.
-        local_max_minor = max(local_minors)
-        remote_max_minor = max(remote_minors)
-        chosen_minor = min(local_max_minor, remote_max_minor)
-
-        # Use whichever side owns that minor.
-        if chosen_minor in local_minors:
-            negotiated = local_minors[chosen_minor]
-        elif chosen_minor in remote_minors:
-            negotiated = remote_minors[chosen_minor]
-        else:
-            # Fall back to lowest minor on the side that has the lower max.
-            if local_max_minor < remote_max_minor:
-                negotiated = local_minors[max(local_minors)]
-            else:
-                negotiated = remote_minors[max(remote_minors)]
+    negotiated = _resolve_best_minor(local_minors, remote_minors)
 
     degraded = degrade_capabilities(local_best, negotiated)
 

@@ -253,34 +253,9 @@ class SchemaRegistry:
         errors: list[str] = []
         warnings: list[str] = []
 
-        # Check required fields are present.
-        for req in sorted(schema.required_fields):
-            if req not in payload:
-                errors.append(f"Missing required field '{req}'")
-
-        # Check for unknown fields.
-        for key in sorted(payload):
-            if key not in schema.fields:
-                errors.append(f"Unknown field '{key}'")
-
-        # Check types of present, known fields.
-        for key in sorted(payload):
-            if key not in schema.fields:
-                continue
-            expected_type_str = schema.fields[key]
-            expected_type = _TYPE_MAP.get(expected_type_str)
-            if expected_type is None:
-                # Can't validate unknown type specifiers; skip.
-                continue
-            value = payload[key]
-            if not isinstance(value, expected_type):
-                actual_type = type(value).__name__
-                errors.append(f"Field '{key}' expected type '{expected_type_str}', got '{actual_type}'")
-
-        # Warn on deprecated field usage.
-        for key in sorted(payload):
-            if key in schema.deprecated_fields:
-                warnings.append(f"Field '{key}' is deprecated")
+        self._check_required_fields(schema, payload, errors)
+        self._check_unknown_and_types(schema, payload, errors)
+        self._check_deprecated(schema, payload, warnings)
 
         valid = len(errors) == 0
         return ValidationResult(
@@ -288,6 +263,42 @@ class SchemaRegistry:
             errors=tuple(errors),
             warnings=tuple(warnings),
         )
+
+    @staticmethod
+    def _check_required_fields(
+        schema: SchemaVersion, payload: dict[str, object], errors: list[str]
+    ) -> None:
+        """Check that all required fields are present."""
+        for req in sorted(schema.required_fields):
+            if req not in payload:
+                errors.append(f"Missing required field '{req}'")
+
+    @staticmethod
+    def _check_unknown_and_types(
+        schema: SchemaVersion, payload: dict[str, object], errors: list[str]
+    ) -> None:
+        """Check for unknown fields and validate types of known fields."""
+        for key in sorted(payload):
+            if key not in schema.fields:
+                errors.append(f"Unknown field '{key}'")
+                continue
+            expected_type_str = schema.fields[key]
+            expected_type = _TYPE_MAP.get(expected_type_str)
+            if expected_type is None:
+                continue
+            value = payload[key]
+            if not isinstance(value, expected_type):
+                actual_type = type(value).__name__
+                errors.append(f"Field '{key}' expected type '{expected_type_str}', got '{actual_type}'")
+
+    @staticmethod
+    def _check_deprecated(
+        schema: SchemaVersion, payload: dict[str, object], warnings: list[str]
+    ) -> None:
+        """Warn on deprecated field usage."""
+        for key in sorted(payload):
+            if key in schema.deprecated_fields:
+                warnings.append(f"Field '{key}' is deprecated")
 
     def migrate_payload(
         self,

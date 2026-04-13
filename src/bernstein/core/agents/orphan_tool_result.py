@@ -102,35 +102,53 @@ def find_orphaned_tool_uses(
     resolved_ids: set[str] = set()
 
     for idx, msg in enumerate(messages):
-        role = msg.get("role", "")
         content = msg.get("content", [])
 
         # ``content`` may be a plain string for simple text-only messages
         if isinstance(content, str):
             continue
 
+        role = msg.get("role", "")
         if role == "assistant":
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                b = cast("dict[str, Any]", block)
-                if b.get("type") == "tool_use":
-                    tool_id = cast("str", b.get("id", ""))
-                    tool_name = cast("str", b.get("name", "unknown_tool"))
-                    if tool_id:
-                        pending.append((idx, tool_id, tool_name))
-
+            _collect_tool_uses(idx, content, pending)
         elif role == "user":
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                b = cast("dict[str, Any]", block)
-                if b.get("type") == "tool_result":
-                    tid = cast("str", b.get("tool_use_id", ""))
-                    if tid:
-                        resolved_ids.add(tid)
+            _collect_resolved_ids(content, resolved_ids)
 
     return [(idx, tid, name) for idx, tid, name in pending if tid not in resolved_ids]
+
+
+def _collect_tool_uses(
+    msg_idx: int,
+    content: list[Any],
+    pending: list[tuple[int, str, str]],
+) -> None:
+    """Extract tool_use block IDs from an assistant message's content."""
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        b = cast("dict[str, Any]", block)
+        if b.get("type") != "tool_use":
+            continue
+        tool_id = cast("str", b.get("id", ""))
+        if tool_id:
+            tool_name = cast("str", b.get("name", "unknown_tool"))
+            pending.append((msg_idx, tool_id, tool_name))
+
+
+def _collect_resolved_ids(
+    content: list[Any],
+    resolved_ids: set[str],
+) -> None:
+    """Extract resolved tool_use_ids from a user message's content."""
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        b = cast("dict[str, Any]", block)
+        if b.get("type") != "tool_result":
+            continue
+        tid = cast("str", b.get("tool_use_id", ""))
+        if tid:
+            resolved_ids.add(tid)
 
 
 # ---------------------------------------------------------------------------

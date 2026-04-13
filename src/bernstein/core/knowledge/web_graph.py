@@ -129,6 +129,49 @@ def build_graph_data(tasks: list[dict[str, object]]) -> GraphData:
 # ---------------------------------------------------------------------------
 
 
+def _topological_sort(
+    node_ids: set[str],
+    adjacency: dict[str, list[str]],
+    in_degree: dict[str, int],
+) -> list[str]:
+    """Kahn's algorithm for topological ordering."""
+    queue: deque[str] = deque(nid for nid, deg in in_degree.items() if deg == 0)
+    topo_order: list[str] = []
+    while queue:
+        node = queue.popleft()
+        topo_order.append(node)
+        for successor in adjacency[node]:
+            in_degree[successor] -= 1
+            if in_degree[successor] == 0:
+                queue.append(successor)
+    return topo_order
+
+
+def _traceback_longest_path(
+    topo_order: list[str],
+    adjacency: dict[str, list[str]],
+    node_ids: set[str],
+) -> list[str]:
+    """DP for longest path, then trace back from the endpoint."""
+    dist: dict[str, int] = {nid: 1 for nid in node_ids}
+    predecessor: dict[str, str | None] = {nid: None for nid in node_ids}
+
+    for node in topo_order:
+        for successor in adjacency[node]:
+            if dist[node] + 1 > dist[successor]:
+                dist[successor] = dist[node] + 1
+                predecessor[successor] = node
+
+    end_node = max(topo_order, key=lambda nid: dist[nid])
+    path: list[str] = []
+    current: str | None = end_node
+    while current is not None:
+        path.append(current)
+        current = predecessor[current]
+    path.reverse()
+    return path
+
+
 def find_critical_path(data: GraphData) -> list[str]:
     """Find the longest dependency chain in the graph.
 
@@ -154,39 +197,11 @@ def find_critical_path(data: GraphData) -> list[str]:
             adjacency[edge.source].append(edge.target)
             in_degree[edge.target] = in_degree.get(edge.target, 0) + 1
 
-    # Kahn's algorithm for topological order
-    queue: deque[str] = deque(nid for nid, deg in in_degree.items() if deg == 0)
-    topo_order: list[str] = []
-    while queue:
-        node = queue.popleft()
-        topo_order.append(node)
-        for successor in adjacency[node]:
-            in_degree[successor] -= 1
-            if in_degree[successor] == 0:
-                queue.append(successor)
-
+    topo_order = _topological_sort(node_ids, adjacency, in_degree)
     if not topo_order:
         return [data.nodes[0].id]
 
-    # DP for longest path
-    dist: dict[str, int] = {nid: 1 for nid in node_ids}
-    predecessor: dict[str, str | None] = {nid: None for nid in node_ids}
-
-    for node in topo_order:
-        for successor in adjacency[node]:
-            if dist[node] + 1 > dist[successor]:
-                dist[successor] = dist[node] + 1
-                predecessor[successor] = node
-
-    # Trace back from the node with maximum distance
-    end_node = max(topo_order, key=lambda nid: dist[nid])
-    path: list[str] = []
-    current: str | None = end_node
-    while current is not None:
-        path.append(current)
-        current = predecessor[current]
-    path.reverse()
-    return path
+    return _traceback_longest_path(topo_order, adjacency, node_ids)
 
 
 # ---------------------------------------------------------------------------

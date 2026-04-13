@@ -371,56 +371,64 @@ class ApprovalGate:
         Returns:
             Dict with 'files', 'insertions', 'deletions', 'file_list' keys.
         """
-        import subprocess
-
         stats: dict[str, Any] = {"files": 0, "insertions": 0, "deletions": 0, "file_list": []}
 
         try:
-            # Get file list with stats
-            result = subprocess.run(
-                ["git", "diff", "--stat", f"{base_branch}...HEAD"],
-                cwd=str(worktree_path),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                lines = result.stdout.strip().split("\n")
-                # Last line is summary like "3 files changed, 45 insertions(+), 12 deletions(-)"
-                for line in lines[:-1]:
-                    # Extract filename (before the | character)
-                    if "|" in line:
-                        filename = line.split("|")[0].strip()
-                        if filename:
-                            stats["file_list"].append(filename)
-
-            # Get numeric stats
-            result = subprocess.run(
-                ["git", "diff", "--shortstat", f"{base_branch}...HEAD"],
-                cwd=str(worktree_path),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                # Parse "3 files changed, 45 insertions(+), 12 deletions(-)"
-                import re
-
-                text = result.stdout.strip()
-                if m := re.search(r"(\d+) files? changed", text[:500]):
-                    stats["files"] = int(m.group(1))
-                if m := re.search(r"(\d+) insertions?", text[:500]):
-                    stats["insertions"] = int(m.group(1))
-                if m := re.search(r"(\d+) deletions?", text[:500]):
-                    stats["deletions"] = int(m.group(1))
+            stats["file_list"] = self._get_diff_file_list(worktree_path, base_branch)
+            self._fill_shortstat(stats, worktree_path, base_branch)
         except Exception as exc:
             logger.debug("Failed to get diff stats: %s", exc)
 
         return stats
+
+    @staticmethod
+    def _get_diff_file_list(worktree_path: Path, base_branch: str) -> list[str]:
+        """Extract the list of changed filenames from git diff --stat."""
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "diff", "--stat", f"{base_branch}...HEAD"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        files: list[str] = []
+        if result.returncode == 0 and result.stdout.strip():
+            lines = result.stdout.strip().split("\n")
+            for line in lines[:-1]:
+                if "|" in line:
+                    filename = line.split("|")[0].strip()
+                    if filename:
+                        files.append(filename)
+        return files
+
+    @staticmethod
+    def _fill_shortstat(stats: dict[str, Any], worktree_path: Path, base_branch: str) -> None:
+        """Parse git diff --shortstat and fill numeric stats."""
+        import re
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "diff", "--shortstat", f"{base_branch}...HEAD"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return
+        text = result.stdout.strip()
+        if m := re.search(r"(\d+) files? changed", text):
+            stats["files"] = int(m.group(1))
+        if m := re.search(r"(\d+) insertions?", text):
+            stats["insertions"] = int(m.group(1))
+        if m := re.search(r"(\d+) deletions?", text):
+            stats["deletions"] = int(m.group(1))
 
     def _pr_body(
         self,

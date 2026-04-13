@@ -194,29 +194,37 @@ def analyze_historical_decompositions(
     if not records:
         return []
 
-    # Index: parent_task_id -> list[child_record]
-    children: dict[str, list[dict[str, object]]] = defaultdict(list)
-    all_by_id: dict[str, dict[str, object]] = {}
+    children = _index_children(records)
+    bucket_data = _build_bucket_data(children)
+    return _aggregate_buckets(bucket_data)
 
+
+def _index_children(
+    records: list[dict[str, object]],
+) -> dict[str, list[dict[str, object]]]:
+    """Index records by parent_task_id to find subtask groups."""
+    children: dict[str, list[dict[str, object]]] = defaultdict(list)
     for rec in records:
-        task_id = str(rec.get("task_id", ""))
-        if task_id:
-            all_by_id[task_id] = rec
         parent_id = rec.get("parent_task_id")
         if isinstance(parent_id, str) and parent_id:
             children[parent_id].append(rec)
+    return children
 
-    # Also detect parents by result_summary pattern when parent_task_id
-    # is missing (older archive format).
+
+def _extract_numeric_values(records: list[dict[str, object]], key: str) -> list[float]:
+    """Extract numeric values for a given key from a list of records."""
+    values: list[float] = []
     for rec in records:
-        summary = str(rec.get("result_summary", ""))
-        task_id = str(rec.get("task_id", ""))
-        if "subtask" in summary.lower() and task_id not in children:
-            # Not a known parent — skip.
-            continue
+        val = rec.get(key)
+        if isinstance(val, (int, float)):
+            values.append(float(val))
+    return values
 
-    # Build per-bucket accumulators.
-    # bucket_key -> list of (subtask_count, success_rate, avg_duration, avg_cost)
+
+def _build_bucket_data(
+    children: dict[str, list[dict[str, object]]],
+) -> dict[tuple[int, int], list[tuple[int, float, float, float]]]:
+    """Compute per-bucket statistics from subtask groups."""
     bucket_data: dict[tuple[int, int], list[tuple[int, float, float, float]]] = defaultdict(list)
 
     for _parent_id, subs in children.items():
@@ -227,24 +235,22 @@ def analyze_historical_decompositions(
         successes = sum(1 for s in subs if str(s.get("status", "")) == "done")
         rate = successes / count
 
-        durations: list[float] = []
-        for s in subs:
-            dur_val = s.get("duration_seconds")
-            if isinstance(dur_val, (int, float)):
-                durations.append(float(dur_val))
+        durations = _extract_numeric_values(subs, "duration_seconds")
         avg_dur = sum(durations) / len(durations) if durations else 0.0
 
-        costs: list[float] = []
-        for s in subs:
-            cost_val = s.get("cost_usd")
-            if isinstance(cost_val, (int, float)):
-                costs.append(float(cost_val))
+        costs = _extract_numeric_values(subs, "cost_usd")
         avg_cost = sum(costs) / len(costs) if costs else 0.0
 
         key = _bucket_for(count)
         bucket_data[key].append((count, rate, avg_dur, avg_cost))
 
-    # Aggregate into GranularityBucket objects.
+    return bucket_data
+
+
+def _aggregate_buckets(
+    bucket_data: dict[tuple[int, int], list[tuple[int, float, float, float]]],
+) -> list[GranularityBucket]:
+    """Aggregate raw bucket data into GranularityBucket objects."""
     buckets: list[GranularityBucket] = []
     for lo, hi in sorted(bucket_data):
         entries = bucket_data[(lo, hi)]
