@@ -25,7 +25,12 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import shutil
+import stat
+import subprocess
+import sys
+import time
 from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_basic import run_git
@@ -34,6 +39,73 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _rmtree_windows_safe(path: Path, max_attempts: int = 3) -> bool:
+    """Remove a directory tree with Windows file-lock handling.
+
+    On Windows, files may be locked by processes that haven't fully exited,
+    antivirus scanning, or editor file watchers. This function:
+    1. Tries shutil.rmtree with permission override
+    2. Retries with delays for transient locks
+    3. Falls back to PowerShell Remove-Item -Force
+
+    Args:
+        path: Directory to remove.
+        max_attempts: Number of retry attempts (default 3).
+
+    Returns:
+        True if the directory was removed, False otherwise.
+    """
+    if not path.exists():
+        return True
+
+    def _onerror(func: object, fpath: str, exc_info: object) -> None:
+        """Handle permission errors by making file writable and retrying."""
+        try:
+            os.chmod(fpath, stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            if callable(func):
+                func(fpath)
+        except OSError:
+            pass  # Give up on this file
+
+    is_windows = sys.platform == "win32"
+    attempts = max_attempts if is_windows else 1
+
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path, onerror=_onerror)
+            return True
+        except OSError as exc:
+            if attempt < attempts - 1:
+                # Wait for file locks to release (antivirus, processes exiting)
+                time.sleep(1.0)
+                logger.debug("Retry %d/%d removing %s: %s", attempt + 1, attempts, path, exc)
+            # Continue to PowerShell fallback
+
+    # Final fallback on Windows: PowerShell Remove-Item -Force
+    if is_windows and path.exists():
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    f"Remove-Item -LiteralPath '{path}' -Recurse -Force -ErrorAction SilentlyContinue",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if not path.exists():
+                return True
+        except Exception as exc:
+            logger.debug("PowerShell Remove-Item failed for %s: %s", path, exc)
+
+    if path.exists():
+        logger.warning("Failed to remove %s after %d attempts", path, attempts)
+        return False
+    return True
 
 
 def run_hygiene(workdir: Path, *, full: bool = False) -> dict[str, int]:
@@ -101,12 +173,9 @@ def _clean_stale_worktrees(workdir: Path) -> int:
             continue
         if str(entry) not in tracked_paths:
             # Stale directory — not tracked by git
-            try:
-                shutil.rmtree(entry)
+            if _rmtree_windows_safe(entry):
                 cleaned += 1
                 logger.debug("Removed stale worktree dir: %s", entry.name)
-            except OSError as exc:
-                logger.warning("Failed to remove stale worktree %s: %s", entry.name, exc)
 
     return cleaned
 
