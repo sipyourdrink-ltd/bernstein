@@ -357,9 +357,7 @@ def build_metrics_bar(data: DemoDashboardData) -> Panel:
     cost_line = f"[bold]Cost:[/bold]   ${m.total_cost_usd:.2f} USD"
     token_line = f"[bold]Tokens:[/bold]  {m.total_tokens:,}"
 
-    content = Text.from_markup(
-        f"{task_bar}\n{quality_bar}\n{cost_line}\n{token_line}"
-    )
+    content = Text.from_markup(f"{task_bar}\n{quality_bar}\n{cost_line}\n{token_line}")
 
     return Panel(
         content,
@@ -435,10 +433,7 @@ def render_tui_snapshot(
             supported by Rich's built-in export).
     """
     if config.output_format == "png":
-        msg = (
-            "PNG export is not supported by Rich's built-in export. "
-            "Use SVG and convert externally."
-        )
+        msg = "PNG export is not supported by Rich's built-in export. Use SVG and convert externally."
         raise ValueError(msg)
 
     console = Console(
