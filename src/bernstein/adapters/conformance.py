@@ -281,6 +281,69 @@ class ConformanceHarness:
     when the observed outcome matches the transcript expectation.
     """
 
+    @staticmethod
+    def _check_exception_result(
+        step: TranscriptStep,
+        step_index: int,
+        exc: Exception,
+    ) -> StepResult:
+        """Produce a StepResult for an exception raised during spawn."""
+        exc_name = type(exc).__name__
+        if step.expect_exception:
+            if exc_name == step.expect_exception:
+                return StepResult(step_index=step_index, passed=True, message=f"Expected {exc_name} raised")
+            return StepResult(
+                step_index=step_index,
+                passed=False,
+                message=f"Expected {step.expect_exception}, got {exc_name}: {exc}",
+            )
+        return StepResult(
+            step_index=step_index,
+            passed=False,
+            message=f"Unexpected exception {exc_name}: {exc}",
+        )
+
+    @staticmethod
+    def _validate_spawn_result(
+        result: object,
+        step: TranscriptStep,
+        step_index: int,
+    ) -> StepResult:
+        """Validate a successful SpawnResult against the transcript step."""
+        if step.expect_exception:
+            return StepResult(
+                step_index=step_index,
+                passed=False,
+                message=f"Expected {step.expect_exception} but spawn() succeeded (pid={getattr(result, 'pid', '?')})",
+            )
+        if not isinstance(result, SpawnResult):
+            return StepResult(
+                step_index=step_index,
+                passed=False,
+                message=f"spawn() returned {type(result).__name__}, expected SpawnResult",
+            )
+        if not isinstance(result.pid, int):
+            return StepResult(
+                step_index=step_index,
+                passed=False,
+                message=f"SpawnResult.pid is {type(result.pid).__name__}, expected int",
+            )
+        if not isinstance(result.log_path, Path):
+            return StepResult(
+                step_index=step_index,
+                passed=False,
+                message=f"SpawnResult.log_path is {type(result.log_path).__name__}, expected Path",
+            )
+        if step.expected_log_suffix and not str(result.log_path).endswith(step.expected_log_suffix):
+            return StepResult(
+                step_index=step_index,
+                passed=False,
+                message=(
+                    f"log_path {result.log_path!s} does not end with expected suffix {step.expected_log_suffix!r}"
+                ),
+            )
+        return StepResult(step_index=step_index, passed=True, message=f"OK — pid={result.pid}")
+
     def replay_step(
         self,
         adapter: CLIAdapter,
@@ -301,7 +364,6 @@ class ConformanceHarness:
         """
         pid = step.expected_pid if step.expected_pid is not None else 1234
         popen_target = _popen_target_for(adapter)
-        # Some adapters call Popen twice (e.g. for a probe process)
         side_effects = [_make_popen_mock(pid), _make_popen_mock(pid + 1)]
 
         try:
@@ -310,7 +372,6 @@ class ConformanceHarness:
                 ctx.__enter__()
                 patched = True
             except (AttributeError, ModuleNotFoundError):
-                # Adapter module doesn't expose subprocess — call spawn unpatched
                 ctx = None
                 patched = False
 
@@ -325,61 +386,9 @@ class ConformanceHarness:
                 if patched and ctx is not None:
                     ctx.__exit__(None, None, None)
         except Exception as exc:
-            exc_name = type(exc).__name__
-            if step.expect_exception:
-                if exc_name == step.expect_exception:
-                    return StepResult(step_index=step_index, passed=True, message=f"Expected {exc_name} raised")
-                return StepResult(
-                    step_index=step_index,
-                    passed=False,
-                    message=f"Expected {step.expect_exception}, got {exc_name}: {exc}",
-                )
-            return StepResult(
-                step_index=step_index,
-                passed=False,
-                message=f"Unexpected exception {exc_name}: {exc}",
-            )
+            return self._check_exception_result(step, step_index, exc)
 
-        # Step expected an exception but none was raised
-        if step.expect_exception:
-            return StepResult(
-                step_index=step_index,
-                passed=False,
-                message=f"Expected {step.expect_exception} but spawn() succeeded (pid={result.pid})",
-            )
-
-        # Validate SpawnResult
-        if not isinstance(result, SpawnResult):
-            return StepResult(
-                step_index=step_index,
-                passed=False,
-                message=f"spawn() returned {type(result).__name__}, expected SpawnResult",
-            )
-
-        if not isinstance(result.pid, int):
-            return StepResult(
-                step_index=step_index,
-                passed=False,
-                message=f"SpawnResult.pid is {type(result.pid).__name__}, expected int",
-            )
-
-        if not isinstance(result.log_path, Path):
-            return StepResult(
-                step_index=step_index,
-                passed=False,
-                message=f"SpawnResult.log_path is {type(result.log_path).__name__}, expected Path",
-            )
-
-        if step.expected_log_suffix and not str(result.log_path).endswith(step.expected_log_suffix):
-            return StepResult(
-                step_index=step_index,
-                passed=False,
-                message=(
-                    f"log_path {result.log_path!s} does not end with expected suffix {step.expected_log_suffix!r}"
-                ),
-            )
-
-        return StepResult(step_index=step_index, passed=True, message=f"OK — pid={result.pid}")
+        return self._validate_spawn_result(result, step, step_index)
 
     def replay_transcript(
         self,

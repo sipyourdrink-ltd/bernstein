@@ -47,24 +47,8 @@ def _error_response(exc: Exception, *, hint: str = "Task server may be restartin
     return json.dumps({"error": str(exc), "hint": hint})
 
 
-def create_mcp_server(
-    server_url: str = _DEFAULT_SERVER_URL,
-    name: str = "bernstein",
-) -> FastMCP[None]:
-    """Build and return the Bernstein FastMCP server instance.
-
-    Args:
-        server_url: Base URL of the Bernstein task server.
-        name: MCP server name advertised to clients.
-
-    Returns:
-        Configured FastMCP instance with all Bernstein tools registered.
-    """
-    mcp: FastMCP[None] = FastMCP(name)
-
-    # ------------------------------------------------------------------
-    # bernstein_health
-    # ------------------------------------------------------------------
+def _register_health_tool(mcp: FastMCP[None]) -> None:
+    """Register the ``bernstein_health`` liveness-check tool."""
 
     @mcp.tool()
     async def bernstein_health(  # pyright: ignore[reportUnusedFunction]
@@ -78,9 +62,9 @@ def create_mcp_server(
         """
         return json.dumps({"status": "ok"})
 
-    # ------------------------------------------------------------------
-    # bernstein_run
-    # ------------------------------------------------------------------
+
+def _register_crud_tools(mcp: FastMCP[None], server_url: str) -> None:
+    """Register run, status, tasks, cost, stop, approve, and create_subtask tools."""
 
     @mcp.tool()
     async def bernstein_run(  # pyright: ignore[reportUnusedFunction]
@@ -125,10 +109,6 @@ def create_mcp_server(
         except Exception as exc:
             return _error_response(exc)
 
-    # ------------------------------------------------------------------
-    # bernstein_status
-    # ------------------------------------------------------------------
-
     @mcp.tool()
     async def bernstein_status(  # pyright: ignore[reportUnusedFunction]
     ) -> str:
@@ -146,10 +126,6 @@ def create_mcp_server(
             return json.dumps(data, indent=2)
         except Exception as exc:
             return _error_response(exc)
-
-    # ------------------------------------------------------------------
-    # bernstein_tasks
-    # ------------------------------------------------------------------
 
     @mcp.tool()
     async def bernstein_tasks(  # pyright: ignore[reportUnusedFunction]
@@ -176,10 +152,6 @@ def create_mcp_server(
         except Exception as exc:
             return _error_response(exc)
 
-    # ------------------------------------------------------------------
-    # bernstein_cost
-    # ------------------------------------------------------------------
-
     @mcp.tool()
     async def bernstein_cost(  # pyright: ignore[reportUnusedFunction]
     ) -> str:
@@ -201,10 +173,6 @@ def create_mcp_server(
             return json.dumps(cost_summary, indent=2)
         except Exception as exc:
             return _error_response(exc)
-
-    # ------------------------------------------------------------------
-    # bernstein_stop
-    # ------------------------------------------------------------------
 
     @mcp.tool()
     async def bernstein_stop(  # pyright: ignore[reportUnusedFunction]
@@ -229,10 +197,6 @@ def create_mcp_server(
             return json.dumps({"status": "shutdown signal sent", "path": str(shutdown_file)})
         except Exception as exc:
             return _error_response(exc, hint="Could not write shutdown signal")
-
-    # ------------------------------------------------------------------
-    # bernstein_approve
-    # ------------------------------------------------------------------
 
     @mcp.tool()
     async def bernstein_approve(  # pyright: ignore[reportUnusedFunction]
@@ -263,10 +227,6 @@ def create_mcp_server(
             )
         except Exception as exc:
             return _error_response(exc)
-
-    # ------------------------------------------------------------------
-    # bernstein_create_subtask
-    # ------------------------------------------------------------------
 
     @mcp.tool()
     async def bernstein_create_subtask(  # pyright: ignore[reportUnusedFunction]
@@ -324,6 +284,23 @@ def create_mcp_server(
         except Exception as exc:
             return _error_response(exc)
 
+
+def create_mcp_server(
+    server_url: str = _DEFAULT_SERVER_URL,
+    name: str = "bernstein",
+) -> FastMCP[None]:
+    """Build and return the Bernstein FastMCP server instance.
+
+    Args:
+        server_url: Base URL of the Bernstein task server.
+        name: MCP server name advertised to clients.
+
+    Returns:
+        Configured FastMCP instance with all Bernstein tools registered.
+    """
+    mcp: FastMCP[None] = FastMCP(name)
+    _register_health_tool(mcp)
+    _register_crud_tools(mcp, server_url)
     return mcp
 
 

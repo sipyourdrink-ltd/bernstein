@@ -151,6 +151,31 @@ def _collect_styles(styles_dir: Path) -> list[OutputStyle]:
     return result
 
 
+def _read_preferred_style_name(project_dir: Path) -> str | None:
+    """Read the preferred output style name from bernstein.yaml, if present."""
+    if yaml is None:
+        return None
+    yaml_path = project_dir / "bernstein.yaml"
+    if not yaml_path.exists():
+        return None
+    try:
+        raw_yaml = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        data: dict[str, Any] = cast("dict[str, Any]", raw_yaml) if isinstance(raw_yaml, dict) else {}
+        if "output_style" in data:
+            return str(data["output_style"]).lower()
+    except Exception:
+        pass  # Config read failed
+    return None
+
+
+def _find_style_by_name(available: list[OutputStyle], name: str) -> OutputStyle | None:
+    """Find a style by case-insensitive name match."""
+    for s in available:
+        if s.name.lower() == name:
+            return s
+    return None
+
+
 def _resolve_active_style(
     project_dir: Path,
     available: list[OutputStyle],
@@ -159,23 +184,13 @@ def _resolve_active_style(
     if not available:
         return None
 
-    active = available[0]
+    preferred = _read_preferred_style_name(project_dir)
+    if preferred is not None:
+        match = _find_style_by_name(available, preferred)
+        if match is not None:
+            return match
 
-    yaml_path = project_dir / "bernstein.yaml"
-    if yaml_path.exists() and yaml is not None:
-        try:
-            raw_yaml = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-            data: dict[str, Any] = cast("dict[str, Any]", raw_yaml) if isinstance(raw_yaml, dict) else {}
-            if "output_style" in data:
-                preferred: str = str(data["output_style"]).lower()
-                for s in available:
-                    if s.name.lower() == preferred:
-                        active = s
-                        break
-        except Exception:
-            pass  # Config read failed; use default style
-
-    return active
+    return available[0]
 
 
 def load_output_styles(project_dir: Path) -> StyleConfig:

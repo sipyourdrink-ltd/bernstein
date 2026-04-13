@@ -142,6 +142,40 @@ def _collect_task_completion_events(metrics_dir: Path, start_ts: float, end_ts: 
     return events
 
 
+def _classify_trace_step(step_type: str) -> str:
+    """Map a trace step type to a timeline event kind."""
+    return {"spawn": "agent_spawned", "fail": "agent_crashed"}.get(step_type, "trace_step")
+
+
+def _trace_step_to_event(
+    step: dict[str, Any],
+    session_id: str,
+    agent_role: str,
+    model: str,
+) -> TimelineEvent:
+    """Convert a single trace step dict to a TimelineEvent."""
+    step_type = step.get("type", "?")
+    detail = step.get("detail", "")
+    summary = (
+        f"[{agent_role}/{model}] {step_type}: {detail[:120]}" if detail else f"[{agent_role}/{model}] {step_type}"
+    )
+    return TimelineEvent(
+        timestamp=step.get("timestamp", 0),
+        kind=_classify_trace_step(step_type),
+        source="traces",
+        summary=summary,
+        details={
+            "session_id": session_id,
+            "agent_role": agent_role,
+            "model": model,
+            "step_type": step_type,
+            "detail": detail,
+            "files": step.get("files", []),
+            "tokens": step.get("tokens", 0),
+        },
+    )
+
+
 def _collect_trace_events(traces_dir: Path, start_ts: float, end_ts: float) -> list[TimelineEvent]:
     """Collect trace step events in the time window."""
     events: list[TimelineEvent] = []
@@ -156,35 +190,7 @@ def _collect_trace_events(traces_dir: Path, start_ts: float, end_ts: float) -> l
         for step in trace_data.get("steps", []):
             ts = step.get("timestamp", 0)
             if start_ts <= ts <= end_ts:
-                step_type = step.get("type", "?")
-                detail = step.get("detail", "")
-                kind = "trace_step"
-                if step_type == "spawn":
-                    kind = "agent_spawned"
-                elif step_type == "fail":
-                    kind = "agent_crashed"
-                summary = (
-                    f"[{agent_role}/{model}] {step_type}: {detail[:120]}"
-                    if detail
-                    else f"[{agent_role}/{model}] {step_type}"
-                )
-                events.append(
-                    TimelineEvent(
-                        timestamp=ts,
-                        kind=kind,
-                        source="traces",
-                        summary=summary,
-                        details={
-                            "session_id": session_id,
-                            "agent_role": agent_role,
-                            "model": model,
-                            "step_type": step_type,
-                            "detail": detail,
-                            "files": step.get("files", []),
-                            "tokens": step.get("tokens", 0),
-                        },
-                    )
-                )
+                events.append(_trace_step_to_event(step, session_id, agent_role, model))
     return events
 
 

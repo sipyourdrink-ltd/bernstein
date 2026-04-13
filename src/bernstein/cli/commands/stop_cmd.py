@@ -243,6 +243,31 @@ def register_sigint_handler() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _get_phase_icon(status: str, icons: object) -> str:
+    """Return the icon for a drain phase status."""
+    running = "..." if sys.platform == "win32" else "\u23f3"
+    done = getattr(icons, "check", "+")
+    failed = getattr(icons, "cross", "x")
+    return {"running": running, "done": done}.get(status, failed)
+
+
+def _format_agent_status_line(agents: object, icons: object) -> str | None:
+    """Format a one-line agent status summary for the wait phase."""
+    if not isinstance(agents, list) or not agents:
+        return None
+    running = "..." if sys.platform == "win32" else "\u23f3"
+    done = getattr(icons, "check", "+")
+    failed = getattr(icons, "cross", "x")
+    commit = "[w]" if sys.platform == "win32" else "\U0001f4dd"
+    sym_map = {"running": running, "exited": done, "killed": failed, "committing": commit}
+    parts: list[str] = []
+    for a_obj in cast("list[object]", agents):
+        sid = getattr(a_obj, "session_id", "?")
+        st = getattr(a_obj, "status", "?")
+        parts.append(f"{sym_map.get(st, '?')} {sid}")
+    return " | ".join(parts) if parts else None
+
+
 def soft_stop(timeout: int) -> None:
     """Graceful drain via DrainCoordinator.
 
@@ -266,40 +291,20 @@ def soft_stop(timeout: int) -> None:
         detail = getattr(phase, "detail", "")
         status = getattr(phase, "status", "")
 
-        # ASCII-safe icons for Windows
-        _running = "..." if sys.platform == "win32" else "\u23f3"  # hourglass
-        _done = _icons.check
-        _failed = _icons.cross
-        _commit = "[w]" if sys.platform == "win32" else "\U0001f4dd"  # memo emoji
-
-        # Print phase header on transition
         if number != _last_phase["number"]:
             if _last_phase["number"] > 0:
-                print()  # newline after previous phase
-            match status:
-                case "running":
-                    icon = _running
-                case "done":
-                    icon = _done
-                case _:
-                    icon = _failed
+                print()
+            icon = _get_phase_icon(status, _icons)
             print(f"  {icon} Phase {number}/6: {name}", flush=True)
             _last_phase["number"] = number
 
-        # Show live detail (agents waiting, etc.)
         if detail:
             print(f"\r    {detail}    ", end="", flush=True)
 
-        # Show per-agent status during wait phase
-        if name == "wait" and isinstance(agents, list) and agents:
-            agent_lines: list[str] = []
-            for a_obj in cast("list[object]", agents):
-                sid: str = getattr(a_obj, "session_id", "?")
-                st: str = getattr(a_obj, "status", "?")
-                sym = {"running": _running, "exited": _done, "killed": _failed, "committing": _commit}.get(st, "?")
-                agent_lines.append(f"{sym} {sid}")
-            if agent_lines:
-                print(f"\r    {' | '.join(agent_lines)}    ", end="", flush=True)
+        if name == "wait":
+            line = _format_agent_status_line(agents, _icons)
+            if line:
+                print(f"\r    {line}    ", end="", flush=True)
 
     report = asyncio.run(coordinator.run(callback=on_update))
     print()  # final newline
@@ -362,6 +367,22 @@ def _collect_pids_from_agents_json(killed: set[int]) -> None:
         pass
 
 
+def _extract_pids_from_meta(meta: dict[str, Any]) -> list[int]:
+    """Extract valid PIDs from a metadata dict."""
+    pids: list[int] = []
+    for key in ("worker_pid", "child_pid", "pid"):
+        raw = meta.get(key)
+        if raw is None:
+            continue
+        try:
+            pid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if pid:
+            pids.append(pid)
+    return pids
+
+
 def _collect_pids_from_metadata(killed: set[int]) -> None:
     """Source B: kill worker + child PIDs from .sdd/runtime/pids/*.json."""
     pids_dir = Path(".sdd/runtime/pids")
@@ -373,15 +394,8 @@ def _collect_pids_from_metadata(killed: set[int]) -> None:
         except (OSError, ValueError):
             continue
         label = meta.get("session", pid_file.stem)
-        for key in ("worker_pid", "child_pid", "pid"):
-            raw = meta.get(key)
-            if raw is None:
-                continue
-            try:
-                pid = int(raw)
-            except (TypeError, ValueError):
-                continue
-            if pid and pid not in killed and is_alive(pid):
+        for pid in _extract_pids_from_meta(meta):
+            if pid not in killed and is_alive(pid):
                 _kill_agent_pid(pid, label, killed)
         pid_file.unlink(missing_ok=True)
 

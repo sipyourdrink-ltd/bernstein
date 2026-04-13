@@ -139,6 +139,29 @@ def combine_tasks_for_batch(tasks: list[Task]) -> BatchTask:
 # ---------------------------------------------------------------------------
 
 
+def _match_task_id(first_line: str, id_set: set[str]) -> str:
+    """Find the task ID that matches the start of a result section header."""
+    for tid in id_set:
+        if first_line.startswith(tid):
+            return tid
+    return ""
+
+
+def _parse_result_sections(result_summary: str, id_set: set[str]) -> dict[str, str]:
+    """Extract task summaries from ``## Result:`` sections."""
+    results: dict[str, str] = {}
+    parts = result_summary.split("## Result:")
+    for part in parts[1:]:  # skip text before first header
+        lines = part.strip().splitlines()
+        if not lines:
+            continue
+        matched_id = _match_task_id(lines[0].strip(), id_set)
+        if matched_id:
+            summary = "\n".join(lines[1:]).strip()
+            results[matched_id] = summary if summary else "Completed (no details)."
+    return results
+
+
 def split_batch_result(
     result_summary: str,
     original_task_ids: list[str],
@@ -155,27 +178,7 @@ def split_batch_result(
     Returns:
         Mapping of task_id -> summary string.
     """
-    results: dict[str, str] = {}
-    id_set = set(original_task_ids)
-
-    # Split on "## Result:" headers
-    parts = result_summary.split("## Result:")
-    for part in parts[1:]:  # skip text before first header
-        # First line after the header is the task ID
-        lines = part.strip().splitlines()
-        if not lines:
-            continue
-        # The task_id is the first token on the first line
-        first_line = lines[0].strip()
-        matched_id = ""
-        for tid in id_set:
-            if first_line.startswith(tid):
-                matched_id = tid
-                break
-        if matched_id:
-            # Everything after the first line is the summary
-            summary = "\n".join(lines[1:]).strip()
-            results[matched_id] = summary if summary else "Completed (no details)."
+    results = _parse_result_sections(result_summary, set(original_task_ids))
 
     # Fill in fallback for tasks without explicit sections
     for tid in original_task_ids:

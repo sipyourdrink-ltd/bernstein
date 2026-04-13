@@ -320,6 +320,65 @@ def _render_verification_nudge(
     )
 
 
+def _render_status_header(con: Console, stats: object, elapsed: float) -> None:
+    """Render the task count status line and elapsed time."""
+    summary = stats.summary  # type: ignore[attr-defined]
+    status_line = Text()
+    status_line.append("Tasks: ", style="bold")
+    status_line.append(f"{summary.total} total  ", style="bold")
+    status_line.append(f"{summary.done} done  ", style="green")
+    status_line.append(f"{summary.in_progress} in progress  ", style="yellow")
+    status_line.append(f"{summary.failed} failed", style="red")
+    con.print(status_line)
+    if elapsed > 0:
+        con.print(Text.assemble(("Elapsed: ", "bold"), (format_duration(elapsed), "dim")))
+
+
+def _render_task_section(con: Console, tasks: list[dict[str, Any]], vc: ViewConfig) -> None:
+    """Render task tables (urgent + full in expert mode)."""
+    if not tasks:
+        return
+    con.print()
+    urgent_tasks = _select_urgent_tasks(tasks)
+    urgent_table = _build_task_table(urgent_tasks)
+    urgent_table.title = "Urgent Tasks"
+    con.print(urgent_table)
+    if vc.mode is ViewMode.EXPERT and len(tasks) > len(urgent_tasks):
+        con.print()
+        con.print(_build_task_table(tasks))
+
+
+def _render_agent_section(con: Console, agents: list[dict[str, Any]]) -> None:
+    """Render the agents table or 'no agents' placeholder."""
+    con.print()
+    if agents:
+        agent_table = AgentStatusTable()
+        con.print(agent_table.render(agents))
+    else:
+        con.print("[dim]No active agents.[/dim]")
+
+
+def _render_cost_section(
+    con: Console,
+    total_cost: float,
+    per_role: list[dict[str, Any]],
+    vc: ViewConfig,
+) -> None:
+    """Render cost summary and optional per-role breakdown."""
+    if not (total_cost > 0 or per_role):
+        return
+    con.print(
+        Text.assemble(
+            ("\nTotal spend: ", "bold"),
+            (f"${total_cost:.4f}", "bold green"),
+        )
+    )
+    if vc.show_cost_per_task:
+        cost_table = _build_cost_table(per_role)
+        if cost_table is not None:
+            con.print(cost_table)
+
+
 def render_status(
     data: dict[str, Any],
     *,
@@ -342,7 +401,6 @@ def render_status(
     con = console or make_console()
 
     tasks, agents, stats, per_role, provider_status, dependency_scan = _extract_run_stats(data)
-    summary = stats.summary
     elapsed = stats.elapsed_seconds
     total_cost = stats.total_cost_usd
     alerts_raw = data.get("alerts", [])
@@ -352,51 +410,16 @@ def render_status(
         con.print(create_summary_plain(stats))
         return
 
-    status_line = Text()
-    status_line.append("Tasks: ", style="bold")
-    status_line.append(f"{summary.total} total  ", style="bold")
-    status_line.append(f"{summary.done} done  ", style="green")
-    status_line.append(f"{summary.in_progress} in progress  ", style="yellow")
-    status_line.append(f"{summary.failed} failed", style="red")
-    con.print(status_line)
-
-    if elapsed > 0:
-        con.print(Text.assemble(("Elapsed: ", "bold"), (format_duration(elapsed), "dim")))
+    _render_status_header(con, stats, elapsed)
 
     alert_lines = _build_alert_lines(alerts)
     if alert_lines is not None:
         con.print()
         con.print(alert_lines)
 
-    if tasks:
-        con.print()
-        urgent_tasks = _select_urgent_tasks(tasks)
-        urgent_table = _build_task_table(urgent_tasks)
-        urgent_table.title = "Urgent Tasks"
-        con.print(urgent_table)
-        if vc.mode is ViewMode.EXPERT and len(tasks) > len(urgent_tasks):
-            con.print()
-            con.print(_build_task_table(tasks))
-
-    if agents:
-        con.print()
-        agent_table = AgentStatusTable()
-        con.print(agent_table.render(agents))
-    else:
-        con.print()
-        con.print("[dim]No active agents.[/dim]")
-
-    if total_cost > 0 or per_role:
-        con.print(
-            Text.assemble(
-                ("\nTotal spend: ", "bold"),
-                (f"${total_cost:.4f}", "bold green"),
-            )
-        )
-        if vc.show_cost_per_task:
-            cost_table = _build_cost_table(per_role)
-            if cost_table is not None:
-                con.print(cost_table)
+    _render_task_section(con, tasks, vc)
+    _render_agent_section(con, agents)
+    _render_cost_section(con, total_cost, per_role, vc)
 
     if vc.show_model_details:
         provider_table = _build_provider_table(provider_status)

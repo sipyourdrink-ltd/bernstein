@@ -165,62 +165,8 @@ class RunReportGenerator:
         if math.isclose(total_cost_usd, 0.0) and cost_data:
             total_cost_usd = float(cost_data.get("total_spent_usd", 0.0))
 
-        # Build task rows and timeline
-        task_rows: list[TaskRow] = []
-        timeline_entries: list[TimelineEntry] = []
-        quality_pass = 0
-        quality_fail = 0
-        run_start = self._infer_run_start(task_metrics)
-
-        for tm in task_metrics:
-            title = str(tm.get("task_id", "unknown"))
-            role = str(tm.get("role", ""))
-            model = str(tm.get("model", ""))
-            success = bool(tm.get("success", False))
-            janitor = bool(tm.get("janitor_passed", False))
-            cost = float(tm.get("cost_usd", 0.0))
-            start_time = float(tm.get("start_time", 0.0))
-            end_time = float(tm.get("end_time", 0.0))
-            dur = end_time - start_time if end_time > start_time else 0.0
-
-            task_rows.append(
-                TaskRow(
-                    title=title,
-                    role=role,
-                    status="done" if success else "failed",
-                    model=model,
-                    duration_s=dur,
-                    cost_usd=cost,
-                    janitor_passed=janitor,
-                )
-            )
-
-            if end_time > 0:
-                if janitor:
-                    quality_pass += 1
-                else:
-                    quality_fail += 1
-
-            if start_time > 0 and run_start > 0:
-                timeline_entries.append(
-                    TimelineEntry(
-                        title=title,
-                        start_offset_s=start_time - run_start,
-                        end_offset_s=(end_time - run_start) if end_time > 0 else (start_time - run_start),
-                    )
-                )
-
-        # Build model costs from cost_data
-        model_costs: list[ModelCost] = []
-        for mc in cost_data.get("per_model", []):
-            model_costs.append(
-                ModelCost(
-                    model=str(mc.get("model", "")),
-                    total_cost_usd=float(mc.get("total_cost_usd", 0.0)),
-                    invocation_count=int(mc.get("invocation_count", 0)),
-                    total_tokens=int(mc.get("total_tokens", 0)),
-                )
-            )
+        task_rows, timeline_entries, quality_pass, quality_fail = self._build_task_rows(task_metrics)
+        model_costs = self._build_model_costs(cost_data)
 
         return RunReport(
             goal=goal,
@@ -247,10 +193,17 @@ class RunReportGenerator:
             Multi-line markdown string.
         """
         lines: list[str] = []
+        lines.extend(self._md_summary(report))
+        lines.extend(self._md_task_breakdown(report))
+        lines.extend(self._md_quality_gates(report))
+        lines.extend(self._md_cost_analysis(report))
+        lines.extend(self._md_timeline(report))
+        return "\n".join(lines)
 
-        # -- Summary -----------------------------------------------------------
-        lines.append("# Run Report")
-        lines.append("")
+    @staticmethod
+    def _md_summary(report: RunReport) -> list[str]:
+        """Render the summary header section."""
+        lines = ["# Run Report", ""]
         if report.goal:
             lines.append(f"**Goal:** {report.goal}")
         lines.append(f"**Run ID:** `{report.run_id}`")
@@ -260,10 +213,12 @@ class RunReportGenerator:
         lines.append(f"**Tasks failed:** {report.tasks_failed}")
         lines.append(f"**Agents spawned:** {report.agents_spawned}")
         lines.append("")
+        return lines
 
-        # -- Task breakdown ----------------------------------------------------
-        lines.append("## Task Breakdown")
-        lines.append("")
+    @staticmethod
+    def _md_task_breakdown(report: RunReport) -> list[str]:
+        """Render the task breakdown table section."""
+        lines = ["## Task Breakdown", ""]
         if report.task_rows:
             lines.append("| Task | Role | Status | Model | Duration | Cost |")
             lines.append("|------|------|--------|-------|----------|------|")
@@ -277,10 +232,12 @@ class RunReportGenerator:
         else:
             lines.append("No tasks recorded.")
         lines.append("")
+        return lines
 
-        # -- Quality gates -----------------------------------------------------
-        lines.append("## Quality Gates")
-        lines.append("")
+    @staticmethod
+    def _md_quality_gates(report: RunReport) -> list[str]:
+        """Render the quality gates section."""
+        lines = ["## Quality Gates", ""]
         total_verified = report.quality_pass_count + report.quality_fail_count
         if total_verified > 0:
             pass_rate = report.quality_pass_count / total_verified * 100
@@ -290,34 +247,36 @@ class RunReportGenerator:
         else:
             lines.append("No quality gate data available.")
         lines.append("")
+        return lines
 
-        # -- Cost analysis -----------------------------------------------------
-        lines.append("## Cost Analysis")
-        lines.append("")
+    @staticmethod
+    def _md_cost_analysis(report: RunReport) -> list[str]:
+        """Render the cost analysis section."""
+        lines = ["## Cost Analysis", ""]
         if report.model_costs:
             lines.append("| Model | Cost | Invocations | Tokens |")
             lines.append("|-------|------|-------------|--------|")
             for mc in report.model_costs:
                 lines.append(f"| {mc.model} | ${mc.total_cost_usd:.4f} | {mc.invocation_count} | {mc.total_tokens:,} |")
             lines.append("")
-            # Most expensive task
             if report.task_rows:
                 most_expensive = max(report.task_rows, key=lambda r: r.cost_usd)
                 lines.append(f"**Most expensive task:** {most_expensive.title} (${most_expensive.cost_usd:.4f})")
         else:
             lines.append("No cost data available.")
         lines.append("")
+        return lines
 
-        # -- Timeline ----------------------------------------------------------
-        lines.append("## Timeline")
-        lines.append("")
+    @staticmethod
+    def _md_timeline(report: RunReport) -> list[str]:
+        """Render the timeline section."""
+        lines = ["## Timeline", ""]
         if report.timeline_entries:
             lines.append(_render_ascii_timeline(report.timeline_entries, report.duration_s))
         else:
             lines.append("No timeline data available.")
         lines.append("")
-
-        return "\n".join(lines)
+        return lines
 
     def save(self, report: RunReport, path: Path | None = None) -> Path:
         """Write the markdown report to disk.
@@ -344,6 +303,77 @@ class RunReportGenerator:
 
     # -- internal helpers ---------------------------------------------------
 
+    def _build_task_rows(
+        self,
+        task_metrics: list[dict[str, Any]],
+    ) -> tuple[list[TaskRow], list[TimelineEntry], int, int]:
+        """Build task rows, timeline entries, and quality counts from metrics."""
+        task_rows: list[TaskRow] = []
+        timeline_entries: list[TimelineEntry] = []
+        quality_pass = 0
+        quality_fail = 0
+        run_start = self._infer_run_start(task_metrics)
+
+        for tm in task_metrics:
+            row, tl_entry = self._parse_task_metric(tm, run_start)
+            task_rows.append(row)
+            if row.janitor_passed and tm.get("end_time", 0.0) > 0:
+                quality_pass += 1
+            elif tm.get("end_time", 0.0) > 0:
+                quality_fail += 1
+            if tl_entry is not None:
+                timeline_entries.append(tl_entry)
+
+        return task_rows, timeline_entries, quality_pass, quality_fail
+
+    @staticmethod
+    def _parse_task_metric(
+        tm: dict[str, Any],
+        run_start: float,
+    ) -> tuple[TaskRow, TimelineEntry | None]:
+        """Parse a single task metric dict into a TaskRow and optional TimelineEntry."""
+        title = str(tm.get("task_id", "unknown"))
+        role = str(tm.get("role", ""))
+        model = str(tm.get("model", ""))
+        success = bool(tm.get("success", False))
+        janitor = bool(tm.get("janitor_passed", False))
+        cost = float(tm.get("cost_usd", 0.0))
+        start_time = float(tm.get("start_time", 0.0))
+        end_time = float(tm.get("end_time", 0.0))
+        dur = end_time - start_time if end_time > start_time else 0.0
+
+        row = TaskRow(
+            title=title,
+            role=role,
+            status="done" if success else "failed",
+            model=model,
+            duration_s=dur,
+            cost_usd=cost,
+            janitor_passed=janitor,
+        )
+
+        tl_entry: TimelineEntry | None = None
+        if start_time > 0 and run_start > 0:
+            tl_entry = TimelineEntry(
+                title=title,
+                start_offset_s=start_time - run_start,
+                end_offset_s=(end_time - run_start) if end_time > 0 else (start_time - run_start),
+            )
+        return row, tl_entry
+
+    @staticmethod
+    def _build_model_costs(cost_data: dict[str, Any]) -> list[ModelCost]:
+        """Build model cost entries from cost data."""
+        return [
+            ModelCost(
+                model=str(mc.get("model", "")),
+                total_cost_usd=float(mc.get("total_cost_usd", 0.0)),
+                invocation_count=int(mc.get("invocation_count", 0)),
+                total_tokens=int(mc.get("total_tokens", 0)),
+            )
+            for mc in cost_data.get("per_model", [])
+        ]
+
     def _detect_latest_run_id(self) -> str:
         """Find the most recent run ID from ``.sdd/runs/``."""
         runs_dir = self._sdd / "runs"
@@ -369,29 +399,27 @@ class RunReportGenerator:
             logger.warning("Failed to load summary.json: %s", exc)
         return {}
 
-    def _load_task_metrics(self) -> list[dict[str, Any]]:
-        """Load per-task metrics from ``.sdd/metrics/task_*.json``.
+    @staticmethod
+    def _load_json_dicts(metrics_dir: Path, glob_pattern: str) -> list[dict[str, Any]]:
+        """Load all JSON files matching a glob and return dicts."""
 
-        Falls back to scanning JSONL metric files for task_completion_time
-        entries when structured per-task files are not available.
-        """
-        metrics_dir = self._sdd / "metrics"
-        if not metrics_dir.is_dir():
-            return []
-
-        # Try structured per-task metric files first
         results: list[dict[str, Any]] = []
-        for f in sorted(metrics_dir.glob("task_*.json")):
+        for f in sorted(metrics_dir.glob(glob_pattern)):
             try:
                 raw: Any = json.loads(f.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
                     results.append(cast(_CAST_DICT_STR_ANY, raw))
             except (OSError, json.JSONDecodeError):
                 continue
-        if results:
-            return results
+        return results
 
-        # Fallback: scan JSONL files for task_completion_time entries
+    @staticmethod
+    def _scan_jsonl_entries(metrics_dir: Path, metric_type: str) -> list[dict[str, Any]]:
+        """Scan JSONL files for entries matching a specific metric_type.
+
+        Returns raw entry dicts (with ``labels`` and ``timestamp``).
+        """
+        entries: list[dict[str, Any]] = []
         for f in sorted(metrics_dir.glob("*.jsonl")):
             try:
                 for raw_line in f.read_text(encoding="utf-8").splitlines():
@@ -402,23 +430,41 @@ class RunReportGenerator:
                     if not isinstance(entry_raw, dict):
                         continue
                     entry = cast(_CAST_DICT_STR_ANY, entry_raw)
-                    if entry.get("metric_type") != "task_completion_time":
-                        continue
-                    labels: dict[str, Any] = entry.get("labels") or {}
-                    results.append(
-                        {
-                            "task_id": str(labels.get("task_id", "")),
-                            "role": str(labels.get("role", "")),
-                            "model": str(labels.get("model", "")),
-                            "success": str(labels.get("success", "false")).lower() == "true",
-                            "start_time": 0.0,
-                            "end_time": float(entry.get("timestamp", 0.0)),
-                            "cost_usd": 0.0,
-                            "janitor_passed": False,
-                        }
-                    )
+                    if entry.get("metric_type") == metric_type:
+                        entries.append(entry)
             except (OSError, json.JSONDecodeError):
                 continue
+        return entries
+
+    def _load_task_metrics(self) -> list[dict[str, Any]]:
+        """Load per-task metrics from ``.sdd/metrics/task_*.json``.
+
+        Falls back to scanning JSONL metric files for task_completion_time
+        entries when structured per-task files are not available.
+        """
+        metrics_dir = self._sdd / "metrics"
+        if not metrics_dir.is_dir():
+            return []
+
+        results = self._load_json_dicts(metrics_dir, "task_*.json")
+        if results:
+            return results
+
+        # Fallback: scan JSONL files for task_completion_time entries
+        for entry in self._scan_jsonl_entries(metrics_dir, "task_completion_time"):
+            labels: dict[str, Any] = entry.get("labels") or {}
+            results.append(
+                {
+                    "task_id": str(labels.get("task_id", "")),
+                    "role": str(labels.get("role", "")),
+                    "model": str(labels.get("model", "")),
+                    "success": str(labels.get("success", "false")).lower() == "true",
+                    "start_time": 0.0,
+                    "end_time": float(entry.get("timestamp", 0.0)),
+                    "cost_usd": 0.0,
+                    "janitor_passed": False,
+                }
+            )
         return results
 
     def _load_agent_metrics(self) -> list[dict[str, Any]]:
@@ -430,38 +476,18 @@ class RunReportGenerator:
         if not metrics_dir.is_dir():
             return []
 
-        results: list[dict[str, Any]] = []
-        for f in sorted(metrics_dir.glob("agent_*.json")):
-            try:
-                raw: Any = json.loads(f.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    results.append(cast(_CAST_DICT_STR_ANY, raw))
-            except (OSError, json.JSONDecodeError):
-                continue
+        results = self._load_json_dicts(metrics_dir, "agent_*.json")
         if results:
             return results
 
         # Fallback: count distinct agent_id from JSONL agent_success entries
         seen_agents: set[str] = set()
-        for f in sorted(metrics_dir.glob("*.jsonl")):
-            try:
-                for raw_line in f.read_text(encoding="utf-8").splitlines():
-                    raw_line = raw_line.strip()
-                    if not raw_line:
-                        continue
-                    entry_raw2: Any = json.loads(raw_line)
-                    if not isinstance(entry_raw2, dict):
-                        continue
-                    entry2 = cast(_CAST_DICT_STR_ANY, entry_raw2)
-                    if entry2.get("metric_type") != "agent_success":
-                        continue
-                    labels: dict[str, Any] = entry2.get("labels") or {}
-                    aid = str(labels.get("agent_id", ""))
-                    if aid and aid not in seen_agents:
-                        seen_agents.add(aid)
-                        results.append({"agent_id": aid})
-            except (OSError, json.JSONDecodeError):
-                continue
+        for entry in self._scan_jsonl_entries(metrics_dir, "agent_success"):
+            labels: dict[str, Any] = entry.get("labels") or {}
+            aid = str(labels.get("agent_id", ""))
+            if aid and aid not in seen_agents:
+                seen_agents.add(aid)
+                results.append({"agent_id": aid})
         return results
 
     def _load_cost_data(self) -> dict[str, Any]:
