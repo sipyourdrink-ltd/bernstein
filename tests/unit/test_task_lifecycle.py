@@ -159,7 +159,7 @@ def test_claim_and_spawn_batches_respects_max_agent_cap(tmp_path: Path, make_tas
     result = TickResult()
 
     claim_and_spawn_batches(
-        orch, [[task]], alive_count=orch._config.max_agents, assigned_task_ids=set(), _done_ids=set(), result=result
+        orch, [[task]], alive_count=orch._config.max_agents, assigned_task_ids=set(), done_ids=set(), result=result
     )
 
     orch._client.post.assert_not_called()
@@ -181,7 +181,7 @@ def test_claim_and_spawn_batches_skips_locked_files_owned_by_live_agent(tmp_path
     )
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     orch._client.post.assert_not_called()
     orch._spawner.spawn_for_tasks.assert_not_called()
@@ -195,7 +195,7 @@ def test_claim_and_spawn_batches_aborts_on_claim_transport_error(tmp_path: Path,
     orch._client.post.side_effect = httpx.TransportError("server down")
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     orch._spawner.spawn_for_tasks.assert_not_called()
     assert result.errors == ["claim:T-net: server down"]
@@ -212,7 +212,7 @@ def test_claim_and_spawn_batches_auto_decomposes_large_task_before_claim(tmp_pat
         patch("bernstein.core.tasks.task_lifecycle.should_auto_decompose", return_value=True),
         patch("bernstein.core.tasks.task_lifecycle.auto_decompose_task") as mock_decompose,
     ):
-        claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+        claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     mock_decompose.assert_called_once()
     orch._client.post.assert_not_called()
@@ -232,7 +232,7 @@ def test_claim_and_spawn_batches_submits_provider_batch_without_spawning(tmp_pat
     )
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     orch._batch_api.try_submit.assert_called_once()
     orch._spawner.spawn_for_tasks.assert_not_called()
@@ -248,7 +248,7 @@ def test_claim_and_spawn_batches_sets_small_timeout_bucket(tmp_path: Path, make_
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 15 * 60
 
@@ -267,7 +267,7 @@ def test_claim_and_spawn_batches_sets_medium_timeout_bucket(tmp_path: Path, make
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 30 * 60
 
@@ -282,7 +282,7 @@ def test_claim_and_spawn_batches_sets_large_timeout_bucket(tmp_path: Path, make_
     result = TickResult()
 
     with patch("bernstein.core.tasks.task_lifecycle.should_auto_decompose", return_value=False):
-        claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+        claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 60 * 60
 
@@ -302,7 +302,7 @@ def test_claim_and_spawn_batches_sets_xl_timeout_bucket_for_high_risk_batch(tmp_
     result = TickResult()
 
     with patch("bernstein.core.tasks.task_lifecycle.should_auto_decompose", return_value=False):
-        claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+        claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 120 * 60
 
@@ -326,7 +326,7 @@ def test_claim_and_spawn_batches_blocked_by_high_error_rate(tmp_path: Path, make
     task = make_task(id="T-blocked", role="backend")
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     # Spawn must not happen — convergence guard blocked it
     orch._client.post.assert_not_called()
@@ -352,7 +352,7 @@ def test_claim_and_spawn_batches_allowed_when_converged(tmp_path: Path, make_tas
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     # Task was claimed and spawned
     orch._client.post.assert_called()
@@ -376,7 +376,7 @@ def test_claim_and_spawn_batches_applies_bandit_route_before_spawn(tmp_path: Pat
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     orch._bandit_router.select.assert_called_once_with(task)
     orch._spawner.spawn_for_tasks.assert_called_once()
@@ -403,7 +403,7 @@ def test_claim_and_spawn_batches_records_bandit_shadow_without_overriding(tmp_pa
     orch._spawner.spawn_for_tasks.return_value = session
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), _done_ids=set(), result=result)
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     orch._bandit_router.select.assert_called_once_with(task)
     orch._bandit_router.record_shadow_decision.assert_called_once_with(

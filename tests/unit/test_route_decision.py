@@ -190,7 +190,7 @@ class TestFormatRoutingReasons:
     def test_high_complexity(self) -> None:
         """Test high complexity reasoning."""
         reasons = format_routing_reasons(
-            _task_id="task-1",
+            task_id="task-1",
             adapter="claude",
             model="opus",
             effort="max",
@@ -204,7 +204,7 @@ class TestFormatRoutingReasons:
     def test_low_complexity(self) -> None:
         """Test low complexity reasoning."""
         reasons = format_routing_reasons(
-            _task_id="task-1",
+            task_id="task-1",
             adapter="claude",
             model="haiku",
             effort="low",
@@ -218,7 +218,7 @@ class TestFormatRoutingReasons:
     def test_security_role(self) -> None:
         """Test security role reasoning."""
         reasons = format_routing_reasons(
-            _task_id="task-1",
+            task_id="task-1",
             adapter="claude",
             model="opus",
             effort="max",
@@ -232,7 +232,7 @@ class TestFormatRoutingReasons:
     def test_critical_priority(self) -> None:
         """Test critical priority reasoning."""
         reasons = format_routing_reasons(
-            _task_id="task-1",
+            task_id="task-1",
             adapter="claude",
             model="opus",
             effort="max",
@@ -246,7 +246,7 @@ class TestFormatRoutingReasons:
     def test_skill_profile(self) -> None:
         """Test skill profile reasoning."""
         reasons = format_routing_reasons(
-            _task_id="task-1",
+            task_id="task-1",
             adapter="claude",
             model="sonnet",
             effort="high",
@@ -261,7 +261,7 @@ class TestFormatRoutingReasons:
     def test_effort_reasoning(self) -> None:
         """Test effort level reasoning."""
         reasons = format_routing_reasons(
-            _task_id="task-1",
+            task_id="task-1",
             adapter="claude",
             model="sonnet",
             effort="max",
@@ -275,7 +275,7 @@ class TestFormatRoutingReasons:
     def test_multiple_reasons(self) -> None:
         """Test multiple reasons are generated."""
         reasons = format_routing_reasons(
-            _task_id="task-1",
+            task_id="task-1",
             adapter="claude",
             model="opus",
             effort="max",
