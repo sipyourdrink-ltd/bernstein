@@ -168,9 +168,7 @@ class TestAPMExporterEventCreation:
         assert ev.attributes["service"] == "bernstein"
 
     def test_export_span_merges_attributes(self) -> None:
-        ev = self._dd_exporter().export_span(
-            "op", duration_ms=1.0, attributes={"task_id": "t-1"}
-        )
+        ev = self._dd_exporter().export_span("op", duration_ms=1.0, attributes={"task_id": "t-1"})
         assert ev.attributes["task_id"] == "t-1"
 
     def test_export_span_duration(self) -> None:

@@ -265,20 +265,14 @@ class TestComputeTrends:
         }
 
     def test_improving_lint_trend(self) -> None:
-        points = [
-            _point(run_id=f"r-{i}", days_ago=4 - i, lint=5.0 - i)
-            for i in range(5)
-        ]
+        points = [_point(run_id=f"r-{i}", days_ago=4 - i, lint=5.0 - i) for i in range(5)]
         trends = compute_trends(points, window_days=30)
         lint_trend = next(t for t in trends if t.metric_name == "lint_errors_per_task")
         assert lint_trend.direction == "improving"
         assert lint_trend.slope < 0
 
     def test_degrading_test_pass_rate(self) -> None:
-        points = [
-            _point(run_id=f"r-{i}", days_ago=4 - i, test_pass=0.95 - i * 0.1)
-            for i in range(5)
-        ]
+        points = [_point(run_id=f"r-{i}", days_ago=4 - i, test_pass=0.95 - i * 0.1) for i in range(5)]
         trends = compute_trends(points, window_days=30)
         tpr = next(t for t in trends if t.metric_name == "test_pass_rate")
         assert tpr.direction == "degrading"
@@ -392,10 +386,7 @@ class TestBuildDashboard:
         assert len(db.trends) == 4
 
     def test_warning_on_degradation(self, tmp_path: Path) -> None:
-        points = [
-            _point(run_id=f"r-{i}", days_ago=4 - i, lint=1.0 + i * 2.0)
-            for i in range(5)
-        ]
+        points = [_point(run_id=f"r-{i}", days_ago=4 - i, lint=1.0 + i * 2.0) for i in range(5)]
         root = _write_snapshots(tmp_path, points)
         db = build_dashboard(root, days=30)
         assert db.overall_health in ("warning", "critical")
@@ -425,9 +416,7 @@ class TestRenderDashboardMarkdown:
             current_value=0.95,
             period_days=14,
         )
-        db = QualityDashboard(
-            trends=(trend,), overall_health="healthy", alerts=()
-        )
+        db = QualityDashboard(trends=(trend,), overall_health="healthy", alerts=())
         md = render_dashboard_markdown(db)
         assert "| Metric |" in md
         assert "Test Pass Rate" in md

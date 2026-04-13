@@ -101,7 +101,7 @@ class EffectivenessScorer:
             + (score.retry_score * EFFECTIVENESS_WEIGHTS["retry"])
             + (score.completion_score * EFFECTIVENESS_WEIGHTS["completion"])
         )
-        result: EffectivenessScore = replace(score, total=total, grade=self._grade(total))  # type: ignore[assignment]
+        result = cast(EffectivenessScore, replace(score, total=total, grade=self._grade(total)))
         return result
 
     def record(self, score: EffectivenessScore) -> None:

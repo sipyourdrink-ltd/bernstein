@@ -35,10 +35,7 @@ def _make_response(
 
 def _default_scores_payload(score: float = 0.8) -> dict[str, dict[str, object]]:
     """Return a scores dict matching DEFAULT_DIMENSIONS."""
-    return {
-        d.name: {"score": score, "reasoning": f"{d.name} looks good."}
-        for d in DEFAULT_DIMENSIONS
-    }
+    return {d.name: {"score": score, "reasoning": f"{d.name} looks good."} for d in DEFAULT_DIMENSIONS}
 
 
 # ---------------------------------------------------------------------------
@@ -305,9 +302,7 @@ class TestParseJudgeResponse:
         assert style.score == pytest.approx(1.0)
 
     def test_missing_reasoning_defaults_to_empty(self) -> None:
-        payload: dict[str, dict[str, object]] = {
-            d.name: {"score": 0.5} for d in DEFAULT_DIMENSIONS
-        }
+        payload: dict[str, dict[str, object]] = {d.name: {"score": 0.5} for d in DEFAULT_DIMENSIONS}
         scores = parse_judge_response(_make_response(payload))
         for ds in scores:
             assert ds.reasoning == ""

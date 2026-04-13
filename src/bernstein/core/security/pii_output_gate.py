@@ -72,7 +72,7 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     ),
     (
         "aws_secret_key",
-        re.compile(r"""(?i)(?:aws_secret_access_key|aws_secret|secret_key)\s*[=:]\s*["']?([A-Za-z\d/+=]{40})["']?"""),
+        re.compile(r"""(?i)(?:aws_secret_access_key|aws_secret|secret_key)\s*[=:]\s*["']?([a-z\d/+=]{40})["']?"""),
         "high",
         "AWS secret access key",
     ),
@@ -111,7 +111,7 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     (
         "generic_api_key",
         re.compile(
-            r"""(?i)(?:api_key|apikey|api[-_]?secret|access[-_]?token|auth[-_]?token|secret[-_]?token)\s*[=:]\s*["']([\w\-/.+=]{16,})["']"""
+            r"""(?i)(?:api[_]?key|api[_]secret|(?:access|auth|secret)[_]token)\s*[=:]\s*["']([\w\-/.+=]{16,})["']"""
         ),
         "high",
         "Generic API key or secret token assignment",
