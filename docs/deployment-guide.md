@@ -9,6 +9,7 @@ How to run Bernstein in different environments. Each section is self-contained w
 - [Docker single-host](#docker-single-host)
 - [Docker Compose cluster](#docker-compose-cluster)
 - [Kubernetes / Helm](#kubernetes--helm)
+- [Cloudflare cloud deployment](#cloudflare-cloud-deployment)
 - [Team shared server (bare metal)](#team-shared-server)
 - [Environment variable reference](#environment-variables)
 - [Zero-downtime upgrades (blue-green)](#zero-downtime-upgrades-blue-green)
@@ -645,6 +646,50 @@ spec:
 kubectl apply -f bernstein.yaml
 kubectl get pods -n bernstein
 ```
+
+---
+
+## Cloudflare cloud deployment
+
+Bernstein can execute agents on Cloudflare's edge infrastructure instead of local processes. This is useful for teams that want centralized billing, isolated sandboxes for untrusted code, or global low-latency agent dispatch.
+
+### Quick start
+
+```bash
+# 1. Install wrangler
+npm install -g wrangler
+wrangler login
+
+# 2. Deploy the agent Worker
+bernstein cloud deploy --worker-name bernstein-agent
+
+# 3. Authenticate with Bernstein Cloud
+bernstein cloud login
+
+# 4. Run orchestration in the cloud
+bernstein cloud run "Add OAuth2 authentication" --max-agents 5 --budget 25.00
+```
+
+### What runs where
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Orchestrator | Local or your server | Deterministic tick loop, task scheduling |
+| Agent execution | Cloudflare Workers / Sandboxes | Code generation, testing |
+| Workspace files | Cloudflare R2 | File sync between local and cloud agents |
+| Analytics / billing | Cloudflare D1 | Usage metering, quota enforcement |
+| LLM response cache | Cloudflare Vectorize | Semantic prompt deduplication |
+| Internal LLM (planning) | Cloudflare Workers AI | Free-tier models for task decomposition |
+
+### Environment variables for Cloudflare
+
+| Variable | Description |
+|----------|-------------|
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account identifier |
+| `CLOUDFLARE_API_TOKEN` | API token with Workers, R2, D1, Vectorize permissions |
+| `BERNSTEIN_CLOUD_API_KEY` | API key for bernstein.run hosted service |
+
+For the full Cloudflare setup guide including R2 buckets, D1 databases, and Vectorize indexes, see the [Cloudflare Setup](cloudflare-setup.md) documentation.
 
 ---
 

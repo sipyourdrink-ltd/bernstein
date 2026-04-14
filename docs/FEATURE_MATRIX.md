@@ -176,6 +176,25 @@ Legend:
 
 ---
 
+## Cloud / Cloudflare
+
+| Capability | Runtime status | Docs status | Notes |
+|---|---|---|---|
+| Workers RuntimeBridge | Shipped | Full | `bridges/cloudflare.py` — agents on Workers + Durable Objects |
+| Workflow Bridge (durable execution) | Shipped | Full | `bridges/cloudflare_workflow.py` — auto-retry, approval gates |
+| Sandbox Bridge (V8/container isolation) | Shipped | Full | `bridges/cloudflare_sandbox.py` — isolated code execution |
+| Browser Rendering Bridge | Shipped | Full | `bridges/browser_rendering.py` — screenshots, scraping, PDFs |
+| R2 Workspace Sync | Shipped | Full | `bridges/r2_sync.py` — content-addressed delta sync |
+| Workers AI Provider (free LLMs) | Shipped | Full | `core/routing/cloudflare_ai.py` — Llama, Mistral, Gemma, Qwen |
+| D1 Analytics & Billing | Shipped | Full | `core/cost/d1_analytics.py` — usage metering, billing tiers |
+| Vectorize Semantic Cache | Shipped | Full | `core/memory/vectorize_cache.py` — embedding-based response cache |
+| MCP Remote Transport | Shipped | Full | `mcp/remote_transport.py` — streamable HTTP for remote MCP |
+| Cloud CLI (`bernstein cloud`) | Shipped | Full | `cli/commands/cloud_cmd.py` — login, run, status, cost, deploy |
+| Cloudflare Agents Adapter | Shipped | Full | `adapters/cloudflare_agents.py` — wrangler dev integration |
+| Codex-on-Cloudflare Adapter | Shipped | Full | `adapters/codex_cloudflare.py` — Codex in CF sandboxes |
+
+---
+
 ## Highest-priority doc gaps
 
 1. Deep examples for retry/escalation and fallback behavior.
