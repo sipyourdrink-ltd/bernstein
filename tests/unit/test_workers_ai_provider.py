@@ -59,7 +59,7 @@ class TestWorkersAIConfig:
         cfg = WorkersAIConfig(account_id="a", api_token="t")
         assert cfg.model == "@cf/meta/llama-3.1-70b-instruct"
         assert cfg.max_tokens == 4096
-        assert cfg.temperature == 0.3
+        assert cfg.temperature == pytest.approx(0.3)
         assert cfg.timeout_seconds == 60
 
     def test_custom_values(self) -> None:
@@ -296,7 +296,7 @@ class TestEstimateCost:
 
     def test_free_model(self, provider: WorkersAIProvider) -> None:
         cost = provider.estimate_cost(input_tokens=1000, output_tokens=500)
-        assert cost == 0.0
+        assert cost == pytest.approx(0.0)
 
     def test_paid_model(self) -> None:
         cfg = WorkersAIConfig(
@@ -309,7 +309,7 @@ class TestEstimateCost:
         assert cost == pytest.approx(0.03)
 
     def test_zero_tokens(self, provider: WorkersAIProvider) -> None:
-        assert provider.estimate_cost(0, 0) == 0.0
+        assert provider.estimate_cost(0, 0) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

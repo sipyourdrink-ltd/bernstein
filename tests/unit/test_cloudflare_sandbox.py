@@ -153,7 +153,7 @@ class TestSandboxInstance:
         assert inst.sandbox_type == SandboxType.ISOLATE
         assert inst.state == AgentState.RUNNING
         assert inst.workspace_id == "ws-abc"
-        assert inst.cpu_time_ms == 42.5
+        assert inst.cpu_time_ms == pytest.approx(42.5)
         assert inst.network_requests == 3
 
     def test_defaults(self) -> None:
@@ -163,9 +163,9 @@ class TestSandboxInstance:
             state=AgentState.PENDING,
         )
         assert inst.workspace_id == ""
-        assert inst.created_at == 0.0
-        assert inst.cpu_time_ms == 0.0
-        assert inst.memory_used_mb == 0.0
+        assert inst.created_at == pytest.approx(0.0)
+        assert inst.cpu_time_ms == pytest.approx(0.0)
+        assert inst.memory_used_mb == pytest.approx(0.0)
         assert inst.network_requests == 0
 
     def test_frozen(self) -> None:
@@ -409,8 +409,8 @@ class TestCloudflareSandboxBridgeStatus:
         await bridge.status("agent-1")
         updated = bridge._instances["agent-1"]
         assert updated.state == AgentState.RUNNING
-        assert updated.cpu_time_ms == 100.0
-        assert updated.memory_used_mb == 48.0
+        assert updated.cpu_time_ms == pytest.approx(100.0)
+        assert updated.memory_used_mb == pytest.approx(48.0)
 
     @pytest.mark.asyncio
     async def test_status_http_error(self) -> None:

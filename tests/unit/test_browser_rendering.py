@@ -104,7 +104,7 @@ class TestDataclasses:
         assert result.html == ""
         assert result.screenshot_base64 == ""
         assert result.status_code == 200
-        assert result.load_time_ms == 0.0
+        assert result.load_time_ms == pytest.approx(0.0)
         assert result.links == []
         assert result.metadata == {}
 

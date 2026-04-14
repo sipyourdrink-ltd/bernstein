@@ -28,7 +28,7 @@ def config() -> RemoteMCPConfig:
 
 @pytest.fixture
 def transport(config: RemoteMCPConfig) -> StreamableHTTPTransport:
-    return StreamableHTTPTransport(config=config, server_url="http://test:8052")
+    return StreamableHTTPTransport(config=config, server_url="https://test:8052")
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def bearer_config() -> RemoteMCPConfig:
 
 @pytest.fixture
 def bearer_transport(bearer_config: RemoteMCPConfig) -> StreamableHTTPTransport:
-    return StreamableHTTPTransport(config=bearer_config, server_url="http://test:8052")
+    return StreamableHTTPTransport(config=bearer_config, server_url="https://test:8052")
 
 
 # ---------------------------------------------------------------------------

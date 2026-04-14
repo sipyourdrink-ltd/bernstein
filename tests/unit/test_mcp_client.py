@@ -30,7 +30,7 @@ def basic_config() -> RemoteServerConfig:
     """Config with no auth."""
     return RemoteServerConfig(
         name="test-server",
-        url="http://localhost:9090/mcp",
+        url="https://localhost:9090/mcp",
     )
 
 
@@ -60,7 +60,7 @@ def oauth_config() -> RemoteServerConfig:
     )
 
 
-_FAKE_REQUEST = httpx.Request("POST", "http://test")
+_FAKE_REQUEST = httpx.Request("POST", "https://test")
 
 
 def _make_jsonrpc_response(
@@ -112,7 +112,7 @@ class TestRemoteServerConfig:
     """Tests for RemoteServerConfig dataclass."""
 
     def test_defaults(self) -> None:
-        cfg = RemoteServerConfig(name="x", url="http://localhost")
+        cfg = RemoteServerConfig(name="x", url="https://localhost")
         assert cfg.transport == "streamable-http"
         assert cfg.auth_type == "none"
         assert cfg.auth_token == ""
@@ -120,7 +120,7 @@ class TestRemoteServerConfig:
         assert cfg.retry_limit == 3
 
     def test_frozen(self) -> None:
-        cfg = RemoteServerConfig(name="x", url="http://localhost")
+        cfg = RemoteServerConfig(name="x", url="https://localhost")
         with pytest.raises(AttributeError):
             cfg.name = "y"  # type: ignore[misc]
 
@@ -346,7 +346,7 @@ class TestSessionErrors:
         """401 response raises MCPAuthError."""
         bearer_cfg = RemoteServerConfig(
             name="s",
-            url="http://x",
+            url="https://x",
             auth_type="bearer",
             auth_token="bad",
             retry_limit=1,
@@ -368,7 +368,7 @@ class TestSessionErrors:
     @pytest.mark.asyncio
     async def test_connection_refused(self, basic_config: RemoteServerConfig) -> None:
         """ConnectError raises MCPConnectionError after retries."""
-        cfg = RemoteServerConfig(name="s", url="http://x", retry_limit=2)
+        cfg = RemoteServerConfig(name="s", url="https://x", retry_limit=2)
 
         async def mock_post(url: str, *, json: Any, headers: Any, **kwargs: Any) -> httpx.Response:
             raise httpx.ConnectError("Connection refused")
@@ -386,7 +386,7 @@ class TestSessionErrors:
     @pytest.mark.asyncio
     async def test_timeout(self) -> None:
         """TimeoutException raises MCPConnectionError."""
-        cfg = RemoteServerConfig(name="s", url="http://x", retry_limit=1)
+        cfg = RemoteServerConfig(name="s", url="https://x", retry_limit=1)
 
         async def mock_post(url: str, *, json: Any, headers: Any, **kwargs: Any) -> httpx.Response:
             raise httpx.TimeoutException("timed out")
@@ -404,7 +404,7 @@ class TestSessionErrors:
     @pytest.mark.asyncio
     async def test_jsonrpc_error(self, basic_config: RemoteServerConfig) -> None:
         """JSON-RPC error in response raises MCPClientError."""
-        cfg = RemoteServerConfig(name="s", url="http://x", retry_limit=1)
+        cfg = RemoteServerConfig(name="s", url="https://x", retry_limit=1)
 
         async def mock_post(url: str, *, json: Any, headers: Any, **kwargs: Any) -> httpx.Response:
             return _make_error_response(-32600, "Invalid Request", request_id=json["id"])
@@ -431,7 +431,7 @@ class TestMCPClientManager:
     @pytest.mark.asyncio
     async def test_connect_and_get_session(self) -> None:
         """connect() stores session accessible via get_session()."""
-        cfg = RemoteServerConfig(name="s1", url="http://x", retry_limit=1)
+        cfg = RemoteServerConfig(name="s1", url="https://x", retry_limit=1)
         manager = MCPClientManager()
 
         # Patch MCPClientSession.connect to be a no-op
@@ -444,8 +444,8 @@ class TestMCPClientManager:
     @pytest.mark.asyncio
     async def test_connect_all_partial_failure(self) -> None:
         """connect_all() succeeds for some servers even if others fail."""
-        good = RemoteServerConfig(name="good", url="http://good", retry_limit=1)
-        bad = RemoteServerConfig(name="bad", url="http://bad", retry_limit=1)
+        good = RemoteServerConfig(name="good", url="https://good", retry_limit=1)
+        bad = RemoteServerConfig(name="bad", url="https://bad", retry_limit=1)
 
         call_count = 0
 
@@ -468,11 +468,11 @@ class TestMCPClientManager:
         manager = MCPClientManager()
 
         # Create two mock sessions
-        s1 = MCPClientSession(RemoteServerConfig(name="s1", url="http://x"))
+        s1 = MCPClientSession(RemoteServerConfig(name="s1", url="https://x"))
         s1._initialized = True
         s1._tools = [RemoteTool(name="t1", description="", server_name="s1")]
 
-        s2 = MCPClientSession(RemoteServerConfig(name="s2", url="http://y"))
+        s2 = MCPClientSession(RemoteServerConfig(name="s2", url="https://y"))
         s2._initialized = True
         s2._tools = [RemoteTool(name="t2", description="", server_name="s2")]
 
@@ -493,7 +493,7 @@ class TestMCPClientManager:
     async def test_call_tool_delegates(self) -> None:
         """call_tool() delegates to the correct session."""
         manager = MCPClientManager()
-        session = MCPClientSession(RemoteServerConfig(name="s1", url="http://x"))
+        session = MCPClientSession(RemoteServerConfig(name="s1", url="https://x"))
         session._initialized = True
         session._tools = [RemoteTool(name="echo", description="", server_name="s1")]
         manager._sessions = {"s1": session}
@@ -516,7 +516,7 @@ class TestMCPClientManager:
     async def test_close_all(self) -> None:
         """close_all() closes and clears all sessions."""
         manager = MCPClientManager()
-        s1 = MCPClientSession(RemoteServerConfig(name="s1", url="http://x"))
+        s1 = MCPClientSession(RemoteServerConfig(name="s1", url="https://x"))
         s1._initialized = True
         manager._sessions = {"s1": s1}
 
@@ -548,7 +548,7 @@ class TestMCPClientManager:
     def test_inject_into_agent_config_no_auth(self) -> None:
         """inject_into_agent_config() omits headers when auth_type is none."""
         manager = MCPClientManager()
-        cfg = RemoteServerConfig(name="open", url="http://localhost:9000/mcp")
+        cfg = RemoteServerConfig(name="open", url="https://localhost:9000/mcp")
         session = MCPClientSession(cfg)
         session._initialized = True
         session._tools = []
@@ -563,13 +563,13 @@ class TestMCPClientManager:
     def test_inject_into_agent_config_merges_existing(self) -> None:
         """inject_into_agent_config() merges with existing mcp_config."""
         manager = MCPClientManager()
-        cfg = RemoteServerConfig(name="new", url="http://x")
+        cfg = RemoteServerConfig(name="new", url="https://x")
         session = MCPClientSession(cfg)
         session._initialized = True
         session._tools = []
         manager._sessions = {"new": session}
 
-        existing_config: dict[str, Any] = {"mcp_config": {"mcpServers": {"old": {"url": "http://old"}}}}
+        existing_config: dict[str, Any] = {"mcp_config": {"mcpServers": {"old": {"url": "https://old"}}}}
         result = manager.inject_into_agent_config(existing_config)
 
         servers = result["mcp_config"]["mcpServers"]
@@ -580,7 +580,7 @@ class TestMCPClientManager:
         """inject_into_agent_config() filters to specified servers."""
         manager = MCPClientManager()
         for name in ("a", "b"):
-            cfg = RemoteServerConfig(name=name, url=f"http://{name}")
+            cfg = RemoteServerConfig(name=name, url=f"https://{name}")
             s = MCPClientSession(cfg)
             s._initialized = True
             s._tools = []
@@ -594,7 +594,7 @@ class TestMCPClientManager:
     def test_inject_skips_disconnected(self) -> None:
         """inject_into_agent_config() skips sessions that are not connected."""
         manager = MCPClientManager()
-        cfg = RemoteServerConfig(name="dead", url="http://x")
+        cfg = RemoteServerConfig(name="dead", url="https://x")
         session = MCPClientSession(cfg)
         session._initialized = False  # not connected
         manager._sessions = {"dead": session}
