@@ -87,9 +87,9 @@ def _format_boot_log_line(raw_line: str) -> str | None:
     parts = stripped.split(" ", 3)
     if len(parts) < 4:
         return None
-    time_part = parts[1].split(",")[0] if len(parts) > 1 else ""
-    level = parts[2] if len(parts) > 2 else ""
-    msg = parts[3] if len(parts) > 3 else stripped
+    time_part = parts[1].split(",")[0]
+    level = parts[2]
+    msg = parts[3]
     if ": " in msg:
         msg = msg.split(": ", 1)[1]
     msg = msg[:80].replace("[", r"\[")
