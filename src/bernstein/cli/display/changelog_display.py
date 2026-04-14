@@ -57,9 +57,7 @@ def _flush_entry(
 ) -> None:
     """Append a completed entry to the list if version and date are set."""
     if version is not None and date is not None:
-        entries.append(
-            ChangelogEntry(version=version, date=date, changes=changes, breaking=breaking)
-        )
+        entries.append(ChangelogEntry(version=version, date=date, changes=changes, breaking=breaking))
 
 
 def _classify_line(

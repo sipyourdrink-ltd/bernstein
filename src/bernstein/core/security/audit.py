@@ -92,9 +92,7 @@ def _compute_hmac(key: bytes, prev_hmac: str, entry: dict[str, Any]) -> str:
     return _hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 
 
-def _verify_log_file(
-    log_path: Path, prev_hmac: str, key: bytes, errors: list[str]
-) -> str:
+def _verify_log_file(log_path: Path, prev_hmac: str, key: bytes, errors: list[str]) -> str:
     """Verify all entries in a single JSONL log file, appending errors."""
     for line_no, raw in enumerate(log_path.read_text().splitlines(), start=1):
         raw = raw.strip()
@@ -116,8 +114,7 @@ def _verify_log_file(
         expected_hmac = _compute_hmac(key, prev_hmac, entry)
         if stored_hmac != expected_hmac:
             errors.append(
-                f"{log_path.name}:{line_no}: HMAC mismatch "
-                f"(expected {expected_hmac[:16]}…, got {stored_hmac[:16]}…)"
+                f"{log_path.name}:{line_no}: HMAC mismatch (expected {expected_hmac[:16]}…, got {stored_hmac[:16]}…)"
             )
 
         prev_hmac = stored_hmac

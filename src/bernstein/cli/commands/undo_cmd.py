@@ -57,7 +57,11 @@ def _find_commits_to_revert(task_id: str | None, revert_all: bool) -> list[tuple
     try:
         res = subprocess.run(
             ["git", "log", "-n", "50", "--pretty=format:%H %s"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=".",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=".",
         )
         commits: list[tuple[str, str]] = []
         for line in res.stdout.splitlines():
@@ -98,8 +102,10 @@ def _log_undo_audit(task_id: str | None, revert_all: bool, success_count: int) -
                 resource_type="session",
                 resource_id=task_id or "all",
                 details={
-                    "action": "revert", "commit_count": success_count,
-                    "task_id": task_id, "revert_all": revert_all,
+                    "action": "revert",
+                    "commit_count": success_count,
+                    "task_id": task_id,
+                    "revert_all": revert_all,
                 },
             )
     except Exception:

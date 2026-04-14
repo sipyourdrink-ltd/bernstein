@@ -128,9 +128,7 @@ class TestTimeRangeFilter:
 class TestGroupBy:
     def test_by_agent_json(self, sdd_dir: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(
-            cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "agent", "--json"]
-        )
+        result = runner.invoke(cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "agent", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["grouped_by"] == "agent"
@@ -140,9 +138,7 @@ class TestGroupBy:
 
     def test_by_day_json(self, sdd_dir: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(
-            cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "day", "--json"]
-        )
+        result = runner.invoke(cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "day", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["grouped_by"] == "day"
@@ -150,18 +146,14 @@ class TestGroupBy:
 
     def test_by_task_json(self, sdd_dir: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(
-            cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "task", "--json"]
-        )
+        result = runner.invoke(cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "task", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["grouped_by"] == "task"
 
     def test_by_model_uses_default_view(self, sdd_dir: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(
-            cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "model", "--json"]
-        )
+        result = runner.invoke(cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "model", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         # model grouping falls through to default rows
@@ -169,9 +161,7 @@ class TestGroupBy:
 
     def test_by_agent_rich_output(self, sdd_dir: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(
-            cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "agent"]
-        )
+        result = runner.invoke(cost_cmd, ["--metrics-dir", str(sdd_dir / "metrics"), "--by", "agent"])
         assert result.exit_code == 0, result.output
         assert "By Agent" in result.output
         assert "tasks" in result.output

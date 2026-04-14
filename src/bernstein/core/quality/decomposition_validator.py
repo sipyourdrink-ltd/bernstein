@@ -209,18 +209,21 @@ def _validate_file_coverage(
     issues: list[ValidationIssue] = []
 
     if file_coverage < min_file_coverage:
-        issues.append(ValidationIssue(
-            category="file_coverage",
-            severity="error",
-            message=f"Only {file_coverage:.0%} of parent files covered. "
-            f"Missing: {', '.join(sorted(uncovered))}",
-        ))
+        issues.append(
+            ValidationIssue(
+                category="file_coverage",
+                severity="error",
+                message=f"Only {file_coverage:.0%} of parent files covered. Missing: {', '.join(sorted(uncovered))}",
+            )
+        )
     elif uncovered:
-        issues.append(ValidationIssue(
-            category="file_coverage",
-            severity="warning",
-            message=f"Uncovered files: {', '.join(sorted(uncovered))}",
-        ))
+        issues.append(
+            ValidationIssue(
+                category="file_coverage",
+                severity="warning",
+                message=f"Uncovered files: {', '.join(sorted(uncovered))}",
+            )
+        )
     return file_coverage, issues
 
 
@@ -243,12 +246,13 @@ def _validate_keyword_coverage(
     if keyword_coverage < min_keyword_coverage:
         missing_kw = parent_keywords - subtask_keywords
         top_missing = sorted(missing_kw)[:10]
-        issues.append(ValidationIssue(
-            category="keyword_coverage",
-            severity="warning",
-            message=f"Only {keyword_coverage:.0%} of parent keywords covered. "
-            f"Missing: {', '.join(top_missing)}",
-        ))
+        issues.append(
+            ValidationIssue(
+                category="keyword_coverage",
+                severity="warning",
+                message=f"Only {keyword_coverage:.0%} of parent keywords covered. Missing: {', '.join(top_missing)}",
+            )
+        )
     return keyword_coverage, issues
 
 
@@ -265,19 +269,23 @@ def _validate_scope_ratio(
     issues: list[ValidationIssue] = []
 
     if scope_ratio < min_scope_ratio:
-        issues.append(ValidationIssue(
-            category="scope_ratio",
-            severity="warning",
-            message=f"Subtask total ({subtask_minutes}m) is only {scope_ratio:.1f}x "
-            f"the parent ({parent_minutes}m) -- may be under-scoped.",
-        ))
+        issues.append(
+            ValidationIssue(
+                category="scope_ratio",
+                severity="warning",
+                message=f"Subtask total ({subtask_minutes}m) is only {scope_ratio:.1f}x "
+                f"the parent ({parent_minutes}m) -- may be under-scoped.",
+            )
+        )
     elif scope_ratio > max_scope_ratio:
-        issues.append(ValidationIssue(
-            category="scope_ratio",
-            severity="warning",
-            message=f"Subtask total ({subtask_minutes}m) is {scope_ratio:.1f}x "
-            f"the parent ({parent_minutes}m) -- may be over-scoped.",
-        ))
+        issues.append(
+            ValidationIssue(
+                category="scope_ratio",
+                severity="warning",
+                message=f"Subtask total ({subtask_minutes}m) is {scope_ratio:.1f}x "
+                f"the parent ({parent_minutes}m) -- may be over-scoped.",
+            )
+        )
     return scope_ratio, issues
 
 
@@ -318,11 +326,13 @@ def validate_decomposition(
     issues.extend(scope_issues)
 
     if not subtasks:
-        issues.append(ValidationIssue(
-            category="empty_decomposition",
-            severity="error",
-            message="No subtasks provided for decomposition validation.",
-        ))
+        issues.append(
+            ValidationIssue(
+                category="empty_decomposition",
+                severity="error",
+                message="No subtasks provided for decomposition validation.",
+            )
+        )
 
     has_errors = any(i.severity == "error" for i in issues)
     report = DecompositionReport(

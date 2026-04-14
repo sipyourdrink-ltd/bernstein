@@ -270,9 +270,14 @@ class GateRunnerCommandsMixin:
         ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
         if vulture_detail.startswith(TIMED_OUT_PREFIX):
             return GateResult(
-                name=step.name, status="timeout", required=step.required,
-                blocked=False, cached=False, duration_ms=0,
-                details=vulture_detail, metadata={"command": command},
+                name=step.name,
+                status="timeout",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=vulture_detail,
+                metadata={"command": command},
             )
 
         report = self._run_dead_code_ast_analysis(dead_code_detector, python_files, run_dir)
@@ -284,7 +289,8 @@ class GateRunnerCommandsMixin:
 
         try:
             return dcd.analyse(
-                python_files, run_dir,
+                python_files,
+                run_dir,
                 check_unused_imports=self._config.dead_code_check_unused_imports,
                 check_unreachable=self._config.dead_code_check_unreachable,
                 check_lost_callers=self._config.dead_code_check_lost_callers,
@@ -295,7 +301,11 @@ class GateRunnerCommandsMixin:
 
     @staticmethod
     def _build_dead_code_result(
-        step: GatePipelineStep, command: str, ok: bool, vulture_detail: str, report: Any,
+        step: GatePipelineStep,
+        command: str,
+        ok: bool,
+        vulture_detail: str,
+        report: Any,
     ) -> GateResult:
         """Build a GateResult from combined vulture + AST dead-code analysis."""
         ast_details = "\n".join(f"  [{i.kind}] {i.file}: {i.detail}" for i in report.issues) if report.issues else ""
@@ -303,8 +313,12 @@ class GateRunnerCommandsMixin:
 
         if vulture_ok and report.passed:
             return GateResult(
-                name=step.name, status="pass", required=step.required,
-                blocked=False, cached=False, duration_ms=0,
+                name=step.name,
+                status="pass",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
                 details=f"No dead code detected. {report.summary()}",
                 metadata={"command": command, "ast_issues": 0},
             )
@@ -321,11 +335,19 @@ class GateRunnerCommandsMixin:
 
         status: GateStatus = "fail" if (step.required or lost_caller_issues) else "warn"
         return GateResult(
-            name=step.name, status=status, required=step.required,
+            name=step.name,
+            status=status,
+            required=step.required,
             blocked=step.required or bool(lost_caller_issues),
-            cached=False, duration_ms=0, details=full_detail,
-            metadata={"command": command, "ast_issues": len(report.issues),
-                       "lost_callers": len(lost_caller_issues), "has_breaking": has_breaking},
+            cached=False,
+            duration_ms=0,
+            details=full_detail,
+            metadata={
+                "command": command,
+                "ast_issues": len(report.issues),
+                "lost_callers": len(lost_caller_issues),
+                "has_breaking": has_breaking,
+            },
         )
 
     # -- comment quality gate ------------------------------------------------
@@ -612,16 +634,24 @@ class GateRunnerCommandsMixin:
 
         if not issues:
             return GateResult(
-                name=step.name, status="pass", required=step.required,
-                blocked=False, cached=False, duration_ms=0,
+                name=step.name,
+                status="pass",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
                 details=f"All {migration_count} migration(s) have rollback paths.",
                 metadata={"migration_count": migration_count},
             )
 
         detail = f"{len(issues)} migration(s) missing rollback:\n" + "\n".join(f"  - {i}" for i in issues)
         return GateResult(
-            name=step.name, status="fail", required=step.required,
-            blocked=step.required, cached=False, duration_ms=0,
+            name=step.name,
+            status="fail",
+            required=step.required,
+            blocked=step.required,
+            cached=False,
+            duration_ms=0,
             details=detail,
             metadata={"migration_count": migration_count, "missing_rollback": len(issues)},
         )

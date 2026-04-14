@@ -863,8 +863,20 @@ def run_pii_gate_sync(
 
 
 _DLP_SKIP_EXTENSIONS = {
-    ".pyc", ".pyo", ".so", ".dylib", ".whl", ".egg",
-    ".gz", ".zip", ".tar", ".png", ".jpg", ".gif", ".ico", ".pdf",
+    ".pyc",
+    ".pyo",
+    ".so",
+    ".dylib",
+    ".whl",
+    ".egg",
+    ".gz",
+    ".zip",
+    ".tar",
+    ".png",
+    ".jpg",
+    ".gif",
+    ".ico",
+    ".pdf",
 }
 
 _DLP_SELF_SKIP_PATHS = (

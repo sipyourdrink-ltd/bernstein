@@ -52,9 +52,7 @@ class RunCostEstimate:
     high_usd: float
 
 
-def _estimate_task_count(
-    workdir: Path, plan_file: Path | None, goal: str | None
-) -> int:
+def _estimate_task_count(workdir: Path, plan_file: Path | None, goal: str | None) -> int:
     """Estimate the number of tasks from plan file or backlog."""
     if plan_file is not None:
         try:
@@ -73,9 +71,7 @@ def _estimate_task_count(
     return max(1, count)
 
 
-def _resolve_model_and_cli(
-    seed_file: str | None, model_override: str | None
-) -> tuple[str, str]:
+def _resolve_model_and_cli(seed_file: str | None, model_override: str | None) -> tuple[str, str]:
     """Resolve model and CLI adapter from seed file or defaults."""
     est_model = model_override or "sonnet"
     est_cli = "claude"

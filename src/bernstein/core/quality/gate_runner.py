@@ -208,97 +208,164 @@ class GateRunner:
         return await self.run_gate(step, task, run_dir, changed_files)
 
     async def _execute_lint_gate(
-        self, step: GatePipelineStep, _task: Task, run_dir: Path, changed_files: list[str],
+        self,
+        step: GatePipelineStep,
+        _task: Task,
+        run_dir: Path,
+        changed_files: list[str],
     ) -> GateResult:
         command = self._lint_command(step, changed_files)
         if command is None:
             return self._skipped(step, _NO_PYTHON_FILES)
         return await self._run_command_gate(
-            step, command, run_dir, self._config.timeout_s,
+            step,
+            command,
+            run_dir,
+            self._config.timeout_s,
             pass_detail="no lint violations",
         )
 
     async def _execute_type_check_gate(
-        self, step: GatePipelineStep, _task: Task, run_dir: Path, changed_files: list[str],
+        self,
+        step: GatePipelineStep,
+        _task: Task,
+        run_dir: Path,
+        changed_files: list[str],
     ) -> GateResult:
         command = self._type_check_command(step, changed_files)
         if command is None:
             return self._skipped(step, _NO_PYTHON_FILES)
         return await self._run_command_gate(
-            step, command, run_dir, self._config.timeout_s,
+            step,
+            command,
+            run_dir,
+            self._config.timeout_s,
             pass_detail="no type errors",
         )
 
     async def _execute_security_scan_gate(
-        self, step: GatePipelineStep, _task: Task, run_dir: Path, _changed_files: list[str],
+        self,
+        step: GatePipelineStep,
+        _task: Task,
+        run_dir: Path,
+        _changed_files: list[str],
     ) -> GateResult:
         command = self._optional_command("security_scan", step.command_override)
         if command is None:
             return self._skipped(step, "No security scan command configured.")
         return await self._run_command_gate(
-            step, command, run_dir, self._config.timeout_s,
+            step,
+            command,
+            run_dir,
+            self._config.timeout_s,
             pass_detail="no security issues found",
         )
 
     async def _execute_scan_gate(
-        self, step: GatePipelineStep, _task: Task, run_dir: Path, changed_files: list[str],
+        self,
+        step: GatePipelineStep,
+        _task: Task,
+        run_dir: Path,
+        changed_files: list[str],
     ) -> GateResult:
         from bernstein.core import quality_gates as qg
 
         gate_fn = qg.run_pii_gate_sync if step.name == "pii_scan" else qg.run_dlp_gate_sync
         scan_result = await asyncio.to_thread(
-            gate_fn, self._config, run_dir, changed_files if self._changed_files_resolved else None,
+            gate_fn,
+            self._config,
+            run_dir,
+            changed_files if self._changed_files_resolved else None,
         )
         status: GateStatus = "pass" if scan_result.passed else "fail"
         return GateResult(
-            name=step.name, status=status, required=step.required,
+            name=step.name,
+            status=status,
+            required=step.required,
             blocked=step.required and not scan_result.passed and scan_result.blocked,
-            cached=False, duration_ms=0, details=scan_result.detail, metadata={},
+            cached=False,
+            duration_ms=0,
+            details=scan_result.detail,
+            metadata={},
         )
 
     async def _execute_mutation_gate(
-        self, step: GatePipelineStep, task: Task, run_dir: Path, _changed_files: list[str],
+        self,
+        step: GatePipelineStep,
+        task: Task,
+        run_dir: Path,
+        _changed_files: list[str],
     ) -> GateResult:
         from bernstein.core import quality_gates as qg
 
         if step.name == "agent_test_mutation":
             ok, detail, score = await asyncio.to_thread(
-                qg.run_agent_test_mutation_gate_sync, self._config, task, run_dir,
+                qg.run_agent_test_mutation_gate_sync,
+                self._config,
+                task,
+                run_dir,
             )
         else:
             ok, detail, score = await asyncio.to_thread(qg.run_mutation_gate_sync, self._config, run_dir)
         return GateResult(
-            name=step.name, status="pass" if ok else "fail", required=step.required,
-            blocked=step.required and not ok, cached=False, duration_ms=0,
-            details=detail, metadata={"mutation_score": score} if score is not None else {},
+            name=step.name,
+            status="pass" if ok else "fail",
+            required=step.required,
+            blocked=step.required and not ok,
+            cached=False,
+            duration_ms=0,
+            details=detail,
+            metadata={"mutation_score": score} if score is not None else {},
         )
 
     async def _execute_intent_gate(
-        self, step: GatePipelineStep, task: Task, run_dir: Path, _changed_files: list[str],
+        self,
+        step: GatePipelineStep,
+        task: Task,
+        run_dir: Path,
+        _changed_files: list[str],
     ) -> GateResult:
         from bernstein.core import quality_gates as qg
 
         verdict, blocked = await asyncio.to_thread(
-            qg.run_intent_gate_sync, task, run_dir, self._config.intent_verification,
+            qg.run_intent_gate_sync,
+            task,
+            run_dir,
+            self._config.intent_verification,
         )
         return GateResult(
-            name="intent_verification", status="fail" if blocked else "pass",
-            required=step.required, blocked=step.required and blocked, cached=False, duration_ms=0,
+            name="intent_verification",
+            status="fail" if blocked else "pass",
+            required=step.required,
+            blocked=step.required and blocked,
+            cached=False,
+            duration_ms=0,
             details=f"Intent verdict: {verdict.verdict} — {verdict.reason}",
             metadata={"verdict": verdict.verdict, "model": verdict.model},
         )
 
     async def _execute_dep_audit_gate(
-        self, step: GatePipelineStep, _task: Task, run_dir: Path, _changed_files: list[str],
+        self,
+        step: GatePipelineStep,
+        _task: Task,
+        run_dir: Path,
+        _changed_files: list[str],
     ) -> GateResult:
         command = step.command_override or self._config.dep_audit_command
         return await self._run_command_gate(
-            step, command, run_dir, self._config.timeout_s,
+            step,
+            command,
+            run_dir,
+            self._config.timeout_s,
             pass_detail="no vulnerable dependencies found",
         )
 
     async def _execute_plugin_gate(
-        self, step: GatePipelineStep, task: Task, run_dir: Path, changed_files: list[str],
+        self,
+        step: GatePipelineStep,
+        task: Task,
+        run_dir: Path,
+        changed_files: list[str],
     ) -> GateResult:
         plugin = self._plugin_registry().get(step.name)
         if plugin is None:
@@ -307,15 +374,25 @@ class GateRunner:
             plugin_result = await asyncio.to_thread(plugin.run, changed_files, run_dir, task.title, task.description)
         except Exception as exc:
             return GateResult(
-                name=step.name, status="fail", required=step.required,
-                blocked=step.required, cached=False, duration_ms=0,
-                details=f"Gate plugin {step.name!r} failed: {exc}", metadata={},
+                name=step.name,
+                status="fail",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=f"Gate plugin {step.name!r} failed: {exc}",
+                metadata={},
             )
         blocked = plugin_result.blocked or (step.required and plugin_result.status == "fail")
         return GateResult(
-            name=step.name, status=plugin_result.status, required=step.required,
-            blocked=blocked, cached=False, duration_ms=0,
-            details=plugin_result.details, metadata=dict(plugin_result.metadata),
+            name=step.name,
+            status=plugin_result.status,
+            required=step.required,
+            blocked=blocked,
+            cached=False,
+            duration_ms=0,
+            details=plugin_result.details,
+            metadata=dict(plugin_result.metadata),
         )
 
     async def _execute_gate(
@@ -538,14 +615,20 @@ class GateRunner:
         ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
         if vulture_detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
-                name=step.name, status="timeout", required=step.required,
-                blocked=False, cached=False, duration_ms=0,
-                details=vulture_detail, metadata={"command": command},
+                name=step.name,
+                status="timeout",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=vulture_detail,
+                metadata={"command": command},
             )
 
         try:
             report = dead_code_detector.analyse(
-                python_files, run_dir,
+                python_files,
+                run_dir,
                 check_unused_imports=self._config.dead_code_check_unused_imports,
                 check_unreachable=self._config.dead_code_check_unreachable,
                 check_lost_callers=self._config.dead_code_check_lost_callers,
@@ -786,16 +869,24 @@ class GateRunner:
 
         if not issues:
             return GateResult(
-                name=step.name, status="pass", required=step.required,
-                blocked=False, cached=False, duration_ms=0,
+                name=step.name,
+                status="pass",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
                 details=f"All {migration_count} migration(s) have rollback paths.",
                 metadata={"migration_count": migration_count},
             )
 
         detail = f"{len(issues)} migration(s) missing rollback:\n" + "\n".join(f"  - {i}" for i in issues)
         return GateResult(
-            name=step.name, status="fail", required=step.required,
-            blocked=step.required, cached=False, duration_ms=0,
+            name=step.name,
+            status="fail",
+            required=step.required,
+            blocked=step.required,
+            cached=False,
+            duration_ms=0,
             details=detail,
             metadata={"migration_count": migration_count, "missing_rollback": len(issues)},
         )
@@ -1467,9 +1558,12 @@ class GateRunner:
         name = step.name
         cfg = self._config
         base: dict[str, object] = {
-            "name": name, "required": step.required,
-            "condition": step.condition, "command_override": step.command_override,
-            "base_ref": self._base_ref, "timeout_s": cfg.timeout_s,
+            "name": name,
+            "required": step.required,
+            "condition": step.condition,
+            "command_override": step.command_override,
+            "base_ref": self._base_ref,
+            "timeout_s": cfg.timeout_s,
         }
         _gate_config_fields: dict[str, list[str]] = {
             "lint": ["lint_command"],
@@ -1480,8 +1574,11 @@ class GateRunner:
             "coverage_delta": ["coverage_delta", "coverage_delta_command"],
             "complexity_check": ["complexity_check", "complexity_threshold", "complexity_check_command"],
             "dead_code": [
-                "dead_code_check", "dead_code_command", "dead_code_min_confidence",
-                "dead_code_check_lost_callers", "dead_code_check_unused_imports",
+                "dead_code_check",
+                "dead_code_command",
+                "dead_code_min_confidence",
+                "dead_code_check_lost_callers",
+                "dead_code_check_unused_imports",
                 "dead_code_check_unreachable",
             ],
             "comment_quality": ["comment_quality_check", "comment_quality_docstyle"],

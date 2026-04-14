@@ -65,15 +65,23 @@ def _write_failure_analysis(lines: list[str], done_tasks: list[Task], failed_tas
     role_done = _count_by_field(done_tasks, "role")
     role_failed = _count_by_field(failed_tasks, "role")
     _write_rate_table(
-        lines, "### By role", "| Role | Done | Failed | Total | Failure rate |",
-        "|------|------|--------|-------|--------------|", role_done, role_failed,
+        lines,
+        "### By role",
+        "| Role | Done | Failed | Total | Failure rate |",
+        "|------|------|--------|-------|--------------|",
+        role_done,
+        role_failed,
     )
 
     cx_done = _count_by_field(done_tasks, "complexity")
     cx_failed = _count_by_field(failed_tasks, "complexity")
     _write_rate_table(
-        lines, "### By complexity", "| Complexity | Done | Failed | Total | Failure rate |",
-        "|------------|------|--------|-------|--------------|", cx_done, cx_failed,
+        lines,
+        "### By complexity",
+        "| Complexity | Done | Failed | Total | Failure rate |",
+        "|------------|------|--------|-------|--------------|",
+        cx_done,
+        cx_failed,
         sort_key=lambda v: list(Complexity).index(Complexity(v)),
     )
 
@@ -215,8 +223,7 @@ def _write_agent_summary(lines: list[str], collector: MetricsCollector) -> None:
     lines.append("|-------|------|-----------|--------------|------|")
     for am in sorted(agent_metrics.values(), key=lambda a: a.role):
         lines.append(
-            f"| {am.agent_id[:8]} | {am.role} | {am.tasks_completed} "
-            f"| {am.tasks_failed} | ${am.total_cost_usd:.4f} |"
+            f"| {am.agent_id[:8]} | {am.role} | {am.tasks_completed} | {am.tasks_failed} | ${am.total_cost_usd:.4f} |"
         )
         if am.tasks_completed == 0 and am.tasks_failed == 0 and am.end_time is not None:
             timed_out_or_killed.append(f"{am.agent_id[:8]} ({am.role})")
@@ -320,9 +327,13 @@ def generate_retrospective(
     role_done = _count_by_field(done_tasks, "role")
     cx_failed = _count_by_field(failed_tasks, "complexity")
     recommendations = _build_recommendations(
-        n_done=n_done, n_failed=n_failed,
-        role_failed=role_failed, role_done=role_done,
-        cx_failed=cx_failed, total_cost=total_cost, wall_clock_s=wall_clock_s,
+        n_done=n_done,
+        n_failed=n_failed,
+        role_failed=role_failed,
+        role_done=role_done,
+        cx_failed=cx_failed,
+        total_cost=total_cost,
+        wall_clock_s=wall_clock_s,
     )
     if recommendations:
         for rec in recommendations:
@@ -338,9 +349,13 @@ def generate_retrospective(
     goal = all_tasks[0].title if all_tasks else "Unknown goal"
     run_id = time.strftime("%Y%m%d-%H%M%S")
     append_to_project_memory(
-        sdd_dir=sdd_dir, run_id=run_id, goal=goal,
-        tasks_done=n_done, tasks_failed=n_failed,
-        cost_usd=total_cost, lesson="",
+        sdd_dir=sdd_dir,
+        run_id=run_id,
+        goal=goal,
+        tasks_done=n_done,
+        tasks_failed=n_failed,
+        cost_usd=total_cost,
+        lesson="",
     )
 
 

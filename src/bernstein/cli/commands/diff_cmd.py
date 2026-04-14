@@ -197,7 +197,9 @@ def _get_stat_from_branch(branch: str, workdir: Path, base: str = "main") -> str
 
 
 def _try_worktree_diff(
-    session_id: str, root: Path, base: str,
+    session_id: str,
+    root: Path,
+    base: str,
 ) -> tuple[str, str, str, list[FileDiffStat]]:
     """Try to get diff from a live worktree. Returns (diff, label, stat, file_stats)."""
     worktree_path = root / ".sdd" / "worktrees" / session_id
@@ -214,7 +216,9 @@ def _try_worktree_diff(
 
 
 def _try_branch_diff(
-    session_id: str, root: Path, base: str,
+    session_id: str,
+    root: Path,
+    base: str,
 ) -> tuple[str, str, str, list[FileDiffStat]]:
     """Try to get diff from a local branch. Returns (diff, label, stat, file_stats)."""
     branch = f"agent/{session_id}"
@@ -230,7 +234,8 @@ def _try_branch_diff(
 
 
 def _try_merge_commit_diff(
-    session_id: str, root: Path,
+    session_id: str,
+    root: Path,
 ) -> tuple[str, str, str, list[FileDiffStat]]:
     """Try to get diff from a merge commit. Returns (diff, label, stat, file_stats)."""
     merge_commit = _find_merge_commit(session_id, root)

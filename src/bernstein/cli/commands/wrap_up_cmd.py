@@ -264,8 +264,13 @@ def wrap_up(do_stop: bool, timeout: int) -> None:
 
     # 8. Print Rich-formatted wrap-up
     _render_wrapup_brief(
-        workdir, saved_path, start_sha, done_tasks, learnings,
-        git_diff_stat, next_session_brief,
+        workdir,
+        saved_path,
+        start_sha,
+        done_tasks,
+        learnings,
+        git_diff_stat,
+        next_session_brief,
     )
 
     # 9. Optionally soft-stop

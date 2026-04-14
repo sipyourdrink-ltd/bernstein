@@ -131,7 +131,14 @@ def _render_dry_run_from_backlog(workdir: Path) -> list[dict[str, Any]]:
         )
         result.append(
             _route_task_to_dict(
-                router, bt.source_file, bt.title, bt.role, bt.priority, bt.scope, bt.complexity, t_obj,
+                router,
+                bt.source_file,
+                bt.title,
+                bt.role,
+                bt.priority,
+                bt.scope,
+                bt.complexity,
+                t_obj,
             )
         )
     return result

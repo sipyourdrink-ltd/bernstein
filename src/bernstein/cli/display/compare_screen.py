@@ -42,9 +42,7 @@ def _run_git(args: list[str], cwd: Path) -> str:
         return ""
 
 
-def _find_agent_for_task(
-    task_id: str, agents: list[dict[str, Any]]
-) -> dict[str, Any] | None:
+def _find_agent_for_task(task_id: str, agents: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Find the agent associated with a task ID or session ID."""
     for a in agents:
         for tid in a.get("task_ids", []):
@@ -59,9 +57,7 @@ def _find_agent_for_task(
     return None
 
 
-def _diff_from_worktree_or_branch(
-    session_id: str, task_id: str, root: Path, base: str
-) -> tuple[str, str]:
+def _diff_from_worktree_or_branch(session_id: str, task_id: str, root: Path, base: str) -> tuple[str, str]:
     """Try worktree first, then branches, to get diff and stat text."""
     worktree_path = root / ".sdd" / "worktrees" / session_id
     if worktree_path.exists() and (worktree_path / ".git").exists():
@@ -132,9 +128,7 @@ def _file_presence_marker(f: str, left_files: dict[str, str], right_files: dict[
 def _mount_diff_content(panel: VerticalScroll, content: str) -> None:
     """Mount diff syntax or placeholder into a panel."""
     if content:
-        panel.mount(
-            Static(Syntax(content, "diff", theme="monokai", line_numbers=False), classes="diff-content")
-        )
+        panel.mount(Static(Syntax(content, "diff", theme="monokai", line_numbers=False), classes="diff-content"))
     else:
         panel.mount(Static("[dim](no changes)[/dim]", classes="diff-content"))
 

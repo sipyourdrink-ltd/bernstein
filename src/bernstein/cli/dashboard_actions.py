@@ -161,9 +161,7 @@ class DelegationTreePanel(Static):
 
         return t
 
-    def _build_tree(
-        self, alive: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    def _build_tree(self, alive: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
         """Build tree from parent_id or cell_id grouping."""
         by_id = {a["id"]: a for a in alive if a.get("id")}
         children: dict[str, list[dict[str, Any]]] = {}
@@ -330,9 +328,7 @@ class ExpertBanditPanel(Static):
 
         return t
 
-    def _render_arms(
-        self, t: Text, selection_frequency: dict[str, Any], exploration_stats: dict[str, Any]
-    ) -> None:
+    def _render_arms(self, t: Text, selection_frequency: dict[str, Any], exploration_stats: dict[str, Any]) -> None:
         """Render per-arm selection and mean reward stats."""
         arms = sorted(selection_frequency.items(), key=lambda item: (-int(item[1]), item[0]))
         for model, pulls_raw in arms:

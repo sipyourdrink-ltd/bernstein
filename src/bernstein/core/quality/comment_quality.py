@@ -176,9 +176,9 @@ def _extract_documented_params_numpy(docstring: str) -> set[str]:
     header_match = _NUMPY_HEADER_RE.search(docstring)
     if not header_match:
         return set()
-    rest = docstring[header_match.end():]
+    rest = docstring[header_match.end() :]
     end_match = _NUMPY_SECTION_END_RE.search(rest)
-    block = rest[:end_match.start()] if end_match else rest
+    block = rest[: end_match.start()] if end_match else rest
     params: set[str] = set()
     for m in _NUMPY_PARAM_RE.finditer(block):
         name = m.group(1)

@@ -335,9 +335,7 @@ class CostBurnPanel:
             text.append("\u2588" if i < filled else "\u2591", style=bar_style if i < filled else "dim")
         text.append("\u258c", style="dim")
 
-    def _render_burn_rate(
-        self, text: Text, total_cost_usd: float, elapsed_seconds: float, budget_usd: float
-    ) -> None:
+    def _render_burn_rate(self, text: Text, total_cost_usd: float, elapsed_seconds: float, budget_usd: float) -> None:
         """Render burn rate and budget depletion projection."""
         if elapsed_seconds <= 0 or total_cost_usd <= 0:
             return
@@ -448,9 +446,7 @@ def _agent_row_cells(agent: AgentInfo, costs: dict[str, float]) -> tuple[str, st
     color = AGENT_STATUS_COLORS.get(agent.status, "dim")
     runtime_str = format_duration(agent.runtime_s) if agent.runtime_s > 0 else "\u2014"
     cost_usd = costs.get(agent.agent_id, 0.0)
-    cost_cell = (
-        f"[bold bright_yellow]${cost_usd:.4f}[/bold bright_yellow]" if cost_usd > 0 else "[dim]\u2014[/dim]"
-    )
+    cost_cell = f"[bold bright_yellow]${cost_usd:.4f}[/bold bright_yellow]" if cost_usd > 0 else "[dim]\u2014[/dim]"
     token_cell = _format_token_cell(agent)
     status_icon = get_status_icon(agent.status)
     agent_icon = get_agent_icon(agent.role)

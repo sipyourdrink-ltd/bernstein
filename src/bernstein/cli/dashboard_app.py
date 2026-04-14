@@ -640,7 +640,9 @@ class BernsteinApp(App[None]):
             aid = a.get("id", "")
             if aid not in existing_ids:
                 widget = AgentWidget(
-                    a, self._task_titles, self._task_progress,
+                    a,
+                    self._task_titles,
+                    self._task_progress,
                     activity_summary=self._activity_summaries.get(aid, ""),
                 )
                 widget.agent_cost = per_agent.get(aid, 0.0)
@@ -793,9 +795,12 @@ class BernsteinApp(App[None]):
         bar.elapsed = int(time.time() - self._start_ts)
         bar.evolve = self._evolve
         self.sub_title = _build_runtime_subtitle(
-            git_branch=bar.git_branch, elapsed_s=bar.elapsed,
-            done=bar.done, total=bar.total,
-            worktrees=bar.active_worktrees, restart_count=bar.restart_count,
+            git_branch=bar.git_branch,
+            elapsed_s=bar.elapsed,
+            done=bar.done,
+            total=bar.total,
+            worktrees=bar.active_worktrees,
+            restart_count=bar.restart_count,
         )
 
         if costs:
@@ -866,7 +871,8 @@ class BernsteinApp(App[None]):
             self._nudge_alert_fired = True  # type: ignore[attr-defined]
             self.notify(
                 f"Verification nudge: {bar.unverified_completions} tasks completed without verification",
-                severity="warning", timeout=10,
+                severity="warning",
+                timeout=10,
             )
 
     def _sync_header(self, header: DashboardHeader, bar: BigStats, sd: Any) -> None:

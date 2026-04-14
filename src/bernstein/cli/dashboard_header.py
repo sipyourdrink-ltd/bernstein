@@ -219,7 +219,9 @@ class AgentListContainer(Vertical):
             aid = a.get("id", "")
             if aid not in existing_ids:
                 widget = AgentWidget(
-                    a, task_titles, task_progress,
+                    a,
+                    task_titles,
+                    task_progress,
                     activity_summary=activity_summaries.get(aid, ""),
                 )
                 widget.agent_cost = per_agent_cost.get(aid, 0.0)

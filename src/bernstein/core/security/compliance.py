@@ -208,28 +208,35 @@ class ComplianceConfig:
             List of human-readable warnings (empty when everything is OK).
         """
         rules: list[tuple[bool, str]] = [
-            (self.audit_hmac_chain and not self.audit_logging,
-             "HMAC audit chain requires audit_logging to be enabled"),
-            (self.wal_signed and not self.wal_enabled,
-             "Signed WAL requires wal_enabled to be enabled"),
-            (self.governed_workflow and not self.wal_enabled,
-             "Governed workflow requires WAL for crash-safe decision history"),
-            (self.mandatory_human_review and not self.approval_gates,
-             "Mandatory human review requires approval_gates to be enabled"),
-            (self.data_residency and not self.data_residency_region,
-             "Data residency enabled but no region specified (set data_residency_region)"),
-            (self.evidence_bundle and not self.wal_enabled,
-             "Evidence bundle export requires WAL to be enabled"),
-            (self.evidence_bundle and not self.audit_logging,
-             "Evidence bundle export requires audit_logging to be enabled"),
-            (self.hipaa_mode and not self.phi_detection,
-             "HIPAA mode requires phi_detection to be enabled"),
-            (self.hipaa_mode and not self.audit_hmac_chain,
-             "HIPAA mode requires audit_hmac_chain for tamper-evident logging"),
-            (self.phi_detection and not self.hipaa_mode,
-             "phi_detection is intended for use with hipaa_mode"),
-            (self.encrypt_state_at_rest and not self.hipaa_mode,
-             "encrypt_state_at_rest is most useful when hipaa_mode is enabled"),
+            (self.audit_hmac_chain and not self.audit_logging, "HMAC audit chain requires audit_logging to be enabled"),
+            (self.wal_signed and not self.wal_enabled, "Signed WAL requires wal_enabled to be enabled"),
+            (
+                self.governed_workflow and not self.wal_enabled,
+                "Governed workflow requires WAL for crash-safe decision history",
+            ),
+            (
+                self.mandatory_human_review and not self.approval_gates,
+                "Mandatory human review requires approval_gates to be enabled",
+            ),
+            (
+                self.data_residency and not self.data_residency_region,
+                "Data residency enabled but no region specified (set data_residency_region)",
+            ),
+            (self.evidence_bundle and not self.wal_enabled, "Evidence bundle export requires WAL to be enabled"),
+            (
+                self.evidence_bundle and not self.audit_logging,
+                "Evidence bundle export requires audit_logging to be enabled",
+            ),
+            (self.hipaa_mode and not self.phi_detection, "HIPAA mode requires phi_detection to be enabled"),
+            (
+                self.hipaa_mode and not self.audit_hmac_chain,
+                "HIPAA mode requires audit_hmac_chain for tamper-evident logging",
+            ),
+            (self.phi_detection and not self.hipaa_mode, "phi_detection is intended for use with hipaa_mode"),
+            (
+                self.encrypt_state_at_rest and not self.hipaa_mode,
+                "encrypt_state_at_rest is most useful when hipaa_mode is enabled",
+            ),
         ]
         return [msg for condition, msg in rules if condition]
 
@@ -780,63 +787,77 @@ def _collect_soc2_artifacts(
     audit_dir = sdd_dir / "audit"
     if audit_dir.is_dir():
         copied = _copy_dir_files(
-            audit_dir, bundle_dir / "audit_logs", "*.jsonl",
+            audit_dir,
+            bundle_dir / "audit_logs",
+            "*.jsonl",
             filter_fn=lambda f: start_date <= f.stem <= end_date,
         )
         if copied:
-            artifacts.append({
-                "type": "audit_logs",
-                "description": "HMAC-chained audit event logs",
-                "file_count": len(copied),
-                "period_filter": f"{start_date} to {end_date}",
-            })
+            artifacts.append(
+                {
+                    "type": "audit_logs",
+                    "description": "HMAC-chained audit event logs",
+                    "file_count": len(copied),
+                    "period_filter": f"{start_date} to {end_date}",
+                }
+            )
 
     # 3. Merkle seals
     merkle_dir = audit_dir / "merkle" if audit_dir.is_dir() else sdd_dir / "audit" / "merkle"
     if merkle_dir.is_dir():
         copied = _copy_dir_files(merkle_dir, bundle_dir / "merkle_seals", _JSON_GLOB)
         if copied:
-            artifacts.append({
-                "type": "merkle_seals",
-                "description": "Merkle tree integrity seals",
-                "file_count": len(copied),
-            })
+            artifacts.append(
+                {
+                    "type": "merkle_seals",
+                    "description": "Merkle tree integrity seals",
+                    "file_count": len(copied),
+                }
+            )
 
     # 4. Compliance configuration
     config_dir = sdd_dir / "config"
     if config_dir.is_dir():
         copied = _copy_dir_files(
-            config_dir, bundle_dir / "compliance_config", "*",
+            config_dir,
+            bundle_dir / "compliance_config",
+            "*",
             filter_fn=lambda f: f.is_file() and f.name != "audit-key",
         )
         if copied:
-            artifacts.append({
-                "type": "compliance_config",
-                "description": "Compliance and policy configuration",
-                "file_count": len(copied),
-            })
+            artifacts.append(
+                {
+                    "type": "compliance_config",
+                    "description": "Compliance and policy configuration",
+                    "file_count": len(copied),
+                }
+            )
 
     # 5. WAL
     wal_dir = sdd_dir / "runtime" / "wal"
     if wal_dir.is_dir():
         copied = _copy_dir_files(wal_dir, bundle_dir / "wal", "*")
         if copied:
-            artifacts.append({
-                "type": "wal",
-                "description": "Write-ahead log entries",
-                "file_count": len(copied),
-            })
+            artifacts.append(
+                {
+                    "type": "wal",
+                    "description": "Write-ahead log entries",
+                    "file_count": len(copied),
+                }
+            )
 
     # 6. SBOM
     sbom_dir = sdd_dir / "sbom"
     if sbom_dir.is_dir():
         copied = _copy_dir_files(sbom_dir, bundle_dir / "sbom", _JSON_GLOB)
         if copied:
-            artifacts.append({
-                "type": "sbom",
-                "description": "Software Bill of Materials (CycloneDX)",
-                "file_count": len(copied),
-            })
+            artifacts.append(
+                {
+                    "type": "sbom",
+                    "description": "Software Bill of Materials (CycloneDX)",
+                    "file_count": len(copied),
+                }
+            )
 
     return artifacts
 

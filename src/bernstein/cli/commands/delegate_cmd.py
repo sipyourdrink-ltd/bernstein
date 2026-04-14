@@ -155,7 +155,11 @@ _POLL_INTERVAL = 2.0
 
 
 def _report_terminal_status(
-    task_id: str, status: str, result_summary: str, poll_url: str, as_json: bool,
+    task_id: str,
+    status: str,
+    result_summary: str,
+    poll_url: str,
+    as_json: bool,
 ) -> None:
     """Report a terminal task status and exit if failed."""
     if as_json:

@@ -762,9 +762,7 @@ def _extract_saml_claims(root: Any) -> tuple[str, dict[str, list[str]]]:
     subject = name_id_el.text if name_id_el is not None and name_id_el.text else ""
 
     attributes: dict[str, list[str]] = {}
-    for attr_stmt in root.findall(
-        ".//saml:Assertion/saml:AttributeStatement/saml:Attribute", _SAML_NS
-    ):
+    for attr_stmt in root.findall(".//saml:Assertion/saml:AttributeStatement/saml:Attribute", _SAML_NS):
         attr_name = attr_stmt.get("Name", "")
         values = [v.text for v in attr_stmt.findall("saml:AttributeValue", _SAML_NS) if v.text]
         if attr_name and values:

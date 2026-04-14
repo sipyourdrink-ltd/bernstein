@@ -260,13 +260,17 @@ def _attempt_signed_commit(
     """Try to create a signed commit, falling back to unsigned on failure."""
     if config.mode == "ssh" and config.signing_key:
         return _try_signing(
-            cwd, full_message, "ssh",
+            cwd,
+            full_message,
+            "ssh",
             lambda: _commit_with_ssh_signing(cwd, full_message, config.signing_key),
         )
 
     if config.mode == "gpg":
         return _try_signing(
-            cwd, full_message, "gpg",
+            cwd,
+            full_message,
+            "gpg",
             lambda: _commit_with_gpg_signing(cwd, full_message, config.signing_key, config.gpg_program),
         )
 

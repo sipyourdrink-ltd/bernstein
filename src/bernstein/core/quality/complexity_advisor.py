@@ -260,10 +260,7 @@ def _cross_file_dep_score(owned_files: list[str], workdir: Path) -> float:
 def _import_node_matches(node: ast.AST, targets: set[str]) -> bool:
     """Return True if an import AST node references any of *targets*."""
     if isinstance(node, ast.Import):
-        return any(
-            alias.name in targets or alias.name.split(".")[0] in targets
-            for alias in node.names
-        )
+        return any(alias.name in targets or alias.name.split(".")[0] in targets for alias in node.names)
     if isinstance(node, ast.ImportFrom):
         module = node.module or ""
         root = module.split(".")[0]

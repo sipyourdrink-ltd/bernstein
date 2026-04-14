@@ -110,9 +110,7 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     ),
     (
         "generic_api_key",
-        re.compile(
-            r"""(?i)(?:api_?key|api_secret|(?:access|auth|secret)_token)\s*[=:]\s*["']([\w\-/.+=]{16,})["']"""
-        ),
+        re.compile(r"""(?i)(?:api_?key|api_secret|(?:access|auth|secret)_token)\s*[=:]\s*["']([\w\-/.+=]{16,})["']"""),
         "high",
         "Generic API key or secret token assignment",
     ),

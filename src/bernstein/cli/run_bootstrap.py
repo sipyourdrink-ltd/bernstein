@@ -778,10 +778,19 @@ def run(
     from bernstein.core.seed import SeedError
 
     _propagate_env_flags(
-        profile=profile, workflow=workflow, routing=routing, compliance=compliance,
-        sandbox=sandbox, container=container, container_image=container_image,
-        two_phase_sandbox=two_phase_sandbox, quiet=quiet, task_filter=task_filter,
-        auto_pr=auto_pr, activity_log_path=activity_log_path, audit=audit,
+        profile=profile,
+        workflow=workflow,
+        routing=routing,
+        compliance=compliance,
+        sandbox=sandbox,
+        container=container,
+        container_image=container_image,
+        two_phase_sandbox=two_phase_sandbox,
+        quiet=quiet,
+        task_filter=task_filter,
+        auto_pr=auto_pr,
+        activity_log_path=activity_log_path,
+        audit=audit,
     )
 
     _configure_quality_gate_bypass(

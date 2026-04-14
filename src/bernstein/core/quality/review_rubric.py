@@ -235,15 +235,27 @@ async def _fetch_diff(run_dir: Path) -> tuple[str, list[str]]:
     """Fetch the Python diff from git. Returns (diff_text, errors)."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "diff", "HEAD~1", "--", "*.py",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=run_dir,
+            "git",
+            "diff",
+            "HEAD~1",
+            "--",
+            "*.py",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=run_dir,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
         diff = stdout.decode() if stdout else ""
         if not diff.strip():
             proc = await asyncio.create_subprocess_exec(
-                "git", "diff", "--cached", "--", "*.py",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=run_dir,
+                "git",
+                "diff",
+                "--cached",
+                "--",
+                "*.py",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=run_dir,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
             diff = stdout.decode() if stdout else ""

@@ -231,16 +231,12 @@ class TestRenderImageReport:
         assert "3" in report
 
     def test_no_images(self) -> None:
-        result = ImageCleanupResult(
-            images_found=0, images_removed=0, tokens_saved_estimate=0, kept_recent=0
-        )
+        result = ImageCleanupResult(images_found=0, images_removed=0, tokens_saved_estimate=0, kept_recent=0)
         report = render_image_report(result)
         assert "No images found" in report
 
     def test_all_kept(self) -> None:
-        result = ImageCleanupResult(
-            images_found=2, images_removed=0, tokens_saved_estimate=0, kept_recent=2
-        )
+        result = ImageCleanupResult(images_found=2, images_removed=0, tokens_saved_estimate=0, kept_recent=2)
         report = render_image_report(result)
         assert "within the keep window" in report
 
@@ -254,8 +250,6 @@ class TestImageCleanupResultFrozen:
     """ImageCleanupResult is a frozen dataclass."""
 
     def test_frozen(self) -> None:
-        result = ImageCleanupResult(
-            images_found=1, images_removed=0, tokens_saved_estimate=0, kept_recent=1
-        )
+        result = ImageCleanupResult(images_found=1, images_removed=0, tokens_saved_estimate=0, kept_recent=1)
         with pytest.raises(AttributeError):
             result.images_found = 5  # type: ignore[misc]

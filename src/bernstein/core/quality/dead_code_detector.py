@@ -243,11 +243,7 @@ def _names_from_import_node(node: ast.AST) -> list[tuple[str, int]]:
     if isinstance(node, ast.Import):
         return [(alias.asname or alias.name.split(".")[0], node.lineno) for alias in node.names]
     if isinstance(node, ast.ImportFrom):
-        return [
-            (alias.asname or alias.name, node.lineno)
-            for alias in node.names
-            if alias.name != "*"
-        ]
+        return [(alias.asname or alias.name, node.lineno) for alias in node.names if alias.name != "*"]
     return []
 
 

@@ -821,15 +821,11 @@ def _gather_guardrail_decisions(
 
     if config.scope:
         raw = check_scope(diff, task)
-        decisions["scope_enforcement"] = (
-            relax_sandboxed(raw, "scope_enforcement") if config.sandbox_relax else raw
-        )
+        decisions["scope_enforcement"] = relax_sandboxed(raw, "scope_enforcement") if config.sandbox_relax else raw
 
     if config.file_permissions:
         raw = check_file_permissions(diff, task.role, config.permission_overrides)
-        decisions["file_permissions"] = (
-            relax_sandboxed(raw, "file_permissions") if config.sandbox_relax else raw
-        )
+        decisions["file_permissions"] = relax_sandboxed(raw, "file_permissions") if config.sandbox_relax else raw
 
     decisions["dangerous_operations"] = check_dangerous_operations(diff, config)
     decisions["critical_file_modification"] = check_critical_file_modifications(diff, automated=True)
@@ -981,8 +977,7 @@ def check_review_checklist(
     except Exception as exc:
         logger.warning("Review checklist failed for task %s: %s", task.id, exc)
         results.extend(
-            PermissionDecision(type=DecisionType.ASK, reason=f"Check failed due to error: {exc}")
-            for _ in checklist
+            PermissionDecision(type=DecisionType.ASK, reason=f"Check failed due to error: {exc}") for _ in checklist
         )
 
     return results

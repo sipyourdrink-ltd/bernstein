@@ -327,9 +327,7 @@ def _collect_hmac_evidence(audit_dir: Path, evidence: list[EvidenceSummary]) -> 
         return False
 
 
-def _collect_merkle_evidence(
-    merkle_dir: Path, evidence: list[EvidenceSummary]
-) -> MerkleAttestation | None:
+def _collect_merkle_evidence(merkle_dir: Path, evidence: list[EvidenceSummary]) -> MerkleAttestation | None:
     """Collect Merkle seal evidence and return attestation if available."""
     if not merkle_dir.is_dir():
         return None

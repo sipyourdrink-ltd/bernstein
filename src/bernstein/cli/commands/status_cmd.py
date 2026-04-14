@@ -222,16 +222,18 @@ def _collect_pid_agents(pid_path: Path) -> tuple[list[dict[str, Any]], list[Path
         hours, minutes = divmod(minutes, 60)
         runtime_str = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {secs:02d}s"
 
-        agents.append({
-            "session": info.get("session", "?"),
-            "role": info.get("role", "?"),
-            "command": info.get("command", "?"),
-            "model": info.get("model", "?"),
-            "worker_pid": worker_pid,
-            "child_pid": info.get("child_pid"),
-            "runtime": runtime_str,
-            "started_at": started_at,
-        })
+        agents.append(
+            {
+                "session": info.get("session", "?"),
+                "role": info.get("role", "?"),
+                "command": info.get("command", "?"),
+                "model": info.get("model", "?"),
+                "worker_pid": worker_pid,
+                "child_pid": info.get("child_pid"),
+                "runtime": runtime_str,
+                "started_at": started_at,
+            }
+        )
 
     return agents, stale_files
 

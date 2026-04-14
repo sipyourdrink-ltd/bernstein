@@ -157,9 +157,17 @@ def _read_config_file(path: Path) -> dict[str, Any]:
         return {}
 
 
-_EXTRA_SETTING_KEYS = frozenset({
-    "model", "effort", "timeout", "max_tokens", "retry_count", "log_level", "server_url",
-})
+_EXTRA_SETTING_KEYS = frozenset(
+    {
+        "model",
+        "effort",
+        "timeout",
+        "max_tokens",
+        "retry_count",
+        "log_level",
+        "server_url",
+    }
+)
 
 
 def _is_known_setting(key: str) -> bool:
@@ -184,7 +192,10 @@ def _load_settings_from_configs(
         for key, value in config_data.items():
             if _is_known_setting(key):
                 settings[key] = SettingValue(
-                    key=key, value=value, source="config", source_detail=str(config_path),
+                    key=key,
+                    value=value,
+                    source="config",
+                    source_detail=str(config_path),
                 )
     return config_paths
 
@@ -200,7 +211,10 @@ def _load_settings_from_env(settings: dict[str, SettingValue]) -> dict[str, str]
         setting_key = env_key.replace("BERNSTEIN_", "").lower()
         if _is_known_setting(setting_key):
             settings[setting_key] = SettingValue(
-                key=setting_key, value=env_value, source="env", source_detail=env_key,
+                key=setting_key,
+                value=env_value,
+                source="env",
+                source_detail=env_key,
             )
     return env_vars
 
@@ -239,7 +253,10 @@ def capture_settings_snapshot(
     if extra_env:
         for key, value in extra_env.items():
             settings[key] = SettingValue(
-                key=key, value=value, source="cli", source_detail="command line argument",
+                key=key,
+                value=value,
+                source="cli",
+                source_detail="command line argument",
             )
 
     return SettingsSnapshot(

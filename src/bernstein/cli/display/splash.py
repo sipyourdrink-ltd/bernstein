@@ -98,8 +98,12 @@ def splash(
         _print_agents_block(console, agents, is_animated)
 
     _print_status_lines(
-        console, width=width, seed_file=seed_file,
-        goal_preview=goal_preview, budget=budget, task_count=task_count,
+        console,
+        width=width,
+        seed_file=seed_file,
+        goal_preview=goal_preview,
+        budget=budget,
+        task_count=task_count,
     )
 
     console.print(sep)

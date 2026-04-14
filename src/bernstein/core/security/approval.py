@@ -138,9 +138,7 @@ def _has_no_diff(worktree_path: Path, base_branch: str) -> bool:
         return False
 
 
-def _push_with_retry(
-    push_fn: _PushBranchFn, worktree_path: Path, pr_branch: str, task_id: str
-) -> bool:
+def _push_with_retry(push_fn: _PushBranchFn, worktree_path: Path, pr_branch: str, task_id: str) -> bool:
     """Push to remote with one retry on failure. Returns True on success."""
     push_result = push_fn(worktree_path, pr_branch)
     if getattr(push_result, "ok", True):

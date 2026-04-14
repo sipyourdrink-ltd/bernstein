@@ -170,9 +170,7 @@ def _verify_hmac_chain() -> bool:
             Panel("[bold green]HMAC Chain Verification Passed[/bold green]", border_style="green", expand=False)
         )
         return True
-    console.print(
-        Panel("[bold red]HMAC Chain Verification FAILED[/bold red]", border_style="red", expand=False)
-    )
+    console.print(Panel("[bold red]HMAC Chain Verification FAILED[/bold red]", border_style="red", expand=False))
     for err in hmac_errors:
         console.print(f"  [red]![/red] {err}")
     return False
@@ -186,9 +184,7 @@ def _verify_merkle_tree() -> bool:
 
     console.print()
     if result.valid:
-        console.print(
-            Panel("[bold green]Merkle Verification Passed[/bold green]", border_style="green", expand=False)
-        )
+        console.print(Panel("[bold green]Merkle Verification Passed[/bold green]", border_style="green", expand=False))
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column("Key", style="dim", no_wrap=True, min_width=14)
         table.add_column("Value")
@@ -197,9 +193,7 @@ def _verify_merkle_tree() -> bool:
             table.add_row("Seal file", str(result.seal_path))
         console.print(table)
         return True
-    console.print(
-        Panel("[bold red]Merkle Verification FAILED[/bold red]", border_style="red", expand=False)
-    )
+    console.print(Panel("[bold red]Merkle Verification FAILED[/bold red]", border_style="red", expand=False))
     for err in result.errors:
         console.print(f"  [red]![/red] {err}")
     return False

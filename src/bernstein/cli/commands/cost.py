@@ -646,9 +646,20 @@ def cost_cmd(metrics_dir: str, last: str | None, group_by: str | None, as_json: 
 
     if as_json or is_json():
         _cost_render_json(
-            time_label, sorted_models, totals, fast_path_savings, savings_vs_opus,
-            savings_vs_manual, daily_costs, projected_monthly, tasks_done, tasks_failed,
-            cache_hit_rate, grouped_data, group_by, downgrade,
+            time_label,
+            sorted_models,
+            totals,
+            fast_path_savings,
+            savings_vs_opus,
+            savings_vs_manual,
+            daily_costs,
+            projected_monthly,
+            tasks_done,
+            tasks_failed,
+            cache_hit_rate,
+            grouped_data,
+            group_by,
+            downgrade,
         )
         return
 

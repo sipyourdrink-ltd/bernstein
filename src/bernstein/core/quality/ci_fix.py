@@ -116,32 +116,38 @@ _FAILURE_DETECTORS: list[
     ]
 ] = [
     (
-        _detect_ruff_lint, CIFailureKind.RUFF_LINT,
+        _detect_ruff_lint,
+        CIFailureKind.RUFF_LINT,
         "ruff lint errors found",
         "uv run ruff check --fix src/ && uv run ruff check src/",
     ),
     (
-        _detect_ruff_format, CIFailureKind.RUFF_FORMAT,
+        _detect_ruff_format,
+        CIFailureKind.RUFF_FORMAT,
         "ruff format: files need reformatting",
         "uv run ruff format src/",
     ),
     (
-        _detect_missing_file, CIFailureKind.MISSING_FILE,
+        _detect_missing_file,
+        CIFailureKind.MISSING_FILE,
         _summary_for_missing_file,
         "Check .gitignore — required files may be excluded from the repo",
     ),
     (
-        _detect_import_error, CIFailureKind.IMPORT_ERROR,
+        _detect_import_error,
+        CIFailureKind.IMPORT_ERROR,
         _summary_for_import_error,
         "Add missing package to pyproject.toml dependencies",
     ),
     (
-        _detect_pytest, CIFailureKind.PYTEST,
+        _detect_pytest,
+        CIFailureKind.PYTEST,
         "pytest failures",
         "uv run python scripts/run_tests.py -x",
     ),
     (
-        _detect_pyright, CIFailureKind.PYRIGHT,
+        _detect_pyright,
+        CIFailureKind.PYRIGHT,
         "pyright type errors",
         "uv run pyright 2>&1 | head -40",
     ),

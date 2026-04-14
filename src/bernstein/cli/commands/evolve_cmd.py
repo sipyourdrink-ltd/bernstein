@@ -97,7 +97,9 @@ def evolve() -> None:
     help="GitHub repo slug (owner/repo). Inferred from git remote if omitted.",
 )
 def _load_evolve_config_from_seed(
-    root: Path, github_sync: bool, github_repo: str | None,
+    root: Path,
+    github_sync: bool,
+    github_repo: str | None,
 ) -> tuple[bool, str | None]:
     """Read evolve config from bernstein.yaml if CLI flags were not set."""
     for seed_name in ("bernstein.yaml", "bernstein.yml"):

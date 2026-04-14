@@ -216,9 +216,7 @@ def _wait_for_recipe_completion(
             time.sleep(poll_interval_s)
             continue
 
-        line, is_complete = _format_recipe_progress(
-            status_payload, health_payload, stages, tasks_payload, total_tasks
-        )
+        line, is_complete = _format_recipe_progress(status_payload, health_payload, stages, tasks_payload, total_tasks)
         if line != last_line:
             console.print(line)
             last_line = line
@@ -588,9 +586,7 @@ def _poll_demo_completion(server_url: str, deadline: float) -> None:
                 if resp.status_code == 200:
                     payload = resp.json()
                     tasks_list: list[dict[str, Any]] = payload.get("tasks", [])
-                    done_count, failed_count = _emit_task_events(
-                        tasks_list, seen_done, seen_failed, progress
-                    )
+                    done_count, failed_count = _emit_task_events(tasks_list, seen_done, seen_failed, progress)
                     total_tasks = len(tasks_list)
                     progress.update(
                         poll_task,

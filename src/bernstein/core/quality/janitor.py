@@ -210,8 +210,7 @@ async def run_janitor(
         if task.task_type == TaskType.UPGRADE_PROPOSAL:
             all_passed, failed_descs = verify_upgrade_task(task, workdir)
             signal_results: list[tuple[str, bool, str]] = (
-                [("upgrade:verified", True, "")] if all_passed
-                else [(f"upgrade:{d}", False, "") for d in failed_descs]
+                [("upgrade:verified", True, "")] if all_passed else [(f"upgrade:{d}", False, "") for d in failed_descs]
             )
         else:
             signal_results = _collect_signal_results(task, workdir)
@@ -221,7 +220,11 @@ async def run_janitor(
 
         diff = _get_git_diff(task, workdir)
         guardrail_results: list[GuardrailResult] = run_guardrails(
-            diff, task, _guardrails, workdir, bypass_enabled=_bypass_guardrails,
+            diff,
+            task,
+            _guardrails,
+            workdir,
+            bypass_enabled=_bypass_guardrails,
         )
 
         blocked_guards = [r for r in guardrail_results if r.blocked and not r.passed]
@@ -232,14 +235,24 @@ async def run_janitor(
                 failed_descs.append(f"guardrail:{gr.check}: {gr.detail}")
 
         fix_task_ids = await _create_fix_tasks_if_needed(
-            task, all_passed, failed_descs, judge_verdict, server_url, workdir,
+            task,
+            all_passed,
+            failed_descs,
+            judge_verdict,
+            server_url,
+            workdir,
         )
 
-        results.append(JanitorResult(
-            task_id=task.id, passed=all_passed, signal_results=signal_results,
-            fix_tasks_created=fix_task_ids, judge_verdict=judge_verdict,
-            guardrail_results=guardrail_results,
-        ))
+        results.append(
+            JanitorResult(
+                task_id=task.id,
+                passed=all_passed,
+                signal_results=signal_results,
+                fix_tasks_created=fix_task_ids,
+                judge_verdict=judge_verdict,
+                guardrail_results=guardrail_results,
+            )
+        )
     return results
 
 

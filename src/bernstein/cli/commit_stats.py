@@ -94,9 +94,7 @@ _GIT_LOG_FMT = "%an <%ae>%t%ad"
 _GIT_NUMSTAT_FMT = "%aN%n"  # author name then numstat block
 
 
-def _parse_numstat_line(
-    line: str, current_author: str | None
-) -> tuple[str | None, tuple[str, int, int] | None]:
+def _parse_numstat_line(line: str, current_author: str | None) -> tuple[str | None, tuple[str, int, int] | None]:
     """Parse a single line from git log --numstat output.
 
     Returns:
@@ -193,9 +191,7 @@ def _count_commits_by_role(
     if until:
         author_cmd.extend(["--until", until])
     try:
-        author_result = subprocess.run(
-            author_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
-        )
+        author_result = subprocess.run(author_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if author_result.returncode == 0:
             for line in author_result.stdout.splitlines():
                 line = line.strip()
