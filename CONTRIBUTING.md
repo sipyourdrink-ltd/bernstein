@@ -192,6 +192,13 @@ bernstein stop
 pkill -f bernstein   # kills everything including your own shell session
 ```
 
+## Recognition
+
+All contributors are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md).
+Outstanding contributions are featured in our
+[monthly Community Spotlight](https://alexchernysh.com/blog)
+blog posts, which are shared on Twitter/X, LinkedIn, and dev.to.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
