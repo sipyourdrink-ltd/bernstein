@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "agents": "^0.0.87"
+    "agents": "^0.11.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
