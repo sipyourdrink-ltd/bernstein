@@ -57,7 +57,9 @@ Bernstein auto-discovers installed CLI agents. Mix them in the same run — chea
 | [Cursor](https://www.cursor.com) | sonnet 4.6, opus 4.6, gpt-5.4 | [Cursor app](https://www.cursor.com) |
 | [Aider](https://aider.chat) | Any OpenAI/Anthropic-compatible | `pip install aider-chat` |
 | [Ollama](https://ollama.ai) + Aider | Local models (offline) | `brew install ollama` |
-| [Amp](https://ampcode.com), [Cody](https://sourcegraph.com/cody), [Continue.dev](https://continue.dev), [Goose](https://block.github.io/goose/), [Kilo](https://kilo.dev), [Kiro](https://kiro.dev), [OpenCode](https://opencode.ai), [Qwen](https://github.com/QwenLM/Qwen-Agent), [Roo Code](https://github.com/RooVetGit/Roo-Code), [Tabby](https://tabby.tabbyml.com) | Various | See docs |
+| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | Workers AI models | `bernstein cloud init` |
+| [Codex on Cloudflare](https://developers.cloudflare.com/agents/) | gpt-5.4 via CF gateway | `bernstein cloud init` |
+| [Amp](https://ampcode.com), [Cody](https://sourcegraph.com/cody), [Continue.dev](https://continue.dev), [Goose](https://block.github.io/goose/), [IaC](https://www.terraform.io/) (Terraform/Pulumi), [Kilo](https://kilo.dev), [Kiro](https://kiro.dev), [OpenCode](https://opencode.ai), [Qwen](https://github.com/QwenLM/Qwen-Agent), [Roo Code](https://github.com/RooVetGit/Roo-Code), [Tabby](https://tabby.tabbyml.com) | Various | See docs |
 | **Generic** | Any CLI with `--prompt` | Built-in |
 
 Any adapter also works as the **internal scheduler LLM** — run the entire stack without any specific provider:
@@ -96,6 +98,25 @@ bernstein run --dry-run plan.yaml # preview tasks and estimated cost
 
 The orchestrator is a Python scheduler, not an LLM. Scheduling decisions are deterministic, auditable, and reproducible.
 
+## Cloud execution (Cloudflare)
+
+Bernstein can run agents on Cloudflare Workers instead of locally. The `bernstein cloud` CLI handles deployment and lifecycle.
+
+- **Workers** — agent execution on Cloudflare's edge, with Durable Workflows for multi-step tasks and automatic retry
+- **V8 sandbox isolation** — each agent runs in its own isolate, no container overhead
+- **R2 workspace sync** — local worktree state syncs to R2 object storage so cloud agents see the same files
+- **Workers AI** — use Cloudflare-hosted models as the LLM provider (no external API keys required)
+- **D1 analytics** — task metrics and cost data stored in D1 for querying
+- **Vectorize** — semantic cache backed by Cloudflare's vector database
+- **Browser rendering** — headless Chrome on Workers for agents that need to inspect web output
+- **MCP remote transport** — expose or consume MCP servers over Cloudflare's network
+
+```bash
+bernstein cloud init       # scaffold wrangler.toml + bindings
+bernstein cloud deploy     # push agent workers
+bernstein cloud run plan.yaml  # execute a plan on Cloudflare
+```
+
 ## Capabilities
 
 **Core orchestration** — parallel execution, git worktree isolation, janitor verification, quality gates (lint + types + PII scan), cross-model code review, circuit breaker for misbehaving agents, token growth monitoring with auto-intervention.
@@ -115,7 +136,7 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
 | Feature | Bernstein | CrewAI | AutoGen | LangGraph |
 |---------|-----------|--------|---------|-----------|
 | Orchestrator | Deterministic code | LLM-driven | LLM-driven | Graph + LLM |
-| Works with | Any CLI agent (29 adapters) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (20 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
 | Verification | Janitor + quality gates | No | No | Conditional edges |
 | Cost tracking | Built-in | No | No | No |
@@ -126,7 +147,7 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
 | MCP support | Yes | No | No | No |
 | Agent-to-agent chat | No | Yes | Yes | No |
 | Web UI | No | Yes | Yes | Partial |
-| Cloud hosted option | No | Yes | No | Yes |
+| Cloud hosted option | Yes (Cloudflare) | Yes | No | Yes |
 | Built-in RAG/retrieval | No | Yes | Yes | Yes |
 
 *Last verified: 2026-04-14. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*

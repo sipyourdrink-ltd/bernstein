@@ -443,6 +443,40 @@ tabby serve --model TabbyML/StarCoder-1B --device cuda
 
 ---
 
+### cloudflare_agents (Cloudflare Agents SDK)
+
+**Install:**
+```bash
+npm install -g wrangler
+wrangler login
+```
+
+**Unique features:**
+- Spawns agents via `npx wrangler dev` with Cloudflare Workers
+- Task prompt, model, and session passed as Worker `--var` flags
+- Environment filtered to Cloudflare-specific keys only (credential isolation)
+- Requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`
+
+**Best for:** Teams running agent infrastructure on Cloudflare Workers. Development and testing with wrangler dev server.
+
+---
+
+### codex_cloudflare (Codex on Cloudflare Sandboxes)
+
+Runs OpenAI Codex inside Cloudflare sandboxes for isolated, scalable execution.
+
+**Unique features:**
+- Full container sandbox with configurable memory (default 512 MiB), CPU, and network access
+- Workspace synced via R2 (same bucket as other Cloudflare bridges)
+- Automatic cleanup on timeout or error
+- Polls sandbox status every 5 seconds until completion
+
+**Configuration:** `CodexSandboxConfig` with `cloudflare_account_id`, `cloudflare_api_token`, `openai_api_key`, `sandbox_image`, `max_execution_minutes`, `memory_mb`, `cpu_cores`, `network_access`, `r2_bucket`.
+
+**Best for:** Running Codex agents in isolated environments where you need container-level security and R2-based workspace sync. See the [Cloudflare Adapters guide](cloudflare-adapters.md) for full details.
+
+---
+
 ### mock (Testing only)
 
 Simulates agent behavior for unit and integration tests. Not for production use.

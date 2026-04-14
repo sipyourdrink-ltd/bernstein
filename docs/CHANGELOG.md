@@ -2,6 +2,24 @@
 
 All notable project changes are tracked here (code + docs).
 
+## [1.7.0] — 2026-04-14
+
+### Added
+- **Cloudflare integration platform** (cf-001 through cf-012):
+  - Workers RuntimeBridge (`bridges/cloudflare.py`) — agent execution on Workers + Durable Objects
+  - Workflow Bridge (`bridges/cloudflare_workflow.py`) — durable multi-step workflows with auto-retry and approval gates
+  - Sandbox Bridge (`bridges/cloudflare_sandbox.py`) — V8 isolate and container sandboxes for isolated code execution
+  - Browser Rendering Bridge (`bridges/browser_rendering.py`) — headless web browsing, screenshots, scraping, PDF generation
+  - R2 Workspace Sync (`bridges/r2_sync.py`) — content-addressed delta file sync via Cloudflare R2
+  - Workers AI Provider (`core/routing/cloudflare_ai.py`) — free-tier LLM models (Llama 3.1, Mistral, Gemma, Qwen) for planning
+  - D1 Analytics Client (`core/cost/d1_analytics.py`) — usage metering, billing tiers (free/pro/team/enterprise), quota enforcement
+  - Vectorize Semantic Cache (`core/memory/vectorize_cache.py`) — embedding-based LLM response caching
+  - MCP Remote Transport (`mcp/remote_transport.py`) — streamable HTTP transport for remote MCP server access
+  - Cloud CLI (`cli/commands/cloud_cmd.py`) — `bernstein cloud` subcommands: login, logout, run, status, runs, cost, deploy
+  - Cloudflare Agents Adapter (`adapters/cloudflare_agents.py`) — spawn agents via `npx wrangler dev`
+  - Codex-on-Cloudflare Adapter (`adapters/codex_cloudflare.py`) — run Codex in Cloudflare sandboxes
+- Full Cloudflare documentation: overview, setup, bridges, adapters, Workers AI, analytics, CLI, MCP remote (8 new doc pages)
+
 ## [1.4.11] — 2026-04-03
 
 ### Added

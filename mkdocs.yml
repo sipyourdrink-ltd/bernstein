@@ -4,7 +4,7 @@ site_author: Alex Chernysh
 site_description: >-
   Bernstein is the open-source multi-agent orchestration platform for AI coding
   agents. Run Claude Code, Codex, Gemini CLI in parallel with deterministic
-  scheduling, 18+ adapters, and zero vendor lock-in.
+  scheduling, 18+ adapters, Cloudflare cloud execution, and zero vendor lock-in.
 repo_url: https://github.com/chernistry/bernstein
 repo_name: chernistry/bernstein
 edit_uri: edit/main/docs/
@@ -165,6 +165,15 @@ nav:
       - Deployment Guide: deployment-guide.md
       - Cluster Mode: CLUSTER.md
       - Helm Deployment: HELM_DEPLOYMENT.md
+  - Cloud / Cloudflare:
+      - Overview: cloudflare-overview.md
+      - Setup: cloudflare-setup.md
+      - Bridges: cloudflare-bridges.md
+      - Adapters: cloudflare-adapters.md
+      - Workers AI: cloudflare-ai.md
+      - Analytics & Caching: cloudflare-analytics.md
+      - Cloud CLI: cloudflare-cli.md
+      - MCP Remote: cloudflare-mcp.md
   - Reference:
       - API Reference: openapi-reference.md
       - Feature Matrix: FEATURE_MATRIX.md
