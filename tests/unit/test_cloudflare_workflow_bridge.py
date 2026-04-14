@@ -499,7 +499,7 @@ class TestDataclasses:
             current_step=WorkflowStep.CLAIM,
             state=AgentState.PENDING,
         )
-        assert ws.started_at == 0.0
+        assert ws.started_at == pytest.approx(0.0)
         assert ws.retries_used == 0
         assert ws.error_message == ""
         assert ws.metadata == {}

@@ -29,7 +29,7 @@ class TestCodexSandboxConfig:
         assert cfg.sandbox_image == "codex-sandbox:latest"
         assert cfg.max_execution_minutes == 30
         assert cfg.memory_mb == 512
-        assert cfg.cpu_cores == 1.0
+        assert cfg.cpu_cores == pytest.approx(1.0)
         assert cfg.network_access == "restricted"
         assert cfg.r2_bucket == "bernstein-workspaces"
 
@@ -51,7 +51,7 @@ class TestCodexSandboxConfig:
         assert cfg.sandbox_image == "custom:v2"
         assert cfg.max_execution_minutes == 60
         assert cfg.memory_mb == 1024
-        assert cfg.cpu_cores == 2.0
+        assert cfg.cpu_cores == pytest.approx(2.0)
         assert cfg.network_access == "full"
         assert cfg.r2_bucket == "my-bucket"
 
@@ -77,7 +77,7 @@ class TestCodexSandboxResult:
         assert result.stdout == ""
         assert result.stderr == ""
         assert result.exit_code == 0
-        assert result.execution_time_seconds == 0.0
+        assert result.execution_time_seconds == pytest.approx(0.0)
         assert result.tokens_used == 0
 
     def test_creation_with_all_fields(self) -> None:
@@ -97,7 +97,7 @@ class TestCodexSandboxResult:
         assert result.stdout == "output"
         assert result.stderr == "error"
         assert result.exit_code == 1
-        assert result.execution_time_seconds == 42.5
+        assert result.execution_time_seconds == pytest.approx(42.5)
         assert result.tokens_used == 1500
 
 
@@ -169,7 +169,7 @@ class TestCreateSandbox:
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
         assert payload["image"] == "img:v1"
         assert payload["memory_mb"] == 1024
-        assert payload["cpu_cores"] == 2.0
+        assert payload["cpu_cores"] == pytest.approx(2.0)
         assert payload["timeout_seconds"] == 600
         assert payload["network_access"] == "full"
         assert payload["env"]["OPENAI_API_KEY"] == "sk-key"

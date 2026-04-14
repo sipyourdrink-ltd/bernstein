@@ -56,7 +56,7 @@ class TestVectorizeConfig:
         cfg = VectorizeConfig(account_id="a", api_token="t")
         assert cfg.index_name == "bernstein-cache"
         assert cfg.embedding_model == "@cf/baai/bge-base-en-v1.5"
-        assert cfg.similarity_threshold == 0.92
+        assert cfg.similarity_threshold == pytest.approx(0.92)
         assert cfg.max_cache_entries == 10_000
         assert cfg.ttl_seconds == 86_400
         assert cfg.dimensions == 768
@@ -70,7 +70,7 @@ class TestVectorizeConfig:
             dimensions=1024,
         )
         assert cfg.index_name == "custom"
-        assert cfg.similarity_threshold == 0.8
+        assert cfg.similarity_threshold == pytest.approx(0.8)
         assert cfg.dimensions == 1024
 
 
@@ -82,7 +82,7 @@ class TestVectorizeConfig:
 class TestCacheStats:
     def test_hit_rate_zero_lookups(self) -> None:
         stats = CacheStats()
-        assert stats.hit_rate == 0.0
+        assert stats.hit_rate == pytest.approx(0.0)
 
     def test_hit_rate_nonzero(self) -> None:
         stats = CacheStats(lookups=10, hits=3)
@@ -90,7 +90,7 @@ class TestCacheStats:
 
     def test_avg_lookup_ms_zero(self) -> None:
         stats = CacheStats()
-        assert stats.avg_lookup_ms == 0.0
+        assert stats.avg_lookup_ms == pytest.approx(0.0)
 
     def test_avg_lookup_ms_nonzero(self) -> None:
         stats = CacheStats(lookups=4, total_lookup_ms=100.0)
@@ -422,8 +422,8 @@ class TestCacheLookupResult:
     def test_miss_defaults(self) -> None:
         r = CacheLookupResult(hit=False)
         assert r.entry is None
-        assert r.similarity == 0.0
-        assert r.lookup_ms == 0.0
+        assert r.similarity == pytest.approx(0.0)
+        assert r.lookup_ms == pytest.approx(0.0)
 
     def test_frozen(self) -> None:
         r = CacheLookupResult(hit=True)

@@ -105,10 +105,10 @@ class TestUsageEvent:
         evt = UsageEvent(user_id="u1", event_type="run_start", timestamp=1000.0)
         assert evt.user_id == "u1"
         assert evt.event_type == "run_start"
-        assert evt.timestamp == 1000.0
+        assert evt.timestamp == pytest.approx(1000.0)
         assert evt.tokens_input == 0
         assert evt.tokens_output == 0
-        assert evt.cost_usd == 0.0
+        assert evt.cost_usd == pytest.approx(0.0)
         assert evt.model == ""
         assert evt.run_id == ""
         assert evt.metadata == {}
@@ -127,7 +127,7 @@ class TestUsageEvent:
         )
         assert evt.tokens_input == 500
         assert evt.tokens_output == 300
-        assert evt.cost_usd == 0.12
+        assert evt.cost_usd == pytest.approx(0.12)
         assert evt.model == "claude-sonnet-4-20250514"
         assert evt.run_id == "run-99"
         assert evt.metadata == {"k": "v"}
@@ -147,7 +147,7 @@ class TestUsageSummary:
         assert s.total_agents_spawned == 0
         assert s.total_tokens_input == 0
         assert s.total_tokens_output == 0
-        assert s.total_cost_usd == 0.0
+        assert s.total_cost_usd == pytest.approx(0.0)
         assert s.models_used == []
 
     def test_creation_full(self) -> None:
@@ -181,21 +181,21 @@ class TestBillingTier:
         assert t.name == "free"
         assert t.max_runs_per_day == 5
         assert t.max_parallel_agents == 1
-        assert t.max_monthly_cost_usd == 0.0
+        assert t.max_monthly_cost_usd == pytest.approx(0.0)
         assert "basic_models" in t.features
 
     def test_pro_tier_limits(self) -> None:
         t = BILLING_TIERS["pro"]
         assert t.max_runs_per_day == 999999
         assert t.max_parallel_agents == 5
-        assert t.max_monthly_cost_usd == 49.0
+        assert t.max_monthly_cost_usd == pytest.approx(49.0)
         assert "all_models" in t.features
         assert "priority_queue" in t.features
 
     def test_team_tier_limits(self) -> None:
         t = BILLING_TIERS["team"]
         assert t.max_parallel_agents == 10
-        assert t.max_monthly_cost_usd == 199.0
+        assert t.max_monthly_cost_usd == pytest.approx(199.0)
         assert "sso" in t.features
         assert "audit_logs" in t.features
         assert "shared_workspaces" in t.features
@@ -203,7 +203,7 @@ class TestBillingTier:
     def test_enterprise_tier_limits(self) -> None:
         t = BILLING_TIERS["enterprise"]
         assert t.max_parallel_agents == 50
-        assert t.max_monthly_cost_usd == 0.0  # unlimited
+        assert t.max_monthly_cost_usd == pytest.approx(0.0)  # unlimited
         assert "dedicated_infra" in t.features
         assert "sla" in t.features
 
@@ -338,11 +338,11 @@ class TestRecordEvent:
             # params: id, user_id, event_type, timestamp, metadata, ...
             assert params[1] == "u1"
             assert params[2] == "run_start"
-            assert params[3] == 1000.0
+            assert params[3] == pytest.approx(1000.0)
             assert json.loads(params[4]) == {"plan": "p1"}
             assert params[5] == 100
             assert params[6] == 50
-            assert params[7] == 0.01
+            assert params[7] == pytest.approx(0.01)
             assert params[8] == "claude-sonnet-4-20250514"
             assert params[9] == "r1"
 
@@ -401,7 +401,7 @@ class TestGetUsageSummary:
             assert summary.total_agents_spawned == 12
             assert summary.total_tokens_input == 50000
             assert summary.total_tokens_output == 30000
-            assert summary.total_cost_usd == 2.50
+            assert summary.total_cost_usd == pytest.approx(2.50)
             assert summary.models_used == ["claude-sonnet-4-20250514", "gpt-4o"]
 
     @pytest.mark.asyncio()
@@ -409,7 +409,7 @@ class TestGetUsageSummary:
         with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=_mock_d1_response([])):
             summary = await client.get_usage_summary("u1", "2026-04")
             assert summary.total_runs == 0
-            assert summary.total_cost_usd == 0.0
+            assert summary.total_cost_usd == pytest.approx(0.0)
             assert summary.models_used == []
 
 
@@ -494,8 +494,8 @@ class TestCheckQuota:
             result = await client.check_quota("u1", "pro")
             assert result.within_limits is False
             assert "Monthly" in result.reason
-            assert result.monthly_cost_used == 55.0
-            assert result.monthly_cost_limit == 49.0
+            assert result.monthly_cost_used == pytest.approx(55.0)
+            assert result.monthly_cost_limit == pytest.approx(49.0)
 
     @pytest.mark.asyncio()
     async def test_unknown_tier(self, client: D1AnalyticsClient) -> None:
@@ -545,7 +545,7 @@ class TestGetTopUsers:
             result = await client.get_top_users("2026-04", limit=2)
             assert len(result) == 2
             assert result[0].user_id == "u2"
-            assert result[0].total_cost_usd == 25.0
+            assert result[0].total_cost_usd == pytest.approx(25.0)
             assert result[1].user_id == "u1"
             # Verify LIMIT is passed
             payload = mock_post.call_args[1]["json"]
