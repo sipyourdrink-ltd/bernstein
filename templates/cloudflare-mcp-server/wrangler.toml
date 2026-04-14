@@ -1,0 +1,16 @@
+name = "bernstein-mcp-server"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+BERNSTEIN_SERVER_URL = "http://127.0.0.1:8052"
+
+[durable_objects]
+bindings = [
+  { name = "MCP_AGENT", class_name = "McpAgent" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["McpAgent"]

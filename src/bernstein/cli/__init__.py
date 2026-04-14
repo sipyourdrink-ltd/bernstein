@@ -32,6 +32,7 @@ _CLI_REDIRECT_MAP: dict[str, str] = {
     "chaos_cmd": "bernstein.cli.commands.chaos_cmd",
     "checkpoint_cmd": "bernstein.cli.commands.checkpoint_cmd",
     "ci_cmd": "bernstein.cli.commands.ci_cmd",
+    "cloud_cmd": "bernstein.cli.commands.cloud_cmd",
     "cli_history": "bernstein.cli.utils.cli_history",
     "compare_screen": "bernstein.cli.display.compare_screen",
     "completions_cmd": "bernstein.cli.commands.completions_cmd",

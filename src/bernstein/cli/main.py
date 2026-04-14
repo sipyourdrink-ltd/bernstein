@@ -54,6 +54,7 @@ from bernstein.cli.changelog_cmd import changelog_cmd
 from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
+from bernstein.cli.cloud_cmd import cloud_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.config_path_cmd import config_path_cmd
 from bernstein.cli.cost import cost_cmd, estimate_cmd
@@ -145,6 +146,7 @@ __all__ = [
     "chaos_group",
     "checkpoint_cmd",
     "cleanup_cmd",
+    "cloud_group",
     "completions",
     # Groups and commands from workspace_cmd
     "config_group",
@@ -745,6 +747,7 @@ cli.add_command(manifest_group, "manifest")
 cli.add_command(memory_group, "memory")
 cli.add_command(prompts_group, "prompts")
 cli.add_command(ci_group, "ci")
+cli.add_command(cloud_group, "cloud")
 cli.add_command(gateway_group, "gateway")
 cli.add_command(report_cmd, "report")
 cli.add_command(postmortem_cmd, "postmortem")

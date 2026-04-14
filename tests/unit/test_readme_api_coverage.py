@@ -83,6 +83,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "changelog",
         "fingerprint",
         "merge",
+        # Cloud
+        "cloud",
         # Infrastructure groups
         "workspace",
         "config",
