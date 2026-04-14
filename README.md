@@ -13,11 +13,9 @@
 <img alt="Bernstein in action — parallel AI agents orchestrated in real time" src="docs/assets/in-action.gif" width="700">
 
 [![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/chernistry/bernstein/graph/badge.svg)](https://codecov.io/gh/chernistry/bernstein)
 [![GitHub stars](https://img.shields.io/github/stars/chernistry/bernstein?style=social)](https://github.com/chernistry/bernstein/stargazers)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
 [![npm](https://img.shields.io/npm/v/bernstein-orchestrator)](https://www.npmjs.com/package/bernstein-orchestrator)
-[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/alex-chernysh.bernstein)](https://marketplace.visualstudio.com/items?itemName=alex-chernysh.bernstein)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/github/license/chernistry/bernstein)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-1.0%2C%201.1-blue)](docs/compatibility.md)
