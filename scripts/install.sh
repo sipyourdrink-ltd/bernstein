@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 set -e
 
 # Detect OS and architecture
@@ -9,7 +9,7 @@ echo "Installing Bernstein on $OS/$ARCH..."
 
 # Check for Python 3.12+
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "Error: Python 3.12+ required. Install from python.org"
+  echo "Error: Python 3.12+ required. Install from https://www.python.org/"
   exit 1
 fi
 
@@ -21,26 +21,40 @@ fi
 
 # Install pipx if not present
 if ! command -v pipx >/dev/null 2>&1; then
-  echo "Installing pipx..."
+  echo "pipx not found. Installing..."
+
   if [ "$OS" = "darwin" ]; then
-    # Use Homebrew to install pipx on macOS
     if ! command -v brew >/dev/null 2>&1; then
-      echo "Error: Homebrew is not installed. Install Homebrew first: https://brew.sh/"
+      echo "Error: Homebrew is not installed. Install it from https://brew.sh/"
       exit 1
     fi
     brew install pipx
-    pipx ensurepath
   else
-    # Use pip to install pipx on other systems
     python3 -m pip install --user pipx
-    python3 -m pipx ensurepath
-    export PATH="$PATH:~/.local/bin"
   fi
 fi
 
+# Ensure pipx is usable in THIS shell (critical fix)
+export PATH="$HOME/.local/bin:$PATH"
+
+# Also ensure pipx paths are configured
+python3 -m pipx ensurepath >/dev/null 2>&1 || true
+
+# Verify pipx works
+if ! command -v pipx >/dev/null 2>&1; then
+  echo "Error: pipx is installed but not available in PATH."
+  echo "Try restarting your terminal or running:"
+  echo "export PATH=\"\$HOME/.local/bin:\$PATH\""
+  exit 1
+fi
+
 # Install Bernstein
+echo "Installing Bernstein..."
 pipx install bernstein
 
 echo ""
-echo "Bernstein installed! Run: bernstein --version"
-echo "Get started: bernstein -g 'your goal here'"
+echo "Bernstein installed successfully! 🎉"
+echo ""
+echo "Try:"
+echo "  bernstein --version"
+echo "  bernstein -g 'your goal here'"
