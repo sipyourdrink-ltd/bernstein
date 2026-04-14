@@ -268,6 +268,36 @@ def _resolve_runtime_cmd(runtime: ContainerRuntime) -> str:
     return cmd
 
 
+def _append_resource_limit_args(args: list[str], limits: Any) -> None:
+    """Append resource limit flags to a container command argument list."""
+    if limits.cpu_cores is not None:
+        args.extend(["--cpus", str(limits.cpu_cores)])
+    if limits.memory_mb is not None:
+        args.extend(["--memory", f"{limits.memory_mb}m"])
+    if limits.memory_swap_mb != -1:
+        args.extend(["--memory-swap", f"{limits.memory_swap_mb}m"])
+    if limits.pids_limit is not None:
+        args.extend(["--pids-limit", str(limits.pids_limit)])
+    if limits.disk_mb is not None:
+        args.extend(["--storage-opt", f"size={limits.disk_mb}m"])
+        args.extend(["--tmpfs", f"/tmp:rw,size={limits.disk_mb}m"])
+    if limits.read_only_rootfs:
+        args.append("--read-only")
+
+
+def _append_security_args(args: list[str], sec: Any) -> None:
+    """Append security profile flags to a container command argument list."""
+    if sec.drop_capabilities:
+        for cap in sec.drop_capabilities:
+            args.extend(["--cap-drop", cap])
+    if sec.no_new_privileges:
+        args.append("--security-opt=no-new-privileges")
+    if sec.seccomp_profile and sec.seccomp_profile != "default":
+        args.append(f"--security-opt=seccomp={sec.seccomp_profile}")
+    if sec.user:
+        args.extend(["--user", sec.user])
+
+
 def _build_create_args(
     config: ContainerConfig,
     session_id: str,
@@ -290,35 +320,8 @@ def _build_create_args(
     container_name = f"bernstein-{session_id}"
     args: list[str] = [runtime_cmd, "create", "--name", container_name]
 
-    # Resource limits
-    limits = config.resource_limits
-    if limits.cpu_cores is not None:
-        args.extend(["--cpus", str(limits.cpu_cores)])
-    if limits.memory_mb is not None:
-        args.extend(["--memory", f"{limits.memory_mb}m"])
-    if limits.memory_swap_mb != -1:
-        args.extend(["--memory-swap", f"{limits.memory_swap_mb}m"])
-    if limits.pids_limit is not None:
-        args.extend(["--pids-limit", str(limits.pids_limit)])
-    if limits.disk_mb is not None:
-        # Docker/Podman cannot quota a bind-mounted project directory portably.
-        # We still cap the container writable layer and /tmp scratch space.
-        args.extend(["--storage-opt", f"size={limits.disk_mb}m"])
-        args.extend(["--tmpfs", f"/tmp:rw,size={limits.disk_mb}m"])
-    if limits.read_only_rootfs:
-        args.append("--read-only")
-
-    # Security profile
-    sec = config.security
-    if sec.drop_capabilities:
-        for cap in sec.drop_capabilities:
-            args.extend(["--cap-drop", cap])
-    if sec.no_new_privileges:
-        args.append("--security-opt=no-new-privileges")
-    if sec.seccomp_profile and sec.seccomp_profile != "default":
-        args.append(f"--security-opt=seccomp={sec.seccomp_profile}")
-    if sec.user:
-        args.extend(["--user", sec.user])
+    _append_resource_limit_args(args, config.resource_limits)
+    _append_security_args(args, config.security)
 
     # gVisor runtime
     if config.runtime == ContainerRuntime.GVISOR:
@@ -912,22 +915,15 @@ class ContainerManager:
         shell_script = " && ".join(setup_cmds)
         run_args: list[str] = [self._runtime_cmd, "run", "--rm", "--name", container_name]
 
-        # Resource limits (reuse from config, but relax for setup)
+        # Resource limits (reuse from config, relaxed — only cpu/memory)
         limits = self._config.resource_limits
         if limits.cpu_cores is not None:
             run_args.extend(["--cpus", str(limits.cpu_cores)])
         if limits.memory_mb is not None:
             run_args.extend(["--memory", f"{limits.memory_mb}m"])
 
-        # Security profile
-        sec = self._config.security
-        if sec.drop_capabilities:
-            for cap in sec.drop_capabilities:
-                run_args.extend(["--cap-drop", cap])
-        if sec.no_new_privileges:
-            run_args.append("--security-opt=no-new-privileges")
-        if sec.user:
-            run_args.extend(["--user", sec.user])
+        # Security profile (reuse shared helper)
+        _append_security_args(run_args, self._config.security)
 
         # Network — Phase 1 needs internet access
         run_args.extend(["--network", phase1_network.value])

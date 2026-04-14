@@ -158,6 +158,8 @@ def render_queue_review_prompt(
         Rendered prompt string.
     """
 
+    _ = server_url  # Part of interface; not included in prompt text
+
     def _fmt_task(t: Task) -> str:
         age = ""
         agent = f" claimed by {t.assigned_agent}" if t.assigned_agent else ""

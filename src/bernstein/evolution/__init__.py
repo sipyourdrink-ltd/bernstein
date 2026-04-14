@@ -404,6 +404,7 @@ class EvolutionCoordinator:
             tasks_completed: Number of tasks the agent successfully completed.
             _model: Model used by the agent (part of interface).
         """
+        _ = model  # Part of interface
         metrics = AgentMetrics(
             timestamp=time.time(),
             agent_id=agent_id,

@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.quality.gate_commands import (
-    _migration_downgrade_is_pass,
     _module_name_from_path,
     _resolve_import_from,
 )
@@ -208,6 +207,117 @@ class GateRunner:
             )
         return await self.run_gate(step, task, run_dir, changed_files)
 
+    async def _execute_lint_gate(
+        self, step: GatePipelineStep, _task: Task, run_dir: Path, changed_files: list[str],
+    ) -> GateResult:
+        command = self._lint_command(step, changed_files)
+        if command is None:
+            return self._skipped(step, _NO_PYTHON_FILES)
+        return await self._run_command_gate(
+            step, command, run_dir, self._config.timeout_s,
+            pass_detail="no lint violations",
+        )
+
+    async def _execute_type_check_gate(
+        self, step: GatePipelineStep, _task: Task, run_dir: Path, changed_files: list[str],
+    ) -> GateResult:
+        command = self._type_check_command(step, changed_files)
+        if command is None:
+            return self._skipped(step, _NO_PYTHON_FILES)
+        return await self._run_command_gate(
+            step, command, run_dir, self._config.timeout_s,
+            pass_detail="no type errors",
+        )
+
+    async def _execute_security_scan_gate(
+        self, step: GatePipelineStep, _task: Task, run_dir: Path, _changed_files: list[str],
+    ) -> GateResult:
+        command = self._optional_command("security_scan", step.command_override)
+        if command is None:
+            return self._skipped(step, "No security scan command configured.")
+        return await self._run_command_gate(
+            step, command, run_dir, self._config.timeout_s,
+            pass_detail="no security issues found",
+        )
+
+    async def _execute_scan_gate(
+        self, step: GatePipelineStep, _task: Task, run_dir: Path, changed_files: list[str],
+    ) -> GateResult:
+        from bernstein.core import quality_gates as qg
+
+        gate_fn = qg.run_pii_gate_sync if step.name == "pii_scan" else qg.run_dlp_gate_sync
+        scan_result = await asyncio.to_thread(
+            gate_fn, self._config, run_dir, changed_files if self._changed_files_resolved else None,
+        )
+        status: GateStatus = "pass" if scan_result.passed else "fail"
+        return GateResult(
+            name=step.name, status=status, required=step.required,
+            blocked=step.required and not scan_result.passed and scan_result.blocked,
+            cached=False, duration_ms=0, details=scan_result.detail, metadata={},
+        )
+
+    async def _execute_mutation_gate(
+        self, step: GatePipelineStep, task: Task, run_dir: Path, _changed_files: list[str],
+    ) -> GateResult:
+        from bernstein.core import quality_gates as qg
+
+        if step.name == "agent_test_mutation":
+            ok, detail, score = await asyncio.to_thread(
+                qg.run_agent_test_mutation_gate_sync, self._config, task, run_dir,
+            )
+        else:
+            ok, detail, score = await asyncio.to_thread(qg.run_mutation_gate_sync, self._config, run_dir)
+        return GateResult(
+            name=step.name, status="pass" if ok else "fail", required=step.required,
+            blocked=step.required and not ok, cached=False, duration_ms=0,
+            details=detail, metadata={"mutation_score": score} if score is not None else {},
+        )
+
+    async def _execute_intent_gate(
+        self, step: GatePipelineStep, task: Task, run_dir: Path, _changed_files: list[str],
+    ) -> GateResult:
+        from bernstein.core import quality_gates as qg
+
+        verdict, blocked = await asyncio.to_thread(
+            qg.run_intent_gate_sync, task, run_dir, self._config.intent_verification,
+        )
+        return GateResult(
+            name="intent_verification", status="fail" if blocked else "pass",
+            required=step.required, blocked=step.required and blocked, cached=False, duration_ms=0,
+            details=f"Intent verdict: {verdict.verdict} — {verdict.reason}",
+            metadata={"verdict": verdict.verdict, "model": verdict.model},
+        )
+
+    async def _execute_dep_audit_gate(
+        self, step: GatePipelineStep, _task: Task, run_dir: Path, _changed_files: list[str],
+    ) -> GateResult:
+        command = step.command_override or self._config.dep_audit_command
+        return await self._run_command_gate(
+            step, command, run_dir, self._config.timeout_s,
+            pass_detail="no vulnerable dependencies found",
+        )
+
+    async def _execute_plugin_gate(
+        self, step: GatePipelineStep, task: Task, run_dir: Path, changed_files: list[str],
+    ) -> GateResult:
+        plugin = self._plugin_registry().get(step.name)
+        if plugin is None:
+            raise ValueError(f"Unsupported gate name: {step.name!r}")
+        try:
+            plugin_result = await asyncio.to_thread(plugin.run, changed_files, run_dir, task.title, task.description)
+        except Exception as exc:
+            return GateResult(
+                name=step.name, status="fail", required=step.required,
+                blocked=step.required, cached=False, duration_ms=0,
+                details=f"Gate plugin {step.name!r} failed: {exc}", metadata={},
+            )
+        blocked = plugin_result.blocked or (step.required and plugin_result.status == "fail")
+        return GateResult(
+            name=step.name, status=plugin_result.status, required=step.required,
+            blocked=blocked, cached=False, duration_ms=0,
+            details=plugin_result.details, metadata=dict(plugin_result.metadata),
+        )
+
     async def _execute_gate(
         self,
         step: GatePipelineStep,
@@ -215,214 +325,51 @@ class GateRunner:
         run_dir: Path,
         changed_files: list[str],
     ) -> GateResult:
-        from bernstein.core import quality_gates as qg
+        # Threaded sync gates (step, run_dir, changed_files)
+        _sync_cf_gates: dict[str, Any] = {
+            "auto_format": self._run_auto_format_gate_sync,
+            "complexity_check": self._run_complexity_gate_sync,
+            "dead_code": self._run_dead_code_gate_sync,
+            "comment_quality": self._run_comment_quality_gate_sync,
+            "import_cycle": self._run_import_cycle_gate_sync,
+            "coverage_delta": self._run_coverage_delta_gate_sync,
+            "merge_conflict": self._run_merge_conflict_gate_sync,
+            "large_file": self._run_large_file_gate_sync,
+        }
+        sync_fn = _sync_cf_gates.get(step.name)
+        if sync_fn is not None:
+            return await asyncio.to_thread(sync_fn, step, run_dir, changed_files)
 
-        if step.name == "auto_format":
-            return await asyncio.to_thread(self._run_auto_format_gate_sync, step, run_dir, changed_files)
+        # Threaded sync gates (step, run_dir) — no changed_files
+        _sync_no_cf_gates: dict[str, Any] = {
+            "benchmark": self._run_benchmark_gate_sync,
+            "migration_reversibility": self._run_migration_reversibility_gate_sync,
+        }
+        sync_no_cf = _sync_no_cf_gates.get(step.name)
+        if sync_no_cf is not None:
+            return await asyncio.to_thread(sync_no_cf, step, run_dir)
 
-        if step.name == "test_expansion":
-            return await asyncio.to_thread(self._run_test_expansion_gate_sync, step, task, run_dir, changed_files)
+        # Async gates with custom dispatch
+        _async_gates: dict[str, Any] = {
+            "test_expansion": lambda s, t, rd, cf: asyncio.to_thread(self._run_test_expansion_gate_sync, s, t, rd, cf),
+            "lint": self._execute_lint_gate,
+            "type_check": self._execute_type_check_gate,
+            "tests": lambda s, t, rd, cf: self._run_tests_gate(s, t, rd, cf),
+            "security_scan": self._execute_security_scan_gate,
+            "pii_scan": self._execute_scan_gate,
+            "dlp_scan": self._execute_scan_gate,
+            "mutation_testing": self._execute_mutation_gate,
+            "agent_test_mutation": self._execute_mutation_gate,
+            "intent_verification": self._execute_intent_gate,
+            "dep_audit": self._execute_dep_audit_gate,
+            "integration_test_gen": lambda s, t, rd, _cf: self._run_integration_test_gen_gate(s, t, rd),
+            "review_rubric": lambda s, t, rd, _cf: self._run_review_rubric_gate(s, t, rd),
+        }
+        async_fn = _async_gates.get(step.name)
+        if async_fn is not None:
+            return await async_fn(step, task, run_dir, changed_files)
 
-        if step.name == "lint":
-            command = self._lint_command(step, changed_files)
-            if command is None:
-                return self._skipped(step, _NO_PYTHON_FILES)
-            return await self._run_command_gate(
-                step,
-                command,
-                run_dir,
-                self._config.timeout_s,
-                pass_detail="no lint violations",
-            )
-
-        if step.name == "type_check":
-            command = self._type_check_command(step, changed_files)
-            if command is None:
-                return self._skipped(step, _NO_PYTHON_FILES)
-            return await self._run_command_gate(
-                step,
-                command,
-                run_dir,
-                self._config.timeout_s,
-                pass_detail="no type errors",
-            )
-
-        if step.name == "tests":
-            return await self._run_tests_gate(step, task, run_dir, changed_files)
-
-        if step.name == "security_scan":
-            command = self._optional_command("security_scan", step.command_override)
-            if command is None:
-                return self._skipped(step, "No security scan command configured.")
-            return await self._run_command_gate(
-                step,
-                command,
-                run_dir,
-                self._config.timeout_s,
-                pass_detail="no security issues found",
-            )
-
-        if step.name == "pii_scan":
-            pii_result = await asyncio.to_thread(
-                qg.run_pii_gate_sync,
-                self._config,
-                run_dir,
-                changed_files if self._changed_files_resolved else None,
-            )
-            status: GateStatus = "pass" if pii_result.passed else "fail"
-            return GateResult(
-                name="pii_scan",
-                status=status,
-                required=step.required,
-                blocked=step.required and not pii_result.passed and pii_result.blocked,
-                cached=False,
-                duration_ms=0,
-                details=pii_result.detail,
-                metadata={},
-            )
-
-        if step.name == "dlp_scan":
-            dlp_result = await asyncio.to_thread(
-                qg.run_dlp_gate_sync,
-                self._config,
-                run_dir,
-                changed_files if self._changed_files_resolved else None,
-            )
-            dlp_status: GateStatus = "pass" if dlp_result.passed else "fail"
-            return GateResult(
-                name="dlp_scan",
-                status=dlp_status,
-                required=step.required,
-                blocked=step.required and not dlp_result.passed and dlp_result.blocked,
-                cached=False,
-                duration_ms=0,
-                details=dlp_result.detail,
-                metadata={},
-            )
-
-        if step.name == "mutation_testing":
-            ok, detail, score = await asyncio.to_thread(qg.run_mutation_gate_sync, self._config, run_dir)
-            return GateResult(
-                name="mutation_testing",
-                status="pass" if ok else "fail",
-                required=step.required,
-                blocked=step.required and not ok,
-                cached=False,
-                duration_ms=0,
-                details=detail,
-                metadata={"mutation_score": score} if score is not None else {},
-            )
-
-        if step.name == "agent_test_mutation":
-            ok, detail, score = await asyncio.to_thread(
-                qg.run_agent_test_mutation_gate_sync, self._config, task, run_dir
-            )
-            return GateResult(
-                name="agent_test_mutation",
-                status="pass" if ok else "fail",
-                required=step.required,
-                blocked=step.required and not ok,
-                cached=False,
-                duration_ms=0,
-                details=detail,
-                metadata={"mutation_score": score} if score is not None else {},
-            )
-
-        if step.name == "intent_verification":
-            verdict, blocked = await asyncio.to_thread(
-                qg.run_intent_gate_sync,
-                task,
-                run_dir,
-                self._config.intent_verification,
-            )
-            return GateResult(
-                name="intent_verification",
-                status="fail" if blocked else "pass",
-                required=step.required,
-                blocked=step.required and blocked,
-                cached=False,
-                duration_ms=0,
-                details=f"Intent verdict: {verdict.verdict} — {verdict.reason}",
-                metadata={"verdict": verdict.verdict, "model": verdict.model},
-            )
-
-        if step.name == "complexity_check":
-            return await asyncio.to_thread(self._run_complexity_gate_sync, step, run_dir, changed_files)
-
-        if step.name == "dead_code":
-            return await asyncio.to_thread(self._run_dead_code_gate_sync, step, run_dir, changed_files)
-
-        if step.name == "comment_quality":
-            return await asyncio.to_thread(self._run_comment_quality_gate_sync, step, run_dir, changed_files)
-
-        if step.name == "import_cycle":
-            return await asyncio.to_thread(self._run_import_cycle_gate_sync, step, run_dir, changed_files)
-
-        if step.name == "coverage_delta":
-            return await asyncio.to_thread(self._run_coverage_delta_gate_sync, step, run_dir, changed_files)
-
-        if step.name == "merge_conflict":
-            return await asyncio.to_thread(self._run_merge_conflict_gate_sync, step, run_dir, changed_files)
-
-        if step.name == "dep_audit":
-            command = step.command_override or self._config.dep_audit_command
-            return await self._run_command_gate(
-                step,
-                command,
-                run_dir,
-                self._config.timeout_s,
-                pass_detail="no vulnerable dependencies found",
-            )
-
-        if step.name == "benchmark":
-            return await asyncio.to_thread(self._run_benchmark_gate_sync, step, run_dir)
-
-        if step.name == "migration_reversibility":
-            return await asyncio.to_thread(self._run_migration_reversibility_gate_sync, step, run_dir)
-
-        if step.name == "large_file":
-            return await asyncio.to_thread(self._run_large_file_gate_sync, step, run_dir, changed_files)
-
-        if step.name == "integration_test_gen":
-            return await self._run_integration_test_gen_gate(step, task, run_dir)
-
-        if step.name == "review_rubric":
-            return await self._run_review_rubric_gate(step, task, run_dir)
-
-        plugin = self._plugin_registry().get(step.name)
-        if plugin is not None:
-            try:
-                plugin_result = await asyncio.to_thread(
-                    plugin.run,
-                    changed_files,
-                    run_dir,
-                    task.title,
-                    task.description,
-                )
-            except Exception as exc:
-                return GateResult(
-                    name=step.name,
-                    status="fail",
-                    required=step.required,
-                    blocked=step.required,
-                    cached=False,
-                    duration_ms=0,
-                    details=f"Gate plugin {step.name!r} failed: {exc}",
-                    metadata={},
-                )
-            blocked = plugin_result.blocked or (step.required and plugin_result.status == "fail")
-            return GateResult(
-                name=step.name,
-                status=plugin_result.status,
-                required=step.required,
-                blocked=blocked,
-                cached=False,
-                duration_ms=0,
-                details=plugin_result.details,
-                metadata=dict(plugin_result.metadata),
-            )
-
-        raise ValueError(f"Unsupported gate name: {step.name!r}")
+        return await self._execute_plugin_gate(step, task, run_dir, changed_files)
 
     async def _run_command_gate(
         self,
@@ -587,26 +534,18 @@ class GateRunner:
         if not python_files:
             return self._skipped(step, _NO_PYTHON_FILES)
 
-        # --- vulture pass ---
         command = self._dead_code_command(step, python_files)
         ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
         if vulture_detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
-                name=step.name,
-                status="timeout",
-                required=step.required,
-                blocked=False,
-                cached=False,
-                duration_ms=0,
-                details=vulture_detail,
-                metadata={"command": command},
+                name=step.name, status="timeout", required=step.required,
+                blocked=False, cached=False, duration_ms=0,
+                details=vulture_detail, metadata={"command": command},
             )
 
-        # --- AST + cross-codebase caller analysis ---
         try:
             report = dead_code_detector.analyse(
-                python_files,
-                run_dir,
+                python_files, run_dir,
                 check_unused_imports=self._config.dead_code_check_unused_imports,
                 check_unreachable=self._config.dead_code_check_unreachable,
                 check_lost_callers=self._config.dead_code_check_lost_callers,
@@ -615,52 +554,7 @@ class GateRunner:
             logger.warning("dead_code_detector.analyse failed: %s", exc)
             report = dead_code_detector.DeadCodeReport()
 
-        # Combine vulture output and AST findings
-        ast_details = ""
-        if report.issues:
-            ast_details = "\n".join(f"  [{i.kind}] {i.file}: {i.detail}" for i in report.issues)
-
-        vulture_ok = ok and vulture_detail == "(no output)"
-        ast_ok = report.passed
-
-        if vulture_ok and ast_ok:
-            return GateResult(
-                name=step.name,
-                status="pass",
-                required=step.required,
-                blocked=False,
-                cached=False,
-                duration_ms=0,
-                details=f"No dead code detected. {report.summary()}",
-                metadata={"command": command, "ast_issues": 0},
-            )
-
-        detail_parts: list[str] = []
-        if not vulture_ok and vulture_detail not in ("(no output)", ""):
-            detail_parts.append(f"vulture:\n{vulture_detail}")
-        if ast_details:
-            detail_parts.append(f"AST analysis:\n{ast_details}")
-
-        full_detail = "\n".join(detail_parts) or vulture_detail
-        lost_caller_issues = [i for i in report.issues if i.kind == "lost_caller"]
-        has_breaking = bool(lost_caller_issues) or (not ok and vulture_detail.startswith("Command error:") is not False)
-
-        status: GateStatus = "fail" if (step.required or lost_caller_issues) else "warn"
-        return GateResult(
-            name=step.name,
-            status=status,
-            required=step.required,
-            blocked=step.required or bool(lost_caller_issues),
-            cached=False,
-            duration_ms=0,
-            details=full_detail,
-            metadata={
-                "command": command,
-                "ast_issues": len(report.issues),
-                "lost_callers": len(lost_caller_issues),
-                "has_breaking": has_breaking,
-            },
-        )
+        return self._build_dead_code_result(step, command, ok, vulture_detail, report)
 
     def _run_comment_quality_gate_sync(
         self,
@@ -879,83 +773,29 @@ class GateRunner:
         step: GatePipelineStep,
         run_dir: Path,
     ) -> GateResult:
-        """Check that every DB migration has a corresponding down/rollback path.
+        """Check that every DB migration has a corresponding down/rollback path."""
+        from bernstein.core.quality.gate_commands import GateRunnerCommandsMixin
 
-        Supports Alembic (``downgrade()`` function must be non-trivial) and
-        generic up/down SQL file pairs.  When no migration files are found the
-        gate passes with a skip note so projects without migrations are not
-        affected.
-        """
-        issues: list[str] = []
-        migration_count = 0
-
-        # --- Alembic migrations (versions/*.py) ---
-        alembic_dirs: list[Path] = []
-        for candidate in ("alembic/versions", "migrations/versions", "db/versions"):
-            p = run_dir / candidate
-            if p.is_dir():
-                alembic_dirs.append(p)
-
-        for versions_dir in alembic_dirs:
-            for migration_file in sorted(versions_dir.glob("*.py")):
-                if migration_file.name.startswith("_"):
-                    continue
-                migration_count += 1
-                try:
-                    source = migration_file.read_text(encoding="utf-8", errors="ignore")
-                except OSError:
-                    continue
-                # A bare `pass` or empty body after def downgrade means no rollback.
-                if "def downgrade" not in source:
-                    issues.append(f"{migration_file.relative_to(run_dir)}: missing downgrade() function")
-                elif _migration_downgrade_is_pass(source):
-                    issues.append(
-                        f"{migration_file.relative_to(run_dir)}: downgrade() is empty (pass-only) — no rollback defined"
-                    )
-
-        # --- Generic SQL up/down pairs ---
-        sql_migration_dirs: list[Path] = []
-        for candidate in ("migrations", "db/migrations", "sql/migrations", "database/migrations"):
-            p = run_dir / candidate
-            if p.is_dir():
-                sql_migration_dirs.append(p)
-
-        for mig_dir in sql_migration_dirs:
-            up_files = {f.stem for f in mig_dir.glob("*_up.sql")} | {
-                f.stem.replace(".up", "") for f in mig_dir.glob("*.up.sql")
-            }
-            down_files = {f.stem for f in mig_dir.glob("*_down.sql")} | {
-                f.stem.replace(".down", "") for f in mig_dir.glob("*.down.sql")
-            }
-            for stem in sorted(up_files):
-                migration_count += 1
-                down_stem = stem.replace("_up", "_down")
-                if down_stem not in down_files and stem not in down_files:
-                    issues.append(f"{mig_dir.relative_to(run_dir)}/{stem}_up.sql: no matching down migration")
+        alembic_count, alembic_issues = GateRunnerCommandsMixin._check_alembic_migrations(run_dir)
+        sql_count, sql_issues = GateRunnerCommandsMixin._check_sql_migrations(run_dir)
+        migration_count = alembic_count + sql_count
+        issues = alembic_issues + sql_issues
 
         if migration_count == 0:
             return self._skipped(step, "No migration files found — skipping reversibility check.")
 
         if not issues:
             return GateResult(
-                name=step.name,
-                status="pass",
-                required=step.required,
-                blocked=False,
-                cached=False,
-                duration_ms=0,
+                name=step.name, status="pass", required=step.required,
+                blocked=False, cached=False, duration_ms=0,
                 details=f"All {migration_count} migration(s) have rollback paths.",
                 metadata={"migration_count": migration_count},
             )
 
         detail = f"{len(issues)} migration(s) missing rollback:\n" + "\n".join(f"  - {i}" for i in issues)
         return GateResult(
-            name=step.name,
-            status="fail",
-            required=step.required,
-            blocked=step.required,
-            cached=False,
-            duration_ms=0,
+            name=step.name, status="fail", required=step.required,
+            blocked=step.required, cached=False, duration_ms=0,
             details=detail,
             metadata={"migration_count": migration_count, "missing_rollback": len(issues)},
         )
@@ -1608,6 +1448,50 @@ class GateRunner:
         lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
         return self._existing_relative_paths(run_dir, lines)
 
+    def _hash_changed_files(self, run_dir: Path, changed_files: list[str]) -> list[dict[str, str]] | None:
+        """Hash changed files for cache key. Returns None on read error."""
+        hashed_files: list[dict[str, str]] = []
+        for rel_path in sorted(changed_files):
+            file_path = run_dir / rel_path
+            if not file_path.exists() or not file_path.is_file():
+                continue
+            try:
+                digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
+            except OSError:
+                return None
+            hashed_files.append({"path": rel_path, "sha256": digest})
+        return hashed_files
+
+    def _build_gate_config_for_cache(self, step: GatePipelineStep) -> dict[str, object]:
+        """Build the gate-specific config dict used for cache key hashing."""
+        name = step.name
+        cfg = self._config
+        base: dict[str, object] = {
+            "name": name, "required": step.required,
+            "condition": step.condition, "command_override": step.command_override,
+            "base_ref": self._base_ref, "timeout_s": cfg.timeout_s,
+        }
+        _gate_config_fields: dict[str, list[str]] = {
+            "lint": ["lint_command"],
+            "type_check": ["type_check_command"],
+            "tests": ["test_command", "flaky_detection", "flaky_min_runs", "flaky_threshold"],
+            "pii_scan": ["pii_scan_paths", "pii_ignore_paths", "pii_allowlist_prefixes"],
+            "security_scan": ["security_scan", "security_scan_command"],
+            "coverage_delta": ["coverage_delta", "coverage_delta_command"],
+            "complexity_check": ["complexity_check", "complexity_threshold", "complexity_check_command"],
+            "dead_code": [
+                "dead_code_check", "dead_code_command", "dead_code_min_confidence",
+                "dead_code_check_lost_callers", "dead_code_check_unused_imports",
+                "dead_code_check_unreachable",
+            ],
+            "comment_quality": ["comment_quality_check", "comment_quality_docstyle"],
+            "import_cycle": ["import_cycle_check", "import_cycle_command"],
+            "merge_conflict": ["merge_conflict_check"],
+        }
+        for field_name in _gate_config_fields.get(name, []):
+            base[field_name] = getattr(cfg, field_name, None)
+        return base
+
     def _make_cache_key_sync(
         self,
         step: GatePipelineStep,
@@ -1622,61 +1506,10 @@ class GateRunner:
             return None
         if not self._config.cache_enabled or not self._changed_files_resolved:
             return None
-        hashed_files: list[dict[str, str]] = []
-        for rel_path in sorted(changed_files):
-            file_path = run_dir / rel_path
-            if not file_path.exists() or not file_path.is_file():
-                continue
-            try:
-                digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
-            except OSError:
-                return None
-            hashed_files.append({"path": rel_path, "sha256": digest})
-        relevant_config = {
-            "name": step.name,
-            "required": step.required,
-            "condition": step.condition,
-            "command_override": step.command_override,
-            "base_ref": self._base_ref,
-            "timeout_s": self._config.timeout_s,
-            "lint_command": self._config.lint_command if step.name == "lint" else None,
-            "type_check_command": self._config.type_check_command if step.name == "type_check" else None,
-            "test_command": self._config.test_command if step.name == "tests" else None,
-            "flaky_detection": self._config.flaky_detection if step.name == "tests" else None,
-            "flaky_min_runs": self._config.flaky_min_runs if step.name == "tests" else None,
-            "flaky_threshold": self._config.flaky_threshold if step.name == "tests" else None,
-            "pii_scan_paths": self._config.pii_scan_paths if step.name == "pii_scan" else None,
-            "pii_ignore_paths": self._config.pii_ignore_paths if step.name == "pii_scan" else None,
-            "pii_allowlist_prefixes": self._config.pii_allowlist_prefixes if step.name == "pii_scan" else None,
-            "security_scan": self._config.security_scan if step.name == "security_scan" else None,
-            "security_scan_command": self._config.security_scan_command if step.name == "security_scan" else None,
-            "coverage_delta": self._config.coverage_delta if step.name == "coverage_delta" else None,
-            "coverage_delta_command": self._config.coverage_delta_command if step.name == "coverage_delta" else None,
-            "complexity_check": self._config.complexity_check if step.name == "complexity_check" else None,
-            "complexity_threshold": self._config.complexity_threshold if step.name == "complexity_check" else None,
-            "complexity_check_command": (
-                self._config.complexity_check_command if step.name == "complexity_check" else None
-            ),
-            "dead_code_check": self._config.dead_code_check if step.name == "dead_code" else None,
-            "dead_code_command": self._config.dead_code_command if step.name == "dead_code" else None,
-            "dead_code_min_confidence": self._config.dead_code_min_confidence if step.name == "dead_code" else None,
-            "dead_code_check_lost_callers": (
-                self._config.dead_code_check_lost_callers if step.name == "dead_code" else None
-            ),
-            "dead_code_check_unused_imports": (
-                self._config.dead_code_check_unused_imports if step.name == "dead_code" else None
-            ),
-            "dead_code_check_unreachable": (
-                self._config.dead_code_check_unreachable if step.name == "dead_code" else None
-            ),
-            "comment_quality_check": (self._config.comment_quality_check if step.name == "comment_quality" else None),
-            "comment_quality_docstyle": (
-                self._config.comment_quality_docstyle if step.name == "comment_quality" else None
-            ),
-            "import_cycle_check": self._config.import_cycle_check if step.name == "import_cycle" else None,
-            "import_cycle_command": self._config.import_cycle_command if step.name == "import_cycle" else None,
-            "merge_conflict_check": self._config.merge_conflict_check if step.name == "merge_conflict" else None,
-        }
+        hashed_files = self._hash_changed_files(run_dir, changed_files)
+        if hashed_files is None:
+            return None
+        relevant_config = self._build_gate_config_for_cache(step)
         payload = {"step": relevant_config, "files": hashed_files}
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 

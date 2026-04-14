@@ -143,6 +143,51 @@ def _load_offline(workdir: str) -> dict[str, Any] | None:
     return None
 
 
+def _fetch_slo_data(workdir: str) -> dict[str, Any] | None:
+    """Fetch SLO data from server or offline file."""
+    try:
+        result = server_get("/slo/burndown")
+        if isinstance(result, dict):
+            return result
+    except Exception:
+        pass
+    return _load_offline(workdir)
+
+
+def _display_slo(data: dict[str, Any], output_json: bool, compact: bool) -> None:
+    """Display SLO data in JSON or Rich format."""
+    if output_json:
+        click.echo(json.dumps(data, indent=2))
+    else:
+        _render_burndown(data, compact=compact)
+
+
+def _slo_watch_loop(
+    fetcher: Any,
+    displayer: Any,
+    output_json: bool,
+    interval: int,
+) -> None:
+    """Run the SLO watch loop until Ctrl-C."""
+    import time
+
+    try:
+        while True:
+            if not output_json:
+                click.clear()
+            data = fetcher()
+            if data is None:
+                console.print("[yellow]Waiting for SLO data…[/yellow]")
+            else:
+                displayer(data)
+            if not output_json:
+                console.print(f"\n[dim]Refreshing every {interval}s — Ctrl-C to stop[/dim]")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
+        sys.exit(0)
+
+
 @click.command("slo")
 @click.option(
     "--workdir",
@@ -199,48 +244,18 @@ def slo_cmd(
       bernstein slo --watch          # refresh every 30s
       bernstein slo --watch --interval 10
     """
-    import time
 
-    def _fetch() -> dict[str, Any] | None:
-        # Try live server first (server_get returns dict | None directly).
-        try:
-            result = server_get("/slo/burndown")
-            if isinstance(result, dict):
-                return result
-        except Exception:
-            pass
-        # Fallback to offline file.
-        return _load_offline(workdir)
-
-    def _display(data: dict[str, Any]) -> None:
-        if output_json:
-            click.echo(json.dumps(data, indent=2))
-        else:
-            _render_burndown(data, compact=compact)
+    fetcher = lambda: _fetch_slo_data(workdir)  # noqa: E731
+    displayer = lambda data: _display_slo(data, output_json, compact)  # noqa: E731
 
     if not watch:
-        data = _fetch()
+        data = fetcher()
         if data is None:
             console.print(
                 "[yellow]No SLO data available.[/yellow] Start the task server or run ``bernstein run`` first."
             )
             raise SystemExit(1)
-        _display(data)
+        displayer(data)
         return
 
-    # --watch mode: refresh until Ctrl-C
-    try:
-        while True:
-            if not output_json:
-                click.clear()
-            data = _fetch()
-            if data is None:
-                console.print("[yellow]Waiting for SLO data…[/yellow]")
-            else:
-                _display(data)
-            if not output_json:
-                console.print(f"\n[dim]Refreshing every {interval}s — Ctrl-C to stop[/dim]")
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        console.print("\n[dim]Stopped.[/dim]")
-        sys.exit(0)
+    _slo_watch_loop(fetcher, displayer, output_json, interval)

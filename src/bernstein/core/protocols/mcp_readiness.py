@@ -139,6 +139,51 @@ def probe_sse_server(
     return False
 
 
+def _probe_single_server(
+    mcp_manager: MCPManager,
+    name: str,
+    *,
+    timeout: float,
+    poll_interval: float,
+) -> ReadinessResult:
+    """Probe a single MCP server and return a ReadinessResult."""
+    start = time.monotonic()
+
+    if not mcp_manager.is_alive(name):
+        elapsed = time.monotonic() - start
+        return ReadinessResult(
+            server_name=name,
+            ready=False,
+            elapsed_s=round(elapsed, 3),
+            reason=f"Server '{name}' is not alive (process exited or never started)",
+        )
+
+    config = mcp_manager.get_server_info(name)
+    if config is None:
+        elapsed = time.monotonic() - start
+        return ReadinessResult(
+            server_name=name,
+            ready=False,
+            elapsed_s=round(elapsed, 3),
+            reason=f"No configuration found for server '{name}'",
+        )
+
+    ready = True
+    reason = ""
+    if config.transport == "sse" and config.url:
+        ready = probe_sse_server(config.url, timeout=timeout, poll_interval=poll_interval)
+        if not ready:
+            reason = f"SSE server at {config.url} did not respond within {timeout}s"
+
+    elapsed = time.monotonic() - start
+    return ReadinessResult(
+        server_name=name,
+        ready=ready,
+        elapsed_s=round(elapsed, 3),
+        reason=reason,
+    )
+
+
 def validate_mcp_readiness(
     mcp_manager: MCPManager,
     *,
@@ -171,71 +216,13 @@ def validate_mcp_readiness(
     results: list[ReadinessResult] = []
 
     for name in names:
-        start = time.monotonic()
-
-        if not mcp_manager.is_alive(name):
-            elapsed = time.monotonic() - start
-            reason = f"Server '{name}' is not alive (process exited or never started)"
-            result = ReadinessResult(
-                server_name=name,
-                ready=False,
-                elapsed_s=round(elapsed, 3),
-                reason=reason,
-            )
-            results.append(result)
-            logger.warning("MCP readiness probe failed: %s", reason)
-            if fail_on_error:
-                raise MCPReadinessError(name, reason)
-            continue
-
-        config = mcp_manager.get_server_info(name)
-        if config is None:
-            elapsed = time.monotonic() - start
-            reason = f"No configuration found for server '{name}'"
-            result = ReadinessResult(
-                server_name=name,
-                ready=False,
-                elapsed_s=round(elapsed, 3),
-                reason=reason,
-            )
-            results.append(result)
-            if fail_on_error:
-                raise MCPReadinessError(name, reason)
-            continue
-
-        # Probe based on transport type
-        # For stdio, mcp_manager.is_alive() already checks process liveness,
-        # which is sufficient.  For SSE, we do an HTTP probe.
-        ready = True
-        reason = ""
-
-        if config.transport == "sse" and config.url:
-            ready = probe_sse_server(
-                config.url,
-                timeout=timeout,
-                poll_interval=poll_interval,
-            )
-            if not ready:
-                reason = f"SSE server at {config.url} did not respond within {timeout}s"
-
-        elapsed = time.monotonic() - start
-        result = ReadinessResult(
-            server_name=name,
-            ready=ready,
-            elapsed_s=round(elapsed, 3),
-            reason=reason,
-        )
+        result = _probe_single_server(mcp_manager, name, timeout=timeout, poll_interval=poll_interval)
         results.append(result)
-
-        if ready:
-            logger.info(
-                "MCP server '%s' ready (%.1fs)",
-                name,
-                elapsed,
-            )
+        if result.ready:
+            logger.info("MCP server '%s' ready (%.1fs)", name, result.elapsed_s)
         else:
-            logger.warning("MCP readiness probe failed for '%s': %s", name, reason)
+            logger.warning("MCP readiness probe failed for '%s': %s", name, result.reason)
             if fail_on_error:
-                raise MCPReadinessError(name, reason)
+                raise MCPReadinessError(name, result.reason)
 
     return results

@@ -16,6 +16,38 @@ if TYPE_CHECKING:
     from bernstein.core.models import ModelConfig
 
 
+def _matches_off_by_one(prompt_lower: str) -> bool:
+    """Check if prompt matches off-by-one task patterns."""
+    if "off-by-one" in prompt_lower or "off_by_one" in prompt_lower:
+        return True
+    return "items" in prompt_lower and (
+        "index" in prompt_lower or "route" in prompt_lower or "n - 1" in prompt_lower or "1-indexed" in prompt_lower
+    )
+
+
+def _matches_missing_import(prompt_lower: str) -> bool:
+    """Check if prompt matches missing-import task patterns."""
+    return (
+        "missing import" in prompt_lower
+        or "missing `request`" in prompt_lower
+        or ("request" in prompt_lower and "import" in prompt_lower)
+    )
+
+
+def _matches_health_status(prompt_lower: str) -> bool:
+    """Check if prompt matches health-status task patterns."""
+    return "201" in prompt_lower or ("health" in prompt_lower and ("status" in prompt_lower or "code" in prompt_lower))
+
+
+def _matches_broken_test(prompt_lower: str) -> bool:
+    """Check if prompt matches broken-test task patterns."""
+    return (
+        "broken" in prompt_lower
+        or "assertion" in prompt_lower
+        or ("test" in prompt_lower and ("404" in prompt_lower or "wrong" in prompt_lower))
+    )
+
+
 class MockAgentAdapter(CLIAdapter):
     """Simulates an agent without making real API calls.
 
@@ -110,33 +142,13 @@ class MockAgentAdapter(CLIAdapter):
             Task identifier matching one of the fix functions in the mock script.
         """
         prompt_lower = prompt.lower()
-        if (
-            "off-by-one" in prompt_lower
-            or "off_by_one" in prompt_lower
-            or (
-                "items" in prompt_lower
-                and (
-                    "index" in prompt_lower
-                    or "route" in prompt_lower
-                    or "n - 1" in prompt_lower
-                    or "1-indexed" in prompt_lower
-                )
-            )
-        ):
+        if _matches_off_by_one(prompt_lower):
             return "off_by_one"
-        if (
-            "missing import" in prompt_lower
-            or "missing `request`" in prompt_lower
-            or ("request" in prompt_lower and "import" in prompt_lower)
-        ):
+        if _matches_missing_import(prompt_lower):
             return "missing_import"
-        if "201" in prompt_lower or ("health" in prompt_lower and ("status" in prompt_lower or "code" in prompt_lower)):
+        if _matches_health_status(prompt_lower):
             return "health_status"
-        if (
-            "broken" in prompt_lower
-            or "assertion" in prompt_lower
-            or ("test" in prompt_lower and ("404" in prompt_lower or "wrong" in prompt_lower))
-        ):
+        if _matches_broken_test(prompt_lower):
             return "broken_test"
         # Legacy / generic fallbacks
         if "health" in prompt_lower or "/health" in prompt_lower:

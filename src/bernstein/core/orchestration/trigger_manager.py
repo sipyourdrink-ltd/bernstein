@@ -291,6 +291,37 @@ def _infer_role_from_files(files: list[str]) -> str:
     return "backend"
 
 
+def _build_template_variables(trigger: TriggerConfig, event: TriggerEvent) -> dict[str, str]:
+    """Build template variable map from trigger config and event data."""
+    sha_short = event.sha[:8] if event.sha else ""
+    message_preview = (event.message or "")[:60]
+    return {
+        "branch": event.branch or "",
+        "sha": event.sha or "",
+        "sha_short": sha_short,
+        "sender": event.sender or "",
+        "repo": event.repo or "",
+        "changed_files": "\n".join(event.changed_files) if event.changed_files else "",
+        "changed_count": str(len(event.changed_files)),
+        "commit_messages": event.message or "",
+        "workflow_name": event.metadata.get("workflow_name", ""),
+        "message_text": event.message or "",
+        "message_preview": message_preview,
+        "channel": event.metadata.get("channel", ""),
+        "environment": event.metadata.get("environment", ""),
+        "date": time.strftime("%Y-%m-%d"),
+        "trigger_name": trigger.name,
+    }
+
+
+def _interpolate_template(text: str, variables: dict[str, str]) -> str:
+    """Replace {key} placeholders in text with variable values."""
+    result = text
+    for key, value in variables.items():
+        result = result.replace(f"{{{key}}}", value)
+    return result
+
+
 def render_task_payload(
     trigger: TriggerConfig,
     event: TriggerEvent,
@@ -309,38 +340,8 @@ def render_task_payload(
         Dict matching ``TaskCreate`` fields.
     """
     template = trigger.task
-    sha_short = event.sha[:8] if event.sha else ""
-    commit_messages = event.message or ""
-    changed_files_str = "\n".join(event.changed_files) if event.changed_files else ""
-    changed_count = str(len(event.changed_files))
-    message_preview = (event.message or "")[:60]
+    variables = _build_template_variables(trigger, event)
 
-    # Template variable map
-    variables: dict[str, str] = {
-        "branch": event.branch or "",
-        "sha": event.sha or "",
-        "sha_short": sha_short,
-        "sender": event.sender or "",
-        "repo": event.repo or "",
-        "changed_files": changed_files_str,
-        "changed_count": changed_count,
-        "commit_messages": commit_messages,
-        "workflow_name": event.metadata.get("workflow_name", ""),
-        "message_text": event.message or "",
-        "message_preview": message_preview,
-        "channel": event.metadata.get("channel", ""),
-        "environment": event.metadata.get("environment", ""),
-        "date": time.strftime("%Y-%m-%d"),
-        "trigger_name": trigger.name,
-    }
-
-    def _interpolate(text: str) -> str:
-        result = text
-        for key, value in variables.items():
-            result = result.replace(f"{{{key}}}", value)
-        return result
-
-    # Determine role
     role = template.role
     if role == "auto":
         role = _infer_role_from_files(list(event.changed_files))
@@ -353,9 +354,8 @@ def render_task_payload(
         model = esc.get("model", model)
         effort = esc.get("effort", effort)
 
-    title = _interpolate(template.title)[:120]
-    description = _interpolate(template.description_template)
-    # Embed trigger metadata as HTML comment for traceability
+    title = _interpolate_template(template.title, variables)[:120]
+    description = _interpolate_template(template.description_template, variables)
     description += f"\n\n<!-- trigger: {trigger.name} source: {event.source} dedup: {dedup_key} -->"
 
     payload: dict[str, Any] = {

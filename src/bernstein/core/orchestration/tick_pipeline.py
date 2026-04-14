@@ -352,6 +352,102 @@ def prioritize_starving_roles(
     return sorted(batches, key=_starving_sort_key)
 
 
+def _build_file_affinity_groups(
+    role_tasks: list[Task],
+    agent_affinity: dict[str, str] | None,
+) -> list[list[Task]]:
+    """Group tasks by transitive file-ownership overlap.
+
+    Tasks that touch overlapping files are merged into the same group so
+    a single agent handles all of them, preventing file-level conflicts.
+
+    Args:
+        role_tasks: Pre-sorted tasks for a single role.
+        agent_affinity: Effective agent affinity map (task_id -> agent_id).
+
+    Returns:
+        List of affinity groups (each a list of tasks).
+    """
+    affinity_groups: list[list[Task]] = []
+    for task in role_tasks:
+        task_files = set(task.owned_files)
+        matching_groups: list[int] = []
+        if task_files:
+            for i, group in enumerate(affinity_groups):
+                group_files: set[str] = set().union(*(set(t.owned_files) for t in group))  # type: ignore[reportUnknownVariableType]
+                if task_files & group_files and _groups_can_merge(group, [task], agent_affinity):
+                    matching_groups.append(i)
+
+        if matching_groups:
+            first_idx = matching_groups[0]
+            affinity_groups[first_idx].append(task)
+            for other_idx in sorted(matching_groups[1:], reverse=True):
+                affinity_groups[first_idx].extend(affinity_groups.pop(other_idx))
+        else:
+            affinity_groups.append([task])
+    return affinity_groups
+
+
+def _merge_agent_affinity_groups(
+    affinity_groups: list[list[Task]],
+    agent_affinity: dict[str, str] | None,
+) -> None:
+    """Merge affinity groups that share a preferred agent (in-place).
+
+    Tasks downstream of a completed task carry a preferred_agent_id hint;
+    grouping them together ensures a single new agent handles all of them.
+    """
+    if not agent_affinity:
+        return
+    agent_to_group_indices: dict[str, list[int]] = defaultdict(list)
+    for idx, group in enumerate(affinity_groups):
+        for task in group:
+            preferred = agent_affinity.get(task.id)
+            if preferred:
+                agent_to_group_indices[preferred].append(idx)
+                break
+    for group_indices in agent_to_group_indices.values():
+        if len(group_indices) <= 1:
+            continue
+        first_idx = group_indices[0]
+        for other_idx in sorted(group_indices[1:], reverse=True):
+            if other_idx < len(affinity_groups) and _groups_can_merge(
+                affinity_groups[first_idx],
+                affinity_groups[other_idx],
+                agent_affinity,
+            ):
+                affinity_groups[first_idx].extend(affinity_groups.pop(other_idx))
+
+
+def _pack_affinity_groups_into_batches(
+    affinity_groups: list[list[Task]],
+    max_per_batch: int,
+    agent_affinity: dict[str, str] | None,
+) -> list[list[Task]]:
+    """Pack affinity groups into batches of up to max_per_batch tasks.
+
+    Small groups are packed into existing batches when possible;
+    large groups get their own batch(es).
+    """
+    batches: list[list[Task]] = []
+    for group in affinity_groups:
+        added = False
+        if len(group) < max_per_batch:
+            for batch in batches:
+                if len(batch) + len(group) <= max_per_batch and _groups_can_merge(
+                    batch,
+                    group,
+                    agent_affinity,
+                ):
+                    batch.extend(group)
+                    added = True
+                    break
+        if not added:
+            for i in range(0, len(group), max_per_batch):
+                batches.append(group[i : i + max_per_batch])
+    return batches
+
+
 def group_by_role(
     tasks: list[Task],
     max_per_batch: int,
@@ -458,77 +554,13 @@ def group_by_role(
     role_batch_queues: dict[str, list[list[Task]]] = {}
     for role, role_tasks in by_role.items():
         role_tasks.sort(key=_sort_key)
-
-        # 1. First pass: group by file affinity (transitive overlap)
-        affinity_groups: list[list[Task]] = []
-        for task in role_tasks:
-            task_files = set(task.owned_files)
-            matching_groups: list[int] = []
-            if task_files:
-                for i, group in enumerate(affinity_groups):
-                    group_files: set[str] = set().union(*(set(t.owned_files) for t in group))  # type: ignore[reportUnknownVariableType]
-                    if task_files & group_files and _groups_can_merge(group, [task], effective_agent_affinity):
-                        matching_groups.append(i)
-
-            if matching_groups:
-                # Merge into the first matching group
-                first_idx = matching_groups[0]
-                affinity_groups[first_idx].append(task)
-                # If it matched multiple groups, merge them all (transitive)
-                for other_idx in sorted(matching_groups[1:], reverse=True):
-                    affinity_groups[first_idx].extend(affinity_groups.pop(other_idx))
-            else:
-                affinity_groups.append([task])
-
-        # 1.5 Agent affinity pass: merge groups that share a preferred agent.
-        # Tasks downstream of a completed task carry a preferred_agent_id hint;
-        # grouping them together ensures a single new agent handles all of them.
-        if effective_agent_affinity:
-            agent_to_group_indices: dict[str, list[int]] = defaultdict(list)
-            for idx, group in enumerate(affinity_groups):
-                for task in group:
-                    preferred = effective_agent_affinity.get(task.id)
-                    if preferred:
-                        agent_to_group_indices[preferred].append(idx)
-                        break  # one match per group is enough
-            for group_indices in agent_to_group_indices.values():
-                if len(group_indices) > 1:
-                    first_idx = group_indices[0]
-                    for other_idx in sorted(group_indices[1:], reverse=True):
-                        if other_idx < len(affinity_groups) and _groups_can_merge(
-                            affinity_groups[first_idx],
-                            affinity_groups[other_idx],
-                            effective_agent_affinity,
-                        ):
-                            affinity_groups[first_idx].extend(affinity_groups.pop(other_idx))
-
-        # 2. Second pass: pack affinity groups into batches of max_per_batch
-        role_batches: list[list[Task]] = []
-        for group in affinity_groups:
-            # Try to pack this affinity group into an existing batch that has room.
-            # Since affinity groups are disjoint by file overlap, any existing batch
-            # is guaranteed not to conflict with this group.
-            added = False
-            # Optimization: only try to pack small groups. If a group is already
-            # at or near max_per_batch, just give it its own batch(es).
-            if len(group) < max_per_batch:
-                for batch in role_batches:
-                    if len(batch) + len(group) <= max_per_batch and _groups_can_merge(
-                        batch,
-                        group,
-                        effective_agent_affinity,
-                    ):
-                        batch.extend(group)
-                        added = True
-                        break
-
-            if not added:
-                # If group is too large to fit or we couldn't find a batch with room,
-                # create new batch(es) for it.
-                for i in range(0, len(group), max_per_batch):
-                    role_batches.append(group[i : i + max_per_batch])
-
-        role_batch_queues[role] = role_batches
+        affinity_groups = _build_file_affinity_groups(role_tasks, effective_agent_affinity)
+        _merge_agent_affinity_groups(affinity_groups, effective_agent_affinity)
+        role_batch_queues[role] = _pack_affinity_groups_into_batches(
+            affinity_groups,
+            max_per_batch,
+            effective_agent_affinity,
+        )
 
     # Round-robin interleave: emit one batch per role per round.
     # Within each round, the most critical roles (lowest priority value) go first.

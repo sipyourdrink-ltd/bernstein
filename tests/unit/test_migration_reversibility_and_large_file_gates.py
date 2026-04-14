@@ -7,9 +7,9 @@ from pathlib import Path
 from bernstein.core.gate_runner import (
     GatePipelineStep,
     GateRunner,
-    _migration_downgrade_is_pass,
     build_default_pipeline,
 )
+from bernstein.core.quality.gate_commands import _migration_downgrade_is_pass
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.quality_gates import QualityGatesConfig
 

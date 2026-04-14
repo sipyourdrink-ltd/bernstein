@@ -1197,9 +1197,11 @@ def _run_manager_queue_review(orch: Any) -> None:
     """
     from bernstein import get_templates_dir
     from bernstein.core.orchestration.manager import ManagerAgent
-    from bernstein.core.seed import parse_seed
-
-    _BERNSTEIN_YAML = "bernstein.yaml"
+    from bernstein.core.orchestration.orchestrator import (
+        _apply_manager_corrections,
+        _fetch_task_states,
+        _resolve_manager_llm,
+    )
 
     try:
         budget_pct = 1.0
@@ -1208,17 +1210,7 @@ def _run_manager_queue_review(orch: Any) -> None:
             budget_pct = max(0.0, 1.0 - status.percentage_used)
 
         workdir = orch._workdir
-        # Read internal LLM provider/model from seed config
-        _mgr_provider = "openrouter_free"
-        _mgr_model = "nvidia/nemotron-3-super-120b-a12b"
-        _seed_path = workdir / _BERNSTEIN_YAML
-        if _seed_path.exists():
-            try:
-                _seed = parse_seed(_seed_path)
-                _mgr_provider = _seed.internal_llm_provider
-                _mgr_model = _seed.internal_llm_model
-            except Exception:
-                pass
+        _mgr_provider, _mgr_model = _resolve_manager_llm(workdir)
         manager = ManagerAgent(
             server_url=orch._config.server_url,
             workdir=workdir,
@@ -1240,109 +1232,14 @@ def _run_manager_queue_review(orch: Any) -> None:
         if result.skipped:
             return
 
-        base = orch._config.server_url
-
-        # Pre-validate corrections against actual server state so the
-        # LLM cannot cancel non-existent tasks, re-route to invalid
-        # roles, or operate on tasks in terminal states.
-        task_states: dict[str, str] = {}
-        try:
-            resp = orch._client.get(f"{base}/tasks")
-            resp.raise_for_status()
-            for t in resp.json():
-                task_states[t["id"]] = t.get("status", "unknown")
-        except httpx.HTTPError as exc:
-            logger.warning(
-                "Manager review: failed to fetch task states for validation: %s",
-                exc,
-            )
-            # Proceed without validation rather than silently dropping all corrections
-
-        valid_roles: set[str] | None = None
-        _cancellable_states = {"open", "claimed", "in_progress"}
-
-        for correction in result.corrections:
-            try:
-                # Validate task_id exists in server state (skip add_task which has no task_id)
-                if (
-                    correction.action != "add_task"
-                    and correction.task_id
-                    and task_states
-                    and correction.task_id not in task_states
-                ):
-                    logger.warning(
-                        "Manager review: skipping %s for non-existent task %s",
-                        correction.action,
-                        correction.task_id,
-                    )
-                    continue
-
-                if correction.action == "reassign" and correction.task_id and correction.new_role:
-                    # Validate target role exists
-                    if valid_roles is None:
-                        from bernstein import get_templates_dir
-                        from bernstein.core.context import available_roles
-
-                        valid_roles = set(available_roles(get_templates_dir(orch._workdir) / "roles"))
-                    if correction.new_role not in valid_roles:
-                        logger.warning(
-                            "Manager review: skipping reassign to invalid role %r (valid: %s)",
-                            correction.new_role,
-                            ", ".join(sorted(valid_roles)),
-                        )
-                        continue
-                    orch._client.patch(
-                        f"{base}/tasks/{correction.task_id}",
-                        json={"role": correction.new_role},
-                    )
-                    logger.info(
-                        "Manager review: reassigned %s to role=%s (%s)",
-                        correction.task_id,
-                        correction.new_role,
-                        correction.reason,
-                    )
-                elif correction.action == "change_priority" and correction.task_id and correction.new_priority:
-                    orch._client.patch(
-                        f"{base}/tasks/{correction.task_id}",
-                        json={"priority": correction.new_priority},
-                    )
-                    logger.info(
-                        "Manager review: changed priority of %s to %d (%s)",
-                        correction.task_id,
-                        correction.new_priority,
-                        correction.reason,
-                    )
-                elif correction.action == "cancel" and correction.task_id:
-                    # Validate task is in a cancellable state
-                    status = task_states.get(correction.task_id)
-                    if status and status not in _cancellable_states:
-                        logger.warning(
-                            "Manager review: skipping cancel for task %s in non-cancellable state %r",
-                            correction.task_id,
-                            status,
-                        )
-                        continue
-                    orch._client.post(
-                        f"{base}/tasks/{correction.task_id}/cancel",
-                        json={"reason": correction.reason or "manager review"},
-                    )
-                    logger.info(
-                        "Manager review: cancelled %s (%s)",
-                        correction.task_id,
-                        correction.reason,
-                    )
-                elif correction.action == "add_task" and correction.new_task:
-                    orch._client.post(
-                        f"{base}/tasks",
-                        json=correction.new_task,
-                    )
-                    logger.info(
-                        "Manager review: added task %r (%s)",
-                        correction.new_task.get("title"),
-                        correction.reason,
-                    )
-            except httpx.HTTPError as exc:
-                logger.warning("Manager review: correction %s failed: %s", correction.action, exc)
+        task_states = _fetch_task_states(orch._client, orch._config.server_url)
+        _apply_manager_corrections(
+            orch._client,
+            orch._config.server_url,
+            orch._workdir,
+            result.corrections,
+            task_states,
+        )
 
         if result.corrections:
             orch._post_bulletin(

@@ -142,7 +142,7 @@ def apply_diff_folding(text: str, max_lines: int = _DIFF_FOLD_THRESHOLD) -> str:
 
 # Patterns that suggest a line is markdown-formatted.
 _MD_HEADING = re.compile(r"^#{1,6} ")
-_MD_BOLD = re.compile(r"\*\*[^\*]+\*\*")
+_MD_BOLD = re.compile(r"\*\*[^*]+\*\*")
 _MD_ITALIC = re.compile(r"\*.+?\*")
 _MD_LIST = re.compile(r"^(\s*[-*+]|\s*\d+\.) ")
 _MD_BLOCKQUOTE = re.compile(r"^> ")

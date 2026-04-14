@@ -265,6 +265,22 @@ def format_hunk_summary(hunk: DiffHunk) -> str:
     return f"    {hunk.header}  (+{hunk.added}/-{hunk.removed})"
 
 
+def _render_hunks(hunks: list[DiffHunk], max_folded_lines: int, output: list[str]) -> None:
+    """Render hunk lines into output, respecting fold state."""
+    for hunk in hunks:
+        hunk_icon = "▸" if hunk.is_folded else "▾"
+        output.append(f"  {hunk_icon} {format_hunk_summary(hunk)}")
+        if hunk.is_folded:
+            for line in hunk.lines[:max_folded_lines]:
+                output.append(f"      {line}")
+            remaining = len(hunk.lines) - max_folded_lines
+            if remaining > 0:
+                output.append(f"      ... ({remaining} more lines)")
+        else:
+            for line in hunk.lines:
+                output.append(f"      {line}")
+
+
 def render_folding_diff(
     files: list[FileDiff],
     max_folded_lines: int = 3,
@@ -281,32 +297,10 @@ def render_folding_diff(
     output: list[str] = []
 
     for file_diff in files:
-        # File header
         icon = "▸" if file_diff.is_folded else "▾"
-        summary = format_file_summary(file_diff)
-        output.append(f"{icon} {summary}")
-
-        if file_diff.is_folded:
-            continue
-
-        # Hunks
-        for hunk in file_diff.hunks:
-            hunk_icon = "▸" if hunk.is_folded else "▾"
-            hunk_summary = format_hunk_summary(hunk)
-            output.append(f"  {hunk_icon} {hunk_summary}")
-
-            if hunk.is_folded:
-                # Show first few lines
-                for line in hunk.lines[:max_folded_lines]:
-                    output.append(f"      {line}")
-                remaining = len(hunk.lines) - max_folded_lines
-                if remaining > 0:
-                    output.append(f"      ... ({remaining} more lines)")
-            else:
-                # Show all lines
-                for line in hunk.lines:
-                    output.append(f"      {line}")
-
+        output.append(f"{icon} {format_file_summary(file_diff)}")
+        if not file_diff.is_folded:
+            _render_hunks(file_diff.hunks, max_folded_lines, output)
         output.append("")
 
     return "\n".join(output)

@@ -972,6 +972,7 @@ class MetricsCollector:
             _cost_usd: Cost in USD (part of interface, tracked by CostTracker).
             success: Whether the call succeeded.
         """
+        _ = cost_usd  # Part of interface; cost tracked separately by CostTracker
         # Write API usage metric
         normalized_tenant = normalize_tenant_id(tenant_id)
         self._write_metric_point(

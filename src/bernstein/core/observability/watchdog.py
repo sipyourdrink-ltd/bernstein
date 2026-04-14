@@ -66,6 +66,121 @@ class WatchdogIncident:
     escalated: bool = False
 
 
+def _check_session_findings(
+    session_id: str,
+    task_id: str,
+    task: Any,
+    runtime_s: float,
+    hb_status: Any,
+    timeout_s: float,
+    current_line: int,
+    no_growth_ticks: int,
+    stall_counts: dict[str, int],
+    findings: dict[str, WatchdogFinding],
+) -> None:
+    """Check a single session for watchdog-worthy findings."""
+    stall_count = int(stall_counts.get(task_id, 0))
+    if stall_count > 0:
+        profile = compute_stall_profile(task, hb_status, None)
+        if stall_count >= profile.wakeup_threshold:
+            severity: WatchdogSeverity = "medium"
+            if stall_count >= profile.shutdown_threshold:
+                severity = "high"
+            if stall_count >= profile.kill_threshold:
+                severity = "critical"
+            title = task.title if task is not None else task_id
+            findings[f"progress_stall:{session_id}:{task_id}"] = WatchdogFinding(
+                key=f"progress_stall:{session_id}:{task_id}",
+                session_id=session_id,
+                task_id=task_id,
+                source="progress_stall",
+                severity=severity,
+                summary=f"Agent stalled on task {title}",
+                detail=(
+                    f"Tier-1 watchdog saw {stall_count} identical progress snapshots for task {task_id}. "
+                    f"Adaptive profile: wakeup={profile.wakeup_threshold}, "
+                    f"shutdown={profile.shutdown_threshold}, kill={profile.kill_threshold} ({profile.reason})."
+                ),
+            )
+            return
+
+    _check_heartbeat_findings(session_id, task_id, task, runtime_s, hb_status, timeout_s, current_line, findings)
+    _check_log_growth_findings(session_id, task_id, task, runtime_s, current_line, no_growth_ticks, findings)
+
+
+def _check_heartbeat_findings(
+    session_id: str,
+    task_id: str,
+    task: Any,
+    runtime_s: float,
+    hb_status: Any,
+    timeout_s: float,
+    current_line: int,
+    findings: dict[str, WatchdogFinding],
+) -> None:
+    """Check heartbeat-related findings for a session."""
+    if hb_status.last_heartbeat is None:
+        if runtime_s >= max(timeout_s / 2.0, 60.0) and current_line == 0:
+            title = task.title if task is not None else task_id
+            findings[f"heartbeat:{session_id}:{task_id}"] = WatchdogFinding(
+                key=f"heartbeat:{session_id}:{task_id}",
+                session_id=session_id,
+                task_id=task_id,
+                source="heartbeat",
+                severity="high",
+                summary=f"Agent silent on task {title}",
+                detail=(
+                    f"Tier-1 watchdog found no heartbeat file and no log activity for {runtime_s:.0f}s "
+                    f"while task {task_id} remains active."
+                ),
+            )
+        return
+
+    if hb_status.age_seconds >= max(timeout_s / 2.0, 60.0):
+        severity: WatchdogSeverity = "critical" if hb_status.age_seconds >= timeout_s else "high"
+        title = task.title if task is not None else task_id
+        findings[f"heartbeat:{session_id}:{task_id}"] = WatchdogFinding(
+            key=f"heartbeat:{session_id}:{task_id}",
+            session_id=session_id,
+            task_id=task_id,
+            source="heartbeat",
+            severity=severity,
+            summary=f"Heartbeat stale for task {title}",
+            detail=(
+                f"Tier-1 watchdog observed heartbeat age {hb_status.age_seconds:.0f}s "
+                f"for task {task_id} (timeout={timeout_s:.0f}s, phase={hb_status.phase or 'unknown'})."
+            ),
+        )
+
+
+def _check_log_growth_findings(
+    session_id: str,
+    task_id: str,
+    task: Any,
+    runtime_s: float,
+    current_line: int,
+    no_growth_ticks: int,
+    findings: dict[str, WatchdogFinding],
+) -> None:
+    """Check log-growth-related findings for a session."""
+    if runtime_s < 60.0 or current_line <= 0 or no_growth_ticks < 3:
+        return
+    severity: WatchdogSeverity = "high" if no_growth_ticks >= 5 else "medium"
+    title = task.title if task is not None else task_id
+    findings[f"log_growth:{session_id}:{task_id}"] = WatchdogFinding(
+        key=f"log_growth:{session_id}:{task_id}",
+        session_id=session_id,
+        task_id=task_id,
+        source="log_growth",
+        severity=severity,
+        summary=f"Agent log stopped growing for task {title}",
+        detail=(
+            f"Tier-1 watchdog saw no new log lines for {no_growth_ticks} consecutive ticks "
+            f"(current_line={current_line}, runtime={runtime_s:.0f}s) on task {task_id}."
+        ),
+    )
+
+
 def collect_watchdog_findings(orch: Any) -> list[WatchdogFinding]:
     """Collect live watchdog findings from the orchestrator state."""
     workdir = getattr(orch, "_workdir", None)
@@ -124,79 +239,18 @@ def collect_watchdog_findings(orch: Any) -> list[WatchdogFinding]:
         no_growth_ticks = prev_no_growth + 1 if current_line > 0 and current_line <= prev_line else 0
         log_state[session_id] = (current_line, no_growth_ticks)
 
-        stall_count = int(stall_counts.get(task_id, 0))
-        if stall_count > 0:
-            profile = compute_stall_profile(task, hb_status, log_summary)
-            if stall_count >= profile.wakeup_threshold:
-                severity: WatchdogSeverity = "medium"
-                if stall_count >= profile.shutdown_threshold:
-                    severity = "high"
-                if stall_count >= profile.kill_threshold:
-                    severity = "critical"
-                title = task.title if task is not None else task_id
-                findings[f"progress_stall:{session_id}:{task_id}"] = WatchdogFinding(
-                    key=f"progress_stall:{session_id}:{task_id}",
-                    session_id=session_id,
-                    task_id=task_id,
-                    source="progress_stall",
-                    severity=severity,
-                    summary=f"Agent stalled on task {title}",
-                    detail=(
-                        f"Tier-1 watchdog saw {stall_count} identical progress snapshots for task {task_id}. "
-                        f"Adaptive profile: wakeup={profile.wakeup_threshold}, "
-                        f"shutdown={profile.shutdown_threshold}, kill={profile.kill_threshold} ({profile.reason})."
-                    ),
-                )
-                continue
-
-        if hb_status.last_heartbeat is None:
-            if runtime_s >= max(timeout_s / 2.0, 60.0) and current_line == 0:
-                title = task.title if task is not None else task_id
-                findings[f"heartbeat:{session_id}:{task_id}"] = WatchdogFinding(
-                    key=f"heartbeat:{session_id}:{task_id}",
-                    session_id=session_id,
-                    task_id=task_id,
-                    source="heartbeat",
-                    severity="high",
-                    summary=f"Agent silent on task {title}",
-                    detail=(
-                        f"Tier-1 watchdog found no heartbeat file and no log activity for {runtime_s:.0f}s "
-                        f"while task {task_id} remains active."
-                    ),
-                )
-                continue
-        elif hb_status.age_seconds >= max(timeout_s / 2.0, 60.0):
-            severity = "critical" if hb_status.age_seconds >= timeout_s else "high"
-            title = task.title if task is not None else task_id
-            findings[f"heartbeat:{session_id}:{task_id}"] = WatchdogFinding(
-                key=f"heartbeat:{session_id}:{task_id}",
-                session_id=session_id,
-                task_id=task_id,
-                source="heartbeat",
-                severity=severity,
-                summary=f"Heartbeat stale for task {title}",
-                detail=(
-                    f"Tier-1 watchdog observed heartbeat age {hb_status.age_seconds:.0f}s "
-                    f"for task {task_id} (timeout={timeout_s:.0f}s, phase={hb_status.phase or 'unknown'})."
-                ),
-            )
-            continue
-
-        if runtime_s >= 60.0 and current_line > 0 and no_growth_ticks >= 3:
-            severity = "high" if no_growth_ticks >= 5 else "medium"
-            title = task.title if task is not None else task_id
-            findings[f"log_growth:{session_id}:{task_id}"] = WatchdogFinding(
-                key=f"log_growth:{session_id}:{task_id}",
-                session_id=session_id,
-                task_id=task_id,
-                source="log_growth",
-                severity=severity,
-                summary=f"Agent log stopped growing for task {title}",
-                detail=(
-                    f"Tier-1 watchdog saw no new log lines for {no_growth_ticks} consecutive ticks "
-                    f"(current_line={current_line}, runtime={runtime_s:.0f}s) on task {task_id}."
-                ),
-            )
+        _check_session_findings(
+            session_id,
+            task_id,
+            task,
+            runtime_s,
+            hb_status,
+            timeout_s,
+            current_line,
+            no_growth_ticks,
+            stall_counts,
+            findings,
+        )
 
     for session_id in list(log_state.keys()):
         if session_id not in active_session_ids:

@@ -122,6 +122,57 @@ _PushBranchFn = Callable[..., Any]
 _CreatePrFn = Callable[..., Any]
 
 
+def _has_no_diff(worktree_path: Path, base_branch: str) -> bool:
+    """Return True if the worktree has no diff vs the base branch."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--quiet", f"{base_branch}...HEAD"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _push_with_retry(
+    push_fn: _PushBranchFn, worktree_path: Path, pr_branch: str, task_id: str
+) -> bool:
+    """Push to remote with one retry on failure. Returns True on success."""
+    push_result = push_fn(worktree_path, pr_branch)
+    if getattr(push_result, "ok", True):
+        return True
+
+    stderr = getattr(push_result, "stderr", "")
+    logger.warning("Approval gate: push failed for task %s, retrying: %s", task_id, stderr)
+    import time as _time
+
+    _time.sleep(2)
+    push_result = push_fn(worktree_path, pr_branch)
+    if not getattr(push_result, "ok", True):
+        logger.error("Approval gate: push failed on retry for task %s", task_id)
+        return False
+    return True
+
+
+def _try_enable_auto_merge(workdir: Path, pr_url: str) -> None:
+    """Attempt to enable auto-merge on a PR, logging the outcome."""
+    from bernstein.core.git_ops import enable_pr_auto_merge
+
+    auto_result = enable_pr_auto_merge(workdir, pr_url)
+    if auto_result.ok:
+        logger.info("Approval gate: auto-merge enabled for PR %s", pr_url)
+    else:
+        logger.warning(
+            "Approval gate: failed to enable auto-merge for PR %s: %s",
+            pr_url,
+            auto_result.stderr,
+        )
+
+
 class ApprovalGate:
     """Gate that decides whether a verified task's work should be merged.
 
@@ -248,7 +299,10 @@ class ApprovalGate:
         Returns:
             PR URL on success, empty string on failure.
         """
-        from bernstein.core.git_ops import PullRequestResult, create_github_pr, enable_pr_auto_merge, push_head_as
+        _ = session_id  # Part of interface
+        _ = model  # Part of interface
+        _ = cost_usd  # Part of interface
+        from bernstein.core.git_ops import PullRequestResult, create_github_pr, push_head_as
 
         effective_labels = labels if labels is not None else self._pr_labels
         pr_branch = f"bernstein/task-{task.id}"
@@ -258,40 +312,17 @@ class ApprovalGate:
         push_fn: _PushBranchFn = self._push_branch_fn or push_head_as
         create_fn = self._create_pr_fn or create_github_pr
 
-        # Check if the worktree has any commits beyond base before pushing.
-        # Prevents "No commits between main and branch" GitHub API errors.
-        import subprocess
-
-        try:
-            diff_check = subprocess.run(
-                ["git", "diff", "--quiet", f"{base_branch}...HEAD"],
-                cwd=str(worktree_path),
-                capture_output=True,
-                timeout=10,
+        if _has_no_diff(worktree_path, base_branch):
+            logger.info(
+                "Approval gate: no diff vs %s for task %s — skipping PR (agent made no changes)",
+                base_branch,
+                task.id,
             )
-            if diff_check.returncode == 0:
-                logger.info(
-                    "Approval gate: no diff vs %s for task %s — skipping PR (agent made no changes)",
-                    base_branch,
-                    task.id,
-                )
-                return ""
-        except (subprocess.TimeoutExpired, OSError):
-            pass  # Proceed with push attempt if check fails
+            return ""
 
-        push_result = push_fn(worktree_path, pr_branch)
-        if not getattr(push_result, "ok", True):
-            stderr = getattr(push_result, "stderr", "")
-            logger.warning("Approval gate: push failed for task %s, retrying: %s", task.id, stderr)
-            import time as _time
+        if not _push_with_retry(push_fn, worktree_path, pr_branch, task.id):
+            return ""
 
-            _time.sleep(2)
-            push_result = push_fn(worktree_path, pr_branch)
-            if not getattr(push_result, "ok", True):
-                logger.error("Approval gate: push failed on retry for task %s", task.id)
-                return ""
-
-        # Get diff stats for the PR body
         diff_stats = self._get_diff_stats(worktree_path, base_branch)
 
         pr_result: PullRequestResult = create_fn(
@@ -302,22 +333,14 @@ class ApprovalGate:
             base=base_branch,
             labels=effective_labels,
         )
-        if pr_result.success:
-            logger.info("Approval gate: PR created for task %s: %s", task.id, pr_result.pr_url)
-            if self._auto_merge and pr_result.pr_url:
-                auto_result = enable_pr_auto_merge(self._workdir, pr_result.pr_url)
-                if auto_result.ok:
-                    logger.info("Approval gate: auto-merge enabled for PR %s", pr_result.pr_url)
-                else:
-                    logger.warning(
-                        "Approval gate: failed to enable auto-merge for PR %s: %s",
-                        pr_result.pr_url,
-                        auto_result.stderr,
-                    )
-            return pr_result.pr_url
+        if not pr_result.success:
+            logger.warning("Approval gate: PR creation failed for task %s: %s", task.id, pr_result.error)
+            return ""
 
-        logger.warning("Approval gate: PR creation failed for task %s: %s", task.id, pr_result.error)
-        return ""
+        logger.info("Approval gate: PR created for task %s: %s", task.id, pr_result.pr_url)
+        if self._auto_merge and pr_result.pr_url:
+            _try_enable_auto_merge(self._workdir, pr_result.pr_url)
+        return pr_result.pr_url
 
     # ------------------------------------------------------------------
     # Internal

@@ -1309,6 +1309,51 @@ def _parse_cost_tags(raw: object) -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
+def _parse_cli(data: dict[str, object]) -> Literal["claude", "codex", "gemini", "qwen", "auto"]:
+    cli_raw: object = data.get("cli", "auto")
+    if cli_raw not in _VALID_CLIS:
+        raise SeedError(f"cli must be one of {sorted(_VALID_CLIS)}, got: {cli_raw!r}")
+    return cast("Literal['claude', 'codex', 'gemini', 'qwen', 'auto']", cli_raw)
+
+
+def _parse_max_agents(data: dict[str, object]) -> int:
+    max_agents_raw: object = data.get("max_agents", 6)
+    if not isinstance(max_agents_raw, int) or max_agents_raw < 1:
+        raise SeedError(f"max_agents must be a positive integer, got: {max_agents_raw!r}")
+    return max_agents_raw
+
+
+def _parse_model(data: dict[str, object]) -> object:
+    model_raw: object = data.get("model")
+    if model_raw is not None and not isinstance(model_raw, str):
+        raise SeedError(f"model must be a string, got: {type(model_raw).__name__}")
+    return model_raw
+
+
+def _parse_max_cost_per_agent(data: dict[str, object]) -> float:
+    raw: object = data.get("max_cost_per_agent")
+    if raw is None:
+        return 0.0
+    val = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, raw)) or 0.0
+    if val < 0:
+        raise SeedError(f"max_cost_per_agent must be >= 0, got: {raw!r}")
+    return val
+
+
+def _parse_optional_str_field(data: dict[str, object], field: str) -> object:
+    raw: object = data.get(field)
+    if raw is not None and not isinstance(raw, str):
+        raise SeedError(f"{field} must be a string path, got: {type(raw).__name__}")
+    return raw
+
+
+def _parse_mcp_servers(data: dict[str, object]) -> object:
+    raw: object = data.get("mcp_servers")
+    if raw is not None and not isinstance(raw, dict):
+        raise SeedError(f"mcp_servers must be a mapping, got: {type(raw).__name__}")
+    return raw
+
+
 def parse_seed(path: Path) -> SeedConfig:
     """Parse a bernstein.yaml seed file into a validated SeedConfig.
 
@@ -1348,37 +1393,17 @@ def parse_seed(path: Path) -> SeedConfig:
     budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, data.get("budget")))
     team = _parse_team(data.get("team"))
 
-    cli_raw: object = data.get("cli", "auto")
-    if cli_raw not in _VALID_CLIS:
-        raise SeedError(f"cli must be one of {sorted(_VALID_CLIS)}, got: {cli_raw!r}")
-    cli = cast("Literal['claude', 'codex', 'gemini', 'qwen', 'auto']", cli_raw)
-
-    max_agents_raw: object = data.get("max_agents", 6)
-    if not isinstance(max_agents_raw, int) or max_agents_raw < 1:
-        raise SeedError(f"max_agents must be a positive integer, got: {max_agents_raw!r}")
-
-    model_raw: object = data.get("model")
-    if model_raw is not None and not isinstance(model_raw, str):
-        raise SeedError(f"model must be a string, got: {type(model_raw).__name__}")
-    max_cost_per_agent_raw: object = data.get("max_cost_per_agent")
-    max_cost_per_agent = 0.0
-    if max_cost_per_agent_raw is not None:
-        max_cost_per_agent = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, max_cost_per_agent_raw)) or 0.0
-        if max_cost_per_agent < 0:
-            raise SeedError(f"max_cost_per_agent must be >= 0, got: {max_cost_per_agent_raw!r}")
+    cli = _parse_cli(data)
+    max_agents_raw = _parse_max_agents(data)
+    model_raw = _parse_model(data)
+    max_cost_per_agent = _parse_max_cost_per_agent(data)
 
     constraints = _parse_string_list(data.get("constraints"), "constraints")
     context_files = _parse_string_list(data.get("context_files"), "context_files")
     role_model_policy = _parse_role_model_policy(data.get("role_model_policy"))
 
-    agent_catalog_raw: object = data.get("agent_catalog")
-    if agent_catalog_raw is not None and not isinstance(agent_catalog_raw, str):
-        raise SeedError(f"agent_catalog must be a string path, got: {type(agent_catalog_raw).__name__}")
-
-    mcp_servers_raw: object = data.get("mcp_servers")
-    if mcp_servers_raw is not None and not isinstance(mcp_servers_raw, dict):
-        raise SeedError(f"mcp_servers must be a mapping, got: {type(mcp_servers_raw).__name__}")
-
+    agent_catalog_raw = _parse_optional_str_field(data, "agent_catalog")
+    mcp_servers_raw = _parse_mcp_servers(data)
     mcp_allowlist_raw: object = data.get("mcp_allowlist")
     mcp_allowlist: tuple[str, ...] | None = (
         None if mcp_allowlist_raw is None else _parse_string_list(mcp_allowlist_raw, "mcp_allowlist")

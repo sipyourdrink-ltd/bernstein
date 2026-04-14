@@ -154,6 +154,24 @@ _TERMINAL = frozenset({"done", "failed", "cancelled"})
 _POLL_INTERVAL = 2.0
 
 
+def _report_terminal_status(
+    task_id: str, status: str, result_summary: str, poll_url: str, as_json: bool,
+) -> None:
+    """Report a terminal task status and exit if failed."""
+    if as_json:
+        payload = {"task_id": task_id, "status": status, "result_summary": result_summary, "poll_url": poll_url}
+        click.echo(json.dumps(payload))
+    elif status == "done":
+        console.print(f"[green]Done:[/green] [bold]{task_id}[/bold]")
+        if result_summary:
+            console.print(f"[dim]{result_summary}[/dim]")
+    else:
+        console.print(f"[red]{status.capitalize()}:[/red] [bold]{task_id}[/bold]")
+        if result_summary:
+            console.print(f"[dim]{result_summary}[/dim]")
+        raise SystemExit(1)
+
+
 def _wait_for_completion(task_id: str, poll_url: str, timeout: int, as_json: bool) -> None:
     """Poll task status until a terminal state is reached or timeout expires.
 
@@ -182,27 +200,7 @@ def _wait_for_completion(task_id: str, poll_url: str, timeout: int, as_json: boo
         status: str = data.get("status", "unknown")
 
         if status in _TERMINAL:
-            result_summary: str = data.get("result_summary") or ""
-            if as_json:
-                click.echo(
-                    json.dumps(
-                        {
-                            "task_id": task_id,
-                            "status": status,
-                            "result_summary": result_summary,
-                            "poll_url": poll_url,
-                        }
-                    )
-                )
-            elif status == "done":
-                console.print(f"[green]Done:[/green] [bold]{task_id}[/bold]")
-                if result_summary:
-                    console.print(f"[dim]{result_summary}[/dim]")
-            else:
-                console.print(f"[red]{status.capitalize()}:[/red] [bold]{task_id}[/bold]")
-                if result_summary:
-                    console.print(f"[dim]{result_summary}[/dim]")
-                raise SystemExit(1)
+            _report_terminal_status(task_id, status, data.get("result_summary") or "", poll_url, as_json)
             return
 
         if not as_json:

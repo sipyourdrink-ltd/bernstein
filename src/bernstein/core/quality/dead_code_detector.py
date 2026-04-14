@@ -238,18 +238,25 @@ def _count_py_files(workdir: Path) -> int:
         return 0
 
 
+def _names_from_import_node(node: ast.AST) -> list[tuple[str, int]]:
+    """Extract (bound_name, lineno) pairs from a single import AST node."""
+    if isinstance(node, ast.Import):
+        return [(alias.asname or alias.name.split(".")[0], node.lineno) for alias in node.names]
+    if isinstance(node, ast.ImportFrom):
+        return [
+            (alias.asname or alias.name, node.lineno)
+            for alias in node.names
+            if alias.name != "*"
+        ]
+    return []
+
+
 def _collect_imported_names(tree: ast.Module) -> dict[str, int]:
     """Collect all imported names and their line numbers from an AST."""
     imported: dict[str, int] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                bound = alias.asname or alias.name.split(".")[0]
-                imported[bound] = node.lineno
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name != "*":
-                    imported[alias.asname or alias.name] = node.lineno
+        for bound, lineno in _names_from_import_node(node):
+            imported[bound] = lineno
     return imported
 
 
@@ -365,6 +372,34 @@ def _check_unreachable_after_jump(
             break  # Only report the first unreachable in each block
 
 
+def _check_removed_name(name: str, workdir: Path, default_file: str) -> DeadCodeIssue | None:
+    """Check if a removed name still has callers in the codebase."""
+    callers = _find_callers_in_codebase(name, workdir)
+    if not callers:
+        return None
+    sample = callers[:3]
+    extra = len(callers) - 3
+    detail = f"Removed/renamed {name!r} still referenced at: {', '.join(sample)}"
+    if extra > 0:
+        detail += f" (+{extra} more)"
+    return DeadCodeIssue(kind="lost_caller", name=name, file=default_file, detail=detail)
+
+
+def _check_added_private_name(name: str, workdir: Path, default_file: str) -> DeadCodeIssue | None:
+    """Check if a newly added private name has no callers."""
+    if not name.startswith("_"):
+        return None
+    callers = _find_callers_in_codebase(name, workdir)
+    if callers:
+        return None
+    return DeadCodeIssue(
+        kind="no_callers",
+        name=name,
+        file=default_file,
+        detail=f"Newly added {name!r} has no callers — may be dead code.",
+    )
+
+
 def _check_lost_callers(
     diff: str,
     workdir: Path,
@@ -381,44 +416,20 @@ def _check_lost_callers(
     Also checks whether newly added names lack any callers (warnings only).
     """
     issues: list[DeadCodeIssue] = []
+    default_file = changed_files[0] if changed_files else ""
 
     removed = _extract_removed_names(diff)
     added = _extract_added_names(diff)
 
-    # Names that appear in both removed and added are likely renames.
-    # The old name is still in ``removed`` and we still check it for stale callers.
-
     for name in sorted(removed):
-        callers = _find_callers_in_codebase(name, workdir)
-        if callers:
-            sample = callers[:3]
-            extra = len(callers) - 3
-            detail = f"Removed/renamed {name!r} still referenced at: {', '.join(sample)}"
-            if extra > 0:
-                detail += f" (+{extra} more)"
-            issues.append(
-                DeadCodeIssue(
-                    kind="lost_caller",
-                    name=name,
-                    file=changed_files[0] if changed_files else "",
-                    detail=detail,
-                )
-            )
+        issue = _check_removed_name(name, workdir, default_file)
+        if issue is not None:
+            issues.append(issue)
 
-    # Warn when newly added private helpers have no callers
     for name in sorted(added):
-        if not name.startswith("_"):
-            continue  # Only warn about private symbols
-        callers = _find_callers_in_codebase(name, workdir)
-        if not callers:
-            issues.append(
-                DeadCodeIssue(
-                    kind="no_callers",
-                    name=name,
-                    file=changed_files[0] if changed_files else "",
-                    detail=f"Newly added {name!r} has no callers — may be dead code.",
-                )
-            )
+        issue = _check_added_private_name(name, workdir, default_file)
+        if issue is not None:
+            issues.append(issue)
 
     return issues
 

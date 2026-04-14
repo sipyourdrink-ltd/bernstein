@@ -43,6 +43,67 @@ _CONTEXT_FILES = [
 ]
 
 
+def _check_single_context_file(workdir: Path, rel_path: str, fmt: str, results: list[DoctorWarning]) -> None:
+    """Check a single context file for readability, emptiness, and JSON validity."""
+    fpath = workdir / rel_path
+    if not fpath.exists():
+        return
+    name = f"Context file: {rel_path}"
+    try:
+        content = fpath.read_text(encoding="utf-8")
+    except Exception as exc:
+        results.append(
+            DoctorWarning(
+                name=name,
+                ok=False,
+                detail=f"unreadable: {exc}",
+                fix=f"Fix permissions or recreate {rel_path}",
+            )
+        )
+        return
+    if not content.strip():
+        results.append(
+            DoctorWarning(
+                name=name,
+                ok=False,
+                detail="file is empty",
+                fix=f"Add content to {rel_path} or remove it",
+            )
+        )
+        return
+    if fmt == "json":
+        try:
+            json.loads(content)
+        except json.JSONDecodeError as exc:
+            results.append(
+                DoctorWarning(
+                    name=name,
+                    ok=False,
+                    detail=f"invalid JSON: {exc}",
+                    fix=f"Fix JSON syntax in {rel_path}",
+                )
+            )
+
+
+def _check_large_context_files(workdir: Path, results: list[DoctorWarning]) -> None:
+    """Warn about context files larger than 100 KB."""
+    for rel_path, _fmt in _CONTEXT_FILES:
+        fpath = workdir / rel_path
+        if not fpath.exists():
+            continue
+        size_bytes = fpath.stat().st_size
+        if size_bytes > 100_000:
+            size_kb = size_bytes / 1024
+            results.append(
+                DoctorWarning(
+                    name=f"Context file: {rel_path}",
+                    ok=False,
+                    detail=f"large file ({size_kb:.0f} KB) -- may consume significant context tokens",
+                    fix=f"Consider splitting or trimming {rel_path}",
+                )
+            )
+
+
 def check_context_files(workdir: Path) -> list[DoctorWarning]:
     """Check context files for existence, size, and parse errors.
 
@@ -55,85 +116,24 @@ def check_context_files(workdir: Path) -> list[DoctorWarning]:
     results: list[DoctorWarning] = []
 
     for rel_path, fmt in _CONTEXT_FILES:
-        fpath = workdir / rel_path
-        if not fpath.exists():
-            continue
-
-        try:
-            content = fpath.read_text(encoding="utf-8")
-        except Exception as exc:
-            results.append(
-                DoctorWarning(
-                    name=f"Context file: {rel_path}",
-                    ok=False,
-                    detail=f"unreadable: {exc}",
-                    fix=f"Fix permissions or recreate {rel_path}",
-                )
-            )
-            continue
-
-        if not content.strip():
-            results.append(
-                DoctorWarning(
-                    name=f"Context file: {rel_path}",
-                    ok=False,
-                    detail="file is empty",
-                    fix=f"Add content to {rel_path} or remove it",
-                )
-            )
-            continue
-
-        if fmt == "json":
-            try:
-                json.loads(content)
-            except json.JSONDecodeError as exc:
-                results.append(
-                    DoctorWarning(
-                        name=f"Context file: {rel_path}",
-                        ok=False,
-                        detail=f"invalid JSON: {exc}",
-                        fix=f"Fix JSON syntax in {rel_path}",
-                    )
-                )
+        _check_single_context_file(workdir, rel_path, fmt, results)
 
     # Check for role template references that don't exist
     templates_dir = workdir / "templates" / "roles"
-    if templates_dir.exists():
-        template_files = list(templates_dir.glob("*.md"))
-        if not template_files:
-            results.append(
-                DoctorWarning(
-                    name="Role templates",
-                    ok=False,
-                    detail="templates/roles/ exists but contains no .md files",
-                    fix="Add role template files to templates/roles/",
-                )
-            )
-
-    # Warn about very large context files that may cause token issues
-    for rel_path, _fmt in _CONTEXT_FILES:
-        fpath = workdir / rel_path
-        if fpath.exists():
-            size_bytes = fpath.stat().st_size
-            if size_bytes > 100_000:  # 100 KB
-                size_kb = size_bytes / 1024
-                results.append(
-                    DoctorWarning(
-                        name=f"Context file: {rel_path}",
-                        ok=False,
-                        detail=f"large file ({size_kb:.0f} KB) -- may consume significant context tokens",
-                        fix=f"Consider splitting or trimming {rel_path}",
-                    )
-                )
-
-    if not results:
+    if templates_dir.exists() and not list(templates_dir.glob("*.md")):
         results.append(
             DoctorWarning(
-                name="Context files",
-                ok=True,
-                detail="all present and well-formed",
+                name="Role templates",
+                ok=False,
+                detail="templates/roles/ exists but contains no .md files",
+                fix="Add role template files to templates/roles/",
             )
         )
+
+    _check_large_context_files(workdir, results)
+
+    if not results:
+        results.append(DoctorWarning(name="Context files", ok=True, detail="all present and well-formed"))
 
     return results
 
@@ -141,6 +141,52 @@ def check_context_files(workdir: Path) -> list[DoctorWarning]:
 # ---------------------------------------------------------------------------
 # MCP server reachability
 # ---------------------------------------------------------------------------
+
+
+def _check_single_mcp_server(
+    server_name: str, server_cfg: dict[str, Any], workdir: Path, results: list[DoctorWarning]
+) -> None:
+    """Check a single MCP server for command availability and credentials."""
+    name = f"MCP server: {server_name}"
+    command = str(server_cfg.get("command", ""))
+    if not command:
+        results.append(
+            DoctorWarning(
+                name=name,
+                ok=False,
+                detail="no command specified",
+                fix=f"Add a 'command' field for MCP server {server_name}",
+            )
+        )
+        return
+    binary = command.split()[0]
+    found = shutil.which(binary) is not None
+    if not found and "/" in binary:
+        bin_path = Path(binary)
+        found = bin_path.exists() if bin_path.is_absolute() else (workdir / bin_path).exists()
+    if not found:
+        results.append(
+            DoctorWarning(
+                name=name,
+                ok=False,
+                detail=f"command '{binary}' not found in PATH",
+                fix=f"Install '{binary}' or fix the command path for {server_name}",
+            )
+        )
+        return
+    missing = _check_mcp_env_credentials(server_cfg)
+    if missing:
+        missing_str = ", ".join(missing)
+        results.append(
+            DoctorWarning(
+                name=name,
+                ok=False,
+                detail=f"missing environment variables: {missing_str}",
+                fix=f"Set {missing_str} before running Bernstein",
+            )
+        )
+    else:
+        results.append(DoctorWarning(name=name, ok=True, detail=f"command '{command}' found"))
 
 
 def check_mcp_servers(workdir: Path) -> list[DoctorWarning]:
@@ -180,53 +226,7 @@ def check_mcp_servers(workdir: Path) -> list[DoctorWarning]:
         return results
 
     for server_name, server_cfg in mcp_servers.items():
-        command = str(server_cfg.get("command", ""))
-        if not command:
-            results.append(
-                DoctorWarning(
-                    name=f"MCP server: {server_name}",
-                    ok=False,
-                    detail="no command specified",
-                    fix=f"Add a 'command' field for MCP server {server_name}",
-                )
-            )
-            continue
-
-        binary = command.split()[0]
-        found = shutil.which(binary) is not None
-
-        if not found and "/" in binary:
-            bin_path = Path(binary)
-            found = bin_path.exists() if bin_path.is_absolute() else (workdir / bin_path).exists()
-
-        if found:
-            missing = _check_mcp_env_credentials(server_cfg)
-            if missing:
-                results.append(
-                    DoctorWarning(
-                        name=f"MCP server: {server_name}",
-                        ok=False,
-                        detail=f"missing environment variables: {', '.join(missing)}",
-                        fix=f"Set {', '.join(missing)} before running Bernstein",
-                    )
-                )
-            else:
-                results.append(
-                    DoctorWarning(
-                        name=f"MCP server: {server_name}",
-                        ok=True,
-                        detail=f"command '{command}' found",
-                    )
-                )
-        else:
-            results.append(
-                DoctorWarning(
-                    name=f"MCP server: {server_name}",
-                    ok=False,
-                    detail=f"command '{binary}' not found in PATH",
-                    fix=f"Install '{binary}' or fix the command path for {server_name}",
-                )
-            )
+        _check_single_mcp_server(server_name, server_cfg, workdir, results)
 
     return results
 
@@ -234,6 +234,54 @@ def check_mcp_servers(workdir: Path) -> list[DoctorWarning]:
 # ---------------------------------------------------------------------------
 # Permission rule health
 # ---------------------------------------------------------------------------
+
+
+def _check_single_permission_file(settings_path: Path, results: list[DoctorWarning]) -> None:
+    """Check a single settings file for permission rule issues."""
+    if not settings_path.exists():
+        return
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    env_obj = _get_dict(data, "env")
+    if env_obj is None:
+        return
+    allow_raw = env_obj.get("allow")
+    deny_raw = env_obj.get("deny")
+    name = f"Permission rules: {settings_path.name}"
+    if not isinstance(allow_raw, list) or not isinstance(deny_raw, list):
+        results.append(
+            DoctorWarning(
+                name=name,
+                ok=False,
+                detail="env.allow and env.deny must be arrays",
+                fix=f"Fix JSON structure in {settings_path.name}",
+            )
+        )
+        return
+    allow: list[str] = _str_list(env_obj, "allow")
+    deny: list[str] = _str_list(env_obj, "deny")
+    for rule in deny:
+        if rule in ("*", "*/*") and not allow:
+            results.append(
+                DoctorWarning(
+                    name=name,
+                    ok=False,
+                    detail=f"dry-run: deny='{rule}' with no allow rules blocks everything",
+                    fix=f"Remove or refine deny rule '{rule}' in {settings_path.name}",
+                )
+            )
+    for rule in allow:
+        if rule.startswith("!"):
+            results.append(
+                DoctorWarning(
+                    name=name,
+                    ok=False,
+                    detail=f"negative allow pattern: '{rule}' -- may cause unexpected blocks",
+                    fix=f"Replace negative allow with explicit deny for '{rule[1:]}'",
+                )
+            )
 
 
 def check_permission_rules(workdir: Path) -> list[DoctorWarning]:
@@ -253,57 +301,7 @@ def check_permission_rules(workdir: Path) -> list[DoctorWarning]:
     ]
 
     for settings_path in settings_paths:
-        if not settings_path.exists():
-            continue
-
-        try:
-            data = json.loads(settings_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-
-        env_obj = _get_dict(data, "env")
-        if env_obj is None:
-            continue
-
-        allow: list[str] = _str_list(env_obj, "allow")
-        deny: list[str] = _str_list(env_obj, "deny")
-        allow_raw = env_obj.get("allow")
-        deny_raw = env_obj.get("deny")
-
-        if not isinstance(allow_raw, list) or not isinstance(deny_raw, list):
-            results.append(
-                DoctorWarning(
-                    name=f"Permission rules: {settings_path.name}",
-                    ok=False,
-                    detail="env.allow and env.deny must be arrays",
-                    fix=f"Fix JSON structure in {settings_path.name}",
-                )
-            )
-            continue
-
-        # Wildcard deny that blocks everything
-        for rule in deny:
-            if rule in ("*", "*/*") and not allow:
-                results.append(
-                    DoctorWarning(
-                        name=f"Permission rules: {settings_path.name}",
-                        ok=False,
-                        detail=f"dry-run: deny='{rule}' with no allow rules blocks everything",
-                        fix=f"Remove or refine deny rule '{rule}' in {settings_path.name}",
-                    )
-                )
-
-        # Negative allow patterns
-        for rule in allow:
-            if rule.startswith("!"):
-                results.append(
-                    DoctorWarning(
-                        name=f"Permission rules: {settings_path.name}",
-                        ok=False,
-                        detail=f"negative allow pattern: '{rule}' -- may cause unexpected blocks",
-                        fix=f"Replace negative allow with explicit deny for '{rule[1:]}'",
-                    )
-                )
+        _check_single_permission_file(settings_path, results)
 
     if not results:
         results.append(

@@ -526,6 +526,30 @@ class ProviderBatchManager:
             job.updated_at = time.time()
             self._store.save(job)
 
+    def _fail_batch_job(
+        self,
+        orch: Any,
+        task: Task,
+        session: AgentSession,
+        job: BatchJobRecord,
+        reason: str,
+    ) -> bool:
+        """Mark a batch job as failed, report to realtime, and return False."""
+        self._fail_to_realtime(
+            orch,
+            task,
+            session=session,
+            reason=reason,
+            cost_usd=job.cost_usd,
+            input_tokens=job.input_tokens,
+            output_tokens=job.output_tokens,
+        )
+        job.status = BatchJobStatus.FAILED
+        job.error = reason
+        job.updated_at = time.time()
+        self._store.save(job)
+        return False
+
     def _apply_and_complete(
         self,
         orch: Any,
@@ -537,38 +561,17 @@ class ProviderBatchManager:
         worktree_path = self._ensure_worktree(orch, job, session)
         diff_text = _extract_diff_text(output)
         if not diff_text.strip():
-            self._fail_to_realtime(
-                orch,
-                task,
-                session=session,
-                reason="provider batch returned no diff",
-                cost_usd=job.cost_usd,
-                input_tokens=job.input_tokens,
-                output_tokens=job.output_tokens,
-            )
-            job.status = BatchJobStatus.FAILED
-            job.error = "provider batch returned no diff"
-            job.updated_at = time.time()
-            self._store.save(job)
-            return False
+            return self._fail_batch_job(orch, task, session, job, "provider batch returned no diff")
 
         apply_result = apply_diff(worktree_path, diff_text)
         if not apply_result.ok:
-            reason = apply_result.stderr.strip() or "git apply failed"
-            self._fail_to_realtime(
+            return self._fail_batch_job(
                 orch,
                 task,
-                session=session,
-                reason=reason,
-                cost_usd=job.cost_usd,
-                input_tokens=job.input_tokens,
-                output_tokens=job.output_tokens,
+                session,
+                job,
+                apply_result.stderr.strip() or "git apply failed",
             )
-            job.status = BatchJobStatus.FAILED
-            job.error = reason
-            job.updated_at = time.time()
-            self._store.save(job)
-            return False
 
         changed_files = _changed_files(worktree_path)
         staged = stage_task_files(worktree_path, task.owned_files or changed_files)
@@ -576,77 +579,46 @@ class ProviderBatchManager:
             stage_files(worktree_path, changed_files)
             staged = changed_files
         if not staged:
-            self._fail_to_realtime(
+            return self._fail_batch_job(
                 orch,
                 task,
-                session=session,
-                reason="provider batch produced no staged changes",
-                cost_usd=job.cost_usd,
-                input_tokens=job.input_tokens,
-                output_tokens=job.output_tokens,
+                session,
+                job,
+                "provider batch produced no staged changes",
             )
-            job.status = BatchJobStatus.FAILED
-            job.error = "provider batch produced no staged changes"
-            job.updated_at = time.time()
-            self._store.save(job)
-            return False
 
         commit_result = commit(worktree_path, f"feat(batch): {task.title[:72]}", enforce_conventional=True)
         if not commit_result.ok:
-            reason = commit_result.stderr.strip() or "git commit failed"
-            self._fail_to_realtime(
+            return self._fail_batch_job(
                 orch,
                 task,
-                session=session,
-                reason=reason,
-                cost_usd=job.cost_usd,
-                input_tokens=job.input_tokens,
-                output_tokens=job.output_tokens,
+                session,
+                job,
+                commit_result.stderr.strip() or "git commit failed",
             )
-            job.status = BatchJobStatus.FAILED
-            job.error = reason
-            job.updated_at = time.time()
-            self._store.save(job)
-            return False
 
         passed, failed_signals = verify_task(task, worktree_path)
         if not passed:
-            reason = "; ".join(failed_signals) or "janitor verification failed"
-            self._fail_to_realtime(
+            return self._fail_batch_job(
                 orch,
                 task,
-                session=session,
-                reason=reason,
-                cost_usd=job.cost_usd,
-                input_tokens=job.input_tokens,
-                output_tokens=job.output_tokens,
+                session,
+                job,
+                "; ".join(failed_signals) or "janitor verification failed",
             )
-            job.status = BatchJobStatus.FAILED
-            job.error = reason
-            job.updated_at = time.time()
-            self._store.save(job)
-            return False
 
         qg_config = getattr(orch, "_quality_gate_config", None)
         if qg_config is not None:
             qg_result = run_quality_gates(task, worktree_path, orch._workdir, qg_config)
             if not qg_result.passed:
                 failed_gates = [r.gate for r in qg_result.gate_results if r.blocked and not r.passed]
-                reason = ", ".join(failed_gates) or "quality gates failed"
-                self._fail_to_realtime(
+                return self._fail_batch_job(
                     orch,
                     task,
-                    session=session,
-                    reason=reason,
-                    cost_usd=job.cost_usd,
-                    input_tokens=job.input_tokens,
-                    output_tokens=job.output_tokens,
+                    session,
+                    job,
+                    ", ".join(failed_gates) or "quality gates failed",
                 )
-                job.status = BatchJobStatus.FAILED
-                job.error = reason
-                job.updated_at = time.time()
-                self._store.save(job)
-                return False
 
         metrics = get_collector(self._metrics_dir).task_metrics.get(task.id)
         if metrics is not None:

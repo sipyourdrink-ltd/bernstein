@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: TC003 -- used at runtime for .exists(), .read_text(), etc.
+from pathlib import Path  # noqa: TC003 - used at runtime for .exists(), .read_text(), etc.
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -117,6 +117,27 @@ def _fetch_task_completion_events(workdir: Path, since_ts: float) -> list[dict[s
     return records
 
 
+def _build_summary_text(
+    events: list[str],
+    completed_tasks: int,
+    failed_tasks: int,
+    api_records: list[dict[str, Any]],
+    cost_spent: float,
+) -> str:
+    """Build human-readable summary text from event data."""
+    if not events:
+        return "Nothing happened while you were away -- quiet period."
+    parts = [f"- {completed_tasks} task{'s' if completed_tasks != 1 else ''} completed"]
+    if failed_tasks:
+        parts.append(f"- {failed_tasks} task{'s' if failed_tasks != 1 else ''} failed")
+    if api_records:
+        parts.append(f"- {len(api_records)} API calls recorded")
+    if cost_spent > 0:
+        parts.append(f"- Estimated cost: ${cost_spent:.4f}")
+    details = "".join(f"  - {event}\n" for event in events)
+    return "Since you were away:\n" + "\n".join(parts) + "\n\nDetails:\n" + details
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -167,20 +188,7 @@ def generate_away_summary(since_ts: float, workdir: Path) -> AwaySummary:
         events.append(f"Provider error for model: {model}")
 
     # Build summary text
-    if not events:
-        summary_text = "Nothing happened while you were away -- quiet period."
-    else:
-        summary_text = "Since you were away:\n"
-        summary_text += f"- {completed_tasks} task{'s' if completed_tasks != 1 else ''} completed"
-        if failed_tasks:
-            summary_text += f"\n- {failed_tasks} task{'s' if failed_tasks != 1 else ''} failed"
-        if api_records:
-            summary_text += f"\n- {len(api_records)} API calls recorded"
-        if cost_spent > 0:
-            summary_text += f"\n- Estimated cost: ${cost_spent:.4f}"
-        summary_text += "\n\nDetails:\n"
-        for event in events:
-            summary_text += f"  - {event}\n"
+    summary_text = _build_summary_text(events, completed_tasks, failed_tasks, api_records, cost_spent)
 
     return AwaySummary(
         completed_tasks=completed_tasks,

@@ -114,31 +114,38 @@ def classify_role(description: str) -> str:
         ],
     }
 
-    # Count matches per role
+    scores = _score_roles(text, keyword_map)
+
+    if not any(scores.values()):
+        return "backend"
+
+    best_role = max(scores.keys(), key=lambda r: (scores[r], -len(r)))
+
+    if _is_auth_only_security(text, scores, keyword_map):
+        return "backend"
+
+    return best_role
+
+
+def _score_roles(text: str, keyword_map: dict[str, list[str]]) -> dict[str, int]:
+    """Score each role based on keyword matches in text."""
     scores: dict[str, int] = dict.fromkeys(keyword_map, 0)
     for role, keywords in keyword_map.items():
         for kw in keywords:
-            # Use word boundaries for short keywords to avoid substrings like 'dom' in 'random'
-            # Also allow optional 's' at the end for plural
             if len(kw) <= 4:
                 if re.search(rf"\b{re.escape(kw)}s?\b", text):
                     scores[role] += 1
             elif kw in text:
                 scores[role] += 1
+    return scores
 
-    # Find role with highest score
-    if not any(scores.values()):
-        return "backend"  # Default
 
-    # Sort by score descending, then by role name for determinism
-    best_role = max(scores.keys(), key=lambda r: (scores[r], -len(r)))
-
-    # Special cases: 'auth' by itself is often backend
-    if "auth" in text and scores["security"] == 1 and "security" not in text:
-        # Check if any other security keywords besides 'auth' matched
-        security_keywords = keyword_map["security"]
-        other_security_matches = any(kw in text for kw in security_keywords if kw != "auth")
-        if not other_security_matches:
-            return "backend"
-
-    return best_role
+def _is_auth_only_security(
+    text: str,
+    scores: dict[str, int],
+    keyword_map: dict[str, list[str]],
+) -> bool:
+    """Check if 'security' score is just from 'auth' keyword (actually backend)."""
+    if "auth" not in text or scores.get("security", 0) != 1 or "security" in text:
+        return False
+    return not any(kw in text for kw in keyword_map["security"] if kw != "auth")

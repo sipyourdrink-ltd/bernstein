@@ -266,50 +266,45 @@ class GateRunnerCommandsMixin:
         if not python_files:
             return self._skipped(step, NO_PYTHON_FILES)
 
-        # --- vulture pass ---
         command = self._dead_code_command(step, python_files)
         ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
         if vulture_detail.startswith(TIMED_OUT_PREFIX):
             return GateResult(
-                name=step.name,
-                status="timeout",
-                required=step.required,
-                blocked=False,
-                cached=False,
-                duration_ms=0,
-                details=vulture_detail,
-                metadata={"command": command},
+                name=step.name, status="timeout", required=step.required,
+                blocked=False, cached=False, duration_ms=0,
+                details=vulture_detail, metadata={"command": command},
             )
 
-        # --- AST + cross-codebase caller analysis ---
+        report = self._run_dead_code_ast_analysis(dead_code_detector, python_files, run_dir)
+        return self._build_dead_code_result(step, command, ok, vulture_detail, report)
+
+    def _run_dead_code_ast_analysis(self: Any, dead_code_detector: Any, python_files: list[str], run_dir: Path) -> Any:
+        """Run AST-based dead code analysis, returning the report."""
+        from bernstein.core import dead_code_detector as dcd
+
         try:
-            report = dead_code_detector.analyse(
-                python_files,
-                run_dir,
+            return dcd.analyse(
+                python_files, run_dir,
                 check_unused_imports=self._config.dead_code_check_unused_imports,
                 check_unreachable=self._config.dead_code_check_unreachable,
                 check_lost_callers=self._config.dead_code_check_lost_callers,
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("dead_code_detector.analyse failed: %s", exc)
-            report = dead_code_detector.DeadCodeReport()
+            return dcd.DeadCodeReport()
 
-        # Combine vulture output and AST findings
-        ast_details = ""
-        if report.issues:
-            ast_details = "\n".join(f"  [{i.kind}] {i.file}: {i.detail}" for i in report.issues)
-
+    @staticmethod
+    def _build_dead_code_result(
+        step: GatePipelineStep, command: str, ok: bool, vulture_detail: str, report: Any,
+    ) -> GateResult:
+        """Build a GateResult from combined vulture + AST dead-code analysis."""
+        ast_details = "\n".join(f"  [{i.kind}] {i.file}: {i.detail}" for i in report.issues) if report.issues else ""
         vulture_ok = ok and vulture_detail == "(no output)"
-        ast_ok = report.passed
 
-        if vulture_ok and ast_ok:
+        if vulture_ok and report.passed:
             return GateResult(
-                name=step.name,
-                status="pass",
-                required=step.required,
-                blocked=False,
-                cached=False,
-                duration_ms=0,
+                name=step.name, status="pass", required=step.required,
+                blocked=False, cached=False, duration_ms=0,
                 details=f"No dead code detected. {report.summary()}",
                 metadata={"command": command, "ast_issues": 0},
             )
@@ -326,19 +321,11 @@ class GateRunnerCommandsMixin:
 
         status: GateStatus = "fail" if (step.required or lost_caller_issues) else "warn"
         return GateResult(
-            name=step.name,
-            status=status,
-            required=step.required,
+            name=step.name, status=status, required=step.required,
             blocked=step.required or bool(lost_caller_issues),
-            cached=False,
-            duration_ms=0,
-            details=full_detail,
-            metadata={
-                "command": command,
-                "ast_issues": len(report.issues),
-                "lost_callers": len(lost_caller_issues),
-                "has_breaking": has_breaking,
-            },
+            cached=False, duration_ms=0, details=full_detail,
+            metadata={"command": command, "ast_issues": len(report.issues),
+                       "lost_callers": len(lost_caller_issues), "has_breaking": has_breaking},
         )
 
     # -- comment quality gate ------------------------------------------------
@@ -563,53 +550,39 @@ class GateRunnerCommandsMixin:
 
     # -- migration reversibility gate ----------------------------------------
 
-    def _run_migration_reversibility_gate_sync(
-        self: Any,
-        step: GatePipelineStep,
-        run_dir: Path,
-    ) -> GateResult:
-        """Check that every DB migration has a corresponding down/rollback path.
-
-        Supports Alembic (``downgrade()`` function must be non-trivial) and
-        generic up/down SQL file pairs.  When no migration files are found the
-        gate passes with a skip note so projects without migrations are not
-        affected.
-        """
+    @staticmethod
+    def _check_alembic_migrations(run_dir: Path) -> tuple[int, list[str]]:
+        """Check Alembic migration files for missing downgrade. Returns (count, issues)."""
+        count = 0
         issues: list[str] = []
-        migration_count = 0
-
-        # --- Alembic migrations (versions/*.py) ---
-        alembic_dirs: list[Path] = []
         for candidate in ("alembic/versions", "migrations/versions", "db/versions"):
-            p = run_dir / candidate
-            if p.is_dir():
-                alembic_dirs.append(p)
-
-        for versions_dir in alembic_dirs:
+            versions_dir = run_dir / candidate
+            if not versions_dir.is_dir():
+                continue
             for migration_file in sorted(versions_dir.glob("*.py")):
                 if migration_file.name.startswith("_"):
                     continue
-                migration_count += 1
+                count += 1
                 try:
                     source = migration_file.read_text(encoding="utf-8", errors="ignore")
                 except OSError:
                     continue
-                # A bare `pass` or empty body after def downgrade means no rollback.
+                rel = migration_file.relative_to(run_dir)
                 if "def downgrade" not in source:
-                    issues.append(f"{migration_file.relative_to(run_dir)}: missing downgrade() function")
+                    issues.append(f"{rel}: missing downgrade() function")
                 elif _migration_downgrade_is_pass(source):
-                    issues.append(
-                        f"{migration_file.relative_to(run_dir)}: downgrade() is empty (pass-only) — no rollback defined"
-                    )
+                    issues.append(f"{rel}: downgrade() is empty (pass-only) — no rollback defined")
+        return count, issues
 
-        # --- Generic SQL up/down pairs ---
-        sql_migration_dirs: list[Path] = []
+    @staticmethod
+    def _check_sql_migrations(run_dir: Path) -> tuple[int, list[str]]:
+        """Check SQL up/down migration pairs. Returns (count, issues)."""
+        count = 0
+        issues: list[str] = []
         for candidate in ("migrations", "db/migrations", "sql/migrations", "database/migrations"):
-            p = run_dir / candidate
-            if p.is_dir():
-                sql_migration_dirs.append(p)
-
-        for mig_dir in sql_migration_dirs:
+            mig_dir = run_dir / candidate
+            if not mig_dir.is_dir():
+                continue
             up_files = {f.stem for f in mig_dir.glob("*_up.sql")} | {
                 f.stem.replace(".up", "") for f in mig_dir.glob("*.up.sql")
             }
@@ -617,34 +590,38 @@ class GateRunnerCommandsMixin:
                 f.stem.replace(".down", "") for f in mig_dir.glob("*.down.sql")
             }
             for stem in sorted(up_files):
-                migration_count += 1
+                count += 1
                 down_stem = stem.replace("_up", "_down")
                 if down_stem not in down_files and stem not in down_files:
                     issues.append(f"{mig_dir.relative_to(run_dir)}/{stem}_up.sql: no matching down migration")
+        return count, issues
+
+    def _run_migration_reversibility_gate_sync(
+        self: Any,
+        step: GatePipelineStep,
+        run_dir: Path,
+    ) -> GateResult:
+        """Check that every DB migration has a corresponding down/rollback path."""
+        alembic_count, alembic_issues = self._check_alembic_migrations(run_dir)
+        sql_count, sql_issues = self._check_sql_migrations(run_dir)
+        migration_count = alembic_count + sql_count
+        issues = alembic_issues + sql_issues
 
         if migration_count == 0:
             return self._skipped(step, "No migration files found — skipping reversibility check.")
 
         if not issues:
             return GateResult(
-                name=step.name,
-                status="pass",
-                required=step.required,
-                blocked=False,
-                cached=False,
-                duration_ms=0,
+                name=step.name, status="pass", required=step.required,
+                blocked=False, cached=False, duration_ms=0,
                 details=f"All {migration_count} migration(s) have rollback paths.",
                 metadata={"migration_count": migration_count},
             )
 
         detail = f"{len(issues)} migration(s) missing rollback:\n" + "\n".join(f"  - {i}" for i in issues)
         return GateResult(
-            name=step.name,
-            status="fail",
-            required=step.required,
-            blocked=step.required,
-            cached=False,
-            duration_ms=0,
+            name=step.name, status="fail", required=step.required,
+            blocked=step.required, cached=False, duration_ms=0,
             details=detail,
             metadata={"migration_count": migration_count, "missing_rollback": len(issues)},
         )
@@ -1010,6 +987,24 @@ class GateRunnerCommandsMixin:
 
     # -- helper: parse complexity output -------------------------------------
 
+    @staticmethod
+    def _extract_complexity_from_dict(raw_map: dict[str, object]) -> float | None:
+        """Extract complexity average from a parsed JSON dict."""
+        for key in ("average_complexity", "average", "mean_complexity"):
+            value = raw_map.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+        complexities: list[float] = []
+        for value in raw_map.values():
+            if not isinstance(value, list):
+                continue
+            for item in cast("list[object]", value):
+                if isinstance(item, dict):
+                    complexity = cast("dict[str, object]", item).get("complexity")
+                    if isinstance(complexity, (int, float)):
+                        complexities.append(float(complexity))
+        return sum(complexities) / len(complexities) if complexities else None
+
     def _parse_complexity_average(self: Any, output: str) -> float | None:
         """Parse an average complexity score from command output."""
         try:
@@ -1017,46 +1012,37 @@ class GateRunnerCommandsMixin:
         except json.JSONDecodeError:
             raw = None
         if isinstance(raw, dict):
-            raw_map = cast("dict[str, object]", raw)
-            for key in ("average_complexity", "average", "mean_complexity"):
-                value = raw_map.get(key)
-                if isinstance(value, (int, float)):
-                    return float(value)
-            complexities: list[float] = []
-            for value in raw_map.values():
-                if isinstance(value, list):
-                    items = cast("list[object]", value)
-                    for item in items:
-                        if isinstance(item, dict):
-                            item_map = cast("dict[str, object]", item)
-                            complexity = item_map.get("complexity")
-                            if isinstance(complexity, (int, float)):
-                                complexities.append(float(complexity))
-            if complexities:
-                return sum(complexities) / len(complexities)
-        stripped = output.strip()
+            result = self._extract_complexity_from_dict(cast("dict[str, object]", raw))
+            if result is not None:
+                return result
         try:
-            return float(stripped)
+            return float(output.strip())
         except ValueError:
             return None
 
     # -- helper: detect import cycles ----------------------------------------
 
-    def _detect_import_cycles_builtin(self: Any, changed_files: list[str], run_dir: Path) -> tuple[bool, str]:
-        """Detect import cycles with a simple AST-based resolver."""
+    @staticmethod
+    def _discover_source_modules(run_dir: Path) -> tuple[dict[str, Path], Path]:
+        """Discover Python source modules, returning module-to-path map and source root."""
         source_root = run_dir / "src"
         search_root = source_root if source_root.exists() else run_dir
         module_to_path: dict[str, Path] = {}
         for py_file in sorted(search_root.rglob("*.py")):
-            if any(part.startswith(".") for part in py_file.relative_to(run_dir).parts):
+            rel_parts = py_file.relative_to(run_dir).parts
+            if any(part.startswith(".") for part in rel_parts):
                 continue
-            if "tests" in py_file.relative_to(run_dir).parts:
+            if "tests" in rel_parts:
                 continue
-            module = _module_name_from_path(py_file, source_root if source_root.exists() else run_dir)
+            module = _module_name_from_path(py_file, search_root)
             if module:
                 module_to_path[module] = py_file
+        return module_to_path, search_root
 
-        graph: dict[str, set[str]] = {module: set() for module in module_to_path}
+    @staticmethod
+    def _build_import_graph(module_to_path: dict[str, Path]) -> dict[str, set[str]]:
+        """Build a module import graph from AST parsing."""
+        graph: dict[str, set[str]] = {mod: set() for mod in module_to_path}
         for module, path in module_to_path.items():
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -1071,14 +1057,14 @@ class GateRunnerCommandsMixin:
                     target = _resolve_import_from(module, node.level, node.module)
                     if target and target in module_to_path:
                         graph[module].add(target)
+        return graph
 
-        changed_modules = {
-            _module_name_from_path(run_dir / rel_path, source_root if source_root.exists() else run_dir)
-            for rel_path in changed_files
-            if rel_path.endswith(".py")
-        }
-        changed_modules.discard("")
-
+    @staticmethod
+    def _find_cycles(
+        graph: dict[str, set[str]],
+        changed_modules: set[str],
+    ) -> set[tuple[str, ...]]:
+        """Find import cycles that intersect with changed modules via DFS."""
         cycles: set[tuple[str, ...]] = set()
         visited: set[str] = set()
         stack: list[str] = []
@@ -1102,7 +1088,21 @@ class GateRunnerCommandsMixin:
         for module in graph:
             if module not in visited:
                 visit(module)
+        return cycles
 
+    def _detect_import_cycles_builtin(self: Any, changed_files: list[str], run_dir: Path) -> tuple[bool, str]:
+        """Detect import cycles with a simple AST-based resolver."""
+        module_to_path, search_root = self._discover_source_modules(run_dir)
+        graph = self._build_import_graph(module_to_path)
+
+        changed_modules = {
+            _module_name_from_path(run_dir / rel_path, search_root)
+            for rel_path in changed_files
+            if rel_path.endswith(".py")
+        }
+        changed_modules.discard("")
+
+        cycles = self._find_cycles(graph, changed_modules)
         if not cycles:
             return False, "No import cycles detected."
         cycle_lines = [" -> ".join(cycle) for cycle in sorted(cycles)]

@@ -123,6 +123,39 @@ class Condition:
         return current
 
 
+_ACTION_KEY_MAP: dict[ActionType, str] = {
+    ActionType.SET_PROVIDER: "provider",
+    ActionType.SET_MODEL: "model",
+    ActionType.SET_EFFORT: "effort",
+    ActionType.SET_MAX_TOKENS: "max_tokens",
+    ActionType.SET_MAX_COST: "max_cost_per_task",
+    ActionType.REQUIRE_FREE_TIER: "require_free_tier",
+    ActionType.ADD_COOLDOWN: "cooldown_seconds",
+    ActionType.SET_BATCH_SIZE: "batch_size",
+    ActionType.SET_BATCH_TIMEOUT: "batch_timeout_seconds",
+    ActionType.SELECT_FASTEST_PROVIDER: "select_fastest",
+    ActionType.SKIP_FREE_TIER_CHECK: "skip_free_tier_check",
+}
+
+
+def _apply_action(action_type: ActionType, value: Any, routing_decision: dict[str, Any]) -> None:
+    """Apply a single action to the routing decision dict."""
+    key = _ACTION_KEY_MAP.get(action_type)
+    if key is not None:
+        routing_decision[key] = value
+        return
+
+    if action_type == ActionType.ADD_FALLBACK:
+        existing = routing_decision.get("fallback", [])
+        for fallback in value:
+            if fallback not in existing:
+                existing.append(fallback)
+        routing_decision["fallback"] = existing
+    elif action_type == ActionType.SWITCH_PROVIDER:
+        if value == "next_best_available":
+            routing_decision["switch_provider"] = True
+
+
 @dataclass
 class Action:
     """A single action to apply when a policy matches."""
@@ -136,49 +169,7 @@ class Action:
         Args:
             routing_decision: The current routing decision dictionary.
         """
-        if self.action_type == ActionType.SET_PROVIDER:
-            routing_decision["provider"] = self.value
-
-        elif self.action_type == ActionType.SET_MODEL:
-            routing_decision["model"] = self.value
-
-        elif self.action_type == ActionType.SET_EFFORT:
-            routing_decision["effort"] = self.value
-
-        elif self.action_type == ActionType.ADD_FALLBACK:
-            existing = routing_decision.get("fallback", [])
-            for fallback in self.value:
-                if fallback not in existing:
-                    existing.append(fallback)
-            routing_decision["fallback"] = existing
-
-        elif self.action_type == ActionType.SET_MAX_TOKENS:
-            routing_decision["max_tokens"] = self.value
-
-        elif self.action_type == ActionType.SET_MAX_COST:
-            routing_decision["max_cost_per_task"] = self.value
-
-        elif self.action_type == ActionType.REQUIRE_FREE_TIER:
-            routing_decision["require_free_tier"] = self.value
-
-        elif self.action_type == ActionType.SWITCH_PROVIDER:
-            if self.value == "next_best_available":
-                routing_decision["switch_provider"] = True
-
-        elif self.action_type == ActionType.ADD_COOLDOWN:
-            routing_decision["cooldown_seconds"] = self.value
-
-        elif self.action_type == ActionType.SET_BATCH_SIZE:
-            routing_decision["batch_size"] = self.value
-
-        elif self.action_type == ActionType.SET_BATCH_TIMEOUT:
-            routing_decision["batch_timeout_seconds"] = self.value
-
-        elif self.action_type == ActionType.SELECT_FASTEST_PROVIDER:
-            routing_decision["select_fastest"] = self.value
-
-        elif self.action_type == ActionType.SKIP_FREE_TIER_CHECK:
-            routing_decision["skip_free_tier_check"] = self.value
+        _apply_action(self.action_type, self.value, routing_decision)
 
 
 @dataclass

@@ -330,6 +330,18 @@ def _aggregate_fast_path_savings(task_records: list[dict[str, Any]]) -> dict[str
     }
 
 
+def _accumulate_record(row: dict[str, Any], rec: dict[str, Any]) -> None:
+    """Accumulate a single task record into an aggregation row."""
+    row["tasks"] += 1
+    row["tokens_in"] += int(rec.get("tokens_prompt", 0) or 0)
+    row["tokens_out"] += int(rec.get("tokens_completion", 0) or 0)
+    row["cost_usd"] += float(rec.get("cost_usd", 0.0) or 0.0)
+    dur = float(rec.get("duration_seconds", 0.0) or 0.0)
+    if dur > 0:
+        row["duration_total"] += dur
+        row["duration_count"] += 1
+
+
 def _aggregate(
     task_records: list[dict[str, Any]],
     api_records: list[dict[str, Any]],
@@ -357,29 +369,10 @@ def _aggregate(
         if tid:
             seen[tid] = rec
         else:
-            # No task_id — treat as anonymous
-            model = rec.get("model") or "unknown"
-            row = rows[model]
-            row["tasks"] += 1
-            row["tokens_in"] += int(rec.get("tokens_prompt", 0) or 0)
-            row["tokens_out"] += int(rec.get("tokens_completion", 0) or 0)
-            row["cost_usd"] += float(rec.get("cost_usd", 0.0) or 0.0)
-            dur = float(rec.get("duration_seconds", 0.0) or 0.0)
-            if dur > 0:
-                row["duration_total"] += dur
-                row["duration_count"] += 1
+            _accumulate_record(rows[rec.get("model") or "unknown"], rec)
 
     for rec in seen.values():
-        model = rec.get("model") or "unknown"
-        row = rows[model]
-        row["tasks"] += 1
-        row["tokens_in"] += int(rec.get("tokens_prompt", 0) or 0)
-        row["tokens_out"] += int(rec.get("tokens_completion", 0) or 0)
-        row["cost_usd"] += float(rec.get("cost_usd", 0.0) or 0.0)
-        dur = float(rec.get("duration_seconds", 0.0) or 0.0)
-        if dur > 0:
-            row["duration_total"] += dur
-            row["duration_count"] += 1
+        _accumulate_record(rows[rec.get("model") or "unknown"], rec)
 
     # api_usage records have labels with provider/model but no token breakdown
     for rec in api_records:
@@ -455,6 +448,92 @@ def estimate_cmd(goal: str, role: str, scope: str, complexity: str, metrics_dir:
 # ---------------------------------------------------------------------------
 # Command
 # ---------------------------------------------------------------------------
+
+
+def _cost_render_json(
+    time_label: str,
+    sorted_models: list[tuple[str, dict[str, Any]]],
+    totals: dict[str, Any],
+    fast_path_savings: dict[str, Any],
+    savings_vs_opus: float,
+    savings_vs_manual: dict[str, Any],
+    daily_costs: Any,
+    projected_monthly: float,
+    tasks_done: int,
+    tasks_failed: int,
+    cache_hit_rate: float | None,
+    grouped_data: dict[str, dict[str, Any]] | None,
+    group_by: str | None,
+    downgrade: tuple[str, float] | None,
+) -> None:
+    """Render cost report as JSON."""
+    output: dict[str, Any] = {
+        "time_range": time_label,
+        "rows": [
+            {
+                "model": model,
+                "tasks": v["tasks"],
+                "tokens_in": v["tokens_in"],
+                "tokens_out": v["tokens_out"],
+                "cost_usd": round(v["cost_usd"], 6),
+                "cost_per_task": round(v["cost_usd"] / v["tasks"], 6) if v["tasks"] > 0 else 0,
+                "avg_duration_s": (
+                    round(v["duration_total"] / v["duration_count"], 1) if v["duration_count"] > 0 else None
+                ),
+            }
+            for model, v in sorted_models
+        ],
+        "totals": totals,
+        "fast_path": fast_path_savings,
+        "savings_vs_opus_usd": round(savings_vs_opus, 6),
+        "savings_vs_manual": savings_vs_manual,
+        "daily_costs": daily_costs,
+        "projected_monthly_usd": round(projected_monthly, 4),
+        "tasks_done": tasks_done,
+        "tasks_failed": tasks_failed,
+        "cache_hit_rate": round(cache_hit_rate, 1) if cache_hit_rate is not None else None,
+    }
+    if grouped_data is not None:
+        output["grouped_by"] = group_by
+        output["grouped"] = {
+            k: {"tasks": v["tasks"], "cost_usd": round(v["cost_usd"], 6)}
+            for k, v in sorted(grouped_data.items(), key=lambda kv: -kv[1]["cost_usd"])
+        }
+    if downgrade is not None:
+        output["tip"] = downgrade[0]
+        output["potential_savings_usd"] = downgrade[1]
+    print_json(output)
+
+
+def _cost_render_grouped(
+    title: str,
+    grouped_data: dict[str, dict[str, Any]],
+    group_by: str,
+    cache_hit_rate: float | None,
+    downgrade: tuple[str, float] | None,
+) -> None:
+    """Render a grouped cost breakdown table."""
+    sorted_grouped = sorted(grouped_data.items(), key=lambda kv: -kv[1]["cost_usd"])
+    total_cost = sum(v["cost_usd"] for v in grouped_data.values())
+    total_tasks = sum(v["tasks"] for v in grouped_data.values())
+    max_cost = max((v["cost_usd"] for v in grouped_data.values()), default=0.0)
+
+    console.print(f"\n[bold]{title}[/bold]\n")
+    console.print(f"  [bold]By {group_by.title()}:[/bold]")
+    for label, v in sorted_grouped:
+        pct = int((v["cost_usd"] / total_cost) * 100) if total_cost > 0 else 0
+        bar = _ascii_bar(v["cost_usd"], max_cost, 16)
+        console.print(f"    {label:<22s} ${v['cost_usd']:>7.2f}  ({pct:>2d}%)  {bar}  {v['tasks']:,} tasks")
+
+    console.print(f"\n  Total: ${total_cost:.2f} across {total_tasks:,} tasks")
+    if total_tasks > 0:
+        console.print(f"  Avg cost/task: ${total_cost / total_tasks:.3f}")
+    if cache_hit_rate is not None:
+        console.print(f"  Cache hit rate: {cache_hit_rate:.0f}%")
+    if downgrade is not None:
+        console.print(f"\n  [dim]Tip: {downgrade[0]}[/dim]")
+        console.print(f"  [dim]Potential savings: ${downgrade[1]:.2f}/week with smarter routing[/dim]")
+    console.print()
 
 
 @click.command("cost")
@@ -566,42 +645,11 @@ def cost_cmd(metrics_dir: str, last: str | None, group_by: str | None, as_json: 
     # group_by == "model" or None => use the default rows (by model)
 
     if as_json or is_json():
-        output: dict[str, Any] = {
-            "time_range": time_label,
-            "rows": [
-                {
-                    "model": model,
-                    "tasks": v["tasks"],
-                    "tokens_in": v["tokens_in"],
-                    "tokens_out": v["tokens_out"],
-                    "cost_usd": round(v["cost_usd"], 6),
-                    "cost_per_task": round(v["cost_usd"] / v["tasks"], 6) if v["tasks"] > 0 else 0,
-                    "avg_duration_s": (
-                        round(v["duration_total"] / v["duration_count"], 1) if v["duration_count"] > 0 else None
-                    ),
-                }
-                for model, v in sorted_models
-            ],
-            "totals": totals,
-            "fast_path": fast_path_savings,
-            "savings_vs_opus_usd": round(savings_vs_opus, 6),
-            "savings_vs_manual": savings_vs_manual,
-            "daily_costs": daily_costs,
-            "projected_monthly_usd": round(projected_monthly, 4),
-            "tasks_done": tasks_done,
-            "tasks_failed": tasks_failed,
-            "cache_hit_rate": round(cache_hit_rate, 1) if cache_hit_rate is not None else None,
-        }
-        if grouped_data is not None:
-            output["grouped_by"] = group_by
-            output["grouped"] = {
-                k: {"tasks": v["tasks"], "cost_usd": round(v["cost_usd"], 6)}
-                for k, v in sorted(grouped_data.items(), key=lambda kv: -kv[1]["cost_usd"])
-            }
-        if downgrade is not None:
-            output["tip"] = downgrade[0]
-            output["potential_savings_usd"] = downgrade[1]
-        print_json(output)
+        _cost_render_json(
+            time_label, sorted_models, totals, fast_path_savings, savings_vs_opus,
+            savings_vs_manual, daily_costs, projected_monthly, tasks_done, tasks_failed,
+            cache_hit_rate, grouped_data, group_by, downgrade,
+        )
         return
 
     # --share: print only the shareable snippet and exit
@@ -618,33 +666,11 @@ def cost_cmd(metrics_dir: str, last: str | None, group_by: str | None, as_json: 
 
     from rich.table import Table
 
-    # Title includes time range
     title = f"Bernstein Cost Report ({time_label})"
 
-    # If --by is set to a non-model group, render a simpler grouped table
     if grouped_data is not None:
-        sorted_grouped = sorted(grouped_data.items(), key=lambda kv: -kv[1]["cost_usd"])
-        total_cost = sum(v["cost_usd"] for v in grouped_data.values())
-        total_tasks = sum(v["tasks"] for v in grouped_data.values())
-        max_cost = max((v["cost_usd"] for v in grouped_data.values()), default=0.0)
-
-        console.print(f"\n[bold]{title}[/bold]\n")
-        assert group_by is not None  # guaranteed when grouped_data is set
-        console.print(f"  [bold]By {group_by.title()}:[/bold]")
-        for label, v in sorted_grouped:
-            pct = int((v["cost_usd"] / total_cost) * 100) if total_cost > 0 else 0
-            bar = _ascii_bar(v["cost_usd"], max_cost, 16)
-            console.print(f"    {label:<22s} ${v['cost_usd']:>7.2f}  ({pct:>2d}%)  {bar}  {v['tasks']:,} tasks")
-
-        console.print(f"\n  Total: ${total_cost:.2f} across {total_tasks:,} tasks")
-        if total_tasks > 0:
-            console.print(f"  Avg cost/task: ${total_cost / total_tasks:.3f}")
-        if cache_hit_rate is not None:
-            console.print(f"  Cache hit rate: {cache_hit_rate:.0f}%")
-        if downgrade is not None:
-            console.print(f"\n  [dim]Tip: {downgrade[0]}[/dim]")
-            console.print(f"  [dim]Potential savings: ${downgrade[1]:.2f}/week with smarter routing[/dim]")
-        console.print()
+        assert group_by is not None
+        _cost_render_grouped(title, grouped_data, group_by, cache_hit_rate, downgrade)
         return
 
     # Default: full model breakdown table

@@ -6,7 +6,6 @@ ConcurrencyGuard to verify thread-safety and generation-based stale detection.
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -487,19 +486,6 @@ class TestWALThreadedWriteRace:
         from bernstein.core.concurrency_guard import ConcurrencyGuard
 
         guard = ConcurrencyGuard()
-        discarded_count = 0
-        executed_count = 0
-        lock = threading.Lock()
-
-        async def payload(gen: int) -> None:
-            await asyncio.sleep(0)  # Async interface requirement
-            nonlocal discarded_count, executed_count
-            if guard.is_stale(gen):
-                with lock:
-                    discarded_count += 1
-            else:
-                with lock:
-                    executed_count += 1
 
         # Run 3 generations; capture gen from each
         gens: list[int] = []

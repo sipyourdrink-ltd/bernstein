@@ -322,6 +322,55 @@ def read_log_tail(path: Path, offset: int = 0) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) -> dict[str, Any]:
+    """Reload and persist bernstein.yaml metadata without restarting."""
+    from bernstein.core.config_diff import (
+        diff_config_snapshots,
+        load_redacted_config,
+        read_config_snapshot,
+        write_config_snapshot,
+    )
+    from bernstein.core.runtime_state import hash_file, write_config_state
+    from bernstein.core.seed import SeedError, parse_seed
+    from bernstein.core.tenanting import TenantRegistry, ensure_tenant_layout, tenant_registry_from_seed
+
+    seed_path = workdir / "bernstein.yaml"
+    sdd_dir = jsonl_path.parent.parent
+    previous_snapshot = read_config_snapshot(sdd_dir)
+    current_snapshot = load_redacted_config(seed_path if seed_path.exists() else None)
+    diff = diff_config_snapshots(previous_snapshot, current_snapshot)
+    config_hash = hash_file(seed_path if seed_path.exists() else None)
+    payload: dict[str, Any] = {
+        "seed_path": str(seed_path) if seed_path.exists() else None,
+        "config_hash": config_hash,
+        "reloaded_at": time.time(),
+        "loaded": False,
+        "config_last_diff": diff.to_dict(),
+    }
+    if seed_path.exists():
+        try:
+            application.state.seed_config = parse_seed(seed_path)  # type: ignore[attr-defined]
+            application.state.tenant_registry = tenant_registry_from_seed(application.state.seed_config)  # type: ignore[attr-defined]
+            for tenant in application.state.tenant_registry.tenants:  # type: ignore[attr-defined]
+                ensure_tenant_layout(sdd_dir, tenant.id)
+            payload["loaded"] = True
+        except SeedError as exc:
+            payload["error"] = str(exc)
+            application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
+    else:
+        application.state.seed_config = None  # type: ignore[attr-defined]
+        application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
+    write_config_state(
+        sdd_dir,
+        config_hash=config_hash,
+        seed_path=payload["seed_path"],
+        reloaded_at=float(payload["reloaded_at"]),
+        last_diff=diff.to_dict(),
+    )
+    write_config_snapshot(sdd_dir, current_snapshot)
+    return payload
+
+
 def create_app(
     jsonl_path: Path = DEFAULT_JSONL_PATH,
     metrics_jsonl_path: Path | None = None,
@@ -406,51 +455,7 @@ def create_app(
 
     def _reload_seed_config() -> dict[str, Any]:
         """Reload and persist bernstein.yaml metadata without restarting."""
-        from bernstein.core.config_diff import (
-            diff_config_snapshots,
-            load_redacted_config,
-            read_config_snapshot,
-            write_config_snapshot,
-        )
-        from bernstein.core.runtime_state import hash_file, write_config_state
-        from bernstein.core.seed import SeedError, parse_seed
-        from bernstein.core.tenanting import TenantRegistry, ensure_tenant_layout, tenant_registry_from_seed
-
-        seed_path = workdir / "bernstein.yaml"
-        sdd_dir = jsonl_path.parent.parent
-        previous_snapshot = read_config_snapshot(sdd_dir)
-        current_snapshot = load_redacted_config(seed_path if seed_path.exists() else None)
-        diff = diff_config_snapshots(previous_snapshot, current_snapshot)
-        config_hash = hash_file(seed_path if seed_path.exists() else None)
-        payload: dict[str, Any] = {
-            "seed_path": str(seed_path) if seed_path.exists() else None,
-            "config_hash": config_hash,
-            "reloaded_at": time.time(),
-            "loaded": False,
-            "config_last_diff": diff.to_dict(),
-        }
-        if seed_path.exists():
-            try:
-                application.state.seed_config = parse_seed(seed_path)  # type: ignore[attr-defined]
-                application.state.tenant_registry = tenant_registry_from_seed(application.state.seed_config)  # type: ignore[attr-defined]
-                for tenant in application.state.tenant_registry.tenants:  # type: ignore[attr-defined]
-                    ensure_tenant_layout(sdd_dir, tenant.id)
-                payload["loaded"] = True
-            except SeedError as exc:
-                payload["error"] = str(exc)
-                application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
-        else:
-            application.state.seed_config = None  # type: ignore[attr-defined]
-            application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
-        write_config_state(
-            sdd_dir,
-            config_hash=config_hash,
-            seed_path=payload["seed_path"],
-            reloaded_at=float(payload["reloaded_at"]),
-            last_diff=diff.to_dict(),
-        )
-        write_config_snapshot(sdd_dir, current_snapshot)
-        return payload
+        return _do_reload_seed_config(workdir, jsonl_path, application)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:

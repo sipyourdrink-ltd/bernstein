@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 import pytest
 import respx
 from bernstein.core.models import Task
-from httpx import Response
 
 if TYPE_CHECKING:
     from bernstein.core.orchestrator import Orchestrator
@@ -75,26 +74,19 @@ async def test_critical_path_priority(test_client: TestClient, orchestrator_fact
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
 
-        def handler(request):
-            method = request.method
-            path = request.url.path
-            api_path = path if path.startswith("/") else "/" + path
+        def _auto_complete_claimed(tasks_data):
+            for t in tasks_data:
+                if t["status"] == "claimed":
+                    test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "done"})
 
-            if method == "GET" and api_path == "/tasks":
-                resp = test_client.get("/tasks")
-                tasks_data = resp.json()
-                for t in tasks_data:
-                    # Auto-complete everything immediately for this test
-                    if t["status"] == "claimed":
-                        test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "done"})
-                resp = test_client.get("/tasks")
-                return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
+        from tests.integration.conftest import make_proxy_handler
 
-            content = request.read()
-            headers = dict(request.headers)
-            resp = test_client.request(method, api_path, content=content, headers=headers)
-            return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
+        handler = make_proxy_handler(
+            test_client,
+            integration_sdd,
+            on_tasks_fetched=_auto_complete_claimed,
+            complete_statuses=frozenset(),  # disable default marker-based completion
+        )
         respx_mock.route().mock(side_effect=handler)
 
         # Run ticks

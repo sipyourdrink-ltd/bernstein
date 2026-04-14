@@ -68,7 +68,7 @@ class TestQuotaStatusFrozen:
             tier="max",
         )
         assert status.provider == "openai"
-        assert status.utilization_pct == 80.0
+        assert status.utilization_pct == pytest.approx(80.0)
         assert status.resets_at == now
         assert status.tier == "max"
 
@@ -119,7 +119,7 @@ class TestRecordAndStatus:
         status = tracker.get_status("unknown")
         assert status.requests_used == 1
         assert status.tokens_used == 150
-        assert status.utilization_pct == 0.0  # no limits set
+        assert status.utilization_pct == pytest.approx(0.0)  # no limits set
 
     def test_request_utilization_dominates(self, tracker: QuotaTracker) -> None:
         tracker.configure_provider("a", requests_limit=10, tokens_limit=100000)

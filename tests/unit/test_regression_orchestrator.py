@@ -902,17 +902,23 @@ class TestAgentCrashMidTask:
         task = _make_task(id="T-resume", role="backend")
         task_dicts = [_task_as_dict(task)]
 
+        _route_table: dict[tuple[str, str], httpx.Response] = {
+            ("GET", "/tasks"): httpx.Response(200, json=task_dicts),
+            ("POST", "/tasks"): httpx.Response(200, json={"id": "T-new", "status": "open"}),
+        }
+
         def handler(request: httpx.Request) -> httpx.Response:
-            if request.method == "GET" and request.url.path == "/tasks":
-                return httpx.Response(200, json=task_dicts)
-            if request.method == "POST" and "/claim" in request.url.path:
+            method = request.method
+            path = request.url.path
+            result = _route_table.get((method, path))
+            if result is not None:
+                return result
+            if method == "POST" and "/claim" in path:
                 return httpx.Response(200, json=task_dicts[0])
-            if request.method == "POST" and "/fail" in request.url.path:
+            if method == "POST" and "/fail" in path:
                 return httpx.Response(200, json={})
-            if request.method == "GET" and "/tasks/" in request.url.path:
+            if method == "GET" and "/tasks/" in path:
                 return httpx.Response(200, json=task_dicts[0])
-            if request.method == "POST" and request.url.path == "/tasks":
-                return httpx.Response(200, json={"id": "T-new", "status": "open"})
             return httpx.Response(200, json={})
 
         adapter = _mock_adapter(pid=8888)

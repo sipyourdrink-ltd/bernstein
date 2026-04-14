@@ -232,6 +232,24 @@ class WarmPool:
 # ---------------------------------------------------------------------------
 
 
+def _parse_warm_pool_section(section: dict[str, Any]) -> WarmPoolConfig:
+    """Parse a warm_pool config section dict into WarmPoolConfig."""
+    max_slots_raw: Any = section.get("max_slots", 3)
+    slot_ttl_raw: Any = section.get("slot_ttl_seconds", 300.0)
+    roles_raw: Any = section.get("roles", [])
+    max_slots: int = max_slots_raw if isinstance(max_slots_raw, int) and not isinstance(max_slots_raw, bool) else 3
+    slot_ttl: float = (
+        float(slot_ttl_raw) if isinstance(slot_ttl_raw, (int, float)) and not isinstance(slot_ttl_raw, bool) else 300.0
+    )
+    if not isinstance(roles_raw, list):
+        roles_raw = []
+    return WarmPoolConfig(
+        max_slots=max_slots,
+        slot_ttl_seconds=float(slot_ttl),
+        roles=[str(r) for r in cast("list[Any]", roles_raw)],
+    )
+
+
 def load_warm_pool_config(yaml_path: Path | None = None) -> WarmPoolConfig:
     """Load warm pool configuration from a YAML file.
 
@@ -274,29 +292,10 @@ def load_warm_pool_config(yaml_path: Path | None = None) -> WarmPoolConfig:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 continue
-            data_typed = cast("dict[str, Any]", data)
-            section_raw: Any = data_typed.get("warm_pool")
+            section_raw: Any = cast("dict[str, Any]", data).get("warm_pool")
             if not isinstance(section_raw, dict):
                 continue
-            section = cast("dict[str, Any]", section_raw)
-            max_slots_raw: Any = section.get("max_slots", 3)
-            slot_ttl_raw: Any = section.get("slot_ttl_seconds", 300.0)
-            roles_raw: Any = section.get("roles", [])
-            max_slots: int = (
-                max_slots_raw if isinstance(max_slots_raw, int) and not isinstance(max_slots_raw, bool) else 3
-            )
-            slot_ttl: float = (
-                float(slot_ttl_raw)
-                if isinstance(slot_ttl_raw, (int, float)) and not isinstance(slot_ttl_raw, bool)
-                else 300.0
-            )
-            if not isinstance(roles_raw, list):
-                roles_raw = []
-            return WarmPoolConfig(
-                max_slots=max_slots,
-                slot_ttl_seconds=float(slot_ttl),
-                roles=[str(r) for r in cast("list[Any]", roles_raw)],
-            )
+            return _parse_warm_pool_section(cast("dict[str, Any]", section_raw))
         except Exception:
             logger.debug("Warm pool: failed to parse config from %s", path)
             continue

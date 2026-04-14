@@ -185,23 +185,10 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
 
         # Strategy 1: Try SSO JWT validation (if SSO auth service is available)
         if self._auth_service is not None:
-            result = self._auth_service.validate_token(token)
-            if result is not None:
-                user, claims = result
-                request.state.user = user  # type: ignore[attr-defined]
-                request.state.auth_claims = claims  # type: ignore[attr-defined]
-
-                # RBAC check
-                permission = _get_required_permission(path, request.method)
-                if permission and not user.has_permission(permission):
-                    return JSONResponse(
-                        status_code=403,
-                        content={
-                            "detail": f"Insufficient permissions. Required: {permission}",
-                            "role": user.role.value,
-                        },
-                    )
-
+            sso_result = self._try_sso_auth(request, token, path)
+            if sso_result is not None:
+                if isinstance(sso_result, JSONResponse):
+                    return sso_result
                 response = await call_next(request)
                 return response
 
@@ -243,6 +230,33 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
             status_code=403,
             content={"detail": "Invalid or expired authentication token"},
         )
+
+    def _try_sso_auth(
+        self,
+        request: Request,
+        token: str,
+        path: str,
+    ) -> JSONResponse | bool | None:
+        """Validate SSO JWT. Returns JSONResponse on RBAC fail, True on success, None on miss."""
+        assert self._auth_service is not None
+        result = self._auth_service.validate_token(token)
+        if result is None:
+            return None
+
+        user, claims = result
+        request.state.user = user  # type: ignore[attr-defined]
+        request.state.auth_claims = claims  # type: ignore[attr-defined]
+
+        permission = _get_required_permission(path, request.method)
+        if permission and not user.has_permission(permission):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": f"Insufficient permissions. Required: {permission}",
+                    "role": user.role.value,
+                },
+            )
+        return True
 
     async def _try_agent_jwt(
         self,

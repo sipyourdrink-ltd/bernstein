@@ -270,6 +270,38 @@ def recap(request: Request) -> dict[str, Any]:
     }
 
 
+def _parse_numstat_output(stdout: str) -> dict[str, Any]:
+    """Parse ``git diff --numstat`` output into a summary dict."""
+    lines = stdout.strip().splitlines()
+    files_changed = 0
+    additions = 0
+    deletions = 0
+    changed_files: list[str] = []
+
+    for line in lines:
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        try:
+            add_count = int(parts[0]) if parts[0] != "-" else 0
+            del_count = int(parts[1]) if parts[1] != "-" else 0
+        except ValueError:
+            continue
+        files_changed += 1
+        additions += add_count
+        deletions += del_count
+        changed_files.append(parts[2])
+
+    return {
+        "files_changed": files_changed,
+        "additions": additions,
+        "deletions": deletions,
+        "changed_files": changed_files[:20],
+    }
+
+
 def _get_git_diff_stats(workdir: Path, done_tasks: list[Any]) -> dict[str, Any]:
     """Get git diff statistics for completed tasks.
 
@@ -311,35 +343,7 @@ def _get_git_diff_stats(workdir: Path, done_tasks: list[Any]) -> dict[str, Any]:
                 "changed_files": [],
             }
 
-        lines = result.stdout.strip().splitlines()
-        files_changed = 0
-        additions = 0
-        deletions = 0
-        changed_files: list[str] = []
-
-        for line in lines:
-            if not line.strip():
-                continue
-            parts = line.split()
-            if len(parts) >= 3:
-                # numstat format: additions<tab>deletions<tab>filename
-                try:
-                    add_count = int(parts[0]) if parts[0] != "-" else 0
-                    del_count = int(parts[1]) if parts[1] != "-" else 0
-                    filename = parts[2]
-                    files_changed += 1
-                    additions += add_count
-                    deletions += del_count
-                    changed_files.append(filename)
-                except ValueError:
-                    continue
-
-        return {
-            "files_changed": files_changed,
-            "additions": additions,
-            "deletions": deletions,
-            "changed_files": changed_files[:20],  # Limit to first 20 files
-        }
+        return _parse_numstat_output(result.stdout)
 
     except (subprocess.TimeoutExpired, OSError) as e:
         logger.warning("Error getting git diff stats: %s", e)
@@ -349,6 +353,19 @@ def _get_git_diff_stats(workdir: Path, done_tasks: list[Any]) -> dict[str, Any]:
             "deletions": 0,
             "changed_files": [],
         }
+
+
+def _score_to_grade(total: int) -> str:
+    """Map a numeric quality score to a letter grade."""
+    if total >= 90:
+        return "A"
+    if total >= 80:
+        return "B"
+    if total >= 70:
+        return "C"
+    if total >= 60:
+        return "D"
+    return "F"
 
 
 def _get_quality_score_distribution(workdir: Path, _done_tasks: list[Any]) -> dict[str, Any]:
@@ -389,31 +406,18 @@ def _get_quality_score_distribution(workdir: Path, _done_tasks: list[Any]) -> di
                 continue
             try:
                 data = json.loads(line)
-                total = data.get("total", 0)
-                if isinstance(total, int):
-                    scores.append(total)
-                    recent_scores.append(total)
-
-                    # Grade distribution
-                    if total >= 90:
-                        grades["A"] += 1
-                    elif total >= 80:
-                        grades["B"] += 1
-                    elif total >= 70:
-                        grades["C"] += 1
-                    elif total >= 60:
-                        grades["D"] += 1
-                    else:
-                        grades["F"] += 1
-
-                    # Gate breakdown
-                    breakdown = data.get("breakdown", {})
-                    for gate_name in gate_scores:
-                        if gate_name in breakdown:
-                            gate_scores[gate_name].append(breakdown[gate_name])
-
             except json.JSONDecodeError:
                 continue
+            total = data.get("total", 0)
+            if not isinstance(total, int):
+                continue
+            scores.append(total)
+            recent_scores.append(total)
+            grades[_score_to_grade(total)] += 1
+            breakdown = data.get("breakdown", {})
+            for gate_name in gate_scores:
+                if gate_name in breakdown:
+                    gate_scores[gate_name].append(breakdown[gate_name])
     except OSError:
         pass
 
@@ -498,6 +502,23 @@ def _get_cost_breakdown(workdir: Path) -> dict[str, Any]:
         }
 
 
+def _collect_trace_tokens(traces_dir: Path, complexity_tokens: dict[str, list[int]]) -> None:
+    """Read trace files and accumulate token counts by complexity bucket."""
+    for trace_file in traces_dir.glob("*.json"):
+        try:
+            data = cast(_CAST_DICT_STR_ANY, json.loads(trace_file.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+        complexity = data.get("complexity", "medium")
+        if isinstance(complexity, dict):
+            complexity = cast(_CAST_DICT_STR_ANY, complexity).get("value", "medium")
+        input_tokens = data.get("input_tokens", 0) or 0
+        output_tokens = data.get("output_tokens", 0) or 0
+        total_tokens = int(input_tokens) + int(output_tokens)
+        if complexity in complexity_tokens:
+            complexity_tokens[cast("str", complexity)].append(total_tokens)
+
+
 @router.get("/observability/token-histogram")
 def token_histogram(request: Request) -> dict[str, Any]:
     """Return histogram of token usage by task complexity.
@@ -517,21 +538,7 @@ def token_histogram(request: Request) -> dict[str, Any]:
     }
 
     if traces_dir.exists():
-        for trace_file in traces_dir.glob("*.json"):
-            try:
-                data = cast(_CAST_DICT_STR_ANY, json.loads(trace_file.read_text(encoding="utf-8")))
-                complexity = data.get("complexity", "medium")
-                if isinstance(complexity, dict):
-                    complexity = cast(_CAST_DICT_STR_ANY, complexity).get("value", "medium")
-
-                input_tokens = data.get("input_tokens", 0) or 0
-                output_tokens = data.get("output_tokens", 0) or 0
-                total_tokens = int(input_tokens) + int(output_tokens)
-
-                if complexity in complexity_tokens:
-                    complexity_tokens[cast("str", complexity)].append(total_tokens)
-            except (OSError, ValueError):
-                continue
+        _collect_trace_tokens(traces_dir, complexity_tokens)
 
     # Calculate statistics
     histogram = {}

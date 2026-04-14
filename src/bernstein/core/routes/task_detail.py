@@ -104,6 +104,21 @@ def task_detail(request: Request, task_id: str) -> TaskDetailResponse:
     )
 
 
+def _try_read_session_log(
+    session_id: str,
+    runtime_dir: Any,
+    read_fn: Any,
+    last_size: int,
+) -> tuple[str, int] | None:
+    """Try to read new log content for a session, returning (content, new_size) or None."""
+    if not session_id:
+        return None
+    log_path = _get_agent_log_path(runtime_dir, session_id)
+    if log_path is None or not log_path.exists():
+        return None
+    return read_fn(log_path, last_size)
+
+
 @router.get("/dashboard/tasks/{task_id}/logs/stream", responses={404: {"description": "Task not found"}})
 async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
     """Stream agent logs for a task via Server-Sent Events.
@@ -139,22 +154,18 @@ async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
             if await request.is_disconnected():
                 return
 
-            # Re-read task status to detect completion
             current_task = store.get_task(task_id)
             if current_task is not None and current_task.status.value in ("done", "failed", "cancelled"):
                 yield f'event: complete\ndata: {{"status": "{current_task.status.value}"}}\n\n'
                 break
 
-            if session_id:
-                log_path = _get_agent_log_path(runtime_dir, session_id)
-                if log_path is not None and log_path.exists():
-                    chunk = _read_new_log_content(log_path, last_size)
-                    if chunk is not None:
-                        new_content, last_size = chunk
-                        idle_ticks = 0
-                        for line in new_content.splitlines():
-                            yield f"event: log\ndata: {line}\n\n"
-                        continue
+            new_data = _try_read_session_log(session_id, runtime_dir, _read_new_log_content, last_size)
+            if new_data is not None:
+                new_content, last_size = new_data
+                idle_ticks = 0
+                for line in new_content.splitlines():
+                    yield f"event: log\ndata: {line}\n\n"
+                continue
 
             idle_ticks += 1
             yield f'event: ping\ndata: {{"ts": {time.time()}}}\n\n'

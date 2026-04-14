@@ -27,33 +27,11 @@ def undo_cmd(task_id: str | None, revert_all: bool, yes: bool) -> None:
         console.print("[red]Error:[/red] Specify a task ID or use --all")
         return
 
-    # Find commits to revert
-    # We look for commits with "[bernstein] task:<id>" in the message
-    commits_to_revert: list[tuple[str, str]] = []  # (hash, subject)
-
-    try:
-        # Get last 50 commits to search
-        res = subprocess.run(
-            ["git", "log", "-n", "50", "--pretty=format:%H %s"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            cwd=".",
-        )
-        for line in res.stdout.splitlines():
-            h, s = line.split(" ", 1)
-            if (revert_all and "[bernstein]" in s) or (task_id and f"task:{task_id}" in s):
-                commits_to_revert.append((h, s))
-    except Exception as exc:
-        console.print(f"[red]Error:[/red] Failed to read git log: {exc}")
-        return
-
+    commits_to_revert = _find_commits_to_revert(task_id, revert_all)
     if not commits_to_revert:
         console.print("[yellow]No matching commits found to undo.[/yellow]")
         return
 
-    # Show preview
     console.print(
         Panel(
             "\n".join([f"- [cyan]{h[:8]}[/cyan] {s}" for h, s in commits_to_revert]),
@@ -66,51 +44,74 @@ def undo_cmd(task_id: str | None, revert_all: bool, yes: bool) -> None:
         console.print("[dim]Cancelled.[/dim]")
         return
 
-    # Revert in reverse order (newest first)
+    success_count = _execute_reverts(commits_to_revert)
+
+    if success_count > 0:
+        console.print(f"\n[green]✓[/green] Successfully reverted {success_count} commit(s).")
+        _log_undo_audit(task_id, revert_all, success_count)
+        _run_post_revert_tests()
+
+
+def _find_commits_to_revert(task_id: str | None, revert_all: bool) -> list[tuple[str, str]]:
+    """Find commits matching the revert criteria."""
+    try:
+        res = subprocess.run(
+            ["git", "log", "-n", "50", "--pretty=format:%H %s"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=".",
+        )
+        commits: list[tuple[str, str]] = []
+        for line in res.stdout.splitlines():
+            h, s = line.split(" ", 1)
+            if (revert_all and "[bernstein]" in s) or (task_id and f"task:{task_id}" in s):
+                commits.append((h, s))
+        return commits
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] Failed to read git log: {exc}")
+        return []
+
+
+def _execute_reverts(commits: list[tuple[str, str]]) -> int:
+    """Execute git reverts and return the count of successful reverts."""
     success_count = 0
-    for h, s in commits_to_revert:
+    for h, s in commits:
         console.print(f"Reverting [cyan]{h[:8]}[/cyan] {s}...")
         try:
-            # We use git revert -n to avoid individual commits if we want to batch them,
-            # but the ticket implies individual revert commits.
             subprocess.run(["git", "revert", "--no-edit", h], check=True, capture_output=True)
             success_count += 1
         except subprocess.CalledProcessError as e:
             console.print(f"[red]Failed to revert {h[:8]}:[/red] {e.stderr.decode()}")
             if not click.confirm("Continue with remaining reverts?", default=True):
                 break
+    return success_count
 
-    if success_count > 0:
-        console.print(f"\n[green]✓[/green] Successfully reverted {success_count} commit(s).")
 
-        # Audit trail
-        try:
-            from bernstein.core.lifecycle import get_audit_log
+def _log_undo_audit(task_id: str | None, revert_all: bool, success_count: int) -> None:
+    """Log undo action to audit trail (best-effort)."""
+    try:
+        from bernstein.core.lifecycle import get_audit_log
 
-            audit = get_audit_log()
-            if audit:
-                audit.log(
-                    event_type="git.undo",
-                    actor="user",
-                    resource_type="session",
-                    resource_id=task_id or "all",
-                    details={
-                        "action": "revert",
-                        "commit_count": success_count,
-                        "task_id": task_id,
-                        "revert_all": revert_all,
-                    },
-                )
-        except Exception:
-            pass  # Audit logging is best-effort
+        audit = get_audit_log()
+        if audit:
+            audit.log(
+                event_type="git.undo",
+                actor="user",
+                resource_type="session",
+                resource_id=task_id or "all",
+                details={
+                    "action": "revert", "commit_count": success_count,
+                    "task_id": task_id, "revert_all": revert_all,
+                },
+            )
+    except Exception:
+        pass
 
-        # Post-revert safety: run tests
 
-        console.print("\n[bold]Running verification tests...[/bold]")
-        try:
-            # Try to find a test command
-            test_cmd = ["pytest", "-q"] if Path("tests").exists() else ["npm", "test"]
-            subprocess.run(test_cmd, check=True)
-            console.print("[green]✓[/green] Tests passed after rollback.")
-        except Exception:
-            console.print("[yellow]⚠ Tests failed after rollback. Manual inspection required.[/yellow]")
+def _run_post_revert_tests() -> None:
+    """Run verification tests after revert."""
+    console.print("\n[bold]Running verification tests...[/bold]")
+    try:
+        test_cmd = ["pytest", "-q"] if Path("tests").exists() else ["npm", "test"]
+        subprocess.run(test_cmd, check=True)
+        console.print("[green]✓[/green] Tests passed after rollback.")
+    except Exception:
+        console.print("[yellow]⚠ Tests failed after rollback. Manual inspection required.[/yellow]")

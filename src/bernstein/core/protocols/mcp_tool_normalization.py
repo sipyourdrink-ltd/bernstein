@@ -142,6 +142,59 @@ class SchemaValidationError:
     message: str
 
 
+def _validate_properties(properties: Any) -> list[SchemaValidationError]:
+    """Validate the ``properties`` field of a schema."""
+    if properties is None:
+        return []
+    if not isinstance(properties, dict):
+        return [SchemaValidationError(path="/properties", message="'properties' must be an object")]
+    errors: list[SchemaValidationError] = []
+    props_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, properties)
+    for prop_name_raw, prop_schema_raw in props_dict.items():
+        prop_name: str = str(prop_name_raw)
+        prop_path = f"/properties/{prop_name}"
+        if not isinstance(prop_schema_raw, dict):
+            errors.append(SchemaValidationError(path=prop_path, message="Property schema must be an object"))
+            continue
+        prop_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, prop_schema_raw)
+        prop_type: str | None = cast(_CAST_STR_NONE, prop_dict.get("type"))
+        if prop_type is not None and prop_type not in _VALID_TYPES:
+            errors.append(SchemaValidationError(path=f"{prop_path}/type", message=f"Unknown type: {prop_type!r}"))
+    return errors
+
+
+def _validate_required(required: Any, properties: Any) -> list[SchemaValidationError]:
+    """Validate the ``required`` field of a schema."""
+    if required is None:
+        return []
+    if not isinstance(required, list):
+        return [SchemaValidationError(path="/required", message="'required' must be an array")]
+    if properties is None or not isinstance(properties, dict):
+        return []
+    errors: list[SchemaValidationError] = []
+    for req_name in cast("list[str]", required):
+        if req_name not in properties:
+            errors.append(
+                SchemaValidationError(
+                    path="/required", message=f"Required property {req_name!r} not found in properties"
+                )
+            )
+    return errors
+
+
+def _validate_items(items: Any) -> list[SchemaValidationError]:
+    """Validate the ``items`` field of a schema (for array types)."""
+    if items is None:
+        return []
+    if not isinstance(items, dict):
+        return [SchemaValidationError(path="/items", message="'items' must be an object")]
+    items_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, items)
+    items_type: str | None = cast(_CAST_STR_NONE, items_dict.get("type"))
+    if items_type is not None and items_type not in _VALID_TYPES:
+        return [SchemaValidationError(path="/items/type", message=f"Unknown type: {items_type!r}")]
+    return []
+
+
 def validate_tool_schema(schema: dict[str, Any]) -> list[SchemaValidationError]:
     """Validate a tool's parameter schema against a JSON Schema subset.
 
@@ -159,66 +212,54 @@ def validate_tool_schema(schema: dict[str, Any]) -> list[SchemaValidationError]:
     """
     errors: list[SchemaValidationError] = []
 
-    # Top-level type check
     schema_type = schema.get("type")
     if schema_type is not None and schema_type not in _VALID_TYPES:
         errors.append(SchemaValidationError(path="/type", message=f"Unknown type: {schema_type!r}"))
 
-    # Properties check
-    properties: Any = schema.get("properties")
-    if properties is not None:
-        if not isinstance(properties, dict):
-            errors.append(SchemaValidationError(path="/properties", message="'properties' must be an object"))
-        else:
-            props_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, properties)
-            for prop_name_raw, prop_schema_raw in props_dict.items():
-                prop_name: str = str(prop_name_raw)
-                prop_path = f"/properties/{prop_name}"
-                if not isinstance(prop_schema_raw, dict):
-                    errors.append(SchemaValidationError(path=prop_path, message="Property schema must be an object"))
-                    continue
-                prop_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, prop_schema_raw)
-                prop_type: str | None = cast(_CAST_STR_NONE, prop_dict.get("type"))
-                if prop_type is not None and prop_type not in _VALID_TYPES:
-                    errors.append(
-                        SchemaValidationError(
-                            path=f"{prop_path}/type",
-                            message=f"Unknown type: {prop_type!r}",
-                        )
-                    )
+    properties = schema.get("properties")
+    errors.extend(_validate_properties(properties))
+    errors.extend(_validate_required(schema.get("required"), properties))
+    errors.extend(_validate_items(schema.get("items")))
 
-    # Required check
-    required: Any = schema.get("required")
-    if required is not None:
-        if not isinstance(required, list):
-            errors.append(SchemaValidationError(path="/required", message="'required' must be an array"))
-        elif properties is not None and isinstance(properties, dict):
-            req_list: list[str] = cast("list[str]", required)
-            for req_name in req_list:
-                if req_name not in properties:
-                    errors.append(
-                        SchemaValidationError(
-                            path="/required",
-                            message=f"Required property {req_name!r} not found in properties",
-                        )
-                    )
+    return errors
 
-    # Items check (for array types)
-    items: Any = schema.get("items")
-    if items is not None:
-        if not isinstance(items, dict):
-            errors.append(SchemaValidationError(path="/items", message="'items' must be an object"))
-        else:
-            items_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, items)
-            items_type: str | None = cast(_CAST_STR_NONE, items_dict.get("type"))
-            if items_type is not None and items_type not in _VALID_TYPES:
-                errors.append(
-                    SchemaValidationError(
-                        path="/items/type",
-                        message=f"Unknown type: {items_type!r}",
-                    )
+
+def _check_required_params(params: dict[str, Any], schema: dict[str, Any]) -> list[SchemaValidationError]:
+    """Check that all required parameters are present."""
+    required_raw: Any = schema.get("required", [])
+    if not isinstance(required_raw, list):
+        return []
+    errors: list[SchemaValidationError] = []
+    for req_name in cast("list[str]", required_raw):
+        if req_name not in params:
+            errors.append(
+                SchemaValidationError(path=f"/params/{req_name}", message=f"Missing required parameter: {req_name!r}")
+            )
+    return errors
+
+
+def _check_param_types(params: dict[str, Any], schema: dict[str, Any]) -> list[SchemaValidationError]:
+    """Check that provided parameter types match schema expectations."""
+    properties_raw: Any = schema.get("properties", {})
+    if not isinstance(properties_raw, dict):
+        return []
+    errors: list[SchemaValidationError] = []
+    props_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, properties_raw)
+    for param_name, param_value in params.items():
+        if param_name not in props_dict:
+            continue
+        prop_schema_raw: Any = props_dict[param_name]
+        if not isinstance(prop_schema_raw, dict):
+            continue
+        prop_schema: dict[str, Any] = cast(_CAST_DICT_STR_ANY, prop_schema_raw)
+        expected_type: str | None = cast(_CAST_STR_NONE, prop_schema.get("type"))
+        if expected_type is not None and not _type_matches(param_value, expected_type):
+            errors.append(
+                SchemaValidationError(
+                    path=f"/params/{param_name}",
+                    message=f"Type mismatch: expected {expected_type!r}, got {type(param_value).__name__!r}",
                 )
-
+            )
     return errors
 
 
@@ -237,40 +278,8 @@ def validate_tool_params(params: dict[str, Any], schema: dict[str, Any]) -> list
         List of validation errors (empty if valid).
     """
     errors: list[SchemaValidationError] = []
-
-    # Check required parameters
-    required_raw: Any = schema.get("required", [])
-    if isinstance(required_raw, list):
-        req_list: list[str] = cast("list[str]", required_raw)
-        for req_name in req_list:
-            if req_name not in params:
-                errors.append(
-                    SchemaValidationError(
-                        path=f"/params/{req_name}",
-                        message=f"Missing required parameter: {req_name!r}",
-                    )
-                )
-
-    # Check types of provided parameters
-    properties_raw: Any = schema.get("properties", {})
-    if isinstance(properties_raw, dict):
-        props_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, properties_raw)
-        for param_name, param_value in params.items():
-            if param_name not in props_dict:
-                continue
-            prop_schema_raw: Any = props_dict[param_name]
-            if not isinstance(prop_schema_raw, dict):
-                continue
-            prop_schema: dict[str, Any] = cast(_CAST_DICT_STR_ANY, prop_schema_raw)
-            expected_type: str | None = cast(_CAST_STR_NONE, prop_schema.get("type"))
-            if expected_type is not None and not _type_matches(param_value, expected_type):
-                errors.append(
-                    SchemaValidationError(
-                        path=f"/params/{param_name}",
-                        message=(f"Type mismatch: expected {expected_type!r}, got {type(param_value).__name__!r}"),
-                    )
-                )
-
+    errors.extend(_check_required_params(params, schema))
+    errors.extend(_check_param_types(params, schema))
     return errors
 
 

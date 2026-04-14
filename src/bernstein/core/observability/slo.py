@@ -214,6 +214,27 @@ class ErrorBudgetPolicy:
         return actions
 
 
+def _breach_projection_text(eb: Any, days_to_breach: float | None) -> str:
+    """Generate a human-readable breach projection string."""
+    if eb.is_depleted:
+        return "Error budget exhausted — SLO breached now"
+    if days_to_breach is None:
+        return "On track — error budget not at risk"
+    if days_to_breach < 1:
+        hours = days_to_breach * 24
+        return f"SLO will breach in {hours:.1f} hours at current rate"
+    return f"SLO will breach in {days_to_breach:.1f} days at current rate"
+
+
+def _burndown_status(eb: Any) -> str:
+    """Determine burndown dashboard status from error budget."""
+    if eb.is_depleted or eb.burn_rate > 3.0:
+        return SLOStatus.RED.value
+    if eb.burn_rate > 1.5 or eb.budget_fraction < 0.3:
+        return SLOStatus.YELLOW.value
+    return SLOStatus.GREEN.value
+
+
 @dataclass
 class SLOTracker:
     """Tracks all SLOs and error budget for a run.
@@ -301,25 +322,8 @@ class SLOTracker:
             for s in self._burn_history[-20:]
         ]
 
-        # Human-readable breach projection
-        breach_projection: str
-        if eb.is_depleted:
-            breach_projection = "Error budget exhausted — SLO breached now"
-        elif days_to_breach is None:
-            breach_projection = "On track — error budget not at risk"
-        elif days_to_breach < 1:
-            hours = days_to_breach * 24
-            breach_projection = f"SLO will breach in {hours:.1f} hours at current rate"
-        else:
-            breach_projection = f"SLO will breach in {days_to_breach:.1f} days at current rate"
-
-        # Determine status based on burn rate and budget fraction
-        if eb.is_depleted or eb.burn_rate > 3.0:
-            status = SLOStatus.RED.value
-        elif eb.burn_rate > 1.5 or eb.budget_fraction < 0.3:
-            status = SLOStatus.YELLOW.value
-        else:
-            status = SLOStatus.GREEN.value
+        breach_projection = _breach_projection_text(eb, days_to_breach)
+        status = _burndown_status(eb)
 
         return {
             "slo_name": "task_success",

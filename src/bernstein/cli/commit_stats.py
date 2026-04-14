@@ -94,6 +94,44 @@ _GIT_LOG_FMT = "%an <%ae>%t%ad"
 _GIT_NUMSTAT_FMT = "%aN%n"  # author name then numstat block
 
 
+def _parse_numstat_line(
+    line: str, current_author: str | None
+) -> tuple[str | None, tuple[str, int, int] | None]:
+    """Parse a single line from git log --numstat output.
+
+    Returns:
+        (new_author, row) where row is (author, added, deleted) or None.
+    """
+    line = line.strip()
+    if not line:
+        return current_author, None
+    # Author lines don't have tabs; numstat lines do
+    if "\t" not in line:
+        return line, None
+    if current_author is None:
+        return None, None
+    parts = line.split("\t")
+    if len(parts) < 2:
+        return current_author, None
+    try:
+        added = int(parts[0]) if parts[0] != "-" else 0
+        deleted = int(parts[1]) if parts[1] != "-" else 0
+    except ValueError:
+        return current_author, None
+    return current_author, (current_author, added, deleted)
+
+
+def _parse_numstat_output(output: str) -> list[tuple[str, int, int]]:
+    """Parse ``git log --numstat`` output into (author, added, deleted) rows."""
+    rows: list[tuple[str, int, int]] = []
+    current_author: str | None = None
+    for line in output.splitlines():
+        current_author, row = _parse_numstat_line(line, current_author)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
 def _run_git_log(
     repo_dir: str = ".",
     since: str | None = None,
@@ -122,31 +160,52 @@ def _run_git_log(
     if result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
 
-    lines = result.stdout.splitlines()
-    rows: list[tuple[str, int, int]] = []
-    current_author: str | None = None
+    return _parse_numstat_output(result.stdout)
 
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        # Author lines are in "<Name <email>>" format — not numstat (which has tabs)
-        if "\t" not in line:
-            current_author = line
-            continue
-        if current_author is None:
-            continue
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        try:
-            added = int(parts[0]) if parts[0] != "-" else 0
-            deleted = int(parts[1]) if parts[1] != "-" else 0
-        except ValueError:
-            continue
-        rows.append((current_author, added, deleted))
 
-    return rows
+def _aggregate_role_stats(
+    rows: list[tuple[str, int, int]],
+) -> tuple[dict[str, RoleStats], int, int]:
+    """Aggregate numstat rows into per-role stats and totals."""
+    role_stats: dict[str, RoleStats] = {}
+    total_added = 0
+    total_deleted = 0
+    for author, added, deleted in rows:
+        role = _author_to_role(author)
+        if role not in role_stats:
+            role_stats[role] = RoleStats()
+        role_stats[role] = role_stats[role].merge(RoleStats(lines_added=added, lines_deleted=deleted))
+        total_added += added
+        total_deleted += deleted
+    return role_stats, total_added, total_deleted
+
+
+def _count_commits_by_role(
+    repo_dir: str,
+    since: str | None,
+    until: str | None,
+) -> dict[str, int] | CommitStatsResult:
+    """Count commits per role via ``git log``. Returns error result on failure."""
+    total_commits_map: dict[str, int] = {}
+    author_cmd: list[str] = ["git", "-C", repo_dir, "log", "--format=%an <%ae>"]
+    if since:
+        author_cmd.extend(["--since", since])
+    if until:
+        author_cmd.extend(["--until", until])
+    try:
+        author_result = subprocess.run(
+            author_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        if author_result.returncode == 0:
+            for line in author_result.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                role = _author_to_role(line)
+                total_commits_map[role] = total_commits_map.get(role, 0) + 1
+    except (OSError, subprocess.SubprocessError) as exc:
+        return CommitStatsResult(error=str(exc))
+    return total_commits_map
 
 
 def collect_commit_stats(
@@ -175,49 +234,11 @@ def collect_commit_stats(
     if not rows:
         return CommitStatsResult()
 
-    role_stats: dict[str, RoleStats] = {}
-    total_added = 0
-    total_deleted = 0
-    total_commits_map: dict[str, int] = {}
+    role_stats, total_added, total_deleted = _aggregate_role_stats(rows)
+    total_commits_map = _count_commits_by_role(repo_dir, since, until)
+    if isinstance(total_commits_map, CommitStatsResult):
+        return total_commits_map  # error result
 
-    for author, added, deleted in rows:
-        role = _author_to_role(author)
-        if role not in role_stats:
-            role_stats[role] = RoleStats()
-        role_stats[role] = role_stats[role].merge(RoleStats(lines_added=added, lines_deleted=deleted))
-
-        # Count commits — we count unique (author, changed-lines) groups
-        # A simpler approach: increment per numstat line but track unique commits
-        total_added += added
-        total_deleted += deleted
-
-    # Count unique commits via a second git log call (cheap)
-    commit_cmd: list[str] = ["git", "-C", repo_dir, "log", "--oneline"]
-    if since:
-        commit_cmd.extend(["--since", since])
-    if until:
-        commit_cmd.extend(["--until", until])
-
-    try:
-        commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if commit_result.returncode == 0:
-            author_cmd: list[str] = ["git", "-C", repo_dir, "log", "--format=%an <%ae>"]
-            if since:
-                author_cmd.extend(["--since", since])
-            if until:
-                author_cmd.extend(["--until", until])
-            author_result = subprocess.run(
-                author_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
-            )
-            if author_result.returncode == 0:
-                author_lines = [line.strip() for line in author_result.stdout.splitlines() if line.strip()]
-                for author_line in author_lines:
-                    role = _author_to_role(author_line)
-                    total_commits_map[role] = total_commits_map.get(role, 0) + 1
-    except (OSError, subprocess.SubprocessError) as exc:
-        return CommitStatsResult(error=str(exc))
-
-    # Set commit counts on role stats
     final_roles: dict[str, RoleStats] = {}
     for role in sorted(role_stats):
         stats = role_stats[role]

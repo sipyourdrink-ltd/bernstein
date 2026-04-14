@@ -525,6 +525,79 @@ def _render_predecessor_context(tasks: list[Task], task_graph: TaskGraph | None)
     )
 
 
+def _resolve_role_prompt(
+    role: str,
+    tasks: list[Task],
+    context: dict[str, Any],
+    templates_dir: Path,
+    catalog_system_prompt: str | None,
+    agency_catalog: dict[str, AgencyAgent] | None,
+    prompt_optimizer: Any | None,
+) -> tuple[str, Any]:
+    """Resolve the role prompt from catalog, optimizer, template, or fallback."""
+    if catalog_system_prompt:
+        return catalog_system_prompt, None
+
+    optimizer_override: str | None = None
+    _optimizer_assignment: Any = None
+    if prompt_optimizer is not None:
+        try:
+            task_id = tasks[0].id if tasks else ""
+            _optimizer_assignment = prompt_optimizer.assign_variant(role=role, task_id=task_id)
+            optimizer_override = _optimizer_assignment.content_override
+            if optimizer_override:
+                logger.debug(
+                    "PromptOptimizer: using variant v%s for role %r task %r",
+                    _optimizer_assignment.variant_version,
+                    role,
+                    task_id,
+                )
+        except Exception as _opt_exc:
+            logger.debug("PromptOptimizer variant selection failed: %s", _opt_exc)
+
+    if optimizer_override:
+        return optimizer_override, _optimizer_assignment
+
+    try:
+        return render_role_prompt(role, context, templates_dir=templates_dir), _optimizer_assignment
+    except (FileNotFoundError, TemplateError) as exc:
+        logger.debug("Template render failed for role %s, using fallback: %s", role, exc)
+        return _render_fallback(role, templates_dir, agency_catalog), _optimizer_assignment
+
+
+def _get_lesson_context(role: str, tasks: list[Task], workdir: Path) -> str:
+    """Load and cache lesson context for a role, enforcing budget."""
+    sdd_dir = workdir / ".sdd"
+    lesson_tags = _extract_tags_from_tasks(tasks)
+    cache_key = f"{role}:{','.join(lesson_tags)}"
+    now = _time.monotonic()
+    cached_lesson = _lesson_cache.get(cache_key)
+    if cached_lesson is not None and (now - cached_lesson[0]) < _LESSON_CACHE_TTL:
+        lesson_context = cached_lesson[1]
+        logger.debug("Lesson cache hit for role=%s (%d chars)", role, len(lesson_context))
+    else:
+        lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
+        _lesson_cache[cache_key] = (now, lesson_context)
+        logger.debug("Lesson cache miss for role=%s, extracted %d chars", role, len(lesson_context))
+
+    # Evict expired entries
+    if len(_lesson_cache) > 50:
+        expired_keys = [k for k, (ts, _) in _lesson_cache.items() if now - ts > _LESSON_CACHE_TTL]
+        for k in expired_keys:
+            del _lesson_cache[k]
+        if expired_keys:
+            logger.debug("Lesson cache cleaned %d expired entries", len(expired_keys))
+
+    # Enforce budget
+    from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS
+
+    lesson_budget = DEFAULT_CATEGORY_BUDGETS.get("lessons", 5_000)
+    if lesson_context and (len(lesson_context) // 4) > lesson_budget:
+        logger.info("Truncating lessons: exceeded budget of %d tokens", lesson_budget)
+        lesson_context = lesson_context[: lesson_budget * 4] + "..."
+    return lesson_context
+
+
 def _render_prompt(
     tasks: list[Task],
     templates_dir: Path,
@@ -644,69 +717,17 @@ def _render_prompt(
         "SPECIALISTS": specialist_block,
     }
 
-    # Use catalog system prompt when available (Agency specialist prompt),
-    # otherwise fall back to role template or built-in default.
-    # When a PromptOptimizer is active, it may override the role prompt with
-    # a variant assigned via A/B testing.
-    _optimizer_assignment: Any = None
-    if catalog_system_prompt:
-        role_prompt = catalog_system_prompt
-    else:
-        # Check prompt optimizer for an active variant before loading template
-        optimizer_override: str | None = None
-        if prompt_optimizer is not None:
-            try:
-                task_id = tasks[0].id if tasks else ""
-                _optimizer_assignment = prompt_optimizer.assign_variant(role=role, task_id=task_id)
-                optimizer_override = _optimizer_assignment.content_override
-                if optimizer_override:
-                    logger.debug(
-                        "PromptOptimizer: using variant v%s for role %r task %r",
-                        _optimizer_assignment.variant_version,
-                        role,
-                        task_id,
-                    )
-            except Exception as _opt_exc:
-                logger.debug("PromptOptimizer variant selection failed: %s", _opt_exc)
+    role_prompt, _optimizer_assignment = _resolve_role_prompt(
+        role,
+        tasks,
+        context,
+        templates_dir,
+        catalog_system_prompt,
+        agency_catalog,
+        prompt_optimizer,
+    )
 
-        if optimizer_override:
-            role_prompt = optimizer_override
-        else:
-            try:
-                role_prompt = render_role_prompt(role, context, templates_dir=templates_dir)
-            except (FileNotFoundError, TemplateError) as exc:
-                logger.debug("Template render failed for role %s, using fallback: %s", role, exc)
-                role_prompt = _render_fallback(role, templates_dir, agency_catalog)
-
-    # Inject prior agent lessons based on task tags (cached per role)
-    sdd_dir = workdir / ".sdd"
-    lesson_tags = _extract_tags_from_tasks(tasks)
-    cache_key = f"{role}:{','.join(lesson_tags)}"
-    now = _time.monotonic()
-    cached_lesson = _lesson_cache.get(cache_key)
-    if cached_lesson is not None and (now - cached_lesson[0]) < _LESSON_CACHE_TTL:
-        lesson_context = cached_lesson[1]
-        logger.debug("Lesson cache hit for role=%s (%d chars)", role, len(lesson_context))
-    else:
-        lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
-        _lesson_cache[cache_key] = (now, lesson_context)
-        logger.debug("Lesson cache miss for role=%s, extracted %d chars", role, len(lesson_context))
-
-    # Evict expired lesson cache entries when size exceeds 50
-    if len(_lesson_cache) > 50:
-        expired_keys = [k for k, (ts, _) in _lesson_cache.items() if now - ts > _LESSON_CACHE_TTL]
-        for k in expired_keys:
-            del _lesson_cache[k]
-        if expired_keys:
-            logger.debug("Lesson cache cleaned %d expired entries", len(expired_keys))
-
-    # Enforce lesson budget
-    from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS
-
-    lesson_budget = DEFAULT_CATEGORY_BUDGETS.get("lessons", 5_000)
-    if lesson_context and (len(lesson_context) // 4) > lesson_budget:
-        logger.info("Truncating lessons: exceeded budget of %d tokens", lesson_budget)
-        lesson_context = lesson_context[: lesson_budget * 4] + "..."
+    lesson_context = _get_lesson_context(role, tasks, workdir)
 
     # Assemble final prompt as named sections for budget-aware compression
     from bernstein.core.section_dedup import deduplicate_section

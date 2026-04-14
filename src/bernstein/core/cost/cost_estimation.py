@@ -78,6 +78,58 @@ class PreSpawnEstimate:
 # ---------------------------------------------------------------------------
 
 
+def _refine_with_history(
+    metrics_dir: Path | None,
+    task: Task,
+    model: str,
+    estimated_total_k: float,
+    est_input: int,
+    est_output: int,
+    source: str,
+    confidence: float,
+    _model_cost: Any,
+    EpsilonGreedyBandit: Any,
+    MIN_OBSERVATIONS: int,
+) -> tuple[int, int, str, float]:
+    """Refine token estimates with historical bandit data."""
+    if not metrics_dir or not metrics_dir.exists():
+        return est_input, est_output, source, confidence
+    bandit = EpsilonGreedyBandit.load(metrics_dir)
+    arm = bandit.get_arm(task.role, model)
+    if not arm or arm.observations < MIN_OBSERVATIONS:
+        return est_input, est_output, source, confidence
+    cost_per_1k = _model_cost(model)
+    if cost_per_1k <= 0:
+        return est_input, est_output, source, confidence
+    hist_tokens_k = arm.avg_cost_usd / cost_per_1k
+    weight = 1.0 / (1.0 + arm.observations / 10.0)
+    blended_k = (weight * estimated_total_k) + ((1 - weight) * hist_tokens_k)
+    return (
+        int(blended_k * 1000 * 0.6),
+        int(blended_k * 1000 * 0.4),
+        "historical",
+        min(0.5 + arm.observations / 20.0, 0.95),
+    )
+
+
+def _compute_token_cost(
+    model: str,
+    est_input: int,
+    est_output: int,
+    model_costs: dict[str, Any],
+    _model_cost: Any,
+) -> float:
+    """Compute cost using detailed or fallback pricing."""
+    model_lower = model.lower()
+    for key, costs in model_costs.items():
+        if key in model_lower:
+            cost = (est_input / 1_000_000.0) * costs.get("input", 0.0)
+            cost += (est_output / 1_000_000.0) * costs.get("output", 0.0)
+            return cost
+    cost_per_1k = _model_cost(model)
+    return ((est_input + est_output) / 1000.0) * cost_per_1k
+
+
 def estimate_spawn_cost(
     task: Task,
     *,
@@ -120,34 +172,21 @@ def estimate_spawn_cost(
     confidence = 0.3
 
     # Refine with historical data if available
-    if metrics_dir and metrics_dir.exists():
-        bandit = EpsilonGreedyBandit.load(metrics_dir)
-        arm = bandit.get_arm(task.role, model)
-        if arm and arm.observations >= MIN_OBSERVATIONS:
-            cost_per_1k = _model_cost(model)
-            if cost_per_1k > 0:
-                hist_tokens_k = arm.avg_cost_usd / cost_per_1k
-                weight = 1.0 / (1.0 + arm.observations / 10.0)
-                blended_k = (weight * estimated_total_k) + ((1 - weight) * hist_tokens_k)
-                est_input = int(blended_k * 1000 * 0.6)
-                est_output = int(blended_k * 1000 * 0.4)
-                source = "historical"
-                confidence = min(0.5 + arm.observations / 20.0, 0.95)
+    est_input, est_output, source, confidence = _refine_with_history(
+        metrics_dir,
+        task,
+        model,
+        estimated_total_k,
+        est_input,
+        est_output,
+        source,
+        confidence,
+        _model_cost,
+        EpsilonGreedyBandit,
+        MIN_OBSERVATIONS,
+    )
 
-    # Compute cost using detailed pricing if available
-    model_lower = model.lower()
-    pricing = None
-    for key, costs in MODEL_COSTS_PER_1M_TOKENS.items():
-        if key in model_lower:
-            pricing = costs
-            break
-
-    if pricing:
-        cost = (est_input / 1_000_000.0) * pricing.get("input", 0.0)
-        cost += (est_output / 1_000_000.0) * pricing.get("output", 0.0)
-    else:
-        cost_per_1k = _model_cost(model)
-        cost = ((est_input + est_output) / 1000.0) * cost_per_1k
+    cost = _compute_token_cost(model, est_input, est_output, MODEL_COSTS_PER_1M_TOKENS, _model_cost)
 
     return PreSpawnEstimate(
         model=model,

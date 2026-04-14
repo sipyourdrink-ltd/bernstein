@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 from bernstein.core.streaming_merge import (
     IncrementalChunk,
     StreamingMergeManager,
@@ -193,38 +191,34 @@ class TestShouldStream:
 class TestMergeChunk:
     """Tests for chunk merging."""
 
-    @pytest.mark.asyncio
-    async def test_merge_passed_chunk(self) -> None:
+    def test_merge_passed_chunk(self) -> None:
         chunk = IncrementalChunk(
             chunk_id="c1",
             task_id="t1",
             files=("src/a.py",),
             quality_gate_passed=True,
         )
-        assert await merge_chunk(chunk)
+        assert merge_chunk(chunk)
 
-    @pytest.mark.asyncio
-    async def test_reject_failed_quality_gate(self) -> None:
+    def test_reject_failed_quality_gate(self) -> None:
         chunk = IncrementalChunk(
             chunk_id="c1",
             task_id="t1",
             files=("src/a.py",),
             quality_gate_passed=False,
         )
-        assert not await merge_chunk(chunk)
+        assert not merge_chunk(chunk)
 
-    @pytest.mark.asyncio
-    async def test_merge_empty_files(self) -> None:
+    def test_merge_empty_files(self) -> None:
         chunk = IncrementalChunk(
             chunk_id="c1",
             task_id="t1",
             files=(),
             quality_gate_passed=True,
         )
-        assert await merge_chunk(chunk)
+        assert merge_chunk(chunk)
 
-    @pytest.mark.asyncio
-    async def test_merge_final_chunk(self) -> None:
+    def test_merge_final_chunk(self) -> None:
         chunk = IncrementalChunk(
             chunk_id="c1",
             task_id="t1",
@@ -232,7 +226,7 @@ class TestMergeChunk:
             quality_gate_passed=True,
             is_final=True,
         )
-        assert await merge_chunk(chunk)
+        assert merge_chunk(chunk)
 
 
 # ---------------------------------------------------------------------------

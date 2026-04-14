@@ -120,6 +120,54 @@ def _collect_signal_results(
     return results
 
 
+async def _evaluate_judge_signals(
+    task: Task,
+    workdir: Path,
+    signal_results: list[tuple[str, bool, str]],
+) -> JudgeVerdict | None:
+    """Evaluate llm_judge signals and append results to signal_results."""
+    judge_signals = [s for s in task.completion_signals if s.type == "llm_judge"]
+    if not judge_signals:
+        return None
+
+    non_judge_ok = all(ok for _, ok, _ in signal_results)
+    if not non_judge_ok:
+        for js in judge_signals:
+            signal_results.append((f"llm_judge: {js.value}", False, "skipped: prerequisite signals failed"))
+        return None
+
+    criteria = judge_signals[0].value
+    verdict = await judge_task(task, workdir, criteria)
+    judge_desc = f"llm_judge: {criteria}"
+    if verdict.verdict == "accept":
+        signal_results.append((judge_desc, True, f"accepted (confidence: {verdict.confidence:.2f})"))
+    else:
+        signal_results.append((judge_desc, False, f"retry: {verdict.feedback}"))
+    return verdict
+
+
+async def _create_fix_tasks_if_needed(
+    task: Task,
+    all_passed: bool,
+    failed_descs: list[str],
+    judge_verdict: JudgeVerdict | None,
+    server_url: str | None,
+    workdir: Path,
+) -> list[str]:
+    """Create fix tasks when signals fail. Returns list of fix task IDs."""
+    if all_passed or server_url is None:
+        return []
+
+    if judge_verdict and judge_verdict.verdict == "retry":
+        retry_count = _get_judge_retry_count(task)
+        if retry_count < MAX_JUDGE_RETRIES:
+            return await _create_judge_fix_task(task, judge_verdict, retry_count, server_url, workdir=workdir)
+        logger.warning("Task %s exceeded max judge retries (%d), not creating fix task", task.id, MAX_JUDGE_RETRIES)
+        return []
+
+    return await create_fix_tasks(task, failed_descs, server_url, workdir=workdir)
+
+
 async def run_janitor(
     tasks: list[Task],
     workdir: Path,
@@ -157,55 +205,25 @@ async def run_janitor(
         if not task.completion_signals:
             continue
 
-        # Initialize judge_verdict for all paths
         judge_verdict: JudgeVerdict | None = None
 
-        # Special handling for upgrade proposals
         if task.task_type == TaskType.UPGRADE_PROPOSAL:
             all_passed, failed_descs = verify_upgrade_task(task, workdir)
-            if all_passed:
-                signal_results = [("upgrade:verified", True, "")]
-            else:
-                signal_results = [(f"upgrade:{d}", False, "") for d in failed_descs]
+            signal_results: list[tuple[str, bool, str]] = (
+                [("upgrade:verified", True, "")] if all_passed
+                else [(f"upgrade:{d}", False, "") for d in failed_descs]
+            )
         else:
             signal_results = _collect_signal_results(task, workdir)
-
-            # Handle llm_judge signals (async, evaluated separately)
-            judge_signals = [s for s in task.completion_signals if s.type == "llm_judge"]
-            if judge_signals:
-                # Only run judge if all non-judge signals pass
-                non_judge_ok = all(ok for _, ok, _ in signal_results)
-                if non_judge_ok:
-                    criteria = judge_signals[0].value
-                    judge_verdict = await judge_task(task, workdir, criteria)
-                    judge_desc = f"llm_judge: {criteria}"
-                    if judge_verdict.verdict == "accept":
-                        detail = f"accepted (confidence: {judge_verdict.confidence:.2f})"
-                        signal_results.append((judge_desc, True, detail))
-                    else:
-                        detail = f"retry: {judge_verdict.feedback}"
-                        signal_results.append((judge_desc, False, detail))
-                else:
-                    # Non-judge signals failed — skip judge, report as not evaluated
-                    for js in judge_signals:
-                        signal_results.append(
-                            (f"llm_judge: {js.value}", False, "skipped: prerequisite signals failed"),
-                        )
-
+            judge_verdict = await _evaluate_judge_signals(task, workdir, signal_results)
             all_passed = all(passed for _, passed, _ in signal_results)
             failed_descs = [desc for desc, passed, _ in signal_results if not passed]
 
-        # Run pre-merge guardrails on the agent's diff
         diff = _get_git_diff(task, workdir)
         guardrail_results: list[GuardrailResult] = run_guardrails(
-            diff,
-            task,
-            _guardrails,
-            workdir,
-            bypass_enabled=_bypass_guardrails,
+            diff, task, _guardrails, workdir, bypass_enabled=_bypass_guardrails,
         )
 
-        # Hard-blocked guardrails (e.g. secrets detected) prevent merge
         blocked_guards = [r for r in guardrail_results if r.blocked and not r.passed]
         if blocked_guards:
             all_passed = False
@@ -213,37 +231,15 @@ async def run_janitor(
                 signal_results.append((f"guardrail:{gr.check}", False, gr.detail))
                 failed_descs.append(f"guardrail:{gr.check}: {gr.detail}")
 
-        fix_task_ids: list[str] = []
-        if not all_passed and server_url is not None:
-            if judge_verdict and judge_verdict.verdict == "retry":
-                retry_count = _get_judge_retry_count(task)
-                if retry_count < MAX_JUDGE_RETRIES:
-                    fix_task_ids = await _create_judge_fix_task(
-                        task,
-                        judge_verdict,
-                        retry_count,
-                        server_url,
-                        workdir=workdir,
-                    )
-                else:
-                    logger.warning(
-                        "Task %s exceeded max judge retries (%d), not creating fix task",
-                        task.id,
-                        MAX_JUDGE_RETRIES,
-                    )
-            else:
-                fix_task_ids = await create_fix_tasks(task, failed_descs, server_url, workdir=workdir)
-
-        results.append(
-            JanitorResult(
-                task_id=task.id,
-                passed=all_passed,
-                signal_results=signal_results,
-                fix_tasks_created=fix_task_ids,
-                judge_verdict=judge_verdict,
-                guardrail_results=guardrail_results,
-            )
+        fix_task_ids = await _create_fix_tasks_if_needed(
+            task, all_passed, failed_descs, judge_verdict, server_url, workdir,
         )
+
+        results.append(JanitorResult(
+            task_id=task.id, passed=all_passed, signal_results=signal_results,
+            fix_tasks_created=fix_task_ids, judge_verdict=judge_verdict,
+            guardrail_results=guardrail_results,
+        ))
     return results
 
 

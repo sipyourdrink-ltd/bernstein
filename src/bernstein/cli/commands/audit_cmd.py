@@ -147,70 +147,62 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
 
     all_passed = True
 
-    # HMAC chain verification
     if not merkle_only:
-        from bernstein.core.audit import AuditLog
+        all_passed = _verify_hmac_chain() and all_passed
 
-        audit_log = AuditLog(AUDIT_DIR)
-        hmac_valid, hmac_errors = audit_log.verify()
-
-        console.print()
-        if hmac_valid:
-            console.print(
-                Panel(
-                    "[bold green]HMAC Chain Verification Passed[/bold green]",
-                    border_style="green",
-                    expand=False,
-                )
-            )
-        else:
-            all_passed = False
-            console.print(
-                Panel(
-                    "[bold red]HMAC Chain Verification FAILED[/bold red]",
-                    border_style="red",
-                    expand=False,
-                )
-            )
-            for err in hmac_errors:
-                console.print(f"  [red]![/red] {err}")
-
-    # Merkle tree verification
     if not hmac_only:
-        from bernstein.core.merkle import verify_merkle
-
-        result = verify_merkle(AUDIT_DIR, MERKLE_DIR)
-
-        console.print()
-        if result.valid:
-            console.print(
-                Panel(
-                    "[bold green]Merkle Verification Passed[/bold green]",
-                    border_style="green",
-                    expand=False,
-                )
-            )
-            table = Table(show_header=False, box=None, padding=(0, 2))
-            table.add_column("Key", style="dim", no_wrap=True, min_width=14)
-            table.add_column("Value")
-            table.add_row("Root hash", result.root_hash)
-            if result.seal_path:
-                table.add_row("Seal file", str(result.seal_path))
-            console.print(table)
-        else:
-            all_passed = False
-            console.print(
-                Panel(
-                    "[bold red]Merkle Verification FAILED[/bold red]",
-                    border_style="red",
-                    expand=False,
-                )
-            )
-            for err in result.errors:
-                console.print(f"  [red]![/red] {err}")
+        all_passed = _verify_merkle_tree() and all_passed
 
     console.print()
     raise SystemExit(0 if all_passed else 1)
+
+
+def _verify_hmac_chain() -> bool:
+    """Verify HMAC chain and print results. Returns True if valid."""
+    from bernstein.core.audit import AuditLog
+
+    audit_log = AuditLog(AUDIT_DIR)
+    hmac_valid, hmac_errors = audit_log.verify()
+
+    console.print()
+    if hmac_valid:
+        console.print(
+            Panel("[bold green]HMAC Chain Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        return True
+    console.print(
+        Panel("[bold red]HMAC Chain Verification FAILED[/bold red]", border_style="red", expand=False)
+    )
+    for err in hmac_errors:
+        console.print(f"  [red]![/red] {err}")
+    return False
+
+
+def _verify_merkle_tree() -> bool:
+    """Verify Merkle tree and print results. Returns True if valid."""
+    from bernstein.core.merkle import verify_merkle
+
+    result = verify_merkle(AUDIT_DIR, MERKLE_DIR)
+
+    console.print()
+    if result.valid:
+        console.print(
+            Panel("[bold green]Merkle Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Root hash", result.root_hash)
+        if result.seal_path:
+            table.add_row("Seal file", str(result.seal_path))
+        console.print(table)
+        return True
+    console.print(
+        Panel("[bold red]Merkle Verification FAILED[/bold red]", border_style="red", expand=False)
+    )
+    for err in result.errors:
+        console.print(f"  [red]![/red] {err}")
+    return False
 
 
 @audit_group.command("verify-hmac")

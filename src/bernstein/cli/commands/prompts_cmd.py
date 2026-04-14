@@ -14,6 +14,7 @@ Usage::
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.panel import Panel
@@ -87,6 +88,16 @@ def prompts_list() -> None:
     console.print(table)
 
 
+def _format_version_status(ver_num: int, meta: Any) -> str:
+    """Format the status label for a prompt version."""
+    parts: list[str] = []
+    if ver_num == meta.active_version:
+        parts.append("[green]active[/green]")
+    if meta.ab_enabled and ver_num in meta.ab_versions:
+        parts.append("[yellow]A/B[/yellow]")
+    return " ".join(parts) if parts else "[dim]-[/dim]"
+
+
 @prompts_group.command("show")
 @click.argument("name")
 def prompts_show(name: str) -> None:
@@ -133,21 +144,16 @@ def prompts_show(name: str) -> None:
         ver_dict = meta.versions[ver_num]
         metrics = VersionMetrics.from_dict(ver_dict.get("metrics", {}))
 
-        status_parts: list[str] = []
-        if ver_num == meta.active_version:
-            status_parts.append("[green]active[/green]")
-        if meta.ab_enabled and ver_num in meta.ab_versions:
-            status_parts.append("[yellow]A/B[/yellow]")
-        status = " ".join(status_parts) if status_parts else "[dim]-[/dim]"
-
+        status = _format_version_status(ver_num, meta)
+        has_obs = bool(metrics.observations)
         table.add_row(
             f"v{ver_num}",
             status,
             str(metrics.observations),
-            f"{metrics.success_rate:.1%}" if metrics.observations else "-",
-            f"{metrics.avg_quality:.3f}" if metrics.observations else "-",
-            f"${metrics.avg_cost:.4f}" if metrics.observations else "-",
-            f"{metrics.avg_latency:.0f}s" if metrics.observations else "-",
+            f"{metrics.success_rate:.1%}" if has_obs else "-",
+            f"{metrics.avg_quality:.3f}" if has_obs else "-",
+            f"${metrics.avg_cost:.4f}" if has_obs else "-",
+            f"{metrics.avg_latency:.0f}s" if has_obs else "-",
             ver_dict.get("description", ""),
         )
 

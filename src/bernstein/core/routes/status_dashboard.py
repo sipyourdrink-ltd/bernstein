@@ -514,18 +514,11 @@ def _read_cost_history(store: TaskStore) -> list[dict[str, Any]]:
     return points
 
 
-def build_alerts(
-    store: TaskStore,
-    alive_agents: list[Any],
-    total_cost: float,
-    now: float,
-    agent_snapshots: dict[str, dict[str, Any]] | None = None,
-) -> list[dict[str, str]]:
-    """Generate alerts for the dashboard."""
+def _task_status_alerts(store: TaskStore) -> list[dict[str, str]]:
+    """Generate alerts for failed and blocked tasks."""
     alerts: list[dict[str, str]] = []
-
-    # Failed tasks
-    failed_tasks = [t for t in store.list_tasks() if t.status.value == "failed"]
+    all_tasks = store.list_tasks()
+    failed_tasks = [t for t in all_tasks if t.status.value == "failed"]
     if failed_tasks:
         alerts.append(
             {
@@ -534,9 +527,7 @@ def build_alerts(
                 "detail": ", ".join(t.title[:30] for t in failed_tasks[:3]),
             }
         )
-
-    # Blocked tasks
-    blocked_tasks = [t for t in store.list_tasks() if t.status.value == "blocked"]
+    blocked_tasks = [t for t in all_tasks if t.status.value == "blocked"]
     if blocked_tasks:
         alerts.append(
             {
@@ -545,8 +536,12 @@ def build_alerts(
                 "detail": ", ".join(t.title[:30] for t in blocked_tasks[:3]),
             }
         )
+    return alerts
 
-    # Stale agents (no heartbeat for 5+ minutes)
+
+def _agent_health_alerts(alive_agents: list[Any], now: float) -> list[dict[str, str]]:
+    """Generate alerts for stale agents and context window pressure."""
+    alerts: list[dict[str, str]] = []
     for a in alive_agents:
         runtime = now - a.spawn_ts
         if runtime > 300 and a.heartbeat_ts > 0 and (now - a.heartbeat_ts) > 300:
@@ -557,8 +552,6 @@ def build_alerts(
                     "detail": f"No heartbeat for {int((now - a.heartbeat_ts) / 60)}m",
                 }
             )
-
-        # Context window alerts from live agent state
         if getattr(a, "context_utilization_alert", False):
             pct = float(getattr(a, "context_utilization_pct", 0.0))
             alerts.append(
@@ -568,20 +561,41 @@ def build_alerts(
                     "detail": f"Context utilization at {pct:.0f}%",
                 }
             )
+    return alerts
 
-    # Context window alerts from agent snapshots (covers agents loaded from agents.json)
-    if agent_snapshots:
-        for snap in agent_snapshots.values():
-            if snap.get("context_utilization_alert"):
-                agent_id = str(snap.get("id", ""))[:12]
-                pct = float(snap.get("context_utilization_pct", 0.0))
-                alerts.append(
-                    {
-                        "level": "warning",
-                        "message": f"Agent {agent_id} nearing context limit",
-                        "detail": f"Context utilization at {pct:.0f}%",
-                    }
-                )
+
+def _snapshot_context_alerts(agent_snapshots: dict[str, dict[str, Any]] | None) -> list[dict[str, str]]:
+    """Generate context-window alerts from persisted agent snapshots."""
+    if not agent_snapshots:
+        return []
+    alerts: list[dict[str, str]] = []
+    for snap in agent_snapshots.values():
+        if not snap.get("context_utilization_alert"):
+            continue
+        agent_id = str(snap.get("id", ""))[:12]
+        pct = float(snap.get("context_utilization_pct", 0.0))
+        alerts.append(
+            {
+                "level": "warning",
+                "message": f"Agent {agent_id} nearing context limit",
+                "detail": f"Context utilization at {pct:.0f}%",
+            }
+        )
+    return alerts
+
+
+def build_alerts(
+    store: TaskStore,
+    alive_agents: list[Any],
+    total_cost: float,
+    now: float,
+    agent_snapshots: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
+    """Generate alerts for the dashboard."""
+    alerts: list[dict[str, str]] = []
+    alerts.extend(_task_status_alerts(store))
+    alerts.extend(_agent_health_alerts(alive_agents, now))
+    alerts.extend(_snapshot_context_alerts(agent_snapshots))
 
     # Budget alerts
     budget = getattr(store, "_budget_usd", 0.0)
@@ -713,6 +727,27 @@ def _read_merge_queue(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _enrich_sdd_payload(sdd_dir: Any, payload: dict[str, Any], read_latest_dependency_scan: Any) -> None:
+    """Add dependency scan and verification nudge data to *payload*."""
+    if sdd_dir is None:
+        return
+    scan = read_latest_dependency_scan(sdd_dir)
+    if scan is not None:
+        payload["dependency_scan"] = scan.to_dict()
+    from bernstein.core.verification_nudge import load_nudge_summary
+
+    nudge = load_nudge_summary(sdd_dir / "metrics")
+    if nudge.total_completions <= 0:
+        return
+    nudge_data = nudge.to_dict()
+    if nudge.threshold_exceeded:
+        nudge_data["alert"] = (
+            f"WARNING: {nudge.unverified_count}/{nudge.total_completions} tasks "
+            f"completed without verification (threshold: {nudge.nudge_threshold:.0%})"
+        )
+    payload["verification_nudge"] = nudge_data
+
+
 @router.get("/status")
 def status_dashboard(request: Request) -> JSONResponse:
     """Dashboard summary of task counts."""
@@ -748,27 +783,9 @@ def status_dashboard(request: Request) -> JSONResponse:
     if provider_status is not None:
         payload["provider_status"] = provider_status
 
-    sdd_dir: Any = getattr(request.app.state, "sdd_dir", None)
-    if sdd_dir is not None:
-        scan = read_latest_dependency_scan(sdd_dir)
-        if scan is not None:
-            payload["dependency_scan"] = scan.to_dict()
+    sdd_dir_val: Any = getattr(request.app.state, "sdd_dir", None)
+    _enrich_sdd_payload(sdd_dir_val, payload, read_latest_dependency_scan)
 
-        # Verification nudge summary: unverified completions tracking.
-        from bernstein.core.verification_nudge import load_nudge_summary
-
-        nudge = load_nudge_summary(sdd_dir / "metrics")
-        if nudge.total_completions > 0:
-            nudge_data = nudge.to_dict()
-            if nudge.threshold_exceeded:
-                nudge_data["alert"] = (
-                    f"WARNING: {nudge.unverified_count}/{nudge.total_completions} tasks "
-                    f"completed without verification (threshold: {nudge.nudge_threshold:.0%})"
-                )
-            payload["verification_nudge"] = nudge_data
-
-    # Transition reason histogram from Prometheus in-process counters.
-    # Gives operators an at-a-glance view of why agent/task ticks end.
     transition_reasons = get_transition_reason_histogram()
     if transition_reasons["agent"] or transition_reasons["task"]:
         payload["transition_reasons"] = transition_reasons
@@ -918,6 +935,108 @@ def dashboard_page() -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
+def _populate_agents_from_snapshots(agents: dict[str, Any], agent_snapshots: dict[str, dict[str, Any]]) -> None:
+    """Hydrate *agents* dict from on-disk agent snapshots."""
+    from bernstein.core.models import AbortReason, AgentSession, TransitionReason
+
+    for snapshot in agent_snapshots.values():
+        status_value = str(snapshot.get("status", "dead"))
+        session = AgentSession(
+            id=str(snapshot.get("id", "")),
+            pid=int(snapshot.get("pid", 0) or 0),
+            role=str(snapshot.get("role", "")),
+            status=cast("Any", status_value),
+            task_ids=list(snapshot.get("task_ids") or []),
+            provider=str(snapshot.get("provider", "")) or None,
+            agent_source=str(snapshot.get("agent_source", "built-in")),
+            tokens_used=int(snapshot.get("tokens_used", 0) or 0),
+            token_budget=int(snapshot.get("token_budget", 0) or 0),
+            transition_reason=TransitionReason(str(snapshot["transition_reason"]))
+            if str(snapshot.get("transition_reason", "")).strip()
+            else None,
+            abort_reason=AbortReason(str(snapshot["abort_reason"]))
+            if str(snapshot.get("abort_reason", "")).strip()
+            else None,
+            abort_detail=str(snapshot.get("abort_detail", "") or ""),
+            finish_reason=str(snapshot.get("finish_reason", "") or ""),
+        )
+        agents[session.id] = session
+
+
+def _build_single_agent_detail(
+    a: Any,
+    snapshot: dict[str, Any],
+    agent_cost: float,
+    agent_tasks: list[Any],
+    now: float,
+) -> dict[str, Any]:
+    """Build a single agent detail dict for the dashboard data endpoint."""
+    runtime_s = int(now - a.spawn_ts)
+    model_name = a.model_config.model if hasattr(a.model_config, "model") else "sonnet"
+    context_window_tokens = int(getattr(a, "context_window_tokens", 0) or snapshot.get("context_window_tokens", 0) or 0)
+    context_utilization_pct = float(
+        getattr(a, "context_utilization_pct", 0.0) or snapshot.get("context_utilization_pct", 0.0) or 0.0
+    )
+    context_utilization_alert = bool(
+        getattr(a, "context_utilization_alert", False) or snapshot.get("context_utilization_alert", False)
+    )
+    return {
+        "id": a.id,
+        "role": a.role,
+        "status": a.status,
+        "model": model_name,
+        "provider": getattr(a, "provider", None) or snapshot.get("provider"),
+        "spawn_ts": a.spawn_ts,
+        "runtime_s": runtime_s,
+        "pid": a.pid,
+        "task_ids": a.task_ids,
+        "agent_source": a.agent_source,
+        "tokens_used": int(getattr(a, "tokens_used", 0) or snapshot.get("tokens_used", 0) or 0),
+        "token_budget": int(getattr(a, "token_budget", 0) or snapshot.get("token_budget", 0) or 0),
+        "context_window_tokens": context_window_tokens,
+        "context_utilization_pct": context_utilization_pct,
+        "context_utilization_alert": context_utilization_alert,
+        "transition_reason": (
+            getattr(a, "transition_reason", None).value  # pyright: ignore[reportOptionalMemberAccess]
+            if getattr(a, "transition_reason", None) is not None
+            else str(snapshot.get("transition_reason", "") or "")
+        ),
+        "abort_reason": (
+            getattr(a, "abort_reason", None).value  # pyright: ignore[reportOptionalMemberAccess]
+            if getattr(a, "abort_reason", None) is not None
+            else str(snapshot.get("abort_reason", "") or "")
+        ),
+        "abort_detail": str(getattr(a, "abort_detail", "") or snapshot.get("abort_detail", "") or ""),
+        "finish_reason": str(getattr(a, "finish_reason", "") or snapshot.get("finish_reason", "") or ""),
+        "cost_usd": round(agent_cost, 4),
+        "tasks": [
+            {"id": t.id, "title": t.title[:40], "status": t.status.value, "progress": _task_progress_pct(t)}
+            for t in agent_tasks
+        ],
+    }
+
+
+def _build_agent_details(
+    all_agents: Any,
+    agent_snapshots: dict[str, dict[str, Any]],
+    live_per_agent: dict[str, float],
+    cost_by_role: dict[str, float],
+    alive_agents: list[Any],
+    tasks: list[Any],
+    now: float,
+) -> list[dict[str, Any]]:
+    """Build agent detail list for the dashboard data endpoint."""
+    agent_details: list[dict[str, Any]] = []
+    for a in all_agents:
+        snapshot = agent_snapshots.get(a.id, {})
+        agent_cost = live_per_agent.get(a.id) or cost_by_role.get(a.role, 0.0) / max(
+            1, len([ag for ag in alive_agents if ag.role == a.role])
+        )
+        agent_tasks = [t for t in tasks if t.assigned_agent == a.id]
+        agent_details.append(_build_single_agent_detail(a, snapshot, agent_cost, agent_tasks, now))
+    return agent_details
+
+
 @router.get("/dashboard/data")
 def dashboard_data(request: Request) -> JSONResponse:
     """Return all mission control dashboard data as JSON.
@@ -935,30 +1054,7 @@ def dashboard_data(request: Request) -> JSONResponse:
 
     # Fallback: if store has no agents, read from agents.json on disk
     if not agents:
-        from bernstein.core.models import AbortReason, AgentSession, TransitionReason
-
-        for snapshot in agent_snapshots.values():
-            status_value = str(snapshot.get("status", "dead"))
-            session = AgentSession(
-                id=str(snapshot.get("id", "")),
-                pid=int(snapshot.get("pid", 0) or 0),
-                role=str(snapshot.get("role", "")),
-                status=cast("Any", status_value),
-                task_ids=list(snapshot.get("task_ids") or []),
-                provider=str(snapshot.get("provider", "")) or None,
-                agent_source=str(snapshot.get("agent_source", "built-in")),
-                tokens_used=int(snapshot.get("tokens_used", 0) or 0),
-                token_budget=int(snapshot.get("token_budget", 0) or 0),
-                transition_reason=TransitionReason(str(snapshot["transition_reason"]))
-                if str(snapshot.get("transition_reason", "")).strip()
-                else None,
-                abort_reason=AbortReason(str(snapshot["abort_reason"]))
-                if str(snapshot.get("abort_reason", "")).strip()
-                else None,
-                abort_detail=str(snapshot.get("abort_detail", "") or ""),
-                finish_reason=str(snapshot.get("finish_reason", "") or ""),
-            )
-            agents[session.id] = session
+        _populate_agents_from_snapshots(agents, agent_snapshots)
 
     all_agents = agents.values()
     alive_agents = [a for a in all_agents if a.status != "dead"]
@@ -1005,62 +1101,9 @@ def dashboard_data(request: Request) -> JSONResponse:
 
     # -- Agent details with cost + task info ---------------------------------
     live_per_agent: dict[str, float] = live_costs.get("per_agent") or {}
-    agent_details: list[dict[str, Any]] = []
-    for a in all_agents:
-        snapshot = agent_snapshots.get(a.id, {})
-        runtime_s = int(now - a.spawn_ts)
-        model_name = a.model_config.model if hasattr(a.model_config, "model") else "sonnet"
-        # Prefer accurate per-agent cost from live tracker; fall back to role-based estimate
-        agent_cost = live_per_agent.get(a.id) or cost_by_role.get(a.role, 0.0) / max(
-            1, len([ag for ag in alive_agents if ag.role == a.role])
-        )
-        context_window_tokens = int(
-            getattr(a, "context_window_tokens", 0) or snapshot.get("context_window_tokens", 0) or 0
-        )
-        context_utilization_pct = float(
-            getattr(a, "context_utilization_pct", 0.0) or snapshot.get("context_utilization_pct", 0.0) or 0.0
-        )
-        context_utilization_alert = bool(
-            getattr(a, "context_utilization_alert", False) or snapshot.get("context_utilization_alert", False)
-        )
-        # Find tasks assigned to this agent
-        agent_tasks = [t for t in tasks if t.assigned_agent == a.id]
-        agent_details.append(
-            {
-                "id": a.id,
-                "role": a.role,
-                "status": a.status,
-                "model": model_name,
-                "provider": getattr(a, "provider", None) or snapshot.get("provider"),
-                "spawn_ts": a.spawn_ts,
-                "runtime_s": runtime_s,
-                "pid": a.pid,
-                "task_ids": a.task_ids,
-                "agent_source": a.agent_source,
-                "tokens_used": int(getattr(a, "tokens_used", 0) or snapshot.get("tokens_used", 0) or 0),
-                "token_budget": int(getattr(a, "token_budget", 0) or snapshot.get("token_budget", 0) or 0),
-                "context_window_tokens": context_window_tokens,
-                "context_utilization_pct": context_utilization_pct,
-                "context_utilization_alert": context_utilization_alert,
-                "transition_reason": (
-                    getattr(a, "transition_reason", None).value  # pyright: ignore[reportOptionalMemberAccess]
-                    if getattr(a, "transition_reason", None) is not None
-                    else str(snapshot.get("transition_reason", "") or "")
-                ),
-                "abort_reason": (
-                    getattr(a, "abort_reason", None).value  # pyright: ignore[reportOptionalMemberAccess]
-                    if getattr(a, "abort_reason", None) is not None
-                    else str(snapshot.get("abort_reason", "") or "")
-                ),
-                "abort_detail": str(getattr(a, "abort_detail", "") or snapshot.get("abort_detail", "") or ""),
-                "finish_reason": str(getattr(a, "finish_reason", "") or snapshot.get("finish_reason", "") or ""),
-                "cost_usd": round(agent_cost, 4),
-                "tasks": [
-                    {"id": t.id, "title": t.title[:40], "status": t.status.value, "progress": _task_progress_pct(t)}
-                    for t in agent_tasks
-                ],
-            }
-        )
+    agent_details = _build_agent_details(
+        all_agents, agent_snapshots, live_per_agent, cost_by_role, alive_agents, tasks, now
+    )
 
     live_spent = float(live_costs.get("spent_usd") or total_cost)
     runtime = _runtime_summary(request, store)

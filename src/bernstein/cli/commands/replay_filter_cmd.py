@@ -96,6 +96,71 @@ def filter_events(
     ]
 
 
+def _handle_task_trace_replay(
+    sdd_path: Path,
+    run_id: str,
+    model: str | None,
+    extra_context: str | None,
+    trace_store_cls: type,
+    build_request_fn: Any,
+) -> None:
+    """Delegate to task trace replay when no run log exists."""
+    trace = trace_store_cls(sdd_path / "traces").latest_for_task(run_id)
+    if trace is None:
+        console.print(f"[red]No trace found for task:[/red] {run_id}")
+        raise SystemExit(1)
+
+    from bernstein.cli.helpers import server_post
+
+    request = build_request_fn(trace, task_id=run_id, override_model=model, extra_context=extra_context)
+    created = server_post("/tasks", request.to_payload())
+    if created is None:
+        console.print("[red]Failed to create replay task.[/red]")
+        raise SystemExit(1)
+
+    console.print(f"[green]Replay task created:[/green] {created.get('id', '')}")
+
+
+def _replay_filter_find_run_dirs(runs_dir: Path, replay_jsonl: str) -> list[Path]:
+    """Find run directories containing replay logs."""
+    if not runs_dir.exists():
+        return []
+    return sorted(
+        (d for d in runs_dir.iterdir() if d.is_dir() and (d / replay_jsonl).exists()),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+
+
+def _replay_filter_list_runs(runs_dir: Path, replay_jsonl: str) -> None:
+    """List available replay runs."""
+    run_dirs = _replay_filter_find_run_dirs(runs_dir, replay_jsonl)
+    if not run_dirs:
+        console.print("[dim]No runs recorded yet.[/dim]")
+        return
+    from rich.table import Table
+
+    table = Table(title="Available Runs", show_header=True, header_style="bold cyan")
+    table.add_column("Run ID")
+    table.add_column("Events", justify="right")
+    for d in run_dirs:
+        replay_file = d / replay_jsonl
+        event_count = sum(1 for line in replay_file.read_text().splitlines() if line.strip())
+        table.add_row(d.name, str(event_count))
+    console.print(table)
+
+
+def _replay_filter_resolve_latest(runs_dir: Path, replay_jsonl: str) -> str:
+    """Resolve 'latest' run ID or exit."""
+    run_dirs = _replay_filter_find_run_dirs(runs_dir, replay_jsonl)
+    if not run_dirs:
+        console.print("[red]No replay logs found.[/red]")
+        raise SystemExit(1)
+    latest = run_dirs[0].name
+    console.print(f"[dim]Replaying latest run:[/dim] {latest}")
+    return latest
+
+
 @click.command("replay")
 @click.argument("run_id")
 @click.option("--sdd-dir", default=".sdd", show_default=True, help="Path to .sdd state directory.")
@@ -144,68 +209,20 @@ def replay_filter_cmd(
 
     _REPLAY_JSONL = "replay.jsonl"
 
-    # Check if this is a task trace replay (no filter support)
     has_filters = any([filter_str, event_type, agent, search])
+    is_run_replay = run_id in {"list", "latest"} or (runs_dir / run_id / _REPLAY_JSONL).exists()
+    is_task_trace = not is_run_replay and not has_filters
 
-    if run_id not in {"list", "latest"} and not (runs_dir / run_id / _REPLAY_JSONL).exists() and not has_filters:
-        # Delegate to task trace replay
-        trace = TraceStore(sdd_path / "traces").latest_for_task(run_id)
-        if trace is None:
-            console.print(f"[red]No trace found for task:[/red] {run_id}")
-            raise SystemExit(1)
-
-        from bernstein.cli.helpers import server_post
-
-        request = build_replay_task_request(trace, task_id=run_id, override_model=model, extra_context=extra_context)
-        created = server_post("/tasks", request.to_payload())
-        if created is None:
-            console.print("[red]Failed to create replay task.[/red]")
-            raise SystemExit(1)
-
-        replay_task_id = str(created.get("id", ""))
-        console.print(f"[green]Replay task created:[/green] {replay_task_id}")
+    if is_task_trace:
+        _handle_task_trace_replay(sdd_path, run_id, model, extra_context, TraceStore, build_replay_task_request)
         return
 
-    # "list" subcommand
     if run_id == "list":
-        if not runs_dir.exists():
-            console.print("[dim]No runs recorded yet.[/dim]")
-            return
-        run_dirs = sorted(
-            (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
-            key=lambda d: d.name,
-            reverse=True,
-        )
-        if not run_dirs:
-            console.print("[dim]No replay logs found.[/dim]")
-            return
-        from rich.table import Table
-
-        table = Table(title="Available Runs", show_header=True, header_style="bold cyan")
-        table.add_column("Run ID")
-        table.add_column("Events", justify="right")
-        for d in run_dirs:
-            replay_file = d / _REPLAY_JSONL
-            event_count = sum(1 for line in replay_file.read_text().splitlines() if line.strip())
-            table.add_row(d.name, str(event_count))
-        console.print(table)
+        _replay_filter_list_runs(runs_dir, _REPLAY_JSONL)
         return
 
-    # Resolve "latest"
     if run_id == "latest":
-        if not runs_dir.exists():
-            console.print("[red]No runs recorded yet.[/red]")
-            raise SystemExit(1)
-        run_dirs = sorted(
-            (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
-            key=lambda d: d.name,
-            reverse=True,
-        )
-        if not run_dirs:
-            console.print("[red]No replay logs found.[/red]")
-            raise SystemExit(1)
-        run_id = run_dirs[0].name
-        console.print(f"[dim]Replaying latest run:[/dim] {run_id}")
+        run_id = _replay_filter_resolve_latest(runs_dir, _REPLAY_JSONL)
 
     replay_path = runs_dir / run_id / _REPLAY_JSONL
     if not replay_path.exists():

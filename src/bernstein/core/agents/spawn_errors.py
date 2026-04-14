@@ -126,6 +126,29 @@ class ResourceExhaustedError(CategorizedSpawnError):
     retry_strategy = RetryStrategy.RETRY_SAME
 
 
+_SPAWN_ERROR_PATTERNS: list[tuple[type[CategorizedSpawnError], str, tuple[str, ...]]] = [
+    (AdapterNotInstalledError, "Adapter binary not found", ("not found", "no such file", "command not found")),
+    (WorktreeCreationError, "Worktree creation failed", ("worktree", "git worktree")),
+    (RateLimitError, "Rate limit exceeded", ("rate limit", "ratelimit", "too many requests", "429")),
+    (PermissionDeniedError, "Permission denied", ("permission", "denied", "unauthorized", "forbidden")),
+    (
+        ResourceExhaustedError,
+        "Resource exhausted",
+        ("disk", "no space", "out of memory", "oom", "resource", "too many open files"),
+    ),
+]
+
+
+def _match_model_error(msg: str) -> bool:
+    """Check if the error message indicates a model availability issue."""
+    return "model" in msg and any(kw in msg for kw in ("not available", "not found", "deprecated"))
+
+
+def _match_prompt_error(msg: str) -> bool:
+    """Check if the error message indicates a prompt size issue."""
+    return "prompt" in msg and any(kw in msg for kw in ("too long", "too large", "exceed"))
+
+
 def classify_spawn_error(
     exc: Exception,
     *,
@@ -144,69 +167,21 @@ def classify_spawn_error(
     Returns:
         A categorized spawn error wrapping the original exception.
     """
-    msg = str(exc).lower()
-
     if isinstance(exc, CategorizedSpawnError):
         return exc
 
-    if "not found" in msg or "no such file" in msg or "command not found" in msg:
-        return AdapterNotInstalledError(
-            f"Adapter binary not found: {exc}",
-            provider=provider,
-            detail=str(exc),
-        )
+    msg = str(exc).lower()
+    detail = str(exc)
 
-    if "model" in msg and ("not available" in msg or "not found" in msg or "deprecated" in msg):
-        return ModelNotAvailableError(
-            f"Model not available: {exc}",
-            provider=provider,
-            detail=str(exc),
-        )
+    # Check compound patterns first (require multiple keywords)
+    if _match_model_error(msg):
+        return ModelNotAvailableError(f"Model not available: {exc}", provider=provider, detail=detail)
+    if _match_prompt_error(msg):
+        return PromptTooLongError(f"Prompt too long: {exc}", provider=provider, detail=detail)
 
-    if "prompt" in msg and ("too long" in msg or "too large" in msg or "exceed" in msg):
-        return PromptTooLongError(
-            f"Prompt too long: {exc}",
-            provider=provider,
-            detail=str(exc),
-        )
+    # Check simple keyword patterns
+    for error_cls, label, keywords in _SPAWN_ERROR_PATTERNS:
+        if any(kw in msg for kw in keywords):
+            return error_cls(f"{label}: {exc}", provider=provider, detail=detail)
 
-    if "worktree" in msg or "git worktree" in msg:
-        return WorktreeCreationError(
-            f"Worktree creation failed: {exc}",
-            provider=provider,
-            detail=str(exc),
-        )
-
-    if "rate limit" in msg or "ratelimit" in msg or "too many requests" in msg or "429" in msg:
-        return RateLimitError(
-            f"Rate limit exceeded: {exc}",
-            provider=provider,
-            detail=str(exc),
-        )
-
-    if "permission" in msg or "denied" in msg or "unauthorized" in msg or "forbidden" in msg:
-        return PermissionDeniedError(
-            f"Permission denied: {exc}",
-            provider=provider,
-            detail=str(exc),
-        )
-
-    if (
-        "disk" in msg
-        or "no space" in msg
-        or "out of memory" in msg
-        or "oom" in msg
-        or "resource" in msg
-        or "too many open files" in msg
-    ):
-        return ResourceExhaustedError(
-            f"Resource exhausted: {exc}",
-            provider=provider,
-            detail=str(exc),
-        )
-
-    return CategorizedSpawnError(
-        str(exc),
-        provider=provider,
-        detail=str(exc),
-    )
+    return CategorizedSpawnError(detail, provider=provider, detail=detail)

@@ -96,6 +96,34 @@ def evolve() -> None:
     default=None,
     help="GitHub repo slug (owner/repo). Inferred from git remote if omitted.",
 )
+def _load_evolve_config_from_seed(
+    root: Path, github_sync: bool, github_repo: str | None,
+) -> tuple[bool, str | None]:
+    """Read evolve config from bernstein.yaml if CLI flags were not set."""
+    for seed_name in ("bernstein.yaml", "bernstein.yml"):
+        seed_path = root / seed_name
+        if not seed_path.exists():
+            continue
+        try:
+            import yaml as _yaml
+
+            raw = _yaml.safe_load(seed_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                break
+            evolve_cfg = cast("dict[str, Any]", raw).get("evolve", {})
+            if not isinstance(evolve_cfg, dict):
+                break
+            evolve_dict = cast("dict[str, Any]", evolve_cfg)
+            if not github_sync and evolve_dict.get("github_sync"):
+                github_sync = True
+            if github_repo is None and evolve_dict.get("github_repo"):
+                github_repo = str(evolve_dict["github_repo"])
+        except Exception:
+            pass
+        break
+    return github_sync, github_repo
+
+
 def evolve_run(
     window: str,
     max_proposals: int,
@@ -136,27 +164,7 @@ def evolve_run(
         console.print(_SDD_NOT_FOUND_MSG)
         raise SystemExit(1)
 
-    # Read evolve.github_sync / evolve.github_repo from bernstein.yaml if present
-    # and the flags were not set on the CLI.
-    for _seed_name in ("bernstein.yaml", "bernstein.yml"):
-        _seed_path = root / _seed_name
-        if _seed_path.exists():
-            try:
-                import yaml as _yaml
-
-                _seed_raw = _yaml.safe_load(_seed_path.read_text(encoding="utf-8"))
-                if isinstance(_seed_raw, dict):
-                    _seed_dict = cast("dict[str, Any]", _seed_raw)
-                    _evolve_cfg = _seed_dict.get("evolve", {})
-                    if isinstance(_evolve_cfg, dict):
-                        _evolve_dict = cast("dict[str, Any]", _evolve_cfg)
-                        if not github_sync and _evolve_dict.get("github_sync"):
-                            github_sync = True
-                        if github_repo is None and _evolve_dict.get("github_repo"):
-                            github_repo = str(_evolve_dict["github_repo"])
-            except Exception:
-                pass  # YAML parse errors are non-fatal here
-            break
+    github_sync, github_repo = _load_evolve_config_from_seed(root, github_sync, github_repo)
 
     # Parse window duration string (e.g. "2h", "30m", "1h30m").
     window_seconds = _parse_duration(window)

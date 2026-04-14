@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import respx
-from httpx import Response
 
 if TYPE_CHECKING:
     from bernstein.core.orchestrator import Orchestrator
@@ -30,31 +29,14 @@ async def test_full_lifecycle(test_client: TestClient, orchestrator_factory, int
     # We'll use respx to route orchestrator's httpx calls to the TestClient
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
         # Route all calls to our test_client
-        def handler(request):
-            method = request.method
-            path = request.url.path
-            api_path = path if path.startswith("/") else "/" + path
+        from tests.integration.conftest import make_proxy_handler
 
-            # Intercept GET /tasks to auto-complete those that have a DONE_ marker
-            if method == "GET" and api_path == "/tasks":
-                resp = test_client.get("/tasks")
-                tasks = resp.json()
-                for t in tasks:
-                    if t["status"] == "working":
-                        marker = integration_sdd / "runtime" / f"DONE_{t['id']}"
-                        if marker.exists():
-                            # Auto-complete via API
-                            test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "done"})
-                            marker.unlink()
-                # Re-fetch after auto-completion
-                resp = test_client.get("/tasks")
-                return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
-            content = request.read()
-            headers = dict(request.headers)
-            resp = test_client.request(method, api_path, content=content, headers=headers)
-            return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
+        handler = make_proxy_handler(
+            test_client,
+            integration_sdd,
+            slug_fn=lambda t: t["id"],
+            complete_statuses=frozenset({"working"}),
+        )
         respx_mock.route().mock(side_effect=handler)
 
         # Create task

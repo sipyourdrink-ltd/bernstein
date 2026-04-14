@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import respx
-from httpx import Response
 
 if TYPE_CHECKING:
     from bernstein.core.orchestrator import Orchestrator
@@ -52,28 +51,9 @@ async def test_parallel_independent(test_client: TestClient, orchestrator_factor
 
         orch._spawner.spawn_for_tasks = counted_spawn
 
-        def handler(request):
-            method = request.method
-            path = request.url.path
-            api_path = path if path.startswith("/") else "/" + path
+        from tests.integration.conftest import make_proxy_handler
 
-            if method == "GET" and api_path == "/tasks":
-                resp = test_client.get("/tasks")
-                tasks_data = resp.json()
-                for t in tasks_data:
-                    slug = t["title"].lower().replace(" ", "-")
-                    marker = integration_sdd / "runtime" / f"DONE_{slug}"
-                    if marker.exists():
-                        test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "done"})
-                        marker.unlink()
-                resp = test_client.get("/tasks")
-                return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
-            content = request.read()
-            headers = dict(request.headers)
-            resp = test_client.request(method, api_path, content=content, headers=headers)
-            return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
+        handler = make_proxy_handler(test_client, integration_sdd)
         respx_mock.route().mock(side_effect=handler)
 
         # First tick should spawn all 3 (in separate batches if they have the same role?)

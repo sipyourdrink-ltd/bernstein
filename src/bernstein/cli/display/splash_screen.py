@@ -448,6 +448,84 @@ class SplashRenderer:
 # ---------------------------------------------------------------------------
 
 
+def _animate_hw_checks(
+    renderer: SplashRenderer,
+    data: BootData,
+    elapsed_fn: Any,
+    check_skip: Any,
+    update: Any,
+) -> None:
+    """Animate hardware check lines (Phase 1)."""
+    checks = [
+        (f"Platform: {data.os_label}", "OK"),
+        (f"CPU cores: {data.cpu_cores}", "OK"),
+        (f"Memory: {data.memory_gb}GB", "OK"),
+        ("Python: " + platform.python_version(), "OK"),
+        ("Orchestrator port: 8052", "OK"),
+    ]
+    for label, status in checks:
+        if check_skip():
+            break
+        ts = elapsed_fn()
+        dots = "." * max(3, 48 - len(label))
+        status_col = C_GREEN if status == "OK" else C_WARN
+        renderer.add_line(
+            f"  {_timestamp(ts)}  [{C_WHITE}]{label}[/{C_WHITE}] "
+            f"[{C_DIM}]{dots}[/{C_DIM}] "
+            f"[bold {status_col}]{status}[/bold {status_col}]"
+        )
+        update()
+        time.sleep(0.06)
+    renderer.add_blank()
+    update()
+
+
+def _animate_agents(
+    renderer: SplashRenderer,
+    data: BootData,
+    elapsed_fn: Any,
+    check_skip: Any,
+    update: Any,
+) -> None:
+    """Animate agent detection lines (Phase 2)."""
+    renderer.phase2_header(elapsed_fn())
+    update()
+    time.sleep(0.1)
+
+    if not check_skip() and data.agents:
+        for agent in data.agents:
+            if check_skip():
+                break
+            renderer.phase2_agent(agent, elapsed_fn())
+            update()
+            delay = 0.18 if agent.status == "ok" else 0.1
+            time.sleep(delay)
+        renderer.add_blank()
+        update()
+
+
+def _animate_progress(
+    renderer: SplashRenderer,
+    width: int,
+    elapsed_fn: Any,
+    check_skip: Any,
+    update: Any,
+) -> None:
+    """Animate progress bar (Phase 3)."""
+    progress_line_idx = len(renderer.lines)
+    renderer.add_line("")
+    steps = 20
+    for i in range(steps + 1):
+        if check_skip():
+            break
+        fraction = i / steps
+        ts = elapsed_fn()
+        bar = _progress_bar(fraction, width=min(40, width - 30))
+        renderer.lines[progress_line_idx] = f"  {_timestamp(ts)}  {bar}"
+        update()
+        time.sleep(0.02)
+
+
 def _run_animated(console: Console, data: BootData) -> None:  # pyright: ignore[reportUnusedFunction]
     """Run the full animated splash sequence using Rich Live."""
     width = min(console.size.width, 120)
@@ -484,82 +562,21 @@ def _run_animated(console: Console, data: BootData) -> None:  # pyright: ignore[
             def update() -> None:
                 live.update(renderer.render())
 
-            # -- Phase 1: Boot POST (0.0s - 0.5s) --
-
-            # Header appears instantly
             renderer.phase1_header(elapsed())
             update()
             if not check_skip():
                 time.sleep(0.15)
 
-            # Hardware checks appear one by one
             if not check_skip():
-                # Build checks incrementally
-                d = data
-                checks = [
-                    (f"Platform: {d.os_label}", "OK"),
-                    (f"CPU cores: {d.cpu_cores}", "OK"),
-                    (f"Memory: {d.memory_gb}GB", "OK"),
-                    ("Python: " + platform.python_version(), "OK"),
-                    ("Orchestrator port: 8052", "OK"),
-                ]
-
-                for label, status in checks:
-                    if check_skip():
-                        break
-                    ts = elapsed()
-                    dots = "." * max(3, 48 - len(label))
-                    status_col = C_GREEN if status == "OK" else C_WARN
-                    renderer.add_line(
-                        f"  {_timestamp(ts)}  [{C_WHITE}]{label}[/{C_WHITE}] "
-                        f"[{C_DIM}]{dots}[/{C_DIM}] "
-                        f"[bold {status_col}]{status}[/bold {status_col}]"
-                    )
-                    update()
-                    time.sleep(0.06)
-
-                renderer.add_blank()
-                update()
-
-            # -- Phase 2: Agent detection (0.5s - 1.5s) --
+                _animate_hw_checks(renderer, data, elapsed, check_skip, update)
 
             if not check_skip():
-                renderer.phase2_header(elapsed())
-                update()
-                time.sleep(0.1)
-
-            if not check_skip() and data.agents:
-                for agent in data.agents:
-                    if check_skip():
-                        break
-                    renderer.phase2_agent(agent, elapsed())
-                    update()
-                    # Slightly longer pause for OK agents (simulates auth check)
-                    delay = 0.18 if agent.status == "ok" else 0.1
-                    time.sleep(delay)
-
-                renderer.add_blank()
-                update()
-
-            # -- Phase 3: System ready (animated progress bar) --
+                _animate_agents(renderer, data, elapsed, check_skip, update)
 
             if not check_skip():
-                # Remove any previously added progress line to overwrite it
-                progress_line_idx = len(renderer.lines)
-                renderer.add_line("")  # placeholder for progress bar
-                steps = 20
-                for i in range(steps + 1):
-                    if check_skip():
-                        break
-                    fraction = i / steps
-                    ts = elapsed()
-                    bar = _progress_bar(fraction, width=min(40, width - 30))
-                    renderer.lines[progress_line_idx] = f"  {_timestamp(ts)}  {bar}"
-                    update()
-                    time.sleep(0.02)
+                _animate_progress(renderer, width, elapsed, check_skip, update)
 
-            # If skipped, render final state instantly
-            if skipped:
+            if skipped:  # NOSONAR -- mutated by check_skip() closures above
                 renderer.lines.clear()
                 renderer.phase1_header(elapsed())
                 renderer.phase1_hw_checks(elapsed())
@@ -569,15 +586,10 @@ def _run_animated(console: Console, data: BootData) -> None:  # pyright: ignore[
                 renderer.add_blank()
                 renderer.phase3_progress(1.0, elapsed())
 
-            # Final status (always shown)
             renderer.phase3_status(elapsed())
             update()
-
-            # Brief hold so the user can see it
             time.sleep(0.3)
 
-    # After Live exits (transient=True clears it), print a compact summary
-    # that stays in scrollback
     _print_static_summary(console, data)
 
 

@@ -231,6 +231,27 @@ def _parse_rubric_response(raw: str) -> tuple[dict[str, int], dict[str, str], st
     return scores, feedbacks, summary
 
 
+async def _fetch_diff(run_dir: Path) -> tuple[str, list[str]]:
+    """Fetch the Python diff from git. Returns (diff_text, errors)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "diff", "HEAD~1", "--", "*.py",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=run_dir,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        diff = stdout.decode() if stdout else ""
+        if not diff.strip():
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", "--cached", "--", "*.py",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=run_dir,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            diff = stdout.decode() if stdout else ""
+        return diff, []
+    except Exception as exc:
+        return "", [f"Failed to get diff: {exc}"]
+
+
 async def score_diff(
     task: Task,
     run_dir: Path,
@@ -253,38 +274,9 @@ async def score_diff(
 
     errors: list[str] = []
 
-    # 1. Get the diff if not provided (async subprocess for async context)
     if diff is None:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "diff",
-                "HEAD~1",
-                "--",
-                "*.py",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=run_dir,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-            diff = stdout.decode() if stdout else ""
-            if not diff.strip():
-                # Try staged diff
-                proc = await asyncio.create_subprocess_exec(
-                    "git",
-                    "diff",
-                    "--cached",
-                    "--",
-                    "*.py",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=run_dir,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-                diff = stdout.decode() if stdout else ""
-        except Exception as exc:
-            errors.append(f"Failed to get diff: {exc}")
-            diff = ""
+        diff, diff_errors = await _fetch_diff(run_dir)
+        errors.extend(diff_errors)
 
     if not diff.strip():
         return RubricResult(

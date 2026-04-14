@@ -167,16 +167,18 @@ def _extract_documented_params_google(docstring: str) -> set[str]:
     return params
 
 
+_NUMPY_HEADER_RE = re.compile(r"Parameters[ \t]*\n[ \t]*[-=]+[ \t]*\n")
+_NUMPY_SECTION_END_RE = re.compile(r"\n[ \t]*\w[^\n]*\n[ \t]*[-=]+")
+
+
 def _extract_documented_params_numpy(docstring: str) -> set[str]:
     """Extract parameter names from a NumPy-style docstring."""
-    params_match = re.search(
-        r"Parameters[ \t]*\n[ \t]*[-=]+[ \t]*\n((?:(?!\n[ \t]*\w[^\n]*\n[ \t]*[-=]+).)*)",
-        docstring,
-        re.DOTALL,
-    )
-    if not params_match:
+    header_match = _NUMPY_HEADER_RE.search(docstring)
+    if not header_match:
         return set()
-    block = params_match.group(1)
+    rest = docstring[header_match.end():]
+    end_match = _NUMPY_SECTION_END_RE.search(rest)
+    block = rest[:end_match.start()] if end_match else rest
     params: set[str] = set()
     for m in _NUMPY_PARAM_RE.finditer(block):
         name = m.group(1)

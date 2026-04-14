@@ -282,7 +282,8 @@ class PolicyLimitsClient:
 
         # Attempt live fetch within the timeout
         try:
-            await asyncio.wait_for(self._refresh(), timeout=self._init_timeout)
+            async with asyncio.timeout(self._init_timeout):
+                await self._refresh()
         except TimeoutError:
             logger.warning(
                 "Policy limits fetch timed out after %ss; using %s",

@@ -63,8 +63,8 @@ class TestInitTimeoutInBootstrap:
         # Read the source to confirm the function call is present.
         import inspect
 
-        from bernstein.core.bootstrap import bootstrap_from_goal
+        from bernstein.core.orchestration.bootstrap import _post_plan_tasks
 
-        source = inspect.getsource(bootstrap_from_goal)
+        source = inspect.getsource(_post_plan_tasks)
         assert "with_init_timeout" in source
         assert "context=" in source

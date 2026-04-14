@@ -126,6 +126,39 @@ async def slack_slash_command(request: Request) -> JSONResponse:
     )
 
 
+def _verify_slack_request(request: Request, body: bytes, verify_fn: Any) -> JSONResponse | None:
+    """Return a 401 JSONResponse if the Slack signature is invalid, else None."""
+    signing_secret: str = getattr(request.app.state, "slack_signing_secret", None) or os.environ.get(
+        "SLACK_SIGNING_SECRET", ""
+    )
+    if not signing_secret:
+        return None
+    timestamp = request.headers.get("x-slack-request-timestamp", "")
+    signature = request.headers.get("x-slack-signature", "")
+    if not timestamp or not signature or not verify_fn(body, timestamp, signature, signing_secret):
+        return JSONResponse(status_code=401, content={"detail": "Invalid Slack signature"})
+    return None
+
+
+def _parse_slack_body(body: bytes) -> dict[str, Any] | None:
+    """Parse a Slack events payload, returning None on failure."""
+    try:
+        import json as _json
+
+        return _json.loads(body)  # type: ignore[no-any-return]
+    except Exception:
+        return None
+
+
+def _is_actionable_slack_event(event: dict[str, Any]) -> bool:
+    """Return True if the Slack event is a user message we should act on."""
+    if event.get("type") != "message":
+        return False
+    if event.get("subtype") in {"bot_message", "message_changed"}:
+        return False
+    return not event.get("bot_id")
+
+
 @router.post("/webhooks/slack/events", status_code=200)
 async def slack_events(request: Request) -> JSONResponse:
     """Receive Slack Events API callbacks.
@@ -143,58 +176,30 @@ async def slack_events(request: Request) -> JSONResponse:
 
     body = await request.body()
 
-    # Verify Slack request signature if a signing secret is configured
-    signing_secret: str = getattr(request.app.state, "slack_signing_secret", None) or os.environ.get(
-        "SLACK_SIGNING_SECRET", ""
-    )
-    if signing_secret:
-        timestamp = request.headers.get("x-slack-request-timestamp", "")
-        signature = request.headers.get("x-slack-signature", "")
-        if not timestamp or not signature or not verify_slack_signature(body, timestamp, signature, signing_secret):
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid Slack signature"},
-            )
+    error_resp = _verify_slack_request(request, body, verify_slack_signature)
+    if error_resp is not None:
+        return error_resp
 
-    try:
-        import json as _json
-
-        payload: dict[str, Any] = _json.loads(body)
-    except Exception as exc:
-        logger.debug("Bad Slack events payload", exc_info=exc)
-        return JSONResponse(
-            status_code=400,
-            content={"detail": "Bad events payload"},
-        )
+    payload = _parse_slack_body(body)
+    if payload is None:
+        return JSONResponse(status_code=400, content={"detail": "Bad events payload"})
 
     event_type = payload.get("type", "")
 
-    # Slack URL verification handshake
     if event_type == "url_verification":
-        return JSONResponse(
-            status_code=200,
-            content={"challenge": payload.get("challenge", "")},
-        )
+        return JSONResponse(status_code=200, content={"challenge": payload.get("challenge", "")})
 
     if event_type != "event_callback":
         return JSONResponse(status_code=200, content={"ok": True})
 
     event: dict[str, Any] = payload.get("event", {})
-    msg_type = event.get("type", "")
-    subtype = event.get("subtype", "")
 
-    # Ignore non-message events, bot_message subtypes, and message_changed
-    if msg_type != "message" or subtype in {"bot_message", "message_changed"}:
-        return JSONResponse(status_code=200, content={"ok": True})
-
-    # Ignore messages sent by bots (bot_id present means it's a bot)
-    if event.get("bot_id"):
+    if not _is_actionable_slack_event(event):
         return JSONResponse(status_code=200, content={"ok": True})
 
     bot_user_id: str = os.environ.get("SLACK_BOT_USER_ID", "")
     text: str = event.get("text", "")
 
-    # Only act when the bot is directly mentioned
     if bot_user_id and f"<@{bot_user_id}>" not in text:
         return JSONResponse(status_code=200, content={"ok": True})
 

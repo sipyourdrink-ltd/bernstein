@@ -862,6 +862,32 @@ def run_pii_gate_sync(
 # ---------------------------------------------------------------------------
 
 
+_DLP_SKIP_EXTENSIONS = {
+    ".pyc", ".pyo", ".so", ".dylib", ".whl", ".egg",
+    ".gz", ".zip", ".tar", ".png", ".jpg", ".gif", ".ico", ".pdf",
+}
+
+_DLP_SELF_SKIP_PATHS = (
+    "src/bernstein/core/dlp_scanner.py",
+    "src/bernstein/core/pii_output_gate.py",
+    "src/bernstein/core/sensitive_file_detector.py",
+    "src/bernstein/core/quality_gates.py",
+    "tests/unit/test_dlp_scanner.py",
+    "tests/unit/test_pii_output_gate.py",
+    "tests/unit/test_sensitive_file_detector.py",
+    "tests/unit/test_quality_gates.py",
+)
+
+
+def _should_skip_dlp_file(rel: str, suffix: str, config: QualityGatesConfig) -> bool:
+    """Return True if the file should be skipped for DLP scanning."""
+    if suffix in _DLP_SKIP_EXTENSIONS:
+        return True
+    if rel in _DLP_SELF_SKIP_PATHS:
+        return True
+    return any(rel.startswith(ig.rstrip("/")) or fnmatch(rel, ig) for ig in config.dlp_ignore_paths)
+
+
 def _run_dlp_gate(
     config: QualityGatesConfig,
     run_dir: Path,
@@ -905,38 +931,6 @@ def _run_dlp_gate(
     )
     scanner = DLPScanner(dlp_config)
 
-    _skip_extensions = {
-        ".pyc",
-        ".pyo",
-        ".so",
-        ".dylib",
-        ".whl",
-        ".egg",
-        ".gz",
-        ".zip",
-        ".tar",
-        ".png",
-        ".jpg",
-        ".gif",
-        ".ico",
-        ".pdf",
-    }
-    # Files that *define* the DLP / PII patterns themselves will always
-    # match their own rules ("All rights reserved", credit-card regexes, etc.)
-    # — scanning them produces guaranteed false positives that block legit
-    # merges (incident 2026-04-11: architect-80d4691e blocked on the very
-    # commit that *added* DLP rules to dlp_scanner.py).
-    _self_skip_paths = (
-        "src/bernstein/core/dlp_scanner.py",
-        "src/bernstein/core/pii_output_gate.py",
-        "src/bernstein/core/sensitive_file_detector.py",
-        "src/bernstein/core/quality_gates.py",
-        "tests/unit/test_dlp_scanner.py",
-        "tests/unit/test_pii_output_gate.py",
-        "tests/unit/test_sensitive_file_detector.py",
-        "tests/unit/test_quality_gates.py",
-    )
-
     scan_targets: list[_Path]
     if changed_files is not None:
         scan_targets = [_Path(run_dir) / rel for rel in changed_files]
@@ -948,13 +942,8 @@ def _run_dlp_gate(
     for fpath in scan_targets:
         if not fpath.is_file():
             continue
-        if fpath.suffix in _skip_extensions:
-            continue
-        # Check ignore paths
         rel = str(fpath.relative_to(run_dir))
-        if rel in _self_skip_paths:
-            continue
-        if any(rel.startswith(ig.rstrip("/")) or fnmatch(rel, ig) for ig in config.dlp_ignore_paths):
+        if _should_skip_dlp_file(rel, fpath.suffix, config):
             continue
         try:
             content = fpath.read_text(encoding="utf-8", errors="ignore")

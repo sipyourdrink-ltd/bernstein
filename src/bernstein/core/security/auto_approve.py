@@ -397,6 +397,30 @@ _DANGEROUS_TOOLS: Final[frozenset[str]] = frozenset(
 # ---------------------------------------------------------------------------
 
 
+def _skip_quoted(cmd: str, start: int, n: int) -> int:
+    """Skip past a quoted string starting at *start*, returning the index after the closing quote."""
+    quote = cmd[start]
+    j = start + 1
+    while j < n and cmd[j] != quote:
+        if quote == '"' and cmd[j] == "\\" and j + 1 < n:
+            j += 1  # skip escaped char
+        j += 1
+    return j + 1
+
+
+def _shell_operator_len(cmd: str, i: int, n: int) -> int:
+    """Return the length of a shell operator at position *i*, or 0 if none."""
+    two = cmd[i : i + 2]
+    if two in ("&&", "||"):
+        return 2
+    ch = cmd[i]
+    if ch == ";" and (i + 1 >= n or cmd[i + 1] != ";"):
+        return 1
+    if ch == "|" and (i + 1 >= n or cmd[i + 1] != "|"):
+        return 1
+    return 0
+
+
 def decompose_command(cmd: str) -> list[str]:
     """Split a compound shell command into individual sub-commands.
 
@@ -414,53 +438,22 @@ def decompose_command(cmd: str) -> list[str]:
     """
     parts: list[str] = []
     current: list[str] = []
-    # Lex the command; shlex handles quotes but not shell operators.
-    # We scan character-by-character to split on unquoted operators.
     i = 0
     n = len(cmd)
     while i < n:
         ch = cmd[i]
-        # Handle single-quoted strings — pass through verbatim
-        if ch == "'":
-            j = i + 1
-            while j < n and cmd[j] != "'":
-                j += 1
-            current.append(cmd[i : j + 1])
-            i = j + 1
+        # Handle quoted strings
+        if ch in ("'", '"'):
+            end = _skip_quoted(cmd, i, n)
+            current.append(cmd[i:end])
+            i = end
             continue
-        # Handle double-quoted strings
-        if ch == '"':
-            j = i + 1
-            while j < n and cmd[j] != '"':
-                if cmd[j] == "\\" and j + 1 < n:
-                    j += 1  # skip escaped char
-                j += 1
-            current.append(cmd[i : j + 1])
-            i = j + 1
-            continue
-        # &&
-        if cmd[i : i + 2] == "&&":
+        # Check for shell operators
+        op_len = _shell_operator_len(cmd, i, n)
+        if op_len:
             parts.append("".join(current).strip())
             current = []
-            i += 2
-            continue
-        # ||
-        if cmd[i : i + 2] == "||":
-            parts.append("".join(current).strip())
-            current = []
-            i += 2
-            continue
-        # ; (but not ;; which is case pattern)
-        if ch == ";" and (i + 1 >= n or cmd[i + 1] != ";"):
-            parts.append("".join(current).strip())
-            current = []
-            i += 1
-            continue
-        # | (but not ||, handled above)
-        if ch == "|" and (i + 1 >= n or cmd[i + 1] != "|"):
-            parts.append("".join(current).strip())
-            current = []
-            i += 1
+            i += op_len
             continue
         current.append(ch)
         i += 1

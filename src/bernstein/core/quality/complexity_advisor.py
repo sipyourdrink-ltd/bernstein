@@ -257,6 +257,20 @@ def _cross_file_dep_score(owned_files: list[str], workdir: Path) -> float:
     return files_with_internal_imports / len(paths)
 
 
+def _import_node_matches(node: ast.AST, targets: set[str]) -> bool:
+    """Return True if an import AST node references any of *targets*."""
+    if isinstance(node, ast.Import):
+        return any(
+            alias.name in targets or alias.name.split(".")[0] in targets
+            for alias in node.names
+        )
+    if isinstance(node, ast.ImportFrom):
+        module = node.module or ""
+        root = module.split(".")[0]
+        return module in targets or root in targets
+    return False
+
+
 def _imports_any(path: Path, targets: set[str]) -> bool:
     """Return True if *path* imports any of the *targets* module names.
 
@@ -270,21 +284,7 @@ def _imports_any(path: Path, targets: set[str]) -> bool:
     try:
         source = path.read_text(encoding="utf-8", errors="replace")
         tree = ast.parse(source, filename=str(path))
-    except SyntaxError:
-        return False
-    except OSError:
+    except (SyntaxError, OSError):
         return False
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root = alias.name.split(".")[0]
-                if alias.name in targets or root in targets:
-                    return True
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            root = module.split(".")[0]
-            if module in targets or root in targets:
-                return True
-
-    return False
+    return any(_import_node_matches(node, targets) for node in ast.walk(tree))

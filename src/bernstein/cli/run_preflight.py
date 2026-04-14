@@ -52,6 +52,63 @@ class RunCostEstimate:
     high_usd: float
 
 
+def _estimate_task_count(
+    workdir: Path, plan_file: Path | None, goal: str | None
+) -> int:
+    """Estimate the number of tasks from plan file or backlog."""
+    if plan_file is not None:
+        try:
+            return max(1, len(load_plan_from_yaml(plan_file)))
+        except Exception:
+            return 5
+    if goal is not None:
+        return 5
+    count = 0
+    for subdir in ("open", "issues"):
+        backlog_dir = workdir / ".sdd" / "backlog" / subdir
+        if backlog_dir.exists():
+            count += len(list(backlog_dir.glob("*.md")))
+            count += len(list(backlog_dir.glob("*.yaml")))
+            count += len(list(backlog_dir.glob("*.yml")))
+    return max(1, count)
+
+
+def _resolve_model_and_cli(
+    seed_file: str | None, model_override: str | None
+) -> tuple[str, str]:
+    """Resolve model and CLI adapter from seed file or defaults."""
+    est_model = model_override or "sonnet"
+    est_cli = "claude"
+    if model_override is not None:
+        return est_model, est_cli
+
+    seed_path = Path(seed_file) if seed_file is not None else find_seed_file()
+    if seed_path is None or not seed_path.exists():
+        return est_model, est_cli
+
+    try:
+        from bernstein.core.seed import parse_seed
+
+        seed = parse_seed(seed_path)
+        if seed.model:
+            est_model = seed.model
+        if seed.role_model_policy:
+            for _role, _policy in seed.role_model_policy.items():
+                if "cli" in _policy:
+                    est_cli = _policy["cli"]
+                if "model" in _policy:
+                    est_model = _policy["model"]
+                break
+        if seed.cli and seed.cli != "auto":
+            est_cli = seed.cli
+    except Exception:
+        est_model = "sonnet"
+    return est_model, est_cli
+
+
+_FREE_ADAPTERS = frozenset(("qwen", "gemini", "ollama", "tabby"))
+
+
 def _estimate_run_preview(
     *,
     workdir: Path,
@@ -72,48 +129,10 @@ def _estimate_run_preview(
     Returns:
         Cost estimate using the best available task count and model hint.
     """
-    est_task_count = 5
-    if plan_file is not None:
-        try:
-            est_task_count = max(1, len(load_plan_from_yaml(plan_file)))
-        except Exception:
-            est_task_count = 5
-    elif goal is None:
-        count = 0
-        for subdir in ("open", "issues"):
-            backlog_dir = workdir / ".sdd" / "backlog" / subdir
-            if backlog_dir.exists():
-                count += len(list(backlog_dir.glob("*.md")))
-                count += len(list(backlog_dir.glob("*.yaml")))
-                count += len(list(backlog_dir.glob("*.yml")))
-        est_task_count = max(1, count)
+    est_task_count = _estimate_task_count(workdir, plan_file, goal)
+    est_model, est_cli = _resolve_model_and_cli(seed_file, model_override)
 
-    est_model = model_override or "sonnet"
-    est_cli = "claude"
-    seed_path = Path(seed_file) if seed_file is not None else find_seed_file()
-    if model_override is None and seed_path is not None and seed_path.exists():
-        try:
-            from bernstein.core.seed import parse_seed
-
-            seed = parse_seed(seed_path)
-            if seed.model:
-                est_model = seed.model
-            # Read the configured CLI adapter from role_model_policy or top-level cli
-            if seed.role_model_policy:
-                # Use the first role's cli/model as representative
-                for _role, _policy in seed.role_model_policy.items():
-                    if "cli" in _policy:
-                        est_cli = _policy["cli"]
-                    if "model" in _policy:
-                        est_model = _policy["model"]
-                    break
-            if seed.cli and seed.cli != "auto":
-                est_cli = seed.cli
-        except Exception:
-            est_model = "sonnet"
-
-    # For non-Claude adapters, costs are typically $0 (free tier) or much lower
-    if est_cli in ("qwen", "gemini", "ollama", "tabby"):
+    if est_cli in _FREE_ADAPTERS:
         low_usd, high_usd = 0.0, 0.0
     else:
         low_usd, high_usd = estimate_run_cost(est_task_count, est_model)

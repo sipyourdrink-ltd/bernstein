@@ -116,6 +116,31 @@ def _serialize_value(value: Any) -> Any:
     return value
 
 
+def _task_to_dict(t: Any) -> dict[str, Any]:
+    """Coerce a task object (dict, dataclass, etc.) to a plain dict."""
+    if isinstance(t, dict):
+        return t
+    if hasattr(t, "__dict__"):
+        return t.__dict__
+    return {}
+
+
+def _extract_task_fields(task: dict[str, Any], fields: list[str]) -> dict[str, Any]:
+    """Pick requested *fields* from a task dict, serializing enums."""
+    row: dict[str, Any] = {}
+    for f in fields:
+        if f in task:
+            row[f] = _serialize_value(task[f])
+        elif f == "agent":
+            row[f] = {
+                "id": task.get("assigned_agent", ""),
+                "provider": task.get("provider", ""),
+            }
+        else:
+            row[f] = None
+    return row
+
+
 def _resolve_tasks(parsed: ParsedQuery, store: Any) -> list[dict[str, Any]]:
     """Resolve a tasks query against the store.
 
@@ -131,31 +156,12 @@ def _resolve_tasks(parsed: ParsedQuery, store: Any) -> list[dict[str, Any]]:
 
     results: list[dict[str, Any]] = []
     for t in tasks:
-        if isinstance(t, dict):
-            task = t
-        elif hasattr(t, "__dict__"):
-            task = t.__dict__
-        else:
-            task = {}
-        # Normalize status to a string for comparison: handles both
-        # plain strings (mock stores) and TaskStatus enum instances
-        # (real TaskStore).
+        task = _task_to_dict(t)
         raw_status = task.get("status")
         task_status_str = raw_status.value if hasattr(raw_status, "value") else raw_status
         if status_filter and task_status_str != status_filter:
             continue
-        row: dict[str, Any] = {}
-        for f in parsed.fields:
-            if f in task:
-                row[f] = _serialize_value(task[f])
-            elif f == "agent":
-                row[f] = {
-                    "id": task.get("assigned_agent", ""),
-                    "provider": task.get("provider", ""),
-                }
-            else:
-                row[f] = None
-        results.append(row)
+        results.append(_extract_task_fields(task, parsed.fields))
     return results
 
 

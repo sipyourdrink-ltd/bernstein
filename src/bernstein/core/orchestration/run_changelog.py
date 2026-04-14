@@ -510,6 +510,25 @@ def _component_for_role(role: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _format_md_component_section(
+    component: str,
+    changes: list[TaskChange],
+    repo_url: str | None,
+    lines: list[str],
+) -> None:
+    """Render a single component section in Markdown."""
+    count = len(changes)
+    lines.append(f"## {component} ({count} {'change' if count == 1 else 'changes'})")
+    lines.append("")
+    for ch in changes:
+        breaking_flag = " ⚠️ **BREAKING**" if ch.is_breaking else ""
+        task_link = _task_link(ch.task_id, repo_url)
+        lines.append(f"- {ch.summary}{breaking_flag} {task_link}")
+        if ch.result_summary:
+            lines.append(f"  _{ch.result_summary[:200]}_")
+    lines.append("")
+
+
 def format_markdown(cl: RunChangelog, *, repo_url: str | None = None) -> str:
     """Render *cl* as a GitHub-flavoured Markdown changelog.
 
@@ -540,17 +559,7 @@ def format_markdown(cl: RunChangelog, *, repo_url: str | None = None) -> str:
     # Ordered component sections (most changes first)
     ordered = sorted(cl.changes.items(), key=lambda kv: -len(kv[1]))
     for component, changes in ordered:
-        count = len(changes)
-        lines.append(f"## {component} ({count} {'change' if count == 1 else 'changes'})")
-        lines.append("")
-        for ch in changes:
-            breaking_flag = " ⚠️ **BREAKING**" if ch.is_breaking else ""
-            task_link = _task_link(ch.task_id, repo_url)
-            lines.append(f"- {ch.summary}{breaking_flag} {task_link}")
-            if ch.result_summary:
-                # Indent the agent's own summary as a sub-bullet
-                lines.append(f"  _{ch.result_summary[:200]}_")
-        lines.append("")
+        _format_md_component_section(component, changes, repo_url, lines)
 
     if not cl.changes:
         lines.append("_No agent-produced changes found for this run window._")

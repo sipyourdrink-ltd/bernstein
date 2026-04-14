@@ -67,6 +67,21 @@ _manager: PluginManager | None = None
 _CAST_LIST_OBJ = "list[object]"
 
 
+def _mcp_entry_from_dict(d: dict[str, Any]) -> Any:
+    """Build an MCPServerEntry from a raw dict."""
+    from bernstein.core.mcp_registry import MCPServerEntry
+
+    return MCPServerEntry(
+        name=str(d["name"]),
+        package=str(d.get("package", "")),
+        capabilities=tuple(str(c) for c in cast(_CAST_LIST_OBJ, d.get("capabilities", []))),
+        keywords=tuple(str(k) for k in cast(_CAST_LIST_OBJ, d.get("keywords", []))),
+        env_required=tuple(str(e) for e in cast(_CAST_LIST_OBJ, d.get("env_required", []))),
+        command=str(d.get("command", "npx")),
+        args=tuple(str(a) for a in cast(_CAST_LIST_OBJ, d["args"])) if "args" in d else None,
+    )
+
+
 class HookBlockingError(Exception):
     """Raised when a hook command exits with code 2, indicating a blocking failure."""
 
@@ -296,6 +311,34 @@ class CommandHook:
                 pass  # Non-JSON error output; use raw text fallback
         raise HookBlockingError(hook_name, error_detail)
 
+    def _execute_hook_script(
+        self, hook_name: str, script: Path, current_payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
+        """Execute a single hook script and return (updated_payload, should_abort)."""
+        sub_kwargs, env = self._prepare_hook_env(**current_payload)
+        proc = subprocess.run(
+            [str(script)],
+            input=json.dumps(sub_kwargs),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return self._handle_success(hook_name, script, proc, current_payload)
+        if proc.returncode == 2:
+            self._handle_blocking(hook_name, proc)
+        else:
+            log.warning(
+                "Hook script %s exited with code %d: %s",
+                script.name,
+                proc.returncode,
+                proc.stderr.strip() or proc.stdout.strip(),
+            )
+        return current_payload, False
+
     def _run_command(self, hook_name: str, **kwargs: Any) -> None:
         current_payload = dict(kwargs)
         validate_hook_payload(hook_name, current_payload)
@@ -307,7 +350,6 @@ class CommandHook:
         for script in sorted(hook_path.iterdir()):
             if not os.access(script, os.X_OK) or script.is_dir():
                 continue
-
             if self._is_duplicate(hook_name, script):
                 log.debug(
                     "Skipping duplicate hook %s/%s (already registered via %s)",
@@ -316,39 +358,12 @@ class CommandHook:
                     self._plugin_root,
                 )
                 continue
-
             log.debug("Executing hook script: %s", script)
             try:
-                sub_kwargs, env = self._prepare_hook_env(**current_payload)
-                proc = subprocess.run(
-                    [str(script)],
-                    input=json.dumps(sub_kwargs),
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    capture_output=True,
-                    env=env,
-                    check=False,
-                )
-
-                if proc.returncode == 0:
-                    current_payload, abort_chain = self._handle_success(hook_name, script, proc, current_payload)
-                    if abort_chain:
-                        break
-                    continue
-
-                if proc.returncode == 2:
-                    self._handle_blocking(hook_name, proc)
-                else:
-                    log.warning(
-                        "Hook script %s exited with code %d: %s",
-                        script.name,
-                        proc.returncode,
-                        proc.stderr.strip() or proc.stdout.strip(),
-                    )
-            except HookBlockingError:
-                raise
-            except HookValidationError:
+                current_payload, abort_chain = self._execute_hook_script(hook_name, script, current_payload)
+                if abort_chain:
+                    break
+            except (HookBlockingError, HookValidationError):
                 raise
             except Exception as exc:
                 log.warning("Failed to execute hook script %s: %s", script, exc)
@@ -950,40 +965,32 @@ class PluginManager:
                 instance.  Typed as ``object`` to avoid a circular import;
                 the method accesses ``register_plugin_servers`` via duck-typing.
         """
-        from bernstein.core.mcp_registry import MCPServerEntry
-
         for plugin_name in self._registered_names:
             plugin = self._pm.get_plugin(plugin_name)
-            if plugin is None:
-                continue
-            if not hasattr(plugin, "provide_mcp_servers"):
+            if plugin is None or not hasattr(plugin, "provide_mcp_servers"):
                 continue
             try:
-                raw_servers: object = plugin.provide_mcp_servers()
-                if not raw_servers or not isinstance(raw_servers, list):
-                    continue
-                typed_servers = cast("_CAST_LIST_OBJ", raw_servers)
-                entries: list[MCPServerEntry] = []
-                for raw in typed_servers:
-                    if isinstance(raw, MCPServerEntry):
-                        entries.append(raw)
-                    elif isinstance(raw, dict):
-                        d: dict[str, Any] = cast("dict[str, Any]", raw)
-                        entries.append(
-                            MCPServerEntry(
-                                name=str(d["name"]),
-                                package=str(d.get("package", "")),
-                                capabilities=tuple(str(c) for c in cast("_CAST_LIST_OBJ", d.get("capabilities", []))),
-                                keywords=tuple(str(k) for k in cast("_CAST_LIST_OBJ", d.get("keywords", []))),
-                                env_required=tuple(str(e) for e in cast("_CAST_LIST_OBJ", d.get("env_required", []))),
-                                command=str(d.get("command", "npx")),
-                                args=tuple(str(a) for a in cast("_CAST_LIST_OBJ", d["args"])) if "args" in d else None,
-                            )
-                        )
-                if entries:
-                    registry.register_plugin_servers(plugin_name, entries)  # type: ignore[union-attr]
+                self._register_plugin_mcp_servers(plugin_name, plugin, registry)
             except Exception as exc:
                 log.warning("Plugin %r provide_mcp_servers failed: %s", plugin_name, exc)
+
+    @staticmethod
+    def _register_plugin_mcp_servers(plugin_name: str, plugin: object, registry: object) -> None:
+        """Parse and register MCP servers from a single plugin."""
+        from bernstein.core.mcp_registry import MCPServerEntry
+
+        raw_servers: object = plugin.provide_mcp_servers()  # type: ignore[union-attr]
+        if not raw_servers or not isinstance(raw_servers, list):
+            return
+        typed_servers = cast("_CAST_LIST_OBJ", raw_servers)
+        entries: list[MCPServerEntry] = []
+        for raw in typed_servers:
+            if isinstance(raw, MCPServerEntry):
+                entries.append(raw)
+            elif isinstance(raw, dict):
+                entries.append(_mcp_entry_from_dict(cast("dict[str, Any]", raw)))
+        if entries:
+            registry.register_plugin_servers(plugin_name, entries)  # type: ignore[union-attr]
 
     def discover_entry_points(self) -> None:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""

@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -842,6 +842,28 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
     return task_to_response(task)
 
 
+def _store_progress_snapshot(store: Any, task_id: str, body: Any) -> None:
+    """Store structured snapshot for stall detection when snapshot fields are present."""
+    if body.files_changed is None and body.tests_passing is None:
+        return
+    store.add_snapshot(
+        task_id,
+        files_changed=body.files_changed if body.files_changed is not None else 0,
+        tests_passing=body.tests_passing if body.tests_passing is not None else -1,
+        errors=body.errors if body.errors is not None else 0,
+        last_file=body.last_file,
+    )
+
+
+def _persist_lines_if_present(request: Request, task: Any, body: Any) -> None:
+    """Persist lines_changed for the cost-efficiency metric endpoint."""
+    if body.lines_changed is None or body.lines_changed <= 0:
+        return
+    agent_id = task.claimed_by_session or ""
+    if agent_id:
+        _persist_lines_changed(request, agent_id, body.lines_changed)
+
+
 @router.post("/tasks/{task_id}/progress", responses={404: {"description": "Task not found"}})
 async def progress_task(task_id: str, body: TaskProgressRequest, request: Request) -> TaskResponse:
     """Append an intermediate progress update to a task.
@@ -859,21 +881,8 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
         task = await store.add_progress(task_id, body.message, body.percent)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-    # Store structured snapshot for stall detection when snapshot fields present
-    if body.files_changed is not None or body.tests_passing is not None:
-        store.add_snapshot(
-            task_id,
-            files_changed=body.files_changed if body.files_changed is not None else 0,
-            tests_passing=body.tests_passing if body.tests_passing is not None else -1,
-            errors=body.errors if body.errors is not None else 0,
-            last_file=body.last_file,
-        )
-
-    # Persist lines_changed for the cost-efficiency metric endpoint
-    if body.lines_changed is not None and body.lines_changed > 0:
-        agent_id = task.claimed_by_session or ""
-        if agent_id:
-            _persist_lines_changed(request, agent_id, body.lines_changed)
+    _store_progress_snapshot(store, task_id, body)
+    _persist_lines_if_present(request, task, body)
 
     # Real-time behavior anomaly detection — checks file access, commands,
     # network endpoints, output size, and file-change velocity against learned
@@ -1320,12 +1329,11 @@ def agent_stream(session_id: str, request: Request) -> StreamingResponse:
     log_path = runtime_dir / f"{session_id}.log"
 
     async def _generate() -> AsyncGenerator[str, None]:
-        # Initial connection event
         yield f"data: {json.dumps({'connected': True, 'session_id': session_id})}\n\n"
 
         offset = 0
         idle_ticks = 0
-        max_idle = 60  # stop after ~30s of no file
+        max_idle = 60
 
         while True:
             if await request.is_disconnected():
@@ -1340,18 +1348,20 @@ def agent_stream(session_id: str, request: Request) -> StreamingResponse:
                 continue
 
             size = log_path.stat().st_size
-            if size > offset:
-                chunk = read_log_tail(log_path, offset)
-                offset = size
-                idle_ticks = 0
-                for line in chunk.splitlines():
-                    if line.strip():
-                        yield f"data: {json.dumps({'line': line})}\n\n"
-            else:
+            if size <= offset:
                 idle_ticks += 1
                 if idle_ticks >= max_idle:
                     yield f"data: {json.dumps({'done': True, 'reason': 'idle'})}\n\n"
                     return
+                await asyncio.sleep(0.5)
+                continue
+
+            chunk = read_log_tail(log_path, offset)
+            offset = size
+            idle_ticks = 0
+            for line in chunk.splitlines():
+                if line.strip():
+                    yield f"data: {json.dumps({'line': line})}\n\n"
 
             await asyncio.sleep(0.5)
 

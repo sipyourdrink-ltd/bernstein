@@ -42,6 +42,48 @@ def _run_git(args: list[str], cwd: Path) -> str:
         return ""
 
 
+def _find_agent_for_task(
+    task_id: str, agents: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Find the agent associated with a task ID or session ID."""
+    for a in agents:
+        for tid in a.get("task_ids", []):
+            if tid == task_id or tid.startswith(task_id) or task_id.startswith(tid[:8]):
+                return a
+
+    # Fall back to matching by session ID
+    for a in agents:
+        aid = a.get("id", "")
+        if aid == task_id or aid.startswith(task_id) or task_id.startswith(aid[:8]):
+            return a
+    return None
+
+
+def _diff_from_worktree_or_branch(
+    session_id: str, task_id: str, root: Path, base: str
+) -> tuple[str, str]:
+    """Try worktree first, then branches, to get diff and stat text."""
+    worktree_path = root / ".sdd" / "worktrees" / session_id
+    if worktree_path.exists() and (worktree_path / ".git").exists():
+        diff_text = _run_git(["diff", f"{base}...HEAD", "--"], worktree_path)
+        stat_text = _run_git(["diff", f"{base}...HEAD", "--stat"], worktree_path)
+        if diff_text:
+            return diff_text, stat_text
+
+    branches = [f"agent/{session_id}", f"task/{task_id}"]
+    if len(task_id) > 8:
+        branches.append(f"task/{task_id[:8]}")
+
+    for branch in branches:
+        check = _run_git(["branch", "--list", branch], root)
+        if check.strip():
+            diff_text = _run_git(["diff", f"{base}...{branch}", "--"], root)
+            stat_text = _run_git(["diff", f"{base}...{branch}", "--stat"], root)
+            if diff_text:
+                return diff_text, stat_text
+    return "", ""
+
+
 def _resolve_task_diff(
     task_id: str, agents: list[dict[str, Any]], root: Path, base: str = "main"
 ) -> tuple[str, str, dict[str, Any] | None]:
@@ -50,52 +92,12 @@ def _resolve_task_diff(
     Returns:
         (diff_text, stat_text, agent_dict)
     """
-    # Find agent for task
-    agent: dict[str, Any] | None = None
-    for a in agents:
-        for tid in a.get("task_ids", []):
-            if tid == task_id or tid.startswith(task_id) or task_id.startswith(tid[:8]):
-                agent = a
-                break
-        if agent:
-            break
-
-    if not agent:
-        # Try as session ID
-        for a in agents:
-            aid = a.get("id", "")
-            if aid == task_id or aid.startswith(task_id) or task_id.startswith(aid[:8]):
-                agent = a
-                break
-
+    agent = _find_agent_for_task(task_id, agents)
     if not agent:
         return "", "", None
 
     session_id = agent.get("id", "")
-    branches = [f"agent/{session_id}", f"task/{task_id}"]
-    if len(task_id) > 8:
-        branches.append(f"task/{task_id[:8]}")
-
-    worktree_path = root / ".sdd" / "worktrees" / session_id
-
-    diff_text = ""
-    stat_text = ""
-
-    # 1. Try worktree first (most live data)
-    if worktree_path.exists() and (worktree_path / ".git").exists():
-        diff_text = _run_git(["diff", f"{base}...HEAD", "--"], worktree_path)
-        stat_text = _run_git(["diff", f"{base}...HEAD", "--stat"], worktree_path)
-
-    # 2. Try branches in order
-    if not diff_text:
-        for branch in branches:
-            check = _run_git(["branch", "--list", branch], root)
-            if check.strip():
-                diff_text = _run_git(["diff", f"{base}...{branch}", "--"], root)
-                stat_text = _run_git(["diff", f"{base}...{branch}", "--stat"], root)
-                if diff_text:
-                    break
-
+    diff_text, stat_text = _diff_from_worktree_or_branch(session_id, task_id, root, base)
     return diff_text, stat_text, agent
 
 
@@ -116,6 +118,25 @@ def _parse_diff_files(diff_text: str) -> dict[str, str]:
     if current_file is not None:
         files[current_file] = "\n".join(lines)
     return files
+
+
+def _file_presence_marker(f: str, left_files: dict[str, str], right_files: dict[str, str]) -> str:
+    """Return a Rich markup string indicating which sides have the file."""
+    if f in left_files and f in right_files:
+        return "[yellow](both)[/yellow]"
+    if f in left_files:
+        return "[cyan](left only)[/cyan]"
+    return "[magenta](right only)[/magenta]"
+
+
+def _mount_diff_content(panel: VerticalScroll, content: str) -> None:
+    """Mount diff syntax or placeholder into a panel."""
+    if content:
+        panel.mount(
+            Static(Syntax(content, "diff", theme="monokai", line_numbers=False), classes="diff-content")
+        )
+    else:
+        panel.mount(Static("[dim](no changes)[/dim]", classes="diff-content"))
 
 
 # ---------------------------------------------------------------------------
@@ -285,35 +306,11 @@ class CompareScreen(Screen[None]):
             return
 
         for f in all_files:
-            left_content = left_files.get(f, "")
-            right_content = right_files.get(f, "")
-
-            in_left = f in left_files
-            in_right = f in right_files
-
-            if in_left and in_right:
-                marker = "[yellow](both)[/yellow]"
-            elif in_left:
-                marker = "[cyan](left only)[/cyan]"
-            else:
-                marker = "[magenta](right only)[/magenta]"
-
+            marker = _file_presence_marker(f, left_files, right_files)
             left_panel.mount(Static(f"[bold]{f}[/bold] {marker}", classes="file-header"))
             right_panel.mount(Static(f"[bold]{f}[/bold] {marker}", classes="file-header"))
-
-            if left_content:
-                left_panel.mount(
-                    Static(Syntax(left_content, "diff", theme="monokai", line_numbers=False), classes="diff-content")
-                )
-            else:
-                left_panel.mount(Static("[dim](no changes)[/dim]", classes="diff-content"))
-
-            if right_content:
-                right_panel.mount(
-                    Static(Syntax(right_content, "diff", theme="monokai", line_numbers=False), classes="diff-content")
-                )
-            else:
-                right_panel.mount(Static("[dim](no changes)[/dim]", classes="diff-content"))
+            _mount_diff_content(left_panel, left_files.get(f, ""))
+            _mount_diff_content(right_panel, right_files.get(f, ""))
 
     def action_pop_screen(self) -> None:
         self.app.pop_screen()

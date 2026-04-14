@@ -37,62 +37,66 @@ def workspace_group(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
 
-    from rich.table import Table
-
     data = server_get("/workspace")
     if data is None:
-        # No server running — try to parse workspace from seed file
-        seed_path = find_seed_file()
-        if seed_path is None:
-            console.print("[dim]No workspace configured (no bernstein.yaml found).[/dim]")
-            return
+        _render_workspace_offline()
+    else:
+        _render_workspace_from_api(data)
 
-        from bernstein.core.seed import SeedError, parse_seed
 
-        try:
-            cfg = parse_seed(seed_path)
-        except SeedError as exc:
-            from bernstein.cli.errors import seed_parse_error
+def _make_workspace_table() -> Any:
+    """Create a workspace table with standard columns."""
+    from rich.table import Table
 
-            seed_parse_error(exc).print()
-            return
-
-        if cfg.workspace is None:
-            console.print(_NO_WORKSPACE_MSG)
-            return
-
-        ws = cfg.workspace
-        repo_statuses = ws.status()
-
-        table = Table(title="Workspace repos", show_header=True, header_style=_STYLE_BOLD_MAGENTA)
-        table.add_column("Repo", style="cyan")
-        table.add_column("Path")
-        table.add_column("Branch", justify="center")
-        table.add_column("Clean", justify="center")
-        table.add_column("Ahead", justify="right")
-        table.add_column("Behind", justify="right")
-
-        for repo in ws.repos:
-            rs = repo_statuses.get(repo.name)
-            if rs:
-                clean_icon = "[green]yes[/green]" if rs.clean else "[red]no[/red]"
-                table.add_row(repo.name, str(repo.path), rs.branch, clean_icon, str(rs.ahead), str(rs.behind))
-            else:
-                table.add_row(repo.name, str(repo.path), "[dim]n/a[/dim]", "[dim]n/a[/dim]", "-", "-")
-
-        console.print(table)
-        return
-
-    # Server is running — render from API response
-    from rich.table import Table as RichTable
-
-    table = RichTable(title="Workspace repos", show_header=True, header_style=_STYLE_BOLD_MAGENTA)
+    table = Table(title="Workspace repos", show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Repo", style="cyan")
     table.add_column("Path")
     table.add_column("Branch", justify="center")
     table.add_column("Clean", justify="center")
     table.add_column("Ahead", justify="right")
     table.add_column("Behind", justify="right")
+    return table
+
+
+def _render_workspace_offline() -> None:
+    """Render workspace status from seed file (no server)."""
+    seed_path = find_seed_file()
+    if seed_path is None:
+        console.print("[dim]No workspace configured (no bernstein.yaml found).[/dim]")
+        return
+
+    from bernstein.core.seed import SeedError, parse_seed
+
+    try:
+        cfg = parse_seed(seed_path)
+    except SeedError as exc:
+        from bernstein.cli.errors import seed_parse_error
+
+        seed_parse_error(exc).print()
+        return
+
+    if cfg.workspace is None:
+        console.print(_NO_WORKSPACE_MSG)
+        return
+
+    ws = cfg.workspace
+    repo_statuses = ws.status()
+    table = _make_workspace_table()
+
+    for repo in ws.repos:
+        rs = repo_statuses.get(repo.name)
+        if rs:
+            clean_icon = "[green]yes[/green]" if rs.clean else "[red]no[/red]"
+            table.add_row(repo.name, str(repo.path), rs.branch, clean_icon, str(rs.ahead), str(rs.behind))
+        else:
+            table.add_row(repo.name, str(repo.path), "[dim]n/a[/dim]", "[dim]n/a[/dim]", "-", "-")
+
+    console.print(table)
+
+
+def _render_workspace_from_api(data: dict[str, Any]) -> None:
+    """Render workspace status from API response."""
+    table = _make_workspace_table()
 
     for repo in data.get("repos", []):
         clean_icon = "[green]yes[/green]" if repo.get("clean") else "[red]no[/red]"
@@ -314,36 +318,33 @@ def config_validate() -> None:
         for issue in issues:
             console.print(f"  [red]•[/red] {issue}")
         sys.exit(1)
-    else:
-        console.print("[green]✓[/green] Configuration is valid")
 
-        # Show provider summary
-        summary = router.get_provider_summary()
-        if summary:
-            from rich.table import Table
+    console.print("[green]✓[/green] Configuration is valid")
+    _render_provider_summary(router)
 
-            table = Table(title="Providers", show_header=True, header_style="bold cyan")
-            table.add_column("Provider")
-            table.add_column("Tier")
-            table.add_column("Region")
-            table.add_column("Status")
-            table.add_column("Policy Allowed")
-            table.add_column("Residency")
 
-            for name, info in sorted(summary.items()):
-                allowed_style = "green" if info["policy_allowed"] else "red"
-                allowed_text = f"[{allowed_style}]{'yes' if info['policy_allowed'] else 'no'}[/{allowed_style}]"
-                residency = str(info.get("residency_attestation") or "—")
-                table.add_row(
-                    name,
-                    info["tier"],
-                    str(info.get("region", "global")),
-                    info["health"],
-                    allowed_text,
-                    residency,
-                )
+def _render_provider_summary(router: Any) -> None:
+    """Render provider summary table if providers are configured."""
+    summary = router.get_provider_summary()
+    if not summary:
+        return
+    from rich.table import Table
 
-            console.print(table)
+    table = Table(title="Providers", show_header=True, header_style="bold cyan")
+    table.add_column("Provider")
+    table.add_column("Tier")
+    table.add_column("Region")
+    table.add_column("Status")
+    table.add_column("Policy Allowed")
+    table.add_column("Residency")
+
+    for name, info in sorted(summary.items()):
+        allowed_style = "green" if info["policy_allowed"] else "red"
+        allowed_text = f"[{allowed_style}]{'yes' if info['policy_allowed'] else 'no'}[/{allowed_style}]"
+        residency = str(info.get("residency_attestation") or "—")
+        table.add_row(name, info["tier"], str(info.get("region", "global")), info["health"], allowed_text, residency)
+
+    console.print(table)
 
 
 @config_group.command("conflicts")

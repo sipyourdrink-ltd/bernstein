@@ -252,6 +252,22 @@ def diagnose_failure(error_message: str, exit_code: int | None = None) -> Failur
     return FailureMode.UNKNOWN
 
 
+def _resolve_compaction_level(
+    adjustments: dict[str, Any],
+    attempt: int,
+) -> Literal["none", "moderate", "aggressive"]:
+    """Determine compaction level from adjustments and attempt number."""
+    compaction_raw = adjustments.get("compaction_level", "none")
+    level: Literal["none", "moderate", "aggressive"] = (
+        compaction_raw if compaction_raw in ("none", "moderate", "aggressive") else "none"
+    )
+    if attempt >= 3 and level != "aggressive":
+        return "aggressive"
+    if attempt >= 2 and level == "none":
+        return "moderate"
+    return level
+
+
 def plan_healing(
     task_id: str,
     failure: FailureMode,
@@ -307,15 +323,7 @@ def plan_healing(
         adjusted_effort = _EFFORT_DOWNGRADE.get(current_effort, current_effort)
 
     # -- compaction ------------------------------------------------------
-    compaction_raw = adjustments.get("compaction_level", "none")
-    compaction_level: Literal["none", "moderate", "aggressive"] = (
-        compaction_raw if compaction_raw in ("none", "moderate", "aggressive") else "none"
-    )
-    # Escalate compaction on later attempts
-    if attempt >= 3 and compaction_level != "aggressive":
-        compaction_level = "aggressive"
-    elif attempt >= 2 and compaction_level == "none":
-        compaction_level = "moderate"
+    compaction_level = _resolve_compaction_level(adjustments, attempt)
 
     # -- additional context ---------------------------------------------
     context_parts: list[str] = []

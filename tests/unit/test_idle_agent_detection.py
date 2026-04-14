@@ -63,18 +63,6 @@ def _tick_transport(extra_posts: list[dict] | None = None) -> httpx.MockTranspor
         query = request.url.query.decode() if request.url.query else ""
         method = request.method
 
-        if method == "GET" and path.endswith("/tasks") and "status=open" in query:
-            return httpx.Response(200, json=[])
-        if method == "GET" and path.endswith("/tasks") and "status=done" in query:
-            return httpx.Response(200, json=[])
-        if method == "GET" and path.endswith("/tasks") and "status=failed" in query:
-            return httpx.Response(200, json=[])
-        if method == "GET" and path.endswith("/tasks") and "status=claimed" in query:
-            return httpx.Response(200, json=[])
-        if method == "GET" and path.endswith("/tasks") and "status=in_progress" in query:
-            return httpx.Response(200, json=[])
-        if method == "GET" and path.endswith("/tasks") and "limit=" in query:
-            return httpx.Response(200, json=[])
         if method == "GET" and path.endswith("/tasks"):
             return httpx.Response(200, json=[])
         if method == "POST" and path.endswith("/tasks/batch"):

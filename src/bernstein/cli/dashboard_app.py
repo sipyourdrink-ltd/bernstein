@@ -73,6 +73,32 @@ _ACTIVITY_LOG_SELECTOR = "#activity-log"
 logger = logging.getLogger(__name__)
 
 
+_BOOT_LOG_LEVEL_COLORS: dict[str, str] = {
+    "ERROR": "[red]{time}[/] [bold red]ERR[/]  {msg}",
+    "WARNING": "[yellow]{time}[/] [yellow]WARN[/] {msg}",
+}
+
+
+def _format_boot_log_line(raw_line: str) -> str | None:
+    """Parse and format a single boot log line, or return None to skip."""
+    stripped = raw_line.strip()
+    if not stripped or "HTTP Request:" in stripped:
+        return None
+    parts = stripped.split(" ", 3)
+    if len(parts) < 4:
+        return None
+    time_part = parts[1].split(",")[0] if len(parts) > 1 else ""
+    level = parts[2] if len(parts) > 2 else ""
+    msg = parts[3] if len(parts) > 3 else stripped
+    if ": " in msg:
+        msg = msg.split(": ", 1)[1]
+    msg = msg[:80].replace("[", r"\[")
+    template = _BOOT_LOG_LEVEL_COLORS.get(level)
+    if template:
+        return template.format(time=time_part, msg=msg)
+    return f"[dim]{time_part}[/] [dim green]OK[/]   [dim]{msg}[/]"
+
+
 # -- Chat input with Escape support -------------------------------
 
 
@@ -406,47 +432,57 @@ class BernsteinApp(App[None]):
 
     def _check_agents_file(self) -> None:
         """Check agents.json + spawner.log for real-time updates."""
-        # 1. Check agents.json for agent state
-        p = Path(".sdd/runtime/agents.json")
-        if p.exists():
-            try:
-                mtime = p.stat().st_mtime
-                if mtime > self._agents_mtime:
-                    self._agents_mtime = mtime
-                    agents = _load_agents()
-                    if agents:
-                        costs: dict[str, Any] = {}
-                        self._update_agents(agents, costs)
-                        self._update_activity(agents)
-            except Exception:
-                pass
+        self._check_agents_json()
+        self._check_spawner_log()
 
-        # 2. Check spawner.log for real-time activity feed
+    def _check_agents_json(self) -> None:
+        """Poll agents.json for agent state changes."""
+        p = Path(".sdd/runtime/agents.json")
+        if not p.exists():
+            return
+        try:
+            mtime = p.stat().st_mtime
+            if mtime > self._agents_mtime:
+                self._agents_mtime = mtime
+                agents = _load_agents()
+                if agents:
+                    self._update_agents(agents, {})
+                    self._update_activity(agents)
+        except Exception:
+            pass
+
+    def _check_spawner_log(self) -> None:
+        """Tail spawner.log for activity feed events."""
         sp = Path(".sdd/runtime/spawner.log")
-        if sp.exists():
-            try:
-                size = sp.stat().st_size
-                if size > self._spawner_size:
-                    # Read new lines
-                    with sp.open() as f:
-                        f.seek(self._spawner_size)
-                        new_lines = f.read()
-                    self._spawner_size = size
-                    for line in new_lines.strip().split("\n"):
-                        if not line:
-                            continue
-                        message = line.split("] ")[-1] if "] " in line else line
-                        # Filter to important events
-                        if "agent_spawned" in line or "Spawning" in line or "spawned" in line.lower():
-                            self._write_activity("system", f"spawned: {message}")
-                        elif "ERROR" in line or "error" in line:
-                            self._write_activity("system", message)
-                        elif "WARNING" in line:
-                            self._write_activity("system", f"warning: {message}")
-                        elif "completed" in line.lower() or "reaped" in line.lower() or "merged" in line.lower():
-                            self._write_activity("system", message)
-            except Exception:
-                pass
+        if not sp.exists():
+            return
+        try:
+            size = sp.stat().st_size
+            if size <= self._spawner_size:
+                return
+            with sp.open() as f:
+                f.seek(self._spawner_size)
+                new_lines = f.read()
+            self._spawner_size = size
+            for line in new_lines.strip().split("\n"):
+                self._classify_spawner_line(line)
+        except Exception:
+            pass
+
+    def _classify_spawner_line(self, line: str) -> None:
+        """Classify and write a spawner log line to the activity feed."""
+        if not line:
+            return
+        message = line.split("] ")[-1] if "] " in line else line
+        lower = line.lower()
+        if "agent_spawned" in line or "Spawning" in line or "spawned" in lower:
+            self._write_activity("system", f"spawned: {message}")
+        elif "ERROR" in line or "error" in line:
+            self._write_activity("system", message)
+        elif "WARNING" in line:
+            self._write_activity("system", f"warning: {message}")
+        elif "completed" in lower or "reaped" in lower or "merged" in lower:
+            self._write_activity("system", message)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         worker: Worker[dict[str, Any]] = event.worker  # type: ignore[assignment]
@@ -485,36 +521,8 @@ class BernsteinApp(App[None]):
 
     def _apply_data(self, data: dict[str, Any]) -> None:
         """Apply fetched data to widgets (main thread, non-blocking)."""
-        # Log phase transitions to activity
-        log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
         status = data.get("status") or {}
-
-        agents_list = data.get("agents") or []
-        total = status.get("total", 0) if isinstance(status, dict) else 0
-        alive = sum(1 for a in agents_list if isinstance(a, dict) and a.get("status") != "dead")
-
-        # Track state transitions
-        prev_total = getattr(self, "_prev_total", 0)
-        prev_alive = getattr(self, "_prev_alive", 0)
-
-        if total > 0 and prev_total == 0:
-            log.write(f"[green]\u2192 {total} task(s) planned[/green]")
-        if alive > 0 and prev_alive == 0:
-            log.write("[green]\u2192 First agent spawned[/green]")
-        elif alive > prev_alive and prev_alive > 0:
-            log.write(f"[dim]\u2192 {alive} agent(s) active[/dim]")
-        runtime = status.get("runtime", {}) if isinstance(status.get("runtime", {}), dict) else {}
-        self._announce_config_diff(runtime)
-
-        if not isinstance(status, dict) or not status:
-            if not getattr(self, "_logged_no_server", False):
-                log.write("[yellow]Server not responding yet...[/yellow]")
-                self._logged_no_server = True  # type: ignore[attr-defined]
-        else:
-            self._logged_no_server = False  # type: ignore[attr-defined]
-
-        self._prev_total = total  # type: ignore[attr-defined]
-        self._prev_alive = alive  # type: ignore[attr-defined]
+        self._log_phase_transitions(status, data.get("agents") or [])
 
         self._update_tasks(data.get("tasks"))
         tasks = data.get("tasks") or []
@@ -533,6 +541,35 @@ class BernsteinApp(App[None]):
         self._update_stats(data.get("status"), tasks, data.get("agents", []), costs, monitoring)
         self._update_activity(data.get("agents", []))
 
+    def _log_phase_transitions(self, status: Any, agents_list: list[Any]) -> None:
+        """Log lifecycle phase transitions to the activity log."""
+        log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
+        total = status.get("total", 0) if isinstance(status, dict) else 0
+        alive = sum(1 for a in agents_list if isinstance(a, dict) and a.get("status") != "dead")
+
+        prev_total = getattr(self, "_prev_total", 0)
+        prev_alive = getattr(self, "_prev_alive", 0)
+
+        if total > 0 and prev_total == 0:
+            log.write(f"[green]\u2192 {total} task(s) planned[/green]")
+        if alive > 0 and prev_alive == 0:
+            log.write("[green]\u2192 First agent spawned[/green]")
+        elif alive > prev_alive and prev_alive > 0:
+            log.write(f"[dim]\u2192 {alive} agent(s) active[/dim]")
+
+        runtime = status.get("runtime", {}) if isinstance(status.get("runtime", {}), dict) else {}
+        self._announce_config_diff(runtime)
+
+        if not isinstance(status, dict) or not status:
+            if not getattr(self, "_logged_no_server", False):
+                log.write("[yellow]Server not responding yet...[/yellow]")
+                self._logged_no_server = True  # type: ignore[attr-defined]
+        else:
+            self._logged_no_server = False  # type: ignore[attr-defined]
+
+        self._prev_total = total  # type: ignore[attr-defined]
+        self._prev_alive = alive  # type: ignore[attr-defined]
+
     # -- Agents --
 
     def _update_agents(self, agents: list[dict[str, Any]], costs: dict[str, Any] | None = None) -> None:
@@ -541,13 +578,24 @@ class BernsteinApp(App[None]):
         alive_ids = {a.get("id", "") for a in alive}
         per_agent: dict[str, float] = (costs or {}).get("per_agent", {})
 
+        existing_ids = self._reconcile_agent_widgets(col, alive, alive_ids, per_agent)
+        self._show_or_hide_boot_log(col, alive, existing_ids, per_agent)
+        self._update_agent_errors(col, agents)
+
+    def _reconcile_agent_widgets(
+        self,
+        col: Any,
+        alive: list[dict[str, Any]],
+        alive_ids: set[str],
+        per_agent: dict[str, float],
+    ) -> set[str]:
+        """Update or remove existing agent widgets. Returns kept IDs."""
         existing_ids: set[str] = set()
         for child in list(col.children):
             if not isinstance(child, (AgentWidget, Static)):
                 continue
             if child.has_class("col-header"):
                 continue
-            # Keep #no-agents widget -- don't remove/recreate it every tick.
             if isinstance(child, Static) and child.id == "no-agents":
                 continue
             if isinstance(child, AgentWidget):
@@ -564,10 +612,17 @@ class BernsteinApp(App[None]):
                     child.refresh()
                     continue
             child.remove()
+        return existing_ids
 
+    def _show_or_hide_boot_log(
+        self,
+        col: Any,
+        alive: list[dict[str, Any]],
+        existing_ids: set[str],
+        per_agent: dict[str, float],
+    ) -> None:
+        """Show boot log when no agents, mount new agent widgets otherwise."""
         if not alive:
-            # Show live orchestrator boot log instead of static "Waiting..." text.
-            # Only update content when it actually changes -- no mount/remove churn.
             boot_text = self._get_boot_log()
             existing_boot = next(iter(col.query("Static#no-agents")), None)
             if isinstance(existing_boot, Static):
@@ -577,21 +632,22 @@ class BernsteinApp(App[None]):
             else:
                 self._last_boot_text = boot_text
                 col.mount(Static(boot_text, id="no-agents"))
-        else:
-            for w in col.query("Static#no-agents"):
-                w.remove()
-            for a in alive:
-                if a.get("id", "") not in existing_ids:
-                    aid = a.get("id", "")
-                    widget = AgentWidget(
-                        a,
-                        self._task_titles,
-                        self._task_progress,
-                        activity_summary=self._activity_summaries.get(aid, ""),
-                    )
-                    widget.agent_cost = per_agent.get(aid, 0.0)
-                    col.mount(widget)
+            return
 
+        for w in col.query("Static#no-agents"):
+            w.remove()
+        for a in alive:
+            aid = a.get("id", "")
+            if aid not in existing_ids:
+                widget = AgentWidget(
+                    a, self._task_titles, self._task_progress,
+                    activity_summary=self._activity_summaries.get(aid, ""),
+                )
+                widget.agent_cost = per_agent.get(aid, 0.0)
+                col.mount(widget)
+
+    def _update_agent_errors(self, col: Any, agents: list[dict[str, Any]]) -> None:
+        """Update or remove the agent error summary widget."""
         error_count, error_lines = _summarize_agent_errors(agents)
         summary_widget = next(iter(col.query("Static#agent-errors")), None)
         if error_count == 0:
@@ -609,12 +665,7 @@ class BernsteinApp(App[None]):
             col.mount(Static(summary_text, id="agent-errors"))
 
     def _get_boot_log(self) -> str:
-        """Read recent orchestrator/spawner logs for the boot sequence display.
-
-        Shows what's happening under the hood while no agents are visible yet:
-        task decomposition, claim attempts, RAG indexing, worktree setup, etc.
-        Formatted like a Linux boot log for visual consistency.
-        """
+        """Read recent orchestrator/spawner logs for the boot sequence display."""
         lines: list[str] = []
         max_lines = 18
 
@@ -625,31 +676,9 @@ class BernsteinApp(App[None]):
             try:
                 raw = log_path.read_text(encoding="utf-8", errors="replace")
                 for raw_line in raw.splitlines()[-50:]:
-                    # Extract timestamp + message, skip noise.
-                    stripped = raw_line.strip()
-                    if not stripped or "HTTP Request:" in stripped:
-                        continue
-                    # Parse: "2026-03-31 17:48:55,723 INFO module: message"
-                    parts = stripped.split(" ", 3)
-                    if len(parts) < 4:
-                        continue
-                    time_part = parts[1].split(",")[0] if len(parts) > 1 else ""
-                    level = parts[2] if len(parts) > 2 else ""
-                    msg = parts[3] if len(parts) > 3 else stripped
-                    # Truncate module prefix for readability.
-                    if ": " in msg:
-                        msg = msg.split(": ", 1)[1]
-                    msg = msg[:80]
-                    # Escape Rich markup in log messages (e.g. WAL entries
-                    # contain "[run=... seq=...]" which Rich misparses).
-                    msg = msg.replace("[", r"\[")
-                    # Color by level.
-                    if level == "ERROR":
-                        lines.append(f"[red]{time_part}[/] [bold red]ERR[/]  {msg}")
-                    elif level == "WARNING":
-                        lines.append(f"[yellow]{time_part}[/] [yellow]WARN[/] {msg}")
-                    else:
-                        lines.append(f"[dim]{time_part}[/] [dim green]OK[/]   [dim]{msg}[/]")
+                    formatted = _format_boot_log_line(raw_line)
+                    if formatted is not None:
+                        lines.append(formatted)
             except OSError:
                 continue
 
@@ -758,104 +787,100 @@ class BernsteinApp(App[None]):
         header = self.query_one(_HEADER_BAR_SELECTOR, DashboardHeader)
 
         if sd:
-            bar.total = sd.get("total", 0)
-            bar.done = sd.get("done", 0)
-            bar.failed = sd.get("failed", 0)
-            self._history.append(float(bar.done))
-            # UX-007: Update terminal title with progress
-            done = sd.get("done", 0)
-            total = sd.get("total", 0)
-            self.title = f"bernstein: {done}/{total} done"
-            runtime = sd.get("runtime", {}) if isinstance(sd.get("runtime", {}), dict) else {}
-            bar.git_branch = str(runtime.get("git_branch", ""))
-            bar.active_worktrees = int(runtime.get("active_worktrees", 0) or 0)
-            bar.restart_count = int(runtime.get("restart_count", 0) or 0)
-            last_completed = runtime.get("last_completed", {})
-            if isinstance(last_completed, dict) and last_completed:
-                seconds_ago = float(last_completed.get("seconds_ago", 0.0) or 0.0)
-                title = str(last_completed.get("title", "")).strip()
-                assigned_agent = str(last_completed.get("assigned_agent", "") or "").strip()
-                suffix = f" \u2014 {title[:32]}" if title else ""
-                if assigned_agent:
-                    suffix += f" ({assigned_agent[:12]})"
-                bar.last_completed_label = f"{_format_relative_age(seconds_ago)}{suffix}"
-            else:
-                bar.last_completed_label = ""
+            self._apply_status_data(bar, sd)
 
         bar.agents = sum(1 for a in agents if a.get("status") not in ("dead", None))
         bar.elapsed = int(time.time() - self._start_ts)
         bar.evolve = self._evolve
         self.sub_title = _build_runtime_subtitle(
-            git_branch=bar.git_branch,
-            elapsed_s=bar.elapsed,
-            done=bar.done,
-            total=bar.total,
-            worktrees=bar.active_worktrees,
-            restart_count=bar.restart_count,
+            git_branch=bar.git_branch, elapsed_s=bar.elapsed,
+            done=bar.done, total=bar.total,
+            worktrees=bar.active_worktrees, restart_count=bar.restart_count,
         )
 
-        # Cost data
         if costs:
-            spent = float(costs.get("spent_usd", 0.0))
-            budget = float(costs.get("budget_usd", 0.0))
-            pct = float(costs.get("percentage_used", 0.0))
-            bar.spent_usd = spent
-            bar.budget_usd = budget
-            bar.budget_pct = pct * 100
-            bar.per_model = costs.get("per_model", {})
-            terminal_tasks = max(1, bar.done + bar.failed) if (bar.done + bar.failed) > 0 else 0
-            bar.avg_cost_per_task = spent / terminal_tasks if terminal_tasks else 0.0
-            self._cost_history.append(spent)
-
-            # Budget threshold alerts (fire once per level)
-            self._check_budget_alerts(pct, spent, budget)
-
-        # Monitoring indicators
+            self._apply_cost_data(bar, costs)
         if monitoring:
-            quarantine: dict[str, Any] = monitoring.get("quarantine", {})
-            bar.quarantine_count = int(quarantine.get("count", 0))
-
-            guardrails: dict[str, Any] = monitoring.get("guardrails", {})
-            bar.guardrail_violations = int(guardrails.get("count", 0))
-
-            bar.pending_approval = int(monitoring.get("pending_approval", 0))
-
-            cache_stats: dict[str, Any] = monitoring.get("cache_stats", {})
-            bar.cache_hit_rate = float(cache_stats.get("hit_rate", 0.0))
-
-            nudge: dict[str, Any] = monitoring.get("verification_nudge", {})
-            _prev_unverified = bar.unverified_completions
-            bar.unverified_completions = int(nudge.get("unverified_count", 0))
-            bar.unverified_threshold_exceeded = bool(nudge.get("threshold_exceeded", False))
-            # Fire toast alert once when threshold is first exceeded
-            if (
-                bar.unverified_threshold_exceeded
-                and not getattr(self, "_nudge_alert_fired", False)
-                and bar.unverified_completions > _prev_unverified
-            ):
-                self._nudge_alert_fired = True  # type: ignore[attr-defined]
-                self.notify(
-                    f"Verification nudge: {bar.unverified_completions} tasks completed without verification",
-                    severity="warning",
-                    timeout=10,
-                )
+            self._apply_monitoring_data(bar, monitoring)
 
         bar.retry_count = sum(_task_retry_count(task) for task in (tasks or []) if isinstance(task, dict))
         bar.agent_error_count = _summarize_agent_errors(agents)[0]
+        self._sync_header(header, bar, sd)
+
+        spark = self.query_one("#spark", Sparkline)
+        spark.data = list(self._history) if self._history else [0.0]
+
+    def _apply_status_data(self, bar: BigStats, sd: Any) -> None:
+        """Apply status dict fields to BigStats widget."""
+        bar.total = sd.get("total", 0)
+        bar.done = sd.get("done", 0)
+        bar.failed = sd.get("failed", 0)
+        self._history.append(float(bar.done))
+        self.title = f"bernstein: {sd.get('done', 0)}/{sd.get('total', 0)} done"
+        runtime = sd.get("runtime", {}) if isinstance(sd.get("runtime", {}), dict) else {}
+        bar.git_branch = str(runtime.get("git_branch", ""))
+        bar.active_worktrees = int(runtime.get("active_worktrees", 0) or 0)
+        bar.restart_count = int(runtime.get("restart_count", 0) or 0)
+        last_completed = runtime.get("last_completed", {})
+        if isinstance(last_completed, dict) and last_completed:
+            seconds_ago = float(last_completed.get("seconds_ago", 0.0) or 0.0)
+            title = str(last_completed.get("title", "")).strip()
+            assigned_agent = str(last_completed.get("assigned_agent", "") or "").strip()
+            suffix = f" \u2014 {title[:32]}" if title else ""
+            if assigned_agent:
+                suffix += f" ({assigned_agent[:12]})"
+            bar.last_completed_label = f"{_format_relative_age(seconds_ago)}{suffix}"
+        else:
+            bar.last_completed_label = ""
+
+    def _apply_cost_data(self, bar: BigStats, costs: dict[str, Any]) -> None:
+        """Apply cost data to BigStats widget and check budget alerts."""
+        spent = float(costs.get("spent_usd", 0.0))
+        budget = float(costs.get("budget_usd", 0.0))
+        pct = float(costs.get("percentage_used", 0.0))
+        bar.spent_usd = spent
+        bar.budget_usd = budget
+        bar.budget_pct = pct * 100
+        bar.per_model = costs.get("per_model", {})
+        terminal_tasks = max(1, bar.done + bar.failed) if (bar.done + bar.failed) > 0 else 0
+        bar.avg_cost_per_task = spent / terminal_tasks if terminal_tasks else 0.0
+        self._cost_history.append(spent)
+        self._check_budget_alerts(pct, spent, budget)
+
+    def _apply_monitoring_data(self, bar: BigStats, monitoring: dict[str, Any]) -> None:
+        """Apply monitoring indicator data to BigStats widget."""
+        bar.quarantine_count = int(monitoring.get("quarantine", {}).get("count", 0))
+        bar.guardrail_violations = int(monitoring.get("guardrails", {}).get("count", 0))
+        bar.pending_approval = int(monitoring.get("pending_approval", 0))
+        bar.cache_hit_rate = float(monitoring.get("cache_stats", {}).get("hit_rate", 0.0))
+
+        nudge: dict[str, Any] = monitoring.get("verification_nudge", {})
+        prev_unverified = bar.unverified_completions
+        bar.unverified_completions = int(nudge.get("unverified_count", 0))
+        bar.unverified_threshold_exceeded = bool(nudge.get("threshold_exceeded", False))
+        if (
+            bar.unverified_threshold_exceeded
+            and not getattr(self, "_nudge_alert_fired", False)
+            and bar.unverified_completions > prev_unverified
+        ):
+            self._nudge_alert_fired = True  # type: ignore[attr-defined]
+            self.notify(
+                f"Verification nudge: {bar.unverified_completions} tasks completed without verification",
+                severity="warning", timeout=10,
+            )
+
+    def _sync_header(self, header: DashboardHeader, bar: BigStats, sd: Any) -> None:
+        """Sync header widget with stats bar values."""
         header.git_branch = bar.git_branch
         header.spent_usd = bar.spent_usd
         header.budget_usd = bar.budget_usd
         header.elapsed = bar.elapsed
         header.cost_trend = _mini_cost_sparkline(list(self._cost_history))
-        # Update agent count from status data
         if isinstance(sd, dict):
             prov = sd.get("runtime", {}).get("config_provenance", {})
             if isinstance(prov, dict):
                 header.max_agents = prov.get("max_agents", {}).get("value", header.max_agents)
         header.active_agents = bar.agents
-
-        spark = self.query_one("#spark", Sparkline)
-        spark.data = list(self._history) if self._history else [0.0]
 
     def _check_budget_alerts(self, pct: float, spent: float, budget: float) -> None:
         """Fire toast notifications when budget thresholds are crossed."""

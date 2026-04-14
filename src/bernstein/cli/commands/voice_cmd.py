@@ -198,27 +198,31 @@ def parse_utterance(text: str, aliases: dict[str, str]) -> str | None:
             return cmd
 
     # 3. Built-in grammar
+    return _match_grammar(cleaned)
+
+
+def _match_grammar(cleaned: str) -> str | None:
+    """Try to match cleaned text against built-in grammar patterns."""
     base = _base_command()
     for pattern, template in _GRAMMAR:
         m = pattern.search(cleaned)
         if m is None:
             continue
-        groups = m.groupdict()
-        goal = groups.get("goal", "").strip() if groups.get("goal") else ""
-        raw_workers = groups.get("workers", "").strip() if groups.get("workers") else ""
-        workers = _parse_workers(raw_workers) if raw_workers else ""
-        workers_flag = f" -j {workers}" if workers else ""
-        try:
-            cmd = template.format(
-                base=base,
-                goal=goal,
-                workers_flag=workers_flag,
-            )
-        except KeyError:
-            cmd = template.format(base=base)
-        return cmd
-
+        return _format_grammar_match(m, template, base)
     return None
+
+
+def _format_grammar_match(m: Any, template: str, base: str) -> str:
+    """Format a grammar match into a CLI command string."""
+    groups = m.groupdict()
+    goal = groups.get("goal", "").strip() if groups.get("goal") else ""
+    raw_workers = groups.get("workers", "").strip() if groups.get("workers") else ""
+    workers = _parse_workers(raw_workers) if raw_workers else ""
+    workers_flag = f" -j {workers}" if workers else ""
+    try:
+        return template.format(base=base, goal=goal, workers_flag=workers_flag)
+    except KeyError:
+        return template.format(base=base)
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +280,54 @@ def _load_whisper_model(model_size: str) -> Any:
     return WhisperModel(model_size, device="cpu", compute_type="int8")
 
 
+def _import_audio_deps() -> tuple[Any, Any]:
+    """Import numpy and sounddevice or exit with an error message."""
+    try:
+        import numpy as np
+        import sounddevice as sd
+
+        return np, sd
+    except ImportError as exc:
+        missing = "sounddevice" if "sounddevice" in str(exc) else "numpy"
+        console.print(
+            f"[red]Error:[/red] '{missing}' is not installed.\n"
+            f"Install it with: [bold]pip install sounddevice numpy[/bold]"
+        )
+        raise SystemExit(1) from exc
+
+
+def _record_utterance(
+    sd: Any,
+    np: Any,
+    chunk_samples: int,
+    silence_threshold: float,
+    max_silence_chunks: int,
+    sample_rate: int,
+) -> list[Any]:
+    """Record audio until silence is detected after speech. Returns audio frames."""
+    audio_frames: list[Any] = []
+    recording = False
+    silence_chunks = 0
+
+    with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
+        while True:
+            data, _ = stream.read(chunk_samples)
+            rms = float(np.sqrt(np.mean(data**2)))
+
+            if rms > silence_threshold:
+                if not recording:
+                    recording = True
+                    console.print("[cyan]Listening…[/cyan]", end="\r")
+                audio_frames.append(data.copy())
+                silence_chunks = 0
+            elif recording:
+                silence_chunks += 1
+                audio_frames.append(data.copy())
+                if silence_chunks >= max_silence_chunks:
+                    break
+    return audio_frames
+
+
 def _capture_and_transcribe(
     model: Any,
     silence_threshold: float,
@@ -296,43 +348,14 @@ def _capture_and_transcribe(
     Returns:
         Transcribed text, or *None* if no speech was captured.
     """
-    try:
-        import numpy as np
-        import sounddevice as sd
-    except ImportError as exc:
-        missing = "sounddevice" if "sounddevice" in str(exc) else "numpy"
-        console.print(
-            f"[red]Error:[/red] '{missing}' is not installed.\n"
-            f"Install it with: [bold]pip install sounddevice numpy[/bold]"
-        )
-        raise SystemExit(1) from exc
+    np, sd = _import_audio_deps()
 
     chunk_secs = 0.3
     chunk_samples = int(sample_rate * chunk_secs)
-
-    audio_frames: list[Any] = []
-    recording = False
-    silence_chunks = 0
-    _MAX_SILENCE_CHUNKS = int(1.5 / chunk_secs)  # 1.5 s of silence ends utterance
+    _MAX_SILENCE_CHUNKS = int(1.5 / chunk_secs)
 
     try:
-        with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
-            while True:
-                data, _ = stream.read(chunk_samples)
-                rms = float(np.sqrt(np.mean(data**2)))
-
-                if rms > silence_threshold:
-                    if not recording:
-                        recording = True
-                        console.print("[cyan]Listening…[/cyan]", end="\r")
-                    audio_frames.append(data.copy())
-                    silence_chunks = 0
-                elif recording:
-                    silence_chunks += 1
-                    audio_frames.append(data.copy())
-                    if silence_chunks >= _MAX_SILENCE_CHUNKS:
-                        break
-
+        audio_frames = _record_utterance(sd, np, chunk_samples, silence_threshold, _MAX_SILENCE_CHUNKS, sample_rate)
     except KeyboardInterrupt:
         return None
 

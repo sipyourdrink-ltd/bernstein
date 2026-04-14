@@ -162,7 +162,29 @@ class AgentListContainer(Vertical):
         visible = agents[self._scroll_offset : self._scroll_offset + capacity]
         visible_ids = {a.get("id", "") for a in visible}
 
-        # Remove widgets for agents no longer in the visible window
+        existing_ids = self._reconcile_existing_widgets(
+            visible, visible_ids, task_titles, task_progress, per_agent_cost, activity_summaries
+        )
+        self._mount_new_agents(visible, existing_ids, task_titles, task_progress, per_agent_cost, activity_summaries)
+
+        hidden_count = total - len(visible)
+        if hidden_count > 0:
+            indicator = Static(
+                f"[dim]+{hidden_count} more agent{'s' if hidden_count != 1 else ''} (scroll to see all)[/dim]",
+                id="agent-overflow",
+            )
+            self.mount(indicator)
+
+    def _reconcile_existing_widgets(
+        self,
+        visible: list[dict[str, Any]],
+        visible_ids: set[str],
+        task_titles: dict[str, str],
+        task_progress: dict[str, int],
+        per_agent_cost: dict[str, float],
+        activity_summaries: dict[str, str],
+    ) -> set[str]:
+        """Update or remove existing child widgets. Returns IDs of kept widgets."""
         existing_ids: set[str] = set()
         for child in list(self.children):
             if isinstance(child, AgentWidget):
@@ -181,28 +203,27 @@ class AgentListContainer(Vertical):
                     child.remove()
             elif isinstance(child, Static) and child.id == "agent-overflow":
                 child.remove()
+        return existing_ids
 
-        # Mount new visible agents
+    def _mount_new_agents(
+        self,
+        visible: list[dict[str, Any]],
+        existing_ids: set[str],
+        task_titles: dict[str, str],
+        task_progress: dict[str, int],
+        per_agent_cost: dict[str, float],
+        activity_summaries: dict[str, str],
+    ) -> None:
+        """Mount widgets for newly visible agents."""
         for a in visible:
             aid = a.get("id", "")
             if aid not in existing_ids:
                 widget = AgentWidget(
-                    a,
-                    task_titles,
-                    task_progress,
+                    a, task_titles, task_progress,
                     activity_summary=activity_summaries.get(aid, ""),
                 )
                 widget.agent_cost = per_agent_cost.get(aid, 0.0)
                 self.mount(widget)
-
-        # Show overflow indicator when agents exceed viewport
-        hidden_count = total - len(visible)
-        if hidden_count > 0:
-            indicator = Static(
-                f"[dim]+{hidden_count} more agent{'s' if hidden_count != 1 else ''} (scroll to see all)[/dim]",
-                id="agent-overflow",
-            )
-            self.mount(indicator)
 
     @property
     def total_agents(self) -> int:
@@ -237,18 +258,33 @@ class AgentWidget(Static):
 
     def render(self) -> Text:
         a = self.agent_data
+        t = Text()
+        self._render_header_line(t, a)
+        self._render_tasks(t, a)
+
+        if self.activity_summary:
+            t.append(f"\n   \u25b8 {self.activity_summary}", style="italic bright_cyan")
+
+        aid = a.get("id", "")
+        lines = _tail_log(aid, 5, log_path=a.get("log_path", ""))
+        for line in lines:
+            clean = line[:90] + "\u2026" if len(line) > 90 else line
+            t.append(f"\n   {clean}", style="dim")
+
+        return t
+
+    def _render_header_line(self, t: Text, a: dict[str, Any]) -> None:
+        """Render the agent identity/status header line."""
         role = a.get("role", "?")
         model = (a.get("model") or "?").upper()
         status = a.get("status", "?")
         runtime = int(a.get("runtime_s", 0))
         m, s = divmod(runtime, 60)
-        aid = a.get("id", "")
 
         color = status_color(str(status))
         dot = {"working": get_status_icon("running"), "starting": "\u25ce", "dead": "\u25cc"}.get(status, "\u25cf")
 
         agent_source = a.get("agent_source", "built-in")
-        # Show catalog agent ID when not built-in, e.g. "(agency:code-reviewer)"
         source_suffix = ""
         if agent_source and agent_source not in ("built-in", "builtin", ""):
             source_suffix = f" ({agent_source})"
@@ -256,7 +292,6 @@ class AgentWidget(Static):
         adapter = str(a.get("adapter", a.get("model", ""))).lower()
         agent_icon = get_agent_icon(adapter)
 
-        t = Text()
         t.append(f" {dot} ", style=f"bold {color}")
         t.append(f"{agent_icon} ", style=f"bold {role_color(str(role))}")
         t.append(f"{role.upper()}", style=f"bold {role_color(str(role))}")
@@ -265,7 +300,6 @@ class AgentWidget(Static):
         t.append(f"  {model}", style=f"bold {model_color(adapter)}")
         t.append(f"  {m}:{s:02d}", style="dim")
 
-        # Per-agent cost ticker
         if self.agent_cost > 0:
             t.append(f"  ${self.agent_cost:.4f}", style="bold bright_green")
 
@@ -276,18 +310,16 @@ class AgentWidget(Static):
             context_capacity = (
                 f"{context_window_tokens / 1000:.0f}k" if context_window_tokens >= 1000 else str(context_window_tokens)
             )
-            t.append(
-                f"  CTX {context_utilization_pct:.1f}%/{context_capacity}",
-                style=context_style,
-            )
+            t.append(f"  CTX {context_utilization_pct:.1f}%/{context_capacity}", style=context_style)
 
+    def _render_tasks(self, t: Text, a: dict[str, Any]) -> None:
+        """Render task assignment lines with inline progress bars."""
         task_ids: list[str] = a.get("task_ids", [])
         for tid in task_ids[:2]:
             title = self.task_titles.get(tid, tid[:12])
             progress = self.task_progress.get(tid, 0)
             t.append(f"\n   \u2192 {title[:48]}", style="italic dim")
             if progress > 0:
-                # Compact inline progress bar (8 blocks)
                 bar_w = 8
                 filled = int(progress / 100 * bar_w)
                 bar_color = "bright_green" if progress >= 100 else "bright_cyan"
@@ -296,16 +328,6 @@ class AgentWidget(Static):
                     t.append("\u2588" if i < filled else "\u2591", style=bar_color if i < filled else "dim")
                 t.append("\u258c", style="dim")
                 t.append(f" {progress}%", style=f"bold {bar_color}")
-
-        if self.activity_summary:
-            t.append(f"\n   \u25b8 {self.activity_summary}", style="italic bright_cyan")
-
-        lines = _tail_log(aid, 5, log_path=a.get("log_path", ""))
-        for line in lines:
-            clean = line[:90] + "\u2026" if len(line) > 90 else line
-            t.append(f"\n   {clean}", style="dim")
-
-        return t
 
 
 class BigStats(Static):
@@ -403,14 +425,29 @@ class BigStats(Static):
             parts = [f"{m}:${c:.4f}" for m, c in sorted(models.items(), key=lambda x: -x[1])]
             t.append(f"  {' '.join(parts)}", style="dim")
 
-        # -- Monitoring indicators row --
-        has_indicators = (
-            self.quarantine_count > 0
-            or self.guardrail_violations > 0
-            or self.pending_approval > 0
-            or self.cache_hit_rate > 0
-            or self.unverified_completions > 0
-        )
+        self._render_monitoring_row(t)
+        self._render_footer_row(t)
+
+        return t
+
+    def _render_monitoring_row(self, t: Text) -> None:
+        """Append monitoring indicators and runtime badges."""
+        indicators: list[tuple[str, str]] = []
+        if self.quarantine_count > 0:
+            indicators.append((f" \u26d4 {self.quarantine_count} quarantined", "bold bright_red"))
+        if self.guardrail_violations > 0:
+            gv_color = "bright_red" if self.guardrail_violations > 5 else "bright_yellow"
+            indicators.append((f"\u26a0 {self.guardrail_violations} violations", f"bold {gv_color}"))
+        if self.pending_approval > 0:
+            indicators.append((f"\u23f3 {self.pending_approval} pending", _STYLE_BOLD_BRIGHT_YELLOW))
+        if self.cache_hit_rate > 0:
+            cache_color = "bright_green" if self.cache_hit_rate >= 0.5 else "dim"
+            indicators.append((f"\u29c2 cache {self.cache_hit_rate * 100:.0f}%", f"bold {cache_color}"))
+        if self.unverified_completions > 0:
+            uv_color = "bright_red" if self.unverified_threshold_exceeded else "bright_yellow"
+            uv_label = "UNVERIFIED" if self.unverified_threshold_exceeded else "unverified"
+            indicators.append((f"\u26a0 {self.unverified_completions} {uv_label}", f"bold {uv_color}"))
+
         runtime_parts: list[tuple[str, str]] = []
         if self.git_branch:
             runtime_parts.append((f"branch {self.git_branch}", "bold bright_cyan"))
@@ -421,42 +458,15 @@ class BigStats(Static):
         if self.avg_cost_per_task > 0:
             runtime_parts.append((f"avg/task ${self.avg_cost_per_task:.4f}", "dim"))
 
-        if has_indicators or runtime_parts:
-            t.append("\n")
-            # Quarantine
-            if self.quarantine_count > 0:
-                t.append(f" \u26d4 {self.quarantine_count} quarantined", style="bold bright_red")
-                t.append("  ", style="")
-            # Guardrail violations
-            if self.guardrail_violations > 0:
-                gv_color = "bright_red" if self.guardrail_violations > 5 else "bright_yellow"
-                t.append(f"\u26a0 {self.guardrail_violations} violations", style=f"bold {gv_color}")
-                t.append("  ", style="")
-            # Pending approval
-            if self.pending_approval > 0:
-                t.append(f"\u23f3 {self.pending_approval} pending", style=_STYLE_BOLD_BRIGHT_YELLOW)
-                t.append("  ", style="")
-            # Cache hit rate
-            if self.cache_hit_rate > 0:
-                cache_color = "bright_green" if self.cache_hit_rate >= 0.5 else "dim"
-                t.append(
-                    f"\u29c2 cache {self.cache_hit_rate * 100:.0f}%",
-                    style=f"bold {cache_color}",
-                )
-                t.append("  ", style="")
-            # Unverified completions
-            if self.unverified_completions > 0:
-                uv_color = "bright_red" if self.unverified_threshold_exceeded else "bright_yellow"
-                uv_label = "UNVERIFIED" if self.unverified_threshold_exceeded else "unverified"
-                t.append(
-                    f"\u26a0 {self.unverified_completions} {uv_label}",
-                    style=f"bold {uv_color}",
-                )
-                t.append("  ", style="")
-            for label, style in runtime_parts:
-                t.append(label, style=style)
-                t.append("  ", style="")
+        if not indicators and not runtime_parts:
+            return
+        t.append("\n")
+        for label, style in indicators + runtime_parts:
+            t.append(label, style=style)
+            t.append("  ", style="")
 
+    def _render_footer_row(self, t: Text) -> None:
+        """Append footer row with last completed, retries, errors."""
         footer_parts: list[tuple[str, str]] = []
         if self.last_completed_label:
             footer_parts.append((f"last {self.last_completed_label}", "dim"))
@@ -464,10 +474,9 @@ class BigStats(Static):
             footer_parts.append((f"{self.retry_count} retries", _STYLE_BOLD_BRIGHT_YELLOW))
         if self.agent_error_count > 0:
             footer_parts.append((f"{self.agent_error_count} agent errors", "bold bright_red"))
-        if footer_parts:
-            t.append("\n")
-            for label, style in footer_parts:
-                t.append(label, style=style)
-                t.append("  ", style="")
-
-        return t
+        if not footer_parts:
+            return
+        t.append("\n")
+        for label, style in footer_parts:
+            t.append(label, style=style)
+            t.append("  ", style="")

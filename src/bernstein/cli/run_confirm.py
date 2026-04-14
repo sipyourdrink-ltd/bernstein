@@ -41,6 +41,30 @@ class RecipeStage:
     step_titles: list[str]
 
 
+def _parse_stage_entry(idx: int, raw_stage: object) -> RecipeStage | None:
+    """Parse a single raw stage dict into a RecipeStage, or None if invalid."""
+    if not isinstance(raw_stage, dict):
+        return None
+    stage_map = cast(_CAST_DICT_STR_ANY, raw_stage)
+    stage_name_raw = stage_map.get("name")
+    stage_name = str(stage_name_raw).strip() if stage_name_raw else f"Stage {idx + 1}"
+
+    deps_raw = stage_map.get("depends_on")
+    depends_on = [str(dep).strip() for dep in cast(_CAST_LIST_OBJ, deps_raw)] if isinstance(deps_raw, list) else []
+
+    step_titles: list[str] = []
+    steps_raw = stage_map.get("steps")
+    if isinstance(steps_raw, list):
+        for step in cast(_CAST_LIST_OBJ, steps_raw):
+            if not isinstance(step, dict):
+                continue
+            step_map = cast(_CAST_DICT_STR_ANY, step)
+            title = step_map.get("title") or step_map.get("goal")
+            if title:
+                step_titles.append(str(title))
+    return RecipeStage(name=stage_name, depends_on=depends_on, step_titles=step_titles)
+
+
 def _extract_recipe_stages(recipe_path: Path) -> list[RecipeStage]:
     """Parse recipe stage metadata for dry-run graph and progress reporting."""
     import yaml
@@ -52,32 +76,12 @@ def _extract_recipe_stages(recipe_path: Path) -> list[RecipeStage]:
     raw_stages = data.get("stages")
     if not isinstance(raw_stages, list):
         return []
-    stages_raw = cast(_CAST_LIST_OBJ, raw_stages)
 
     stages: list[RecipeStage] = []
-    for idx, raw_stage in enumerate(stages_raw):
-        if not isinstance(raw_stage, dict):
-            continue
-        stage_map = cast(_CAST_DICT_STR_ANY, raw_stage)
-        stage_name_raw = stage_map.get("name")
-        stage_name = str(stage_name_raw).strip() if stage_name_raw else f"Stage {idx + 1}"
-        deps_raw = stage_map.get("depends_on")
-        depends_on: list[str] = []
-        if isinstance(deps_raw, list):
-            for dep in cast(_CAST_LIST_OBJ, deps_raw):
-                depends_on.append(str(dep).strip())
-
-        step_titles: list[str] = []
-        steps_raw = stage_map.get("steps")
-        if isinstance(steps_raw, list):
-            for step in cast(_CAST_LIST_OBJ, steps_raw):
-                if not isinstance(step, dict):
-                    continue
-                step_map = cast(_CAST_DICT_STR_ANY, step)
-                title = step_map.get("title") or step_map.get("goal")
-                if title:
-                    step_titles.append(str(title))
-        stages.append(RecipeStage(name=stage_name, depends_on=depends_on, step_titles=step_titles))
+    for idx, raw_stage in enumerate(cast(_CAST_LIST_OBJ, raw_stages)):
+        parsed = _parse_stage_entry(idx, raw_stage)
+        if parsed is not None:
+            stages.append(parsed)
     return stages
 
 
@@ -161,6 +165,35 @@ def _print_cook_dry_run(
     )
 
 
+def _format_recipe_progress(
+    status_payload: dict[str, Any],
+    health_payload: dict[str, Any],
+    stages: list[RecipeStage],
+    tasks_payload: object,
+    total_tasks: int,
+) -> tuple[str, bool]:
+    """Build progress line and check if run is complete.
+
+    Returns:
+        (progress_line, is_complete)
+    """
+    done_count = int(status_payload.get("done", 0) or 0)
+    failed_count = int(status_payload.get("failed", 0) or 0)
+    open_count = int(status_payload.get("open", 0) or 0)
+    claimed_count = int(status_payload.get("claimed", 0) or 0)
+    agent_count = int(health_payload.get("agent_count", 0) or 0)
+    spent_usd = float(status_payload.get("total_cost_usd", 0.0) or 0.0)
+
+    completed_tasks = done_count + failed_count
+    pct_complete = round((completed_tasks / max(total_tasks, 1)) * 100)
+    sprint_done = _completed_sprints(stages, tasks_payload) if isinstance(tasks_payload, list) else 0
+    line = f"Sprint {sprint_done}/{max(len(stages), 1)} | {pct_complete}% complete | ${spent_usd:.2f} spent"
+
+    total = int(status_payload.get("total", 0) or 0)
+    is_complete = total > 0 and open_count == 0 and claimed_count == 0 and agent_count == 0
+    return line, is_complete
+
+
 def _wait_for_recipe_completion(
     *,
     stages: list[RecipeStage],
@@ -183,22 +216,14 @@ def _wait_for_recipe_completion(
             time.sleep(poll_interval_s)
             continue
 
-        done_count = int(status_payload.get("done", 0) or 0)
-        failed_count = int(status_payload.get("failed", 0) or 0)
-        open_count = int(status_payload.get("open", 0) or 0)
-        claimed_count = int(status_payload.get("claimed", 0) or 0)
-        agent_count = int(health_payload.get("agent_count", 0) or 0)
-        spent_usd = float(status_payload.get("total_cost_usd", 0.0) or 0.0)
-        completed_tasks = done_count + failed_count
-        pct_complete = round((completed_tasks / max(total_tasks, 1)) * 100)
-        sprint_done = _completed_sprints(stages, tasks_payload) if isinstance(tasks_payload, list) else 0
-        line = f"Sprint {sprint_done}/{max(len(stages), 1)} | {pct_complete}% complete | ${spent_usd:.2f} spent"
+        line, is_complete = _format_recipe_progress(
+            status_payload, health_payload, stages, tasks_payload, total_tasks
+        )
         if line != last_line:
             console.print(line)
             last_line = line
 
-        total = int(status_payload.get("total", 0) or 0)
-        if total > 0 and open_count == 0 and claimed_count == 0 and agent_count == 0:
+        if is_complete:
             return status_payload
         time.sleep(poll_interval_s)
     return last_status
@@ -540,6 +565,75 @@ def cook(
         console.print("[yellow]Recipe monitor timed out before a final status snapshot was available.[/yellow]")
 
 
+def _poll_demo_completion(server_url: str, deadline: float) -> None:
+    """Poll demo server for task completion with live progress output."""
+    from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+    seen_done: set[str] = set()
+    seen_failed: set[str] = set()
+
+    console.print()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        poll_task = progress.add_task("Agents working\u2026", total=None)
+
+        while time.monotonic() < deadline:
+            try:
+                resp = httpx.get(f"{server_url}/status", timeout=3.0)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    tasks_list: list[dict[str, Any]] = payload.get("tasks", [])
+                    done_count, failed_count = _emit_task_events(
+                        tasks_list, seen_done, seen_failed, progress
+                    )
+                    total_tasks = len(tasks_list)
+                    progress.update(
+                        poll_task,
+                        description=(
+                            f"Agents working\u2026 "
+                            f"[green]{done_count}[/green]/{total_tasks} bugs fixed"
+                            + (f"  [red]{failed_count} failed[/red]" if failed_count else "")
+                        ),
+                    )
+                    if total_tasks > 0 and done_count + failed_count >= total_tasks:
+                        break
+            except Exception:
+                pass
+            time.sleep(2)
+
+
+def _emit_task_events(
+    tasks_list: list[dict[str, Any]],
+    seen_done: set[str],
+    seen_failed: set[str],
+    progress: Any,
+) -> tuple[int, int]:
+    """Emit per-task completion/failure lines and return (done, failed) counts."""
+    done_count = 0
+    failed_count = 0
+    for t in tasks_list:
+        tid = t.get("id", "")
+        title = (t.get("title") or "")[:60]
+        role = t.get("role", "agent")
+        status = t.get("status", "")
+        if status == "done":
+            done_count += 1
+            if tid not in seen_done:
+                seen_done.add(tid)
+                progress.console.print(f"  [green]\u2713[/green] [{role}] {title}")
+        elif status == "failed":
+            failed_count += 1
+            if tid not in seen_failed:
+                seen_failed.add(tid)
+                progress.console.print(f"  [red]\u2717[/red] [{role}] {title}")
+    return done_count, failed_count
+
+
 @click.command("demo")
 @click.option(
     "--dry-run",
@@ -653,59 +747,7 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
             cli=detected,
         )
 
-        # Poll for completion with a live progress indicator and per-task events
-        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-
-        deadline = orchestration_start + timeout
-        seen_done: set[str] = set()
-        seen_failed: set[str] = set()
-
-        console.print()
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console,
-            transient=False,
-        ) as progress:
-            poll_task = progress.add_task("Agents working\u2026", total=None)
-
-            while time.monotonic() < deadline:
-                try:
-                    resp = httpx.get(f"{server_url}/status", timeout=3.0)
-                    if resp.status_code == 200:
-                        payload = resp.json()
-                        tasks_list: list[dict[str, Any]] = payload.get("tasks", [])
-                        done_count = sum(1 for t in tasks_list if t.get("status") == "done")
-                        failed_count = sum(1 for t in tasks_list if t.get("status") == "failed")
-                        total_tasks = len(tasks_list)
-
-                        # Emit a line for each newly-completed task
-                        for t in tasks_list:
-                            tid = t.get("id", "")
-                            title = (t.get("title") or "")[:60]
-                            role = t.get("role", "agent")
-                            if t.get("status") == "done" and tid not in seen_done:
-                                seen_done.add(tid)
-                                progress.console.print(f"  [green]\u2713[/green] [{role}] {title}")
-                            elif t.get("status") == "failed" and tid not in seen_failed:
-                                seen_failed.add(tid)
-                                progress.console.print(f"  [red]\u2717[/red] [{role}] {title}")
-
-                        progress.update(
-                            poll_task,
-                            description=(
-                                f"Agents working\u2026 "
-                                f"[green]{done_count}[/green]/{total_tasks} bugs fixed"
-                                + (f"  [red]{failed_count} failed[/red]" if failed_count else "")
-                            ),
-                        )
-                        if total_tasks > 0 and done_count + failed_count >= total_tasks:
-                            break
-                except Exception:
-                    pass
-                time.sleep(2)
-
+        _poll_demo_completion(server_url, orchestration_start + timeout)
         console.print("[green]\u2713[/green] Orchestration finished")
 
     except KeyboardInterrupt:

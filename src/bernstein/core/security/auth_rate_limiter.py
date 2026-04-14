@@ -193,24 +193,11 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Try seed_config buckets first
-        seed_config = getattr(request.app.state, "seed_config", None)
-        rate_limit = getattr(seed_config, "rate_limit", None)
-        if rate_limit is not None and hasattr(rate_limit, "match_request"):
-            bucket = rate_limit.match_request(path, method)
-            if bucket is not None:
-                client_id = _request_client_id(request)
-                retry_after = self._limiter.check(bucket.name, client_id, bucket.requests, bucket.window_seconds)
-                if retry_after is not None:
-                    retry_after_header = str(math.ceil(retry_after))
-                    return JSONResponse(
-                        status_code=429,
-                        content={
-                            "detail": f"Rate limit exceeded for bucket '{bucket.name}'",
-                            "bucket": bucket.name,
-                        },
-                        headers={"Retry-After": retry_after_header},
-                    )
-                return await call_next(request)
+        seed_result = self._check_seed_bucket(request, path, method)
+        if seed_result is not None:
+            if isinstance(seed_result, JSONResponse):
+                return seed_result
+            return await call_next(request)
 
         # Default method-based rate limits
         client_id = _request_client_id(request)
@@ -236,6 +223,33 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         return await call_next(request)
+
+    def _check_seed_bucket(
+        self,
+        request: Request,
+        path: str,
+        method: str,
+    ) -> JSONResponse | bool | None:
+        """Check seed_config rate limit buckets. Returns JSONResponse, True, or None."""
+        seed_config = getattr(request.app.state, "seed_config", None)
+        rate_limit = getattr(seed_config, "rate_limit", None)
+        if rate_limit is None or not hasattr(rate_limit, "match_request"):
+            return None
+        bucket = rate_limit.match_request(path, method)
+        if bucket is None:
+            return None
+        client_id = _request_client_id(request)
+        retry_after = self._limiter.check(bucket.name, client_id, bucket.requests, bucket.window_seconds)
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": f"Rate limit exceeded for bucket '{bucket.name}'",
+                    "bucket": bucket.name,
+                },
+                headers={"Retry-After": str(math.ceil(retry_after))},
+            )
+        return True
 
 
 def _request_client_id(request: Request) -> str:

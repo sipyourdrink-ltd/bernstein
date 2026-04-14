@@ -39,7 +39,7 @@ _err()  { local msg="$1"; echo -e "  ${CROSS} ${msg}" >&2; return 0; }
 _step() { local msg="$1"; echo -e "  ${ARROW} ${DIM}${msg}${RST}"; return 0; }
 
 _branch() { git rev-parse --abbrev-ref HEAD; return 0; }
-_is_dirty() { ! git diff --quiet || ! git diff --cached --quiet; }
+_is_dirty() { ! git diff --quiet || ! git diff --cached --quiet; return $?; }
 
 _require_gh() {
   if ! command -v gh &>/dev/null; then

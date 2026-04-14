@@ -853,33 +853,38 @@ class PostMortemGenerator:
 
         # Fallback: scan JSONL for task_completion_time entries
         for f in sorted(metrics_dir.glob("*.jsonl")):
-            try:
-                for raw_line in f.read_text(encoding="utf-8").splitlines():
-                    stripped = raw_line.strip()
-                    if not stripped:
-                        continue
-                    entry_raw: Any = json.loads(stripped)
-                    if not isinstance(entry_raw, dict):
-                        continue
-                    entry = cast(_CAST_DICT_STR_ANY, entry_raw)
-                    if entry.get("metric_type") != "task_completion_time":
-                        continue
-                    labels: dict[str, Any] = entry.get("labels") or {}
-                    results.append(
-                        {
-                            "task_id": str(labels.get("task_id", "")),
-                            "role": str(labels.get("role", "")),
-                            "model": str(labels.get("model", "")),
-                            "success": str(labels.get("success", "false")).lower() == "true",
-                            "session_id": str(labels.get("session_id", "")),
-                            "start_time": 0.0,
-                            "end_time": float(entry.get("timestamp", 0.0)),
-                            "cost_usd": 0.0,
-                        }
-                    )
-            except (OSError, json.JSONDecodeError):
-                continue
+            self._extract_completion_entries(f, results)
         return results
+
+    @staticmethod
+    def _extract_completion_entries(jsonl_file: Path, results: list[dict[str, Any]]) -> None:
+        """Extract task_completion_time entries from a JSONL file."""
+        try:
+            for raw_line in jsonl_file.read_text(encoding="utf-8").splitlines():
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                entry_raw: Any = json.loads(stripped)
+                if not isinstance(entry_raw, dict):
+                    continue
+                entry = cast(_CAST_DICT_STR_ANY, entry_raw)
+                if entry.get("metric_type") != "task_completion_time":
+                    continue
+                labels: dict[str, Any] = entry.get("labels") or {}
+                results.append(
+                    {
+                        "task_id": str(labels.get("task_id", "")),
+                        "role": str(labels.get("role", "")),
+                        "model": str(labels.get("model", "")),
+                        "success": str(labels.get("success", "false")).lower() == "true",
+                        "session_id": str(labels.get("session_id", "")),
+                        "start_time": 0.0,
+                        "end_time": float(entry.get("timestamp", 0.0)),
+                        "cost_usd": 0.0,
+                    }
+                )
+        except (OSError, json.JSONDecodeError):
+            pass
 
     def _build_timeline(self, task_metrics: list[dict[str, Any]]) -> list[PostMortemEvent]:
         """Build a chronological list of events from task metrics."""

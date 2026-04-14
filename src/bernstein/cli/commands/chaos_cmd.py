@@ -238,22 +238,27 @@ def chaos_status(limit: int) -> None:
         table.add_row(ts, scenario, target[:40], f"[{result_style}]{result_text}[/{result_style}]")
 
     console.print(table)
+    _show_active_rate_limit()
 
-    # Show active simulations
+
+def _show_active_rate_limit() -> None:
+    """Show active rate-limit simulation if one exists and is not expired."""
     rate_limit_file = CHAOS_DIR / "rate_limit_active.json"
-    if rate_limit_file.exists():
-        try:
-            rl = json.loads(rate_limit_file.read_text())
-            if float(str(rl.get("expires_at", 0))) > time.time():
-                console.print(
-                    f"\n[yellow]Active rate limit simulation:[/yellow] "
-                    f"provider={rl.get('provider')} "
-                    f"expires={time.strftime('%H:%M:%S', time.localtime(float(str(rl.get('expires_at', 0)))))}"
-                )
-            else:
-                rate_limit_file.unlink(missing_ok=True)
-        except (json.JSONDecodeError, OSError):
-            pass  # Rate-limit file missing or corrupt; skip
+    if not rate_limit_file.exists():
+        return
+    try:
+        rl = json.loads(rate_limit_file.read_text())
+        expires_at = float(str(rl.get("expires_at", 0)))
+        if expires_at <= time.time():
+            rate_limit_file.unlink(missing_ok=True)
+            return
+        console.print(
+            f"\n[yellow]Active rate limit simulation:[/yellow] "
+            f"provider={rl.get('provider')} "
+            f"expires={time.strftime('%H:%M:%S', time.localtime(expires_at))}"
+        )
+    except (json.JSONDecodeError, OSError):
+        pass
 
 
 @chaos_group.command("slo")

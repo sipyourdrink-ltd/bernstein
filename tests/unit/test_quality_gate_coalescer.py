@@ -134,12 +134,6 @@ class TestCoalescence:
         config = QualityGatesConfig(enabled=False)
         call_log: list[str] = []
 
-        def fake_run_qg(
-            task: Task, run_dir: Path, workdir: Path, cfg: QualityGatesConfig, **kw: object
-        ) -> QualityGatesResult:
-            call_log.append(task.id)
-            return _pass_result(task.id)
-
         coalescer = QualityGateCoalescer()
         barrier = threading.Barrier(2)
         first_run_released = threading.Event()

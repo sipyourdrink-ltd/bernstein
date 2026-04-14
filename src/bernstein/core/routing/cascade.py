@@ -346,6 +346,39 @@ class CascadeFallbackManager:
             trigger,
         )
 
+    def _is_viable_candidate(
+        self,
+        agent: AgentCapabilities | None,
+        entry: str,
+        excluded_providers: frozenset[str],
+        min_strength: int,
+        task_complexity: Complexity,
+    ) -> bool:
+        """Check if an agent is a viable cascade candidate."""
+        if agent is None:
+            return False
+        if agent.name in excluded_providers:
+            return False
+        if not agent.logged_in:
+            return False
+        if self._tracker.is_throttled(agent.name):
+            return False
+        agent_strength = _STRENGTH_ORDER.get(agent.reasoning_strength, 0)
+        if agent_strength < min_strength:
+            logger.debug(
+                "Cascade: skipping %s (reasoning=%s) for %s task — below capability floor",
+                entry,
+                agent.reasoning_strength,
+                task_complexity.value,
+            )
+            return False
+        if self._budget_remaining is not None and self._budget_remaining <= 0:
+            cost_rank = _COST_ORDER.get(agent.cost_tier, 2)
+            if cost_rank > 0:
+                logger.debug("Cascade: skipping %s — budget exhausted", entry)
+                return False
+        return True
+
     def _find_fallback_by_chain(
         self,
         task_complexity: Complexity,
@@ -367,35 +400,14 @@ class CascadeFallbackManager:
 
         for entry in self._cascade_order[start_idx:]:
             agent, model = self._resolve_entry(entry, discovery.agents)
-            if agent is None:
-                continue  # not installed
-
-            if agent.name in excluded_providers:
+            if not self._is_viable_candidate(
+                agent,
+                entry,
+                excluded_providers,
+                min_strength,
+                task_complexity,
+            ):
                 continue
-
-            if not agent.logged_in:
-                continue
-
-            if self._tracker.is_throttled(agent.name):
-                continue
-
-            # Capability floor — HARD constraint
-            agent_strength = _STRENGTH_ORDER.get(agent.reasoning_strength, 0)
-            if agent_strength < min_strength:
-                logger.debug(
-                    "Cascade: skipping %s (reasoning=%s) for %s task — below capability floor",
-                    entry,
-                    agent.reasoning_strength,
-                    task_complexity.value,
-                )
-                continue
-
-            # Budget check
-            if self._budget_remaining is not None and self._budget_remaining <= 0:
-                cost_rank = _COST_ORDER.get(agent.cost_tier, 2)
-                if cost_rank > 0:
-                    logger.debug("Cascade: skipping %s — budget exhausted", entry)
-                    continue
 
             # Found a viable fallback
             original = next(iter(excluded_providers)) if excluded_providers else "unknown"
@@ -439,31 +451,14 @@ class CascadeFallbackManager:
 
         candidates: list[AgentCapabilities] = []
         for agent in discovery.agents:
-            if agent.name in excluded_providers:
+            if not self._is_viable_candidate(
+                agent,
+                agent.name,
+                excluded_providers,
+                min_strength,
+                task_complexity,
+            ):
                 continue
-
-            if not agent.logged_in:
-                continue
-
-            if self._tracker.is_throttled(agent.name):
-                continue
-
-            agent_strength = _STRENGTH_ORDER.get(agent.reasoning_strength, 0)
-            if agent_strength < min_strength:
-                logger.debug(
-                    "Cascade: skipping %s (reasoning=%s) for %s task — below capability floor",
-                    agent.name,
-                    agent.reasoning_strength,
-                    task_complexity.value,
-                )
-                continue
-
-            if self._budget_remaining is not None and self._budget_remaining <= 0:
-                cost_rank = _COST_ORDER.get(agent.cost_tier, 2)
-                if cost_rank > 0:
-                    logger.debug("Cascade: skipping %s — budget exhausted", agent.name)
-                    continue
-
             candidates.append(agent)
 
         if not candidates:

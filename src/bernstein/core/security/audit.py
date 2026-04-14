@@ -92,6 +92,56 @@ def _compute_hmac(key: bytes, prev_hmac: str, entry: dict[str, Any]) -> str:
     return _hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 
 
+def _verify_log_file(
+    log_path: Path, prev_hmac: str, key: bytes, errors: list[str]
+) -> str:
+    """Verify all entries in a single JSONL log file, appending errors."""
+    for line_no, raw in enumerate(log_path.read_text().splitlines(), start=1):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            errors.append(f"{log_path.name}:{line_no}: invalid JSON — {exc}")
+            continue
+
+        stored_hmac = entry.pop("hmac", "")
+        if entry.get("prev_hmac") != prev_hmac:
+            errors.append(
+                f"{log_path.name}:{line_no}: prev_hmac mismatch "
+                f"(expected {prev_hmac[:16]}…, got {str(entry.get('prev_hmac', ''))[:16]}…)"
+            )
+
+        expected_hmac = _compute_hmac(key, prev_hmac, entry)
+        if stored_hmac != expected_hmac:
+            errors.append(
+                f"{log_path.name}:{line_no}: HMAC mismatch "
+                f"(expected {expected_hmac[:16]}…, got {stored_hmac[:16]}…)"
+            )
+
+        prev_hmac = stored_hmac
+    return prev_hmac
+
+
+def _matches_query_filters(
+    entry: dict[str, Any],
+    event_type: str | None,
+    actor: str | None,
+    since: str | None,
+    until: str | None,
+) -> bool:
+    """Return True if entry passes all query filters."""
+    if event_type and entry.get("event_type") != event_type:
+        return False
+    if actor and entry.get("actor") != actor:
+        return False
+    ts = entry.get("timestamp", "")
+    if since and ts < since:
+        return False
+    return not (until and ts > until)
+
+
 class AuditLog:
     """Append-only HMAC-chained audit log with daily rotation.
 
@@ -212,31 +262,7 @@ class AuditLog:
 
         prev_hmac = _GENESIS_HMAC
         for log_path in log_files:
-            for line_no, raw in enumerate(log_path.read_text().splitlines(), start=1):
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    entry = json.loads(raw)
-                except json.JSONDecodeError as exc:
-                    errors.append(f"{log_path.name}:{line_no}: invalid JSON — {exc}")
-                    continue
-
-                stored_hmac = entry.pop("hmac", "")
-                if entry.get("prev_hmac") != prev_hmac:
-                    errors.append(
-                        f"{log_path.name}:{line_no}: prev_hmac mismatch "
-                        f"(expected {prev_hmac[:16]}…, got {str(entry.get('prev_hmac', ''))[:16]}…)"
-                    )
-
-                expected_hmac = _compute_hmac(self._key, prev_hmac, entry)
-                if stored_hmac != expected_hmac:
-                    errors.append(
-                        f"{log_path.name}:{line_no}: HMAC mismatch "
-                        f"(expected {expected_hmac[:16]}…, got {stored_hmac[:16]}…)"
-                    )
-
-                prev_hmac = stored_hmac
+            prev_hmac = _verify_log_file(log_path, prev_hmac, self._key, errors)
 
         return len(errors) == 0, errors
 
@@ -329,14 +355,7 @@ class AuditLog:
                 except json.JSONDecodeError:
                     continue
 
-                if event_type and entry.get("event_type") != event_type:
-                    continue
-                if actor and entry.get("actor") != actor:
-                    continue
-                ts = entry.get("timestamp", "")
-                if since and ts < since:
-                    continue
-                if until and ts > until:
+                if not _matches_query_filters(entry, event_type, actor, since, until):
                     continue
 
                 results.append(

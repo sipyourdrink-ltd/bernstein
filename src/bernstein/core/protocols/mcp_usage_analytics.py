@@ -195,6 +195,54 @@ def _build_server_summary(
     )
 
 
+def _server_recommendations(server: MCPServerUsageSummary) -> list[MCPUsageRecommendation]:
+    """Generate usage recommendations for a single MCP server."""
+    recs: list[MCPUsageRecommendation] = []
+    if server.installed and server.total_calls == 0:
+        recs.append(
+            MCPUsageRecommendation(
+                kind="unused_server",
+                server_name=server.server_name,
+                message=f"Installed server {server.server_name!r} has no recorded tool calls. Consider removing it.",
+            )
+        )
+    if server.known_tools and server.unused_tools:
+        unused_count = len(server.unused_tools)
+        recs.append(
+            MCPUsageRecommendation(
+                kind="unused_tools",
+                server_name=server.server_name,
+                message=(
+                    f"Server {server.server_name!r} has {unused_count} cataloged tool(s) with zero recorded usage: "
+                    f"{', '.join(server.unused_tools[:5])}"
+                ),
+            )
+        )
+    if server.total_calls > 0 and server.error_rate >= 0.25:
+        recs.append(
+            MCPUsageRecommendation(
+                kind="high_error_rate",
+                server_name=server.server_name,
+                message=(
+                    f"Server {server.server_name!r} is erroring on {server.error_rate:.0%} of recorded calls. "
+                    "Retest or sandbox it before keeping it enabled."
+                ),
+            )
+        )
+    if server.installed and not server.known_tools:
+        recs.append(
+            MCPUsageRecommendation(
+                kind="missing_inventory",
+                server_name=server.server_name,
+                message=(
+                    f"Server {server.server_name!r} has no tool inventory snapshot yet. "
+                    f"Run `bernstein mcp test {server.server_name}` to catalog its tools."
+                ),
+            )
+        )
+    return recs
+
+
 def analyze_mcp_usage(
     sdd_dir: Path,
     *,
@@ -253,50 +301,7 @@ def analyze_mcp_usage(
 
     recommendations: list[MCPUsageRecommendation] = []
     for server in server_summaries:
-        if server.installed and server.total_calls == 0:
-            recommendations.append(
-                MCPUsageRecommendation(
-                    kind="unused_server",
-                    server_name=server.server_name,
-                    message=(
-                        f"Installed server {server.server_name!r} has no recorded tool calls. Consider removing it."
-                    ),
-                )
-            )
-        if server.known_tools and server.unused_tools:
-            unused_count = len(server.unused_tools)
-            recommendations.append(
-                MCPUsageRecommendation(
-                    kind="unused_tools",
-                    server_name=server.server_name,
-                    message=(
-                        f"Server {server.server_name!r} has {unused_count} cataloged tool(s) with zero recorded usage: "
-                        f"{', '.join(server.unused_tools[:5])}"
-                    ),
-                )
-            )
-        if server.total_calls > 0 and server.error_rate >= 0.25:
-            recommendations.append(
-                MCPUsageRecommendation(
-                    kind="high_error_rate",
-                    server_name=server.server_name,
-                    message=(
-                        f"Server {server.server_name!r} is erroring on {server.error_rate:.0%} of recorded calls. "
-                        "Retest or sandbox it before keeping it enabled."
-                    ),
-                )
-            )
-        if server.installed and not server.known_tools:
-            recommendations.append(
-                MCPUsageRecommendation(
-                    kind="missing_inventory",
-                    server_name=server.server_name,
-                    message=(
-                        f"Server {server.server_name!r} has no tool inventory snapshot yet. "
-                        f"Run `bernstein mcp test {server.server_name}` to catalog its tools."
-                    ),
-                )
-            )
+        recommendations.extend(_server_recommendations(server))
 
     return MCPUsageAnalyticsReport(
         generated_at=time.time(),
@@ -314,41 +319,75 @@ def _inventory_key(server_name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in lowered)
 
 
+def _parse_inventory_file(path: Path) -> _ToolInventory | None:
+    """Parse a single tool inventory JSON file, returning None on failure."""
+    try:
+        raw_obj: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw_obj, dict):
+        return None
+    raw = cast(_CAST_DICT_STR_OBJ, raw_obj)
+    server_name = str(raw.get("server_name", "")).strip()
+    if not server_name:
+        return None
+    tools_raw_obj = raw.get("tools", [])
+    if not isinstance(tools_raw_obj, list):
+        return None
+    tool_names: list[str] = []
+    for tool in cast("list[object]", tools_raw_obj):
+        if not isinstance(tool, dict):
+            continue
+        tool_name = str(cast(_CAST_DICT_STR_OBJ, tool).get("name", "")).strip()
+        if tool_name:
+            tool_names.append(tool_name)
+    return _ToolInventory(server_name=server_name, tool_names=tuple(sorted(set(tool_names))))
+
+
 def _load_tool_inventory(sdd_dir: Path) -> dict[str, _ToolInventory]:
     """Load tool inventory snapshots captured during MCP protocol tests."""
     inventory_dir = sdd_dir / "mcp" / "tool_catalog"
     inventories: dict[str, _ToolInventory] = {}
     if not inventory_dir.exists():
         return inventories
-
     for path in sorted(inventory_dir.glob("*.json")):
-        try:
-            raw_obj: object = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(raw_obj, dict):
-            continue
-        raw = cast(_CAST_DICT_STR_OBJ, raw_obj)
-        server_name = str(raw.get("server_name", "")).strip()
-        tools_raw_obj = raw.get("tools", [])
-        if not isinstance(tools_raw_obj, list):
-            continue
-        tools_raw = cast("list[object]", tools_raw_obj)
-        if not server_name:
-            continue
-        tool_names: list[str] = []
-        for tool in tools_raw:
-            if not isinstance(tool, dict):
-                continue
-            tool_dict = cast(_CAST_DICT_STR_OBJ, tool)
-            tool_name = str(tool_dict.get("name", "")).strip()
-            if tool_name:
-                tool_names.append(tool_name)
-        inventories[server_name] = _ToolInventory(
-            server_name=server_name,
-            tool_names=tuple(sorted(set(tool_names))),
-        )
+        inv = _parse_inventory_file(path)
+        if inv is not None:
+            inventories[inv.server_name] = inv
     return inventories
+
+
+def _parse_wal_line(stripped: str) -> _UsageRow | None:
+    """Parse a single WAL JSONL line into a _UsageRow, or None if not applicable."""
+    try:
+        raw_obj: object = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw_obj, dict):
+        return None
+    raw = cast(_CAST_DICT_STR_OBJ, raw_obj)
+    if raw.get("decision_type") != "mcp_tool_call":
+        return None
+    inputs_obj = raw.get("inputs", {})
+    output_obj = raw.get("output", {})
+    if not isinstance(inputs_obj, dict) or not isinstance(output_obj, dict):
+        return None
+    inputs = cast(_CAST_DICT_STR_OBJ, inputs_obj)
+    output = cast(_CAST_DICT_STR_OBJ, output_obj)
+    tool_name = str(inputs.get("tool_name", "")).strip()
+    if not tool_name:
+        return None
+    latency_raw = output.get("latency_ms", 0.0)
+    latency_ms = float(latency_raw) if isinstance(latency_raw, (int, float)) else 0.0
+    timestamp_raw = raw.get("timestamp", 0.0)
+    timestamp = float(timestamp_raw) if isinstance(timestamp_raw, (int, float)) else 0.0
+    return _UsageRow(
+        timestamp=timestamp,
+        server_name=str(inputs.get("server_name", "unknown")).strip() or "unknown",
+        tool_name=tool_name,
+        latency_ms=latency_ms,
+        error=output.get("error") is not None,
+    )
 
 
 def _load_usage_rows(sdd_dir: Path) -> list[_UsageRow]:
@@ -367,36 +406,7 @@ def _load_usage_rows(sdd_dir: Path) -> list[_UsageRow]:
             stripped = line.strip()
             if not stripped:
                 continue
-            try:
-                raw_obj: object = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(raw_obj, dict):
-                continue
-            raw = cast(_CAST_DICT_STR_OBJ, raw_obj)
-            if raw.get("decision_type") != "mcp_tool_call":
-                continue
-            inputs_obj = raw.get("inputs", {})
-            output_obj = raw.get("output", {})
-            if not isinstance(inputs_obj, dict) or not isinstance(output_obj, dict):
-                continue
-            inputs = cast(_CAST_DICT_STR_OBJ, inputs_obj)
-            output = cast(_CAST_DICT_STR_OBJ, output_obj)
-            server_name = str(inputs.get("server_name", "unknown")).strip() or "unknown"
-            tool_name = str(inputs.get("tool_name", "")).strip()
-            if not tool_name:
-                continue
-            latency_raw = output.get("latency_ms", 0.0)
-            latency_ms = float(latency_raw) if isinstance(latency_raw, (int, float)) else 0.0
-            timestamp_raw = raw.get("timestamp", 0.0)
-            timestamp = float(timestamp_raw) if isinstance(timestamp_raw, (int, float)) else 0.0
-            rows.append(
-                _UsageRow(
-                    timestamp=timestamp,
-                    server_name=server_name,
-                    tool_name=tool_name,
-                    latency_ms=latency_ms,
-                    error=output.get("error") is not None,
-                )
-            )
+            row = _parse_wal_line(stripped)
+            if row is not None:
+                rows.append(row)
     return rows

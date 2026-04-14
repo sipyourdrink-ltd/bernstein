@@ -447,9 +447,6 @@ class TestDiscoverAgents:
     def test_detector_exception_is_swallowed(self) -> None:
         """A detector that raises should not crash the whole scan."""
 
-        def _exploding_detect() -> tuple[None, list[str]]:
-            raise RuntimeError("boom")
-
         with (
             patch("bernstein.core.agents.agent_discovery._detect_claude", side_effect=RuntimeError("boom")),
             patch("bernstein.core.agents.agent_discovery._detect_codex", return_value=(None, [])),

@@ -657,63 +657,78 @@ def validate_file_paths(
         List of error messages for missing paths. Empty list means all OK.
     """
     errors: list[str] = []
+    _validate_context_files(config, project_root, errors)
+    _validate_agency_path(config, project_root, errors)
+    _validate_worktree_setup(config, project_root, errors)
+    _validate_formal_verification(config, project_root, errors)
+    _validate_remote_key(config, errors)
+    _validate_catalog_paths(config, project_root, errors)
+    return errors
 
-    # context_files
+
+def _validate_context_files(config: BernsteinConfig, root: Path, errors: list[str]) -> None:
     for ctx_file in config.context_files:
-        resolved = project_root / ctx_file
+        resolved = root / ctx_file
         if not resolved.exists():
             errors.append(f"context_files: path {ctx_file!r} does not exist (resolved to {resolved})")
 
-    # agency.path
-    if config.agency and config.agency.path:
-        agency_path = Path(config.agency.path)
-        if not agency_path.is_absolute():
-            agency_path = project_root / agency_path
-        if not agency_path.exists():
-            errors.append(f"agency.path: {config.agency.path!r} does not exist (resolved to {agency_path})")
 
-    # worktree_setup.symlink_dirs and copy_files
-    if config.worktree_setup:
-        for sym_dir in config.worktree_setup.symlink_dirs:
-            resolved = project_root / sym_dir
-            if not resolved.exists():
-                errors.append(f"worktree_setup.symlink_dirs: {sym_dir!r} does not exist (resolved to {resolved})")
-        for copy_file in config.worktree_setup.copy_files:
-            resolved = project_root / copy_file
-            if not resolved.exists():
-                errors.append(f"worktree_setup.copy_files: {copy_file!r} does not exist (resolved to {resolved})")
+def _validate_agency_path(config: BernsteinConfig, root: Path, errors: list[str]) -> None:
+    if not config.agency or not config.agency.path:
+        return
+    agency_path = Path(config.agency.path)
+    if not agency_path.is_absolute():
+        agency_path = root / agency_path
+    if not agency_path.exists():
+        errors.append(f"agency.path: {config.agency.path!r} does not exist (resolved to {agency_path})")
 
-    # formal_verification lemmas files
-    if config.formal_verification and config.formal_verification.properties:
-        for prop in config.formal_verification.properties:
-            if prop.lemmas_file:
-                resolved = project_root / prop.lemmas_file
-                if not resolved.exists():
-                    errors.append(
-                        f"formal_verification.properties[{prop.name!r}].lemmas_file: "
-                        f"{prop.lemmas_file!r} does not exist "
-                        f"(resolved to {resolved})"
-                    )
 
-    # remote.key
-    if config.remote and config.remote.key:
-        key_path = Path(os.path.expanduser(config.remote.key))
-        if not key_path.exists():
-            errors.append(f"remote.key: {config.remote.key!r} does not exist (resolved to {key_path})")
+def _validate_worktree_setup(config: BernsteinConfig, root: Path, errors: list[str]) -> None:
+    if not config.worktree_setup:
+        return
+    for sym_dir in config.worktree_setup.symlink_dirs:
+        resolved = root / sym_dir
+        if not resolved.exists():
+            errors.append(f"worktree_setup.symlink_dirs: {sym_dir!r} does not exist (resolved to {resolved})")
+    for copy_file in config.worktree_setup.copy_files:
+        resolved = root / copy_file
+        if not resolved.exists():
+            errors.append(f"worktree_setup.copy_files: {copy_file!r} does not exist (resolved to {resolved})")
 
-    # catalogs with local paths
-    if config.catalogs:
-        for catalog in config.catalogs:
-            if catalog.path and catalog.enabled:
-                cat_path = Path(catalog.path)
-                if not cat_path.is_absolute():
-                    cat_path = project_root / cat_path
-                if not cat_path.exists():
-                    errors.append(
-                        f"catalogs[{catalog.name!r}].path: {catalog.path!r} does not exist (resolved to {cat_path})"
-                    )
 
-    return errors
+def _validate_formal_verification(config: BernsteinConfig, root: Path, errors: list[str]) -> None:
+    if not config.formal_verification or not config.formal_verification.properties:
+        return
+    for prop in config.formal_verification.properties:
+        if not prop.lemmas_file:
+            continue
+        resolved = root / prop.lemmas_file
+        if not resolved.exists():
+            errors.append(
+                f"formal_verification.properties[{prop.name!r}].lemmas_file: "
+                f"{prop.lemmas_file!r} does not exist (resolved to {resolved})"
+            )
+
+
+def _validate_remote_key(config: BernsteinConfig, errors: list[str]) -> None:
+    if not config.remote or not config.remote.key:
+        return
+    key_path = Path(os.path.expanduser(config.remote.key))
+    if not key_path.exists():
+        errors.append(f"remote.key: {config.remote.key!r} does not exist (resolved to {key_path})")
+
+
+def _validate_catalog_paths(config: BernsteinConfig, root: Path, errors: list[str]) -> None:
+    if not config.catalogs:
+        return
+    for catalog in config.catalogs:
+        if not catalog.path or not catalog.enabled:
+            continue
+        cat_path = Path(catalog.path)
+        if not cat_path.is_absolute():
+            cat_path = root / cat_path
+        if not cat_path.exists():
+            errors.append(f"catalogs[{catalog.name!r}].path: {catalog.path!r} does not exist (resolved to {cat_path})")
 
 
 # ---------------------------------------------------------------------------

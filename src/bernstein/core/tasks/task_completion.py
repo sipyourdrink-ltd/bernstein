@@ -204,6 +204,36 @@ def maybe_retry_task(
         return False
 
 
+_TRANSIENT_MARKERS = (
+    "rate limit",
+    "timeout",
+    "503",
+    "transient",
+    "connection error",
+    "connection refused",
+    "502",
+    "504",
+    "429",
+    "too many requests",
+    "service unavailable",
+    "overloaded",
+    "temporary failure",
+    "network error",
+    "internal server error",
+)
+_FATAL_MARKERS = ("syntaxerror", "syntax error", "fatal", "typeerror", "valueerror", "nameerror", "attributeerror")
+
+
+def _dynamic_retry_limit(reason: str, default_max: int) -> int:
+    """Determine the retry limit based on failure reason keywords."""
+    reason_lower = reason.lower()
+    if any(k in reason_lower for k in _TRANSIENT_MARKERS):
+        return 3
+    if any(k in reason_lower for k in _FATAL_MARKERS):
+        return 0
+    return default_max
+
+
 def retry_or_fail_task(
     task_id: str,
     reason: str,
@@ -233,41 +263,7 @@ def retry_or_fail_task(
             extra HTTP round-trip when the task is already in cache.
     """
     base = server_url
-
-    # Dynamic retry limit based on failure type (T176)
-    reason_lower = reason.lower()
-    transient_markers = (
-        "rate limit",
-        "timeout",
-        "503",
-        "transient",
-        "connection error",
-        "connection refused",
-        "502",
-        "504",
-        "429",
-        "too many requests",
-        "service unavailable",
-        "overloaded",
-        "temporary failure",
-        "network error",
-        "internal server error",
-    )
-    fatal_markers = (
-        "syntaxerror",
-        "syntax error",
-        "fatal",
-        "typeerror",
-        "valueerror",
-        "nameerror",
-        "attributeerror",
-    )
-    if any(k in reason_lower for k in transient_markers):
-        max_retries = 3
-    elif any(k in reason_lower for k in fatal_markers):
-        max_retries = 0
-    else:
-        max_retries = max_task_retries
+    max_retries = _dynamic_retry_limit(reason, max_task_retries)
 
     # Try the pre-fetched snapshot first to avoid an extra GET
     task: Task | None = None

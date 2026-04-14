@@ -146,6 +146,22 @@ def _commits_since(cwd: Path, since_ref: str | None, until_ref: str) -> list[Com
 # ---------------------------------------------------------------------------
 
 
+_COMMIT_TYPE_ORDER = ["feat", "fix", "perf", "refactor", "docs", "build", "ci", "chore", "test", "style", "revert"]
+
+
+def _group_entries(entries: list[CommitEntry]) -> tuple[dict[str, list[CommitEntry]], list[CommitEntry]]:
+    """Group entries by commit type and collect breaking changes."""
+    from collections import defaultdict
+
+    grouped: dict[str, list[CommitEntry]] = defaultdict(list)
+    breaking: list[CommitEntry] = []
+    for e in entries:
+        if e.is_breaking:
+            breaking.append(e)
+        grouped[e.commit_type].append(e)
+    return grouped, breaking
+
+
 def _format_keepachangelog(
     entries: list[CommitEntry],
     version: str,
@@ -154,19 +170,10 @@ def _format_keepachangelog(
     repo_url: str | None,
 ) -> str:
     """Render entries in Keep a Changelog format."""
-    from collections import defaultdict
-
-    grouped: dict[str, list[CommitEntry]] = defaultdict(list)
-    breaking: list[CommitEntry] = []
-
-    for e in entries:
-        if e.is_breaking:
-            breaking.append(e)
-        grouped[e.commit_type].append(e)
+    grouped, breaking = _group_entries(entries)
 
     lines: list[str] = ["# Changelog", ""]
 
-    # Version header
     date = entries[0].date if entries else ""
     compare_url = ""
     if repo_url and since_ref:
@@ -185,7 +192,7 @@ def _format_keepachangelog(
             lines.append(f"- {scope_prefix}{e.description} ([`{e.sha[:8]}`])")
         lines.append("")
 
-    for ctype in ["feat", "fix", "perf", "refactor", "docs", "build", "ci", "chore", "test", "style", "revert"]:
+    for ctype in _COMMIT_TYPE_ORDER:
         type_entries = grouped.get(ctype, [])
         if not type_entries:
             continue
@@ -236,16 +243,29 @@ def _format_simple(
 # ---------------------------------------------------------------------------
 
 
+_CTYPE_COLORS: dict[str, str] = {"feat": "green", "fix": "yellow"}
+
+
+def _write_changelog_file(output_path: str, text: str, entry_count: int, version_label: str) -> None:
+    """Write changelog text to a file, prepending if an existing changelog header is found."""
+    out = Path(output_path)
+    if out.exists():
+        existing = out.read_text()
+        if existing.startswith("# Changelog"):
+            title_end = existing.find("\n")
+            new_content = existing[: title_end + 1] + "\n" + text.split("\n", 1)[1] + existing[title_end + 1 :]
+            out.write_text(new_content)
+        else:
+            out.write_text(text)
+    else:
+        out.write_text(text)
+    console.print(f"[green]Changelog written to[/green] [bold]{output_path}[/bold]")
+    console.print(f"[dim]{entry_count} commit(s), version {version_label}[/dim]")
+
+
 def _render_to_console(entries: list[CommitEntry], version: str, since_ref: str | None) -> None:
     """Print changelog to console with Rich formatting."""
-    from collections import defaultdict
-
-    grouped: dict[str, list[CommitEntry]] = defaultdict(list)
-    breaking: list[CommitEntry] = []
-    for e in entries:
-        if e.is_breaking:
-            breaking.append(e)
-        grouped[e.commit_type].append(e)
+    grouped, breaking = _group_entries(entries)
 
     range_label = f"{since_ref}..HEAD" if since_ref else "all commits"
     console.print()
@@ -263,17 +283,12 @@ def _render_to_console(entries: list[CommitEntry], version: str, since_ref: str 
             scope_prefix = f"[cyan]{e.scope}:[/cyan] " if e.scope else ""
             console.print(f"  [red]![/red] {scope_prefix}{e.description}  [dim]{e.sha[:8]}[/dim]")
 
-    for ctype in ["feat", "fix", "perf", "refactor", "docs", "build", "ci", "chore", "test", "style", "revert"]:
+    for ctype in _COMMIT_TYPE_ORDER:
         type_entries = grouped.get(ctype, [])
         if not type_entries:
             continue
         label = _TYPE_LABELS.get(ctype, ctype.capitalize())
-        if ctype == "feat":
-            color = "green"
-        elif ctype == "fix":
-            color = "yellow"
-        else:
-            color = "blue"
+        color = _CTYPE_COLORS.get(ctype, "blue")
         console.print(f"\n[bold {color}]{label}[/bold {color}]")
         for e in type_entries:
             scope_prefix = f"[cyan]{e.scope}:[/cyan] " if e.scope else ""
@@ -425,20 +440,6 @@ def changelog_cmd(
         text = _format_simple(entries, version_label, effective_since, until_ref)
 
     if output_path:
-        out = Path(output_path)
-        # Prepend to existing file if it exists and starts with a changelog header
-        if out.exists():
-            existing = out.read_text()
-            if existing.startswith("# Changelog"):
-                # Insert new section after the title line
-                title_end = existing.find("\n")
-                new_content = existing[: title_end + 1] + "\n" + text.split("\n", 1)[1] + existing[title_end + 1 :]
-                out.write_text(new_content)
-            else:
-                out.write_text(text)
-        else:
-            out.write_text(text)
-        console.print(f"[green]Changelog written to[/green] [bold]{output_path}[/bold]")
-        console.print(f"[dim]{len(entries)} commit(s), version {version_label}[/dim]")
+        _write_changelog_file(output_path, text, len(entries), version_label)
     else:
         click.echo(text)

@@ -565,48 +565,47 @@ def _parse_osv_scanner_output(stdout: str, _sbom_serial: str) -> list[SBOMVulnFi
     return findings
 
 
+def _grype_parse_match(match: dict[str, Any]) -> SBOMVulnFinding | None:
+    """Parse a single grype match entry into a finding."""
+    vuln = match.get("vulnerability", {})
+    artifact = match.get("artifact", {})
+    if not isinstance(vuln, dict) or not isinstance(artifact, dict):
+        return None
+    fix_versions = vuln.get("fix", {})
+    fix_version = ""
+    if isinstance(fix_versions, dict):
+        fix_list = fix_versions.get("versions", [])
+        if fix_list:
+            fix_version = str(fix_list[0])
+    return SBOMVulnFinding(
+        component_name=str(artifact.get("name", "")),
+        component_version=str(artifact.get("version", "")),
+        vuln_id=str(vuln.get("id", "unknown")),
+        severity=_severity_from_str(str(vuln.get("severity", "unknown"))),
+        summary=str(vuln.get("description", "") or vuln.get("url", ""))[:300],
+        fix_version=fix_version,
+        scanner="grype",
+    )
+
+
 def _parse_grype_output(stdout: str, _sbom_serial: str) -> list[SBOMVulnFinding]:
     """Parse JSON output from ``grype -o json``."""
-    findings: list[SBOMVulnFinding] = []
     if not stdout.strip():
-        return findings
+        return []
     try:
         payload = json.loads(stdout)
     except json.JSONDecodeError:
         logger.warning("grype: could not parse JSON output")
-        return findings
+        return []
 
-    # grype JSON schema: {"matches": [{"vulnerability": {...}, "artifact": {...}}]}
     matches = payload.get("matches", []) if isinstance(payload, dict) else []
+    findings: list[SBOMVulnFinding] = []
     for match in matches:
         if not isinstance(match, dict):
             continue
-        vuln = match.get("vulnerability", {})
-        artifact = match.get("artifact", {})
-        if not isinstance(vuln, dict) or not isinstance(artifact, dict):
-            continue
-        pkg_name = str(artifact.get("name", ""))
-        pkg_version = str(artifact.get("version", ""))
-        vuln_id = str(vuln.get("id", "unknown"))
-        severity_raw = str(vuln.get("severity", "unknown"))
-        summary = str(vuln.get("description", "") or vuln.get("url", ""))[:300]
-        fix_versions = vuln.get("fix", {})
-        fix_version = ""
-        if isinstance(fix_versions, dict):
-            fix_list = fix_versions.get("versions", [])
-            if fix_list:
-                fix_version = str(fix_list[0])
-        findings.append(
-            SBOMVulnFinding(
-                component_name=pkg_name,
-                component_version=pkg_version,
-                vuln_id=vuln_id,
-                severity=_severity_from_str(severity_raw),
-                summary=summary,
-                fix_version=fix_version,
-                scanner="grype",
-            )
-        )
+        finding = _grype_parse_match(match)
+        if finding is not None:
+            findings.append(finding)
     return findings
 
 

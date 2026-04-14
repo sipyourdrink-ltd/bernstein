@@ -197,6 +197,45 @@ def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _collect_pid_agents(pid_path: Path) -> tuple[list[dict[str, Any]], list[Path]]:
+    """Read PID files and return (live_agents, stale_files)."""
+    agents: list[dict[str, Any]] = []
+    stale_files: list[Path] = []
+    if not pid_path.exists():
+        return agents, stale_files
+
+    for pid_file in sorted(pid_path.glob("*.json")):
+        try:
+            info = json.loads(pid_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        worker_pid = info.get("worker_pid", 0)
+        alive = is_process_alive(worker_pid) if worker_pid else False
+        if not alive:
+            stale_files.append(pid_file)
+            continue
+
+        started_at = info.get("started_at", 0)
+        runtime_s = time.time() - started_at if started_at else 0
+        minutes, secs = divmod(int(runtime_s), 60)
+        hours, minutes = divmod(minutes, 60)
+        runtime_str = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {secs:02d}s"
+
+        agents.append({
+            "session": info.get("session", "?"),
+            "role": info.get("role", "?"),
+            "command": info.get("command", "?"),
+            "model": info.get("model", "?"),
+            "worker_pid": worker_pid,
+            "child_pid": info.get("child_pid"),
+            "runtime": runtime_str,
+            "started_at": started_at,
+        })
+
+    return agents, stale_files
+
+
 @click.command("ps")
 @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON instead of table.")
 @click.option("--pid-dir", default=".sdd/runtime/pids", help="PID metadata directory.")
@@ -205,44 +244,8 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
     from rich.table import Table
 
     pid_path = Path(pid_dir)
-    agents: list[dict[str, Any]] = []
-    stale_files: list[Path] = []
+    agents, stale_files = _collect_pid_agents(pid_path)
 
-    if pid_path.exists():
-        for pid_file in sorted(pid_path.glob("*.json")):
-            try:
-                info = json.loads(pid_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-
-            worker_pid = info.get("worker_pid", 0)
-            child_pid = info.get("child_pid")
-            alive = is_process_alive(worker_pid) if worker_pid else False
-
-            if not alive:
-                stale_files.append(pid_file)
-                continue
-
-            started_at = info.get("started_at", 0)
-            runtime_s = time.time() - started_at if started_at else 0
-            minutes, secs = divmod(int(runtime_s), 60)
-            hours, minutes = divmod(minutes, 60)
-            runtime_str = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {secs:02d}s"
-
-            agents.append(
-                {
-                    "session": info.get("session", "?"),
-                    "role": info.get("role", "?"),
-                    "command": info.get("command", "?"),
-                    "model": info.get("model", "?"),
-                    "worker_pid": worker_pid,
-                    "child_pid": child_pid,
-                    "runtime": runtime_str,
-                    "started_at": started_at,
-                }
-            )
-
-    # Clean up stale PID files
     for f in stale_files:
         f.unlink(missing_ok=True)
 
@@ -382,42 +385,96 @@ def _doctor_check_redis(_check: _CheckFn) -> None:
         _check(_STORAGE_BACKEND_LABEL, True, "redis mode (pg + redis locking)", "")
 
 
+def _try_parse_secrets_config(config_path: Path) -> Any | None:
+    """Try to parse secrets config from a YAML file. Returns SecretsConfig or None."""
+    if not config_path.exists():
+        return None
+    try:
+        import yaml as _yaml
+
+        from bernstein.core.secrets import SecretsConfig
+
+        raw_data = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        if not isinstance(raw_data, dict) or "secrets" not in raw_data:
+            return None
+        s = raw_data["secrets"]
+        if not isinstance(s, dict) or "provider" not in s or "path" not in s:
+            return None
+        return SecretsConfig(
+            provider=s["provider"],
+            path=s["path"],
+            ttl=s.get("ttl", 300),
+            field_map=s.get("field_map", {}),
+        )
+    except Exception:
+        return None
+
+
 def _doctor_check_secrets(workdir: Path, _check: _CheckFn) -> None:
     """Check secrets manager configuration and connectivity."""
-    from bernstein.core.secrets import SecretsConfig, check_provider_connectivity
+    from bernstein.core.secrets import check_provider_connectivity
 
-    secrets_cfg: SecretsConfig | None = None
+    secrets_cfg = None
     for config_path in (workdir / ".sdd" / "config.yaml", workdir / "bernstein.yaml"):
+        secrets_cfg = _try_parse_secrets_config(config_path)
         if secrets_cfg is not None:
             break
-        if not config_path.exists():
-            continue
-        try:
-            import yaml as _yaml
 
-            raw_data = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            if isinstance(raw_data, dict) and "secrets" in raw_data:
-                s = raw_data["secrets"]
-                if isinstance(s, dict) and "provider" in s and "path" in s:
-                    secrets_cfg = SecretsConfig(
-                        provider=s["provider"],
-                        path=s["path"],
-                        ttl=s.get("ttl", 300),
-                        field_map=s.get("field_map", {}),
-                    )
-        except Exception:
-            pass
-
-    if secrets_cfg is not None:
-        sm_ok, sm_detail = check_provider_connectivity(secrets_cfg)
-        _check(
-            f"Secrets: {secrets_cfg.provider}",
-            sm_ok,
-            sm_detail,
-            f"Check {secrets_cfg.provider} connectivity and credentials" if not sm_ok else "",
-        )
-    else:
+    if secrets_cfg is None:
         _check("Secrets manager", True, "not configured (using env vars)", "")
+        return
+
+    sm_ok, sm_detail = check_provider_connectivity(secrets_cfg)
+    _check(
+        f"Secrets: {secrets_cfg.provider}",
+        sm_ok,
+        sm_detail,
+        f"Check {secrets_cfg.provider} connectivity and credentials" if not sm_ok else "",
+    )
+
+
+def _fix_port_in_use(fixed: list[str], manual_needed: list[str]) -> None:
+    """Try to fix port-in-use issue."""
+    try:
+        from bernstein.cli.stop_cmd import soft_stop
+
+        soft_stop(timeout=10)
+        fixed.append("Killed stale server on port 8052")
+    except Exception:
+        manual_needed.append("Run 'bernstein stop' to free port 8052")
+
+
+def _fix_sdd_missing(workdir: Path, fixed: list[str], manual_needed: list[str]) -> None:
+    """Try to create missing .sdd workspace."""
+    try:
+        from bernstein.core.server_launch import ensure_sdd
+
+        ensure_sdd(workdir)
+        fixed.append("Created .sdd workspace")
+    except Exception:
+        manual_needed.append("Run 'bernstein init' to create .sdd workspace")
+
+
+def _fix_stale_pids(stale_pid_paths: list[Path], fixed: list[str]) -> None:
+    """Clean up stale PID files."""
+    count = sum(1 for p in stale_pid_paths if _try_unlink(p))
+    if count > 0:
+        fixed.append(f"Cleaned {count} stale PID file(s)")
+
+
+def _try_unlink(path: Path) -> bool:
+    """Try to unlink a file, return True on success."""
+    try:
+        path.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+_MANUAL_FIXES: dict[str, str] = {
+    "codex_login": "Run 'codex login' to authenticate Codex CLI",
+    "gemini_auth": "Run 'gemini' to authenticate Gemini CLI (prompts on first run)",
+}
 
 
 def _doctor_auto_fix(
@@ -432,35 +489,13 @@ def _doctor_auto_fix(
     for c in failed:
         fix_id = c["fix_id"]
         if fix_id == "port_in_use":
-            try:
-                from bernstein.cli.stop_cmd import soft_stop
-
-                soft_stop(timeout=10)
-                fixed.append("Killed stale server on port 8052")
-            except Exception:
-                manual_needed.append("Run 'bernstein stop' to free port 8052")
+            _fix_port_in_use(fixed, manual_needed)
         elif fix_id == "sdd_missing":
-            try:
-                from bernstein.core.server_launch import ensure_sdd
-
-                ensure_sdd(workdir)
-                fixed.append("Created .sdd workspace")
-            except Exception:
-                manual_needed.append("Run 'bernstein init' to create .sdd workspace")
+            _fix_sdd_missing(workdir, fixed, manual_needed)
         elif fix_id == "stale_pids":
-            count = 0
-            for pid_file in stale_pid_paths:
-                try:
-                    pid_file.unlink(missing_ok=True)
-                    count += 1
-                except OSError:
-                    pass
-            if count > 0:
-                fixed.append(f"Cleaned {count} stale PID file(s)")
-        elif fix_id == "codex_login":
-            manual_needed.append("Run 'codex login' to authenticate Codex CLI")
-        elif fix_id == "gemini_auth":
-            manual_needed.append("Run 'gemini' to authenticate Gemini CLI (prompts on first run)")
+            _fix_stale_pids(stale_pid_paths, fixed)
+        elif fix_id in _MANUAL_FIXES:
+            manual_needed.append(_MANUAL_FIXES[fix_id])
 
 
 # ---------------------------------------------------------------------------
@@ -759,6 +794,21 @@ def _doctor_check_secrets_yaml(checks: list[dict[str, Any]], workdir: Path) -> N
         _add_check(checks, "Secrets", False, f"configuration error: {exc}", "Check bernstein.yaml syntax")
 
 
+def _doctor_print_fix_summary(auto_fix: bool, fixed: list[str], manual_needed: list[str]) -> None:
+    """Print auto-fix results if applicable."""
+    if not auto_fix or not (fixed or manual_needed):
+        return
+    console.print()
+    if fixed:
+        console.print("[bold green]Fixed:[/bold green]")
+        for msg in fixed:
+            console.print(f"  [green]\u2713[/green] {msg}")
+    if manual_needed:
+        console.print("[bold yellow]Manual action needed:[/bold yellow]")
+        for msg in manual_needed:
+            console.print(f"  [yellow]\u2192[/yellow] {msg}")
+
+
 def _doctor_render_table(
     checks: list[dict[str, Any]],
     auto_fix: bool,
@@ -779,26 +829,16 @@ def _doctor_render_table(
         table.add_row(c["name"], icon, c["detail"], f"[dim]{c['fix']}[/dim]" if c["fix"] else "")
 
     console.print(table)
+    _doctor_print_fix_summary(auto_fix, fixed, manual_needed)
 
-    if auto_fix and (fixed or manual_needed):
-        console.print()
-        if fixed:
-            console.print("[bold green]Fixed:[/bold green]")
-            for msg in fixed:
-                console.print(f"  [green]\u2713[/green] {msg}")
-        if manual_needed:
-            console.print("[bold yellow]Manual action needed:[/bold yellow]")
-            for msg in manual_needed:
-                console.print(f"  [yellow]\u2192[/yellow] {msg}")
-
-    failed_checks = [c for c in checks if not c["ok"]]
-    if failed_checks:
-        console.print(f"\n[red]{len(failed_checks)} issue(s) found.[/red]")
+    failed_count = sum(1 for c in checks if not c["ok"])
+    if failed_count:
+        console.print(f"\n[red]{failed_count} issue(s) found.[/red]")
         if not auto_fix:
             console.print("[dim]Run 'bernstein doctor --fix' to attempt auto-repair.[/dim]")
         raise SystemExit(1)
-    else:
-        console.print("\n[green]All checks passed.[/green]")
+
+    console.print("\n[green]All checks passed.[/green]")
 
 
 @click.command("doctor")

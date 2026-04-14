@@ -21,6 +21,225 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _count_by_field(tasks: list[Task], field: str) -> dict[str, int]:
+    """Count tasks grouped by a given field name."""
+    counts: dict[str, int] = defaultdict(int)
+    for t in tasks:
+        val = getattr(t, field)
+        key = val.value if hasattr(val, "value") else str(val)
+        counts[key] += 1
+    return counts
+
+
+def _write_rate_table(
+    lines: list[str],
+    header: str,
+    columns: str,
+    separator: str,
+    done_counts: dict[str, int],
+    failed_counts: dict[str, int],
+    sort_key: object = None,
+) -> None:
+    """Write a rate table (by role or complexity) into *lines*."""
+    all_keys = sorted(set(done_counts) | set(failed_counts), key=sort_key)  # type: ignore[arg-type]
+    if not all_keys:
+        return
+    lines.append(header)
+    lines.append("")
+    lines.append(columns)
+    lines.append(separator)
+    for key in all_keys:
+        d = done_counts.get(key, 0)
+        f = failed_counts.get(key, 0)
+        tot = d + f
+        rate = f / tot * 100 if tot else 0.0
+        lines.append(f"| {key} | {d} | {f} | {tot} | {rate:.0f}% |")
+    lines.append("")
+
+
+def _write_failure_analysis(lines: list[str], done_tasks: list[Task], failed_tasks: list[Task]) -> None:
+    """Write the Failure Analysis section."""
+    lines.append("## Failure Analysis")
+    lines.append("")
+
+    role_done = _count_by_field(done_tasks, "role")
+    role_failed = _count_by_field(failed_tasks, "role")
+    _write_rate_table(
+        lines, "### By role", "| Role | Done | Failed | Total | Failure rate |",
+        "|------|------|--------|-------|--------------|", role_done, role_failed,
+    )
+
+    cx_done = _count_by_field(done_tasks, "complexity")
+    cx_failed = _count_by_field(failed_tasks, "complexity")
+    _write_rate_table(
+        lines, "### By complexity", "| Complexity | Done | Failed | Total | Failure rate |",
+        "|------------|------|--------|-------|--------------|", cx_done, cx_failed,
+        sort_key=lambda v: list(Complexity).index(Complexity(v)),
+    )
+
+    if failed_tasks:
+        lines.append("### Failed task titles")
+        lines.append("")
+        for t in sorted(failed_tasks, key=lambda t: t.title):
+            lines.append(f"- {t.title} *(role: {t.role}, complexity: {t.complexity.value})*")
+        lines.append("")
+
+
+def _write_performance_section(
+    lines: list[str],
+    task_metrics: dict[str, TaskMetrics],
+    all_tasks: list[Task],
+) -> None:
+    """Write the Performance section."""
+    lines.append("## Performance")
+    lines.append("")
+
+    role_durations: dict[str, list[float]] = defaultdict(list)
+    for tm in task_metrics.values():
+        if tm.end_time is not None:
+            role_durations[tm.role].append(tm.end_time - tm.start_time)
+
+    if role_durations:
+        lines.append("### Average duration by role")
+        lines.append("")
+        lines.append("| Role | Tasks measured | Avg duration |")
+        lines.append("|------|---------------|--------------|")
+        for role in sorted(role_durations):
+            durs = role_durations[role]
+            lines.append(f"| {role} | {len(durs)} | {_fmt_seconds(sum(durs) / len(durs))} |")
+        lines.append("")
+
+    task_id_to_cx: dict[str, str] = {t.id: t.complexity.value for t in all_tasks}
+    cx_durations: dict[str, list[float]] = defaultdict(list)
+    for tm in task_metrics.values():
+        if tm.end_time is not None:
+            cx = task_id_to_cx.get(tm.task_id)
+            if cx:
+                cx_durations[cx].append(tm.end_time - tm.start_time)
+
+    if cx_durations:
+        lines.append("### Average duration by complexity")
+        lines.append("")
+        lines.append("| Complexity | Tasks measured | Avg duration |")
+        lines.append("|------------|---------------|--------------|")
+        for cx in sorted(cx_durations, key=lambda v: list(Complexity).index(Complexity(v))):
+            durs = cx_durations[cx]
+            lines.append(f"| {cx} | {len(durs)} | {_fmt_seconds(sum(durs) / len(durs))} |")
+        lines.append("")
+
+
+def _write_cost_breakdown(lines: list[str], task_metrics: dict[str, TaskMetrics]) -> None:
+    """Write the Cost Breakdown section."""
+    lines.append("## Cost Breakdown")
+    lines.append("")
+
+    model_costs: dict[str, float] = defaultdict(float)
+    model_counts: dict[str, int] = defaultdict(int)
+    for tm in task_metrics.values():
+        m = tm.model or "unknown"
+        model_costs[m] += tm.cost_usd
+        model_counts[m] += 1
+
+    if model_costs:
+        lines.append("### By model")
+        lines.append("")
+        lines.append("| Model | Tasks | Cost |")
+        lines.append("|-------|-------|------|")
+        for model in sorted(model_costs, key=lambda m: model_costs[m], reverse=True):
+            lines.append(f"| {model} | {model_counts[model]} | ${model_costs[model]:.4f} |")
+        lines.append("")
+
+    role_costs: dict[str, float] = defaultdict(float)
+    role_task_counts: dict[str, int] = defaultdict(int)
+    for tm in task_metrics.values():
+        role_costs[tm.role] += tm.cost_usd
+        role_task_counts[tm.role] += 1
+
+    if role_costs:
+        lines.append("### By role")
+        lines.append("")
+        lines.append("| Role | Tasks | Cost |")
+        lines.append("|------|-------|------|")
+        for role in sorted(role_costs, key=lambda r: role_costs[r], reverse=True):
+            lines.append(f"| {role} | {role_task_counts[role]} | ${role_costs[role]:.4f} |")
+        lines.append("")
+
+    _write_token_breakdown(lines, task_metrics)
+
+
+def _write_token_breakdown(lines: list[str], task_metrics: dict[str, TaskMetrics]) -> None:
+    """Write the token usage sub-section if token data is available."""
+    total_prompt = sum(tm.tokens_prompt for tm in task_metrics.values())
+    total_completion = sum(tm.tokens_completion for tm in task_metrics.values())
+    if total_prompt == 0 and total_completion == 0:
+        return
+
+    model_token_data: dict[str, dict[str, int]] = defaultdict(lambda: {"prompt": 0, "completion": 0})
+    for tm in task_metrics.values():
+        m = tm.model or "unknown"
+        model_token_data[m]["prompt"] += tm.tokens_prompt
+        model_token_data[m]["completion"] += tm.tokens_completion
+
+    lines.append("### Token usage by model")
+    lines.append("")
+    lines.append("| Model | Prompt tokens | Completion tokens | Total tokens |")
+    lines.append("|-------|--------------|------------------|-------------|")
+
+    def _total(k: str) -> int:
+        return model_token_data[k]["prompt"] + model_token_data[k]["completion"]
+
+    for m in sorted(model_token_data, key=_total, reverse=True):
+        p, c = model_token_data[m]["prompt"], model_token_data[m]["completion"]
+        lines.append(f"| {m} | {p:,} | {c:,} | {p + c:,} |")
+    lines.append("")
+    total = total_prompt + total_completion
+    lines.append(f"**Total tokens:** {total:,} ({total_prompt:,} prompt, {total_completion:,} completion)")
+    lines.append("")
+
+
+def _write_agent_summary(lines: list[str], collector: MetricsCollector) -> None:
+    """Write the Agent Summary section."""
+    lines.append("## Agent Summary")
+    lines.append("")
+
+    agent_metrics = collector._agent_metrics  # type: ignore[reportPrivateUsage]
+    if not agent_metrics:
+        lines.append("*(No in-memory agent metrics available.)*")
+        lines.append("")
+        return
+
+    timed_out_or_killed: list[str] = []
+    high_failure: list[str] = []
+
+    lines.append("| Agent | Role | Tasks done | Tasks failed | Cost |")
+    lines.append("|-------|------|-----------|--------------|------|")
+    for am in sorted(agent_metrics.values(), key=lambda a: a.role):
+        lines.append(
+            f"| {am.agent_id[:8]} | {am.role} | {am.tasks_completed} "
+            f"| {am.tasks_failed} | ${am.total_cost_usd:.4f} |"
+        )
+        if am.tasks_completed == 0 and am.tasks_failed == 0 and am.end_time is not None:
+            timed_out_or_killed.append(f"{am.agent_id[:8]} ({am.role})")
+        tot = am.tasks_completed + am.tasks_failed
+        if tot >= 2 and am.tasks_failed / tot > 0.5:
+            high_failure.append(f"{am.agent_id[:8]} ({am.role})")
+    lines.append("")
+
+    if timed_out_or_killed:
+        lines.append("### Agents that may have been killed or timed out")
+        lines.append("")
+        for entry in timed_out_or_killed:
+            lines.append(f"- {entry}")
+        lines.append("")
+
+    if high_failure:
+        lines.append("### Agents with high failure rates")
+        lines.append("")
+        for entry in high_failure:
+            lines.append(f"- {entry}")
+        lines.append("")
+
+
 def generate_retrospective(
     done_tasks: list[Task],
     failed_tasks: list[Task],
@@ -90,235 +309,20 @@ def generate_retrospective(
     _section(f"- **Wall-clock duration:** {duration_str}")
     _section("")
 
-    # ------------------------------------------------------------------
-    # Failure analysis
-    # ------------------------------------------------------------------
-    _section("## Failure Analysis")
-    _section("")
+    _write_failure_analysis(lines, done_tasks, failed_tasks)
+    _write_performance_section(lines, task_metrics, all_tasks)
+    _write_cost_breakdown(lines, task_metrics)
+    _write_agent_summary(lines, collector)
 
-    # By role
-    role_done: dict[str, int] = defaultdict(int)
-    role_failed: dict[str, int] = defaultdict(int)
-    for t in done_tasks:
-        role_done[t.role] += 1
-    for t in failed_tasks:
-        role_failed[t.role] += 1
-
-    all_roles = sorted(set(role_done) | set(role_failed))
-    if all_roles:
-        _section("### By role")
-        _section("")
-        _section("| Role | Done | Failed | Total | Failure rate |")
-        _section("|------|------|--------|-------|--------------|")
-        for role in all_roles:
-            d = role_done[role]
-            f = role_failed[role]
-            tot = d + f
-            rate = f / tot * 100 if tot else 0.0
-            _section(f"| {role} | {d} | {f} | {tot} | {rate:.0f}% |")
-        _section("")
-
-    # By complexity
-    cx_done: dict[str, int] = defaultdict(int)
-    cx_failed: dict[str, int] = defaultdict(int)
-    for t in done_tasks:
-        cx_done[t.complexity.value] += 1
-    for t in failed_tasks:
-        cx_failed[t.complexity.value] += 1
-
-    all_complexities = sorted(
-        set(cx_done) | set(cx_failed),
-        key=lambda v: list(Complexity).index(Complexity(v)),
-    )
-    if all_complexities:
-        _section("### By complexity")
-        _section("")
-        _section("| Complexity | Done | Failed | Total | Failure rate |")
-        _section("|------------|------|--------|-------|--------------|")
-        for cx in all_complexities:
-            d = cx_done[cx]
-            f = cx_failed[cx]
-            tot = d + f
-            rate = f / tot * 100 if tot else 0.0
-            _section(f"| {cx} | {d} | {f} | {tot} | {rate:.0f}% |")
-        _section("")
-
-    # Failed task titles
-    if failed_tasks:
-        _section("### Failed task titles")
-        _section("")
-        for t in sorted(failed_tasks, key=lambda t: t.title):
-            _section(f"- {t.title} *(role: {t.role}, complexity: {t.complexity.value})*")
-        _section("")
-
-    # ------------------------------------------------------------------
-    # Performance
-    # ------------------------------------------------------------------
-    _section("## Performance")
-    _section("")
-
-    # Average duration by role from TaskMetrics
-    role_durations: dict[str, list[float]] = defaultdict(list)
-    for tm in task_metrics.values():
-        if tm.end_time is not None:
-            role_durations[tm.role].append(tm.end_time - tm.start_time)
-
-    if role_durations:
-        _section("### Average duration by role")
-        _section("")
-        _section("| Role | Tasks measured | Avg duration |")
-        _section("|------|---------------|--------------|")
-        for role in sorted(role_durations):
-            durs = role_durations[role]
-            avg = sum(durs) / len(durs)
-            _section(f"| {role} | {len(durs)} | {_fmt_seconds(avg)} |")
-        _section("")
-
-    # Average duration by complexity — join task model data via task id
-    task_id_to_complexity: dict[str, str] = {t.id: t.complexity.value for t in all_tasks}
-    cx_durations: dict[str, list[float]] = defaultdict(list)
-    for tm in task_metrics.values():
-        if tm.end_time is not None:
-            cx = task_id_to_complexity.get(tm.task_id)
-            if cx:
-                cx_durations[cx].append(tm.end_time - tm.start_time)
-
-    if cx_durations:
-        _section("### Average duration by complexity")
-        _section("")
-        _section("| Complexity | Tasks measured | Avg duration |")
-        _section("|------------|---------------|--------------|")
-        for cx in sorted(cx_durations, key=lambda v: list(Complexity).index(Complexity(v))):
-            durs = cx_durations[cx]
-            avg = sum(durs) / len(durs)
-            _section(f"| {cx} | {len(durs)} | {_fmt_seconds(avg)} |")
-        _section("")
-
-    # ------------------------------------------------------------------
-    # Cost breakdown
-    # ------------------------------------------------------------------
-    _section("## Cost Breakdown")
-    _section("")
-
-    # By model
-    model_costs: dict[str, float] = defaultdict(float)
-    model_counts: dict[str, int] = defaultdict(int)
-    for tm in task_metrics.values():
-        m = tm.model or "unknown"
-        model_costs[m] += tm.cost_usd
-        model_counts[m] += 1
-
-    if model_costs:
-        _section("### By model")
-        _section("")
-        _section("| Model | Tasks | Cost |")
-        _section("|-------|-------|------|")
-        for model in sorted(model_costs, key=lambda m: model_costs[m], reverse=True):
-            _section(f"| {model} | {model_counts[model]} | ${model_costs[model]:.4f} |")
-        _section("")
-
-    # By role
-    role_costs: dict[str, float] = defaultdict(float)
-    role_task_counts: dict[str, int] = defaultdict(int)
-    for tm in task_metrics.values():
-        role_costs[tm.role] += tm.cost_usd
-        role_task_counts[tm.role] += 1
-
-    if role_costs:
-        _section("### By role")
-        _section("")
-        _section("| Role | Tasks | Cost |")
-        _section("|------|-------|------|")
-        for role in sorted(role_costs, key=lambda r: role_costs[r], reverse=True):
-            _section(f"| {role} | {role_task_counts[role]} | ${role_costs[role]:.4f} |")
-        _section("")
-
-    # Token breakdown (only shown when token data is available)
-    total_prompt_tokens = sum(tm.tokens_prompt for tm in task_metrics.values())
-    total_completion_tokens = sum(tm.tokens_completion for tm in task_metrics.values())
-    if total_prompt_tokens > 0 or total_completion_tokens > 0:
-        model_token_data: dict[str, dict[str, int | float]] = defaultdict(lambda: {"prompt": 0, "completion": 0})
-        for tm in task_metrics.values():
-            m = tm.model or "unknown"
-            model_token_data[m]["prompt"] = int(model_token_data[m]["prompt"]) + tm.tokens_prompt
-            model_token_data[m]["completion"] = int(model_token_data[m]["completion"]) + tm.tokens_completion
-
-        _section("### Token usage by model")
-        _section("")
-        _section("| Model | Prompt tokens | Completion tokens | Total tokens |")
-        _section("|-------|--------------|------------------|-------------|")
-
-        def _total_tokens(k: str) -> int:
-            return int(model_token_data[k]["prompt"]) + int(model_token_data[k]["completion"])
-
-        for m in sorted(model_token_data, key=_total_tokens, reverse=True):
-            p = int(model_token_data[m]["prompt"])
-            c = int(model_token_data[m]["completion"])
-            _section(f"| {m} | {p:,} | {c:,} | {p + c:,} |")
-        _section("")
-        total_tokens = total_prompt_tokens + total_completion_tokens
-        _section(
-            f"**Total tokens:** {total_tokens:,} "
-            f"({total_prompt_tokens:,} prompt, {total_completion_tokens:,} completion)"
-        )
-        _section("")
-
-    # ------------------------------------------------------------------
-    # Agent summary
-    # ------------------------------------------------------------------
-    _section("## Agent Summary")
-    _section("")
-
-    agent_metrics = collector._agent_metrics  # type: ignore[reportPrivateUsage]
-    if agent_metrics:
-        timed_out_or_killed: list[str] = []
-        high_failure: list[str] = []
-
-        _section("| Agent | Role | Tasks done | Tasks failed | Cost |")
-        _section("|-------|------|-----------|--------------|------|")
-        for am in sorted(agent_metrics.values(), key=lambda a: a.role):
-            _section(
-                f"| {am.agent_id[:8]} | {am.role} | {am.tasks_completed} "
-                f"| {am.tasks_failed} | ${am.total_cost_usd:.4f} |"
-            )
-            # Dead with no tasks completed and no cost → likely killed/timed out
-            if am.tasks_completed == 0 and am.tasks_failed == 0 and am.end_time is not None:
-                timed_out_or_killed.append(f"{am.agent_id[:8]} ({am.role})")
-            tot = am.tasks_completed + am.tasks_failed
-            if tot >= 2 and am.tasks_failed / tot > 0.5:
-                high_failure.append(f"{am.agent_id[:8]} ({am.role})")
-        _section("")
-
-        if timed_out_or_killed:
-            _section("### Agents that may have been killed or timed out")
-            _section("")
-            for entry in timed_out_or_killed:
-                _section(f"- {entry}")
-            _section("")
-
-        if high_failure:
-            _section("### Agents with high failure rates")
-            _section("")
-            for entry in high_failure:
-                _section(f"- {entry}")
-            _section("")
-    else:
-        _section("*(No in-memory agent metrics available.)*")
-        _section("")
-
-    # ------------------------------------------------------------------
-    # Recommendations
-    # ------------------------------------------------------------------
     _section("## Recommendations")
     _section("")
+    role_failed = _count_by_field(failed_tasks, "role")
+    role_done = _count_by_field(done_tasks, "role")
+    cx_failed = _count_by_field(failed_tasks, "complexity")
     recommendations = _build_recommendations(
-        n_done=n_done,
-        n_failed=n_failed,
-        role_failed=role_failed,
-        role_done=role_done,
-        cx_failed=cx_failed,
-        total_cost=total_cost,
-        wall_clock_s=wall_clock_s,
+        n_done=n_done, n_failed=n_failed,
+        role_failed=role_failed, role_done=role_done,
+        cx_failed=cx_failed, total_cost=total_cost, wall_clock_s=wall_clock_s,
     )
     if recommendations:
         for rec in recommendations:
@@ -330,18 +334,13 @@ def generate_retrospective(
     retro_path.write_text("\n".join(lines))
     logger.info("Retrospective written to .sdd/runtime/retrospective.md")
 
-    # Append to cross-run project memory for manager context in future runs
     sdd_dir = runtime_dir.parent
     goal = all_tasks[0].title if all_tasks else "Unknown goal"
     run_id = time.strftime("%Y%m%d-%H%M%S")
     append_to_project_memory(
-        sdd_dir=sdd_dir,
-        run_id=run_id,
-        goal=goal,
-        tasks_done=n_done,
-        tasks_failed=n_failed,
-        cost_usd=total_cost,
-        lesson="",
+        sdd_dir=sdd_dir, run_id=run_id, goal=goal,
+        tasks_done=n_done, tasks_failed=n_failed,
+        cost_usd=total_cost, lesson="",
     )
 
 

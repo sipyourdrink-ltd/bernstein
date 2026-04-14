@@ -155,34 +155,46 @@ class TaskMCPFilter:
         result = FilterResult(task_id=task.id, role=task.role)
 
         if task.mcp_servers:
-            explicit_set = set(task.mcp_servers)
-            result.allowed = [n for n in all_server_names if n in explicit_set]
-            result.blocked = [n for n in all_server_names if n not in explicit_set]
-            for name in result.blocked:
-                result.reasons[name] = "not in task.mcp_servers explicit list"
-            return result
+            return self._filter_explicit(result, task.mcp_servers, all_server_names)
 
+        allowed_set = self._collect_allowed(task)
+        self._apply_allowed_set(result, allowed_set, all_server_names, task.role)
+        return result
+
+    def _filter_explicit(
+        self, result: FilterResult, mcp_servers: list[str], all_server_names: list[str]
+    ) -> FilterResult:
+        """Apply explicit mcp_servers list to the filter result."""
+        explicit_set = set(mcp_servers)
+        result.allowed = [n for n in all_server_names if n in explicit_set]
+        result.blocked = [n for n in all_server_names if n not in explicit_set]
+        for name in result.blocked:
+            result.reasons[name] = "not in task.mcp_servers explicit list"
+        return result
+
+    def _collect_allowed(self, task: Task) -> set[str]:
+        """Collect allowed server names from matching rules."""
         allowed_set: set[str] = set()
         for rule in self._rules:
             if rule.matches_role(task.role) and rule.matches_scope(task.owned_files):
                 allowed_set.update(rule.allowed_servers)
+        return allowed_set
 
+    def _apply_allowed_set(
+        self, result: FilterResult, allowed_set: set[str], all_server_names: list[str], role: str
+    ) -> None:
+        """Apply allowed_set to the filter result, using default policy as fallback."""
         if allowed_set:
             result.allowed = [n for n in all_server_names if n in allowed_set]
             result.blocked = [n for n in all_server_names if n not in allowed_set]
             for name in result.blocked:
-                result.reasons[name] = f"no rule allows server for role '{task.role}'"
-        elif self._default_allow_all:
+                result.reasons[name] = f"no rule allows server for role '{role}'"
+        elif self._default_allow_all or not self._rules:
             result.allowed = list(all_server_names)
         else:
-            if self._rules:
-                result.blocked = list(all_server_names)
-                for name in result.blocked:
-                    result.reasons[name] = f"no matching rule for role '{task.role}'"
-            else:
-                result.allowed = list(all_server_names)
-
-        return result
+            result.blocked = list(all_server_names)
+            for name in result.blocked:
+                result.reasons[name] = f"no matching rule for role '{role}'"
 
     def filter_names(self, task: Task, all_server_names: list[str]) -> list[str]:
         """Convenience method returning just the allowed server names.

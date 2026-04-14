@@ -288,10 +288,10 @@ class OpenClawGatewayClient:
                 result.append(cast("dict[str, Any]", item_raw))
         return result
 
-    async def _open_connection(self, *, _retry_with_device_token: bool = True) -> ClientConnection:
-        """Open and authenticate a Gateway WebSocket connection."""
+    async def _connect_websocket(self) -> ClientConnection:
+        """Create a new WebSocket connection to the gateway."""
         try:
-            websocket = await connect(
+            return await connect(
                 self._url,
                 open_timeout=self._connect_timeout_s,
                 close_timeout=self._request_timeout_s,
@@ -300,30 +300,31 @@ class OpenClawGatewayClient:
             )
         except Exception as exc:
             raise BridgeError(f"OpenClaw gateway connect failed: {exc}") from exc
+
+    async def _retry_with_device_token(self) -> ClientConnection:
+        """Retry connection using cached device token."""
+        try:
+            retry_socket = await self._connect_websocket()
+        except BridgeError:
+            raise
+        try:
+            await self._authenticate(retry_socket, use_device_token=True)
+            return retry_socket
+        except Exception:
+            await retry_socket.close()
+            raise
+
+    async def _open_connection(self, *, _retry_with_device_token: bool = True) -> ClientConnection:
+        """Open and authenticate a Gateway WebSocket connection."""
+        websocket = await self._connect_websocket()
         try:
             await self._authenticate(websocket, use_device_token=False)
             return websocket
         except BridgeError as exc:
             if _retry_with_device_token and self._is_auth_token_mismatch(exc):
                 await websocket.close()
-                cached_device_token = self._identity_store.load_device_token()
-                if cached_device_token:
-                    try:
-                        retry_socket = await connect(
-                            self._url,
-                            open_timeout=self._connect_timeout_s,
-                            close_timeout=self._request_timeout_s,
-                            ping_interval=20,
-                            max_size=None,
-                        )
-                    except Exception as retry_exc:
-                        raise BridgeError(f"OpenClaw gateway reconnect failed: {retry_exc}") from retry_exc
-                    try:
-                        await self._authenticate(retry_socket, use_device_token=True)
-                        return retry_socket
-                    except Exception:
-                        await retry_socket.close()
-                        raise
+                if self._identity_store.load_device_token():
+                    return await self._retry_with_device_token()
             await websocket.close()
             raise
 

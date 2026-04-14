@@ -503,6 +503,38 @@ def _list_process_snapshots_unix() -> list[_ProcessSnapshot]:
     return snapshots
 
 
+def _classify_and_kill_process(
+    snapshot: Any,
+    workdir: Path,
+    heartbeat_prefix: str,
+    worktree_prefix: str,
+    killed: set[int],
+) -> None:
+    """Classify a process snapshot and kill it if it belongs to this repo."""
+    command = snapshot.command
+
+    if heartbeat_prefix in command or worktree_prefix in command:
+        _kill_agent_pid(snapshot.pid, f"orphan-{snapshot.pid}", killed)
+        return
+
+    is_watchdog = "bernstein.core.bootstrap" in command and "--watchdog" in command
+    is_orchestrator = "bernstein.core.orchestrator" in command
+    is_server = "uvicorn bernstein.core.server:app" in command
+
+    if not (is_watchdog or is_orchestrator or is_server):
+        return
+
+    if process_cwd(snapshot.pid) != workdir:
+        return
+
+    if is_watchdog:
+        _kill_named_pid(snapshot.pid, "Watchdog", killed)
+    elif is_orchestrator:
+        _kill_named_pid(snapshot.pid, "Spawner", killed)
+    else:
+        _kill_named_pid(snapshot.pid, _LABEL_TASK_SERVER, killed)
+
+
 def _collect_repo_processes(killed: set[int]) -> None:
     """Source D: scan repo-owned runtime processes when PID files are gone."""
     workdir = Path.cwd()
@@ -513,24 +545,7 @@ def _collect_repo_processes(killed: set[int]) -> None:
     for snapshot in _list_process_snapshots():
         if snapshot.pid in killed or snapshot.pid == my_pid:
             continue
-
-        command = snapshot.command
-        if heartbeat_prefix in command or worktree_prefix in command:
-            _kill_agent_pid(snapshot.pid, f"orphan-{snapshot.pid}", killed)
-            continue
-
-        if "bernstein.core.bootstrap" in command and "--watchdog" in command:
-            if process_cwd(snapshot.pid) == workdir:
-                _kill_named_pid(snapshot.pid, "Watchdog", killed)
-            continue
-
-        if "bernstein.core.orchestrator" in command:
-            if process_cwd(snapshot.pid) == workdir:
-                _kill_named_pid(snapshot.pid, "Spawner", killed)
-            continue
-
-        if "uvicorn bernstein.core.server:app" in command and process_cwd(snapshot.pid) == workdir:
-            _kill_named_pid(snapshot.pid, _LABEL_TASK_SERVER, killed)
+        _classify_and_kill_process(snapshot, workdir, heartbeat_prefix, worktree_prefix, killed)
 
 
 def _kill_port_holder(port: int, killed: set[int]) -> None:

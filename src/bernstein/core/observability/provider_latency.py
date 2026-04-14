@@ -102,6 +102,35 @@ class DegradationAlert:
         }
 
 
+def _read_latency_samples(
+    jsonl_file: Path,
+    cutoff: float,
+    provider: str | None,
+    model: str | None,
+    samples: list[dict[str, object]],
+) -> None:
+    """Read and filter latency samples from a single JSONL file."""
+    try:
+        for line in jsonl_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record: dict[str, object] = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts = float(record.get("timestamp", 0))
+            if ts < cutoff:
+                continue
+            if provider and record.get("provider") != provider:
+                continue
+            if model and record.get("model") != model:
+                continue
+            samples.append(record)
+    except OSError:
+        pass
+
+
 class ProviderLatencyTracker:
     """Track per-provider-per-model API response latency percentiles over time.
 
@@ -297,25 +326,7 @@ class ProviderLatencyTracker:
         samples: list[dict[str, object]] = []
 
         for jsonl_file in sorted(self._metrics_dir.glob("provider_latency_*.jsonl")):
-            try:
-                for line in jsonl_file.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record: dict[str, object] = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    ts = float(record.get("timestamp", 0))
-                    if ts < cutoff:
-                        continue
-                    if provider and record.get("provider") != provider:
-                        continue
-                    if model and record.get("model") != model:
-                        continue
-                    samples.append(record)
-            except OSError:
-                continue
+            _read_latency_samples(jsonl_file, cutoff, provider, model, samples)
 
         samples.sort(key=lambda r: float(r.get("timestamp", 0)))
         return samples

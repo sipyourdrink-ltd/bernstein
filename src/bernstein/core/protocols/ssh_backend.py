@@ -273,6 +273,7 @@ class SSHBackend:
         Raises:
             SSHError: If the SSH process cannot be started.
         """
+        _ = timeout_seconds  # Part of interface; tracked externally by the caller
         remote_cmd = self._wrap_remote_cmd(cmd)
         full_cmd = [*self._ssh_cmd(), self._config.ssh_target(), remote_cmd]
 

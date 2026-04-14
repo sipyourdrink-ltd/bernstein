@@ -145,6 +145,28 @@ def _normalize_stream_json(data: dict[str, Any]) -> NormalizedMessage | None:
     return None
 
 
+def _parse_legacy_content_blocks(content_list: list[object]) -> tuple[list[str], dict[str, Any] | None]:
+    """Extract text parts and tool_use from a list of content blocks."""
+    text_parts: list[str] = []
+    tool_use: dict[str, Any] | None = None
+    for block_item in content_list:
+        if not isinstance(block_item, dict):
+            continue
+        block = cast(_CAST_DICT_STR_OBJ, block_item)
+        if block.get("type") == "text":
+            text_parts.append(str(block.get("text", "")))
+        elif block.get("type") == "tool_use":
+            tool_use = {
+                "name": _str(block.get("name", "")),
+                "input": block.get("input", {}),
+                "id": _str(block.get("id", "")),
+            }
+    return text_parts, tool_use
+
+
+_VALID_ROLES = frozenset({"assistant", "user", "system", "tool"})
+
+
 def _normalize_legacy_json(data: dict[str, Any]) -> NormalizedMessage | None:
     """Normalize a legacy JSON format message (older Claude Code versions).
 
@@ -158,22 +180,9 @@ def _normalize_legacy_json(data: dict[str, Any]) -> NormalizedMessage | None:
     content_raw: object = data.get("content", "")
 
     if isinstance(content_raw, list):
-        content_list = cast("list[object]", content_raw)
-        text_parts: list[str] = []
-        tool_use: dict[str, Any] | None = None
-        for block_item in content_list:
-            if isinstance(block_item, dict):
-                block = cast(_CAST_DICT_STR_OBJ, block_item)
-                if block.get("type") == "text":
-                    text_parts.append(str(block.get("text", "")))
-                elif block.get("type") == "tool_use":
-                    tool_use = {
-                        "name": _str(block.get("name", "")),
-                        "input": block.get("input", {}),
-                        "id": _str(block.get("id", "")),
-                    }
+        text_parts, tool_use = _parse_legacy_content_blocks(cast("list[object]", content_raw))
         return NormalizedMessage(
-            role=role if role in ("assistant", "user", "system", "tool") else "assistant",
+            role=role if role in _VALID_ROLES else "assistant",
             content="\n".join(text_parts),
             tool_use=tool_use,
             raw_type="legacy",
@@ -181,8 +190,7 @@ def _normalize_legacy_json(data: dict[str, Any]) -> NormalizedMessage | None:
 
     if isinstance(content_raw, str):
         normalized_role: Literal["assistant", "user", "system", "tool"] = "assistant"
-        _role_set = {"assistant", "user", "system", "tool"}
-        if role in _role_set:
+        if role in _VALID_ROLES:
             normalized_role = role  # type: ignore[assignment]
         return NormalizedMessage(
             role=normalized_role,
@@ -191,6 +199,21 @@ def _normalize_legacy_json(data: dict[str, Any]) -> NormalizedMessage | None:
         )
 
     return None
+
+
+def _update_cost_from_json(info: dict[str, Any], typed_data: dict[str, Any]) -> None:
+    """Update cost info dict from a parsed JSON event."""
+    usage_raw: object = typed_data.get("usage", {})
+    if isinstance(usage_raw, dict):
+        usage_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, usage_raw)
+        info["input_tokens"] = max(int(info["input_tokens"]), int(usage_dict.get("input_tokens", 0)))
+        info["output_tokens"] = max(int(info["output_tokens"]), int(usage_dict.get("output_tokens", 0)))
+    cost_val: object = typed_data.get("cost_usd")
+    if cost_val is None:
+        cost_val = typed_data.get("cost", 0.0)
+    if cost_val:
+        cost_num = float(cast("str | int | float", cost_val))
+        info["total_cost_usd"] = max(float(info["total_cost_usd"]), cost_num)
 
 
 @dataclass
@@ -282,26 +305,8 @@ class MessageNormalizer:
             try:
                 data = json.loads(stripped)
                 if isinstance(data, dict):
-                    typed_data = cast(_CAST_DICT_STR_ANY, data)
-                    usage_raw: object = typed_data.get("usage", {})
-                    if isinstance(usage_raw, dict):
-                        usage_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, usage_raw)
-                        info["input_tokens"] = max(
-                            int(info["input_tokens"]),
-                            int(usage_dict.get("input_tokens", 0)),
-                        )
-                        info["output_tokens"] = max(
-                            int(info["output_tokens"]),
-                            int(usage_dict.get("output_tokens", 0)),
-                        )
-                    cost_val: object = typed_data.get("cost_usd")
-                    if cost_val is None:
-                        cost_val = typed_data.get("cost", 0.0)
-                    if cost_val:
-                        cost_num = float(cast("str | int | float", cost_val))
-                        info["total_cost_usd"] = max(float(info["total_cost_usd"]), cost_num)
+                    _update_cost_from_json(info, cast(_CAST_DICT_STR_ANY, data))
             except (ValueError, TypeError):
-                # Try regex extraction for text-format output.
                 match = _SESSION_SUMMARY_PATTERN.search(stripped)
                 if match:
                     info["total_cost_usd"] = max(info["total_cost_usd"], float(match.group(1)))

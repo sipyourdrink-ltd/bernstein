@@ -86,31 +86,45 @@ def _aggregate_costs(sdd_dir: Path) -> dict[str, Any]:
     }
 
 
-def _aggregate_quality(sdd_dir: Path) -> dict[str, Any]:
-    """Compute quality gate pass rate from metrics files."""
+def _count_metrics_gates(sdd_dir: Path) -> tuple[int, int]:
+    """Count passed/failed quality gates from metrics directory."""
     metrics_dir = sdd_dir / "metrics"
     passed = 0
     failed = 0
-
-    if metrics_dir.exists():
-        for metrics_file in metrics_dir.glob(_JSON_GLOB):
-            data = _read_json(metrics_file)
-            for gate in data.get("quality_gates", []):
-                if gate.get("passed", False):
-                    passed += 1
-                else:
-                    failed += 1
-
-    # Also check runtime quality results
-    quality_dir = sdd_dir / "runtime" / "quality"
-    if quality_dir.exists():
-        for qf in quality_dir.glob(_JSON_GLOB):
-            data = _read_json(qf)
-            if data.get("passed", False):
+    if not metrics_dir.exists():
+        return passed, failed
+    for metrics_file in metrics_dir.glob(_JSON_GLOB):
+        data = _read_json(metrics_file)
+        for gate in data.get("quality_gates", []):
+            if gate.get("passed", False):
                 passed += 1
-            elif data.get("status") == "failed":
+            else:
                 failed += 1
+    return passed, failed
 
+
+def _count_runtime_quality(sdd_dir: Path) -> tuple[int, int]:
+    """Count passed/failed quality results from runtime directory."""
+    quality_dir = sdd_dir / "runtime" / "quality"
+    passed = 0
+    failed = 0
+    if not quality_dir.exists():
+        return passed, failed
+    for qf in quality_dir.glob(_JSON_GLOB):
+        data = _read_json(qf)
+        if data.get("passed", False):
+            passed += 1
+        elif data.get("status") == "failed":
+            failed += 1
+    return passed, failed
+
+
+def _aggregate_quality(sdd_dir: Path) -> dict[str, Any]:
+    """Compute quality gate pass rate from metrics files."""
+    p1, f1 = _count_metrics_gates(sdd_dir)
+    p2, f2 = _count_runtime_quality(sdd_dir)
+    passed = p1 + p2
+    failed = f1 + f2
     total = passed + failed
     return {
         "passed": passed,

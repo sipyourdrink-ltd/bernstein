@@ -336,7 +336,7 @@ class InProcessAgent:
             else:
                 exit_code = 0  # adapter did not expose a handle
 
-        except SystemExit as exc:
+        except SystemExit as exc:  # NOSONAR — intentionally trap adapter's sys.exit()
             # Trap SystemExit — the adapter might call sys.exit().
             if isinstance(exc.code, int):
                 exit_code = exc.code

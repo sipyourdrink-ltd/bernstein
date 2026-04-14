@@ -126,25 +126,16 @@ def _select_batch_config(
     from bernstein.core.models import Complexity, Scope
     from bernstein.core.router import route_task
 
-    def _get_high_stakes_config(task: Task) -> ModelConfig | None:
-        """Return a fixed config for high-stakes roles/tasks, or None."""
-        if task.role in ("manager", "architect", "security"):
-            return ModelConfig(model="opus", effort="max")
-        if task.scope == Scope.LARGE:
-            return ModelConfig(model="opus", effort="max")
-        if task.complexity == Complexity.HIGH:
-            return ModelConfig(model="opus", effort="high")
-        if task.priority == 1:
-            return ModelConfig(model="opus", effort="max")
-        return None
+    _HIGH_STAKES_ROLES = frozenset({"manager", "architect", "security"})
 
     def _route_for_batch(task: Task) -> ModelConfig:
         """Batch-specific routing: consult bandit when available, else heuristics."""
         if task.model or task.effort:
             return ModelConfig(model=task.model or "sonnet", effort=task.effort or "normal")
-        high_stakes = _get_high_stakes_config(task)
-        if high_stakes is not None:
-            return high_stakes
+        if task.role in _HIGH_STAKES_ROLES or task.scope == Scope.LARGE or task.priority == 1:
+            return ModelConfig(model="opus", effort="max")
+        if task.complexity == Complexity.HIGH:
+            return ModelConfig(model="opus", effort="high")
         return route_task(task, bandit_metrics_dir=metrics_dir, workdir=workdir)
 
     configs = [_route_for_batch(t) for t in tasks]

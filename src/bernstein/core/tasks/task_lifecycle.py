@@ -502,6 +502,36 @@ def maybe_retry_task(
         return False
 
 
+_TRANSIENT_MARKERS = (
+    "rate limit",
+    "timeout",
+    "503",
+    "transient",
+    "connection error",
+    "connection refused",
+    "502",
+    "504",
+    "429",
+    "too many requests",
+    "service unavailable",
+    "overloaded",
+    "temporary failure",
+    "network error",
+    "internal server error",
+)
+_FATAL_MARKERS = ("syntaxerror", "syntax error", "fatal")
+
+
+def _dynamic_retry_limit(reason: str, default_max: int) -> int:
+    """Determine the retry limit based on failure reason keywords."""
+    reason_lower = reason.lower()
+    if any(k in reason_lower for k in _TRANSIENT_MARKERS):
+        return 3
+    if any(k in reason_lower for k in _FATAL_MARKERS):
+        return 0
+    return default_max
+
+
 def retry_or_fail_task(
     task_id: str,
     reason: str,
@@ -531,41 +561,7 @@ def retry_or_fail_task(
             extra HTTP round-trip when the task is already in cache.
     """
     base = server_url
-
-    # Dynamic retry limit based on failure type (T176)
-    reason_lower = reason.lower()
-    transient_markers = (
-        "rate limit",
-        "timeout",
-        "503",
-        "transient",
-        "connection error",
-        "connection refused",
-        "502",
-        "504",
-        "429",
-        "too many requests",
-        "service unavailable",
-        "overloaded",
-        "temporary failure",
-        "network error",
-        "internal server error",
-    )
-    # Only treat agent-process-level fatal errors as truly fatal (0 retries).
-    # Python exception type names (TypeError, ValueError, etc.) appear routinely
-    # in tool output and log snippets — they do NOT indicate an unrecoverable
-    # agent failure, so they should not suppress retries.
-    fatal_markers = (
-        "syntaxerror",
-        "syntax error",
-        "fatal",
-    )
-    if any(k in reason_lower for k in transient_markers):
-        max_retries = 3
-    elif any(k in reason_lower for k in fatal_markers):
-        max_retries = 0
-    else:
-        max_retries = max_task_retries
+    max_retries = _dynamic_retry_limit(reason, max_task_retries)
 
     # Try the pre-fetched snapshot first to avoid an extra GET
     task: Task | None = None
@@ -724,6 +720,7 @@ def should_auto_decompose(
     Returns:
         True when force_parallel is set AND the task meets scope/retry criteria.
     """
+    _ = workdir  # Part of interface; reserved for coupling analysis
     if not force_parallel:
         return False
 
@@ -751,7 +748,7 @@ def create_conflict_resolution_task(
     *,
     client: httpx.Client,
     server_url: str,
-    session_id: str,
+    session_id: str | None,
 ) -> str | None:
     """Create a resolver task when a merge conflict is detected.
 
@@ -927,6 +924,37 @@ def auto_decompose_task(
 # ---------------------------------------------------------------------------
 
 
+def _pre_spawn_checks_pass(orch: Any, alive_count: int) -> bool:
+    """Run pre-spawn guard checks; return False if spawning should be skipped."""
+    if getattr(orch, "is_shutting_down", lambda: False)():
+        logger.debug("Skipping claim/spawn: orchestrator is shutting down")
+        return False
+
+    _adapter = getattr(getattr(orch, "_spawner", None), "_adapter", None)
+    if _adapter is not None and _adapter.is_rate_limited():
+        logger.warning("Provider rate-limited — skipping all spawns this tick")
+        return False
+
+    _cg = getattr(orch, "_convergence_guard", None)
+    if _cg is None:
+        return True
+
+    _merge_queue = getattr(orch, "_merge_queue", None)
+    _pending_merges = len(_merge_queue) if _merge_queue is not None else 0
+    _error_rate = _cg.current_error_rate()
+    _spawn_rate = _cg.current_spawn_rate()
+    _cg_status = _cg.is_converged(
+        pending_merges=_pending_merges,
+        active_agents=alive_count,
+        error_rate=_error_rate if _error_rate >= 0 else None,
+        spawn_rate=_spawn_rate,
+    )
+    if not _cg_status.ready:
+        logger.warning("Convergence guard blocking spawn wave: %s", "; ".join(_cg_status.reasons))
+        return False
+    return True
+
+
 def claim_and_spawn_batches(
     orch: Any,  # Orchestrator instance (avoids circular import)
     batches: list[list[Task]],
@@ -949,36 +977,9 @@ def claim_and_spawn_batches(
         _done_ids: IDs of already-completed tasks (part of interface).
         result: TickResult accumulator for spawned/error lists.
     """
-    if getattr(orch, "is_shutting_down", lambda: False)():
-        logger.debug("Skipping claim/spawn: orchestrator is shutting down")
+    _ = done_ids  # Part of interface; used for overlap detection by callers
+    if not _pre_spawn_checks_pass(orch, alive_count):
         return
-
-    # Pre-spawn rate-limit check: avoid wasting worktree/process resources
-    # when the provider is known to be throttling requests (CRITICAL-003).
-    _adapter = getattr(getattr(orch, "_spawner", None), "_adapter", None)
-    if _adapter is not None and _adapter.is_rate_limited():
-        logger.warning("Provider rate-limited — skipping all spawns this tick")
-        return
-
-    # Convergence guard: block entire spawn wave if system is overloaded.
-    _cg = getattr(orch, "_convergence_guard", None)
-    if _cg is not None:
-        _merge_queue = getattr(orch, "_merge_queue", None)
-        _pending_merges = len(_merge_queue) if _merge_queue is not None else 0
-        _error_rate = _cg.current_error_rate()
-        _spawn_rate = _cg.current_spawn_rate()
-        _cg_status = _cg.is_converged(
-            pending_merges=_pending_merges,
-            active_agents=alive_count,
-            error_rate=_error_rate if _error_rate >= 0 else None,
-            spawn_rate=_spawn_rate,
-        )
-        if not _cg_status.ready:
-            logger.warning(
-                "Convergence guard blocking spawn wave: %s",
-                "; ".join(_cg_status.reasons),
-            )
-            return
 
     base = orch._config.server_url
     spawn_analyzer = SpawnAnalyzer()

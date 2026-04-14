@@ -507,6 +507,25 @@ def load_all_tasks(tasks_dir: Path = TASKS_DIR) -> list[BenchmarkTask]:
 # ---------------------------------------------------------------------------
 
 
+def _advance_to_next_completion(
+    agent_free_at: list[float],
+    done_at: dict[str, float],
+    completed: set[str],
+    current_time: float,
+) -> bool:
+    """Advance idle agents to the next completion time. Returns False if no future completions."""
+    future_completions = [t for t in agent_free_at if t > current_time]
+    if not future_completions:
+        return False
+    next_time = min(future_completions)
+    newly = {sid for sid, t in done_at.items() if t <= next_time and sid not in completed}
+    completed |= newly
+    for i in range(len(agent_free_at)):
+        if agent_free_at[i] <= current_time:
+            agent_free_at[i] = next_time
+    return True
+
+
 def simulate_schedule(task: BenchmarkTask, agents: int) -> float:
     """Simulate task execution with *agents* parallel workers.
 
@@ -535,29 +554,15 @@ def simulate_schedule(task: BenchmarkTask, agents: int) -> float:
     pending = list(task.subtasks)
 
     while pending:
-        # Find the earliest time we can make progress
         current_time = min(agent_free_at)
-
-        # Mark subtasks whose dependencies are now complete at current_time
         newly_completed = {sid for sid, t in done_at.items() if t <= current_time and sid not in completed}
         completed |= newly_completed
 
-        # Find subtasks ready to run
         ready = [st for st in pending if all(dep in completed for dep in st.depends_on)]
 
         if not ready:
-            # No ready tasks — advance to next agent completion
-            future_completions = [t for t in agent_free_at if t > current_time]
-            if not future_completions:
+            if not _advance_to_next_completion(agent_free_at, done_at, completed, current_time):
                 break
-            next_time = min(future_completions)
-            # Mark completions up to next_time
-            newly = {sid for sid, t in done_at.items() if t <= next_time and sid not in completed}
-            completed |= newly
-            # Advance idle agents to next_time so min(agent_free_at) progresses
-            for i in range(len(agent_free_at)):
-                if agent_free_at[i] <= current_time:
-                    agent_free_at[i] = next_time
             continue
 
         # Assign ready tasks to idle agents
@@ -739,6 +744,48 @@ def run_simulate(tasks: list[BenchmarkTask]) -> BenchmarkSuite:
 # ---------------------------------------------------------------------------
 
 
+def _run_single_scenario(task_id: str, goal: str, scenario: str, agents: int, budget_usd: float) -> ScenarioResult:
+    """Run a single benchmark scenario and return the result."""
+    t0 = time.monotonic()
+    try:
+        subprocess.run(
+            ["bernstein", "--goal", goal, "--headless", "--max-agents", str(agents), "--budget", str(budget_usd)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+        wall_time = (time.monotonic() - t0) / 60.0
+        cost_usd = _read_run_cost()
+        pass_rate = _read_test_pass_rate()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        wall_time = (time.monotonic() - t0) / 60.0
+        cost_usd = 0.0
+        pass_rate = 0.0
+        print(f"  [WARN] {task_id}/{scenario} failed: {exc}")
+    return ScenarioResult(
+        task_id=task_id,
+        scenario=scenario,
+        wall_time_minutes=round(wall_time, 1),
+        cost_usd=round(cost_usd, 4),
+        test_pass_rate=round(pass_rate, 3),
+    )
+
+
+def _run_task_scenarios(task: BenchmarkTask, budget_usd: float) -> list[ScenarioResult]:
+    """Run all scenarios for a single task and compute speedups."""
+    results: list[ScenarioResult] = []
+    goal = f"{task.name}\n\n{task.description}"
+    for scenario, agents in [("single", 1), ("multi-3", 3), ("multi-5", 5)]:
+        results.append(_run_single_scenario(task.id, goal, scenario, agents, budget_usd))
+    single = next((r for r in results if r.scenario == "single"), None)
+    if single and single.wall_time_minutes > 0:
+        for r in results:
+            r.speedup = round(single.wall_time_minutes / r.wall_time_minutes, 2)
+            r.cost_ratio = round(r.cost_usd / single.cost_usd, 3) if single.cost_usd > 0 else 1.0
+    return results
+
+
 def run_real(tasks: list[BenchmarkTask], budget_usd: float = 5.0) -> BenchmarkSuite:
     """Run actual Bernstein agents for each task and measure live metrics.
 
@@ -757,55 +804,7 @@ def run_real(tasks: list[BenchmarkTask], budget_usd: float = 5.0) -> BenchmarkSu
     task_results: list[TaskBenchmarkResult] = []
 
     for task in tasks:
-        results: list[ScenarioResult] = []
-
-        for scenario, agents in [("single", 1), ("multi-3", 3), ("multi-5", 5)]:
-            goal = f"{task.name}\n\n{task.description}"
-            t0 = time.monotonic()
-
-            try:
-                subprocess.run(
-                    [
-                        "bernstein",
-                        "--goal",
-                        goal,
-                        "--headless",
-                        "--max-agents",
-                        str(agents),
-                        "--budget",
-                        str(budget_usd),
-                    ],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=1800,  # 30-minute hard cap per scenario
-                )
-                wall_time = (time.monotonic() - t0) / 60.0
-                cost_usd = _read_run_cost()
-                pass_rate = _read_test_pass_rate()
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-                wall_time = (time.monotonic() - t0) / 60.0
-                cost_usd = 0.0
-                pass_rate = 0.0
-                print(f"  [WARN] {task.id}/{scenario} failed: {exc}")
-
-            results.append(
-                ScenarioResult(
-                    task_id=task.id,
-                    scenario=scenario,
-                    wall_time_minutes=round(wall_time, 1),
-                    cost_usd=round(cost_usd, 4),
-                    test_pass_rate=round(pass_rate, 3),
-                )
-            )
-
-        # Compute speedups relative to single
-        single = next((r for r in results if r.scenario == "single"), None)
-        if single and single.wall_time_minutes > 0:
-            for r in results:
-                r.speedup = round(single.wall_time_minutes / r.wall_time_minutes, 2)
-                r.cost_ratio = round(r.cost_usd / single.cost_usd, 3) if single.cost_usd > 0 else 1.0
-
+        results = _run_task_scenarios(task, budget_usd)
         task_results.append(
             TaskBenchmarkResult(
                 task_id=task.id,
@@ -1062,6 +1061,49 @@ def simulate_issues(
     )
 
 
+def _effect_label(h: float) -> str:
+    """Label effect size from Cohen's h."""
+    if h >= 0.8:
+        return "large"
+    if h >= 0.5:
+        return "medium"
+    if h >= 0.2:
+        return "small"
+    return "negligible"
+
+
+def _sig_label(p: float) -> str:
+    """Label statistical significance."""
+    if p < 0.01:
+        return "p < 0.01 \u2713"
+    if p < 0.05:
+        return f"p = {p:.3f} \u2713"
+    return f"p = {p:.3f}"
+
+
+def _build_breakdown_rows(single_rs: list[object], multi3_rs: list[object], key_attr: str) -> list[str]:
+    """Build per-category or per-difficulty comparison rows."""
+    values = sorted({getattr(r, key_attr) for r in single_rs + multi3_rs})
+    rows: list[str] = []
+    for val in values:
+        s_sub = [r for r in single_rs if getattr(r, key_attr) == val]
+        m3_sub = [r for r in multi3_rs if getattr(r, key_attr) == val]
+        if not s_sub:
+            continue
+        n = len(s_sub)
+        s_res = sum(r.resolved for r in s_sub)
+        m3_res = sum(r.resolved for r in m3_sub)
+        s_rate = s_res / n
+        m3_rate = m3_res / n
+        delta_pp = (m3_rate - s_rate) * 100
+        pv = _two_proportion_z_test(s_res, n, m3_res, n)
+        label = val.replace("_", " ").title() if key_attr == "category" else val.capitalize()
+        rows.append(
+            f"| {label} | {n} | {s_rate * 100:.0f}% | {m3_rate * 100:.0f}% | {delta_pp:+.0f}pp | {_sig_label(pv)} |"
+        )
+    return rows
+
+
 def format_issues_stats(suite: IssuesBenchmarkSuite) -> str:
     """Render a statistical significance section for the issues benchmark.
 
@@ -1097,63 +1139,11 @@ def format_issues_stats(suite: IssuesBenchmarkSuite) -> str:
     h_sm3 = _cohens_h(s_rate, m3_rate)
     h_sm5 = _cohens_h(s_rate, m5_rate)
 
-    def _effect_label(h: float) -> str:
-        if h >= 0.8:
-            return "large"
-        if h >= 0.5:
-            return "medium"
-        if h >= 0.2:
-            return "small"
-        return "negligible"
-
-    def _sig_label(p: float) -> str:
-        if p < 0.01:
-            return "p < 0.01 ✓"
-        if p < 0.05:
-            return f"p = {p:.3f} ✓"
-        return f"p = {p:.3f}"
-
     # Per-category breakdown
-    categories = sorted({r.category for r in suite.results})
-    cat_rows: list[str] = []
-    for cat in categories:
-        s_cat = [r for r in single_rs if r.category == cat]
-        m3_cat = [r for r in multi3_rs if r.category == cat]
-        if not s_cat:
-            continue
-        nc = len(s_cat)
-        sc_res = sum(r.resolved for r in s_cat)
-        m3c_res = sum(r.resolved for r in m3_cat)
-        sc_rate = sc_res / nc
-        m3c_rate = m3c_res / nc
-        delta_pp = (m3c_rate - sc_rate) * 100
-        pv = _two_proportion_z_test(sc_res, nc, m3c_res, nc)
-        cat_rows.append(
-            f"| {cat.replace('_', ' ').title()} | {nc} "
-            f"| {sc_rate * 100:.0f}% | {m3c_rate * 100:.0f}% "
-            f"| {delta_pp:+.0f}pp | {_sig_label(pv)} |"
-        )
+    cat_rows = _build_breakdown_rows(single_rs, multi3_rs, "category")
 
     # Per-difficulty breakdown
-    difficulties = ["easy", "medium", "hard"]
-    diff_rows: list[str] = []
-    for diff in difficulties:
-        s_diff = [r for r in single_rs if r.difficulty == diff]
-        m3_diff = [r for r in multi3_rs if r.difficulty == diff]
-        if not s_diff:
-            continue
-        nd = len(s_diff)
-        sd_res = sum(r.resolved for r in s_diff)
-        m3d_res = sum(r.resolved for r in m3_diff)
-        sd_rate = sd_res / nd
-        m3d_rate = m3d_res / nd
-        delta_pp = (m3d_rate - sd_rate) * 100
-        pv = _two_proportion_z_test(sd_res, nd, m3d_res, nd)
-        diff_rows.append(
-            f"| {diff.capitalize()} | {nd} "
-            f"| {sd_rate * 100:.0f}% | {m3d_rate * 100:.0f}% "
-            f"| {delta_pp:+.0f}pp | {_sig_label(pv)} |"
-        )
+    diff_rows = _build_breakdown_rows(single_rs, multi3_rs, "difficulty")
 
     # Speedup statistics
     speedups_3 = [r.speedup for r in multi3_rs]

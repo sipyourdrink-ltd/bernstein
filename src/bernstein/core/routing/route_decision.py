@@ -171,6 +171,7 @@ def format_routing_reasons(
     Returns:
         List of reason strings.
     """
+    _ = task_id  # Part of interface; not included in reason strings
     reasons: list[str] = []
 
     # Complexity-based reasoning

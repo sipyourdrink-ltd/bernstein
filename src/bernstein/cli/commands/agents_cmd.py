@@ -52,57 +52,65 @@ def agents_sync(definitions_dir: str, force: bool) -> None:
 
     definitions_path = Path(definitions_dir)
 
-    # Provider: local YAML definitions
     console.print("[bold]Syncing agent catalogs…[/bold]\n")
-    console.print(f"[cyan]→ local[/cyan]  {definitions_path}")
+    _sync_local_definitions(definitions_path, AgentRegistry)
+    _sync_agency_local_yaml()
+    _sync_agency_github(AgencyProvider, force=force)
+    console.print("\n[green]Sync complete.[/green]")
 
+
+def _sync_local_definitions(definitions_path: Path, registry_cls: type) -> None:
+    """Sync local YAML agent definitions."""
+    console.print(f"[cyan]→ local[/cyan]  {definitions_path}")
     if not definitions_path.exists():
         console.print(f"  [yellow]Directory does not exist:[/yellow] {definitions_path}")
         console.print(f"  [dim]Create it with: mkdir -p {definitions_path}[/dim]")
-    else:
-        registry = AgentRegistry(definitions_dir=definitions_path)
-        loaded = registry.load_definitions()
-        console.print(f"  [green]✓[/green] Loaded {len(loaded)} agent definition(s)")
-        for defn in loaded:
-            console.print(f"    [dim]{defn.name}[/dim] v{defn.version} ({defn.role})")
+        return
+    registry = registry_cls(definitions_dir=definitions_path)
+    loaded = registry.load_definitions()
+    console.print(f"  [green]✓[/green] Loaded {len(loaded)} agent definition(s)")
+    for defn in loaded:
+        console.print(f"    [dim]{defn.name}[/dim] v{defn.version} ({defn.role})")
 
-    # Provider: agency catalog (legacy YAML format — .sdd/agents/agency/)
+
+def _sync_agency_local_yaml() -> None:
+    """Sync agency catalog from local YAML files."""
     agency_dir = Path(_AGENCY_DIR)
     console.print(f"\n[cyan]→ agency (local YAML)[/cyan] {agency_dir}")
     if not agency_dir.exists():
         console.print(f"  [dim]Directory not found — skipping (place Agency YAML files in {agency_dir})[/dim]")
-    else:
-        from bernstein.core.agency_loader import load_agency_catalog
+        return
+    from bernstein.core.agency_loader import load_agency_catalog
 
-        catalog = load_agency_catalog(agency_dir)
-        console.print(f"  [green]✓[/green] Loaded {len(catalog)} agency agent(s)")
-        for name in list(catalog)[:5]:
-            agent = catalog[name]
-            console.print(f"    [dim]{name}[/dim] ({agent.role})")
-        if len(catalog) > 5:
-            console.print(f"    [dim]… and {len(catalog) - 5} more[/dim]")
+    catalog = load_agency_catalog(agency_dir)
+    console.print(f"  [green]✓[/green] Loaded {len(catalog)} agency agent(s)")
+    for name in list(catalog)[:5]:
+        agent = catalog[name]
+        console.print(f"    [dim]{name}[/dim] ({agent.role})")
+    if len(catalog) > 5:
+        console.print(f"    [dim]… and {len(catalog) - 5} more[/dim]")
 
-    # Provider: Agency GitHub repo (msitarzewski/agency-agents markdown format)
-    default_agency_path = AgencyProvider.default_cache_path()
+
+def _sync_agency_github(provider_cls: type, *, force: bool) -> None:
+    """Sync agency catalog from GitHub."""
+    default_agency_path = provider_cls.default_cache_path()
     console.print(f"\n[cyan]→ agency (GitHub)[/cyan] {default_agency_path}")
-    ok, msg = AgencyProvider.sync_catalog(force=force)
-    if ok:
-        console.print(f"  [green]✓[/green] {msg}")
-        provider = AgencyProvider(local_path=default_agency_path)
-        agency_agents = asyncio.run(provider.fetch_agents())
-        console.print(f"  [green]✓[/green] {len(agency_agents)} specialist agent(s) available")
-        for a in agency_agents[:5]:
-            caps = ", ".join(a.capabilities[:3]) if a.capabilities else "—"
-            console.print(f"    [dim]{a.name}[/dim] ({a.role})  {caps}")
-        if len(agency_agents) > 5:
-            console.print(f"    [dim]… and {len(agency_agents) - 5} more[/dim]")
-    else:
+    ok, msg = provider_cls.sync_catalog(force=force)
+    if not ok:
         console.print(f"  [yellow]![/yellow] {msg}")
         console.print(
             f"  [dim]Manual clone: git clone https://github.com/msitarzewski/agency-agents {default_agency_path}[/dim]"
         )
-
-    console.print("\n[green]Sync complete.[/green]")
+        return
+    console.print(f"  [green]✓[/green] {msg}")
+    provider = provider_cls(local_path=default_agency_path)
+    agency_agents = asyncio.run(provider.fetch_agents())
+    console.print(f"  [green]✓[/green] {len(agency_agents)} specialist agent(s) available")
+    for a in agency_agents[:5]:
+        caps = ", ".join(a.capabilities[:3]) if a.capabilities else "—"
+        console.print(f"    [dim]{a.name}[/dim] ({a.role})  {caps}")
+    if len(agency_agents) > 5:
+        console.print(f"    [dim]… and {len(agency_agents) - 5} more[/dim]")
 
 
 def _list_identities(status_filter: str) -> None:
@@ -156,6 +164,49 @@ def _list_identities(status_filter: str) -> None:
     console.print(f"\n[dim]{len(identities)} identity(ies) total[/dim]")
 
 
+def _collect_local_agents(
+    rows: list[tuple[str, str, str, str, str]],
+    source: str,
+    definitions_dir: str,
+    registry_cls: type,
+) -> None:
+    """Collect agents from local definitions into rows."""
+    if source not in ("local", "all"):
+        return
+    definitions_path = Path(definitions_dir)
+    if not definitions_path.exists():
+        return
+    registry = registry_cls(definitions_dir=definitions_path)
+    registry.load_definitions()
+    for defn in registry.definitions.values():
+        rows.append((defn.name, defn.name, defn.role, "", "local"))
+
+
+def _collect_agency_agents(
+    rows: list[tuple[str, str, str, str, str]],
+    source: str,
+    provider_cls: type,
+) -> None:
+    """Collect agents from agency catalogs (local YAML + GitHub) into rows."""
+    if source not in ("agency", "all"):
+        return
+    agency_dir = Path(_AGENCY_DIR)
+    if agency_dir.exists():
+        from bernstein.core.agency_loader import load_agency_catalog
+
+        catalog = load_agency_catalog(agency_dir)
+        for name, agent in catalog.items():
+            rows.append((name, agent.name, agent.role, "", "agency"))
+
+    default_agency_path = provider_cls.default_cache_path()
+    if default_agency_path.exists():
+        provider = provider_cls(local_path=default_agency_path)
+        agency_agents = asyncio.run(provider.fetch_agents())
+        for a in agency_agents:
+            caps = ", ".join(a.capabilities[:4]) if a.capabilities else ""
+            rows.append((a.id or a.name, a.name, a.role, caps, "agency"))
+
+
 @agents_group.command("list")
 @click.option(
     "--source",
@@ -192,37 +243,9 @@ def agents_list(source: str, definitions_dir: str, identities: bool, identity_st
     from bernstein.agents.agency_provider import AgencyProvider
     from bernstein.agents.registry import AgentRegistry
 
-    # rows: (id, name, role, capabilities, source)
     rows: list[tuple[str, str, str, str, str]] = []
-
-    # Local definitions
-    if source in ("local", "all"):
-        definitions_path = Path(definitions_dir)
-        if definitions_path.exists():
-            registry = AgentRegistry(definitions_dir=definitions_path)
-            registry.load_definitions()
-            for defn in registry.definitions.values():
-                rows.append((defn.name, defn.name, defn.role, "", "local"))
-
-    # Agency catalog — legacy YAML format (.sdd/agents/agency/)
-    if source in ("agency", "all"):
-        agency_dir = Path(_AGENCY_DIR)
-        if agency_dir.exists():
-            from bernstein.core.agency_loader import load_agency_catalog
-
-            catalog = load_agency_catalog(agency_dir)
-            for name, agent in catalog.items():
-                rows.append((name, agent.name, agent.role, "", "agency"))
-
-    # Agency catalog — GitHub markdown format (~/.bernstein/catalogs/agency/)
-    if source in ("agency", "all"):
-        default_agency_path = AgencyProvider.default_cache_path()
-        if default_agency_path.exists():
-            provider = AgencyProvider(local_path=default_agency_path)
-            agency_agents = asyncio.run(provider.fetch_agents())
-            for a in agency_agents:
-                caps = ", ".join(a.capabilities[:4]) if a.capabilities else ""
-                rows.append((a.id or a.name, a.name, a.role, caps, "agency"))
+    _collect_local_agents(rows, source, definitions_dir, AgentRegistry)
+    _collect_agency_agents(rows, source, AgencyProvider)
 
     if not rows:
         console.print("[dim]No agents found. Run [bold]bernstein agents sync[/bold] first.[/dim]")
@@ -267,62 +290,13 @@ def agents_validate(definitions_dir: str) -> None:
 
     Exits with code 1 if any provider is unreachable or has invalid agents.
     """
-    import yaml
-
-    from bernstein.agents.registry import SchemaValidationError
-
     definitions_path = Path(definitions_dir)
     issues: list[str] = []
 
     console.print("[bold]Validating agent catalogs…[/bold]\n")
+    _validate_local_definitions(definitions_path, issues)
+    _validate_agency_catalog(issues)
 
-    # --- Local definitions ---
-    console.print(f"[cyan]→ local[/cyan]  {definitions_path}")
-    if not definitions_path.exists():
-        issues.append(f"local: definitions directory not found: {definitions_path}")
-        console.print(f"  [red]✗[/red] Directory not found: {definitions_path}")
-    else:
-        yaml_files = list(definitions_path.glob("*.yaml")) + list(definitions_path.glob("*.yml"))
-        if not yaml_files:
-            console.print("  [dim]No YAML files found — catalog is empty[/dim]")
-        for yaml_file in sorted(yaml_files):
-            try:
-                content = yaml_file.read_text(encoding="utf-8")
-                data = yaml.safe_load(content)
-                if not isinstance(data, dict):
-                    raise ValueError("YAML must be a mapping")
-                from bernstein.agents.registry import AgentRegistry
-
-                registry = AgentRegistry(definitions_dir=definitions_path)
-                registry._validate_schema(cast("dict[str, Any]", data), yaml_file)  # type: ignore[reportPrivateUsage]
-                console.print(f"  [green]✓[/green] {yaml_file.name}")
-            except SchemaValidationError as exc:
-                issues.append(f"local/{yaml_file.name}: {exc}")
-                console.print(f"  [red]✗[/red] {yaml_file.name}: {exc}")
-            except Exception as exc:
-                issues.append(f"local/{yaml_file.name}: {exc}")
-                console.print(f"  [red]✗[/red] {yaml_file.name}: {exc}")
-
-    # --- Agency catalog ---
-    agency_dir = Path(_AGENCY_DIR)
-    console.print(f"\n[cyan]→ agency[/cyan] {agency_dir}")
-    if not agency_dir.exists():
-        console.print("  [dim]Not configured — skipping[/dim]")
-    else:
-        from bernstein.core.agency_loader import parse_agency_agent
-
-        agency_files = [p for p in sorted(agency_dir.iterdir()) if p.suffix in (".yaml", ".yml")]
-        if not agency_files:
-            console.print("  [dim]No YAML files found — catalog is empty[/dim]")
-        for p in agency_files:
-            try:
-                parse_agency_agent(p)
-                console.print(f"  [green]✓[/green] {p.name}")
-            except ValueError as exc:
-                issues.append(f"agency/{p.name}: {exc}")
-                console.print(f"  [red]✗[/red] {p.name}: {exc}")
-
-    # --- Summary ---
     console.print()
     if issues:
         console.print(f"[red]Validation failed: {len(issues)} issue(s)[/red]")
@@ -331,6 +305,97 @@ def agents_validate(definitions_dir: str) -> None:
         raise SystemExit(1)
     else:
         console.print("[green]All catalogs valid.[/green]")
+
+
+def _validate_local_definitions(definitions_path: Path, issues: list[str]) -> None:
+    """Validate local YAML agent definitions."""
+    import yaml
+
+    from bernstein.agents.registry import AgentRegistry, SchemaValidationError
+
+    console.print(f"[cyan]→ local[/cyan]  {definitions_path}")
+    if not definitions_path.exists():
+        issues.append(f"local: definitions directory not found: {definitions_path}")
+        console.print(f"  [red]✗[/red] Directory not found: {definitions_path}")
+        return
+
+    yaml_files = list(definitions_path.glob("*.yaml")) + list(definitions_path.glob("*.yml"))
+    if not yaml_files:
+        console.print("  [dim]No YAML files found — catalog is empty[/dim]")
+    for yaml_file in sorted(yaml_files):
+        try:
+            content = yaml_file.read_text(encoding="utf-8")
+            data = yaml.safe_load(content)
+            if not isinstance(data, dict):
+                raise ValueError("YAML must be a mapping")
+            registry = AgentRegistry(definitions_dir=definitions_path)
+            registry._validate_schema(cast("dict[str, Any]", data), yaml_file)  # type: ignore[reportPrivateUsage]
+            console.print(f"  [green]✓[/green] {yaml_file.name}")
+        except (SchemaValidationError, Exception) as exc:
+            issues.append(f"local/{yaml_file.name}: {exc}")
+            console.print(f"  [red]✗[/red] {yaml_file.name}: {exc}")
+
+
+def _validate_agency_catalog(issues: list[str]) -> None:
+    """Validate agency catalog YAML files."""
+    agency_dir = Path(_AGENCY_DIR)
+    console.print(f"\n[cyan]→ agency[/cyan] {agency_dir}")
+    if not agency_dir.exists():
+        console.print("  [dim]Not configured — skipping[/dim]")
+        return
+    from bernstein.core.agency_loader import parse_agency_agent
+
+    agency_files = [p for p in sorted(agency_dir.iterdir()) if p.suffix in (".yaml", ".yml")]
+    if not agency_files:
+        console.print("  [dim]No YAML files found — catalog is empty[/dim]")
+    for p in agency_files:
+        try:
+            parse_agency_agent(p)
+            console.print(f"  [green]✓[/green] {p.name}")
+        except ValueError as exc:
+            issues.append(f"agency/{p.name}: {exc}")
+            console.print(f"  [red]✗[/red] {p.name}: {exc}")
+
+
+def _format_metrics(m: Any) -> tuple[str, str]:
+    """Format metrics for a source into (assigned_count, rate_string)."""
+    rate = f"{m.success_rate * 100:.0f}%" if m and m.tasks_assigned else "—"
+    assigned = str(m.tasks_assigned) if m else "0"
+    return assigned, rate
+
+
+def _showcase_collect_all(
+    rows: list[tuple[str, str, str, str, str, str]],
+    definitions_dir: str,
+    metrics: dict[str, Any],
+) -> None:
+    """Collect all agents from local, agency, and builtin sources."""
+    definitions_path = Path(definitions_dir)
+    if definitions_path.exists():
+        from bernstein.agents.registry import AgentRegistry
+
+        registry = AgentRegistry(definitions_dir=definitions_path)
+        registry.load_definitions()
+        for defn in registry.definitions.values():
+            assigned, rate = _format_metrics(metrics.get("local"))
+            rows.append((defn.name, defn.role, defn.description[:60], "local", assigned, rate))
+
+    agency_dir = Path(_AGENCY_DIR)
+    if agency_dir.exists():
+        from bernstein.core.agency_loader import load_agency_catalog
+
+        catalog = load_agency_catalog(agency_dir)
+        for name, agent in catalog.items():
+            assigned, rate = _format_metrics(metrics.get("agency"))
+            rows.append((name, agent.role, agent.description[:60], "agency", assigned, rate))
+
+    from bernstein.agents.catalog import _BUILTIN_AGENT_ENTRIES  # type: ignore[reportPrivateUsage]
+
+    builtin_names = {r[0] for r in rows}
+    for entry in _BUILTIN_AGENT_ENTRIES:
+        if entry["role"] not in builtin_names:
+            assigned, rate = _format_metrics(metrics.get("builtin"))
+            rows.append((entry["role"], entry["role"], entry.get("description", ""), "builtin", assigned, rate))
 
 
 @agents_group.command("showcase")
@@ -354,56 +419,11 @@ def agents_showcase(definitions_dir: str) -> None:
 
     from bernstein.agents.discovery import AgentDiscovery
 
-    # Load success metrics from registry
     discovery = AgentDiscovery.load()
     metrics = discovery.metrics
 
     rows: list[tuple[str, str, str, str, str, str]] = []
-
-    # Local definitions
-    definitions_path = Path(definitions_dir)
-    if definitions_path.exists():
-        from bernstein.agents.registry import AgentRegistry
-
-        registry = AgentRegistry(definitions_dir=definitions_path)
-        registry.load_definitions()
-        for defn in registry.definitions.values():
-            m = metrics.get("local")
-            rate = f"{m.success_rate * 100:.0f}%" if m and m.tasks_assigned else "—"
-            assigned = str(m.tasks_assigned) if m else "0"
-            rows.append((defn.name, defn.role, defn.description[:60], "local", assigned, rate))
-
-    # Agency catalog
-    agency_dir = Path(_AGENCY_DIR)
-    if agency_dir.exists():
-        from bernstein.core.agency_loader import load_agency_catalog
-
-        catalog = load_agency_catalog(agency_dir)
-        for name, agent in catalog.items():
-            m = metrics.get("agency")
-            rate = f"{m.success_rate * 100:.0f}%" if m and m.tasks_assigned else "—"
-            assigned = str(m.tasks_assigned) if m else "0"
-            rows.append((name, agent.role, agent.description[:60], "agency", assigned, rate))
-
-    # Built-in roles (fallback)
-    from bernstein.agents.catalog import _BUILTIN_AGENT_ENTRIES  # type: ignore[reportPrivateUsage]
-
-    builtin_names = {r[0] for r in rows}
-    for entry in _BUILTIN_AGENT_ENTRIES:
-        if entry["role"] not in builtin_names:
-            m = metrics.get("builtin")
-            rate = f"{m.success_rate * 100:.0f}%" if m and m.tasks_assigned else "—"
-            assigned = str(m.tasks_assigned) if m else "0"
-            rows.append(
-                (
-                    entry["role"],
-                    entry["role"],
-                    entry.get("description", ""),
-                    "builtin",
-                    assigned,
-                    rate,
-                )
-            )
+    _showcase_collect_all(rows, definitions_dir, metrics)
 
     if not rows:
         console.print("[dim]No agents found. Run [bold]bernstein agents sync[/bold] first.[/dim]")

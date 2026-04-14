@@ -103,6 +103,26 @@ class DockerSandbox:
         )
 
 
+def _parse_image_config(image_raw: object) -> tuple[str, dict[str, str]]:
+    """Parse the sandbox image configuration into (default_image, adapter_images)."""
+    if isinstance(image_raw, str):
+        return image_raw, {}
+    if isinstance(image_raw, Mapping):
+        image_map = cast("Mapping[str, object]", image_raw)
+        default_raw = image_map.get("default", _AGENT_IMAGE)
+        if not isinstance(default_raw, str):
+            raise ValueError("sandbox.image.default must be a string")
+        adapter_images: dict[str, str] = {}
+        for raw_key, raw_value in image_map.items():
+            if raw_key == "default":
+                continue
+            if not isinstance(raw_value, str):
+                raise ValueError("sandbox.image adapter entries must be strings")
+            adapter_images[str(raw_key).strip().lower()] = raw_value
+        return default_raw, adapter_images
+    raise ValueError("sandbox.image must be a string or mapping")
+
+
 def parse_docker_sandbox(raw: object | None) -> DockerSandbox | None:
     """Parse the optional ``sandbox`` seed section.
 
@@ -130,27 +150,7 @@ def parse_docker_sandbox(raw: object | None) -> DockerSandbox | None:
     if not isinstance(network_raw, str) or network_raw not in _VALID_NETWORKS:
         raise ValueError("sandbox.network_mode must be one of none, bridge, host")
 
-    image_raw = data.get("image", _AGENT_IMAGE)
-    default_image: str
-    adapter_images: dict[str, str]
-    if isinstance(image_raw, str):
-        default_image = image_raw
-        adapter_images = {}
-    elif isinstance(image_raw, Mapping):
-        image_map = cast("Mapping[str, object]", image_raw)
-        default_raw = image_map.get("default", _AGENT_IMAGE)
-        if not isinstance(default_raw, str):
-            raise ValueError("sandbox.image.default must be a string")
-        default_image = default_raw
-        adapter_images = {}
-        for raw_key, raw_value in image_map.items():
-            if raw_key == "default":
-                continue
-            if not isinstance(raw_value, str):
-                raise ValueError("sandbox.image adapter entries must be strings")
-            adapter_images[str(raw_key).strip().lower()] = raw_value
-    else:
-        raise ValueError("sandbox.image must be a string or mapping")
+    default_image, adapter_images = _parse_image_config(data.get("image", _AGENT_IMAGE))
 
     return DockerSandbox(
         enabled=enabled,

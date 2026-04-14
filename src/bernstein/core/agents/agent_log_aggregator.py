@@ -68,7 +68,7 @@ class AgentLogAggregator:
     _WARNING_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"(?i)\b(warn|warning|deprecated|retrying)\b")
     _TEST_SUMMARY_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"(?i)\b\d+\s+(?:passed|failed|skipped|error)")
     _MEANINGFUL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
-        r"(?i)(?:^(?:Modified|Created|Wrote|Updated):\s+\S+|(?:(?:uv run )?pytest)|(?:coverage)|(?:ruff)|(?:pyright))"
+        r"(?i)(?:^(?:Modified|Created|Wrote|Updated):\s+\S+|(?:uv run )?pytest|coverage|ruff|pyright)"
     )
 
     def __init__(self, workdir: Path) -> None:

@@ -32,6 +32,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 _JSON_GLOB = "*.json"
@@ -206,42 +207,31 @@ class ComplianceConfig:
         Returns:
             List of human-readable warnings (empty when everything is OK).
         """
-        warnings: list[str] = []
-
-        if self.audit_hmac_chain and not self.audit_logging:
-            warnings.append("HMAC audit chain requires audit_logging to be enabled")
-
-        if self.wal_signed and not self.wal_enabled:
-            warnings.append("Signed WAL requires wal_enabled to be enabled")
-
-        if self.governed_workflow and not self.wal_enabled:
-            warnings.append("Governed workflow requires WAL for crash-safe decision history")
-
-        if self.mandatory_human_review and not self.approval_gates:
-            warnings.append("Mandatory human review requires approval_gates to be enabled")
-
-        if self.data_residency and not self.data_residency_region:
-            warnings.append("Data residency enabled but no region specified (set data_residency_region)")
-
-        if self.evidence_bundle and not self.wal_enabled:
-            warnings.append("Evidence bundle export requires WAL to be enabled")
-
-        if self.evidence_bundle and not self.audit_logging:
-            warnings.append("Evidence bundle export requires audit_logging to be enabled")
-
-        if self.hipaa_mode and not self.phi_detection:
-            warnings.append("HIPAA mode requires phi_detection to be enabled")
-
-        if self.hipaa_mode and not self.audit_hmac_chain:
-            warnings.append("HIPAA mode requires audit_hmac_chain for tamper-evident logging")
-
-        if self.phi_detection and not self.hipaa_mode:
-            warnings.append("phi_detection is intended for use with hipaa_mode")
-
-        if self.encrypt_state_at_rest and not self.hipaa_mode:
-            warnings.append("encrypt_state_at_rest is most useful when hipaa_mode is enabled")
-
-        return warnings
+        rules: list[tuple[bool, str]] = [
+            (self.audit_hmac_chain and not self.audit_logging,
+             "HMAC audit chain requires audit_logging to be enabled"),
+            (self.wal_signed and not self.wal_enabled,
+             "Signed WAL requires wal_enabled to be enabled"),
+            (self.governed_workflow and not self.wal_enabled,
+             "Governed workflow requires WAL for crash-safe decision history"),
+            (self.mandatory_human_review and not self.approval_gates,
+             "Mandatory human review requires approval_gates to be enabled"),
+            (self.data_residency and not self.data_residency_region,
+             "Data residency enabled but no region specified (set data_residency_region)"),
+            (self.evidence_bundle and not self.wal_enabled,
+             "Evidence bundle export requires WAL to be enabled"),
+            (self.evidence_bundle and not self.audit_logging,
+             "Evidence bundle export requires audit_logging to be enabled"),
+            (self.hipaa_mode and not self.phi_detection,
+             "HIPAA mode requires phi_detection to be enabled"),
+            (self.hipaa_mode and not self.audit_hmac_chain,
+             "HIPAA mode requires audit_hmac_chain for tamper-evident logging"),
+            (self.phi_detection and not self.hipaa_mode,
+             "phi_detection is intended for use with hipaa_mode"),
+            (self.encrypt_state_at_rest and not self.hipaa_mode,
+             "encrypt_state_at_rest is most useful when hipaa_mode is enabled"),
+        ]
+        return [msg for condition, msg in rules if condition]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-safe dict for persistence and API responses."""
@@ -453,6 +443,16 @@ def export_evidence_bundle(
 # ---------------------------------------------------------------------------
 
 
+def _last_day_of_month(year: int, month: int) -> int:
+    """Return the last day of the given month/year."""
+    if month == 2:
+        is_leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+        return 29 if is_leap else 28
+    if month in (4, 6, 9, 11):
+        return 30
+    return 31
+
+
 def parse_period(period: str) -> tuple[str, str]:
     """Parse a period string into ISO 8601 start/end timestamps.
 
@@ -477,9 +477,7 @@ def parse_period(period: str) -> tuple[str, str]:
         year = int(m.group(2))
         start_month = (quarter - 1) * 3 + 1
         end_month = quarter * 3
-        # Last day of the end month
-        end_day = 30 if end_month in (4, 6, 9, 11) else 31
-        return f"{year}-{start_month:02d}-01", f"{year}-{end_month:02d}-{end_day:02d}"
+        return f"{year}-{start_month:02d}-01", f"{year}-{end_month:02d}-{_last_day_of_month(year, end_month):02d}"
 
     # Month: 2026-03
     m = re.match(r"^(\d{4})-(\d{2})$", period)
@@ -489,16 +487,7 @@ def parse_period(period: str) -> tuple[str, str]:
         if not 1 <= month <= 12:
             msg = f"Invalid month in period: {period!r}"
             raise ValueError(msg)
-        # Last day of the month
-        if month == 12:
-            last_day = 31
-        elif month in (4, 6, 9, 11):
-            last_day = 30
-        elif month == 2:
-            last_day = 29 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28
-        else:
-            last_day = 31
-        return f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last_day}"
+        return f"{year}-{month:02d}-01", f"{year}-{month:02d}-{_last_day_of_month(year, month)}"
 
     # Year: 2026
     m = re.match(r"^(\d{4})$", period)
@@ -759,6 +748,120 @@ def _build_evidence_summary(
     return "\n".join(lines)
 
 
+def _copy_dir_files(
+    src_dir: Path,
+    dest: Path,
+    glob_pattern: str,
+    *,
+    filter_fn: Callable[[Path], bool] | None = None,
+) -> list[Path]:
+    """Copy matching files from *src_dir* to *dest*, returning copied paths."""
+    import shutil
+
+    dest.mkdir(exist_ok=True)
+    for f in sorted(src_dir.glob(glob_pattern)):
+        if filter_fn and not filter_fn(f):
+            continue
+        if f.is_file():
+            shutil.copy2(f, dest / f.name)
+    return list(dest.iterdir())
+
+
+def _collect_soc2_artifacts(
+    sdd_dir: Path,
+    bundle_dir: Path,
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, Any]]:
+    """Collect audit logs, merkle seals, config, WAL, and SBOM into bundle_dir."""
+    artifacts: list[dict[str, Any]] = []
+
+    # 1. Audit logs (filtered by period)
+    audit_dir = sdd_dir / "audit"
+    if audit_dir.is_dir():
+        copied = _copy_dir_files(
+            audit_dir, bundle_dir / "audit_logs", "*.jsonl",
+            filter_fn=lambda f: start_date <= f.stem <= end_date,
+        )
+        if copied:
+            artifacts.append({
+                "type": "audit_logs",
+                "description": "HMAC-chained audit event logs",
+                "file_count": len(copied),
+                "period_filter": f"{start_date} to {end_date}",
+            })
+
+    # 3. Merkle seals
+    merkle_dir = audit_dir / "merkle" if audit_dir.is_dir() else sdd_dir / "audit" / "merkle"
+    if merkle_dir.is_dir():
+        copied = _copy_dir_files(merkle_dir, bundle_dir / "merkle_seals", _JSON_GLOB)
+        if copied:
+            artifacts.append({
+                "type": "merkle_seals",
+                "description": "Merkle tree integrity seals",
+                "file_count": len(copied),
+            })
+
+    # 4. Compliance configuration
+    config_dir = sdd_dir / "config"
+    if config_dir.is_dir():
+        copied = _copy_dir_files(
+            config_dir, bundle_dir / "compliance_config", "*",
+            filter_fn=lambda f: f.is_file() and f.name != "audit-key",
+        )
+        if copied:
+            artifacts.append({
+                "type": "compliance_config",
+                "description": "Compliance and policy configuration",
+                "file_count": len(copied),
+            })
+
+    # 5. WAL
+    wal_dir = sdd_dir / "runtime" / "wal"
+    if wal_dir.is_dir():
+        copied = _copy_dir_files(wal_dir, bundle_dir / "wal", "*")
+        if copied:
+            artifacts.append({
+                "type": "wal",
+                "description": "Write-ahead log entries",
+                "file_count": len(copied),
+            })
+
+    # 6. SBOM
+    sbom_dir = sdd_dir / "sbom"
+    if sbom_dir.is_dir():
+        copied = _copy_dir_files(sbom_dir, bundle_dir / "sbom", _JSON_GLOB)
+        if copied:
+            artifacts.append({
+                "type": "sbom",
+                "description": "Software Bill of Materials (CycloneDX)",
+                "file_count": len(copied),
+            })
+
+    return artifacts
+
+
+def _verify_hmac_chain(audit_dir: Path) -> dict[str, Any]:
+    """Run HMAC chain verification and return results dict."""
+    verification: dict[str, Any] = {"hmac_chain": None, "merkle": None}
+    if not audit_dir.is_dir():
+        return verification
+
+    from bernstein.core.security.audit import AuditLog
+
+    try:
+        audit_log = AuditLog(audit_dir)
+        valid, errors = audit_log.verify()
+        verification["hmac_chain"] = {
+            "valid": valid,
+            "errors": errors,
+            "verified_at": time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
+        }
+    except Exception as exc:
+        verification["hmac_chain"] = {"valid": False, "errors": [str(exc)]}
+    return verification
+
+
 def export_soc2_package(
     sdd_dir: Path,
     period: str,
@@ -799,114 +902,12 @@ def export_soc2_package(
         shutil.rmtree(bundle_dir)
     bundle_dir.mkdir(parents=True)
 
-    artifacts_collected: list[dict[str, Any]] = []
+    artifacts_collected = _collect_soc2_artifacts(sdd_dir, bundle_dir, start_date, end_date)
 
-    # --- 1. Audit logs (filtered by period) --------------------------------
     audit_dir = sdd_dir / "audit"
-    if audit_dir.is_dir():
-        dest = bundle_dir / "audit_logs"
-        dest.mkdir()
-        for jsonl_file in sorted(audit_dir.glob("*.jsonl")):
-            # File names are YYYY-MM-DD.jsonl — filter by date range
-            file_date = jsonl_file.stem  # e.g. "2026-01-15"
-            if start_date <= file_date <= end_date:
-                shutil.copy2(jsonl_file, dest / jsonl_file.name)
-        copied = list(dest.iterdir())
-        if copied:
-            artifacts_collected.append(
-                {
-                    "type": "audit_logs",
-                    "description": "HMAC-chained audit event logs",
-                    "file_count": len(copied),
-                    "period_filter": f"{start_date} to {end_date}",
-                }
-            )
+    verification = _verify_hmac_chain(audit_dir)
 
-    # --- 2. HMAC chain verification ----------------------------------------
-    verification: dict[str, Any] = {"hmac_chain": None, "merkle": None}
-    if audit_dir.is_dir():
-        from bernstein.core.security.audit import AuditLog
-
-        try:
-            audit_log = AuditLog(audit_dir)
-            valid, errors = audit_log.verify()
-            verification["hmac_chain"] = {
-                "valid": valid,
-                "errors": errors,
-                "verified_at": time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
-            }
-        except Exception as exc:
-            verification["hmac_chain"] = {"valid": False, "errors": [str(exc)]}
-
-    # --- 3. Merkle seals ---------------------------------------------------
     merkle_dir = audit_dir / "merkle" if audit_dir.is_dir() else sdd_dir / "audit" / "merkle"
-    if merkle_dir.is_dir():
-        dest = bundle_dir / "merkle_seals"
-        dest.mkdir()
-        for seal_file in sorted(merkle_dir.glob(_JSON_GLOB)):
-            shutil.copy2(seal_file, dest / seal_file.name)
-        copied = list(dest.iterdir())
-        if copied:
-            artifacts_collected.append(
-                {
-                    "type": "merkle_seals",
-                    "description": "Merkle tree integrity seals",
-                    "file_count": len(copied),
-                }
-            )
-
-    # --- 4. Compliance configuration ---------------------------------------
-    config_dir = sdd_dir / "config"
-    if config_dir.is_dir():
-        dest = bundle_dir / "compliance_config"
-        dest.mkdir()
-        for cfg_file in config_dir.iterdir():
-            if cfg_file.is_file() and cfg_file.name != "audit-key":
-                shutil.copy2(cfg_file, dest / cfg_file.name)
-        copied = list(dest.iterdir())
-        if copied:
-            artifacts_collected.append(
-                {
-                    "type": "compliance_config",
-                    "description": "Compliance and policy configuration",
-                    "file_count": len(copied),
-                }
-            )
-
-    # --- 5. WAL (write-ahead log) ------------------------------------------
-    wal_dir = sdd_dir / "runtime" / "wal"
-    if wal_dir.is_dir():
-        dest = bundle_dir / "wal"
-        dest.mkdir()
-        for wal_file in sorted(wal_dir.glob("*")):
-            if wal_file.is_file():
-                shutil.copy2(wal_file, dest / wal_file.name)
-        copied = list(dest.iterdir())
-        if copied:
-            artifacts_collected.append(
-                {
-                    "type": "wal",
-                    "description": "Write-ahead log entries",
-                    "file_count": len(copied),
-                }
-            )
-
-    # --- 6. SBOM -----------------------------------------------------------
-    sbom_dir = sdd_dir / "sbom"
-    if sbom_dir.is_dir():
-        dest = bundle_dir / "sbom"
-        dest.mkdir()
-        for sbom_file in sorted(sbom_dir.glob(_JSON_GLOB)):
-            shutil.copy2(sbom_file, dest / sbom_file.name)
-        copied = list(dest.iterdir())
-        if copied:
-            artifacts_collected.append(
-                {
-                    "type": "sbom",
-                    "description": "Software Bill of Materials (CycloneDX)",
-                    "file_count": len(copied),
-                }
-            )
 
     # --- 7. SOC 2 control mappings ------------------------------------------
     control_mappings = _build_soc2_control_mappings(artifacts_collected, verification)

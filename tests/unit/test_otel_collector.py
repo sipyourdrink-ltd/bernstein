@@ -248,7 +248,9 @@ def test_generate_grafana_dashboard_empty_panels() -> None:
 def test_get_default_panels_count() -> None:
     """Default panel set should contain 8-10 panels."""
     panels = get_default_panels()
-    assert 8 <= len(panels) <= 10
+    count = len(panels)
+    assert count >= 8
+    assert count <= 10
 
 
 def test_get_default_panels_are_dashboard_panels() -> None:

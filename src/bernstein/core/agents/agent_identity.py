@@ -610,57 +610,16 @@ class AgentIdentityStore:
         identity = self._load(identity_id)
         if identity is None or identity.credential is None:
             return None
-        if identity.credential.token_type != "jwt":
-            return None
-        if identity.credential.token_hash != _hash_token(token):
-            return None
-        if identity.credential.jti and str(claims.get("jti", "")) != identity.credential.jti:
-            return None
-        if str(claims.get("sid", "")) != identity.session_id:
-            return None
-        if str(claims.get("role", "")) != identity.role:
-            return None
-        if normalize_tenant_id(str(claims.get("tenant_id", "default"))) != identity.credential.tenant_id:
-            return None
-        claim_scopes = claims.get("scopes", [])
-        if not isinstance(claim_scopes, list) or set(map(str, claim_scopes)) != set(identity.permissions):
-            return None
-        # Verify task-scope and file-scope claims match the stored credential
-        # (prevents claim-substitution attacks where an attacker tampers with
-        # the token payload to expand their scope).
-        claim_task_ids = claims.get("task_ids", [])
-        if not isinstance(claim_task_ids, list) or sorted(map(str, claim_task_ids)) != sorted(
-            identity.credential.task_ids
-        ):
-            return None
-        claim_files = claims.get("allowed_files", [])
-        if not isinstance(claim_files, list) or sorted(map(str, claim_files)) != sorted(
-            identity.credential.allowed_files
-        ):
+
+        if not self._validate_jwt_claims(claims, identity, token):
             return None
 
         if not identity.is_active:
-            self._append_audit(
-                IdentityAuditEvent(
-                    timestamp=time.time(),
-                    identity_id=identity_id,
-                    action="denied",
-                    actor="auth",
-                    details={"reason": f"identity status: {identity.status}"},
-                )
-            )
+            self._audit_denial(identity_id, f"identity status: {identity.status}")
             return None
 
         if not identity.credential.is_valid:
-            self._append_audit(
-                IdentityAuditEvent(
-                    timestamp=time.time(),
-                    identity_id=identity_id,
-                    action="denied",
-                    actor="auth",
-                    details={"reason": "credential expired or revoked"},
-                )
-            )
+            self._audit_denial(identity_id, "credential expired or revoked")
             return None
 
         identity.last_authenticated_at = time.time()
@@ -675,6 +634,43 @@ class AgentIdentityStore:
             )
         )
         return identity
+
+    def _validate_jwt_claims(self, claims: dict[str, object], identity: AgentIdentity, token: str) -> bool:
+        """Validate JWT claims against stored identity and credential."""
+        cred = identity.credential
+        assert cred is not None  # caller guarantees this
+        if cred.token_type != "jwt":
+            return False
+        if cred.token_hash != _hash_token(token):
+            return False
+        if cred.jti and str(claims.get("jti", "")) != cred.jti:
+            return False
+        if str(claims.get("sid", "")) != identity.session_id:
+            return False
+        if str(claims.get("role", "")) != identity.role:
+            return False
+        if normalize_tenant_id(str(claims.get("tenant_id", "default"))) != cred.tenant_id:
+            return False
+        claim_scopes = claims.get("scopes", [])
+        if not isinstance(claim_scopes, list) or set(map(str, claim_scopes)) != set(identity.permissions):
+            return False
+        claim_task_ids = claims.get("task_ids", [])
+        if not isinstance(claim_task_ids, list) or sorted(map(str, claim_task_ids)) != sorted(cred.task_ids):
+            return False
+        claim_files = claims.get("allowed_files", [])
+        return isinstance(claim_files, list) and sorted(map(str, claim_files)) == sorted(cred.allowed_files)
+
+    def _audit_denial(self, identity_id: str, reason: str) -> None:
+        """Log a denied authentication attempt."""
+        self._append_audit(
+            IdentityAuditEvent(
+                timestamp=time.time(),
+                identity_id=identity_id,
+                action="denied",
+                actor="auth",
+                details={"reason": reason},
+            )
+        )
 
     def authorize(self, identity_id: str, permission: str, *, actor: str = "authz") -> bool:
         """Check if an identity has a specific permission. Logs the result."""

@@ -306,6 +306,43 @@ def run_security_review(diff_text: str) -> list[SecurityReviewResult]:
     return results
 
 
+def _render_file_findings(
+    file_path: str,
+    file_results: list[SecurityReviewResult],
+    severity_icons: dict[Severity, str],
+    severity_colours: dict[Severity, str],
+    lines: list[str],
+) -> None:
+    """Render findings for a single file into lines."""
+    lines.append(f"[bold underline]{file_path}[/bold underline]")
+    for r in file_results:
+        icon = severity_icons.get(r.severity, "?")
+        colour = severity_colours.get(r.severity, "white")
+        line_info = ""
+        if r.line_range:
+            start, end = r.line_range
+            line_info = f" (line {start}" + (f"-{end}" if end != start else "") + ")"
+        lines.append(f"  [{colour}]{icon} [{r.severity.upper()}][/{colour}]{line_info} {r.description}")
+        if r.suggestion:
+            lines.append(f"   [dim]-> {r.suggestion}[/dim]")
+    lines.append("")
+
+
+def _render_severity_summary(
+    results: list[SecurityReviewResult], severity_colours: dict[Severity, str], lines: list[str]
+) -> None:
+    """Render severity count summary into lines."""
+    counts: dict[Severity, int] = {}
+    for r in results:
+        counts[r.severity] = counts.get(r.severity, 0) + 1
+    lines.append("[bold]Summary:[/bold]")
+    for sev in ("critical", "high", "medium", "low"):
+        count = counts.get(sev, 0)
+        if count > 0:
+            colour = severity_colours[sev]
+            lines.append(f"  [{colour}]{sev.upper()}: {count}[/{colour}]")
+
+
 def format_security_review(results: list[SecurityReviewResult]) -> str:
     """Format security review results as a Rich-compatible string.
 
@@ -340,31 +377,9 @@ def format_security_review(results: list[SecurityReviewResult]) -> str:
         by_file.setdefault(r.file, []).append(r)
 
     for file_path, file_results in sorted(by_file.items()):
-        lines.append(f"[bold underline]{file_path}[/bold underline]")
-        for r in file_results:
-            icon = severity_icons.get(r.severity, "?")
-            colour = severity_colours.get(r.severity, "white")
-            line_info = ""
-            if r.line_range:
-                start, end = r.line_range
-                line_info = f" (line {start}" + (f"-{end}" if end != start else "") + ")"
-            lines.append(f"  [{colour}]{icon} [{r.severity.upper()}][/{colour}]{line_info} {r.description}")
-            if r.suggestion:
-                lines.append(f"   [dim]-> {r.suggestion}[/dim]")
-        lines.append("")
+        _render_file_findings(file_path, file_results, severity_icons, severity_colours, lines)
 
-    # Summary
-    counts: dict[Severity, int] = {}
-    for r in results:
-        counts[r.severity] = counts.get(r.severity, 0) + 1
-
-    lines.append("[bold]Summary:[/bold]")
-    for sev in ("critical", "high", "medium", "low"):
-        count = counts.get(sev, 0)
-        if count > 0:
-            colour = severity_colours[sev]
-            lines.append(f"  [{colour}]{sev.upper()}: {count}[/{colour}]")
-
+    _render_severity_summary(results, severity_colours, lines)
     return "\n".join(lines)
 
 

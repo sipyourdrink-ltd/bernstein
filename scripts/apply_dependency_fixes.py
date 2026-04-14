@@ -39,6 +39,23 @@ def load_report(path: str) -> dict:
         return json.load(f)
 
 
+def _apply_single_upgrade(package: str, suggested: str, content: str) -> str:
+    """Apply a single package upgrade to pyproject.toml content. Returns updated content."""
+    old_pattern = f"{package}>="
+    if old_pattern not in content:
+        return content
+    lines = content.split("\n")
+    updated = False
+    for i, line in enumerate(lines):
+        if package in line and ">=" in line:
+            before = line.split('"')[0] + '"'
+            after = '"' + line.split('"')[-1]
+            lines[i] = f"{before}{package}>={suggested}{after}"
+            updated = True
+            console.print(f"  ✓ Updated {package} to >={suggested}")
+    return "\n".join(lines) if updated else content
+
+
 def apply_upgrades(resolutions: list[dict]) -> None:
     """Apply dependency upgrades to pyproject.toml."""
     console.print("[bold cyan]Applying upgrades to pyproject.toml[/bold cyan]")
@@ -48,30 +65,10 @@ def apply_upgrades(resolutions: list[dict]) -> None:
 
     for resolution in resolutions:
         package = resolution["package"]
-        suggested = resolution["suggested"]
-
-        # Skip pip as it's not in project dependencies
         if package.lower() == "pip":
             console.print(f"  ⊘ Skipping {package} (not a project dependency)")
             continue
-
-        # Update the dependency requirement
-        old_pattern = f"{package}>="
-
-        if old_pattern in content:
-            lines = content.split("\n")
-            updated = False
-            for i, line in enumerate(lines):
-                if package in line and ">=" in line:
-                    # Extract current requirement
-                    before = line.split('"')[0] + '"'
-                    after = '"' + line.split('"')[-1]
-                    lines[i] = f"{before}{package}>={suggested}{after}"
-                    updated = True
-                    console.print(f"  ✓ Updated {package} to >={suggested}")
-
-            if updated:
-                content = "\n".join(lines)
+        content = _apply_single_upgrade(package, resolution["suggested"], content)
 
     pyproject_path.write_text(content)
 

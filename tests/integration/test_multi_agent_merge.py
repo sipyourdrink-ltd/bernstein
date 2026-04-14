@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import respx
-from httpx import Response
 
 if TYPE_CHECKING:
     from bernstein.core.orchestrator import Orchestrator
@@ -51,29 +50,9 @@ async def test_multi_agent_merge(test_client: TestClient, orchestrator_factory, 
     orch._incident_manager.auto_pause = False
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+        from tests.integration.conftest import make_proxy_handler
 
-        def handler(request):
-            method = request.method
-            path = request.url.path
-            api_path = path if path.startswith("/") else "/" + path
-
-            if method == "GET" and api_path == "/tasks":
-                resp = test_client.get("/tasks")
-                tasks = resp.json()
-                for t in tasks:
-                    slug = t["title"].lower().replace(" ", "-")
-                    marker_slug = integration_sdd / "runtime" / f"DONE_{slug}"
-                    if marker_slug.exists():
-                        test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "done"})
-                        marker_slug.unlink()
-                resp = test_client.get("/tasks")
-                return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
-            content = request.read()
-            headers = dict(request.headers)
-            resp = test_client.request(method, api_path, content=content, headers=headers)
-            return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
+        handler = make_proxy_handler(test_client, integration_sdd)
         respx_mock.route().mock(side_effect=handler)
 
         for _ in range(40):

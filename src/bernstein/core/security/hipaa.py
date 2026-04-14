@@ -332,6 +332,24 @@ _DEFAULT_PHI_FILE_PATTERNS: list[str] = [
 ]
 
 
+def _matches_phi_pattern(normalized: str, filename: str, pattern: str) -> bool:
+    """Check if a normalized path or filename matches a single PHI pattern."""
+    if fnmatch.fnmatch(normalized, pattern):
+        return True
+    if fnmatch.fnmatch(filename, pattern):
+        return True
+    if "**" not in pattern:
+        return False
+    parts = pattern.split("**")
+    prefix = parts[0].rstrip("/")
+    suffix = parts[-1].lstrip("/")
+    if prefix and not normalized.startswith(prefix):
+        return False
+    if suffix and not normalized.endswith(suffix):
+        return False
+    return bool(prefix or suffix)
+
+
 def is_phi_file(
     file_path: str,
     patterns: list[str] | None = None,
@@ -349,29 +367,10 @@ def is_phi_file(
     if patterns is None:
         patterns = _DEFAULT_PHI_FILE_PATTERNS
 
-    # Normalize to forward slashes for consistent matching
     normalized = file_path.replace(os.sep, "/")
-    # Also check just the filename
     filename = os.path.basename(file_path)
 
-    for pattern in patterns:
-        if fnmatch.fnmatch(normalized, pattern):
-            return True
-        if fnmatch.fnmatch(filename, pattern):
-            return True
-        # Support recursive globs: treat ** as matching any path segment
-        if "**" in pattern:
-            parts = pattern.split("**")
-            prefix = parts[0].rstrip("/")
-            suffix = parts[-1].lstrip("/")
-            if prefix and not normalized.startswith(prefix):
-                continue
-            if suffix and not normalized.endswith(suffix):
-                continue
-            if prefix or suffix:
-                return True
-
-    return False
+    return any(_matches_phi_pattern(normalized, filename, p) for p in patterns)
 
 
 # ---------------------------------------------------------------------------

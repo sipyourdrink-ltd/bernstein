@@ -136,14 +136,16 @@ def agent_stream(request: Request, session_id: str) -> StreamingResponse:
             new_size = log_path.stat().st_size
             content = read_log_tail(log_path, offset)
 
-            if content:
-                for line in content.splitlines():
-                    if line:
-                        yield f"data: {json.dumps({'line': line})}\n\n"
-                offset = new_size
-                idle_ticks = 0
-            else:
+            if not content:
                 idle_ticks += 1
+                await asyncio.sleep(_POLL_INTERVAL)
+                continue
+
+            for line in content.splitlines():
+                if line:
+                    yield f"data: {json.dumps({'line': line})}\n\n"
+            offset = new_size
+            idle_ticks = 0
 
             await asyncio.sleep(_POLL_INTERVAL)
 

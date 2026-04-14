@@ -122,6 +122,18 @@ def _perturb(value: Any, sensitivity: float, config: DPConfig) -> Any:
     return mech.add_noise(float(value))
 
 
+def _perturb_fields(
+    record: dict[str, Any],
+    sensitivities: dict[str, float],
+    passthrough: frozenset[str],
+    config: DPConfig,
+) -> None:
+    """Apply DP noise to eligible numeric fields in *record* in-place."""
+    for field_name, sensitivity in sensitivities.items():
+        if field_name in record and field_name not in passthrough:
+            record[field_name] = _perturb(record[field_name], sensitivity, config)
+
+
 def apply_dp_to_export(data: dict[str, Any], config: DPConfig) -> dict[str, Any]:
     """Return a deep copy of *data* with numeric telemetry fields privatised.
 
@@ -138,22 +150,12 @@ def apply_dp_to_export(data: dict[str, Any], config: DPConfig) -> dict[str, Any]
     """
     result: dict[str, Any] = copy.deepcopy(data)
 
-    # -- task_metrics ---------------------------------------------------------
     for task in result.get("task_metrics", []):
-        for field_name, sensitivity in _TASK_SENSITIVITIES.items():
-            if field_name in task and field_name not in _TASK_PASSTHROUGH:
-                task[field_name] = _perturb(task[field_name], sensitivity, config)
+        _perturb_fields(task, _TASK_SENSITIVITIES, _TASK_PASSTHROUGH, config)
 
-    # -- agent_metrics --------------------------------------------------------
     for agent in result.get("agent_metrics", []):
-        for field_name, sensitivity in _AGENT_SENSITIVITIES.items():
-            if field_name in agent and field_name not in _AGENT_PASSTHROUGH:
-                agent[field_name] = _perturb(agent[field_name], sensitivity, config)
+        _perturb_fields(agent, _AGENT_SENSITIVITIES, _AGENT_PASSTHROUGH, config)
 
-    # -- summary --------------------------------------------------------------
-    summary = result.get("summary", {})
-    for field_name, sensitivity in _SUMMARY_SENSITIVITIES.items():
-        if field_name in summary and field_name not in _SUMMARY_PASSTHROUGH:
-            summary[field_name] = _perturb(summary[field_name], sensitivity, config)
+    _perturb_fields(result.get("summary", {}), _SUMMARY_SENSITIVITIES, _SUMMARY_PASSTHROUGH, config)
 
     return result

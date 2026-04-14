@@ -125,53 +125,46 @@ class GateReport:
     cache_hits: int
 
 
+def _is_gate_enabled(config: QualityGatesConfig, flag: str) -> bool:
+    """Check whether a gate flag is enabled (supports nested .enabled attrs)."""
+    value = getattr(config, flag, False)
+    if hasattr(value, "enabled"):
+        return bool(value.enabled)
+    return bool(value)
+
+
+# (config_flag, gate_name, required, condition)
+_DEFAULT_GATE_SPECS: list[tuple[str, str, bool, str]] = [
+    ("auto_format", "auto_format", False, "any_changed"),
+    ("lint", "lint", True, "always"),
+    ("type_check", "type_check", True, "python_changed"),
+    ("tests", "tests", True, "python_changed"),
+    ("security_scan", "security_scan", True, "python_changed"),
+    ("complexity_check", "complexity_check", True, "python_changed"),
+    ("dead_code_check", "dead_code", False, "python_changed"),
+    ("comment_quality_check", "comment_quality", False, "python_changed"),
+    ("import_cycle_check", "import_cycle", True, "python_changed"),
+    ("coverage_delta", "coverage_delta", True, "python_changed"),
+    ("merge_conflict_check", "merge_conflict", True, "any_changed"),
+    ("pii_scan", "pii_scan", True, "any_changed"),
+    ("dlp_scan", "dlp_scan", True, "any_changed"),
+    ("mutation_testing", "mutation_testing", True, "python_changed"),
+    ("intent_verification", "intent_verification", True, "any_changed"),
+    ("dep_audit", "dep_audit", True, "deps_changed"),
+    ("benchmark", "benchmark", True, "always"),
+    ("migration_reversibility_check", "migration_reversibility", True, "any_changed"),
+    ("large_file_check", "large_file", False, "any_changed"),
+    ("integration_test_gen", "integration_test_gen", True, "python_changed"),
+    ("review_rubric", "review_rubric", True, "python_changed"),
+    ("test_expansion", "test_expansion", False, "python_changed"),
+    ("agent_test_mutation", "agent_test_mutation", True, "tests_changed"),
+]
+
+
 def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]:
     """Build the implicit pipeline used when the seed file omits one."""
-    pipeline: list[GatePipelineStep] = []
-    if config.auto_format:
-        pipeline.append(GatePipelineStep(name="auto_format", required=False, condition="any_changed"))
-    if config.lint:
-        pipeline.append(GatePipelineStep(name="lint", required=True, condition="always"))
-    if config.type_check:
-        pipeline.append(GatePipelineStep(name="type_check", required=True, condition="python_changed"))
-    if config.tests:
-        pipeline.append(GatePipelineStep(name="tests", required=True, condition="python_changed"))
-    if config.security_scan:
-        pipeline.append(GatePipelineStep(name="security_scan", required=True, condition="python_changed"))
-    if config.complexity_check:
-        pipeline.append(GatePipelineStep(name="complexity_check", required=True, condition="python_changed"))
-    if config.dead_code_check:
-        pipeline.append(GatePipelineStep(name="dead_code", required=False, condition="python_changed"))
-    if config.comment_quality_check:
-        pipeline.append(GatePipelineStep(name="comment_quality", required=False, condition="python_changed"))
-    if config.import_cycle_check:
-        pipeline.append(GatePipelineStep(name="import_cycle", required=True, condition="python_changed"))
-    if config.coverage_delta:
-        pipeline.append(GatePipelineStep(name="coverage_delta", required=True, condition="python_changed"))
-    if config.merge_conflict_check:
-        pipeline.append(GatePipelineStep(name="merge_conflict", required=True, condition="any_changed"))
-    if config.pii_scan:
-        pipeline.append(GatePipelineStep(name="pii_scan", required=True, condition="any_changed"))
-    if config.dlp_scan:
-        pipeline.append(GatePipelineStep(name="dlp_scan", required=True, condition="any_changed"))
-    if config.mutation_testing:
-        pipeline.append(GatePipelineStep(name="mutation_testing", required=True, condition="python_changed"))
-    if config.intent_verification.enabled:
-        pipeline.append(GatePipelineStep(name="intent_verification", required=True, condition="any_changed"))
-    if config.dep_audit:
-        pipeline.append(GatePipelineStep(name="dep_audit", required=True, condition="deps_changed"))
-    if config.benchmark.enabled:
-        pipeline.append(GatePipelineStep(name="benchmark", required=True, condition="always"))
-    if config.migration_reversibility_check:
-        pipeline.append(GatePipelineStep(name="migration_reversibility", required=True, condition="any_changed"))
-    if config.large_file_check:
-        pipeline.append(GatePipelineStep(name="large_file", required=False, condition="any_changed"))
-    if config.integration_test_gen:
-        pipeline.append(GatePipelineStep(name="integration_test_gen", required=True, condition="python_changed"))
-    if config.review_rubric:
-        pipeline.append(GatePipelineStep(name="review_rubric", required=True, condition="python_changed"))
-    if config.test_expansion:
-        pipeline.append(GatePipelineStep(name="test_expansion", required=False, condition="python_changed"))
-    if config.agent_test_mutation:
-        pipeline.append(GatePipelineStep(name="agent_test_mutation", required=True, condition="tests_changed"))
-    return pipeline
+    return [
+        GatePipelineStep(name=name, required=required, condition=condition)
+        for flag, name, required, condition in _DEFAULT_GATE_SPECS
+        if _is_gate_enabled(config, flag)
+    ]

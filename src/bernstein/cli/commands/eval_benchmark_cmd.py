@@ -227,16 +227,11 @@ def benchmark_run(tier: str, benchmarks_dir: str, save: bool) -> None:
             status_str,
             f"{result.duration_seconds:.2f}s",
         )
-        if not result.passed:
-            for sig in result.signal_results:
-                if not sig.passed:
-                    table.add_row(
-                        "",
-                        "",
-                        f"  [dim]↳ {sig.signal_type}: {sig.message}[/dim]",
-                        "",
-                        "",
-                    )
+        if result.passed:
+            continue
+        for sig in result.signal_results:
+            if not sig.passed:
+                table.add_row("", "", f"  [dim]↳ {sig.signal_type}: {sig.message}[/dim]", "", "")
 
     console.print(table)
     console.print(

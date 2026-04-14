@@ -172,6 +172,52 @@ def list_recordings(recordings_dir: Path, limit: int = 5) -> list[RecordingSumma
     return summaries[:limit]
 
 
+def _render_recorder_status(text: Text, recording_active: bool, active_recording: Path | None) -> None:
+    """Render recorder status header."""
+    text.append("Recorder ", style="bold")
+    text.append("REC" if recording_active else "idle", style="bold green" if recording_active else "dim")
+    text.append("  [Ctrl+P: record/replay]", style="dim")
+    if active_recording is not None:
+        text.append("\n")
+        text.append(f"Writing: {active_recording.name}", style="cyan")
+
+
+def _render_recordings_list(text: Text, recordings: list[RecordingSummary], selected_recording: Path | None) -> None:
+    """Render the list of recent recordings."""
+    text.append("\n")
+    text.append("Recent recordings", style="bold")
+    if not recordings:
+        text.append("\n")
+        text.append("No recordings yet.", style="dim")
+        return
+    for summary in recordings:
+        marker = "> " if selected_recording == summary.path else "  "
+        stamp = datetime.fromtimestamp(summary.modified_ts).strftime("%H:%M:%S")
+        text.append("\n")
+        text.append(marker, style="bold cyan" if marker.strip() else "dim")
+        text.append(
+            f"{stamp} {summary.path.stem} ({summary.frame_count} frames, {summary.duration_s:.1f}s)",
+            style="white",
+        )
+        text.append(f" {summary.last_event_type}", style="dim")
+
+
+def _render_playback_frame(text: Text, playback_frame: RecordingFrame | None) -> None:
+    """Render the playback frame preview."""
+    if playback_frame is None:
+        return
+    text.append("\n\n")
+    text.append("Playback", style="bold")
+    text.append("\n")
+    text.append(f"{playback_frame.timestamp:.1f}s ", style="dim")
+    text.append(playback_frame.event_type, style="yellow")
+    summary = playback_frame.data.get("summary")
+    if isinstance(summary, dict):
+        done = int(summary.get("done", 0))
+        total = int(summary.get("total", 0))
+        text.append(f"  tasks {done}/{total}", style="dim")
+
+
 def render_session_recorder_panel(
     *,
     recording_active: bool,
@@ -182,46 +228,9 @@ def render_session_recorder_panel(
 ) -> Text:
     """Render recorder state, recent recordings, and current playback preview."""
     text = Text()
-    if recording_active:
-        text.append("Recorder ", style="bold")
-        text.append("REC", style="bold green")
-    else:
-        text.append("Recorder ", style="bold")
-        text.append("idle", style="dim")
-    text.append("  [Ctrl+P: record/replay]", style="dim")
-
-    if active_recording is not None:
-        text.append("\n")
-        text.append(f"Writing: {active_recording.name}", style="cyan")
-
-    text.append("\n")
-    text.append("Recent recordings", style="bold")
-    if not recordings:
-        text.append("\n")
-        text.append("No recordings yet.", style="dim")
-    else:
-        for summary in recordings:
-            marker = "> " if selected_recording == summary.path else "  "
-            stamp = datetime.fromtimestamp(summary.modified_ts).strftime("%H:%M:%S")
-            text.append("\n")
-            text.append(marker, style="bold cyan" if marker.strip() else "dim")
-            text.append(
-                f"{stamp} {summary.path.stem} ({summary.frame_count} frames, {summary.duration_s:.1f}s)",
-                style="white",
-            )
-            text.append(f" {summary.last_event_type}", style="dim")
-
-    if playback_frame is not None:
-        text.append("\n\n")
-        text.append("Playback", style="bold")
-        text.append("\n")
-        text.append(f"{playback_frame.timestamp:.1f}s ", style="dim")
-        text.append(playback_frame.event_type, style="yellow")
-        summary = playback_frame.data.get("summary")
-        if isinstance(summary, dict):
-            done = int(summary.get("done", 0))
-            total = int(summary.get("total", 0))
-            text.append(f"  tasks {done}/{total}", style="dim")
+    _render_recorder_status(text, recording_active, active_recording)
+    _render_recordings_list(text, recordings, selected_recording)
+    _render_playback_frame(text, playback_frame)
     return text
 
 

@@ -227,15 +227,8 @@ class DependencyVulnerabilityScanner:
         self._write_state(current_time)
         return result
 
-    def run_scan(
-        self,
-        *,
-        create_fix_task: Callable[[DependencyVulnerabilityFinding], str | None] | None = None,
-        audit_log: AuditLog | None = None,
-        now: float | None = None,
-    ) -> DependencyScanResult:
-        """Run one dependency vulnerability scan immediately."""
-        current_time = time.time() if now is None else now
+    def _run_scanners(self) -> tuple[list[DependencyVulnerabilityFinding], list[str], list[str], int, int]:
+        """Execute all scanner commands. Returns (findings, errors, scanners_run, successful, unavailable)."""
         findings: list[DependencyVulnerabilityFinding] = []
         errors: list[str] = []
         scanners_run: list[str] = []
@@ -260,17 +253,41 @@ class DependencyVulnerabilityScanner:
             if execution.returncode not in (0, 1, 64):
                 errors.append(f"{command.name}: exited with code {execution.returncode}")
 
+        return findings, errors, scanners_run, successful_scanners, unavailable_scanners
+
+    @staticmethod
+    def _create_fix_tasks(
+        deduped_findings: list[DependencyVulnerabilityFinding],
+        create_fix_task: Callable[[DependencyVulnerabilityFinding], str | None],
+    ) -> list[str]:
+        """Create fix tasks for unique packages, returning created task titles."""
+        created: list[str] = []
+        seen_packages: set[str] = set()
+        for finding in deduped_findings:
+            if finding.package in seen_packages:
+                continue
+            seen_packages.add(finding.package)
+            title = create_fix_task(finding)
+            if title:
+                created.append(title)
+        return created
+
+    def run_scan(
+        self,
+        *,
+        create_fix_task: Callable[[DependencyVulnerabilityFinding], str | None] | None = None,
+        audit_log: AuditLog | None = None,
+        now: float | None = None,
+    ) -> DependencyScanResult:
+        """Run one dependency vulnerability scan immediately."""
+        current_time = time.time() if now is None else now
+
+        findings, errors, scanners_run, successful_scanners, unavailable_scanners = self._run_scanners()
+
         deduped_findings = _dedupe_findings(findings)
         created_task_titles: list[str] = []
         if create_fix_task is not None:
-            seen_packages: set[str] = set()
-            for finding in deduped_findings:
-                if finding.package in seen_packages:
-                    continue
-                seen_packages.add(finding.package)
-                title = create_fix_task(finding)
-                if title:
-                    created_task_titles.append(title)
+            created_task_titles = self._create_fix_tasks(deduped_findings, create_fix_task)
 
         status = _determine_scan_status(
             findings=deduped_findings,

@@ -263,6 +263,19 @@ def status_dot(status: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _extract_progress_pct(raw: dict[str, Any]) -> float | None:
+    """Extract progress percentage from a task API dict."""
+    from bernstein.tui.progress_bar import TaskProgress
+
+    if str(raw.get("status", "")) == "done":
+        return 100.0
+    tp = TaskProgress.from_api(raw)
+    raw_pct = tp.percentage
+    if raw_pct > 0.0 or raw.get("progress") or raw.get("files_changed"):
+        return raw_pct
+    return None
+
+
 @dataclass
 class TaskRow:
     """Parsed row for the task list table.
@@ -313,19 +326,7 @@ class TaskRow:
         """
         model = str(raw.get("model", "")) or "\u2014"
         elapsed = str(raw.get("elapsed", "")) or "\u2014"
-
-        # TUI-010: extract progress percentage
-        progress_pct: float | None = None
-        from bernstein.tui.progress_bar import TaskProgress
-
-        tp = TaskProgress.from_api(raw)
-        raw_pct = tp.percentage
-        # Only store a non-zero pct so empty rows show "—" rather than "0%"
-        if raw_pct > 0.0 or raw.get("progress") or raw.get("files_changed"):
-            progress_pct = raw_pct
-        # Always show 100% for completed tasks
-        if str(raw.get("status", "")) == "done":
-            progress_pct = 100.0
+        progress_pct = _extract_progress_pct(raw)
 
         return cls(
             task_id=str(raw.get("id", "")),
@@ -361,6 +362,42 @@ class TaskRow:
         if age_s < 3600:
             return f"{age_s // 60}m"
         return f"{age_s // 3600}h"
+
+
+_PRIORITY_STYLES: dict[int, str] = {1: "magenta", 2: "yellow"}
+
+
+def _build_task_cells(
+    row: TaskRow,
+    accessibility: Any,
+    render_progress_bar_text: Any,
+) -> tuple[Text, ...]:
+    """Build the tuple of Text cells for a single task row."""
+    colour = status_color(row.status)
+    dot = status_dot(row.status)
+    status_text = accessible_status_label(row.status, accessibility)
+    prefix = replace_unicode(f"{dot} ", accessibility)
+    priority_style = _PRIORITY_STYLES.get(row.priority, "dim")
+    blocker_text = row.blocked_reason[:24] if row.blocked_reason else "\u2014"
+    blocker_style = "red" if row.blocked_reason else "dim"
+    progress_cell = (
+        render_progress_bar_text(row.progress_pct, width=10, show_pct=True)
+        if row.progress_pct is not None
+        else Text("\u2014", style="dim")
+    )
+    return (
+        Text(row.task_id, style="bold"),
+        Text(f"{prefix}{status_text}", style=colour),
+        Text(f"P{row.priority}", style=priority_style),
+        Text(row.role, style="cyan"),
+        Text(row.title),
+        Text(row.assigned_agent[:12] if row.assigned_agent else "\u2014", style="dim"),
+        Text(row.age_display, style="dim"),
+        Text(str(row.retry_count), style="yellow" if row.retry_count > 0 else "dim"),
+        Text(blocker_text, style=blocker_style),
+        Text(row.model, style="dim"),
+        progress_cell,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -404,38 +441,8 @@ class TaskListWidget(DataTable[Text]):
         # Update existing rows in-place, add new ones
         columns = ("ID", "Status", "P", "Role", "Title", "Agent", "Age", "Retry", "Blocker", "Model", "Progress")
         for row in rows:
-            colour = status_color(row.status)
-            dot = status_dot(row.status)
-            status_text = accessible_status_label(row.status, accessibility)
-            prefix = replace_unicode(f"{dot} ", accessibility)
-            if row.priority == 1:
-                priority_style = "magenta"
-            elif row.priority == 2:
-                priority_style = "yellow"
-            else:
-                priority_style = "dim"
-            blocker_text = row.blocked_reason[:24] if row.blocked_reason else "—"
-            blocker_style = "red" if row.blocked_reason else "dim"
-            # TUI-010: render compact progress bar for in-progress tasks
-            if row.progress_pct is not None:
-                progress_cell = render_progress_bar_text(row.progress_pct, width=10, show_pct=True)
-            else:
-                progress_cell = Text("\u2014", style="dim")
-            cells = (
-                Text(row.task_id, style="bold"),
-                Text(f"{prefix}{status_text}", style=colour),
-                Text(f"P{row.priority}", style=priority_style),
-                Text(row.role, style="cyan"),
-                Text(row.title),
-                Text(row.assigned_agent[:12] if row.assigned_agent else "—", style="dim"),
-                Text(row.age_display, style="dim"),
-                Text(str(row.retry_count), style="yellow" if row.retry_count > 0 else "dim"),
-                Text(blocker_text, style=blocker_style),
-                Text(row.model, style="dim"),
-                progress_cell,
-            )
+            cells = _build_task_cells(row, accessibility, render_progress_bar_text)
             if row.task_id in existing_keys:
-                # Update each cell individually — preserves cursor position
                 for col_label, cell_value in zip(columns, cells, strict=True):
                     with contextlib.suppress(Exception):
                         self.update_cell(row.task_id, col_label, cell_value)

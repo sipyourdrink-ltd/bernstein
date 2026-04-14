@@ -92,6 +92,39 @@ def sse_events(request: Request) -> StreamingResponse:
     )
 
 
+def _read_avg_quality_score(sdd_dir: Any) -> float:
+    """Read average quality score from the JSONL metrics file."""
+    quality_file = sdd_dir / "metrics" / "quality_scores.jsonl"
+    if not quality_file.exists():
+        return 0.0
+    scores: list[int] = []
+    for line in quality_file.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data: dict[str, Any] = json.loads(line)
+            if "total" in data:
+                scores.append(int(data["total"]))
+        except ValueError:
+            pass
+    return sum(scores) / len(scores) if scores else 0.0
+
+
+def _completion_rate_color(completed: int, failed: int) -> str:
+    """Return a shields.io color string based on completion rate."""
+    total = completed + failed
+    if total == 0:
+        return "lightgrey"
+    rate = completed / total
+    if rate >= 0.9:
+        return "brightgreen"
+    if rate >= 0.7:
+        return "yellowgreen"
+    if rate >= 0.5:
+        return "yellow"
+    return "red"
+
+
 @router.get("/badge.json")
 def get_badge(request: Request) -> JSONResponse:
     """Return dynamic badge data for GitHub shields.io integration.
@@ -122,35 +155,10 @@ def get_badge(request: Request) -> JSONResponse:
                 total_cost = tracker.spent_usd
 
     # Quality score
-    quality_score = 0.0
-    quality_file = sdd_dir / "metrics" / "quality_scores.jsonl"
-    if quality_file.exists():
-        scores: list[int] = []
-        for line in quality_file.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                try:
-                    data: dict[str, Any] = json.loads(line)
-                    if "total" in data:
-                        scores.append(int(data["total"]))
-                except ValueError:
-                    pass
-        if scores:
-            quality_score = sum(scores) / len(scores)
+    quality_score = _read_avg_quality_score(sdd_dir)
 
     # Determine color based on completion rate
-    total = completed + failed
-    if total > 0:
-        rate = completed / total
-        if rate >= 0.9:
-            color = "brightgreen"
-        elif rate >= 0.7:
-            color = "yellowgreen"
-        elif rate >= 0.5:
-            color = "yellow"
-        else:
-            color = "red"
-    else:
-        color = "lightgrey"
+    color = _completion_rate_color(completed, failed)
 
     return JSONResponse(
         content={

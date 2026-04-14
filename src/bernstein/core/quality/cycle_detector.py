@@ -99,7 +99,7 @@ def detect_cycles(tasks: Sequence[Task]) -> CycleReport:
     for t in tasks:
         adjacency[t.id] = [dep for dep in t.depends_on if dep in task_ids]
 
-    colour: dict[str, int] = dict.fromkeys(task_ids, 0)  # 0=WHITE
+    colour: dict[str, int] = dict.fromkeys(task_ids, 0)
     parent: dict[str, str | None] = dict.fromkeys(task_ids, None)
     cycles: list[list[str]] = []
     seen_cycle_sets: list[frozenset[str]] = []

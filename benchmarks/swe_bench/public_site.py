@@ -150,6 +150,56 @@ def build_public_context(summaries: dict[str, ScenarioSummary]) -> PublicBenchma
     )
 
 
+def _md_ready_section(context: PublicBenchmarkContext, lines: list[str]) -> None:
+    """Append verified results section to markdown lines."""
+    lines.append(f"## {context.heading}")
+    lines.append("")
+    lines.append(f"**Dataset:** {context.dataset}")
+    lines.append(f"**Commit:** `{context.commit_sha}`")
+    if context.last_verified_run:
+        lines.append(f"**Last verified run:** {context.last_verified_run}")
+    lines.append("")
+    lines.append("| Scenario | Resolve rate | Mean time | Mean cost/issue | Total cost | Model family |")
+    lines.append("|---|---:|---:|---:|---:|---|")
+    for summary in context.required_summaries:
+        lines.append(
+            f"| {SCENARIO_LABELS.get(summary.scenario_name, summary.scenario_name)} "
+            f"| {_pct(summary.resolve_rate)} "
+            f"| {summary.mean_wall_time_s:.0f}s "
+            f"| ${summary.mean_cost_per_instance_usd:.2f} "
+            f"| ${summary.total_cost_usd:.2f} "
+            f"| {summary.model_family or 'n/a'} |"
+        )
+    lines.append("")
+
+
+def _md_artifact_section(context: PublicBenchmarkContext, lines: list[str]) -> None:
+    """Append artifact state section to markdown lines."""
+    lines.append("## Current Artifact State")
+    lines.append("")
+    lines.append("| Scenario | Source type | Verified | Sample size | Notes |")
+    lines.append("|---|---|---|---:|---|")
+    for name in PUBLIC_SCENARIO_ORDER:
+        summary = context.summaries.get(name)
+        if summary is None:
+            lines.append(f"| {SCENARIO_LABELS.get(name, name)} | missing | No | 0 | Awaiting artifact |")
+            continue
+        lines.append(
+            f"| {SCENARIO_LABELS.get(name, name)} "
+            f"| {summary.source_type} "
+            f"| {'Yes' if summary.verified else 'No'} "
+            f"| {summary.sample_size or summary.total_instances} "
+            f"| {summary.notes or 'Preview artifact'} |"
+        )
+    lines.append("")
+    if context.blockers:
+        lines.append("## Publication Blockers")
+        lines.append("")
+        for blocker in context.blockers:
+            lines.append(f"- {blocker}")
+        lines.append("")
+
+
 def render_public_markdown(context: PublicBenchmarkContext) -> str:
     """Render a safe public benchmark markdown report."""
     lines: list[str] = []
@@ -160,51 +210,9 @@ def render_public_markdown(context: PublicBenchmarkContext) -> str:
     lines.append("")
 
     if context.ready:
-        lines.append(f"## {context.heading}")
-        lines.append("")
-        lines.append(f"**Dataset:** {context.dataset}")
-        lines.append(f"**Commit:** `{context.commit_sha}`")
-        if context.last_verified_run:
-            lines.append(f"**Last verified run:** {context.last_verified_run}")
-        lines.append("")
-        lines.append("| Scenario | Resolve rate | Mean time | Mean cost/issue | Total cost | Model family |")
-        lines.append("|---|---:|---:|---:|---:|---|")
-        for summary in context.required_summaries:
-            lines.append(
-                "| "
-                f"{SCENARIO_LABELS.get(summary.scenario_name, summary.scenario_name)} "
-                f"| {_pct(summary.resolve_rate)} "
-                f"| {summary.mean_wall_time_s:.0f}s "
-                f"| ${summary.mean_cost_per_instance_usd:.2f} "
-                f"| ${summary.total_cost_usd:.2f} "
-                f"| {summary.model_family or 'n/a'} |"
-            )
-        lines.append("")
+        _md_ready_section(context, lines)
     else:
-        lines.append("## Current Artifact State")
-        lines.append("")
-        lines.append("| Scenario | Source type | Verified | Sample size | Notes |")
-        lines.append("|---|---|---|---:|---|")
-        for name in PUBLIC_SCENARIO_ORDER:
-            summary = context.summaries.get(name)
-            if summary is None:
-                lines.append(f"| {SCENARIO_LABELS.get(name, name)} | missing | No | 0 | Awaiting artifact |")
-                continue
-            lines.append(
-                "| "
-                f"{SCENARIO_LABELS.get(name, name)} "
-                f"| {summary.source_type} "
-                f"| {'Yes' if summary.verified else 'No'} "
-                f"| {summary.sample_size or summary.total_instances} "
-                f"| {summary.notes or 'Preview artifact'} |"
-            )
-        lines.append("")
-        if context.blockers:
-            lines.append("## Publication Blockers")
-            lines.append("")
-            for blocker in context.blockers:
-                lines.append(f"- {blocker}")
-            lines.append("")
+        _md_artifact_section(context, lines)
 
     lines.append("## Public Benchmark Policy")
     lines.append("")
@@ -242,6 +250,67 @@ def render_public_markdown(context: PublicBenchmarkContext) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _html_verified_results_section(context: PublicBenchmarkContext) -> str:
+    """Build the verified results HTML section."""
+    result_rows = "\n".join(
+        "<tr>"
+        f"<td>{escape(SCENARIO_LABELS.get(s.scenario_name, s.scenario_name))}</td>"
+        f"<td>{escape(s.model_family or 'n/a')}</td>"
+        f"<td>{_pct(s.resolve_rate)}</td>"
+        f"<td>{s.mean_wall_time_s:.0f}s</td>"
+        f"<td>${s.mean_cost_per_instance_usd:.2f}</td>"
+        f"<td>${s.total_cost_usd:.2f}</td>"
+        "</tr>"
+        for s in context.required_summaries
+    )
+    return f"""
+  <section id="verified-results" style="padding: 0; margin-bottom: var(--space-16);">
+    <h2>{escape(context.heading)}</h2>
+    <p>Dataset: {escape(context.dataset or "SWE-Bench Lite")} &middot; Commit: <code>{escape(context.commit_sha or "")}</code> &middot; Last verified run: {escape(context.last_verified_run or "")}</p>
+    <div class="comparison-wrap">
+      <table class="comparison-table">
+        <thead><tr><th>Scenario</th><th>Model family</th><th>Resolve rate</th><th>Mean time</th><th>Mean cost/issue</th><th>Total cost</th></tr></thead>
+        <tbody>{result_rows}</tbody>
+      </table>
+    </div>
+  </section>
+"""
+
+
+def _html_preview_results_section(context: PublicBenchmarkContext) -> str:
+    """Build the preview/artifact state HTML section."""
+    preview_parts: list[str] = []
+    for name in PUBLIC_SCENARIO_ORDER:
+        summary = context.summaries.get(name)
+        source_type = escape(summary.source_type if summary is not None else "missing")
+        verified = "Yes" if summary is not None and summary.verified else "No"
+        sample_count = (summary.sample_size or summary.total_instances) if summary is not None else 0
+        notes = escape(summary.notes if summary is not None and summary.notes else "Awaiting artifact")
+        preview_parts.append(
+            f"<tr><td>{escape(SCENARIO_LABELS.get(name, name))}</td>"
+            f"<td>{source_type}</td><td>{verified}</td>"
+            f"<td>{sample_count}</td><td>{notes}</td></tr>"
+        )
+    preview_rows = "\n".join(preview_parts)
+    blocker_html = "".join(f"<li>{escape(b)}</li>" for b in context.blockers)
+    return f"""
+  <section id="artifact-state" style="padding: 0; margin-bottom: var(--space-16);">
+    <h2>Current Artifact State</h2>
+    <p>This page suppresses headline benchmark claims until all four public scenarios are present as verified SWE-Bench eval artifacts.</p>
+    <div class="comparison-wrap">
+      <table class="comparison-table">
+        <thead><tr><th>Scenario</th><th>Source type</th><th>Verified</th><th>Sample size</th><th>Notes</th></tr></thead>
+        <tbody>{preview_rows}</tbody>
+      </table>
+    </div>
+    <div class="callout callout-info" style="margin-top: var(--space-4);">
+      <strong>Publication blockers</strong>
+      <ul>{blocker_html}</ul>
+    </div>
+  </section>
+"""
+
+
 def render_public_html(context: PublicBenchmarkContext) -> str:
     """Render the public benchmark page for ``docs/leaderboard.html``."""
     cards = [
@@ -268,93 +337,9 @@ def render_public_html(context: PublicBenchmarkContext) -> str:
 
     status_html = "".join(f"<li>{escape(line)}</li>" for line in context.status_lines)
 
-    if context.ready:
-        result_rows = "\n".join(
-            (
-                "<tr>"
-                f"<td>{escape(SCENARIO_LABELS.get(summary.scenario_name, summary.scenario_name))}</td>"
-                f"<td>{escape(summary.model_family or 'n/a')}</td>"
-                f"<td>{_pct(summary.resolve_rate)}</td>"
-                f"<td>{summary.mean_wall_time_s:.0f}s</td>"
-                f"<td>${summary.mean_cost_per_instance_usd:.2f}</td>"
-                f"<td>${summary.total_cost_usd:.2f}</td>"
-                "</tr>"
-            )
-            for summary in context.required_summaries
-        )
-        results_section = f"""
-  <section id="verified-results" style="padding: 0; margin-bottom: var(--space-16);">
-    <h2>{escape(context.heading)}</h2>
-    <p>Dataset: {escape(context.dataset or "SWE-Bench Lite")} &middot; Commit: <code>{escape(context.commit_sha or "")}</code> &middot; Last verified run: {escape(context.last_verified_run or "")}</p>
-    <div class="comparison-wrap">
-      <table class="comparison-table">
-        <thead>
-          <tr>
-            <th>Scenario</th>
-            <th>Model family</th>
-            <th>Resolve rate</th>
-            <th>Mean time</th>
-            <th>Mean cost/issue</th>
-            <th>Total cost</th>
-          </tr>
-        </thead>
-        <tbody>
-          {result_rows}
-        </tbody>
-      </table>
-    </div>
-  </section>
-"""
-    else:
-        _preview_parts: list[str] = []
-        for name in PUBLIC_SCENARIO_ORDER:
-            summary = context.summaries.get(name)
-            source_type = escape(summary.source_type if summary is not None else "missing")
-            verified = "Yes" if summary is not None and summary.verified else "No"
-            if summary is not None and summary.sample_size:
-                sample_count = summary.sample_size
-            elif summary is not None:
-                sample_count = summary.total_instances
-            else:
-                sample_count = 0
-            notes = escape(summary.notes if summary is not None and summary.notes else "Awaiting artifact")
-            _preview_parts.append(
-                "<tr>"
-                f"<td>{escape(SCENARIO_LABELS.get(name, name))}</td>"
-                f"<td>{source_type}</td>"
-                f"<td>{verified}</td>"
-                f"<td>{sample_count}</td>"
-                f"<td>{notes}</td>"
-                "</tr>"
-            )
-        preview_rows = "\n".join(_preview_parts)
-        blocker_html = "".join(f"<li>{escape(blocker)}</li>" for blocker in context.blockers)
-        results_section = f"""
-  <section id="artifact-state" style="padding: 0; margin-bottom: var(--space-16);">
-    <h2>Current Artifact State</h2>
-    <p>This page suppresses headline benchmark claims until all four public scenarios are present as verified SWE-Bench eval artifacts.</p>
-    <div class="comparison-wrap">
-      <table class="comparison-table">
-        <thead>
-          <tr>
-            <th>Scenario</th>
-            <th>Source type</th>
-            <th>Verified</th>
-            <th>Sample size</th>
-            <th>Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          {preview_rows}
-        </tbody>
-      </table>
-    </div>
-    <div class="callout callout-info" style="margin-top: var(--space-4);">
-      <strong>Publication blockers</strong>
-      <ul>{blocker_html}</ul>
-    </div>
-  </section>
-"""
+    results_section = (
+        _html_verified_results_section(context) if context.ready else _html_preview_results_section(context)
+    )
 
     architecture_rows = "\n".join(
         (

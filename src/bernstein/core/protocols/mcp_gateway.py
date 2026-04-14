@@ -234,61 +234,28 @@ class MCPGateway:
     # Core proxy
     # ------------------------------------------------------------------
 
-    async def handle_jsonrpc(self, message: dict[str, Any]) -> dict[str, Any] | None:
-        """Handle one JSON-RPC message, recording to WAL.
-
-        Args:
-            message: Parsed JSON-RPC request or notification.
-
-        Returns:
-            Response dict for requests (``id`` present), ``None`` for notifications.
-        """
-        method = str(message.get("method", ""))
-        params: dict[str, Any] = message.get("params") or {}
-        req_id = message.get("id")
-        is_notification = "id" not in message
-
-        # ------------------------------------------------------------------
-        # Replay mode
-        # ------------------------------------------------------------------
-        if self._replay is not None:
-            if is_notification:
-                return None
-            recorded = self._replay.find_response(method, params)
-            if recorded is not None:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": recorded.get("result"),
-                }
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32000, "message": "No recorded response for this call"},
-            }
-
-        # ------------------------------------------------------------------
-        # Live proxy mode
-        # ------------------------------------------------------------------
+    def _handle_replay(
+        self, method: str, params: dict[str, Any], req_id: Any, is_notification: bool
+    ) -> dict[str, Any] | None:
+        """Handle a message in replay mode."""
+        assert self._replay is not None
         if is_notification:
-            if self._proc:
-                await self._send_upstream(message)
             return None
+        recorded = self._replay.find_response(method, params)
+        if recorded is not None:
+            return {"jsonrpc": "2.0", "id": req_id, "result": recorded.get("result")}
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32000, "message": "No recorded response for this call"},
+        }
 
-        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
-        self._pending[req_id] = fut
-        t0 = time.monotonic()
-        try:
-            await self._send_upstream(message)
-            response: dict[str, Any] = await asyncio.wait_for(asyncio.shield(fut), timeout=30.0)
-        finally:
-            self._pending.pop(req_id, None)
-
-        latency_ms = (time.monotonic() - t0) * 1000.0
+    def _record_wal_and_metrics(
+        self, method: str, params: dict[str, Any], req_id: Any, response: dict[str, Any], latency_ms: float
+    ) -> None:
+        """Write WAL record and update per-tool metrics."""
         tool_name = str(params.get("name", "")) if method == "tools/call" else ""
         has_error = response.get("error") is not None
-
-        # WAL record
         self._wal_writer.append(
             decision_type="mcp_tool_call",
             inputs={
@@ -305,12 +272,44 @@ class MCPGateway:
             },
             actor="mcp_gateway",
         )
-
-        # Metrics
         metric_key = f"tools/call:{tool_name}" if tool_name else method
         if metric_key not in self._metrics:
             self._metrics[metric_key] = ToolMetrics(tool_name=metric_key)
         self._metrics[metric_key].record(latency_ms, error=has_error)
+
+    async def handle_jsonrpc(self, message: dict[str, Any]) -> dict[str, Any] | None:
+        """Handle one JSON-RPC message, recording to WAL.
+
+        Args:
+            message: Parsed JSON-RPC request or notification.
+
+        Returns:
+            Response dict for requests (``id`` present), ``None`` for notifications.
+        """
+        method = str(message.get("method", ""))
+        params: dict[str, Any] = message.get("params") or {}
+        req_id = message.get("id")
+        is_notification = "id" not in message
+
+        if self._replay is not None:
+            return self._handle_replay(method, params, req_id, is_notification)
+
+        if is_notification:
+            if self._proc:
+                await self._send_upstream(message)
+            return None
+
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self._pending[req_id] = fut
+        t0 = time.monotonic()
+        try:
+            await self._send_upstream(message)
+            response: dict[str, Any] = await asyncio.wait_for(asyncio.shield(fut), timeout=30.0)
+        finally:
+            self._pending.pop(req_id, None)
+
+        latency_ms = (time.monotonic() - t0) * 1000.0
+        self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
 
         return response
 

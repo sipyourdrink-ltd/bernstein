@@ -159,56 +159,19 @@ def retry_http(
             for attempt in range(config.max_retries + 1):
                 try:
                     result = func(*args, **kwargs)
-
-                    # If the result is an httpx.Response, check status
-                    if (
-                        isinstance(result, httpx.Response)
-                        and is_retryable_response(result, config)
-                        and attempt < config.max_retries
-                    ):
-                        delay = compute_backoff(
-                            attempt,
-                            config.base_delay_s,
-                            config.max_delay_s,
-                            jitter=config.jitter,
-                        )
-                        logger.warning(
-                            "Retryable HTTP %d from %s (attempt %d/%d), backing off %.2fs",
-                            result.status_code,
-                            func.__name__,
-                            attempt + 1,
-                            config.max_retries,
-                            delay,
-                        )
-                        time.sleep(delay)
-                        continue
-                    return result
+                    if not _should_retry_response(result, config, attempt):
+                        return result
+                    _backoff_and_log_response(result, func.__name__, attempt, config)
+                    continue
 
                 except Exception as exc:
                     last_exception = exc
                     if not is_retryable_exception(exc):
                         raise
-
-                    if attempt < config.max_retries:
-                        delay = compute_backoff(
-                            attempt,
-                            config.base_delay_s,
-                            config.max_delay_s,
-                            jitter=config.jitter,
-                        )
-                        logger.warning(
-                            "Retryable error in %s (attempt %d/%d): %s. Backing off %.2fs",
-                            func.__name__,
-                            attempt + 1,
-                            config.max_retries,
-                            exc,
-                            delay,
-                        )
-                        time.sleep(delay)
-                    else:
+                    if attempt >= config.max_retries:
                         raise
+                    _backoff_and_log_exception(exc, func.__name__, attempt, config)
 
-            # Should not reach here, but satisfy type checker
             if last_exception is not None:
                 raise last_exception
             msg = f"Retry exhausted for {func.__name__}"
@@ -217,6 +180,39 @@ def retry_http(
         return wrapper
 
     return decorator
+
+
+def _should_retry_response(result: Any, config: RetryConfig, attempt: int) -> bool:
+    """Check if a response should be retried."""
+    return isinstance(result, httpx.Response) and is_retryable_response(result, config) and attempt < config.max_retries
+
+
+def _backoff_and_log_response(result: Any, func_name: str, attempt: int, config: RetryConfig) -> None:
+    """Log and sleep for a retryable HTTP response."""
+    delay = compute_backoff(attempt, config.base_delay_s, config.max_delay_s, jitter=config.jitter)
+    logger.warning(
+        "Retryable HTTP %d from %s (attempt %d/%d), backing off %.2fs",
+        result.status_code,
+        func_name,
+        attempt + 1,
+        config.max_retries,
+        delay,
+    )
+    time.sleep(delay)
+
+
+def _backoff_and_log_exception(exc: Exception, func_name: str, attempt: int, config: RetryConfig) -> None:
+    """Log and sleep for a retryable exception."""
+    delay = compute_backoff(attempt, config.base_delay_s, config.max_delay_s, jitter=config.jitter)
+    logger.warning(
+        "Retryable error in %s (attempt %d/%d): %s. Backing off %.2fs",
+        func_name,
+        attempt + 1,
+        config.max_retries,
+        exc,
+        delay,
+    )
+    time.sleep(delay)
 
 
 def retry_request(

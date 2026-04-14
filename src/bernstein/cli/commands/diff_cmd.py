@@ -196,6 +196,54 @@ def _get_stat_from_branch(branch: str, workdir: Path, base: str = "main") -> str
 # ---------------------------------------------------------------------------
 
 
+def _try_worktree_diff(
+    session_id: str, root: Path, base: str,
+) -> tuple[str, str, str, list[FileDiffStat]]:
+    """Try to get diff from a live worktree. Returns (diff, label, stat, file_stats)."""
+    worktree_path = root / ".sdd" / "worktrees" / session_id
+    has_worktree = worktree_path.exists() and (worktree_path / ".git").exists()
+    if not has_worktree:
+        return "", "", "", []
+    diff_text = _get_diff_from_worktree(worktree_path, base)
+    if not diff_text:
+        return "", "", "", []
+    label = f"[dim]source:[/dim] worktree [cyan]{session_id}[/cyan] vs [yellow]{base}[/yellow]"
+    stat = _get_stat_from_worktree(worktree_path, base)
+    stats = _get_numstat(["diff", f"{base}...HEAD"], worktree_path)
+    return diff_text, label, stat, stats
+
+
+def _try_branch_diff(
+    session_id: str, root: Path, base: str,
+) -> tuple[str, str, str, list[FileDiffStat]]:
+    """Try to get diff from a local branch. Returns (diff, label, stat, file_stats)."""
+    branch = f"agent/{session_id}"
+    if not _branch_exists(branch, root):
+        return "", "", "", []
+    diff_text = _get_diff_from_branch(branch, root, base)
+    if not diff_text:
+        return "", "", "", []
+    label = f"[dim]source:[/dim] branch [cyan]{branch}[/cyan] vs [yellow]{base}[/yellow]"
+    stat = _get_stat_from_branch(branch, root, base)
+    stats = _get_numstat(["diff", f"{base}...{branch}"], root)
+    return diff_text, label, stat, stats
+
+
+def _try_merge_commit_diff(
+    session_id: str, root: Path,
+) -> tuple[str, str, str, list[FileDiffStat]]:
+    """Try to get diff from a merge commit. Returns (diff, label, stat, file_stats)."""
+    merge_commit = _find_merge_commit(session_id, root)
+    if not merge_commit:
+        return "", "", "", []
+    diff_text = _get_diff_from_merge_commit(merge_commit, root)
+    if not diff_text:
+        return "", "", "", []
+    label = f"[dim]source:[/dim] merge commit [cyan]{merge_commit}[/cyan] ([dim]agent/{session_id}[/dim])"
+    stats = _get_numstat(["diff", f"{merge_commit}^..{merge_commit}"], root)
+    return diff_text, label, "", stats
+
+
 def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base: str = "main") -> ResolvedDiff:
     """Resolve a diff for a task ID or agent session ID.
 
@@ -211,7 +259,6 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
     Returns:
         ResolvedDiff with the diff text and metadata.
     """
-    # Try as task ID first, then as session ID
     agent = _find_agent_for_task(identifier, agents) or _find_agent_by_session(identifier, agents)
     session_id = None if agent is None else agent.get("id")
 
@@ -221,43 +268,20 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
     file_stats: list[FileDiffStat] = []
 
     if session_id:
-        branch = f"agent/{session_id}"
-        worktree_path = root / ".sdd" / "worktrees" / session_id
-
-        # Live worktree
-        if worktree_path.exists() and (worktree_path / ".git").exists():
-            diff_text = _get_diff_from_worktree(worktree_path, base)
+        for try_fn in [
+            lambda: _try_worktree_diff(session_id, root, base),
+            lambda: _try_branch_diff(session_id, root, base),
+            lambda: _try_merge_commit_diff(session_id, root),
+        ]:
+            diff_text, source_label, stat_text, file_stats = try_fn()
             if diff_text:
-                source_label = f"[dim]source:[/dim] worktree [cyan]{session_id}[/cyan] vs [yellow]{base}[/yellow]"
-                stat_text = _get_stat_from_worktree(worktree_path, base)
-                file_stats = _get_numstat(["diff", f"{base}...HEAD"], worktree_path)
-
-        # Local branch still exists
-        if not diff_text and _branch_exists(branch, root):
-            diff_text = _get_diff_from_branch(branch, root, base)
-            if diff_text:
-                source_label = f"[dim]source:[/dim] branch [cyan]{branch}[/cyan] vs [yellow]{base}[/yellow]"
-                stat_text = _get_stat_from_branch(branch, root, base)
-                file_stats = _get_numstat(["diff", f"{base}...{branch}"], root)
-
-        # Merged branch
-        if not diff_text:
-            merge_commit = _find_merge_commit(session_id, root)
-            if merge_commit:
-                diff_text = _get_diff_from_merge_commit(merge_commit, root)
-                if diff_text:
-                    source_label = (
-                        f"[dim]source:[/dim] merge commit [cyan]{merge_commit}[/cyan] ([dim]agent/{session_id}[/dim])"
-                    )
-                    file_stats = _get_numstat(["diff", f"{merge_commit}^..{merge_commit}"], root)
+                break
 
     # Last resort: search commits
     if not diff_text:
         diff_text = _search_commits_by_task_id(identifier, root)
         if diff_text:
             source_label = f"[dim]source:[/dim] commit search for [cyan]{identifier}[/cyan]"
-            # Extract hash from diff_text if possible, or skip stats
-            # For simplicity, we skip numstat for commit search for now
 
     return ResolvedDiff(
         diff_text=diff_text,
@@ -383,11 +407,46 @@ def _render_compare(left: ResolvedDiff, right: ResolvedDiff, left_name: str, rig
         console.print()
 
 
+def _format_change_text(stat: FileDiffStat) -> Any:
+    """Format addition/deletion counts as a Rich Text object."""
+    from rich.text import Text
+
+    changes = Text()
+    if stat.is_binary:
+        changes.append("binary", style="dim")
+        return changes
+    if stat.additions > 0:
+        changes.append(f"+{stat.additions}", style="green")
+    if stat.deletions > 0:
+        if stat.additions > 0:
+            changes.append(" ")
+        changes.append(f"-{stat.deletions}", style="red")
+    return changes
+
+
+_SENSITIVE_KEYWORDS = ("secret", "auth", "encrypt", "key", "config")
+
+
+def _assess_file_risk(stat: FileDiffStat) -> Any:
+    """Assess risk level for a file diff."""
+    from rich.text import Text
+
+    path_lower = stat.path.lower()
+    total_changes = stat.additions + stat.deletions
+
+    if any(k in path_lower for k in _SENSITIVE_KEYWORDS):
+        return Text("HIGH", style="red")
+    if total_changes > 500:
+        return Text("LARGE", style="magenta")
+    if "test" in path_lower and stat.deletions > stat.additions:
+        return Text("MODERATE", style="yellow")
+    return Text("low", style="dim")
+
+
 def _render_enhanced_summary(resolved: ResolvedDiff) -> None:
     """Render a file-level summary with risk indicators."""
     from rich.panel import Panel
     from rich.table import Table
-    from rich.text import Text
 
     if not resolved.file_stats:
         return
@@ -404,26 +463,8 @@ def _render_enhanced_summary(resolved: ResolvedDiff) -> None:
         total_adds += stat.additions
         total_dels += stat.deletions
 
-        changes = Text()
-        if stat.is_binary:
-            changes.append("binary", style="dim")
-        else:
-            if stat.additions > 0:
-                changes.append(f"+{stat.additions}", style="green")
-            if stat.deletions > 0:
-                if stat.additions > 0:
-                    changes.append(" ")
-                changes.append(f"-{stat.deletions}", style="red")
-
-        # Basic risk detection
-        risk = Text("low", style="dim")
-        if "test" in stat.path.lower() and stat.deletions > stat.additions:
-            risk = Text("MODERATE", style="yellow")
-        if any(k in stat.path.lower() for k in ["secret", "auth", "encrypt", "key", "config"]):
-            risk = Text("HIGH", style="red")
-        if stat.additions + stat.deletions > 500:
-            risk = Text("LARGE", style="magenta")
-
+        changes = _format_change_text(stat)
+        risk = _assess_file_risk(stat)
         table.add_row(stat.path, changes, risk)
 
     summary_text = (
@@ -436,6 +477,23 @@ def _render_enhanced_summary(resolved: ResolvedDiff) -> None:
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
+
+
+def _render_stat_only(resolved: ResolvedDiff, root: Path, base: str) -> None:
+    """Render stat-only output for a resolved diff."""
+    if resolved.stat_text:
+        console.print(resolved.stat_text)
+        return
+    if not resolved.session_id:
+        console.print("[dim](stat not available for this source)[/dim]")
+        return
+    worktree_path = root / ".sdd" / "worktrees" / resolved.session_id
+    if worktree_path.exists():
+        stat = _run_git(["diff", f"{base}...HEAD", "--stat"], worktree_path)
+    else:
+        branch = f"agent/{resolved.session_id}"
+        stat = _run_git(["diff", f"{base}...{branch}", "--stat"], root)
+    console.print(stat or "[dim](no stat available)[/dim]")
 
 
 @click.command("diff")
@@ -541,20 +599,7 @@ def diff_cmd(
         _render_enhanced_summary(resolved)
 
     if stat_only:
-        if resolved.stat_text:
-            console.print(resolved.stat_text)
-        else:
-            # Re-run with --stat if we have enough info
-            if resolved.session_id:
-                worktree_path = root / ".sdd" / "worktrees" / resolved.session_id
-                if worktree_path.exists():
-                    stat = _run_git(["diff", f"{base}...HEAD", "--stat"], worktree_path)
-                else:
-                    branch = f"agent/{resolved.session_id}"
-                    stat = _run_git(["diff", f"{base}...{branch}", "--stat"], root)
-                console.print(stat or "[dim](no stat available)[/dim]")
-            else:
-                console.print("[dim](stat not available for this source)[/dim]")
+        _render_stat_only(resolved, root, base)
         return
 
     if raw:

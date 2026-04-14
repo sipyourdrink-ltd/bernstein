@@ -125,30 +125,43 @@ def _extract_model_names(result: subprocess.CompletedProcess[str] | None) -> lis
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
-        models: list[str] = []
-        for line in text.splitlines():
-            candidate = line.strip().split()[0]
-            if candidate and any(ch.isalnum() for ch in candidate):
-                models.append(candidate)
-        return models
+        return _extract_models_from_lines(text)
 
     if isinstance(payload, list):
-        models: list[str] = []
-        payload_list = cast("list[object]", payload)
-        for item in payload_list:
-            if isinstance(item, str):
-                models.append(item)
-            elif isinstance(item, dict):
-                item_dict = cast("dict[str, object]", item)
-                name: object = item_dict.get("name", "")
-                if not isinstance(name, str) or not name:
-                    name = item_dict.get("id", "")
-                if not isinstance(name, str) or not name:
-                    name = item_dict.get("model", "")
-                if isinstance(name, str) and name:
-                    models.append(name)
-        return models
+        return _extract_models_from_json_list(cast("list[object]", payload))
     return []
+
+
+def _extract_models_from_lines(text: str) -> list[str]:
+    """Extract model names from line-oriented CLI output."""
+    models: list[str] = []
+    for line in text.splitlines():
+        candidate = line.strip().split()[0]
+        if candidate and any(ch.isalnum() for ch in candidate):
+            models.append(candidate)
+    return models
+
+
+def _extract_models_from_json_list(payload_list: list[object]) -> list[str]:
+    """Extract model names from a JSON array of strings or dicts."""
+    models: list[str] = []
+    for item in payload_list:
+        if isinstance(item, str):
+            models.append(item)
+        elif isinstance(item, dict):
+            name = _extract_model_name_from_dict(cast("dict[str, object]", item))
+            if name:
+                models.append(name)
+    return models
+
+
+def _extract_model_name_from_dict(item_dict: dict[str, object]) -> str:
+    """Extract a model name from a dict, trying 'name', 'id', then 'model' keys."""
+    for key in ("name", "id", "model"):
+        val: object = item_dict.get(key, "")
+        if isinstance(val, str) and val:
+            return val
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +512,27 @@ def _detect_kilo() -> tuple[AgentCapabilities | None, list[str]]:
     ), warnings
 
 
+def _detect_kiro_auth(binary_name: str) -> tuple[bool, str]:
+    """Detect Kiro authentication status via whoami, env var, or config file."""
+    whoami_result = _run_probe([binary_name, "whoami", "--format", "json"])
+    if whoami_result is not None and whoami_result.returncode == 0:
+        login_method = "Kiro account"
+        try:
+            payload = json.loads((whoami_result.stdout or "").strip())
+            method = payload.get("authMethod") or payload.get("provider")
+            if isinstance(method, str) and method:
+                login_method = method
+        except json.JSONDecodeError:
+            pass
+        return True, login_method
+
+    if os.environ.get("KIRO_API_KEY"):
+        return True, _LOGIN_API_KEY
+    if (Path.home() / ".kiro").exists():
+        return True, "config"
+    return False, ""
+
+
 def _detect_kiro() -> tuple[AgentCapabilities | None, list[str]]:
     """Detect Kiro CLI."""
     warnings: list[str] = []
@@ -509,25 +543,7 @@ def _detect_kiro() -> tuple[AgentCapabilities | None, list[str]]:
     binary_name = Path(binary).name
     version = _extract_version(_run_probe([binary_name, "--version"]))
 
-    logged_in = False
-    login_method = ""
-    whoami_result = _run_probe([binary_name, "whoami", "--format", "json"])
-    if whoami_result is not None and whoami_result.returncode == 0:
-        logged_in = True
-        login_method = "Kiro account"
-        try:
-            payload = json.loads((whoami_result.stdout or "").strip())
-            method = payload.get("authMethod") or payload.get("provider")
-            if isinstance(method, str) and method:
-                login_method = method
-        except json.JSONDecodeError:
-            pass
-    elif os.environ.get("KIRO_API_KEY"):
-        logged_in = True
-        login_method = _LOGIN_API_KEY
-    elif (Path.home() / ".kiro").exists():
-        logged_in = True
-        login_method = "config"
+    logged_in, login_method = _detect_kiro_auth(binary_name)
 
     models = _extract_model_names(_run_probe([binary_name, "chat", "--list-models", "--format", "json"]))
     if not models:

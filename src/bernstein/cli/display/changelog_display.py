@@ -48,6 +48,40 @@ _CHANGE_RE = re.compile(
 )
 
 
+def _flush_entry(
+    version: str | None,
+    date: str | None,
+    changes: list[str],
+    breaking: list[str],
+    entries: list[ChangelogEntry],
+) -> None:
+    """Append a completed entry to the list if version and date are set."""
+    if version is not None and date is not None:
+        entries.append(
+            ChangelogEntry(version=version, date=date, changes=changes, breaking=breaking)
+        )
+
+
+def _classify_line(
+    line: str,
+    current_breaking: list[str],
+    current_changes: list[str],
+) -> None:
+    """Classify a bullet line as breaking or normal change and append it."""
+    breaking_match = _BREAKING_RE.match(line)
+    if breaking_match:
+        text = breaking_match.group(1).strip()
+        if text:
+            current_breaking.append(text)
+        return
+
+    change_match = _CHANGE_RE.match(line)
+    if change_match:
+        text = change_match.group(1).strip()
+        if text:
+            current_changes.append(text)
+
+
 def parse_changelog(content: str) -> list[ChangelogEntry]:
     """Parse CHANGELOG.md content into structured entries.
 
@@ -76,50 +110,19 @@ def parse_changelog(content: str) -> list[ChangelogEntry]:
     for line in content.splitlines():
         header_match = _HEADER_RE.match(line)
         if header_match:
-            # Flush the previous entry
-            if current_version is not None and current_date is not None:
-                entries.append(
-                    ChangelogEntry(
-                        version=current_version,
-                        date=current_date,
-                        changes=current_changes,
-                        breaking=current_breaking,
-                    )
-                )
+            _flush_entry(current_version, current_date, current_changes, current_breaking, entries)
             current_version = header_match.group("version")
             current_date = header_match.group("date")
             current_changes = []
             current_breaking = []
             continue
 
-        # Only process bullet lines when inside a version section
         if current_version is None:
             continue
 
-        breaking_match = _BREAKING_RE.match(line)
-        if breaking_match:
-            text = breaking_match.group(1).strip()
-            if text:
-                current_breaking.append(text)
-            continue
+        _classify_line(line, current_breaking, current_changes)
 
-        change_match = _CHANGE_RE.match(line)
-        if change_match:
-            text = change_match.group(1).strip()
-            if text:
-                current_changes.append(text)
-
-    # Flush the last entry
-    if current_version is not None and current_date is not None:
-        entries.append(
-            ChangelogEntry(
-                version=current_version,
-                date=current_date,
-                changes=current_changes,
-                breaking=current_breaking,
-            )
-        )
-
+    _flush_entry(current_version, current_date, current_changes, current_breaking, entries)
     return entries
 
 

@@ -168,6 +168,56 @@ def _build_next_session_brief(open_tasks: list[dict[str, Any]]) -> str:
     show_default=True,
     help="Soft-stop timeout in seconds (only used with --stop).",
 )
+def _render_wrapup_brief(
+    workdir: Path,
+    saved_path: Path,
+    start_sha: str,
+    done_tasks: list[dict[str, Any]],
+    learnings: list[str],
+    git_diff_stat: str,
+    next_session_brief: str,
+) -> None:
+    """Print the Rich-formatted wrap-up brief."""
+    console.print()
+    console.print(Panel("[bold]Session Wrap-Up[/bold]", border_style="green", expand=False))
+
+    meta_table = Table(show_header=False, box=None, padding=(0, 2))
+    meta_table.add_column("Key", style="dim", no_wrap=True, min_width=16)
+    meta_table.add_column("Value")
+    meta_table.add_row("Saved to", str(saved_path.relative_to(workdir)))
+    if start_sha:
+        meta_table.add_row("Session start SHA", start_sha[:12])
+    console.print(meta_table)
+    console.print()
+
+    console.print(f"  [bold green]Completed[/bold green]   {len(done_tasks)} task(s)")
+    for task in done_tasks:
+        title = task.get("title", task.get("id", "?"))
+        summary = task.get("result_summary") or ""
+        short = summary[:60] + "…" if len(summary) > 60 else summary
+        suffix = f"  [dim]{short}[/dim]" if short else ""
+        console.print(f"    [green]✓[/green] {title}{suffix}")
+
+    if learnings:
+        console.print(f"\n  [bold red]Learnings[/bold red]   {len(learnings)} item(s)")
+        for item in learnings:
+            console.print(f"    [red]![/red] {item}")
+
+    if git_diff_stat and git_diff_stat != "(no uncommitted changes)":
+        console.print("\n  [bold cyan]Changes[/bold cyan]")
+        stat_lines = git_diff_stat.splitlines()
+        for line in stat_lines[:20]:
+            console.print(f"    [dim]{line}[/dim]")
+        if len(stat_lines) > 20:
+            console.print(f"    [dim]… {len(stat_lines) - 20} more lines[/dim]")
+
+    console.print("\n  [bold yellow]Next session[/bold yellow]")
+    for line in next_session_brief.splitlines():
+        console.print(f"    {line}")
+
+    console.print()
+
+
 def wrap_up(do_stop: bool, timeout: int) -> None:
     """End the current session with a structured wrap-up brief.
 
@@ -213,54 +263,10 @@ def wrap_up(do_stop: bool, timeout: int) -> None:
     saved_path = save_wrapup(workdir, brief)
 
     # 8. Print Rich-formatted wrap-up
-    console.print()
-    console.print(
-        Panel(
-            "[bold]Session Wrap-Up[/bold]",
-            border_style="green",
-            expand=False,
-        )
+    _render_wrapup_brief(
+        workdir, saved_path, start_sha, done_tasks, learnings,
+        git_diff_stat, next_session_brief,
     )
-
-    meta_table = Table(show_header=False, box=None, padding=(0, 2))
-    meta_table.add_column("Key", style="dim", no_wrap=True, min_width=16)
-    meta_table.add_column("Value")
-    meta_table.add_row("Saved to", str(saved_path.relative_to(workdir)))
-    if start_sha:
-        meta_table.add_row("Session start SHA", start_sha[:12])
-    console.print(meta_table)
-    console.print()
-
-    # Completed tasks
-    console.print(f"  [bold green]Completed[/bold green]   {len(done_tasks)} task(s)")
-    for task in done_tasks:
-        title = task.get("title", task.get("id", "?"))
-        summary = task.get("result_summary") or ""
-        short = summary[:60] + "…" if len(summary) > 60 else summary
-        suffix = f"  [dim]{short}[/dim]" if short else ""
-        console.print(f"    [green]✓[/green] {title}{suffix}")
-
-    # Learnings from failures
-    if learnings:
-        console.print(f"\n  [bold red]Learnings[/bold red]   {len(learnings)} item(s)")
-        for item in learnings:
-            console.print(f"    [red]![/red] {item}")
-
-    # Git diff stat
-    if git_diff_stat and git_diff_stat != "(no uncommitted changes)":
-        console.print("\n  [bold cyan]Changes[/bold cyan]")
-        for line in git_diff_stat.splitlines()[:20]:
-            console.print(f"    [dim]{line}[/dim]")
-        stat_lines = git_diff_stat.splitlines()
-        if len(stat_lines) > 20:
-            console.print(f"    [dim]… {len(stat_lines) - 20} more lines[/dim]")
-
-    # Next session brief
-    console.print("\n  [bold yellow]Next session[/bold yellow]")
-    for line in next_session_brief.splitlines():
-        console.print(f"    {line}")
-
-    console.print()
 
     # 9. Optionally soft-stop
     if do_stop:

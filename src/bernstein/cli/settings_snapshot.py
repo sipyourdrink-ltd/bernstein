@@ -157,6 +157,54 @@ def _read_config_file(path: Path) -> dict[str, Any]:
         return {}
 
 
+_EXTRA_SETTING_KEYS = frozenset({
+    "model", "effort", "timeout", "max_tokens", "retry_count", "log_level", "server_url",
+})
+
+
+def _is_known_setting(key: str) -> bool:
+    """Check whether a key is a recognized setting name."""
+    return key in _DEFAULTS or key in _EXTRA_SETTING_KEYS
+
+
+def _load_settings_from_configs(
+    working_dir: Path,
+    settings: dict[str, SettingValue],
+) -> list[str]:
+    """Load settings from config files and return list of paths checked."""
+    config_paths: list[str] = []
+    for config_rel in _CONFIG_FILES:
+        config_path = Path(config_rel).expanduser()
+        if not config_path.is_absolute():
+            config_path = working_dir / config_rel
+        config_paths.append(str(config_path))
+        if not config_path.exists():
+            continue
+        config_data = _read_config_file(config_path)
+        for key, value in config_data.items():
+            if _is_known_setting(key):
+                settings[key] = SettingValue(
+                    key=key, value=value, source="config", source_detail=str(config_path),
+                )
+    return config_paths
+
+
+def _load_settings_from_env(settings: dict[str, SettingValue]) -> dict[str, str]:
+    """Load settings from environment variables. Returns captured env vars."""
+    env_vars: dict[str, str] = {}
+    for env_key in _RELEVANT_ENV_VARS:
+        env_value = os.environ.get(env_key)
+        if env_value is None:
+            continue
+        env_vars[env_key] = env_value
+        setting_key = env_key.replace("BERNSTEIN_", "").lower()
+        if _is_known_setting(setting_key):
+            settings[setting_key] = SettingValue(
+                key=setting_key, value=env_value, source="env", source_detail=env_key,
+            )
+    return env_vars
+
+
 def capture_settings_snapshot(
     working_dir: Path | None = None,
     extra_env: dict[str, str] | None = None,
@@ -180,78 +228,18 @@ def capture_settings_snapshot(
         working_dir = Path.cwd()
 
     now = datetime.now(tz=UTC)
-    settings: dict[str, SettingValue] = {}
-    config_paths: list[str] = []
+    settings: dict[str, SettingValue] = {
+        key: SettingValue(key=key, value=value, source="default", source_detail="built-in defaults")
+        for key, value in _DEFAULTS.items()
+    }
 
-    # 1. Start with defaults
-    for key, value in _DEFAULTS.items():
-        settings[key] = SettingValue(
-            key=key,
-            value=value,
-            source="default",
-            source_detail="built-in defaults",
-        )
+    config_paths = _load_settings_from_configs(working_dir, settings)
+    env_vars = _load_settings_from_env(settings)
 
-    # 2. Load config files
-    for config_rel in _CONFIG_FILES:
-        config_path = Path(config_rel).expanduser()
-        if not config_path.is_absolute():
-            config_path = working_dir / config_rel
-
-        config_paths.append(str(config_path))
-
-        if config_path.exists():
-            config_data = _read_config_file(config_path)
-            for key, value in config_data.items():
-                if key in _DEFAULTS or key in [
-                    "model",
-                    "effort",
-                    "timeout",
-                    "max_tokens",
-                    "retry_count",
-                    "log_level",
-                    "server_url",
-                ]:
-                    settings[key] = SettingValue(
-                        key=key,
-                        value=value,
-                        source="config",
-                        source_detail=str(config_path),
-                    )
-
-    # 3. Environment variables
-    env_vars: dict[str, str] = {}
-    for env_key in _RELEVANT_ENV_VARS:
-        env_value = os.environ.get(env_key)
-        if env_value is not None:
-            env_vars[env_key] = env_value
-
-            # Map env var to setting key
-            setting_key = env_key.replace("BERNSTEIN_", "").lower()
-            if setting_key in _DEFAULTS or setting_key in [
-                "model",
-                "effort",
-                "timeout",
-                "max_tokens",
-                "retry_count",
-                "log_level",
-                "server_url",
-            ]:
-                settings[setting_key] = SettingValue(
-                    key=setting_key,
-                    value=env_value,
-                    source="env",
-                    source_detail=env_key,
-                )
-
-    # 4. Extra overrides (CLI args, etc.)
     if extra_env:
         for key, value in extra_env.items():
             settings[key] = SettingValue(
-                key=key,
-                value=value,
-                source="cli",
-                source_detail="command line argument",
+                key=key, value=value, source="cli", source_detail="command line argument",
             )
 
     return SettingsSnapshot(

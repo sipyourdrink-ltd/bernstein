@@ -66,26 +66,44 @@ def _print_failure_summary(output: str) -> None:
     dumping everything (which can be 1000+ lines with -s / no-capture).
     """
     lines = output.strip().split("\n")
-    # Find the FAILURES section and short test summary
-    in_section = False
-    printed = 0
-    for line in lines:
-        stripped = line.strip()
-        if "FAILURES" in stripped and "===" in stripped:
-            in_section = True
-        if "short test summary" in stripped:
-            in_section = True
-        if in_section:
-            print(f"       {line}")
-            printed += 1
-            if printed > 80:
-                print("       ... (truncated)")
-                break
-    if not printed:
-        # Fallback: show last 30 lines
+    extracted = _extract_failure_sections(lines)
+    if not extracted:
         for line in lines[-30:]:
             if line.strip():
                 print(f"       {line}")
+        return
+    for line in extracted:
+        print(f"       {line}")
+
+
+def _extract_failure_sections(lines: list[str]) -> list[str]:
+    """Extract FAILURES and short test summary sections from output lines."""
+    result: list[str] = []
+    in_section = False
+    for line in lines:
+        stripped = line.strip()
+        if ("FAILURES" in stripped and "===" in stripped) or "short test summary" in stripped:
+            in_section = True
+        if in_section:
+            result.append(line)
+            if len(result) > 80:
+                result.append("... (truncated)")
+                break
+    return result
+
+
+def _report_file_result(label: str, code: int, duration: float, output: str) -> bool:
+    """Report a single file result. Returns True if passed/skipped."""
+    if code == 0:
+        last_line = [ln for ln in output.strip().split("\n") if ln.strip()][-1] if output.strip() else ""
+        print(f"  PASS {label} ({duration:.1f}s) {last_line}")
+        return True
+    if code == 5:
+        print(f"  SKIP {label} (no tests)")
+        return True
+    print(f"  FAIL {label} ({duration:.1f}s)")
+    _print_failure_summary(output)
+    return False
 
 
 def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool) -> int:
@@ -106,19 +124,10 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool) ->
             continue
 
         total_duration += duration
-        if code == 0:
+        if _report_file_result(label, code, duration, output):
             passed += 1
-            # Extract test count from output
-            last_line = [ln for ln in output.strip().split("\n") if ln.strip()][-1] if output.strip() else ""
-            print(f"  PASS {label} ({duration:.1f}s) {last_line}")
-        elif code == 5:
-            # No tests collected — not a failure
-            passed += 1
-            print(f"  SKIP {label} (no tests)")
         else:
             failed += 1
-            print(f"  FAIL {label} ({duration:.1f}s)")
-            _print_failure_summary(output)
             if fail_fast:
                 break
 
@@ -161,18 +170,11 @@ def run_parallel(files: list[Path], extra_args: list[str], workers: int, fail_fa
                 continue
 
             done += 1
-            if code == 0 or code == 5:
+            label = f"[{done}/{total}] {fpath.name}"
+            if _report_file_result(label, code, duration, output):
                 passed += 1
-                status = "SKIP" if code == 5 else "PASS"
-                last_line = ""
-                if code == 0:
-                    last_line = [ln for ln in output.strip().split("\n") if ln.strip()][-1] if output.strip() else ""
-                suffix = "(no tests)" if code == 5 else f"({duration:.1f}s) {last_line}"
-                print(f"  {status} [{done}/{total}] {fpath.name} {suffix}")
             else:
                 failed += 1
-                print(f"  FAIL [{done}/{total}] {fpath.name} ({duration:.1f}s)")
-                _print_failure_summary(output)
                 if fail_fast:
                     abort = True
                     for f in futures:

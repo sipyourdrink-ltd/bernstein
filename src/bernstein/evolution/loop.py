@@ -232,6 +232,38 @@ class EvolutionLoop:
                 )
         return self._github
 
+    _EXPECTED_CYCLE_ERRORS = (ProposalGenerationError, SandboxValidationError, ApplyError, RollbackError)
+
+    def _log_github_sync_status(self) -> None:
+        """Log GitHub sync configuration at run start."""
+        if not self._github_sync:
+            return
+        gh = self._gh
+        if not (gh and gh.available):
+            return
+        if self._community_mode:
+            logger.info("Community mode enabled — scanning GitHub for evolve-candidate and feature-request issues")
+        else:
+            logger.info("GitHub sync enabled — proposals will be synced as Issues")
+
+    def _run_single_cycle(self, focus: str) -> None:
+        """Execute one cycle with error handling."""
+        try:
+            result = self.run_cycle()
+            if result is not None:
+                self._experiments.append(result)
+        except self._EXPECTED_CYCLE_ERRORS as exc:
+            self._record_error(exc, focus=focus)
+        except Exception as exc:
+            logger.error(
+                "Unexpected error in evolution cycle %d: %s",
+                self._cycle_count,
+                exc,
+                exc_info=True,
+                extra={"focus_area": focus, "error_type": type(exc).__name__, "cycle": self._cycle_count},
+            )
+            self._record_error(exc, focus=focus)
+
     def run(
         self,
         window_seconds: int | None = None,
@@ -262,47 +294,14 @@ class EvolutionLoop:
             effective_max,
             self._cycle_seconds,
         )
-        if self._github_sync:
-            gh = self._gh
-            if gh and gh.available:
-                if self._community_mode:
-                    logger.info(
-                        "Community mode enabled — scanning GitHub for evolve-candidate and feature-request issues"
-                    )
-                else:
-                    logger.info("GitHub sync enabled — proposals will be synced as Issues")
+        self._log_github_sync_status()
 
         while self._within_window(effective_window) and self._proposals_generated < effective_max and self._running:
             cycle_start = time.time()
-            # Peek at what the next cycle's focus will be for error context.
             rotation = _FOCUS_ROTATION_COMMUNITY if self._community_mode else _FOCUS_ROTATION
             focus = rotation[self._cycle_count % len(rotation)]
 
-            try:
-                result = self.run_cycle()
-                if result is not None:
-                    self._experiments.append(result)
-            except ProposalGenerationError as exc:
-                self._record_error(exc, focus=focus)
-            except SandboxValidationError as exc:
-                self._record_error(exc, focus=focus)
-            except ApplyError as exc:
-                self._record_error(exc, focus=focus)
-            except RollbackError as exc:
-                self._record_error(exc, focus=focus)
-            except Exception as exc:
-                logger.error(
-                    "Unexpected error in evolution cycle %d: %s",
-                    self._cycle_count,
-                    exc,
-                    exc_info=True,
-                    extra={
-                        "focus_area": focus,
-                        "error_type": type(exc).__name__,
-                        "cycle": self._cycle_count,
-                    },
-                )
-                self._record_error(exc, focus=focus)
+            self._run_single_cycle(focus)
 
             # Sleep until next cycle boundary, but only if still running.
             if self._running and self._within_window(effective_window):
@@ -320,6 +319,19 @@ class EvolutionLoop:
             self._proposals_generated,
         )
         return self._experiments
+
+    def _prepare_governance_cycle(self) -> None:
+        """Adjust governance weights and reset per-cycle accumulators."""
+        self._cycle_weights_before = self._current_weights
+        project_ctx = self._build_project_context()
+        self._current_weights, self._cycle_weight_reason = self._governor.adjust_weights(
+            self._cycle_weights_before, project_ctx
+        )
+        self._governor.persist_weights(self._current_weights, self._cycle_weight_reason)
+        self._cycle_proposals_evaluated = 0
+        self._cycle_proposals_applied = 0
+        self._cycle_risk_scores = []
+        self._cycle_outcome_metrics = {}
 
     def run_cycle(self) -> ExperimentResult | None:
         """Run a single experiment cycle (one proposal).
@@ -354,41 +366,20 @@ class EvolutionLoop:
         if focus == "creative_vision":
             return self._run_creative_cycle(cycle_start)
 
-        # Governance — adjust weights before each scoring cycle.
-        self._cycle_weights_before = self._current_weights
-        project_ctx = self._build_project_context()
-        self._current_weights, self._cycle_weight_reason = self._governor.adjust_weights(
-            self._cycle_weights_before, project_ctx
-        )
-        self._governor.persist_weights(self._current_weights, self._cycle_weight_reason)
-        # Reset per-cycle accumulators.
-        self._cycle_proposals_evaluated = 0
-        self._cycle_proposals_applied = 0
-        self._cycle_risk_scores = []
-        self._cycle_outcome_metrics = {}
+        self._prepare_governance_cycle()
 
         # Step 1 — Gather metrics, detect opportunities, and run feature discovery.
         self._aggregator.run_full_analysis()
         opportunities = self._detector.identify_opportunities()
         feature_tickets = self._feature_discovery.discover(max_tickets=5)
         if feature_tickets:
-            logger.info(
-                "Feature discovery: %d new ticket(s) written to backlog",
-                len(feature_tickets),
-            )
+            logger.info("Feature discovery: %d new ticket(s) written to backlog", len(feature_tickets))
 
-        # Step 2 — Run baseline benchmark.
         baseline_score = self._run_baseline()
 
-        # Step 3 — GitHub coordination: check for unclaimed issues before generating.
-        # If GitHub sync is enabled, check whether another instance is already
-        # working on something similar.  We still generate locally (the proposal
-        # generator drives from detected metrics), but we skip publishing a new
-        # issue if an equivalent one is already open and unclaimed.
+        # Step 3 — GitHub coordination.
         self._current_issue_number = None
-        github_hint: str | None = None
-        if self._github_sync:
-            github_hint = self._github_check_unclaimed()
+        github_hint: str | None = self._github_check_unclaimed() if self._github_sync else None
 
         # Step 4 — Generate a proposal.
         proposal = self._generate_proposal(opportunities)
@@ -396,8 +387,6 @@ class EvolutionLoop:
             logger.debug("No actionable opportunities found this cycle")
             self._consecutive_empty += 1
             if github_hint is not None:
-                # We may have claimed an issue but generated nothing locally.
-                # Unclaim so another instance can pick it up.
                 self._github_unclaim_current()
             self._flush_governance_log()
             return None

@@ -298,7 +298,23 @@ class AgentCache:
         if not self._cache_dir.exists():
             return
 
-        # Collect all real (non-symlink) entries with their timestamps
+        entries, total_size = self._collect_cache_entries()
+        if total_size <= self._max_size_bytes:
+            return
+
+        # Sort oldest-first and remove until under budget
+        entries.sort(key=lambda e: e[0])
+        for _created_at, size, path in entries:
+            if total_size <= self._max_size_bytes:
+                break
+            try:
+                path.unlink()
+                total_size -= size
+            except OSError:
+                pass
+
+    def _collect_cache_entries(self) -> tuple[list[tuple[float, int, Path]], int]:
+        """Collect all real (non-symlink) cache entries with timestamps and sizes."""
         entries: list[tuple[float, int, Path]] = []
         total_size = 0
         for session_dir in self._cache_dir.iterdir():
@@ -317,20 +333,7 @@ class AgentCache:
                     total_size += size
                 except (OSError, ValueError):
                     pass
-
-        if total_size <= self._max_size_bytes:
-            return
-
-        # Sort oldest-first and remove until under budget
-        entries.sort(key=lambda e: e[0])
-        for _created_at, size, path in entries:
-            if total_size <= self._max_size_bytes:
-                break
-            try:
-                path.unlink()
-                total_size -= size
-            except OSError:
-                pass
+        return entries, total_size
 
     def list_keys(self, session: str | None = None) -> list[str]:
         """Return cache keys present in a session directory.

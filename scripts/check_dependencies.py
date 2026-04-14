@@ -56,46 +56,51 @@ def run_command(cmd: list[str]) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+def _parse_cve_line(line: str) -> CVE | None:
+    """Parse a single pip-audit table row into a CVE, or None if malformed."""
+    parts = line.split()
+    if len(parts) < 3:
+        return None
+    try:
+        return CVE(
+            package=parts[0],
+            version=parts[1],
+            cve_id=parts[2],
+            fix_versions=parts[3:] if len(parts) > 3 else [],
+        )
+    except (IndexError, ValueError):
+        return None
+
+
+def _parse_pip_audit_table(output: str) -> list[CVE]:
+    """Parse pip-audit table output into a list of CVEs."""
+    cves: list[CVE] = []
+    in_table = False
+    for line in output.split("\n"):
+        if "---" in line:
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if not line.strip():
+            continue
+        if "Name" in line and "Skip" in line:
+            break
+        cve = _parse_cve_line(line)
+        if cve is not None:
+            cves.append(cve)
+    return cves
+
+
 def detect_cves() -> list[CVE]:
     """Detect CVEs using pip-audit."""
     console.print("[bold cyan]Running pip-audit...[/bold cyan]")
     exit_code, stdout, stderr = run_command(["pip-audit"])
 
-    cves = []
     output = stderr + stdout  # pip-audit outputs to stderr
-
     if exit_code == 1 and "Found" in output:
-        # Parse pip-audit table output
-        # Format: Name     Version ID            Fix Versions
-        lines = output.split("\n")
-        in_table = False
-        for line in lines:
-            # Start parsing after the header row
-            if "---" in line:
-                in_table = True
-                continue
-            if in_table:
-                if not line.strip():
-                    # Empty line might indicate end of table
-                    continue
-                if "Name" in line and "Skip" in line:
-                    # End of vulnerability table
-                    break
-                # Split by whitespace, accounting for the specific column widths
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        package = parts[0]
-                        version = parts[1]
-                        cve_id = parts[2]
-                        # Fix versions may be missing (empty column)
-                        fix_versions = parts[3:] if len(parts) > 3 else []
-                        cves.append(CVE(package=package, version=version, cve_id=cve_id, fix_versions=fix_versions))
-                    except (IndexError, ValueError):
-                        # Skip malformed lines
-                        pass
-
-    return cves
+        return _parse_pip_audit_table(output)
+    return []
 
 
 def check_conflicts() -> list[str]:

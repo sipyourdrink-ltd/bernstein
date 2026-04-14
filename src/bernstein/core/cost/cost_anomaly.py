@@ -140,6 +140,7 @@ class CostAnomalyDetector:
         Token-ratio checks require input/output breakdown unavailable on
         ``AgentSession``; those run at task-completion time instead.
         """
+        _ = agents  # Reserved for future per-agent checks
         if not self._config.enabled:
             return []
         return self._check_burn_rate(cost_tracker)

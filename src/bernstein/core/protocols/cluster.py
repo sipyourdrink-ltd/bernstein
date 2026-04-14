@@ -315,6 +315,28 @@ def node_from_dict(raw: dict[str, Any]) -> NodeInfo:
     )
 
 
+def _match_steal_pairs(
+    donors: list[tuple[str, int]],
+    receivers: list[tuple[str, int]],
+    overload_threshold: int,
+    max_steal_per_tick: int,
+) -> list[tuple[str, str, int]]:
+    """Match donor nodes to receiver nodes, returning (donor, receiver, count) tuples."""
+    pairs: list[tuple[str, str, int]] = []
+    for donor_id, depth in donors:
+        excess = depth - overload_threshold
+        for i, (recv_id, recv_slots) in enumerate(receivers):
+            if recv_slots <= 0 or excess <= 0:
+                continue
+            steal_count = min(excess, recv_slots, max_steal_per_tick)
+            if steal_count <= 0:
+                continue
+            pairs.append((donor_id, recv_id, steal_count))
+            excess -= steal_count
+            receivers[i] = (recv_id, recv_slots - steal_count)
+    return pairs
+
+
 class TaskStealPolicy:
     """Policy for when and how to steal tasks between nodes.
 
@@ -368,21 +390,7 @@ class TaskStealPolicy:
         donors.sort(key=lambda x: x[1], reverse=True)
         receivers.sort(key=lambda x: x[1], reverse=True)
 
-        pairs: list[tuple[str, str, int]] = []
-        for donor_id, depth in donors:
-            excess = depth - self.overload_threshold
-            for i, (recv_id, recv_slots) in enumerate(receivers):
-                if recv_slots <= 0:
-                    continue
-                steal_count = min(excess, recv_slots, self.max_steal_per_tick)
-                if steal_count > 0:
-                    pairs.append((donor_id, recv_id, steal_count))
-                    excess -= steal_count
-                    receivers[i] = (recv_id, recv_slots - steal_count)
-                if excess <= 0:
-                    break
-
-        return pairs
+        return _match_steal_pairs(donors, receivers, self.overload_threshold, self.max_steal_per_tick)
 
 
 class NodeHeartbeatClient:

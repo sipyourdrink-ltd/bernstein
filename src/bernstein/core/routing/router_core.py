@@ -446,20 +446,13 @@ class TierAwareRouter:
         requires_large_context = self._task_requires_large_context(task)
 
         if preferred_provider:
-            provider = self.state.providers.get(preferred_provider)
-            if provider is None:
-                raise RouterError(f"Preferred provider '{preferred_provider}' is not registered")
-            if not self.state.model_policy.is_provider_allowed(provider.name, provider.region):
-                raise RouterError(f"Preferred provider '{preferred_provider}' is denied by model_policy")
-            if not provider.available:
-                raise RouterError(f"Preferred provider '{preferred_provider}' is unavailable")
-            if not self._provider_supports_model(provider, base_config.model):
-                raise RouterError(
-                    f"Preferred provider '{preferred_provider}' does not support model '{base_config.model}'"
-                )
-            if not self._provider_meets_requirements(provider, requires_vision, requires_large_context):
-                raise RouterError(f"Preferred provider '{preferred_provider}' does not meet task requirements")
-            return self._create_decision(provider, task, base_config, "role_policy", fallback=False)
+            return self._route_preferred_provider(
+                preferred_provider,
+                task,
+                base_config,
+                requires_vision,
+                requires_large_context,
+            )
 
         # Try preferred tier first (default: FREE)
         preferred_providers = self.get_available_providers(
@@ -507,6 +500,28 @@ class TierAwareRouter:
         raise RouterError(
             f"No available provider for model '{base_config.model}' (preferred tier: {self.state.preferred_tier.value})"
         )
+
+    def _route_preferred_provider(
+        self,
+        preferred_provider: str,
+        task: Task,
+        base_config: ModelConfig,
+        requires_vision: bool,
+        requires_large_context: bool,
+    ) -> RoutingDecision:
+        """Validate and route to a preferred provider."""
+        provider = self.state.providers.get(preferred_provider)
+        if provider is None:
+            raise RouterError(f"Preferred provider '{preferred_provider}' is not registered")
+        if not self.state.model_policy.is_provider_allowed(provider.name, provider.region):
+            raise RouterError(f"Preferred provider '{preferred_provider}' is denied by model_policy")
+        if not provider.available:
+            raise RouterError(f"Preferred provider '{preferred_provider}' is unavailable")
+        if not self._provider_supports_model(provider, base_config.model):
+            raise RouterError(f"Preferred provider '{preferred_provider}' does not support model '{base_config.model}'")
+        if not self._provider_meets_requirements(provider, requires_vision, requires_large_context):
+            raise RouterError(f"Preferred provider '{preferred_provider}' does not meet task requirements")
+        return self._create_decision(provider, task, base_config, "role_policy", fallback=False)
 
     def _task_requires_vision(self, task: Task) -> bool:
         """Check if task requires vision capabilities."""
@@ -743,40 +758,34 @@ class TierAwareRouter:
             List of validation issues (empty if valid).
         """
         issues: list[str] = []
+        policy = self.state.model_policy
 
-        # Check policy syntax
-        policy_issues = self.state.model_policy.validate()
-        issues.extend(policy_issues)
+        issues.extend(policy.validate())
+        self._check_registered_providers(policy, issues)
+        self._check_tier_availability(policy, issues)
 
-        # Check that denied providers are registered (warn if not)
-        if self.state.model_policy.denied_providers:
-            for denied in self.state.model_policy.denied_providers:
-                if denied not in self.state.providers:
-                    issues.append(f"Denied provider '{denied}' is not registered")
+        return issues
 
-        # Check that allowed providers are registered (warn if not)
-        if self.state.model_policy.allowed_providers:
-            for allowed in self.state.model_policy.allowed_providers:
-                if allowed not in self.state.providers:
-                    issues.append(f"Allowed provider '{allowed}' is not registered")
+    def _check_registered_providers(self, policy: Any, issues: list[str]) -> None:
+        """Check that policy-referenced providers are registered."""
+        for denied in policy.denied_providers or []:
+            if denied not in self.state.providers:
+                issues.append(f"Denied provider '{denied}' is not registered")
+        for allowed in policy.allowed_providers or []:
+            if allowed not in self.state.providers:
+                issues.append(f"Allowed provider '{allowed}' is not registered")
 
-        # Check that at least one provider remains available for each tier
+    def _check_tier_availability(self, policy: Any, issues: list[str]) -> None:
+        """Check that at least one provider is available for each tier."""
         for tier in Tier:
             available_for_tier = [
                 p
                 for p in self.state.providers.values()
-                if p.tier == tier and self.state.model_policy.is_provider_allowed(p.name, p.region)
+                if p.tier == tier and policy.is_provider_allowed(p.name, p.region)
             ]
             if not available_for_tier:
-                if self.state.model_policy.required_region:
-                    issues.append(
-                        f"No available providers for tier '{tier.value}' in region "
-                        f"'{self.state.model_policy.required_region}' after policy constraints"
-                    )
-                else:
-                    issues.append(f"No available providers for tier '{tier.value}' after policy constraints")
-
-        return issues
+                region_note = f" in region '{policy.required_region}'" if policy.required_region else ""
+                issues.append(f"No available providers for tier '{tier.value}'{region_note} after policy constraints")
 
 
 class RouterError(Exception):
@@ -822,6 +831,98 @@ def route_task(
     return cfg
 
 
+_HIGH_STAKES_ROLES = frozenset({"manager", "architect", "security"})
+
+
+def _check_opus_override(task: Task) -> str | None:
+    """Return a reason string if the task requires opus/max, otherwise None."""
+    if task.role in _HIGH_STAKES_ROLES:
+        return f"high-stakes role: {task.role}, priority={task.priority}"
+    if task.scope == Scope.LARGE:
+        return f"large scope: {task.scope.value}, priority={task.priority}, complexity={task.complexity.value}"
+    if task.priority == 1:
+        return f"critical priority: role={task.role}, complexity={task.complexity.value}"
+    return None
+
+
+def _try_l1_fast_path(task: Task) -> ModelConfig | None:
+    """Try L1 fast-path routing for simple tasks."""
+    from bernstein.core.fast_path import TaskLevel, classify_task, get_l1_model_config
+
+    classification = classify_task(task)
+    if classification.level != TaskLevel.L1:
+        return None
+    l1_cfg = get_l1_model_config()
+    logger.info(
+        "Task %s: Selected %s/%s (L1 fast-path: role=%s, scope=%s, %s)",
+        task.id,
+        l1_cfg.model,
+        l1_cfg.effort,
+        task.role,
+        task.scope.value,
+        classification.reason,
+    )
+    return l1_cfg
+
+
+def _try_bandit_selection(
+    task: Task,
+    bandit_metrics_dir: Path | None,
+    workdir: Path | None,
+) -> ModelConfig | None:
+    """Try epsilon-greedy bandit for dynamic model selection."""
+    if bandit_metrics_dir is None:
+        return None
+    try:
+        from bernstein.core.cost import CASCADE, EpsilonGreedyBandit
+
+        bandit = EpsilonGreedyBandit.load(bandit_metrics_dir)
+        _seed_bandit_with_effectiveness(bandit, task, workdir, bandit_metrics_dir)
+
+        candidates = ["sonnet", "opus"] if task.complexity == Complexity.HIGH else list(CASCADE)
+        selected = bandit.select(role=task.role, candidate_models=candidates)
+        effort = "max" if selected == "opus" else "high"
+        logger.info(
+            "Task %s: Selected %s/%s (bandit: role=%s, complexity=%s, priority=%d)",
+            task.id,
+            selected,
+            effort,
+            task.role,
+            task.complexity.value,
+            task.priority,
+        )
+        return ModelConfig(model=selected, effort=effort)
+    except Exception as exc:
+        logger.warning("Bandit routing failed, using heuristics: %s", exc)
+        return None
+
+
+def _seed_bandit_with_effectiveness(
+    bandit: Any,
+    task: Task,
+    workdir: Path | None,
+    bandit_metrics_dir: Path,
+) -> None:
+    """Warm-start bandit with effectiveness data."""
+    if workdir is None:
+        return
+    try:
+        from bernstein.core.effectiveness import EffectivenessScorer
+
+        effectiveness_data = EffectivenessScorer(workdir).export_for_bandit(task.role)
+        for model, rate in effectiveness_data.items():
+            bandit.seed_arm(task.role, model, rate)
+        if effectiveness_data:
+            bandit.save(bandit_metrics_dir)
+            logger.debug(
+                "Seeded bandit for role=%s with effectiveness priors: %s",
+                task.role,
+                {m: f"{r:.2f}" for m, r in effectiveness_data.items()},
+            )
+    except Exception as exc:
+        logger.debug("Effectiveness seeding failed for role %s: %s", task.role, exc)
+
+
 def _select_model_config(
     task: Task,
     bandit_metrics_dir: Path | None = None,
@@ -843,101 +944,21 @@ def _select_model_config(
         )
         return ModelConfig(model=model, effort=effort)
 
-    # High-stakes roles skip bandit — always use premium models
-    if task.role == "manager":
-        logger.info(
-            "Task %s: Selected opus/max (high-stakes role: manager, priority=%d)",
-            task.id,
-            task.priority,
-        )
-        return ModelConfig(model="opus", effort="max")
-
-    if task.role in ("architect", "security"):
-        logger.info(
-            "Task %s: Selected opus/max (high-stakes role: %s, priority=%d)",
-            task.id,
-            task.role,
-            task.priority,
-        )
-        return ModelConfig(model="opus", effort="max")
-
-    if task.scope == Scope.LARGE:
-        logger.info(
-            "Task %s: Selected opus/max (large scope: %s, priority=%d, complexity=%s)",
-            task.id,
-            task.scope.value,
-            task.priority,
-            task.complexity.value,
-        )
-        return ModelConfig(model="opus", effort="max")
-
-    if task.priority == 1:
-        logger.info(
-            "Task %s: Selected opus/max (critical priority: role=%s, complexity=%s)",
-            task.id,
-            task.role,
-            task.complexity.value,
-        )
+    # High-stakes roles/scope/priority skip bandit — always use premium models
+    opus_reason = _check_opus_override(task)
+    if opus_reason is not None:
+        logger.info("Task %s: Selected opus/max (%s)", task.id, opus_reason)
         return ModelConfig(model="opus", effort="max")
 
     # L1 fast-path: route simple tasks to the cheapest model
-    from bernstein.core.fast_path import TaskLevel, classify_task, get_l1_model_config
-
-    classification = classify_task(task)
-    if classification.level == TaskLevel.L1:
-        l1_cfg = get_l1_model_config()
-        logger.info(
-            "Task %s: Selected %s/%s (L1 fast-path: role=%s, scope=%s, %s)",
-            task.id,
-            l1_cfg.model,
-            l1_cfg.effort,
-            task.role,
-            task.scope.value,
-            classification.reason,
-        )
-        return l1_cfg
+    l1_result = _try_l1_fast_path(task)
+    if l1_result is not None:
+        return l1_result
 
     # Consult epsilon-greedy bandit for dynamic model selection
-    if bandit_metrics_dir is not None:
-        try:
-            from bernstein.core.cost import CASCADE, EpsilonGreedyBandit
-
-            bandit = EpsilonGreedyBandit.load(bandit_metrics_dir)
-
-            # Warm-start bandit with effectiveness data so both systems share knowledge
-            if workdir is not None:
-                try:
-                    from bernstein.core.effectiveness import EffectivenessScorer
-
-                    effectiveness_data = EffectivenessScorer(workdir).export_for_bandit(task.role)
-                    for model, rate in effectiveness_data.items():
-                        bandit.seed_arm(task.role, model, rate)
-                    if effectiveness_data:
-                        bandit.save(bandit_metrics_dir)
-                        logger.debug(
-                            "Seeded bandit for role=%s with effectiveness priors: %s",
-                            task.role,
-                            {m: f"{r:.2f}" for m, r in effectiveness_data.items()},
-                        )
-                except Exception as exc:
-                    logger.debug("Effectiveness seeding failed for role %s: %s", task.role, exc)
-
-            # For high-complexity tasks, restrict candidates to sonnet/opus
-            candidates = ["sonnet", "opus"] if task.complexity == Complexity.HIGH else list(CASCADE)
-            selected = bandit.select(role=task.role, candidate_models=candidates)
-            effort = "max" if selected == "opus" else "high"
-            logger.info(
-                "Task %s: Selected %s/%s (bandit: role=%s, complexity=%s, priority=%d)",
-                task.id,
-                selected,
-                effort,
-                task.role,
-                task.complexity.value,
-                task.priority,
-            )
-            return ModelConfig(model=selected, effort=effort)
-        except Exception as exc:
-            logger.warning("Bandit routing failed, using heuristics: %s", exc)
+    bandit_result = _try_bandit_selection(task, bandit_metrics_dir, workdir)
+    if bandit_result is not None:
+        return bandit_result
 
     # Heuristic fallback
     if task.complexity == Complexity.HIGH:
@@ -1015,6 +1036,48 @@ def load_model_policy_from_yaml(path: Path, router: TierAwareRouter) -> None:
         logger.warning("Failed to parse model policy from %s: %s", path, exc)
 
 
+def _parse_provider_models(raw_models: object) -> dict[str, ModelConfig]:
+    """Parse models dict from provider config."""
+    models: dict[str, ModelConfig] = {}
+    if not isinstance(raw_models, dict):
+        return models
+    raw_models_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, raw_models)
+    for model_id, mc_raw in raw_models_dict.items():
+        if isinstance(mc_raw, dict):
+            mc: dict[str, Any] = cast(_CAST_DICT_STR_ANY, mc_raw)
+            models[str(model_id)] = ModelConfig(
+                model=str(mc.get("model", model_id)),
+                effort=str(mc.get("effort", "high")),
+                aliases=list(mc.get("aliases", [])),
+            )
+    return models
+
+
+def _parse_provider_config(name: str, cfg: dict[str, Any]) -> ProviderConfig:
+    """Parse a single provider config dict into a ProviderConfig."""
+    tier = Tier(str(cfg.get("tier", "standard")))
+    models = _parse_provider_models(cfg.get("models", {}))
+    free_tier_limit_raw: Any = cfg.get("free_tier_limit")
+    free_tier_limit: int | None = int(free_tier_limit_raw) if free_tier_limit_raw is not None else None
+    rate_limit_raw: Any = cfg.get("rate_limit_rpm")
+    rate_limit_rpm: int | None = int(rate_limit_raw) if rate_limit_raw is not None else None
+    return ProviderConfig(
+        name=name,
+        models=models,
+        tier=tier,
+        cost_per_1k_tokens=float(cfg.get("cost_per_1k_tokens", 0.0)),
+        available=bool(cfg.get("available", True)),
+        free_tier_limit=free_tier_limit,
+        free_tier_used=int(cfg.get("free_tier_used", 0)),
+        max_context_tokens=int(cfg.get("max_context_tokens", 200_000)),
+        supports_streaming=bool(cfg.get("supports_streaming", True)),
+        supports_vision=bool(cfg.get("supports_vision", False)),
+        rate_limit_rpm=rate_limit_rpm,
+        region=str(cfg.get("region", "global")),
+        residency_attestation=cast("str | None", cfg.get("residency_attestation")),
+    )
+
+
 def load_providers_from_yaml(path: Path, router: TierAwareRouter) -> None:
     """Load provider configurations from a YAML file and register them.
 
@@ -1047,42 +1110,10 @@ def load_providers_from_yaml(path: Path, router: TierAwareRouter) -> None:
     for name, cfg_raw in providers_dict.items():
         if not isinstance(cfg_raw, dict):
             continue
-        cfg: dict[str, Any] = cast(_CAST_DICT_STR_ANY, cfg_raw)
         try:
-            tier = Tier(str(cfg.get("tier", "standard")))
-            raw_models: object = cfg.get("models", {})
-            models: dict[str, ModelConfig] = {}
-            if isinstance(raw_models, dict):
-                raw_models_dict: dict[str, Any] = cast(_CAST_DICT_STR_ANY, raw_models)
-                for model_id, mc_raw in raw_models_dict.items():
-                    if isinstance(mc_raw, dict):
-                        mc: dict[str, Any] = cast(_CAST_DICT_STR_ANY, mc_raw)
-                        models[str(model_id)] = ModelConfig(
-                            model=str(mc.get("model", model_id)),
-                            effort=str(mc.get("effort", "high")),
-                            aliases=list(mc.get("aliases", [])),
-                        )
-            free_tier_limit_raw: Any = cfg.get("free_tier_limit")
-            free_tier_limit: int | None = int(free_tier_limit_raw) if free_tier_limit_raw is not None else None
-            rate_limit_raw: Any = cfg.get("rate_limit_rpm")
-            rate_limit_rpm: int | None = int(rate_limit_raw) if rate_limit_raw is not None else None
-            provider = ProviderConfig(
-                name=str(name),
-                models=models,
-                tier=tier,
-                cost_per_1k_tokens=float(cfg.get("cost_per_1k_tokens", 0.0)),
-                available=bool(cfg.get("available", True)),
-                free_tier_limit=free_tier_limit,
-                free_tier_used=int(cfg.get("free_tier_used", 0)),
-                max_context_tokens=int(cfg.get("max_context_tokens", 200_000)),
-                supports_streaming=bool(cfg.get("supports_streaming", True)),
-                supports_vision=bool(cfg.get("supports_vision", False)),
-                rate_limit_rpm=rate_limit_rpm,
-                region=str(cfg.get("region", "global")),
-                residency_attestation=cast("str | None", cfg.get("residency_attestation")),
-            )
+            provider = _parse_provider_config(str(name), cast(_CAST_DICT_STR_ANY, cfg_raw))
             router.register_provider(provider)
-            logger.debug("Registered provider '%s' (tier=%s) from %s", str(name), tier.value, path)
+            logger.debug("Registered provider '%s' (tier=%s) from %s", str(name), provider.tier.value, path)
         except Exception as exc:
             logger.warning("Skipping malformed provider '%s' in %s: %s", str(name), path, exc)
 

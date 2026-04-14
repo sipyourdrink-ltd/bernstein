@@ -19,7 +19,7 @@ Usage::
     if should_stream(task):
         chunk = detect_merge_ready_chunk(task["id"], agent_output)
         if chunk is not None:
-            await merge_chunk(chunk)
+            merge_chunk(chunk)
 """
 
 from __future__ import annotations
@@ -258,7 +258,7 @@ def should_stream(task: dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def merge_chunk(chunk: IncrementalChunk) -> bool:
+def merge_chunk(chunk: IncrementalChunk) -> bool:
     """Merge a single chunk incrementally.
 
     In production this would stage the chunk's files, run quality gates

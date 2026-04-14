@@ -17,6 +17,51 @@ import click
 from bernstein.cli.helpers import console
 
 
+def _route_task_to_dict(
+    router: Any,
+    task_id: str,
+    title: str,
+    role: str,
+    priority: int,
+    scope: str,
+    complexity: str,
+    task_obj: Any | None = None,
+) -> dict[str, Any]:
+    """Route a task and return a dict with routing metadata, falling back to 'auto'."""
+    base = {
+        "id": task_id,
+        "title": title,
+        "role": role,
+        "priority": priority,
+        "scope": scope,
+        "complexity": complexity,
+    }
+    try:
+        decision = router.select_provider_for_task(task_obj) if task_obj is not None else None
+        if decision is not None:
+            base["provider"] = decision.provider
+            base["model"] = decision.model_config.model
+            base["effort"] = decision.model_config.effort
+            return base
+    except Exception:
+        pass
+    base["provider"] = "auto"
+    base["model"] = "auto"
+    base["effort"] = "auto"
+    return base
+
+
+def _init_router(workdir: Path) -> Any:
+    """Create and configure a TierAwareRouter from providers.yaml if available."""
+    from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
+
+    router = TierAwareRouter()
+    providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
+    if providers_yaml.exists():
+        load_providers_from_yaml(providers_yaml, router)
+    return router
+
+
 def render_dry_run(
     workdir: Path,
     plan_file: Path | None = None,
@@ -32,60 +77,36 @@ def render_dry_run(
     Returns:
         List of task dicts with routing metadata.
     """
+    if plan_file is not None:
+        return _render_dry_run_from_plan(workdir, plan_file)
+    return _render_dry_run_from_backlog(workdir)
+
+
+def _render_dry_run_from_plan(workdir: Path, plan_file: Path) -> list[dict[str, Any]]:
+    """Build dry-run task list from a plan file."""
+    from bernstein.core.plan_loader import PlanLoadError, load_plan
+
+    try:
+        _plan_config, loaded_tasks = load_plan(plan_file)
+    except PlanLoadError as exc:
+        console.print(f"[red]Plan load error:[/red] {exc}")
+        return []
+
+    router = _init_router(workdir)
+    result: list[dict[str, Any]] = []
+    for t in loaded_tasks:
+        scope_val = t.scope.value if hasattr(t.scope, "value") else str(t.scope)
+        complexity_val = t.complexity.value if hasattr(t.complexity, "value") else str(t.complexity)
+        result.append(_route_task_to_dict(router, t.id, t.title, t.role, t.priority, scope_val, complexity_val, t))
+    return result
+
+
+def _render_dry_run_from_backlog(workdir: Path) -> list[dict[str, Any]]:
+    """Build dry-run task list from backlog files."""
     from bernstein.core.models import Complexity, Scope, Task
-    from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
     from bernstein.core.sync import BacklogTask, parse_backlog_file
 
     tasks: list[BacklogTask] = []
-
-    if plan_file is not None:
-        from bernstein.core.plan_loader import PlanLoadError, load_plan
-
-        try:
-            _plan_config, loaded_tasks = load_plan(plan_file)
-            # Convert Task objects to BacklogTask-like dicts
-            result: list[dict[str, Any]] = []
-            router = TierAwareRouter()
-            providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
-            if providers_yaml.exists():
-                load_providers_from_yaml(providers_yaml, router)
-
-            for t in loaded_tasks:
-                try:
-                    decision = router.select_provider_for_task(t)
-                    result.append(
-                        {
-                            "id": t.id,
-                            "title": t.title,
-                            "role": t.role,
-                            "priority": t.priority,
-                            "scope": t.scope.value if hasattr(t.scope, "value") else str(t.scope),
-                            "complexity": t.complexity.value if hasattr(t.complexity, "value") else str(t.complexity),
-                            "provider": decision.provider,
-                            "model": decision.model_config.model,
-                            "effort": decision.model_config.effort,
-                        }
-                    )
-                except Exception:
-                    result.append(
-                        {
-                            "id": t.id,
-                            "title": t.title,
-                            "role": t.role,
-                            "priority": t.priority,
-                            "scope": t.scope.value if hasattr(t.scope, "value") else str(t.scope),
-                            "complexity": t.complexity.value if hasattr(t.complexity, "value") else str(t.complexity),
-                            "provider": "auto",
-                            "model": "auto",
-                            "effort": "auto",
-                        }
-                    )
-            return result
-        except PlanLoadError as exc:
-            console.print(f"[red]Plan load error:[/red] {exc}")
-            return []
-
-    # Load from backlog
     backlog_dir = workdir / ".sdd" / "backlog" / "open"
     if backlog_dir.exists():
         for md_file in sorted(backlog_dir.glob("*.yaml")):
@@ -96,12 +117,8 @@ def render_dry_run(
     if not tasks:
         return []
 
-    router = TierAwareRouter()
-    providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
-    if providers_yaml.exists():
-        load_providers_from_yaml(providers_yaml, router)
-
-    result = []
+    router = _init_router(workdir)
+    result: list[dict[str, Any]] = []
     for bt in sorted(tasks, key=lambda t: t.priority):
         t_obj = Task(
             id=bt.source_file,
@@ -112,35 +129,11 @@ def render_dry_run(
             scope=Scope(bt.scope),
             complexity=Complexity(bt.complexity),
         )
-        try:
-            decision = router.select_provider_for_task(t_obj)
-            result.append(
-                {
-                    "id": bt.source_file,
-                    "title": bt.title,
-                    "role": bt.role,
-                    "priority": bt.priority,
-                    "scope": bt.scope,
-                    "complexity": bt.complexity,
-                    "provider": decision.provider,
-                    "model": decision.model_config.model,
-                    "effort": decision.model_config.effort,
-                }
+        result.append(
+            _route_task_to_dict(
+                router, bt.source_file, bt.title, bt.role, bt.priority, bt.scope, bt.complexity, t_obj,
             )
-        except Exception:
-            result.append(
-                {
-                    "id": bt.source_file,
-                    "title": bt.title,
-                    "role": bt.role,
-                    "priority": bt.priority,
-                    "scope": bt.scope,
-                    "complexity": bt.complexity,
-                    "provider": "auto",
-                    "model": "auto",
-                    "effort": "auto",
-                }
-            )
+        )
     return result
 
 

@@ -24,6 +24,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from bernstein.core.quality.ci_log_parser import CILogParser
@@ -72,6 +73,81 @@ class CIFailure:
 _FILE_RE = re.compile(r"src/\S+\.py")
 
 
+def _detect_ruff_lint(log_lower: str, log: str) -> bool:
+    return "ruff check" in log_lower or bool(re.search(r"E\d{3}|W\d{3}|F\d{3}|RUF\d{3}", log))
+
+
+def _detect_ruff_format(log_lower: str, _log: str) -> bool:
+    return "would reformat" in log_lower
+
+
+def _detect_missing_file(log_lower: str, _log: str) -> bool:
+    return "filenotfounderror" in log_lower or "no such file" in log_lower
+
+
+def _detect_import_error(log_lower: str, _log: str) -> bool:
+    return "importerror" in log_lower or "modulenotfounderror" in log_lower
+
+
+def _detect_pytest(log_lower: str, _log: str) -> bool:
+    return "failed" in log_lower and ("pytest" in log_lower or "test_" in log_lower)
+
+
+def _detect_pyright(log_lower: str, _log: str) -> bool:
+    return "error" in log_lower and "pyright" in log_lower
+
+
+def _summary_for_missing_file(log: str) -> str:
+    missing = re.findall(r"FileNotFoundError[^\n]*", log, re.IGNORECASE)
+    return missing[0] if missing else "missing file"
+
+
+def _summary_for_import_error(log: str) -> str:
+    errors = re.findall(r"(?:ImportError|ModuleNotFoundError)[^\n]*", log)
+    return errors[0] if errors else "import error"
+
+
+_FAILURE_DETECTORS: list[
+    tuple[
+        Callable[[str, str], bool],
+        CIFailureKind,
+        str | Callable[[str], str],
+        str,
+    ]
+] = [
+    (
+        _detect_ruff_lint, CIFailureKind.RUFF_LINT,
+        "ruff lint errors found",
+        "uv run ruff check --fix src/ && uv run ruff check src/",
+    ),
+    (
+        _detect_ruff_format, CIFailureKind.RUFF_FORMAT,
+        "ruff format: files need reformatting",
+        "uv run ruff format src/",
+    ),
+    (
+        _detect_missing_file, CIFailureKind.MISSING_FILE,
+        _summary_for_missing_file,
+        "Check .gitignore — required files may be excluded from the repo",
+    ),
+    (
+        _detect_import_error, CIFailureKind.IMPORT_ERROR,
+        _summary_for_import_error,
+        "Add missing package to pyproject.toml dependencies",
+    ),
+    (
+        _detect_pytest, CIFailureKind.PYTEST,
+        "pytest failures",
+        "uv run python scripts/run_tests.py -x",
+    ),
+    (
+        _detect_pyright, CIFailureKind.PYRIGHT,
+        "pyright type errors",
+        "uv run pyright 2>&1 | head -40",
+    ),
+]
+
+
 def parse_failures(log: str, job: str = "ci") -> list[CIFailure]:
     """Extract structured failures from raw CI log output.
 
@@ -85,75 +161,24 @@ def parse_failures(log: str, job: str = "ci") -> list[CIFailure]:
     failures: list[CIFailure] = []
     snippet = log[:2048]
     files = _FILE_RE.findall(log)
+    log_lower = log.lower()
+    deduped_files = list(dict.fromkeys(files))
 
-    if "ruff check" in log.lower() or re.search(r"E\d{3}|W\d{3}|F\d{3}|RUF\d{3}", log):
+    for detector, kind, summary_or_fn, fix_hint in _FAILURE_DETECTORS:
+        if not detector(log_lower, log):
+            continue
+        summary = summary_or_fn(log) if callable(summary_or_fn) else summary_or_fn
         failures.append(
             CIFailure(
-                kind=CIFailureKind.RUFF_LINT,
+                kind=kind,
                 job=job,
-                summary="ruff lint errors found",
+                summary=summary,
                 details=snippet,
-                fix_hint="uv run ruff check --fix src/ && uv run ruff check src/",
-                affected_files=list(dict.fromkeys(files)),
+                fix_hint=fix_hint,
+                affected_files=deduped_files,
             )
         )
-    if "would reformat" in log.lower():
-        failures.append(
-            CIFailure(
-                kind=CIFailureKind.RUFF_FORMAT,
-                job=job,
-                summary="ruff format: files need reformatting",
-                details=snippet,
-                fix_hint="uv run ruff format src/",
-                affected_files=list(dict.fromkeys(files)),
-            )
-        )
-    if "filenotfounderror" in log.lower() or "no such file" in log.lower():
-        missing = re.findall(r"FileNotFoundError[^\n]*", log, re.IGNORECASE)
-        failures.append(
-            CIFailure(
-                kind=CIFailureKind.MISSING_FILE,
-                job=job,
-                summary=missing[0] if missing else "missing file",
-                details=snippet,
-                fix_hint="Check .gitignore — required files may be excluded from the repo",
-                affected_files=list(dict.fromkeys(files)),
-            )
-        )
-    if "importerror" in log.lower() or "modulenotfounderror" in log.lower():
-        errors = re.findall(r"(?:ImportError|ModuleNotFoundError)[^\n]*", log)
-        failures.append(
-            CIFailure(
-                kind=CIFailureKind.IMPORT_ERROR,
-                job=job,
-                summary=errors[0] if errors else "import error",
-                details=snippet,
-                fix_hint="Add missing package to pyproject.toml dependencies",
-                affected_files=list(dict.fromkeys(files)),
-            )
-        )
-    if "failed" in log.lower() and ("pytest" in log.lower() or "test_" in log.lower()):
-        failures.append(
-            CIFailure(
-                kind=CIFailureKind.PYTEST,
-                job=job,
-                summary="pytest failures",
-                details=snippet,
-                fix_hint="uv run python scripts/run_tests.py -x",
-                affected_files=list(dict.fromkeys(files)),
-            )
-        )
-    if "error" in log.lower() and "pyright" in log.lower():
-        failures.append(
-            CIFailure(
-                kind=CIFailureKind.PYRIGHT,
-                job=job,
-                summary="pyright type errors",
-                details=snippet,
-                fix_hint="uv run pyright 2>&1 | head -40",
-                affected_files=list(dict.fromkeys(files)),
-            )
-        )
+
     if not failures:
         failures.append(
             CIFailure(

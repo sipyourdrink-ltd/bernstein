@@ -51,6 +51,30 @@ class GateResult:
         }
 
 
+def _render_gate_result(result: GateResult, lines: list[str]) -> None:
+    """Render a single gate result into *lines*."""
+    status = "PASSED" if result.passed else "FAILED"
+    lines.append(f"### {result.gate_name}: {status}")
+
+    if result.passed:
+        return
+
+    if result.errors:
+        lines.append("\nErrors to fix:")
+        for i, error in enumerate(result.errors[:20], 1):
+            lines.append(f"  {i}. {error}")
+        if len(result.errors) > 20:
+            lines.append(f"  ... and {len(result.errors) - 20} more errors")
+
+    if result.output:
+        output_lines = result.output.strip().splitlines()
+        if len(output_lines) > 30:
+            truncated = "\n".join(output_lines[:30])
+            lines.append(f"\nOutput (truncated):\n```\n{truncated}\n... ({len(output_lines)} total lines)\n```")
+        else:
+            lines.append(f"\nOutput:\n```\n{result.output.strip()}\n```")
+
+
 @dataclass(frozen=True, slots=True)
 class InjectionPayload:
     """Formatted payload for injecting gate results into agent context.
@@ -76,24 +100,7 @@ class InjectionPayload:
         lines: list[str] = ["## Quality Gate Results\n"]
 
         for result in self.gate_results:
-            status = "PASSED" if result.passed else "FAILED"
-            lines.append(f"### {result.gate_name}: {status}")
-
-            if not result.passed and result.errors:
-                lines.append("\nErrors to fix:")
-                for i, error in enumerate(result.errors[:20], 1):
-                    lines.append(f"  {i}. {error}")
-                if len(result.errors) > 20:
-                    lines.append(f"  ... and {len(result.errors) - 20} more errors")
-
-            if not result.passed and result.output:
-                # Include truncated output for context.
-                output_lines = result.output.strip().splitlines()
-                if len(output_lines) > 30:
-                    truncated = "\n".join(output_lines[:30])
-                    lines.append(f"\nOutput (truncated):\n```\n{truncated}\n... ({len(output_lines)} total lines)\n```")
-                else:
-                    lines.append(f"\nOutput:\n```\n{result.output.strip()}\n```")
+            _render_gate_result(result, lines)
 
         if self.action_required:
             lines.append("\n## Action Required")

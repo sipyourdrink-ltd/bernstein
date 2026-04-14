@@ -180,31 +180,41 @@ class GateRunnerCacheMixin:
     def _quote_paths(self: Any, paths: list[str]) -> str:
         return " ".join(shlex.quote(path) for path in paths)
 
+    def _tests_by_name_pattern(self: Any, run_dir: Path, module_name: str) -> set[str]:
+        """Find test files matching a module name via glob patterns."""
+        found: set[str] = set()
+        for pattern in (f"tests/**/test_{module_name}.py", f"tests/**/*{module_name}*test.py"):
+            for candidate in sorted(run_dir.glob(pattern)):
+                if candidate.is_file():
+                    found.add(candidate.relative_to(run_dir).as_posix())
+        return found
+
+    def _tests_in_ancestor_dirs(self: Any, run_dir: Path, rel_path: str) -> set[str]:
+        """Find test files in ancestor test directories of a source file."""
+        found: set[str] = set()
+        parent = (run_dir / rel_path).parent
+        candidate_dirs = [
+            parent / "tests",
+            *(ancestor / "tests" for ancestor in parent.parents if ancestor != run_dir.parent),
+        ]
+        for candidate_dir in candidate_dirs:
+            if not candidate_dir.exists() or not candidate_dir.is_dir():
+                continue
+            try:
+                candidate_dir.relative_to(run_dir)
+            except ValueError:
+                continue
+            for test_file in sorted(candidate_dir.glob("test_*.py")):
+                if test_file.is_file():
+                    found.add(test_file.relative_to(run_dir).as_posix())
+        return found
+
     def _impacted_tests(self: Any, run_dir: Path, changed_python_files: list[str]) -> list[str]:
         impacted: set[str] = set()
         for rel_path in changed_python_files:
-            path = Path(rel_path)
-            module_name = path.stem
-            for pattern in (f"tests/**/test_{module_name}.py", f"tests/**/*{module_name}*test.py"):
-                for candidate in sorted(run_dir.glob(pattern)):
-                    if candidate.is_file():
-                        impacted.add(candidate.relative_to(run_dir).as_posix())
-
-            parent = (run_dir / rel_path).parent
-            candidate_dirs = [
-                parent / "tests",
-                *(ancestor / "tests" for ancestor in parent.parents if ancestor != run_dir.parent),
-            ]
-            for candidate_dir in candidate_dirs:
-                if not candidate_dir.exists() or not candidate_dir.is_dir():
-                    continue
-                try:
-                    candidate_dir.relative_to(run_dir)
-                except ValueError:
-                    continue
-                for test_file in sorted(candidate_dir.glob("test_*.py")):
-                    if test_file.is_file():
-                        impacted.add(test_file.relative_to(run_dir).as_posix())
+            module_name = Path(rel_path).stem
+            impacted.update(self._tests_by_name_pattern(run_dir, module_name))
+            impacted.update(self._tests_in_ancestor_dirs(run_dir, rel_path))
         return sorted(impacted)
 
     def _resolve_changed_files_sync(self: Any, task: Task, run_dir: Path) -> list[str] | None:
@@ -252,6 +262,53 @@ class GateRunnerCacheMixin:
 
     # -- cache ---------------------------------------------------------------
 
+    def _build_gate_config_for_cache(self: Any, step: GatePipelineStep) -> dict[str, object]:
+        """Build the gate-specific config dict used for cache key hashing."""
+        name = step.name
+        cfg = self._config
+        base: dict[str, object] = {
+            "name": name,
+            "required": step.required,
+            "condition": step.condition,
+            "command_override": step.command_override,
+            "base_ref": self._base_ref,
+            "timeout_s": cfg.timeout_s,
+        }
+        # Map each gate name to the config fields relevant for that gate.
+        _gate_config_fields: dict[str, list[str]] = {
+            "lint": ["lint_command"],
+            "type_check": ["type_check_command"],
+            "tests": ["test_command", "flaky_detection", "flaky_min_runs", "flaky_threshold"],
+            "pii_scan": ["pii_scan_paths", "pii_ignore_paths", "pii_allowlist_prefixes"],
+            "security_scan": ["security_scan", "security_scan_command"],
+            "coverage_delta": ["coverage_delta", "coverage_delta_command"],
+            "complexity_check": ["complexity_check", "complexity_threshold", "complexity_check_command"],
+            "dead_code": [
+                "dead_code_check", "dead_code_command", "dead_code_min_confidence",
+                "dead_code_check_lost_callers", "dead_code_check_unused_imports", "dead_code_check_unreachable",
+            ],
+            "comment_quality": ["comment_quality_check", "comment_quality_docstyle"],
+            "import_cycle": ["import_cycle_check", "import_cycle_command"],
+            "merge_conflict": ["merge_conflict_check"],
+        }
+        for field_name in _gate_config_fields.get(name, []):
+            base[field_name] = getattr(cfg, field_name, None)
+        return base
+
+    def _hash_changed_files(self: Any, run_dir: Path, changed_files: list[str]) -> list[dict[str, str]] | None:
+        """Hash changed files for cache key. Returns None on read error."""
+        hashed_files: list[dict[str, str]] = []
+        for rel_path in sorted(changed_files):
+            file_path = run_dir / rel_path
+            if not file_path.exists() or not file_path.is_file():
+                continue
+            try:
+                digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
+            except OSError:
+                return None
+            hashed_files.append({"path": rel_path, "sha256": digest})
+        return hashed_files
+
     def _make_cache_key_sync(
         self: Any,
         step: GatePipelineStep,
@@ -266,61 +323,10 @@ class GateRunnerCacheMixin:
             return None
         if not self._config.cache_enabled or not self._changed_files_resolved:
             return None
-        hashed_files: list[dict[str, str]] = []
-        for rel_path in sorted(changed_files):
-            file_path = run_dir / rel_path
-            if not file_path.exists() or not file_path.is_file():
-                continue
-            try:
-                digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
-            except OSError:
-                return None
-            hashed_files.append({"path": rel_path, "sha256": digest})
-        relevant_config = {
-            "name": step.name,
-            "required": step.required,
-            "condition": step.condition,
-            "command_override": step.command_override,
-            "base_ref": self._base_ref,
-            "timeout_s": self._config.timeout_s,
-            "lint_command": self._config.lint_command if step.name == "lint" else None,
-            "type_check_command": self._config.type_check_command if step.name == "type_check" else None,
-            "test_command": self._config.test_command if step.name == "tests" else None,
-            "flaky_detection": self._config.flaky_detection if step.name == "tests" else None,
-            "flaky_min_runs": self._config.flaky_min_runs if step.name == "tests" else None,
-            "flaky_threshold": self._config.flaky_threshold if step.name == "tests" else None,
-            "pii_scan_paths": self._config.pii_scan_paths if step.name == "pii_scan" else None,
-            "pii_ignore_paths": self._config.pii_ignore_paths if step.name == "pii_scan" else None,
-            "pii_allowlist_prefixes": self._config.pii_allowlist_prefixes if step.name == "pii_scan" else None,
-            "security_scan": self._config.security_scan if step.name == "security_scan" else None,
-            "security_scan_command": self._config.security_scan_command if step.name == "security_scan" else None,
-            "coverage_delta": self._config.coverage_delta if step.name == "coverage_delta" else None,
-            "coverage_delta_command": self._config.coverage_delta_command if step.name == "coverage_delta" else None,
-            "complexity_check": self._config.complexity_check if step.name == "complexity_check" else None,
-            "complexity_threshold": self._config.complexity_threshold if step.name == "complexity_check" else None,
-            "complexity_check_command": (
-                self._config.complexity_check_command if step.name == "complexity_check" else None
-            ),
-            "dead_code_check": self._config.dead_code_check if step.name == "dead_code" else None,
-            "dead_code_command": self._config.dead_code_command if step.name == "dead_code" else None,
-            "dead_code_min_confidence": self._config.dead_code_min_confidence if step.name == "dead_code" else None,
-            "dead_code_check_lost_callers": (
-                self._config.dead_code_check_lost_callers if step.name == "dead_code" else None
-            ),
-            "dead_code_check_unused_imports": (
-                self._config.dead_code_check_unused_imports if step.name == "dead_code" else None
-            ),
-            "dead_code_check_unreachable": (
-                self._config.dead_code_check_unreachable if step.name == "dead_code" else None
-            ),
-            "comment_quality_check": (self._config.comment_quality_check if step.name == "comment_quality" else None),
-            "comment_quality_docstyle": (
-                self._config.comment_quality_docstyle if step.name == "comment_quality" else None
-            ),
-            "import_cycle_check": self._config.import_cycle_check if step.name == "import_cycle" else None,
-            "import_cycle_command": self._config.import_cycle_command if step.name == "import_cycle" else None,
-            "merge_conflict_check": self._config.merge_conflict_check if step.name == "merge_conflict" else None,
-        }
+        hashed_files = self._hash_changed_files(run_dir, changed_files)
+        if hashed_files is None:
+            return None
+        relevant_config = self._build_gate_config_for_cache(step)
         payload = {"step": relevant_config, "files": hashed_files}
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 

@@ -44,6 +44,7 @@ def should_auto_decompose(
     Returns:
         True when force_parallel is set AND the task meets scope/retry criteria.
     """
+    _ = workdir  # Part of interface; reserved for coupling analysis
     if not force_parallel:
         return False
 

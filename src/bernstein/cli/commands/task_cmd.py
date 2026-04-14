@@ -318,9 +318,50 @@ def _print_critical_path(data: dict[str, Any]) -> None:
         console.print("[bold red]Bottlenecks:[/bold red] " + ", ".join(b[:8] for b in bottlenecks))
 
 
+def _make_node_text(
+    tid: str,
+    task_map: dict[str, dict[str, Any]],
+    critical_set: set[str],
+) -> Any:
+    """Build a Rich Text label for a graph node."""
+    from rich.text import Text
+
+    t = task_map.get(tid, {})
+    short_id = tid[:8]
+    title = str(t.get("title", "?"))
+    status = str(t.get("status", "?"))
+    status_color = STATUS_COLORS.get(status, "white")
+    text = Text()
+    style = "bold yellow" if tid in critical_set else ""
+    text.append(f"[{short_id}] {title}", style=style)
+    if tid in critical_set:
+        text.append(" \u2605", style="bold yellow")
+    text.append(f" ({status})", style=status_color)
+    return text
+
+
+def _build_tree_recursive(
+    parent: Any,
+    tid: str,
+    forward: dict[str, list[str]],
+    task_map: dict[str, dict[str, Any]],
+    critical_set: set[str],
+    visited: set[str],
+) -> None:
+    """Recursively add branches to the tree."""
+    from rich.text import Text
+
+    visited.add(tid)
+    branch = parent.add(_make_node_text(tid, task_map, critical_set))
+    for child in forward.get(tid, []):
+        if child not in visited:
+            _build_tree_recursive(branch, child, forward, task_map, critical_set, visited)
+        else:
+            branch.add(Text(f"  \u21b3 [{child[:8]}] (shown above)", style="dim italic"))
+
+
 def _render_graph() -> None:
     """Render ASCII task dependency graph using rich.tree.Tree."""
-    from rich.text import Text
     from rich.tree import Tree
 
     raw = server_get("/tasks/graph")
@@ -339,43 +380,19 @@ def _render_graph() -> None:
     task_map, forward, edges = _build_graph_maps(data)
     critical_set: set[str] = set(data.get("critical_path", []))
 
-    def _node_text(tid: str) -> Text:
-        t = task_map.get(tid, {})
-        short_id = tid[:8]
-        title = str(t.get("title", "?"))
-        status = str(t.get("status", "?"))
-        status_color = STATUS_COLORS.get(status, "white")
-        text = Text()
-        if tid in critical_set:
-            text.append(f"[{short_id}] {title}", style="bold yellow")
-            text.append(" \u2605", style="bold yellow")
-        else:
-            text.append(f"[{short_id}] {title}")
-        text.append(f" ({status})", style=status_color)
-        return text
-
     has_incoming: set[str] = {e["to"] for e in edges}
     roots = [n["id"] for n in nodes if n["id"] not in has_incoming]
 
     tree = Tree("[bold cyan]Task Dependency Graph[/bold cyan]")
     visited: set[str] = set()
 
-    def _add_branch(parent: Any, tid: str) -> None:
-        visited.add(tid)
-        branch = parent.add(_node_text(tid))
-        for child in forward.get(tid, []):
-            if child not in visited:
-                _add_branch(branch, child)
-            else:
-                branch.add(Text(f"  \u21b3 [{child[:8]}] (shown above)", style="dim italic"))
-
     for root_id in sorted(roots):
-        _add_branch(tree, root_id)
+        _build_tree_recursive(tree, root_id, forward, task_map, critical_set, visited)
 
     edge_nodes: set[str] = {e["from"] for e in edges} | {e["to"] for e in edges}
     for n in nodes:
         if n["id"] not in visited and n["id"] not in edge_nodes:
-            tree.add(_node_text(n["id"]))
+            tree.add(_make_node_text(n["id"], task_map, critical_set))
 
     console.print(tree)
     _print_critical_path(data)

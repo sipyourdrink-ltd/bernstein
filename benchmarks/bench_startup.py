@@ -41,10 +41,11 @@ def run_benchmark():
     latencies = []
     for i in range(5):
         # We need fresh app/client each time because tasks.jsonl might be locked or something
-        from bernstein.adapters.mock import MockAgentAdapter
         from bernstein.core.orchestrator import Orchestrator, OrchestratorConfig
-        from bernstein.core.server import create_app
         from bernstein.core.spawner import AgentSpawner
+
+        from bernstein.adapters.mock import MockAgentAdapter
+        from bernstein.core.server import create_app
 
         start = time.perf_counter()
 

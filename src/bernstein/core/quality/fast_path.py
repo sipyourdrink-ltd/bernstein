@@ -446,6 +446,63 @@ def get_l1_model_config() -> ModelConfig:
 _ACTION_MAP: dict[str, FastPathAction] = {a.value: a for a in FastPathAction}
 
 
+def _parse_l0_patterns(
+    raw_l0: object,
+    routing_yaml: Path,
+) -> list[tuple[re.Pattern[str], FastPathAction, str]] | None:
+    """Parse L0 pattern entries from config. Returns None if no valid entries."""
+    if not isinstance(raw_l0, list):
+        return None
+    l0_items: list[object] = cast("list[object]", raw_l0)
+    new_l0: list[tuple[re.Pattern[str], FastPathAction, str]] = []
+    for entry_obj in l0_items:
+        if not isinstance(entry_obj, dict):
+            continue
+        entry: dict[str, object] = cast(_CAST_DICT_STR_OBJ, entry_obj)
+        pat_str = str(entry.get("pattern", ""))
+        action_str = str(entry.get("action", ""))
+        label = str(entry.get("label", action_str))
+        action = _ACTION_MAP.get(action_str)
+        if not pat_str or action is None:
+            logger.debug("Skipping invalid l0 pattern entry: %s", entry)
+            continue
+        try:
+            new_l0.append((re.compile(pat_str), action, label))
+        except re.error as exc:
+            logger.warning("Bad regex in routing.yaml l0_patterns (%r): %s", pat_str, exc)
+    if new_l0:
+        logger.debug("Loaded %d L0 patterns from %s", len(new_l0), routing_yaml)
+        return new_l0
+    return None
+
+
+def _parse_l1_patterns(
+    raw_l1: object,
+    routing_yaml: Path,
+) -> list[tuple[re.Pattern[str], str]] | None:
+    """Parse L1 pattern entries from config. Returns None if no valid entries."""
+    if not isinstance(raw_l1, list):
+        return None
+    l1_items: list[object] = cast("list[object]", raw_l1)
+    new_l1: list[tuple[re.Pattern[str], str]] = []
+    for entry_obj in l1_items:
+        if not isinstance(entry_obj, dict):
+            continue
+        entry_l1: dict[str, object] = cast(_CAST_DICT_STR_OBJ, entry_obj)
+        pat_str_l1 = str(entry_l1.get("pattern", ""))
+        label_l1 = str(entry_l1.get("label", ""))
+        if not pat_str_l1:
+            continue
+        try:
+            new_l1.append((re.compile(pat_str_l1), label_l1))
+        except re.error as exc:
+            logger.warning("Bad regex in routing.yaml l1_patterns (%r): %s", pat_str_l1, exc)
+    if new_l1:
+        logger.debug("Loaded %d L1 patterns from %s", len(new_l1), routing_yaml)
+        return new_l1
+    return None
+
+
 def load_fast_path_config(routing_yaml: Path) -> bool:
     """Load fast-path patterns from routing.yaml and update module-level rules.
 
@@ -490,50 +547,13 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
         _l1_patterns = []
         return True
 
-    # Load L0 patterns
-    raw_l0: object = fp_cfg.get("l0_patterns", [])
-    if isinstance(raw_l0, list):
-        l0_items: list[object] = cast("list[object]", raw_l0)
-        new_l0: list[tuple[re.Pattern[str], FastPathAction, str]] = []
-        for entry_obj in l0_items:
-            if not isinstance(entry_obj, dict):
-                continue
-            entry: dict[str, object] = cast(_CAST_DICT_STR_OBJ, entry_obj)
-            pat_str: str = str(entry.get("pattern", ""))
-            action_str: str = str(entry.get("action", ""))
-            label: str = str(entry.get("label", action_str))
-            action: FastPathAction | None = _ACTION_MAP.get(action_str)
-            if not pat_str or action is None:
-                logger.debug("Skipping invalid l0 pattern entry: %s", entry)
-                continue
-            try:
-                new_l0.append((re.compile(pat_str), action, label))
-            except re.error as exc:
-                logger.warning("Bad regex in routing.yaml l0_patterns (%r): %s", pat_str, exc)
-        if new_l0:
-            _l0_patterns = new_l0
-            logger.debug("Loaded %d L0 patterns from %s", len(new_l0), routing_yaml)
+    parsed_l0 = _parse_l0_patterns(fp_cfg.get("l0_patterns", []), routing_yaml)
+    if parsed_l0 is not None:
+        _l0_patterns = parsed_l0
 
-    # Load L1 patterns
-    raw_l1: object = fp_cfg.get("l1_patterns", [])
-    if isinstance(raw_l1, list):
-        l1_items: list[object] = cast("list[object]", raw_l1)
-        new_l1: list[tuple[re.Pattern[str], str]] = []
-        for entry_obj in l1_items:
-            if not isinstance(entry_obj, dict):
-                continue
-            entry_l1: dict[str, object] = cast(_CAST_DICT_STR_OBJ, entry_obj)
-            pat_str_l1: str = str(entry_l1.get("pattern", ""))
-            label_l1: str = str(entry_l1.get("label", ""))
-            if not pat_str_l1:
-                continue
-            try:
-                new_l1.append((re.compile(pat_str_l1), label_l1))
-            except re.error as exc:
-                logger.warning("Bad regex in routing.yaml l1_patterns (%r): %s", pat_str_l1, exc)
-        if new_l1:
-            _l1_patterns = new_l1
-            logger.debug("Loaded %d L1 patterns from %s", len(new_l1), routing_yaml)
+    parsed_l1 = _parse_l1_patterns(fp_cfg.get("l1_patterns", []), routing_yaml)
+    if parsed_l1 is not None:
+        _l1_patterns = parsed_l1
 
     # Load L1 model override
     l1_model: object = fp_cfg.get("l1_model")

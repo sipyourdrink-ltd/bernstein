@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import respx
-from httpx import Response
 
 if TYPE_CHECKING:
     from bernstein.core.orchestrator import Orchestrator
@@ -41,32 +40,22 @@ async def test_worktree_locked(test_client: TestClient, orchestrator_factory, in
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
 
-        def handler(request):
-            method = request.method
-            path = request.url.path
-            api_path = path if path.startswith("/") else "/" + path
+        def _inject_lock_on_completion(tasks_data):
+            """CHAOS: Lock the git index when tasks have DONE markers."""
+            for t in tasks_data:
+                slug = t["title"].lower().replace(" ", "-")
+                marker = integration_sdd / "runtime" / f"DONE_{slug}"
+                if marker.exists():
+                    lock_file = integration_sdd.parent / ".git" / "index.lock"
+                    lock_file.write_text("locked")
 
-            if method == "GET" and api_path == "/tasks":
-                resp = test_client.get("/tasks")
-                tasks_data = resp.json()
-                for t in tasks_data:
-                    slug = t["title"].lower().replace(" ", "-")
-                    marker = integration_sdd / "runtime" / f"DONE_{slug}"
-                    if marker.exists():
-                        # CHAOS: Lock the main repo index just before completing the task
-                        lock_file = integration_sdd.parent / ".git" / "index.lock"
-                        lock_file.write_text("locked")
+        from tests.integration.conftest import make_proxy_handler
 
-                        test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "done"})
-                        marker.unlink()
-                resp = test_client.get("/tasks")
-                return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
-            content = request.read()
-            headers = dict(request.headers)
-            resp = test_client.request(method, api_path, content=content, headers=headers)
-            return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
+        handler = make_proxy_handler(
+            test_client,
+            integration_sdd,
+            on_tasks_fetched=_inject_lock_on_completion,
+        )
         respx_mock.route().mock(side_effect=handler)
 
         # Run ticks

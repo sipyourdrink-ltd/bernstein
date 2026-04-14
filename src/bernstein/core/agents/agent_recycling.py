@@ -52,6 +52,27 @@ _IDLE_LIVENESS_EXTENSION_S: float = 600.0
 # ---------------------------------------------------------------------------
 
 
+def _build_snapshot_indexes(
+    tasks_snapshot: dict[str, list[Task]],
+) -> tuple[set[str], dict[str, int], dict[str, int]]:
+    """Build resolved IDs, open-per-role, and active-per-role indexes from snapshot."""
+    resolved_ids: set[str] = set()
+    for status in ("done", "failed", "blocked"):
+        for t in tasks_snapshot.get(status, []):
+            resolved_ids.add(t.id)
+
+    open_per_role: dict[str, int] = {}
+    for t in tasks_snapshot.get("open", []):
+        open_per_role[t.role] = open_per_role.get(t.role, 0) + 1
+
+    active_per_role: dict[str, int] = {}
+    for status in ("open", "claimed", "in_progress"):
+        for t in tasks_snapshot.get(status, []):
+            active_per_role[t.role] = active_per_role.get(t.role, 0) + 1
+
+    return resolved_ids, open_per_role, active_per_role
+
+
 def recycle_idle_agents(
     orch: Any,
     tasks_snapshot: dict[str, list[Task]],
@@ -77,40 +98,16 @@ def recycle_idle_agents(
         tasks_snapshot: Pre-fetched tasks bucketed by status from this tick.
     """
     now = time.time()
-
-    # Build resolved task ID set from snapshot (done / failed / blocked)
-    resolved_ids: set[str] = set()
-    for status in ("done", "failed", "blocked"):
-        for t in tasks_snapshot.get(status, []):
-            resolved_ids.add(t.id)
-
-    # Count open tasks per role — used in Case 3 to detect empty role queues.
-    open_per_role: dict[str, int] = {}
-    for t in tasks_snapshot.get("open", []):
-        open_per_role[t.role] = open_per_role.get(t.role, 0) + 1
-
-    # Count active tasks per role (open + claimed + in_progress) — used in
-    # Case 4 to detect fully drained roles for rebalancing (#333d-03).
-    active_per_role: dict[str, int] = {}
-    for status in ("open", "claimed", "in_progress"):
-        for t in tasks_snapshot.get(status, []):
-            active_per_role[t.role] = active_per_role.get(t.role, 0) + 1
-
-    # Heartbeat-idle threshold — tighter in evolve mode for fast turnover
+    resolved_ids, open_per_role, active_per_role = _build_snapshot_indexes(tasks_snapshot)
     hb_idle_s = _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S if orch._config.evolve_mode else _IDLE_HEARTBEAT_THRESHOLD_S
-
-    # Completion marker directory — written by the wrapper script when the
-    # agent emits a stream-json ``result`` event.  Presence means the agent
-    # finished its work and can be reaped immediately (no 300s wait).
     completed_dir = orch._workdir / ".sdd" / "runtime" / "completed"
 
     for session in list(orch._agents.values()):
         if session.status == "dead":
             continue
         if not orch._spawner.check_alive(session):
-            continue  # Already dead — refresh_agent_states handles it next tick
+            continue
 
-        # Fast path: completion marker written by the wrapper script.
         completion_file = completed_dir / session.id
         if completion_file.exists():
             logger.info("Agent %s has completion marker — reaping immediately", session.id)

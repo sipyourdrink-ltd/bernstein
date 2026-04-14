@@ -116,6 +116,46 @@ def _mock_adapter(pid: int = 42) -> MagicMock:
     return adapter
 
 
+def _aggregate_status_tasks(responses: dict[str, httpx.Response]) -> list[object]:
+    """Aggregate all tasks from status-specific response entries."""
+    aggregated: list[object] = []
+    for resp_key, resp in responses.items():
+        if resp_key.startswith("GET /tasks?status=") and resp.status_code == 200:
+            aggregated.extend(resp.json())
+    return aggregated
+
+
+def _handle_status_filter(key: str, url: httpx.URL, responses: dict[str, httpx.Response]) -> httpx.Response | None:
+    """Handle GET /tasks?status=X by filtering from bulk or returning empty."""
+    if not key.startswith("GET /tasks?status="):
+        return None
+    if "GET /tasks" in responses:
+        bulk_resp = responses["GET /tasks"]
+        if bulk_resp.status_code != 200:
+            return bulk_resp
+        status_val = url.params.get("status", "")
+        filtered = [t for t in bulk_resp.json() if t.get("status") == status_val]
+        return httpx.Response(200, json=filtered)
+    return httpx.Response(200, json=[])
+
+
+def _handle_paginated_fetch(url: httpx.URL, responses: dict[str, httpx.Response]) -> httpx.Response | None:
+    """Handle paginated GET /tasks?limit=N&offset=M requests."""
+    if "limit" not in url.params:
+        return None
+    all_tasks: list[object] = []
+    if "GET /tasks" in responses and responses["GET /tasks"].status_code == 200:
+        all_tasks = responses["GET /tasks"].json()
+    else:
+        all_tasks = _aggregate_status_tasks(responses)
+        if not all_tasks and not any(k.startswith("GET /tasks?status=") for k in responses):
+            return None
+    offset_val = int(url.params.get("offset", "0"))
+    limit_val = int(url.params.get("limit", "100"))
+    page = all_tasks[offset_val : offset_val + limit_val]
+    return httpx.Response(200, json={"tasks": page, "total": len(all_tasks), "limit": limit_val, "offset": offset_val})
+
+
 def _mock_transport(responses: dict[str, httpx.Response]) -> httpx.MockTransport:
     """Build a mock transport that returns canned responses by URL path+query.
 
@@ -136,84 +176,46 @@ def _mock_transport(responses: dict[str, httpx.Response]) -> httpx.MockTransport
             key += f"?{url.query.decode()}"
         if key in responses:
             return responses[key]
-        # Auto-filter: "GET /tasks?status=X" falls back to bulk "GET /tasks" ──
-        if key.startswith("GET /tasks?status=") and "GET /tasks" in responses:
-            bulk_resp = responses["GET /tasks"]
-            if bulk_resp.status_code != 200:
-                return bulk_resp
-            status_val = url.params.get("status", "")
-            filtered = [t for t in bulk_resp.json() if t.get("status") == status_val]
-            return httpx.Response(200, json=filtered)
-        # Auto-empty: unregistered status filters return [] (not 404) ──────────
-        if key.startswith("GET /tasks?status="):
-            return httpx.Response(200, json=[])
-        # Auto-aggregate for legacy bulk-fetch path ────────────────────────────
-        if key == "GET /tasks":
-            aggregated: list[object] = []
-            for resp_key, resp in responses.items():
-                if resp_key.startswith("GET /tasks?status=") and resp.status_code == 200:
-                    aggregated.extend(resp.json())
-            if aggregated or any(k.startswith("GET /tasks?status=") for k in responses):
-                return httpx.Response(200, json=aggregated)
-        # Paginated fetch: "GET /tasks?limit=N&offset=M" → wrap bulk result ──
-        if request.method == "GET" and url.path == "/tasks" and "limit" in url.params:
-            bulk_key = "GET /tasks"
-            if bulk_key in responses:
-                bulk_resp = responses[bulk_key]
-                if bulk_resp.status_code == 200:
-                    all_tasks = bulk_resp.json()
-                    offset_val = int(url.params.get("offset", "0"))
-                    limit_val = int(url.params.get("limit", "100"))
-                    page = all_tasks[offset_val : offset_val + limit_val]
-                    return httpx.Response(
-                        200, json={"tasks": page, "total": len(all_tasks), "limit": limit_val, "offset": offset_val}
-                    )
-            # Also try aggregating from status-specific entries
-            aggregated_p: list[object] = []
-            for resp_key, resp in responses.items():
-                if resp_key.startswith("GET /tasks?status=") and resp.status_code == 200:
-                    aggregated_p.extend(resp.json())
-            if aggregated_p or any(k.startswith("GET /tasks?status=") for k in responses):
-                return httpx.Response(
-                    200, json={"tasks": aggregated_p, "total": len(aggregated_p), "limit": 100, "offset": 0}
-                )
+        if request.method == "GET" and url.path == "/tasks":
+            # Try status filter, then paginated, then aggregate
+            result = _handle_status_filter(key, url, responses)
+            if result is not None:
+                return result
+            result = _handle_paginated_fetch(url, responses)
+            if result is not None:
+                return result
+            if key == "GET /tasks":
+                aggregated = _aggregate_status_tasks(responses)
+                if aggregated or any(k.startswith("GET /tasks?status=") for k in responses):
+                    return httpx.Response(200, json=aggregated)
         return httpx.Response(404, json={"detail": f"No mock for {key}"})
 
     return httpx.MockTransport(handler)
 
 
-def _paginated_transport(inner: httpx.MockTransport) -> httpx.MockTransport:
-    """Wrap a mock transport to handle paginated /tasks requests.
+def _wrap_as_paginated(resp: httpx.Response, url: httpx.URL) -> httpx.Response:
+    """Wrap a plain-list response in a paginated envelope if needed."""
+    body = resp.json()
+    if isinstance(body, dict) and "tasks" in body:
+        return resp
+    tasks_list = body if isinstance(body, list) else []
+    offset_val = int(url.params.get("offset", "0"))
+    limit_val = int(url.params.get("limit", "100"))
+    page = tasks_list[offset_val : offset_val + limit_val]
+    return httpx.Response(200, json={"tasks": page, "total": len(tasks_list), "limit": limit_val, "offset": offset_val})
 
-    The orchestrator now fetches /tasks?limit=N&offset=M and expects a paginated
-    response ``{"tasks": [...], "total": N, ...}``.  Most test transports return
-    a plain list for ``GET /tasks``.  This wrapper intercepts paginated requests,
-    forwards them as plain ``GET /tasks`` to the inner transport, and wraps the
-    response in the paginated envelope.
-    """
+
+def _paginated_transport(inner: httpx.MockTransport) -> httpx.MockTransport:
+    """Wrap a mock transport to handle paginated /tasks requests."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = request.url
         if request.method == "GET" and url.path == "/tasks" and "limit" in url.params:
-            # Strip pagination params and forward to inner transport
             plain_params = {k: v for k, v in url.params.items() if k not in ("limit", "offset")}
             plain_url = url.copy_with(params=plain_params) if plain_params else url.copy_with(params={})
             plain = httpx.Request(request.method, plain_url, headers=request.headers)
             resp = inner.handle_request(plain)
-            if resp.status_code == 200:
-                body = resp.json()
-                # Already paginated?
-                if isinstance(body, dict) and "tasks" in body:
-                    return resp
-                # Wrap plain list
-                tasks_list = body if isinstance(body, list) else []
-                offset_val = int(url.params.get("offset", "0"))
-                limit_val = int(url.params.get("limit", "100"))
-                page = tasks_list[offset_val : offset_val + limit_val]
-                return httpx.Response(
-                    200, json={"tasks": page, "total": len(tasks_list), "limit": limit_val, "offset": offset_val}
-                )
-            return resp
+            return _wrap_as_paginated(resp, url) if resp.status_code == 200 else resp
         return inner.handle_request(request)
 
     return httpx.MockTransport(handler)
@@ -2013,6 +2015,7 @@ def _make_task_transport(
     routes: dict[str, httpx.Response],
 ) -> httpx.MockTransport:
     """Build a MockTransport that returns empty task lists by default."""
+
     def _handler(request: httpx.Request) -> httpx.Response:
         url = request.url
         key = f"{request.method} {url.path}"

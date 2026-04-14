@@ -499,123 +499,11 @@ class RealtimeBehaviorMonitor:
 
         signals: list[AnomalySignal] = []
 
-        # 1. Suspicious file-access check
-        if last_file and _is_suspicious_file(last_file):
-            state.suspicious_file_hits.append(last_file)
-            signals.append(
-                self._make_signal(
-                    rule="suspicious_file_access",
-                    severity="critical",
-                    action=BehaviorAnomalyAction.KILL_AGENT,
-                    session_id=session_id,
-                    task_id=task_id,
-                    message=f"Agent {session_id} accessed suspicious file: {last_file}",
-                    details={
-                        "last_file": last_file,
-                        "all_suspicious_hits": state.suspicious_file_hits,
-                    },
-                )
-            )
-
-        # 2. Dangerous command execution check
-        if last_command:
-            matched_pattern = _match_dangerous_command(last_command)
-            if matched_pattern is not None:
-                state.dangerous_commands.append(last_command)
-                signals.append(
-                    self._make_signal(
-                        rule="dangerous_command_execution",
-                        severity="critical",
-                        action=BehaviorAnomalyAction.KILL_AGENT,
-                        session_id=session_id,
-                        task_id=task_id,
-                        message=(
-                            f"Agent {session_id} executed dangerous command"
-                            f" (pattern={matched_pattern!r}): {last_command[:200]}"
-                        ),
-                        details={
-                            "last_command": last_command,
-                            "matched_pattern": matched_pattern,
-                            "all_dangerous_commands": state.dangerous_commands,
-                        },
-                    )
-                )
-
-        # 3. Suspicious network endpoint detection in progress messages
-        if message:
-            network_hits = _extract_suspicious_network_endpoints(message)
-            for endpoint in network_hits:
-                if endpoint not in state.suspicious_network_hits:
-                    state.suspicious_network_hits.append(endpoint)
-                    signals.append(
-                        self._make_signal(
-                            rule="suspicious_network_endpoint",
-                            severity="critical",
-                            action=BehaviorAnomalyAction.KILL_AGENT,
-                            session_id=session_id,
-                            task_id=task_id,
-                            message=f"Agent {session_id} referenced suspicious network endpoint: {endpoint}",
-                            details={
-                                "endpoint": endpoint,
-                                "all_network_hits": state.suspicious_network_hits,
-                            },
-                        )
-                    )
-
-        # 4. Output-size explosion
-        if state.output_size_bytes > self._max_output_bytes:
-            signals.append(
-                self._make_signal(
-                    rule="output_size_explosion",
-                    severity="critical",
-                    action=BehaviorAnomalyAction.KILL_AGENT,
-                    session_id=session_id,
-                    task_id=task_id,
-                    message=(
-                        f"Agent {session_id} output {state.output_size_bytes:,} bytes "
-                        f"(limit {self._max_output_bytes:,})"
-                    ),
-                    details={
-                        "output_size_bytes": state.output_size_bytes,
-                        "limit_bytes": self._max_output_bytes,
-                    },
-                )
-            )
-
-        # 5. Statistical file-change velocity check (if baseline available)
-        baseline = self._load_baseline()
-        if baseline is not None and files_changed > 0:
-            detector = BehaviorAnomalyDetector(
-                self._workdir,
-                sigma_threshold=self._sigma_threshold,
-                min_samples=self._min_samples,
-            )
-            metric = BehaviorBaselineMetric(
-                mean=baseline.files_modified.mean,
-                stddev=baseline.files_modified.stddev,
-                sample_count=baseline.files_modified.sample_count,
-            )
-            deviation = detector._deviation("files_changed", float(files_changed), metric)
-            if deviation is not None:
-                signals.append(
-                    self._make_signal(
-                        rule="file_change_velocity",
-                        severity="warning",
-                        action=BehaviorAnomalyAction.LOG,
-                        session_id=session_id,
-                        task_id=task_id,
-                        message=(
-                            f"Agent {session_id} modified {files_changed} files "
-                            f"(baseline mean={deviation.mean:.1f}, z={deviation.zscore:.1f})"
-                        ),
-                        details={
-                            "files_changed": files_changed,
-                            "baseline_mean": deviation.mean,
-                            "baseline_stddev": deviation.stddev,
-                            "zscore": round(deviation.zscore, 3),
-                        },
-                    )
-                )
+        self._check_suspicious_file(state, session_id, task_id, last_file, signals)
+        self._check_dangerous_command(state, session_id, task_id, last_command, signals)
+        self._check_network_endpoints(state, session_id, task_id, message, signals)
+        self._check_output_explosion(state, session_id, task_id, signals)
+        self._check_file_change_velocity(state, session_id, task_id, files_changed, signals)
 
         # Write kill signals for KILL_AGENT actions
         for signal in signals:
@@ -635,6 +523,157 @@ class RealtimeBehaviorMonitor:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _check_suspicious_file(
+        self,
+        state: SessionAnomalyState,
+        session_id: str,
+        task_id: str,
+        last_file: str,
+        signals: list[AnomalySignal],
+    ) -> None:
+        if not last_file or not _is_suspicious_file(last_file):
+            return
+        state.suspicious_file_hits.append(last_file)
+        signals.append(
+            self._make_signal(
+                rule="suspicious_file_access",
+                severity="critical",
+                action=BehaviorAnomalyAction.KILL_AGENT,
+                session_id=session_id,
+                task_id=task_id,
+                message=f"Agent {session_id} accessed suspicious file: {last_file}",
+                details={"last_file": last_file, "all_suspicious_hits": state.suspicious_file_hits},
+            )
+        )
+
+    def _check_dangerous_command(
+        self,
+        state: SessionAnomalyState,
+        session_id: str,
+        task_id: str,
+        last_command: str,
+        signals: list[AnomalySignal],
+    ) -> None:
+        if not last_command:
+            return
+        matched_pattern = _match_dangerous_command(last_command)
+        if matched_pattern is None:
+            return
+        state.dangerous_commands.append(last_command)
+        signals.append(
+            self._make_signal(
+                rule="dangerous_command_execution",
+                severity="critical",
+                action=BehaviorAnomalyAction.KILL_AGENT,
+                session_id=session_id,
+                task_id=task_id,
+                message=(
+                    f"Agent {session_id} executed dangerous command (pattern={matched_pattern!r}): {last_command[:200]}"
+                ),
+                details={
+                    "last_command": last_command,
+                    "matched_pattern": matched_pattern,
+                    "all_dangerous_commands": state.dangerous_commands,
+                },
+            )
+        )
+
+    def _check_network_endpoints(
+        self,
+        state: SessionAnomalyState,
+        session_id: str,
+        task_id: str,
+        message: str,
+        signals: list[AnomalySignal],
+    ) -> None:
+        if not message:
+            return
+        for endpoint in _extract_suspicious_network_endpoints(message):
+            if endpoint in state.suspicious_network_hits:
+                continue
+            state.suspicious_network_hits.append(endpoint)
+            signals.append(
+                self._make_signal(
+                    rule="suspicious_network_endpoint",
+                    severity="critical",
+                    action=BehaviorAnomalyAction.KILL_AGENT,
+                    session_id=session_id,
+                    task_id=task_id,
+                    message=f"Agent {session_id} referenced suspicious network endpoint: {endpoint}",
+                    details={"endpoint": endpoint, "all_network_hits": state.suspicious_network_hits},
+                )
+            )
+
+    def _check_output_explosion(
+        self,
+        state: SessionAnomalyState,
+        session_id: str,
+        task_id: str,
+        signals: list[AnomalySignal],
+    ) -> None:
+        if state.output_size_bytes <= self._max_output_bytes:
+            return
+        signals.append(
+            self._make_signal(
+                rule="output_size_explosion",
+                severity="critical",
+                action=BehaviorAnomalyAction.KILL_AGENT,
+                session_id=session_id,
+                task_id=task_id,
+                message=(
+                    f"Agent {session_id} output {state.output_size_bytes:,} bytes (limit {self._max_output_bytes:,})"
+                ),
+                details={
+                    "output_size_bytes": state.output_size_bytes,
+                    "limit_bytes": self._max_output_bytes,
+                },
+            )
+        )
+
+    def _check_file_change_velocity(
+        self,
+        state: SessionAnomalyState,
+        session_id: str,
+        task_id: str,
+        files_changed: int,
+        signals: list[AnomalySignal],
+    ) -> None:
+        baseline = self._load_baseline()
+        if baseline is None or files_changed <= 0:
+            return
+        detector = BehaviorAnomalyDetector(
+            self._workdir,
+            sigma_threshold=self._sigma_threshold,
+            min_samples=self._min_samples,
+        )
+        metric = BehaviorBaselineMetric(
+            mean=baseline.files_modified.mean,
+            stddev=baseline.files_modified.stddev,
+            sample_count=baseline.files_modified.sample_count,
+        )
+        deviation = detector._deviation("files_changed", float(files_changed), metric)
+        if deviation is None:
+            return
+        signals.append(
+            self._make_signal(
+                rule="file_change_velocity",
+                severity="warning",
+                action=BehaviorAnomalyAction.LOG,
+                session_id=session_id,
+                task_id=task_id,
+                message=(
+                    f"Agent {session_id} modified {files_changed} files "
+                    f"(baseline mean={deviation.mean:.1f}, z={deviation.zscore:.1f})"
+                ),
+                details={
+                    "files_changed": files_changed,
+                    "baseline_mean": deviation.mean,
+                    "baseline_stddev": deviation.stddev,
+                    "zscore": round(deviation.zscore, 3),
+                },
+            )
+        )
 
     def _make_signal(
         self,

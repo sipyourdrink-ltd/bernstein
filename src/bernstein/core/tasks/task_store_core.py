@@ -1695,29 +1695,9 @@ class TaskStore:
 
     def status_summary(self) -> dict[str, Any]:
         """Return aggregated task counts for the dashboard."""
+        role_counts = self._build_role_counts()
+        total_cost, cost_by_role = self._compute_costs()
 
-        # Build per-role breakdown across all statuses
-        role_counts: dict[str, dict[str, int]] = {}
-        for task in self._tasks.values():
-            if task.role not in role_counts:
-                role_counts[task.role] = {"open": 0, "claimed": 0, "done": 0, "failed": 0}
-            status_key = task.status.value
-            if status_key in role_counts[task.role]:
-                role_counts[task.role][status_key] += 1
-
-        # Sum cost from in-memory tasks
-        total_cost = 0.0
-        for t in self._tasks.values():
-            if hasattr(t, "cost_usd") and t.cost_usd:
-                total_cost += t.cost_usd
-
-        # Also sum from metrics JSONL (external cost data)
-        cost_by_role = self._read_cost_by_role()
-        metrics_cost = sum(cost_by_role.values())
-        if metrics_cost > total_cost:
-            total_cost = metrics_cost
-
-        # Build per_role list with cost
         per_role = []
         for role, counts in sorted(role_counts.items()):
             entry: dict[str, Any] = {"role": role, **counts}
@@ -1734,23 +1714,47 @@ class TaskStore:
             "per_role": per_role,
             "total_cost_usd": round(total_cost, 4),
         }
-        # Include bandit routing stats when available
-        bandit_state_path = self._jsonl_path.parent.parent / "routing" / "bandit_state.json"
-        if bandit_state_path.exists():
-            try:
-                bandit_data = json.loads(bandit_state_path.read_text())
-                summary["routing"] = {
-                    "mode": bandit_data.get("mode", "bandit"),
-                    "total_completions": bandit_data.get("total_completions", 0),
-                    "selection_frequency": bandit_data.get("selection_counts", {}),
-                    "exploration_stats": bandit_data.get("exploration_stats", {}),
-                    "shadow_stats": bandit_data.get("shadow_stats", {}),
-                }
-            except json.JSONDecodeError:
-                logger.warning("Corrupted bandit state at %s — skipping", bandit_state_path)
-            except OSError as exc:
-                logger.warning("Cannot read bandit state at %s: %s", bandit_state_path, exc)
+        self._attach_bandit_stats(summary)
         return summary
+
+    def _build_role_counts(self) -> dict[str, dict[str, int]]:
+        """Build per-role breakdown across all statuses."""
+        role_counts: dict[str, dict[str, int]] = {}
+        for task in self._tasks.values():
+            if task.role not in role_counts:
+                role_counts[task.role] = {"open": 0, "claimed": 0, "done": 0, "failed": 0}
+            status_key = task.status.value
+            if status_key in role_counts[task.role]:
+                role_counts[task.role][status_key] += 1
+        return role_counts
+
+    def _compute_costs(self) -> tuple[float, dict[str, float]]:
+        """Compute total cost from in-memory tasks and metrics JSONL."""
+        total_cost = sum(t.cost_usd for t in self._tasks.values() if hasattr(t, "cost_usd") and t.cost_usd)
+        cost_by_role = self._read_cost_by_role()
+        metrics_cost = sum(cost_by_role.values())
+        if metrics_cost > total_cost:
+            total_cost = metrics_cost
+        return total_cost, cost_by_role
+
+    def _attach_bandit_stats(self, summary: dict[str, Any]) -> None:
+        """Attach bandit routing stats to summary if available."""
+        bandit_state_path = self._jsonl_path.parent.parent / "routing" / "bandit_state.json"
+        if not bandit_state_path.exists():
+            return
+        try:
+            bandit_data = json.loads(bandit_state_path.read_text())
+            summary["routing"] = {
+                "mode": bandit_data.get("mode", "bandit"),
+                "total_completions": bandit_data.get("total_completions", 0),
+                "selection_frequency": bandit_data.get("selection_counts", {}),
+                "exploration_stats": bandit_data.get("exploration_stats", {}),
+                "shadow_stats": bandit_data.get("shadow_stats", {}),
+            }
+        except json.JSONDecodeError:
+            logger.warning("Corrupted bandit state at %s — skipping", bandit_state_path)
+        except OSError as exc:
+            logger.warning("Cannot read bandit state at %s: %s", bandit_state_path, exc)
 
     def recently_completed(self, grace_ms: int = PANEL_GRACE_MS) -> list[Task]:
         """Return tasks completed within the grace period.

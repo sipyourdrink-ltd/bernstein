@@ -53,6 +53,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 from bernstein.core.git_basic import GitResult, run_git
@@ -251,6 +252,49 @@ def _commit_plain(cwd: Path, message: str) -> GitResult:
 # ---------------------------------------------------------------------------
 
 
+def _attempt_signed_commit(
+    cwd: Path,
+    full_message: str,
+    config: SigningConfig,
+) -> tuple[GitResult, bool, SigningMode]:
+    """Try to create a signed commit, falling back to unsigned on failure."""
+    if config.mode == "ssh" and config.signing_key:
+        return _try_signing(
+            cwd, full_message, "ssh",
+            lambda: _commit_with_ssh_signing(cwd, full_message, config.signing_key),
+        )
+
+    if config.mode == "gpg":
+        return _try_signing(
+            cwd, full_message, "gpg",
+            lambda: _commit_with_gpg_signing(cwd, full_message, config.signing_key, config.gpg_program),
+        )
+
+    return _commit_plain(cwd, full_message), False, "none"
+
+
+def _try_signing(
+    cwd: Path,
+    full_message: str,
+    mode: SigningMode,
+    commit_fn: Callable[[], GitResult],
+) -> tuple[GitResult, bool, SigningMode]:
+    """Execute a signing function with fallback to unsigned on failure."""
+    try:
+        git_result = commit_fn()
+        if git_result.ok:
+            return git_result, True, mode
+        logger.warning(
+            "%s-signed commit failed (%s), falling back to unsigned: %s",
+            mode.upper(),
+            git_result.returncode,
+            git_result.stderr[:200],
+        )
+    except Exception as exc:
+        logger.warning("%s signing error, falling back to unsigned: %s", mode.upper(), exc)
+    return _commit_plain(cwd, full_message), False, "none"
+
+
 def sign_and_commit(
     cwd: Path,
     message: str,
@@ -278,48 +322,7 @@ def sign_and_commit(
     trailers = build_provenance_trailers(provenance)
     full_message = _append_trailers(message, trailers)
 
-    git_result: GitResult
-    signed = False
-    mode_used: SigningMode = "none"
-
-    if config.mode == "ssh" and config.signing_key:
-        try:
-            git_result = _commit_with_ssh_signing(cwd, full_message, config.signing_key)
-            if git_result.ok:
-                signed = True
-                mode_used = "ssh"
-            else:
-                logger.warning(
-                    "SSH-signed commit failed (%s), falling back to unsigned: %s",
-                    git_result.returncode,
-                    git_result.stderr[:200],
-                )
-                git_result = _commit_plain(cwd, full_message)
-        except Exception as exc:
-            logger.warning("SSH signing error, falling back to unsigned: %s", exc)
-            git_result = _commit_plain(cwd, full_message)
-
-    elif config.mode == "gpg":
-        try:
-            git_result = _commit_with_gpg_signing(cwd, full_message, config.signing_key, config.gpg_program)
-            if git_result.ok:
-                signed = True
-                mode_used = "gpg"
-            else:
-                logger.warning(
-                    "GPG-signed commit failed (%s), falling back to unsigned: %s",
-                    git_result.returncode,
-                    git_result.stderr[:200],
-                )
-                git_result = _commit_plain(cwd, full_message)
-        except Exception as exc:
-            logger.warning("GPG signing error, falling back to unsigned: %s", exc)
-            git_result = _commit_plain(cwd, full_message)
-
-    else:
-        # No signing requested — provenance trailers only.
-        git_result = _commit_plain(cwd, full_message)
-        mode_used = "none"
+    git_result, signed, mode_used = _attempt_signed_commit(cwd, full_message, config)
 
     sha = _resolve_commit_sha(cwd) if git_result.ok else ""
 

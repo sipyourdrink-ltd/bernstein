@@ -50,22 +50,36 @@ def _find_first_file(workdir: Path, names: tuple[str, ...], max_bytes: int) -> s
     return None
 
 
+_SKIP_DIRS = {"__pycache__", "node_modules"}
+
+
+def _should_skip_entry(entry: Path) -> bool:
+    """Return True if a directory entry should be excluded from the tree."""
+    return entry.name.startswith(".") or entry.name in _SKIP_DIRS
+
+
+def _list_dir_children(directory: Path) -> list[str]:
+    """List up to 6 visible children of a directory."""
+    lines: list[str] = []
+    try:
+        for child in sorted(directory.iterdir())[:6]:
+            if not child.name.startswith("."):
+                lines.append(f"    {child.name}{'/' if child.is_dir() else ''}")
+    except PermissionError:
+        pass
+    return lines
+
+
 def _build_directory_tree(workdir: Path) -> list[str]:
     """Build a 2-level directory tree listing, skipping hidden/noise dirs."""
-    _SKIP_DIRS = {"__pycache__", "node_modules"}
     tree_lines: list[str] = []
     try:
         for entry in sorted(workdir.iterdir()):
-            if entry.name.startswith(".") or entry.name in _SKIP_DIRS:
+            if _should_skip_entry(entry):
                 continue
             if entry.is_dir():
                 tree_lines.append(f"  {entry.name}/")
-                try:
-                    for child in sorted(entry.iterdir())[:6]:
-                        if not child.name.startswith("."):
-                            tree_lines.append(f"    {child.name}{'/' if child.is_dir() else ''}")
-                except PermissionError:
-                    pass
+                tree_lines.extend(_list_dir_children(entry))
             else:
                 tree_lines.append(f"  {entry.name}")
     except PermissionError:

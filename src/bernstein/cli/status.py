@@ -155,6 +155,22 @@ def _build_cost_table(per_role: list[dict[str, Any]]) -> Table | None:
     return table
 
 
+def _format_quota(snapshot: dict[str, Any]) -> str:
+    """Format quota info from a provider snapshot."""
+    rpm_obj = snapshot.get("requests_per_minute")
+    tpm_obj = snapshot.get("tokens_per_minute")
+    rpm = int(rpm_obj) if isinstance(rpm_obj, int) else None
+    tpm = int(tpm_obj) if isinstance(tpm_obj, int) else None
+    if rpm is None and tpm is None:
+        return "unknown"
+    parts: list[str] = []
+    if rpm is not None:
+        parts.append(f"{rpm}/m")
+    if tpm is not None:
+        parts.append(f"{tpm} tok/m")
+    return " ".join(parts)
+
+
 def _build_provider_table(provider_status: dict[str, Any]) -> Table | None:
     """Build a provider/quota table from persisted orchestrator status."""
     providers_obj = provider_status.get("providers")
@@ -175,24 +191,12 @@ def _build_provider_table(provider_status: dict[str, Any]) -> Table | None:
         payload = cast(_CAST_DICT_STR_OBJ, payload_obj)
         snapshot_obj = payload.get("quota_snapshot")
         snapshot = cast(_CAST_DICT_STR_OBJ, snapshot_obj) if isinstance(snapshot_obj, dict) else {}
-        quota = "unknown"
-        rpm_obj = snapshot.get("requests_per_minute")
-        tpm_obj = snapshot.get("tokens_per_minute")
-        rpm = int(rpm_obj) if isinstance(rpm_obj, int) else None
-        tpm = int(tpm_obj) if isinstance(tpm_obj, int) else None
-        if rpm is not None or tpm is not None:
-            parts: list[str] = []
-            if rpm is not None:
-                parts.append(f"{rpm}/m")
-            if tpm is not None:
-                parts.append(f"{tpm} tok/m")
-            quota = " ".join(parts)
         table.add_row(
             provider_name,
             str(payload.get("health", "unknown")),
             str(payload.get("tier", "unknown")),
-            str(payload.get("model", "—")),
-            quota,
+            str(payload.get("model", "\u2014")),
+            _format_quota(snapshot),
         )
     return table
 

@@ -164,6 +164,47 @@ class AgentCard:
         }
 
 
+def _parse_capabilities(raw_caps: object) -> list[AgentCapability]:
+    """Parse capabilities from raw agent card data."""
+    capabilities: list[AgentCapability] = []
+    if not isinstance(raw_caps, list):
+        return capabilities
+    for cap_item in cast(_CAST_LIST_OBJ, raw_caps):
+        if isinstance(cap_item, dict):
+            cap_dict = cast("dict[str, object]", cap_item)
+            capabilities.append(
+                AgentCapability(
+                    name=str(cap_dict.get("name", "")),
+                    description=str(cap_dict.get("description", "")),
+                    version=str(cap_dict.get("version", "")),
+                )
+            )
+        elif isinstance(cap_item, str):
+            capabilities.append(AgentCapability(name=cap_item))
+    return capabilities
+
+
+def _parse_skills(raw_skills: object) -> list[AgentSkill]:
+    """Parse skills from raw agent card data."""
+    skills: list[AgentSkill] = []
+    if not isinstance(raw_skills, list):
+        return skills
+    for skill_item in cast(_CAST_LIST_OBJ, raw_skills):
+        if isinstance(skill_item, dict):
+            skill_dict = cast("dict[str, object]", skill_item)
+            tags_raw: object = skill_dict.get("tags", [])
+            tag_tuple = tuple(str(t) for t in cast(_CAST_LIST_OBJ, tags_raw)) if isinstance(tags_raw, list) else ()
+            skills.append(
+                AgentSkill(
+                    id=str(skill_dict.get("id", "")),
+                    name=str(skill_dict.get("name", "")),
+                    description=str(skill_dict.get("description", "")),
+                    tags=tag_tuple,
+                )
+            )
+    return skills
+
+
 def parse_agent_card(data: dict[str, Any], *, source_path: str = "") -> AgentCard:
     """Parse a raw agent.json dict into an AgentCard.
 
@@ -176,42 +217,8 @@ def parse_agent_card(data: dict[str, Any], *, source_path: str = "") -> AgentCar
     Returns:
         Parsed AgentCard.
     """
-    # Parse capabilities.
-    raw_caps: object = data.get("capabilities", [])
-    capabilities: list[AgentCapability] = []
-    if isinstance(raw_caps, list):
-        caps_list = cast(_CAST_LIST_OBJ, raw_caps)
-        for cap_item in caps_list:
-            if isinstance(cap_item, dict):
-                cap_dict = cast("dict[str, object]", cap_item)
-                capabilities.append(
-                    AgentCapability(
-                        name=str(cap_dict.get("name", "")),
-                        description=str(cap_dict.get("description", "")),
-                        version=str(cap_dict.get("version", "")),
-                    )
-                )
-            elif isinstance(cap_item, str):
-                capabilities.append(AgentCapability(name=cap_item))
-
-    # Parse skills.
-    raw_skills: object = data.get("skills", [])
-    skills: list[AgentSkill] = []
-    if isinstance(raw_skills, list):
-        skills_list = cast(_CAST_LIST_OBJ, raw_skills)
-        for skill_item in skills_list:
-            if isinstance(skill_item, dict):
-                skill_dict = cast("dict[str, object]", skill_item)
-                tags_raw: object = skill_dict.get("tags", [])
-                tag_tuple = tuple(str(t) for t in cast(_CAST_LIST_OBJ, tags_raw)) if isinstance(tags_raw, list) else ()
-                skills.append(
-                    AgentSkill(
-                        id=str(skill_dict.get("id", "")),
-                        name=str(skill_dict.get("name", "")),
-                        description=str(skill_dict.get("description", "")),
-                        tags=tag_tuple,
-                    )
-                )
+    capabilities = _parse_capabilities(data.get("capabilities", []))
+    skills = _parse_skills(data.get("skills", []))
 
     # Parse models.
     raw_models: object = data.get("supported_models", data.get("models", []))

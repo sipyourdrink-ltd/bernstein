@@ -343,7 +343,7 @@ def _apply_modify_stage(plan: PlanDict, delta: PlanDelta) -> PlanDict:
     return plan
 
 
-def _apply_reorder(plan: PlanDict, delta: PlanDelta) -> PlanDict:
+def _apply_reorder(plan: PlanDict, delta: PlanDelta) -> PlanDict:  # NOSONAR — returns plan for chaining
     """Move a stage before or after another stage."""
     stages = _ensure_stages(plan)
     src_idx = _find_stage_index(plan, delta.target_stage)

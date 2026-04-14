@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
 
 class LLMSettings(BaseSettings):
     """Configuration for external LLM providers."""
@@ -57,7 +59,7 @@ def _resolve_provider_config(provider: str, settings: LLMSettings) -> tuple[str,
         ValueError: If the provider is unknown or unconfigured.
     """
     _PROVIDER_MAP: dict[str, tuple[str, str | None, str]] = {
-        "openrouter": ("https://openrouter.ai/api/v1", None, "OPENROUTER_API_KEY_PAID"),
+        "openrouter": (_OPENROUTER_BASE_URL, None, "OPENROUTER_API_KEY_PAID"),
         "oxen": ("", None, "OXEN_API_KEY"),
         "together": ("https://api.together.xyz/v1", None, "TOGETHERAI_USER_KEY"),
         "g4f": ("", None, "G4F_API_KEY"),
@@ -66,13 +68,13 @@ def _resolve_provider_config(provider: str, settings: LLMSettings) -> tuple[str,
     if provider == "openrouter":
         if not settings.openrouter_api_key_paid:
             raise ValueError("Missing OPENROUTER_API_KEY_PAID")
-        return "https://openrouter.ai/api/v1", settings.openrouter_api_key_paid
+        return _OPENROUTER_BASE_URL, settings.openrouter_api_key_paid
 
     if provider == "openrouter_free":
         api_key = settings.openrouter_api_key_free or settings.openrouter_api_key_paid
         if not api_key:
             raise ValueError("Missing Free OpenRouter API key")
-        return "https://openrouter.ai/api/v1", api_key
+        return _OPENROUTER_BASE_URL, api_key
 
     key_configs: dict[str, tuple[str, str | None, str]] = {
         "oxen": (settings.oxen_base_url, settings.oxen_api_key, "OXEN_API_KEY"),
@@ -154,7 +156,8 @@ async def _call_cli_provider(prompt: str, model: str, provider: str) -> str:
             stdout=_asyncio.subprocess.PIPE,
             stderr=_asyncio.subprocess.PIPE,
         )
-        stdout_bytes, stderr_bytes = await _asyncio.wait_for(proc.communicate(), timeout=120)
+        async with _asyncio.timeout(120):
+            stdout_bytes, stderr_bytes = await proc.communicate()
         _stdout = stdout_bytes.decode() if stdout_bytes else ""
         _stderr = stderr_bytes.decode() if stderr_bytes else ""
         if proc.returncode != 0:

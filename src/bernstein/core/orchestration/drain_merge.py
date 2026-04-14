@@ -218,7 +218,8 @@ async def run_merge_agent(
         return []
 
     try:
-        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+        async with asyncio.timeout(timeout_s):
+            stdout_bytes, _ = await proc.communicate()
     except TimeoutError:
         logger.warning("Merge agent timed out after %ds -- killing process", timeout_s)
         with contextlib.suppress(OSError):

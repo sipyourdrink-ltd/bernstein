@@ -115,6 +115,22 @@ def export_config(
 def import_config(import_path: Path, target_path: Path, *, mode: Literal["replace", "merge"] = "merge") -> ImportResult:
     if not import_path.exists():
         return ImportResult(success=False, error=f"Import file not found: {import_path}")
+
+    imported_config = _parse_import_file(import_path)
+    if isinstance(imported_config, ImportResult):
+        return imported_config
+
+    imported_config.pop(_EXPORT_META_KEY, None)
+    warnings: list[str] = []
+    skipped, imported_config = _strip_redacted(imported_config, warnings)
+
+    keys_imported = len(imported_config)
+    _write_imported_config(imported_config, target_path, mode)
+    return ImportResult(success=True, keys_imported=keys_imported, keys_skipped=skipped, warnings=warnings)
+
+
+def _parse_import_file(import_path: Path) -> dict[str, Any] | ImportResult:
+    """Parse an import file as JSON or YAML. Returns ImportResult on error."""
     try:
         raw_text = import_path.read_text(encoding="utf-8")
         try:
@@ -123,11 +139,16 @@ def import_config(import_path: Path, target_path: Path, *, mode: Literal["replac
             imported = yaml.safe_load(raw_text)
         if not isinstance(imported, dict):
             return ImportResult(success=False, error="Imported file must be a YAML/JSON mapping")
-        imported_config = cast(_CAST_DICT_STR_ANY, imported)
+        return cast(_CAST_DICT_STR_ANY, imported)
     except Exception as exc:
         return ImportResult(success=False, error=f"Failed to parse import file: {exc}")
-    imported_config.pop(_EXPORT_META_KEY, None)
-    warnings: list[str] = []
+
+
+def _strip_redacted(
+    config: dict[str, Any],
+    warnings: list[str],
+) -> tuple[int, dict[str, Any]]:
+    """Remove redacted values from config, returning (skipped_count, cleaned_config)."""
     skipped = 0
 
     def _count_redacted(data: object, path: str = "") -> object:
@@ -147,21 +168,26 @@ def import_config(import_path: Path, target_path: Path, *, mode: Literal["replac
             return [_count_redacted(item, f"{path}[{i}]") for i, item in enumerate(cast("list[Any]", data))]
         return data
 
-    cleaned = _count_redacted(imported_config)
+    cleaned = _count_redacted(config)
     if isinstance(cleaned, dict):
-        imported_config = cast(_CAST_DICT_STR_ANY, cleaned)
+        config = cast(_CAST_DICT_STR_ANY, cleaned)
+    return skipped, config
+
+
+def _write_imported_config(
+    config: dict[str, Any],
+    target_path: Path,
+    mode: Literal["replace", "merge"],
+) -> None:
+    """Write imported config to target path in replace or merge mode."""
+    target_path.parent.mkdir(parents=True, exist_ok=True)
     if mode == "replace":
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(yaml.dump(imported_config, default_flow_style=False, sort_keys=False), encoding="utf-8")
-        keys_imported = len(imported_config)
+        target_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False), encoding="utf-8")
     else:
         existing: dict[str, Any] = {}
         if target_path.exists():
             loaded = yaml.safe_load(target_path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 existing = cast(_CAST_DICT_STR_ANY, loaded)
-        existing.update(imported_config)
-        keys_imported = len(imported_config)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+        existing.update(config)
         target_path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False), encoding="utf-8")
-    return ImportResult(success=True, keys_imported=keys_imported, keys_skipped=skipped, warnings=warnings)

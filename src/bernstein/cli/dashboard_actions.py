@@ -16,6 +16,25 @@ from bernstein.cli.dashboard_polling import ROLE_COLORS
 
 _STYLE_BOLD_BRIGHT_CYAN = "bold bright_cyan"
 
+
+def _rate_color(rate: float) -> str:
+    """Return a Rich color name for a success/pass rate."""
+    if rate >= 0.95:
+        return "bright_green"
+    if rate >= 0.80:
+        return "bright_yellow"
+    return "bright_red"
+
+
+def _fmt_secs(secs: float) -> str:
+    """Format seconds into a compact duration string."""
+    if secs <= 0:
+        return "-"
+    if secs < 60:
+        return f"{secs:.0f}s"
+    return f"{secs / 60:.1f}m"
+
+
 # -- Quality metrics panel -----------------------------------------
 
 
@@ -45,27 +64,19 @@ class QualityPanel(Static):
         rejection_rate: float = float(q.get("review_rejection_rate", 0.0))
         success_rate: float = float(overall.get("success_rate", 1.0))
 
-        def _rate_color(rate: float) -> str:
-            if rate >= 0.95:
-                return "bright_green"
-            if rate >= 0.80:
-                return "bright_yellow"
-            return "bright_red"
-
-        def _fmt_secs(secs: float) -> str:
-            if secs <= 0:
-                return "-"
-            if secs < 60:
-                return f"{secs:.0f}s"
-            return f"{secs / 60:.1f}m"
-
-        # -- Header --
         total = int(overall.get("total_tasks", 0))
         t.append(" QUALITY", style=_STYLE_BOLD_BRIGHT_CYAN)
         t.append(f"  {total} tasks", style="dim")
         t.append("\n")
 
-        # -- Overall success rate --
+        self._render_rates(t, success_rate, guardrail_pass, rejection_rate)
+        self._render_latency(t, overall)
+        self._render_per_model(t, per_model)
+
+        return t
+
+    def _render_rates(self, t: Text, success_rate: float, guardrail_pass: float, rejection_rate: float) -> None:
+        """Append success, guardrail, and rejection rates."""
         sr_color = _rate_color(success_rate)
         t.append(f" \u2713 {success_rate * 100:.1f}%", style=f"bold {sr_color}")
         t.append(" success  ", style="dim")
@@ -74,50 +85,46 @@ class QualityPanel(Static):
         t.append(" guardrails", style="dim")
         t.append("\n")
 
-        if rejection_rate > 0.1:
-            rj_color = "bright_red"
-        elif rejection_rate > 0.05:
-            rj_color = "bright_yellow"
-        else:
-            rj_color = "dim"
+        rj_color = "bright_red" if rejection_rate > 0.1 else ("bright_yellow" if rejection_rate > 0.05 else "dim")
         t.append(f" \u2717 {rejection_rate * 100:.1f}%", style=f"bold {rj_color}")
         t.append(" rejection", style="dim")
         t.append("\n")
 
-        # -- Completion time distribution --
+    def _render_latency(self, t: Text, overall: dict[str, Any]) -> None:
+        """Append completion time distribution."""
         p50 = float(overall.get("p50_completion_seconds", 0))
         p90 = float(overall.get("p90_completion_seconds", 0))
         p99 = float(overall.get("p99_completion_seconds", 0))
-        if p50 > 0 or p90 > 0:
-            t.append("\n \u23f1 ", style="bright_cyan")
-            t.append("p50 ", style="dim")
-            t.append(_fmt_secs(p50), style="bold")
-            t.append("  p90 ", style="dim")
-            t.append(_fmt_secs(p90), style="bold")
-            t.append("  p99 ", style="dim")
-            t.append(_fmt_secs(p99), style="bold")
-            t.append("\n")
+        if p50 <= 0 and p90 <= 0:
+            return
+        t.append("\n \u23f1 ", style="bright_cyan")
+        t.append("p50 ", style="dim")
+        t.append(_fmt_secs(p50), style="bold")
+        t.append("  p90 ", style="dim")
+        t.append(_fmt_secs(p90), style="bold")
+        t.append("  p99 ", style="dim")
+        t.append(_fmt_secs(p99), style="bold")
+        t.append("\n")
 
-        # -- Per-model breakdown --
-        if per_model:
-            t.append("\n \u25a4 PER MODEL", style="bold dim")
+    def _render_per_model(self, t: Text, per_model: dict[str, Any]) -> None:
+        """Append per-model quality breakdown."""
+        if not per_model:
+            return
+        t.append("\n \u25a4 PER MODEL", style="bold dim")
+        t.append("\n")
+        for model, stats in sorted(per_model.items()):
+            sr = float(stats.get("success_rate", 1.0))
+            avg_tok = float(stats.get("avg_tokens", 0))
+            p50_m = float(stats.get("p50_completion_seconds", 0))
+            color = _rate_color(sr)
+            short_model = model.replace("claude-", "").replace("-20", "-")[:18]
+            t.append(f"  {short_model}", style="bold")
+            t.append(f"  {sr * 100:.0f}%", style=f"bold {color}")
+            if avg_tok > 0:
+                t.append(f"  {avg_tok / 1000:.1f}k\u29f3", style="dim")
+            if p50_m > 0:
+                t.append(f"  {_fmt_secs(p50_m)}", style="dim")
             t.append("\n")
-            for model, stats in sorted(per_model.items()):
-                sr = float(stats.get("success_rate", 1.0))
-                avg_tok = float(stats.get("avg_tokens", 0))
-                p50_m = float(stats.get("p50_completion_seconds", 0))
-                color = _rate_color(sr)
-                short_model = model.replace("claude-", "").replace("-20", "-")[:18]
-                t.append(f"  {short_model}", style="bold")
-                t.append(f"  {sr * 100:.0f}%", style=f"bold {color}")
-                if avg_tok > 0:
-                    tok_k = avg_tok / 1000
-                    t.append(f"  {tok_k:.1f}k\u29f3", style="dim")
-                if p50_m > 0:
-                    t.append(f"  {_fmt_secs(p50_m)}", style="dim")
-                t.append("\n")
-
-        return t
 
 
 # -- Delegation tree panel ----------------------------------------
@@ -147,15 +154,22 @@ class DelegationTreePanel(Static):
             t.append(" no agents", style="dim")
             return t
 
-        # Build tree from parent_id relationships.
-        # Falls back to cell_id grouping when parent_id is absent.
+        roots, children = self._build_tree(alive)
+        roots_sorted = sorted(roots, key=lambda a: a.get("spawn_ts", 0))
+        for i, root in enumerate(roots_sorted):
+            self._render_node(t, root, "", i == len(roots_sorted) - 1, children)
+
+        return t
+
+    def _build_tree(
+        self, alive: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        """Build tree from parent_id or cell_id grouping."""
         by_id = {a["id"]: a for a in alive if a.get("id")}
         children: dict[str, list[dict[str, Any]]] = {}
         roots: list[dict[str, Any]] = []
 
-        has_parent_links = any(a.get("parent_id") for a in alive)
-
-        if has_parent_links:
+        if any(a.get("parent_id") for a in alive):
             for a in alive:
                 pid = a.get("parent_id")
                 if pid and pid in by_id:
@@ -163,74 +177,78 @@ class DelegationTreePanel(Static):
                 else:
                     roots.append(a)
         else:
-            # Group by cell_id: cell managers/vps are roots; others are children.
-            cells: dict[str, list[dict[str, Any]]] = {}
-            no_cell: list[dict[str, Any]] = []
-            for a in alive:
-                cid = a.get("cell_id")
-                if cid:
-                    cells.setdefault(cid, []).append(a)
-                else:
-                    no_cell.append(a)
+            roots, children = self._build_tree_from_cells(alive)
+        return roots, children
 
-            for _cid, members in sorted(cells.items()):
-                # Manager/vp roles are the cell root; others are leaves.
-                leads = [m for m in members if m.get("role", "") in ("manager", "vp", "orchestrator")]
-                workers = [m for m in members if m not in leads]
-                if leads:
-                    root = leads[0]
-                    roots.append(root)
-                    child_list = leads[1:] + workers
-                    if child_list:
-                        children[root["id"]] = child_list
-                else:
-                    roots.extend(members)
-            roots.extend(no_cell)
+    def _build_tree_from_cells(
+        self, alive: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        """Group agents by cell_id when parent_id links are absent."""
+        cells: dict[str, list[dict[str, Any]]] = {}
+        no_cell: list[dict[str, Any]] = []
+        children: dict[str, list[dict[str, Any]]] = {}
+        roots: list[dict[str, Any]] = []
 
-        # Render tree recursively
-        def _render_node(
-            a: dict[str, Any],
-            prefix: str,
-            is_last: bool,
-        ) -> None:
-            role = a.get("role", "?")
-            aid = a.get("id", "")
-            status = a.get("status", "?")
-            model = (a.get("model") or "").replace("claude-", "").replace("-2025", "")[:12]
-            runtime = int(a.get("runtime_s", 0))
-            m, s = divmod(runtime, 60)
-            source = a.get("agent_source", "")
+        for a in alive:
+            cid = a.get("cell_id")
+            if cid:
+                cells.setdefault(cid, []).append(a)
+            else:
+                no_cell.append(a)
 
-            connector = self._LAST if is_last else self._BRANCH
-            dot_color = {"working": "bright_green", "starting": "bright_yellow", "dead": "bright_red"}.get(
-                status, "dim"
-            )
-            dot = {"working": "\u25c9", "starting": "\u25ce", "dead": "\u25cc"}.get(status, "\u25cf")
+        for _cid, members in sorted(cells.items()):
+            leads = [m for m in members if m.get("role", "") in ("manager", "vp", "orchestrator")]
+            workers = [m for m in members if m not in leads]
+            if leads:
+                root = leads[0]
+                roots.append(root)
+                child_list = leads[1:] + workers
+                if child_list:
+                    children[root["id"]] = child_list
+            else:
+                roots.extend(members)
+        roots.extend(no_cell)
+        return roots, children
 
-            t.append(prefix + connector, style="dim")
-            t.append(f"{dot} ", style=f"bold {dot_color}")
-            rc = ROLE_COLORS.get(role.lower(), "bright_white")
-            t.append(role.upper(), style=f"bold {rc}")
-            if source and source not in ("built-in", "builtin", ""):
-                t.append(f" ({source})", style=f"italic {rc}")
-            if model:
-                t.append(f"  {model}", style="dim")
-            t.append(f"  {m}:{s:02d}", style="dim")
-            cell_id = a.get("cell_id")
-            if cell_id:
-                t.append(f"  [{cell_id}]", style="dim")
-            t.append("\n")
+    def _render_node(
+        self,
+        t: Text,
+        a: dict[str, Any],
+        prefix: str,
+        is_last: bool,
+        children: dict[str, list[dict[str, Any]]],
+    ) -> None:
+        """Render a single tree node and recurse into children."""
+        role = a.get("role", "?")
+        aid = a.get("id", "")
+        status = a.get("status", "?")
+        model = (a.get("model") or "").replace("claude-", "").replace("-2025", "")[:12]
+        runtime = int(a.get("runtime_s", 0))
+        m, s = divmod(runtime, 60)
+        source = a.get("agent_source", "")
 
-            kids = children.get(aid, [])
-            child_prefix = prefix + (self._BLANK if is_last else self._PIPE)
-            for i, kid in enumerate(kids):
-                _render_node(kid, child_prefix, i == len(kids) - 1)
+        connector = self._LAST if is_last else self._BRANCH
+        dot_color = {"working": "bright_green", "starting": "bright_yellow", "dead": "bright_red"}.get(status, "dim")
+        dot = {"working": "\u25c9", "starting": "\u25ce", "dead": "\u25cc"}.get(status, "\u25cf")
 
-        roots_sorted = sorted(roots, key=lambda a: a.get("spawn_ts", 0))
-        for i, root in enumerate(roots_sorted):
-            _render_node(root, "", i == len(roots_sorted) - 1)
+        t.append(prefix + connector, style="dim")
+        t.append(f"{dot} ", style=f"bold {dot_color}")
+        rc = ROLE_COLORS.get(role.lower(), "bright_white")
+        t.append(role.upper(), style=f"bold {rc}")
+        if source and source not in ("built-in", "builtin", ""):
+            t.append(f" ({source})", style=f"italic {rc}")
+        if model:
+            t.append(f"  {model}", style="dim")
+        t.append(f"  {m}:{s:02d}", style="dim")
+        cell_id = a.get("cell_id")
+        if cell_id:
+            t.append(f"  [{cell_id}]", style="dim")
+        t.append("\n")
 
-        return t
+        kids = children.get(aid, [])
+        child_prefix = prefix + (self._BLANK if is_last else self._PIPE)
+        for i, kid in enumerate(kids):
+            self._render_node(t, kid, child_prefix, i == len(kids) - 1, children)
 
 
 # -- Expert mode panels -------------------------------------------
@@ -307,6 +325,15 @@ class ExpertBanditPanel(Static):
         t.append(f"\n {mode}", style="dim")
         t.append("\n\n", style="")
 
+        self._render_arms(t, selection_frequency, exploration_stats)
+        self._render_shadow(t, shadow_stats)
+
+        return t
+
+    def _render_arms(
+        self, t: Text, selection_frequency: dict[str, Any], exploration_stats: dict[str, Any]
+    ) -> None:
+        """Render per-arm selection and mean reward stats."""
         arms = sorted(selection_frequency.items(), key=lambda item: (-int(item[1]), item[0]))
         for model, pulls_raw in arms:
             pulls = int(pulls_raw)
@@ -314,28 +341,25 @@ class ExpertBanditPanel(Static):
             mean = float(stats.get("mean", 0.0) or 0.0)
             last = float(stats.get("last", 0.0) or 0.0)
             short = model.replace("claude-", "").replace("-2025", "")[:18]
-            if mean <= 0.15:
-                mean_color = "bright_green"
-            elif mean <= 0.35:
-                mean_color = "bright_yellow"
-            else:
-                mean_color = "bright_red"
+            mean_color = "bright_green" if mean <= 0.15 else ("bright_yellow" if mean <= 0.35 else "bright_red")
             t.append(f"  {short:<18}", style="bold")
             t.append(f" {pulls:>3d} sel", style="dim")
             t.append(f"  \u03bc={mean:.3f}", style=f"bold {mean_color}")
             t.append(f"  last={last:.3f}\n", style="dim")
 
+    def _render_shadow(self, t: Text, shadow_stats: dict[str, Any]) -> None:
+        """Render shadow mode agreement stats."""
         matched = int(shadow_stats.get("matched_outcomes", 0) or 0)
-        if matched > 0 or int(shadow_stats.get("pending_outcomes", 0) or 0) > 0:
-            t.append("\n shadow ", style=_STYLE_BOLD_BRIGHT_CYAN)
-            t.append(
-                f"agree={float(shadow_stats.get('agreement_rate', 0.0) or 0.0):.0%} "
-                f"disagree={int(shadow_stats.get('disagreement_count', 0) or 0)} "
-                f"pending={int(shadow_stats.get('pending_outcomes', 0) or 0)}",
-                style="dim",
-            )
-
-        return t
+        pending = int(shadow_stats.get("pending_outcomes", 0) or 0)
+        if matched <= 0 and pending <= 0:
+            return
+        t.append("\n shadow ", style=_STYLE_BOLD_BRIGHT_CYAN)
+        t.append(
+            f"agree={float(shadow_stats.get('agreement_rate', 0.0) or 0.0):.0%} "
+            f"disagree={int(shadow_stats.get('disagreement_count', 0) or 0)} "
+            f"pending={pending}",
+            style="dim",
+        )
 
 
 class ExpertDepsPanel(Static):

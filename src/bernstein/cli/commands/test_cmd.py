@@ -61,7 +61,5 @@ async def _chaos_injector(duration_s: int):
         console.print(f"[bold red]CHAOS INJECTOR:[/bold red] Triggering {scenario}")
 
         # We call the CLI commands directly for now (simplified)
-        if scenario == "agent-kill":
-            pass  # Chaos scenario stub: agent-kill not yet wired
-        elif scenario == "rate-limit":
-            pass  # Chaos scenario stub: rate-limit not yet wired
+        if scenario in ("agent-kill", "rate-limit"):
+            pass  # Chaos scenario stub: not yet wired

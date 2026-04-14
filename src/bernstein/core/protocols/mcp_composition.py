@@ -164,6 +164,25 @@ def resolve_template(
 # ---------------------------------------------------------------------------
 
 
+def _validate_step_refs(idx: int, step: ToolStep, seen_keys: set[str]) -> list[str]:
+    """Check a single step for forward/circular references and duplicate output_keys."""
+    errors: list[str] = []
+    for arg_key, arg_val in step.args_template.items():
+        for match in _TEMPLATE_RE.finditer(arg_val):
+            ref = match.group(1)
+            if ref not in seen_keys:
+                errors.append(
+                    f"Step {idx} ({step.tool_name}): arg '{arg_key}' "
+                    f"references '{{prev.{ref}}}' which is not produced "
+                    f"by an earlier step."
+                )
+    if step.output_key:
+        if step.output_key in seen_keys:
+            errors.append(f"Step {idx} ({step.tool_name}): duplicate output_key '{step.output_key}'.")
+        seen_keys.add(step.output_key)
+    return errors
+
+
 def validate_composition(tool: CompositeToolDef) -> list[str]:
     """Check a composite tool definition for structural problems.
 
@@ -176,32 +195,13 @@ def validate_composition(tool: CompositeToolDef) -> list[str]:
     - No step references an ``output_key`` that is not produced by an
       earlier step (forward/circular references).
     """
-    errors: list[str] = []
-
     if not tool.steps:
-        errors.append("Composite tool must have at least one step.")
-        return errors
+        return ["Composite tool must have at least one step."]
 
+    errors: list[str] = []
     seen_keys: set[str] = set()
     for idx, step in enumerate(tool.steps):
-        # Forward / circular / self references in args_template
-        # (must be checked BEFORE adding this step's output_key)
-        for arg_key, arg_val in step.args_template.items():
-            for match in _TEMPLATE_RE.finditer(arg_val):
-                ref = match.group(1)
-                if ref not in seen_keys:
-                    errors.append(
-                        f"Step {idx} ({step.tool_name}): arg '{arg_key}' "
-                        f"references '{{prev.{ref}}}' which is not produced "
-                        f"by an earlier step."
-                    )
-
-        # Duplicate output_key
-        if step.output_key:
-            if step.output_key in seen_keys:
-                errors.append(f"Step {idx} ({step.tool_name}): duplicate output_key '{step.output_key}'.")
-            seen_keys.add(step.output_key)
-
+        errors.extend(_validate_step_refs(idx, step, seen_keys))
     return errors
 
 
@@ -262,6 +262,24 @@ def load_compositions(yaml_path: Path | None = None) -> list[CompositeToolDef]:
     return []
 
 
+def _parse_single_step(raw_step: dict[str, Any]) -> ToolStep:
+    """Parse a single raw YAML step dict into a ToolStep."""
+    on_failure: str = str(raw_step.get("on_failure", "stop"))
+    if on_failure not in ("stop", "skip", "retry"):
+        on_failure = "stop"
+    args_raw: Any = raw_step.get("args_template", {})
+    args_dict: dict[str, str] = (
+        {str(k): str(v) for k, v in cast("dict[Any, Any]", args_raw).items()} if isinstance(args_raw, dict) else {}
+    )
+    return ToolStep(
+        tool_name=str(raw_step.get("tool_name", "")),
+        server=str(raw_step.get("server", "")),
+        args_template=args_dict,
+        output_key=str(raw_step.get("output_key", "")),
+        on_failure=on_failure,
+    )
+
+
 def _parse_compositions(raw_list: list[Any]) -> list[CompositeToolDef]:
     """Convert raw YAML dicts into :class:`CompositeToolDef` instances."""
     results: list[CompositeToolDef] = []
@@ -270,30 +288,12 @@ def _parse_compositions(raw_list: list[Any]) -> list[CompositeToolDef]:
             logger.warning("Skipping non-dict mcp_compositions entry: %r", entry)
             continue
         entry_d = cast(_CAST_DICT_STR_ANY, entry)
-        steps: list[ToolStep] = []
         raw_steps: Any = entry_d.get("steps", [])
-        for raw_step_item in cast("list[Any]", raw_steps) if isinstance(raw_steps, list) else []:
-            if not isinstance(raw_step_item, dict):
-                continue
-            raw_step = cast(_CAST_DICT_STR_ANY, raw_step_item)
-            on_failure: str = str(raw_step.get("on_failure", "stop"))
-            if on_failure not in ("stop", "skip", "retry"):
-                on_failure = "stop"
-            args_raw: Any = raw_step.get("args_template", {})
-            args_dict: dict[str, str] = (
-                {str(k): str(v) for k, v in cast("dict[Any, Any]", args_raw).items()}
-                if isinstance(args_raw, dict)
-                else {}
-            )
-            steps.append(
-                ToolStep(
-                    tool_name=str(raw_step.get("tool_name", "")),
-                    server=str(raw_step.get("server", "")),
-                    args_template=args_dict,
-                    output_key=str(raw_step.get("output_key", "")),
-                    on_failure=on_failure,
-                )
-            )
+        steps: list[ToolStep] = [
+            _parse_single_step(cast(_CAST_DICT_STR_ANY, item))
+            for item in (cast("list[Any]", raw_steps) if isinstance(raw_steps, list) else [])
+            if isinstance(item, dict)
+        ]
         results.append(
             CompositeToolDef(
                 name=str(entry_d.get("name", "")),

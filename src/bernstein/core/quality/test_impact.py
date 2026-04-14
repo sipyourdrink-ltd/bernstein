@@ -231,6 +231,36 @@ def _expand_transitive_modules(
     return all_affected
 
 
+def _collect_changed_test_files(
+    changed_files: list[str],
+    root: Path,
+    test_deps: dict[str, object],
+) -> set[str]:
+    """Collect directly changed test files that exist in test_deps."""
+    affected: set[str] = set()
+    for rel_path in changed_files:
+        file_path = root / rel_path
+        if file_path.suffix == ".py" and file_path.name.startswith("test_"):
+            rel = file_path.relative_to(root).as_posix()
+            if rel in test_deps:
+                affected.add(rel)
+    return affected
+
+
+def _collect_tests_for_modules(
+    all_affected: set[str],
+    module_to_tests: dict[str, set[str]],
+) -> set[str]:
+    """Collect tests for affected modules, including parent module prefixes."""
+    affected: set[str] = set()
+    for module in all_affected:
+        affected.update(module_to_tests.get(module, set()))
+        parts = module.split(".")
+        for index in range(1, len(parts)):
+            affected.update(module_to_tests.get(".".join(parts[:index]), set()))
+    return affected
+
+
 def compat_get_affected_tests(
     changed_files: list[str],
     dep_map: dict[str, Any],
@@ -256,20 +286,8 @@ def compat_get_affected_tests(
             changed_modules.add(_path_to_module(file_path, src_root))
 
     all_affected = _expand_transitive_modules(changed_modules, source_imports)
-
-    affected_tests: set[str] = set()
-    for rel_path in changed_files:
-        file_path = root / rel_path
-        if file_path.suffix == ".py" and file_path.name.startswith("test_"):
-            rel = file_path.relative_to(root).as_posix()
-            if rel in test_deps:
-                affected_tests.add(rel)
-
-    for module in all_affected:
-        affected_tests.update(module_to_tests.get(module, set()))
-        parts = module.split(".")
-        for index in range(1, len(parts)):
-            affected_tests.update(module_to_tests.get(".".join(parts[:index]), set()))
+    affected_tests = _collect_changed_test_files(changed_files, root, test_deps)
+    affected_tests.update(_collect_tests_for_modules(all_affected, module_to_tests))
 
     return sorted(root / rel for rel in affected_tests)
 
@@ -316,20 +334,16 @@ class TestImpactAnalyzer:
         self._all_tests: set[str] = set()
         self._built = False
 
-    def build_index(self, *, force: bool = False) -> None:
-        """Build or load the source-to-test mapping index."""
-        if self._built and not force:
-            return
-        if not force:
-            cached = self._load_cache()
-            if cached is not None:
-                self._graph = {key: set(value) for key, value in cached["graph"].items()}
-                self._reverse = {key: set(value) for key, value in cached["reverse"].items()}
-                self._source_imports = {key: set(value) for key, value in cached["source_imports"].items()}
-                self._all_tests = set(cached["all_tests"])
-                self._built = True
-                return
+    def _restore_from_cache(self, cached: dict[str, Any]) -> None:
+        """Restore index state from a cached dict."""
+        self._graph = {key: set(value) for key, value in cached["graph"].items()}
+        self._reverse = {key: set(value) for key, value in cached["reverse"].items()}
+        self._source_imports = {key: set(value) for key, value in cached["source_imports"].items()}
+        self._all_tests = set(cached["all_tests"])
+        self._built = True
 
+    def _build_fresh_index(self) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]], set[str]]:
+        """Scan tests and sources to build the index from scratch."""
         graph: dict[str, set[str]] = {}
         reverse: dict[str, set[str]] = {}
         source_imports: dict[str, set[str]] = {}
@@ -338,8 +352,7 @@ class TestImpactAnalyzer:
         for test_file in self._discover_tests():
             rel = test_file.relative_to(self._root).as_posix()
             all_tests.add(rel)
-            imports = self._parse_test_imports(test_file)
-            for module in imports:
+            for module in self._parse_test_imports(test_file):
                 graph.setdefault(module, set()).add(rel)
                 reverse.setdefault(rel, set()).add(module)
 
@@ -354,10 +367,19 @@ class TestImpactAnalyzer:
                     reverse.setdefault(test_file, set()).add(module)
                     all_tests.add(test_file)
 
-        self._graph = graph
-        self._reverse = reverse
-        self._source_imports = source_imports
-        self._all_tests = all_tests
+        return graph, reverse, source_imports, all_tests
+
+    def build_index(self, *, force: bool = False) -> None:
+        """Build or load the source-to-test mapping index."""
+        if self._built and not force:
+            return
+        if not force:
+            cached = self._load_cache()
+            if cached is not None:
+                self._restore_from_cache(cached)
+                return
+
+        self._graph, self._reverse, self._source_imports, self._all_tests = self._build_fresh_index()
         self._persist_cache()
         self._built = True
 

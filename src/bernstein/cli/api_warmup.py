@@ -109,6 +109,7 @@ async def warmup_provider(
     Returns:
         WarmupResult with provider name, measured latency, and success flag.
     """
+    _ = model  # Used in log messages only; not sent in the minimal ping
     settings = LLMSettings()
 
     if not _is_provider_configured(provider, settings):

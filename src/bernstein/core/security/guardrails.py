@@ -351,6 +351,21 @@ def _is_file_deleted(diff: str, filepath: str) -> bool:
     return False
 
 
+def _calc_deletion_pct(added: int, removed: int) -> int:
+    """Return deletion percentage (0-100) from added/removed counts."""
+    total = added + removed
+    return int(removed / total * 100) if total > 0 else 0
+
+
+def _extract_file_from_diff_header(line: str) -> str | None:
+    """Extract the file path from a 'diff --git' header line."""
+    parts = line.split(" ", 3)
+    if len(parts) < 3:
+        return None
+    path = parts[2]
+    return path[2:] if path.startswith("a/") else path
+
+
 def _parse_deletion_pct_per_file(diff: str) -> dict[str, int]:
     """Estimate deletion percentage per file from diff change lines.
 
@@ -363,15 +378,9 @@ def _parse_deletion_pct_per_file(diff: str) -> dict[str, int]:
 
     for line in diff.splitlines():
         if line.startswith(_DIFF_GIT_PREFIX):
-            # Flush previous file stats
             if current_file is not None and (added + removed) > 0:
-                pct[current_file] = int(removed / (added + removed) * 100)
-            parts = line.split(" ", 3)
-            if len(parts) >= 3:
-                path = parts[2]
-                current_file = path[2:] if path.startswith("a/") else path
-            else:
-                current_file = None
+                pct[current_file] = _calc_deletion_pct(added, removed)
+            current_file = _extract_file_from_diff_header(line)
             added = removed = 0
         elif line.startswith("+") and not line.startswith("+++"):
             added += 1
@@ -379,7 +388,7 @@ def _parse_deletion_pct_per_file(diff: str) -> dict[str, int]:
             removed += 1
 
     if current_file is not None and (added + removed) > 0:
-        pct[current_file] = int(removed / (added + removed) * 100)
+        pct[current_file] = _calc_deletion_pct(added, removed)
 
     return pct
 
@@ -792,6 +801,51 @@ def check_permission_rules(
     return engine.evaluate_to_decision(tool_name, tool_args)
 
 
+def _gather_guardrail_decisions(
+    diff: str,
+    task: Task,
+    config: GuardrailsConfig,
+    workdir: Path,
+    always_allow_engine: AlwaysAllowEngine | None,
+) -> dict[str, list[PermissionDecision]]:
+    """Collect all guardrail check decisions into a dict keyed by check name."""
+    decisions: dict[str, list[PermissionDecision]] = {}
+
+    if always_allow_engine is not None:
+        decisions["always_allow"] = _check_always_allow_for_diff(diff, always_allow_engine)
+
+    decisions["immune_path_enforcement"] = check_immune_paths(diff)
+
+    if config.secrets:
+        decisions["secret_detection"] = check_secrets(diff)
+
+    if config.scope:
+        raw = check_scope(diff, task)
+        decisions["scope_enforcement"] = (
+            relax_sandboxed(raw, "scope_enforcement") if config.sandbox_relax else raw
+        )
+
+    if config.file_permissions:
+        raw = check_file_permissions(diff, task.role, config.permission_overrides)
+        decisions["file_permissions"] = (
+            relax_sandboxed(raw, "file_permissions") if config.sandbox_relax else raw
+        )
+
+    decisions["dangerous_operations"] = check_dangerous_operations(diff, config)
+    decisions["critical_file_modification"] = check_critical_file_modifications(diff, automated=True)
+
+    if config.license_scan:
+        decisions["license_obligations"] = check_license_obligations(diff)
+    if config.review_checklist:
+        decisions["review_checklist"] = check_review_checklist(diff, task, config.review_checklist, workdir)
+    if config.readme_reminder:
+        decisions["readme_reminder"] = check_readme_reminder(diff)
+    if config.arch_conformance is not None and config.arch_conformance.enabled:
+        decisions["arch_conformance"] = check_arch_conformance(diff, config.arch_conformance)
+
+    return decisions
+
+
 def run_guardrails(
     diff: str,
     task: Task,
@@ -817,52 +871,7 @@ def run_guardrails(
         List of GuardrailResult, one per enabled check.
     """
     graph = DecisionGraph(bypass_enabled=bypass_enabled)
-    decisions: dict[str, list[PermissionDecision]] = {}
-
-    # Always-allow check — highest precedence for matched files
-    if always_allow_engine is not None:
-        decisions["always_allow"] = _check_always_allow_for_diff(diff, always_allow_engine)
-
-    # Mandatory checks that cannot be disabled
-    decisions["immune_path_enforcement"] = check_immune_paths(diff)
-
-    if config.secrets:
-        decisions["secret_detection"] = check_secrets(diff)
-
-    if config.scope:
-        decisions["scope_enforcement"] = (
-            relax_sandboxed(check_scope(diff, task), "scope_enforcement")
-            if config.sandbox_relax
-            else check_scope(diff, task)
-        )
-
-    if config.file_permissions:
-        decisions["file_permissions"] = (
-            relax_sandboxed(
-                check_file_permissions(diff, task.role, config.permission_overrides),
-                "file_permissions",
-            )
-            if config.sandbox_relax
-            else check_file_permissions(diff, task.role, config.permission_overrides)
-        )
-
-    decisions["dangerous_operations"] = check_dangerous_operations(diff, config)
-
-    # Critical file modification check — always runs.
-    # Bernstein agents are automated; a human session would set automated=False.
-    decisions["critical_file_modification"] = check_critical_file_modifications(diff, automated=True)
-
-    if config.license_scan:
-        decisions["license_obligations"] = check_license_obligations(diff)
-
-    if config.review_checklist:
-        decisions["review_checklist"] = check_review_checklist(diff, task, config.review_checklist, workdir)
-
-    if config.readme_reminder:
-        decisions["readme_reminder"] = check_readme_reminder(diff)
-
-    if config.arch_conformance is not None and config.arch_conformance.enabled:
-        decisions["arch_conformance"] = check_arch_conformance(diff, config.arch_conformance)
+    decisions = _gather_guardrail_decisions(diff, task, config, workdir, always_allow_engine)
 
     # Populate graph and build results
     results: list[GuardrailResult] = []
@@ -913,6 +922,25 @@ def _decision_to_result(task_id: str, check_name: str, d: PermissionDecision, by
     )
 
 
+def _parse_checklist_item(response: str, item: str) -> PermissionDecision:
+    """Parse LLM response for a single checklist item."""
+    for line in response.splitlines():
+        if item.lower() not in line.lower():
+            continue
+        if "FAIL" in line.upper():
+            reason = line.split(":", 1)[1].strip() if ":" in line else "Failed review"
+            return PermissionDecision(type=DecisionType.ASK, reason=reason)
+        if "PASS" in line.upper():
+            reason = line.split(":", 1)[1].strip() if ":" in line else "Passed review"
+            return PermissionDecision(type=DecisionType.ALLOW, reason=reason)
+    return PermissionDecision(type=DecisionType.ALLOW, reason="Item not mentioned in LLM response")
+
+
+def _parse_checklist_response(response: str, checklist: list[str]) -> list[PermissionDecision]:
+    """Parse the LLM response into decisions for each checklist item."""
+    return [_parse_checklist_item(response, item) for item in checklist]
+
+
 def check_review_checklist(
     diff: str,
     task: Task,
@@ -946,44 +974,16 @@ def check_review_checklist(
     )
 
     try:
-        # Note: In a real implementation, we might want to use a more structured
-        # output format or a dedicated judge model. For this feature, we'll use
-        # a basic LLM call and parse the response.
         import asyncio
 
         response = asyncio.run(call_llm(prompt, model="sonnet", provider="auto"))
-
-        for item in checklist:
-            dtype = DecisionType.ALLOW
-            reason = "Item not mentioned in LLM response"
-
-            # Simple heuristic parsing
-            for line in response.splitlines():
-                if item.lower() in line.lower():
-                    if "FAIL" in line.upper():
-                        dtype = DecisionType.ASK
-                        reason = line.split(":", 1)[1].strip() if ":" in line else "Failed review"
-                        break
-                    elif "PASS" in line.upper():
-                        dtype = DecisionType.ALLOW
-                        reason = line.split(":", 1)[1].strip() if ":" in line else "Passed review"
-                        break
-
-            results.append(
-                PermissionDecision(
-                    type=dtype,
-                    reason=reason,
-                )
-            )
+        results.extend(_parse_checklist_response(response, checklist))
     except Exception as exc:
         logger.warning("Review checklist failed for task %s: %s", task.id, exc)
-        for _item in checklist:
-            results.append(
-                PermissionDecision(
-                    type=DecisionType.ASK,
-                    reason=f"Check failed due to error: {exc}",
-                )
-            )
+        results.extend(
+            PermissionDecision(type=DecisionType.ASK, reason=f"Check failed due to error: {exc}")
+            for _ in checklist
+        )
 
     return results
 

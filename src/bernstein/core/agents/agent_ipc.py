@@ -79,30 +79,9 @@ def broadcast_message(message: str, workdir: Any = None) -> dict[str, str]:
     Returns:
         Dict mapping session_id to delivery method ("pipe" or "file" or "failed").
     """
-    from bernstein.core.agents.agent_signals import AgentSignalManager
-
     results: dict[str, str] = {}
-
-    # Try stdin pipe for all registered sessions
-    for session_id in list(_stdin_pipes.keys()):
-        if send_message(session_id, message):
-            results[session_id] = "pipe"
-        else:
-            results[session_id] = "failed"
-
-    # File-based fallback for sessions without pipes
-    if workdir is not None:
-        signal_mgr = AgentSignalManager(workdir)
-        # Get all signal directories (sessions with signal dirs but no pipe)
-        signals_dir = workdir / ".sdd" / "runtime" / "signals"
-        if signals_dir.exists():
-            for entry_path in signals_dir.iterdir():
-                session_id = entry_path.name
-                if session_id not in results:
-                    if signal_mgr.write_command_signal(session_id, message):
-                        results[session_id] = "file"
-                    else:
-                        results[session_id] = "failed"
+    _broadcast_via_pipes(message, results)
+    _broadcast_via_files(message, workdir, results)
 
     pipe_count = sum(1 for v in results.values() if v == "pipe")
     file_count = sum(1 for v in results.values() if v == "file")
@@ -114,6 +93,28 @@ def broadcast_message(message: str, workdir: Any = None) -> dict[str, str]:
     )
 
     return results
+
+
+def _broadcast_via_pipes(message: str, results: dict[str, str]) -> None:
+    """Send message to all registered stdin pipes."""
+    for session_id in list(_stdin_pipes.keys()):
+        results[session_id] = "pipe" if send_message(session_id, message) else "failed"
+
+
+def _broadcast_via_files(message: str, workdir: Any, results: dict[str, str]) -> None:
+    """Fall back to file-based COMMAND signal for sessions without pipes."""
+    if workdir is None:
+        return
+    from bernstein.core.agents.agent_signals import AgentSignalManager
+
+    signal_mgr = AgentSignalManager(workdir)
+    signals_dir = workdir / ".sdd" / "runtime" / "signals"
+    if not signals_dir.exists():
+        return
+    for entry_path in signals_dir.iterdir():
+        session_id = entry_path.name
+        if session_id not in results:
+            results[session_id] = "file" if signal_mgr.write_command_signal(session_id, message) else "failed"
 
 
 def shutdown_all(reason: str = "user requested shutdown", workdir: Any = None) -> dict[str, str]:

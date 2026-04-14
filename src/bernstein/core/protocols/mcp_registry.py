@@ -242,34 +242,40 @@ class MCPRegistry:
             De-duplicated list of matching MCPServerEntry objects.
         """
         matched: dict[str, MCPServerEntry] = {}
+        self._match_by_keywords(task_description, matched)
+        self._match_by_file_extensions(owned_files, matched)
+        self._match_by_capabilities(requested_capabilities, matched)
+        return list(matched.values())
 
-        # 1. Keyword matching against task description
+    def _match_by_keywords(self, task_description: str, matched: dict[str, MCPServerEntry]) -> None:
+        """Match servers by keyword patterns against the task description."""
         for pattern, entry in self._keyword_patterns:
             if entry.name not in matched and pattern.search(task_description):
                 matched[entry.name] = entry
 
-        # 2. File extension matching
-        if owned_files:
-            file_text = " ".join(owned_files)
-            for entry in self._servers:
-                if entry.name in matched:
-                    continue
-                # Check if any keyword matches file paths
-                for keyword in entry.keywords:
-                    if keyword.startswith(".") and keyword in file_text:
-                        matched[entry.name] = entry
-                        break
-
-        # 3. Explicit capability requests
-        if requested_capabilities:
-            cap_set = set(requested_capabilities)
-            for entry in self._servers:
-                if entry.name in matched:
-                    continue
-                if cap_set & set(entry.capabilities):
+    def _match_by_file_extensions(self, owned_files: list[str] | None, matched: dict[str, MCPServerEntry]) -> None:
+        """Match servers by file extension keywords in owned file paths."""
+        if not owned_files:
+            return
+        file_text = " ".join(owned_files)
+        for entry in self._servers:
+            if entry.name in matched:
+                continue
+            for keyword in entry.keywords:
+                if keyword.startswith(".") and keyword in file_text:
                     matched[entry.name] = entry
+                    break
 
-        return list(matched.values())
+    def _match_by_capabilities(
+        self, requested_capabilities: list[str] | None, matched: dict[str, MCPServerEntry]
+    ) -> None:
+        """Match servers by explicit capability requests."""
+        if not requested_capabilities:
+            return
+        cap_set = set(requested_capabilities)
+        for entry in self._servers:
+            if entry.name not in matched and cap_set & set(entry.capabilities):
+                matched[entry.name] = entry
 
     def filter_available(self, servers: list[MCPServerEntry]) -> list[MCPServerEntry]:
         """Filter servers to only those with required env vars available.

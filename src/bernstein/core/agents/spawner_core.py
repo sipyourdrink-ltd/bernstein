@@ -435,6 +435,78 @@ def _render_batch_prompt(task: Task) -> str:
     return "\n".join(lines)
 
 
+def _load_persistent_memory(sdd_dir: Path, lesson_tags: list[str]) -> str:
+    """Load persistent memory from SQLite store."""
+    db_path = sdd_dir / "memory" / "memory.db"
+    if not db_path.exists():
+        return ""
+    try:
+        from bernstein.core.memory.sqlite_store import SQLiteMemoryStore
+
+        store = SQLiteMemoryStore(db_path)
+        memories = store.get_relevant(lesson_tags, limit=10)
+        if not memories:
+            return ""
+        lines = ["## Persistent Memory\nRelevant conventions and architectural decisions:"]
+        for m in memories:
+            lines.append(f"- [{m.type.upper()}] {m.content}")
+        return "\n".join(lines) + "\n"
+    except Exception as mem_exc:
+        logger.debug("Failed to fetch persistent memory: %s", mem_exc)
+        return ""
+
+
+def _build_rag_context(tasks: list[Task], workdir: Path, spawner_config: Any | None) -> str:
+    """Build RAG-based smart context injection."""
+    try:
+        from bernstein.core.rag import CodebaseIndexer
+        from bernstein.core.section_dedup import deduplicate_section
+
+        indexer = CodebaseIndexer(workdir)
+        if indexer.file_count() == 0:
+            return ""
+        query = " ".join(t.title for t in tasks)
+        rag_cfg = getattr(spawner_config, "rag", None)
+        max_files = rag_cfg.max_files if rag_cfg else 5
+        max_chars = (rag_cfg.max_tokens if rag_cfg else 50000) * 4
+
+        results = indexer.search(query, limit=max_files)
+        if not results:
+            return ""
+        lines = ["## Relevant Code Context\nAutomatically identified relevant files via RAG:"]
+        total_chars = 0
+        for res in results:
+            if total_chars >= max_chars:
+                break
+            path = Path(res["path"])
+            if not path.exists():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            remaining = max_chars - total_chars
+            if len(content) > remaining:
+                content = content[:remaining] + "\n... (truncated)"
+            lines.append(f"### {res['path']} (score: {res['score']:.2f})\n```\n{content}\n```")
+            total_chars += len(content)
+        return deduplicate_section("\n".join(lines) + "\n")
+    except Exception as rag_exc:
+        logger.debug("Smart context injection failed: %s", rag_exc)
+        return ""
+
+
+def _build_file_scope_context(tasks: list[Task]) -> str:
+    """Build file-scope context based on owned files."""
+    try:
+        from bernstein.core.context_activation import activate_context_for_task
+
+        all_owned: list[str] = []
+        for t in tasks:
+            all_owned.extend(t.owned_files)
+        return activate_context_for_task(all_owned)
+    except Exception as exc:
+        logger.debug("File-scope context activation failed: %s", exc)
+        return ""
+
+
 def _render_prompt(
     tasks: list[Task],
     templates_dir: Path,
@@ -565,78 +637,12 @@ def _render_prompt(
             logger.debug("Template render failed for role %s, using fallback: %s", role, exc)
             role_prompt = _render_fallback(role, templates_dir, agency_catalog)
 
-    # Inject prior agent lessons based on task tags (legacy JSONL system)
     sdd_dir = workdir / ".sdd"
     lesson_tags = _extract_tags_from_tasks(tasks)
     lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
-
-    # Inject persistent memory from SQLite store (new system)
-    persistent_memory_context = ""
-    db_path = sdd_dir / "memory" / "memory.db"
-    if db_path.exists():
-        try:
-            from bernstein.core.memory.sqlite_store import SQLiteMemoryStore
-
-            store = SQLiteMemoryStore(db_path)
-            memories = store.get_relevant(lesson_tags, limit=10)
-            if memories:
-                lines = ["## Persistent Memory\nRelevant conventions and architectural decisions:"]
-                for m in memories:
-                    lines.append(f"- [{m.type.upper()}] {m.content}")
-                persistent_memory_context = "\n".join(lines) + "\n"
-        except Exception as mem_exc:
-            logger.debug("Failed to fetch persistent memory: %s", mem_exc)
-
-    # Smart context injection (RAG)
-    smart_context = ""
-    try:
-        from bernstein.core.rag import CodebaseIndexer
-
-        indexer = CodebaseIndexer(workdir)
-        if indexer.file_count() > 0:
-            query = " ".join(t.title for t in tasks)
-            # Cache the query key so that identical query sets reuse the same RAG results
-            from bernstein.core.section_dedup import deduplicate_section
-
-            # Build RAG results
-            # Find top N relevant files
-            rag_cfg = getattr(spawner_config, "rag", None)
-            max_files = rag_cfg.max_files if rag_cfg else 5
-            max_chars = (rag_cfg.max_tokens if rag_cfg else 50000) * 4  # heuristic: 4 chars per token
-
-            results = indexer.search(query, limit=max_files)
-            if results:
-                lines = ["## Relevant Code Context\nAutomatically identified relevant files via RAG:"]
-                total_chars = 0
-                for res in results:
-                    if total_chars >= max_chars:
-                        break
-                    path = Path(res["path"])
-                    if path.exists():
-                        content = path.read_text(encoding="utf-8", errors="replace")
-                        # Truncate if this file alone exceeds remaining budget
-                        remaining = max_chars - total_chars
-                        if len(content) > remaining:
-                            content = content[:remaining] + "\n... (truncated)"
-
-                        lines.append(f"### {res['path']} (score: {res['score']:.2f})\n```\n{content}\n```")
-                        total_chars += len(content)
-                smart_context = deduplicate_section("\n".join(lines) + "\n")
-    except Exception as rag_exc:
-        logger.debug("Smart context injection failed: %s", rag_exc)
-
-    # File-scope context activation: inject role-specific context based on owned files.
-    # Matches task owned_files against .gitignore-style patterns at claim time.
-    file_scope_context = ""
-    try:
-        from bernstein.core.context_activation import activate_context_for_task
-
-        all_owned: list[str] = []
-        for t in tasks:
-            all_owned.extend(t.owned_files)
-        file_scope_context = activate_context_for_task(all_owned)
-    except Exception as exc:
-        logger.debug("File-scope context activation failed: %s", exc)
+    persistent_memory_context = _load_persistent_memory(sdd_dir, lesson_tags)
+    smart_context = _build_rag_context(tasks, workdir, spawner_config)
+    file_scope_context = _build_file_scope_context(tasks)
 
     # Assemble final prompt
     from bernstein.core.section_dedup import deduplicate_section
@@ -1213,6 +1219,59 @@ class AgentSpawner:
         ):
             return self._spawn_for_tasks_internal(tasks, model_override=model_override)
 
+    def _resolve_routing(
+        self,
+        tasks: list[Task],
+        model_config: ModelConfig,
+        role_policy: dict[str, Any],
+        preferred_provider: str | None,
+    ) -> tuple[ModelConfig, str | None, str]:
+        """Select provider and model via router or operator config."""
+        provider_name: str | None = None
+        use_router = _should_use_router(
+            role_policy=role_policy,
+            adapter_name=self._adapter.name(),
+            has_router=self._router is not None and bool(self._router.state.providers),
+        )
+        if not use_router:
+            if preferred_provider:
+                provider_name = preferred_provider
+            routing_source = "operator-config" if role_policy.get("model") else "heuristic"
+            logger.info(
+                "Router skipped for role=%s (adapter=%s): using %s/%s (source=%s)",
+                tasks[0].role,
+                role_policy.get("cli", self._adapter.name()),
+                model_config.model,
+                model_config.effort,
+                routing_source,
+            )
+            return model_config, provider_name, routing_source
+
+        assert self._router is not None
+        try:
+            decision = self._router.select_provider_for_task(
+                tasks[0],
+                base_config=model_config,
+                preferred_provider=preferred_provider,
+            )
+            return decision.model_config, decision.provider, "router"
+        except RouterError as exc:
+            if preferred_provider:
+                logger.warning(
+                    "Role policy provider override for role=%s could not be honored (%s); "
+                    "falling back to normal routing",
+                    tasks[0].role,
+                    exc,
+                )
+                try:
+                    decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
+                    return decision.model_config, decision.provider, "router-fallback"
+                except RouterError as fallback_exc:
+                    logger.warning("Router failed to select provider, using fallback: %s", fallback_exc)
+            else:
+                logger.warning("Router failed to select provider, using fallback: %s", exc)
+        return model_config, provider_name, "heuristic"
+
     def _spawn_for_tasks_internal(self, tasks: list[Task], model_override: str | None = None) -> AgentSession:
         """Actual spawn implementation."""
         if self._shutdown_event is not None and self._shutdown_event.is_set():
@@ -1308,53 +1367,12 @@ class AgentSpawner:
                 is_batch=base_config.is_batch,
             )
 
-        use_router = _should_use_router(
-            role_policy=role_policy,
-            adapter_name=self._adapter.name(),
-            has_router=self._router is not None and bool(self._router.state.providers),
+        model_config, provider_name, routing_source = self._resolve_routing(
+            tasks,
+            model_config,
+            role_policy,
+            preferred_provider,
         )
-        routing_source = "heuristic"
-        if use_router:
-            assert self._router is not None  # guaranteed by _should_use_router
-            try:
-                decision = self._router.select_provider_for_task(
-                    tasks[0],
-                    base_config=model_config,
-                    preferred_provider=preferred_provider,
-                )
-                model_config = decision.model_config
-                provider_name = decision.provider
-                routing_source = "router"
-            except RouterError as exc:
-                if preferred_provider:
-                    logger.warning(
-                        "Role policy provider override for role=%s could not be honored (%s); "
-                        "falling back to normal routing",
-                        tasks[0].role,
-                        exc,
-                    )
-                    try:
-                        decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
-                        model_config = decision.model_config
-                        provider_name = decision.provider
-                        routing_source = "router-fallback"
-                    except RouterError as fallback_exc:
-                        logger.warning("Router failed to select provider, using fallback: %s", fallback_exc)
-                else:
-                    logger.warning("Router failed to select provider, using fallback: %s", exc)
-        else:
-            # Router skipped — operator config or non-Claude adapter.
-            if preferred_provider:
-                provider_name = preferred_provider
-            routing_source = "operator-config" if role_policy.get("model") else "heuristic"
-            logger.info(
-                "Router skipped for role=%s (adapter=%s): using %s/%s (source=%s)",
-                tasks[0].role,
-                role_policy.get("cli", self._adapter.name()),
-                model_config.model,
-                model_config.effort,
-                routing_source,
-            )
 
         logger.info(
             "Model selection for role=%s: model=%s effort=%s provider=%s source=%s",
@@ -2254,6 +2272,8 @@ class AgentSpawner:
         Returns:
             Command argument list.
         """
+        _ = prompt_file  # Part of interface; container path is reconstructed from session_id
+        _ = mcp_config  # Part of interface; not used in container command
         # Map container path: host workspace is mounted at /workspace
         container_prompt = f"/workspace/.sdd/runtime/prompts/{session_id}.md"
 
@@ -2359,28 +2379,23 @@ class AgentSpawner:
             session: Agent session to kill.
         """
         if session.runtime_backend == "openclaw":
-            try:
-                self._bridge_cancel(session)
-            except BridgeError as exc:
-                logger.warning("OpenClaw cancellation failed for %s: %s", session.id, exc)
-            if session.status != "dead":
-                transition_agent(
-                    session,
-                    "dead",
-                    actor="spawner",
-                    reason="remote bridge kill requested",
-                    transition_reason=TransitionReason.ABORTED,
-                    abort_reason=AbortReason.SHUTDOWN_SIGNAL,
-                    abort_detail="remote runtime cancellation requested by orchestrator",
-                    finish_reason="kill_requested",
-                )
-            try:
-                TeamStateStore(self._workdir / ".sdd").on_kill(session.id)
-            except Exception as _ts_exc:
-                logger.debug("Team state on_kill failed: %s", _ts_exc)
+            self._kill_openclaw(session)
             return
 
-        # Container-based agents: stop and destroy the container
+        self._kill_local(session)
+
+    def _kill_openclaw(self, session: AgentSession) -> None:
+        """Kill an agent running on the OpenClaw remote bridge."""
+        try:
+            self._bridge_cancel(session)
+        except BridgeError as exc:
+            logger.warning("OpenClaw cancellation failed for %s: %s", session.id, exc)
+        self._transition_to_dead(
+            session, "remote bridge kill requested", "remote runtime cancellation requested by orchestrator"
+        )
+
+    def _kill_local(self, session: AgentSession) -> None:
+        """Kill a locally-running agent (container, in-process, or PID)."""
         container_mgr = self._container_manager_for_session(session.id)
         if session.container_id and container_mgr is not None:
             handle = container_mgr.get_handle(session.id)
@@ -2395,15 +2410,19 @@ class AgentSpawner:
             self._in_process.cleanup(session.id)
         elif session.pid is not None:
             self._adapter.kill(session.pid)
+        self._transition_to_dead(session, "kill requested", "local process kill requested by orchestrator")
+
+    def _transition_to_dead(self, session: AgentSession, reason: str, detail: str) -> None:
+        """Transition session to dead and update team state."""
         if session.status != "dead":
             transition_agent(
                 session,
                 "dead",
                 actor="spawner",
-                reason="kill requested",
+                reason=reason,
                 transition_reason=TransitionReason.ABORTED,
                 abort_reason=AbortReason.SHUTDOWN_SIGNAL,
-                abort_detail="local process kill requested by orchestrator",
+                abort_detail=detail,
                 finish_reason="kill_requested",
             )
         try:

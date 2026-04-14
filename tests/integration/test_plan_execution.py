@@ -11,7 +11,6 @@ import respx
 import yaml
 from bernstein.core.manager_parsing import _resolve_depends_on
 from bernstein.core.plan_loader import load_plan_from_yaml
-from httpx import Response
 
 if TYPE_CHECKING:
     from bernstein.core.orchestrator import Orchestrator
@@ -51,32 +50,14 @@ async def test_plan_execution(test_client: TestClient, orchestrator_factory, int
     # 3. Bootstrap (inject tasks into server)
     # We'll use a global respx mock to handle all orchestrator calls
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+        from tests.integration.conftest import make_proxy_handler
 
-        def handler(request):
-            method = request.method
-            path = request.url.path
-            api_path = path if path.startswith("/") else "/" + path
-
-            # Auto-complete logic for tick: when orchestrator polls, we check if any agent is 'working' and finished
-            if method == "GET" and api_path == "/tasks":
-                resp = test_client.get("/tasks")
-                ts = resp.json()
-                for t in ts:
-                    if t["status"] == "working":
-                        marker = integration_sdd / "runtime" / f"DONE_{t['id']}"
-                        if marker.exists():
-                            print(f"Handler: Detected completion for {t['id']}, marking done")
-                            test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "done"})
-                            marker.unlink()
-                # Re-fetch after possible completions
-                resp = test_client.get("/tasks")
-                return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
-            content = request.read()
-            headers = dict(request.headers)
-            resp = test_client.request(method, api_path, content=content, headers=headers)
-            return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
-
+        handler = make_proxy_handler(
+            test_client,
+            integration_sdd,
+            slug_fn=lambda t: t["id"],
+            complete_statuses=frozenset({"working"}),
+        )
         respx_mock.route().mock(side_effect=handler)
 
         id_map = {}

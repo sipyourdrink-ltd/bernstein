@@ -130,16 +130,8 @@ def _module_display(path: Path, package_dir: Path) -> str:
     return parts[0] + "/"
 
 
-def _collect_package(package: str) -> list[tuple[str, str]]:
-    """Collect (display_name, description) rows for one top-level package."""
-    pkg_dir = SRC_ROOT / package
-    if not pkg_dir.is_dir():
-        return []
-
-    rows: list[tuple[str, str]] = []
-    seen_subdirs: set[str] = set()
-
-    # Determine file order: pinned first, then alphabetical
+def _get_ordered_files(pkg_dir: Path, package: str) -> list[Path]:
+    """Return Python files in the package, with core files pinned first."""
     if package == "core":
         pinned = [f for f in CORE_PINNED_ORDER if (pkg_dir / f).exists()]
         rest = sorted(
@@ -151,11 +143,37 @@ def _collect_package(package: str) -> list[tuple[str, str]]:
             and f.name not in SKIP_FILES
             and (package != "core" or f.name != _INIT_PY)
         )
-        all_files = [pkg_dir / name for name in (pinned + rest)]
-    else:
-        all_files = sorted(
-            f for f in pkg_dir.iterdir() if f.is_file() and f.suffix == ".py" and f.name not in SKIP_FILES
-        )
+        return [pkg_dir / name for name in (pinned + rest)]
+    return sorted(f for f in pkg_dir.iterdir() if f.is_file() and f.suffix == ".py" and f.name not in SKIP_FILES)
+
+
+def _collect_subpackage_rows(pkg_dir: Path) -> list[tuple[str, str]]:
+    """Collect rows for sub-packages (directories) in a package."""
+    rows: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for subdir in sorted(pkg_dir.iterdir()):
+        if not subdir.is_dir() or subdir.name.startswith("_") or subdir.name in seen:
+            continue
+        seen.add(subdir.name)
+        init = subdir / _INIT_PY
+        desc = _first_docstring_line(init) if init.exists() else f"{subdir.name}/ sub-package"
+        py_names = sorted(f.stem for f in subdir.glob("*.py") if not f.name.startswith("_"))
+        if py_names and not desc:
+            desc = f"Sub-package: {', '.join(py_names)}"
+        elif py_names and desc:
+            desc += f" ({', '.join(py_names)}.py)"
+        rows.append((f"`{subdir.name}/`", desc))
+    return rows
+
+
+def _collect_package(package: str) -> list[tuple[str, str]]:
+    """Collect (display_name, description) rows for one top-level package."""
+    pkg_dir = SRC_ROOT / package
+    if not pkg_dir.is_dir():
+        return []
+
+    rows: list[tuple[str, str]] = []
+    all_files = _get_ordered_files(pkg_dir, package)
 
     for py_file in all_files:
         fname = py_file.name
@@ -163,35 +181,13 @@ def _collect_package(package: str) -> list[tuple[str, str]]:
             continue
         if fname in SKIP_IN_MULTI:
             continue
-
-        display = fname
         if fname in MULTI_FILE_ROWS:
             display = " / ".join(f"`{f}`" for f in MULTI_FILE_ROWS[fname])
-            desc = _first_docstring_line(py_file)
-            rows.append((display, desc))
+            rows.append((display, _first_docstring_line(py_file)))
             continue
+        rows.append((f"`{fname}`", _first_docstring_line(py_file)))
 
-        desc = _first_docstring_line(py_file)
-        rows.append((f"`{display}`", desc))
-
-    # Sub-packages (e.g. routes/)
-    for subdir in sorted(pkg_dir.iterdir()):
-        if not subdir.is_dir() or subdir.name.startswith("_"):
-            continue
-        if subdir.name in seen_subdirs:
-            continue
-        seen_subdirs.add(subdir.name)
-        # Collect a one-liner from __init__.py if it exists
-        init = subdir / _INIT_PY
-        desc = _first_docstring_line(init) if init.exists() else f"{subdir.name}/ sub-package"
-        # List contents inline if small
-        py_names = sorted(f.stem for f in subdir.glob("*.py") if not f.name.startswith("_"))
-        if py_names and not desc:
-            desc = f"Sub-package: {', '.join(py_names)}"
-        elif py_names and desc:
-            desc += f" ({', '.join(py_names)}.py)"
-        rows.append((f"`{subdir.name}/`", desc))
-
+    rows.extend(_collect_subpackage_rows(pkg_dir))
     return rows
 
 

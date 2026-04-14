@@ -19,6 +19,30 @@ if TYPE_CHECKING:
 _WORD_RE = re.compile(r"\w+|\s+|[^\w\s]+")
 
 
+def _apply_opcode(
+    tag: str,
+    old_tokens: list[str],
+    new_tokens: list[str],
+    i1: int,
+    i2: int,
+    j1: int,
+    j2: int,
+    old_result: list[tuple[str, bool]],
+    new_result: list[tuple[str, bool]],
+) -> None:
+    """Apply a single SequenceMatcher opcode to result lists."""
+    if tag == "equal":
+        old_result.extend((tok, False) for tok in old_tokens[i1:i2])
+        new_result.extend((tok, False) for tok in new_tokens[j1:j2])
+    elif tag == "replace":
+        old_result.extend((tok, True) for tok in old_tokens[i1:i2])
+        new_result.extend((tok, True) for tok in new_tokens[j1:j2])
+    elif tag == "delete":
+        old_result.extend((tok, True) for tok in old_tokens[i1:i2])
+    elif tag == "insert":
+        new_result.extend((tok, True) for tok in new_tokens[j1:j2])
+
+
 def _tokenize(line: str) -> list[str]:
     """Split a line into word-level tokens.
 
@@ -59,22 +83,7 @@ def word_diff(
     new_result: list[tuple[str, bool]] = []
 
     for tag, i1, i2, j1, j2 in opcodes:
-        if tag == "equal":
-            for tok in old_tokens[i1:i2]:
-                old_result.append((tok, False))
-            for tok in new_tokens[j1:j2]:
-                new_result.append((tok, False))
-        elif tag == "replace":
-            for tok in old_tokens[i1:i2]:
-                old_result.append((tok, True))
-            for tok in new_tokens[j1:j2]:
-                new_result.append((tok, True))
-        elif tag == "delete":
-            for tok in old_tokens[i1:i2]:
-                old_result.append((tok, True))
-        elif tag == "insert":
-            for tok in new_tokens[j1:j2]:
-                new_result.append((tok, True))
+        _apply_opcode(tag, old_tokens, new_tokens, i1, i2, j1, j2, old_result, new_result)
 
     return old_result, new_result
 

@@ -449,7 +449,25 @@ class EvolutionLoop:
         if self._github_sync:
             self._github_sync_proposal(proposal.title, proposal.description)
 
-        # Step 5 — Circuit breaker check.
+        return self._evaluate_and_apply_proposal(
+            proposal,
+            risk_level,
+            risk_route,
+            composite_risk,
+            baseline_score,
+            cycle_start,
+        )
+
+    def _evaluate_and_apply_proposal(
+        self,
+        proposal: Any,
+        risk_level: Any,
+        risk_route: str,
+        composite_risk: float,
+        baseline_score: float,
+        cycle_start: float,
+    ) -> ExperimentResult:
+        """Run circuit breaker, approval gate, sandbox, eval gate, and apply."""
         can_evolve, breaker_reason = self._breaker.can_evolve(risk_level)
         if not can_evolve:
             logger.warning("Circuit breaker blocked %s: %s", proposal.id, breaker_reason)
@@ -464,7 +482,6 @@ class EvolutionLoop:
                 cycle_start,
             )
 
-        # Step 6 — Approval gate routing.
         decision = self._gate.route(_to_types_proposal(proposal, risk_level))
         is_auto = decision.outcome in (ApprovalOutcome.AUTO_APPROVED, ApprovalOutcome.AUTO_APPROVED_AUDIT)
         if not is_auto:
@@ -481,7 +498,6 @@ class EvolutionLoop:
                 cycle_start,
             )
 
-        # Step 7 — Sandbox validation.
         sandbox_result = self._run_sandbox_validation(proposal, risk_route, composite_risk, baseline_score)
         if not sandbox_result.passed:
             self._breaker.record_sandbox_failure(proposal.id)
@@ -496,7 +512,6 @@ class EvolutionLoop:
                 cycle_start,
             )
 
-        # Step 7b — Eval gate.
         eval_result = self._eval_gate.evaluate(
             proposal=_to_types_proposal(proposal, risk_level),
             risk_level=risk_level,
@@ -513,7 +528,6 @@ class EvolutionLoop:
                 cycle_start,
             )
 
-        # Step 8 — Apply the proposal.
         applied = self._apply_proposal(proposal, sandbox_result)
         candidate_score = sandbox_result.candidate_score if applied else baseline_score
         delta = sandbox_result.delta if applied else 0.0

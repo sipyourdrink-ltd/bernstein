@@ -396,119 +396,16 @@ class DrainCoordinator:
         phase = self._phases[1]
 
         # Source 1: HTTP API — most reliable when server is running.
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self._server_url}/status")
-                if resp.status_code == 200:
-                    status_data = resp.json()
-                    claimed = int(status_data.get("claimed", 0))
-                    logger.info("Server reports %d claimed tasks", claimed)
-        except Exception:
-            pass
-
+        await self._discover_agents_from_api()
         # Source 2: PID files in .sdd/runtime/pids/.
-        pids_dir = self._workdir / ".sdd" / "runtime" / "pids"
-        if pids_dir.is_dir():
-            for pid_file in pids_dir.glob("*.json"):
-                try:
-                    meta = json.loads(pid_file.read_text(encoding="utf-8"))
-                    session_id = str(meta.get("session_id", pid_file.stem))
-                    role = str(meta.get("role", "unknown"))
-                    pid = int(meta.get("pid", 0))
-                    if pid and _is_process_alive(pid):
-                        already = any(a.session_id == session_id for a in self._agents)
-                        if not already:
-                            wt = self._workdir / ".sdd" / "worktrees" / session_id
-                            self._agents.append(
-                                AgentDrainStatus(
-                                    session_id=session_id,
-                                    role=role,
-                                    pid=pid,
-                                    status="running",
-                                    worktree_path=str(wt) if wt.exists() else "",
-                                )
-                            )
-                except (OSError, ValueError):
-                    continue
-
+        self._discover_agents_from_pid_files()
         # Source 3: agents.json (legacy fallback).
-        agents_file = self._workdir / ".sdd" / "runtime" / "agents.json"
-        if agents_file.exists():
-            try:
-                raw = json.loads(agents_file.read_text(encoding="utf-8"))
-                agents_data = cast("list[dict[str, object]]", raw) if isinstance(raw, list) else []
-                for entry in agents_data:
-                    session_id = str(entry.get("session_id", entry.get("id", "")))
-                    if any(a.session_id == session_id for a in self._agents):
-                        continue
-                    role = str(entry.get("role", "unknown"))
-                    raw_pid = entry.get("pid", 0)
-                    pid = int(raw_pid) if isinstance(raw_pid, (int, str, float)) else 0
-                    worktree = str(entry.get("worktree_path", ""))
-                    if session_id and pid:
-                        self._agents.append(
-                            AgentDrainStatus(
-                                session_id=session_id,
-                                role=role,
-                                pid=pid,
-                                status="running",
-                                worktree_path=worktree,
-                            )
-                        )
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        # Source 4: scan running processes for orphan agents working in this repo.
-        # This catches agents that lost their PID file or were spawned externally.
-        my_pid = os.getpid()
-        workdir_str = str(self._workdir)
-        known_pids = {a.pid for a in self._agents}
-        try:
-            ps_proc = await asyncio.create_subprocess_exec(
-                "ps",
-                "-ax",
-                "-o",
-                "pid=,command=",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            ps_stdout, _ = await asyncio.wait_for(ps_proc.communicate(), timeout=5)
-            if ps_proc.returncode == 0:
-                for line in ps_stdout.decode().splitlines():
-                    parts = line.strip().split(maxsplit=1)
-                    if len(parts) != 2:
-                        continue
-                    try:
-                        pid = int(parts[0])
-                    except ValueError:
-                        continue
-                    if pid == my_pid or pid in known_pids:
-                        continue
-                    cmd = parts[1]
-                    # Match agents working in this repo's worktrees
-                    if workdir_str in cmd and (
-                        ".sdd/worktrees" in cmd or ".claude/worktrees" in cmd or ".sdd/runtime/heartbeats" in cmd
-                    ):
-                        self._agents.append(
-                            AgentDrainStatus(
-                                session_id=f"orphan-{pid}",
-                                role="unknown",
-                                pid=pid,
-                                status="running",
-                                worktree_path="",
-                            )
-                        )
-        except OSError:
-            pass
+        self._discover_agents_from_agents_json()
+        # Source 4: scan running processes for orphan agents.
+        await self._discover_orphan_agents()
 
         # Write SHUTDOWN signals for discovered agents.
-        for agent in self._agents:
-            signal_dir = self._workdir / ".sdd" / "runtime" / "signals" / agent.session_id
-            signal_dir.mkdir(parents=True, exist_ok=True)
-            (signal_dir / "SHUTDOWN").write_text(
-                "DRAIN: Save all work, commit changes, and exit cleanly",
-                encoding="utf-8",
-            )
+        self._write_shutdown_signals()
 
         count = len(self._agents)
         phase.detail = f"SHUTDOWN sent to {count} agent{'s' if count != 1 else ''}"
@@ -526,52 +423,20 @@ class DrainCoordinator:
         remaining = [a for a in self._agents if a.status == "running"]
 
         while remaining and time.monotonic() < deadline:
-            for agent in remaining:
-                if not _is_process_alive(agent.pid):
-                    agent.status = "exited"
-                    logger.info("Agent %s (pid %d) exited cleanly", agent.session_id, agent.pid)
-                    continue
-
-                # Check worktree for recent commits.
-                if agent.worktree_path:
-                    wt = Path(agent.worktree_path)
-                    if wt.exists():
-                        result = _run_git(["status", "--porcelain"], cwd=wt)
-                        if result.returncode == 0 and not result.stdout.strip():
-                            agent.status = "committing"
-
+            self._poll_agent_statuses(remaining)
             remaining = [a for a in self._agents if a.status == "running"]
             exited = [a for a in self._agents if a.status == "exited"]
             elapsed = self._config.wait_timeout_s - (deadline - time.monotonic())
             phase.detail = (
                 f"{len(exited)} exited, {len(remaining)} waiting ({int(elapsed)}s/{self._config.wait_timeout_s}s)"
             )
-            # Update UI each poll so the user sees live progress
             if self._callback is not None:
                 self._callback(phase, self._agents)
             if remaining:
                 await asyncio.sleep(_POLL_INTERVAL_S)
 
         # Timeout: escalate remaining agents.
-        still_alive = [a for a in self._agents if a.status in ("running", "committing")]
-        if still_alive:
-            logger.warning("Timeout: sending SIGTERM to %d remaining agents", len(still_alive))
-            for agent in still_alive:
-                _send_signal(agent.pid, signal.SIGTERM)
-
-            await asyncio.sleep(_SIGTERM_GRACE_S)
-
-            for agent in still_alive:
-                if _is_process_alive(agent.pid):
-                    _send_signal(agent.pid, signal.SIGKILL)
-                    agent.status = "killed"
-                    logger.warning(
-                        "Agent %s (pid %d) killed after timeout",
-                        agent.session_id,
-                        agent.pid,
-                    )
-                else:
-                    agent.status = "exited"
+        await self._escalate_remaining_agents()
 
         exited = sum(1 for a in self._agents if a.status == "exited")
         killed = sum(1 for a in self._agents if a.status == "killed")
@@ -697,65 +562,18 @@ class DrainCoordinator:
     async def _phase_cleanup(self) -> None:
         """Phase 6: Cleanup — remove worktrees, branches, update tickets."""
         phase = self._phases[5]
-        worktrees_removed = 0
-        branches_deleted = 0
 
         # Stop long-lived infrastructure first so the watchdog cannot
         # respawn the server/spawner while we are tearing runtime state down.
         await self._stop_infrastructure()
 
-        # Remove ALL agent worktrees from .sdd/worktrees/ and .claude/worktrees/
-        # — not just those in self._agents (which may be empty after a restart).
-        wt_dirs = [
-            self._workdir / ".sdd" / "worktrees",
-            self._workdir / ".claude" / "worktrees",
-        ]
-        for wt_dir in wt_dirs:
-            if not wt_dir.is_dir():
-                continue
-            for entry in sorted(wt_dir.iterdir()):
-                if not entry.is_dir():
-                    continue
-                # On Windows, retry git worktree remove with delays for file locks
-                max_git_attempts = 3 if sys.platform == "win32" else 1
-                removed = False
-                for attempt in range(max_git_attempts):
-                    result = _run_git(
-                        ["worktree", "remove", "--force", str(entry)],
-                        cwd=self._workdir,
-                    )
-                    if result.returncode == 0:
-                        worktrees_removed += 1
-                        removed = True
-                        break
-                    if attempt < max_git_attempts - 1:
-                        await asyncio.sleep(1.0)  # Wait for file locks to release
-
-                if not removed:  # noqa: SIM102
-                    # Fallback: rm -rf with Windows file-lock handling
-                    if _rmtree_windows_safe(entry):
-                        worktrees_removed += 1
+        worktrees_removed = await self._remove_all_worktrees()
 
         # Prune worktree registry BEFORE deleting branches — this
         # unregisters removed worktrees so branch -D succeeds.
         _run_git(["worktree", "prune"], cwd=self._workdir)
 
-        # Delete agent/* branches.
-        branch_result = _run_git(["branch", "--list", "agent/*"], cwd=self._workdir)
-        if branch_result.returncode == 0:
-            for line in branch_result.stdout.strip().splitlines():
-                branch_name = line.strip().lstrip("*+ ")
-                if not branch_name:
-                    continue
-                del_result = _run_git(["branch", "-D", branch_name], cwd=self._workdir)
-                if del_result.returncode == 0:
-                    branches_deleted += 1
-                elif "not found" not in del_result.stderr:
-                    logger.warning(
-                        "Failed to delete branch %s: %s",
-                        branch_name,
-                        del_result.stderr.strip(),
-                    )
+        branches_deleted = self._delete_agent_branches()
 
         # Move ticket files.
         self._move_tickets()
@@ -764,19 +582,247 @@ class DrainCoordinator:
         self._clean_runtime()
 
         # Cancel drain mode on the server so claims work again on next run.
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(f"{self._server_url}/drain/cancel")
-                logger.info("Drain mode cancelled on server")
-        except Exception:
-            # Server may already be down — that's fine, draining is
-            # an in-memory flag that resets on server restart.
-            logger.debug("Could not cancel drain on server (may be already stopped)")
+        await self._cancel_drain_mode()
 
         phase.detail = (
             f"{worktrees_removed} worktree{'s' if worktrees_removed != 1 else ''} removed, "
             f"{branches_deleted} branch{'es' if branches_deleted != 1 else ''} deleted"
         )
+
+    async def _remove_all_worktrees(self) -> int:
+        """Remove ALL agent worktrees from .sdd/worktrees/ and .claude/worktrees/.
+
+        Returns:
+            Number of worktrees successfully removed.
+        """
+        wt_dirs = [
+            self._workdir / ".sdd" / "worktrees",
+            self._workdir / ".claude" / "worktrees",
+        ]
+        count = 0
+        for wt_dir in wt_dirs:
+            if not wt_dir.is_dir():
+                continue
+            for entry in sorted(wt_dir.iterdir()):
+                if not entry.is_dir():
+                    continue
+                if await self._try_remove_worktree(entry):
+                    count += 1
+        return count
+
+    async def _try_remove_worktree(self, entry: Path) -> bool:
+        """Try to remove a single worktree with platform-aware retries."""
+        max_git_attempts = 3 if sys.platform == "win32" else 1
+        for attempt in range(max_git_attempts):
+            result = _run_git(
+                ["worktree", "remove", "--force", str(entry)],
+                cwd=self._workdir,
+            )
+            if result.returncode == 0:
+                return True
+            if attempt < max_git_attempts - 1:
+                await asyncio.sleep(1.0)
+        # Fallback: rm -rf with Windows file-lock handling
+        return _rmtree_windows_safe(entry)
+
+    def _delete_agent_branches(self) -> int:
+        """Delete agent/* branches and return count of branches deleted."""
+        branch_result = _run_git(["branch", "--list", "agent/*"], cwd=self._workdir)
+        if branch_result.returncode != 0:
+            return 0
+        deleted = 0
+        for line in branch_result.stdout.strip().splitlines():
+            branch_name = line.strip().lstrip("*+ ")
+            if not branch_name:
+                continue
+            del_result = _run_git(["branch", "-D", branch_name], cwd=self._workdir)
+            if del_result.returncode == 0:
+                deleted += 1
+            elif "not found" not in del_result.stderr:
+                logger.warning(
+                    "Failed to delete branch %s: %s",
+                    branch_name,
+                    del_result.stderr.strip(),
+                )
+        return deleted
+
+    async def _cancel_drain_mode(self) -> None:
+        """Cancel drain mode on the server so claims work again on next run."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{self._server_url}/drain/cancel")
+                logger.info("Drain mode cancelled on server")
+        except Exception:
+            logger.debug("Could not cancel drain on server (may be already stopped)")
+
+    # ------------------------------------------------------------------
+    # Internal helpers — agent polling and escalation
+    # ------------------------------------------------------------------
+
+    def _poll_agent_statuses(self, remaining: list[AgentDrainStatus]) -> None:
+        """Check each running agent and update its status."""
+        for agent in remaining:
+            if not _is_process_alive(agent.pid):
+                agent.status = "exited"
+                logger.info("Agent %s (pid %d) exited cleanly", agent.session_id, agent.pid)
+                continue
+            if not agent.worktree_path:
+                continue
+            wt = Path(agent.worktree_path)
+            if not wt.exists():
+                continue
+            result = _run_git(["status", "--porcelain"], cwd=wt)
+            if result.returncode == 0 and not result.stdout.strip():
+                agent.status = "committing"
+
+    async def _escalate_remaining_agents(self) -> None:
+        """Send SIGTERM then SIGKILL to agents that failed to exit."""
+        still_alive = [a for a in self._agents if a.status in ("running", "committing")]
+        if not still_alive:
+            return
+        logger.warning("Timeout: sending SIGTERM to %d remaining agents", len(still_alive))
+        for agent in still_alive:
+            _send_signal(agent.pid, signal.SIGTERM)
+
+        await asyncio.sleep(_SIGTERM_GRACE_S)
+
+        for agent in still_alive:
+            if _is_process_alive(agent.pid):
+                _send_signal(agent.pid, signal.SIGKILL)
+                agent.status = "killed"
+                logger.warning(
+                    "Agent %s (pid %d) killed after timeout",
+                    agent.session_id,
+                    agent.pid,
+                )
+            else:
+                agent.status = "exited"
+
+    # ------------------------------------------------------------------
+    # Internal helpers — agent discovery
+    # ------------------------------------------------------------------
+
+    async def _discover_agents_from_api(self) -> None:
+        """Source 1: query HTTP API for claimed task count."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self._server_url}/status")
+                if resp.status_code == 200:
+                    status_data = resp.json()
+                    claimed = int(status_data.get("claimed", 0))
+                    logger.info("Server reports %d claimed tasks", claimed)
+        except Exception:
+            pass
+
+    def _discover_agents_from_pid_files(self) -> None:
+        """Source 2: discover agents from PID files in .sdd/runtime/pids/."""
+        pids_dir = self._workdir / ".sdd" / "runtime" / "pids"
+        if not pids_dir.is_dir():
+            return
+        for pid_file in pids_dir.glob("*.json"):
+            try:
+                meta = json.loads(pid_file.read_text(encoding="utf-8"))
+                session_id = str(meta.get("session_id", pid_file.stem))
+                role = str(meta.get("role", "unknown"))
+                pid = int(meta.get("pid", 0))
+            except (OSError, ValueError):
+                continue
+            if not pid or not _is_process_alive(pid):
+                continue
+            if any(a.session_id == session_id for a in self._agents):
+                continue
+            wt = self._workdir / ".sdd" / "worktrees" / session_id
+            self._agents.append(
+                AgentDrainStatus(
+                    session_id=session_id,
+                    role=role,
+                    pid=pid,
+                    status="running",
+                    worktree_path=str(wt) if wt.exists() else "",
+                )
+            )
+
+    def _discover_agents_from_agents_json(self) -> None:
+        """Source 3: discover agents from agents.json (legacy fallback)."""
+        agents_file = self._workdir / ".sdd" / "runtime" / "agents.json"
+        if not agents_file.exists():
+            return
+        try:
+            raw = json.loads(agents_file.read_text(encoding="utf-8"))
+            agents_data = cast("list[dict[str, object]]", raw) if isinstance(raw, list) else []
+        except (json.JSONDecodeError, OSError):
+            return
+        for entry in agents_data:
+            session_id = str(entry.get("session_id", entry.get("id", "")))
+            if any(a.session_id == session_id for a in self._agents):
+                continue
+            role = str(entry.get("role", "unknown"))
+            raw_pid = entry.get("pid", 0)
+            pid = int(raw_pid) if isinstance(raw_pid, (int, str, float)) else 0
+            worktree = str(entry.get("worktree_path", ""))
+            if session_id and pid:
+                self._agents.append(
+                    AgentDrainStatus(
+                        session_id=session_id,
+                        role=role,
+                        pid=pid,
+                        status="running",
+                        worktree_path=worktree,
+                    )
+                )
+
+    async def _discover_orphan_agents(self) -> None:
+        """Source 4: scan running processes for orphan agents in this repo."""
+        my_pid = os.getpid()
+        workdir_str = str(self._workdir)
+        known_pids = {a.pid for a in self._agents}
+        try:
+            ps_proc = await asyncio.create_subprocess_exec(
+                "ps",
+                "-ax",
+                "-o",
+                "pid=,command=",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            ps_stdout, _ = await asyncio.wait_for(ps_proc.communicate(), timeout=5)
+        except OSError:
+            return
+        if ps_proc.returncode != 0:
+            return
+        for line in ps_stdout.decode().splitlines():
+            parts = line.strip().split(maxsplit=1)
+            if len(parts) != 2:
+                continue
+            try:
+                pid = int(parts[0])
+            except ValueError:
+                continue
+            if pid == my_pid or pid in known_pids:
+                continue
+            cmd = parts[1]
+            if workdir_str in cmd and (
+                ".sdd/worktrees" in cmd or ".claude/worktrees" in cmd or ".sdd/runtime/heartbeats" in cmd
+            ):
+                self._agents.append(
+                    AgentDrainStatus(
+                        session_id=f"orphan-{pid}",
+                        role="unknown",
+                        pid=pid,
+                        status="running",
+                        worktree_path="",
+                    )
+                )
+
+    def _write_shutdown_signals(self) -> None:
+        """Write SHUTDOWN signal files for all discovered agents."""
+        for agent in self._agents:
+            signal_dir = self._workdir / ".sdd" / "runtime" / "signals" / agent.session_id
+            signal_dir.mkdir(parents=True, exist_ok=True)
+            (signal_dir / "SHUTDOWN").write_text(
+                "DRAIN: Save all work, commit changes, and exit cleanly",
+                encoding="utf-8",
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers

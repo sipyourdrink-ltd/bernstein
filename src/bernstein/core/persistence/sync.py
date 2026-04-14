@@ -464,13 +464,23 @@ def _move_completed_files(
         task = parse_backlog_file(md_file)
         if task is None or normalise_title(task.title) not in done_slugs:
             continue
-        for live_dir in (backlog_open, backlog_claimed):
-            live_file = live_dir / md_file.name
-            if not live_file.exists():
-                continue
-            try:
-                shutil.move(str(live_file), str(closed_dir / md_file.name))
-                result.moved.append(md_file.name)
-                logger.info("Moved %s to backlog/closed/", md_file.name)
-            except OSError as exc:
-                result.errors.append(f"Failed to move {md_file.name}: {exc}")
+        _try_move_to_closed(md_file, (backlog_open, backlog_claimed), closed_dir, result)
+
+
+def _try_move_to_closed(
+    md_file: Path,
+    live_dirs: tuple[Path, ...],
+    closed_dir: Path,
+    result: Any,
+) -> None:
+    """Try to move a backlog file from live directories to closed/."""
+    for live_dir in live_dirs:
+        live_file = live_dir / md_file.name
+        if not live_file.exists():
+            continue
+        try:
+            shutil.move(str(live_file), str(closed_dir / md_file.name))
+            result.moved.append(md_file.name)
+            logger.info("Moved %s to backlog/closed/", md_file.name)
+        except OSError as exc:
+            result.errors.append(f"Failed to move {md_file.name}: {exc}")

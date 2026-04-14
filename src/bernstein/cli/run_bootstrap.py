@@ -157,6 +157,88 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
     return [Task.from_dict(td) for td in tasks_data]
 
 
+def _confirm_run(*, goal: str | None, seed_file: str | None) -> bool:
+    """Show confirmation prompt before execution. Returns True to proceed."""
+    effective_goal = goal
+    team: list[str] | None = None
+
+    if effective_goal is None:
+        _peek_path: Path | None = Path(seed_file) if seed_file is not None else find_seed_file()
+        if _peek_path is not None:
+            try:
+                from bernstein.core.seed import parse_seed as _parse_seed
+
+                _seed = _parse_seed(_peek_path)
+                effective_goal = _seed.goal
+                team = list(_seed.team) if _seed.team != "auto" else None
+                from bernstein.core.plan_approval import configure_plan_models
+
+                configure_plan_models(_seed.role_model_policy)
+            except Exception:
+                pass
+
+    if effective_goal:
+        plan_obj, plan_tasks = _build_synthetic_plan(effective_goal, team)
+        from bernstein.cli.plan_display import display_plan_and_confirm
+
+        return display_plan_and_confirm(plan_obj, plan_tasks, console=console)
+
+    try:
+        if not click.confirm("\nProceed with execution?", default=True):
+            console.print("[dim]Cancelled.[/dim]")
+            return False
+    except (UnicodeDecodeError, EOFError):
+        pass
+    return True
+
+
+def _propagate_env_flags(
+    *,
+    profile: bool,
+    workflow: str | None,
+    routing: str | None,
+    compliance: str | None,
+    sandbox: str | None,
+    container: bool,
+    container_image: str | None,
+    two_phase_sandbox: bool,
+    quiet: bool,
+    task_filter: str | None,
+    auto_pr: bool,
+    activity_log_path: str | None,
+    audit: bool,
+) -> None:
+    """Set environment variables so orchestrator subprocesses inherit CLI flags."""
+    _flag_map: list[tuple[bool, str]] = [
+        (profile, "BERNSTEIN_PROFILE"),
+        (two_phase_sandbox, "BERNSTEIN_TWO_PHASE_SANDBOX"),
+        (quiet, "BERNSTEIN_QUIET"),
+        (auto_pr, "BERNSTEIN_AUTO_PR"),
+        (audit, "BERNSTEIN_AUDIT"),
+    ]
+    for flag, key in _flag_map:
+        if flag:
+            os.environ[key] = "1"
+
+    _str_map: list[tuple[str | None, str]] = [
+        (workflow, "BERNSTEIN_WORKFLOW"),
+        (routing, "BERNSTEIN_ROUTING"),
+        (compliance, "BERNSTEIN_COMPLIANCE"),
+        (container_image, "BERNSTEIN_CONTAINER_IMAGE"),
+        (task_filter, "BERNSTEIN_TASK_FILTER"),
+        (activity_log_path, "BERNSTEIN_ACTIVITY_LOG"),
+    ]
+    for val, key in _str_map:
+        if val:
+            os.environ[key] = val
+
+    if sandbox:
+        os.environ["BERNSTEIN_CONTAINER"] = "1"
+        os.environ["BERNSTEIN_SANDBOX_RUNTIME"] = sandbox.lower()
+    elif container:
+        os.environ["BERNSTEIN_CONTAINER"] = "1"
+
+
 def _show_dry_run_plan(
     workdir: Path,
     plan_file: Path | None,
@@ -179,6 +261,9 @@ def _show_dry_run_plan(
         model_override: Optional model override.
         _cli: Optional CLI override.
     """
+    _ = workdir  # Part of interface
+    _ = seed_file  # Part of interface
+    _ = cli  # Part of interface
     from rich.table import Table
 
     console.print("\n[bold]Dry-run mode — no agents will be spawned.[/bold]\n")
@@ -692,48 +777,12 @@ def run(
     )
     from bernstein.core.seed import SeedError
 
-    # Propagate profiler flag via env var so the orchestrator subprocess picks it up
-    if profile:
-        os.environ["BERNSTEIN_PROFILE"] = "1"
-
-    # Propagate workflow mode to orchestrator subprocess via env var
-    if workflow:
-        os.environ["BERNSTEIN_WORKFLOW"] = workflow
-
-    # Propagate routing mode so the orchestrator picks up bandit vs static
-    if routing:
-        os.environ["BERNSTEIN_ROUTING"] = routing
-
-    # Propagate compliance preset so the orchestrator subprocess picks it up
-    if compliance:
-        os.environ["BERNSTEIN_COMPLIANCE"] = compliance
-
-    # Propagate container isolation settings to the orchestrator subprocess
-    if sandbox:
-        os.environ["BERNSTEIN_CONTAINER"] = "1"
-        os.environ["BERNSTEIN_SANDBOX_RUNTIME"] = sandbox.lower()
-    elif container:
-        os.environ["BERNSTEIN_CONTAINER"] = "1"
-    if container_image:
-        os.environ["BERNSTEIN_CONTAINER_IMAGE"] = container_image
-    if two_phase_sandbox:
-        os.environ["BERNSTEIN_TWO_PHASE_SANDBOX"] = "1"
-
-    # Propagate quiet flag so the orchestrator suppresses the live summary card
-    if quiet:
-        os.environ["BERNSTEIN_QUIET"] = "1"
-
-    # Propagate task filter so the orchestrator only ingests matching backlog tasks
-    if task_filter:
-        os.environ["BERNSTEIN_TASK_FILTER"] = task_filter
-
-    # Propagate auto-PR flag so the orchestrator creates a PR when all tasks complete
-    if auto_pr:
-        os.environ["BERNSTEIN_AUTO_PR"] = "1"
-
-    # Propagate activity log path so the dashboard writes activity to a file
-    if activity_log_path:
-        os.environ["BERNSTEIN_ACTIVITY_LOG"] = activity_log_path
+    _propagate_env_flags(
+        profile=profile, workflow=workflow, routing=routing, compliance=compliance,
+        sandbox=sandbox, container=container, container_image=container_image,
+        two_phase_sandbox=two_phase_sandbox, quiet=quiet, task_filter=task_filter,
+        auto_pr=auto_pr, activity_log_path=activity_log_path, audit=audit,
+    )
 
     _configure_quality_gate_bypass(
         goal=goal,
@@ -741,10 +790,6 @@ def run(
         skip_gate=skip_gate,
         skip_gate_reason=skip_gate_reason,
     )
-
-    # Propagate audit mode so the orchestrator enables SOC 2 audit logging
-    if audit:
-        os.environ["BERNSTEIN_AUDIT"] = "1"
 
     # --dry-run: show scheduling plan without executing
     if dry_run:
@@ -868,46 +913,8 @@ def run(
         return
 
     # Confirmation prompt before execution (skip with --auto-approve)
-    if not auto_approve:
-        effective_goal_for_confirm = goal
-        team_for_confirm: list[str] | None = None
-
-        if effective_goal_for_confirm is None:
-            # Peek at seed to get goal for confirmation display
-            if seed_file is not None:
-                _peek_path: Path | None = Path(seed_file)
-            else:
-                _peek_path = find_seed_file()
-
-            if _peek_path is not None:
-                try:
-                    from bernstein.core.seed import parse_seed as _parse_seed
-
-                    _seed = _parse_seed(_peek_path)
-                    effective_goal_for_confirm = _seed.goal
-                    team_for_confirm = list(_seed.team) if _seed.team != "auto" else None
-                    # Configure plan model display from seed config
-                    from bernstein.core.plan_approval import configure_plan_models
-
-                    configure_plan_models(_seed.role_model_policy)
-                except Exception:
-                    pass
-
-        if effective_goal_for_confirm:
-            plan_obj, plan_tasks = _build_synthetic_plan(effective_goal_for_confirm, team_for_confirm)
-            from bernstein.cli.plan_display import display_plan_and_confirm
-
-            if not display_plan_and_confirm(plan_obj, plan_tasks, console=console):
-                return
-        elif not auto_approve:
-            # No goal resolved -- fall back to simple confirmation
-            try:
-                if not click.confirm("\nProceed with execution?", default=True):
-                    console.print("[dim]Cancelled.[/dim]")
-                    return
-            except (UnicodeDecodeError, EOFError):
-                # Non-ASCII input (e.g. Cyrillic keyboard) -- treat as "yes"
-                pass
+    if not auto_approve and not _confirm_run(goal=goal, seed_file=seed_file):
+        return
 
     if goal is not None:
         # Inline goal mode -- no YAML needed

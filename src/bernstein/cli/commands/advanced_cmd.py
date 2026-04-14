@@ -215,6 +215,25 @@ def dashboard(port: int, no_open: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _classify_archive_task(
+    task: dict[str, Any],
+    since: float | None,
+    done_tasks: list[dict[str, Any]],
+    failed_tasks: list[dict[str, Any]],
+) -> None:
+    """Classify a single archive task into done or failed lists, applying time filter."""
+    ts = task.get("completed_at") or task.get("failed_at")
+    if ts:
+        ts_float = float(ts) if isinstance(ts, (int, float, str)) else 0
+        if since is not None and ts_float < since:
+            return
+    status = task.get("status")
+    if status == "done":
+        done_tasks.append(task)
+    elif status == "failed":
+        failed_tasks.append(task)
+
+
 def _load_archive_tasks(path: Path, since: float | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Load completed and failed tasks from archive, optionally filtered by time."""
     done_tasks: list[dict[str, Any]] = []
@@ -232,15 +251,7 @@ def _load_archive_tasks(path: Path, since: float | None = None) -> tuple[list[di
                     continue
                 try:
                     task = _json.loads(line)
-                    ts = task.get("completed_at") or task.get("failed_at")
-                    if ts:
-                        ts_float = float(ts) if isinstance(ts, (int, float, str)) else 0
-                        if since is not None and ts_float < since:
-                            continue
-                    if task.get("status") == "done":
-                        done_tasks.append(task)
-                    elif task.get("status") == "failed":
-                        failed_tasks.append(task)
+                    _classify_archive_task(task, since, done_tasks, failed_tasks)
                 except Exception:
                     pass
     except Exception:
@@ -714,6 +725,95 @@ def trace_cmd(task_id: str, as_json: bool, traces_dir: str) -> None:
 _REPLAY_JSONL = "replay.jsonl"
 
 
+def _replay_print_header(
+    run_id: str,
+    events: list[dict[str, Any]],
+    fingerprint: str,
+    metadata: Any,
+) -> None:
+    """Print the replay header panel with run metadata."""
+    from rich.panel import Panel
+
+    first_ts = events[0].get("ts", 0)
+    last_ts = events[-1].get("ts", 0)
+    duration_s = last_ts - first_ts
+    duration_m, duration_s_rem = divmod(int(duration_s), 60)
+
+    header_parts = [
+        f"Run: [bold cyan]{run_id}[/bold cyan]  "
+        f"Events: [bold]{len(events)}[/bold]  "
+        f"Duration: [bold]{duration_m}m{duration_s_rem:02d}s[/bold]  "
+        f"Fingerprint: [dim]{fingerprint[:16]}...[/dim]"
+    ]
+    if metadata is not None:
+        started = dt.datetime.fromtimestamp(metadata.started_at).strftime("%Y-%m-%d %H:%M:%S")
+        header_parts.append(f"Started: [bold]{started}[/bold]")
+        if metadata.git_branch:
+            header_parts.append(f"Branch: [bold]{metadata.git_branch}[/bold]")
+        if metadata.git_sha:
+            header_parts.append(f"SHA: [bold]{metadata.git_sha[:12]}[/bold]")
+        if metadata.config_hash:
+            header_parts.append(f"Config: [dim]{metadata.config_hash[:12]}...[/dim]")
+    header_text = "  ".join(header_parts)
+    console.print(Panel(header_text, title="Deterministic Replay", border_style="cyan"))
+
+
+def _replay_find_run_dirs(runs_dir: Path) -> list[Path]:
+    """Return sorted list of run directories that contain replay logs."""
+    if not runs_dir.exists():
+        return []
+    return sorted(
+        (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+
+
+def _replay_list_runs(runs_dir: Path) -> None:
+    """Show all available run IDs in a Rich table."""
+    if not runs_dir.exists():
+        console.print("[dim]No runs recorded yet.[/dim]")
+        return
+    run_dirs = _replay_find_run_dirs(runs_dir)
+    if not run_dirs:
+        console.print("[dim]No replay logs found.[/dim]")
+        return
+    from rich.table import Table
+
+    table = Table(title="Available Runs", show_header=True, header_style=_STYLE_BOLD_CYAN)
+    table.add_column("Run ID")
+    table.add_column("Started")
+    table.add_column("Branch")
+    table.add_column("SHA")
+    table.add_column("Events", justify="right")
+    table.add_column("Size", justify="right")
+    for d in run_dirs:
+        replay_file = d / _REPLAY_JSONL
+        event_count = sum(1 for line in replay_file.read_text().splitlines() if line.strip())
+        size_kb = replay_file.stat().st_size / 1024
+        metadata = read_session_replay_metadata(d)
+        started = "—"
+        branch = "—"
+        sha = "—"
+        if metadata is not None:
+            started = dt.datetime.fromtimestamp(metadata.started_at).strftime("%Y-%m-%d %H:%M")
+            branch = metadata.git_branch or "—"
+            sha = metadata.git_sha[:8] if metadata.git_sha else "—"
+        table.add_row(d.name, started, branch, sha, str(event_count), f"{size_kb:.1f} KB")
+    console.print(table)
+
+
+def _replay_resolve_latest(runs_dir: Path) -> str:
+    """Resolve 'latest' to the most recent run ID or exit."""
+    run_dirs = _replay_find_run_dirs(runs_dir)
+    if not run_dirs:
+        console.print("[red]No replay logs found.[/red]")
+        raise SystemExit(1)
+    latest = run_dirs[0].name
+    console.print(f"[dim]Replaying latest run:[/dim] {latest}")
+    return latest
+
+
 def _should_use_run_replay(run_id: str, runs_dir: Path) -> bool:
     """Return whether replay should use the legacy run-event mode."""
     return run_id in {"list", "latest"} or (runs_dir / run_id / _REPLAY_JSONL).exists()
@@ -828,57 +928,12 @@ def replay_cmd(
 
     # "list" subcommand: show all available run IDs
     if run_id == "list":
-        if not runs_dir.exists():
-            console.print("[dim]No runs recorded yet.[/dim]")
-            return
-        run_dirs = sorted(
-            (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
-            key=lambda d: d.name,
-            reverse=True,
-        )
-        if not run_dirs:
-            console.print("[dim]No replay logs found.[/dim]")
-            return
-        from rich.table import Table
-
-        table = Table(title="Available Runs", show_header=True, header_style=_STYLE_BOLD_CYAN)
-        table.add_column("Run ID")
-        table.add_column("Started")
-        table.add_column("Branch")
-        table.add_column("SHA")
-        table.add_column("Events", justify="right")
-        table.add_column("Size", justify="right")
-        for d in run_dirs:
-            replay_file = d / _REPLAY_JSONL
-            event_count = sum(1 for line in replay_file.read_text().splitlines() if line.strip())
-            size_kb = replay_file.stat().st_size / 1024
-            metadata = read_session_replay_metadata(d)
-            started = "—"
-            branch = "—"
-            sha = "—"
-            if metadata is not None:
-                started = dt.datetime.fromtimestamp(metadata.started_at).strftime("%Y-%m-%d %H:%M")
-                branch = metadata.git_branch or "—"
-                sha = metadata.git_sha[:8] if metadata.git_sha else "—"
-            table.add_row(d.name, started, branch, sha, str(event_count), f"{size_kb:.1f} KB")
-        console.print(table)
+        _replay_list_runs(runs_dir)
         return
 
     # Resolve "latest"
     if run_id == "latest":
-        if not runs_dir.exists():
-            console.print("[red]No runs recorded yet.[/red]")
-            raise SystemExit(1)
-        run_dirs = sorted(
-            (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
-            key=lambda d: d.name,
-            reverse=True,
-        )
-        if not run_dirs:
-            console.print("[red]No replay logs found.[/red]")
-            raise SystemExit(1)
-        run_id = run_dirs[0].name
-        console.print(f"[dim]Replaying latest run:[/dim] {run_id}")
+        run_id = _replay_resolve_latest(runs_dir)
 
     replay_path = runs_dir / run_id / _REPLAY_JSONL
     if not replay_path.exists():
@@ -905,32 +960,9 @@ def replay_cmd(
     fingerprint = compute_replay_fingerprint(replay_path)
 
     # Build Rich table
-    from rich.panel import Panel
     from rich.table import Table
 
-    # Header panel
-    first_ts = events[0].get("ts", 0)
-    last_ts = events[-1].get("ts", 0)
-    duration_s = last_ts - first_ts
-    duration_m, duration_s_rem = divmod(int(duration_s), 60)
-
-    header_parts = [
-        f"Run: [bold cyan]{run_id}[/bold cyan]  "
-        f"Events: [bold]{len(events)}[/bold]  "
-        f"Duration: [bold]{duration_m}m{duration_s_rem:02d}s[/bold]  "
-        f"Fingerprint: [dim]{fingerprint[:16]}...[/dim]"
-    ]
-    if metadata is not None:
-        started = dt.datetime.fromtimestamp(metadata.started_at).strftime("%Y-%m-%d %H:%M:%S")
-        header_parts.append(f"Started: [bold]{started}[/bold]")
-        if metadata.git_branch:
-            header_parts.append(f"Branch: [bold]{metadata.git_branch}[/bold]")
-        if metadata.git_sha:
-            header_parts.append(f"SHA: [bold]{metadata.git_sha[:12]}[/bold]")
-        if metadata.config_hash:
-            header_parts.append(f"Config: [dim]{metadata.config_hash[:12]}...[/dim]")
-    header_text = "  ".join(header_parts)
-    console.print(Panel(header_text, title="Deterministic Replay", border_style="cyan"))
+    _replay_print_header(run_id, events, fingerprint, metadata)
 
     # Event table
     table = Table(show_header=True, header_style=_STYLE_BOLD_CYAN, expand=True)

@@ -333,6 +333,50 @@ def _iter_python_files(workdir: Path, exclude_rel: set[str]) -> list[Path]:
     return result
 
 
+def _parse_python_file(py_path: Path) -> ast.Module | None:
+    """Parse a Python file, returning None on read/syntax errors."""
+    try:
+        source = py_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    try:
+        return ast.parse(source)
+    except SyntaxError:
+        return None
+
+
+def _scan_file_for_impacts(
+    py_path: Path,
+    workdir: Path,
+    module_for_file: dict[str, str],
+    broken_symbols_per_module: dict[str, set[str]],
+    breaks_by_file: dict[str, list[BreakingChange]],
+) -> list[CallSiteImpact]:
+    """Scan a single file for breaking call-site impacts."""
+    tree = _parse_python_file(py_path)
+    if tree is None:
+        return []
+
+    try:
+        caller_rel = str(py_path.relative_to(workdir)).replace("\\", "/")
+    except ValueError:
+        caller_rel = str(py_path)
+
+    impacts: list[CallSiteImpact] = []
+    for changed_rel, module_path in module_for_file.items():
+        broken_syms = broken_symbols_per_module[module_path]
+        bcs = breaks_by_file[changed_rel]
+
+        imported_names = _collect_imported_names(tree, module_path, broken_syms)
+        module_aliases = _collect_module_aliases(tree, module_path)
+
+        if not imported_names and not module_aliases:
+            continue
+
+        impacts.extend(_find_call_impacts(tree, caller_rel, imported_names, module_aliases, bcs))
+    return impacts
+
+
 def find_call_site_impacts(
     workdir: Path,
     compat_report: CompatReport,
@@ -353,62 +397,23 @@ def find_call_site_impacts(
     if not compat_report.breaking_changes:
         return []
 
-    # Group breaking changes by the file they come from.
     breaks_by_file: dict[str, list[BreakingChange]] = {}
     for bc in compat_report.breaking_changes:
         breaks_by_file.setdefault(bc.file, []).append(bc)
 
-    # Pre-compute module paths for changed files.
     module_for_file: dict[str, str] = {rel: _rel_path_to_module(rel) for rel in breaks_by_file}
 
-    # Pre-compute the set of all broken symbol names per changed module.
     broken_symbols_per_module: dict[str, set[str]] = {}
     for rel, bcs in breaks_by_file.items():
-        syms: set[str] = set()
-        for bc in bcs:
-            syms.add(bc.name.split(".")[0])
-        broken_symbols_per_module[module_for_file[rel]] = syms
+        broken_symbols_per_module[module_for_file[rel]] = {bc.name.split(".")[0] for bc in bcs}
 
-    exclude = set(changed_files)
-    all_py_files = _iter_python_files(workdir, exclude)
+    all_py_files = _iter_python_files(workdir, set(changed_files))
 
     all_impacts: list[CallSiteImpact] = []
-
     for py_path in all_py_files:
-        try:
-            source = py_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
-            continue
-
-        try:
-            caller_rel = str(py_path.relative_to(workdir)).replace("\\", "/")
-        except ValueError:
-            caller_rel = str(py_path)
-
-        for changed_rel, module_path in module_for_file.items():
-            broken_syms = broken_symbols_per_module[module_path]
-            bcs = breaks_by_file[changed_rel]
-
-            imported_names = _collect_imported_names(tree, module_path, broken_syms)
-            module_aliases = _collect_module_aliases(tree, module_path)
-
-            if not imported_names and not module_aliases:
-                continue
-
-            impacts = _find_call_impacts(
-                tree,
-                caller_rel,
-                imported_names,
-                module_aliases,
-                bcs,
-            )
-            all_impacts.extend(impacts)
-
+        all_impacts.extend(
+            _scan_file_for_impacts(py_path, workdir, module_for_file, broken_symbols_per_module, breaks_by_file)
+        )
     return all_impacts
 
 

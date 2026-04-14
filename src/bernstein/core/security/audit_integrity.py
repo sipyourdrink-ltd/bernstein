@@ -129,6 +129,64 @@ def _load_audit_key(audit_dir: Path) -> bytes | None:
     return key_path.read_bytes().strip()
 
 
+def _verify_entry_chain(
+    entries: list[tuple[str, int, dict[str, Any]]],
+    key: bytes,
+    errors: list[str],
+) -> tuple[str | None, int]:
+    """Verify HMAC chain linkage and integrity for a list of entries.
+
+    Returns:
+        Tuple of (last_hmac, entries_checked).
+    """
+    prev_hmac: str | None = None
+    checked = 0
+    for filename, line_no, entry in entries:
+        if entry.get("__parse_error"):
+            errors.append(f"{filename}:{line_no}: unparseable JSON")
+            continue
+
+        stored_hmac = entry.get("hmac", "")
+        entry_prev_hmac = entry.get("prev_hmac", "")
+
+        if prev_hmac is not None and entry_prev_hmac != prev_hmac:
+            errors.append(
+                f"{filename}:{line_no}: chain broken — "
+                f"prev_hmac {entry_prev_hmac[:16]}... != expected {prev_hmac[:16]}..."
+            )
+
+        payload = {k: v for k, v in entry.items() if k != "hmac"}
+        expected_hmac = _compute_hmac(key, entry_prev_hmac, payload)
+
+        if stored_hmac != expected_hmac:
+            errors.append(
+                f"{filename}:{line_no}: HMAC mismatch — "
+                f"stored {stored_hmac[:16]}... != computed {expected_hmac[:16]}..."
+            )
+
+        prev_hmac = stored_hmac
+        checked += 1
+    return prev_hmac, checked
+
+
+def _log_integrity_result(errors: list[str], checked: int, duration_ms: float) -> None:
+    """Log the outcome of an integrity check."""
+    if errors:
+        logger.warning(
+            "Audit integrity check FAILED: %d error(s) in last %d entries",
+            len(errors),
+            checked,
+        )
+        for err in errors:
+            logger.warning("  %s", err)
+    else:
+        logger.info(
+            "Audit integrity check passed: %d entries verified in %.1fms",
+            checked,
+            duration_ms,
+        )
+
+
 def verify_audit_integrity(
     audit_dir: Path,
     count: int = DEFAULT_VERIFY_COUNT,
@@ -191,54 +249,10 @@ def verify_audit_integrity(
         )
 
     # Verify the chain within our window.
-    prev_hmac: str | None = None  # Unknown for first entry in window
-    checked = 0
-
-    for filename, line_no, entry in entries:
-        if entry.get("__parse_error"):
-            errors.append(f"{filename}:{line_no}: unparseable JSON")
-            continue
-
-        stored_hmac = entry.get("hmac", "")
-        entry_prev_hmac = entry.get("prev_hmac", "")
-
-        # Check chain linkage (skip for the first entry in our window since
-        # we don't know the preceding HMAC unless it's the genesis entry).
-        if prev_hmac is not None and entry_prev_hmac != prev_hmac:
-            errors.append(
-                f"{filename}:{line_no}: chain broken — "
-                f"prev_hmac {entry_prev_hmac[:16]}... != expected {prev_hmac[:16]}..."
-            )
-
-        # Recompute HMAC from payload
-        payload = {k: v for k, v in entry.items() if k != "hmac"}
-        expected_hmac = _compute_hmac(key, entry_prev_hmac, payload)
-
-        if stored_hmac != expected_hmac:
-            errors.append(
-                f"{filename}:{line_no}: HMAC mismatch — "
-                f"stored {stored_hmac[:16]}... != computed {expected_hmac[:16]}..."
-            )
-
-        prev_hmac = stored_hmac
-        checked += 1
+    _prev_hmac, checked = _verify_entry_chain(entries, key, errors)
 
     duration_ms = (time.monotonic() - start) * 1000
-
-    if errors:
-        logger.warning(
-            "Audit integrity check FAILED: %d error(s) in last %d entries",
-            len(errors),
-            checked,
-        )
-        for err in errors:
-            logger.warning("  %s", err)
-    else:
-        logger.info(
-            "Audit integrity check passed: %d entries verified in %.1fms",
-            checked,
-            duration_ms,
-        )
+    _log_integrity_result(errors, checked, duration_ms)
 
     return IntegrityCheckResult(
         valid=len(errors) == 0,

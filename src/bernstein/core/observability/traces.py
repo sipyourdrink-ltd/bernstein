@@ -191,6 +191,17 @@ _EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
 _VERIFY_TOOLS = {"Bash", "Task", "WebFetch", "WebSearch"}
 
 
+def _classify_tool(tool: str) -> str:
+    """Classify a tool name into a step type category."""
+    if tool in _ORIENT_TOOLS:
+        return "orient"
+    if tool in _EDIT_TOOLS:
+        return "edit"
+    if tool in _VERIFY_TOOLS:
+        return "verify"
+    return "plan"
+
+
 def parse_log_to_steps(log_path: Path) -> list[TraceStep]:
     """Parse a human-readable agent log into TraceStep list.
 
@@ -237,7 +248,6 @@ def parse_log_to_steps(log_path: Path) -> list[TraceStep]:
         ts = estimated_start + (i / total) * time_span
         m = _TOOL_RE.match(line.strip())
         if m is None:
-            # Plain text — could be assistant commentary (plan step)
             if line.strip() and last_type not in ("plan",):
                 if last_type and current_files:
                     _flush(last_type, current_ts, current_files)
@@ -247,18 +257,7 @@ def parse_log_to_steps(log_path: Path) -> list[TraceStep]:
                 current_files = []
             continue
 
-        tool = m.group("tool")
-        args = m.group("args").strip()
-
-        if tool in _ORIENT_TOOLS:
-            step_type = "orient"
-        elif tool in _EDIT_TOOLS:
-            step_type = "edit"
-        elif tool in _VERIFY_TOOLS:
-            step_type = "verify"
-        else:
-            # Unknown tool — treat as plan/commentary
-            step_type = "plan"
+        step_type = _classify_tool(m.group("tool"))
 
         if step_type != last_type:
             if last_type and (current_files or last_type == "plan"):
@@ -267,8 +266,7 @@ def parse_log_to_steps(log_path: Path) -> list[TraceStep]:
             last_type = step_type
             current_ts = ts
 
-        # Extract filename from args (heuristic: first path-looking token)
-        file_hint = _extract_file_hint(args)
+        file_hint = _extract_file_hint(m.group("args").strip())
         if file_hint:
             current_files.append(file_hint)
 
@@ -1019,34 +1017,45 @@ def build_crash_bundle(
     }
 
     if include_traces:
-        traces_dir = workdir / ".sdd" / "traces"
-        if traces_dir.exists():
-            trace_files = sorted(traces_dir.glob(_JSONL_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
-            total_bytes = 0
-            for tf in trace_files[:10]:
-                if total_bytes >= max_trace_bytes:
-                    break
-                try:
-                    content = tf.read_text(encoding="utf-8", errors="replace")
-                    total_bytes += len(content)
-                    bundle["traces"].append({"file": tf.name, "content": content[: max_trace_bytes - total_bytes]})
-                except OSError:
-                    pass
+        bundle["traces"] = _collect_crash_traces(workdir, max_trace_bytes)
 
     if include_metrics:
-        metrics_dir = workdir / ".sdd" / "metrics"
-        if metrics_dir.exists():
-            metric_files = list(metrics_dir.glob(_JSONL_GLOB))
-            bundle["metrics_summary"] = {
-                "file_count": len(metric_files),
-                "files": [f.name for f in metric_files[:20]],
-            }
+        bundle["metrics_summary"] = _collect_crash_metrics(workdir)
 
     runtime_dir = workdir / ".sdd" / "runtime"
     if runtime_dir.exists():
         bundle["runtime_files"] = [f.name for f in runtime_dir.iterdir() if f.is_file()][:30]
 
     return bundle
+
+
+def _collect_crash_traces(workdir: Path, max_trace_bytes: int) -> list[dict[str, str]]:
+    """Collect recent trace files for the crash bundle."""
+    traces_dir = workdir / ".sdd" / "traces"
+    if not traces_dir.exists():
+        return []
+    trace_files = sorted(traces_dir.glob(_JSONL_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
+    result: list[dict[str, str]] = []
+    total_bytes = 0
+    for tf in trace_files[:10]:
+        if total_bytes >= max_trace_bytes:
+            break
+        try:
+            content = tf.read_text(encoding="utf-8", errors="replace")
+            total_bytes += len(content)
+            result.append({"file": tf.name, "content": content[: max_trace_bytes - total_bytes]})
+        except OSError:
+            pass
+    return result
+
+
+def _collect_crash_metrics(workdir: Path) -> dict[str, Any]:
+    """Collect metrics summary for the crash bundle."""
+    metrics_dir = workdir / ".sdd" / "metrics"
+    if not metrics_dir.exists():
+        return {}
+    metric_files = list(metrics_dir.glob(_JSONL_GLOB))
+    return {"file_count": len(metric_files), "files": [f.name for f in metric_files[:20]]}
 
 
 # ---------------------------------------------------------------------------

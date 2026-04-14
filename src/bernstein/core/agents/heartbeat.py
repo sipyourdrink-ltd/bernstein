@@ -382,6 +382,33 @@ def _check_stalled_tasks_simple(orch: Any) -> None:
             _escalate_stall_simple(orch, session, task_id, count)
 
 
+def _check_session_stalls(
+    orch: Any,
+    session: Any,
+    monitor: HeartbeatMonitor,
+    aggregator: AgentLogAggregator,
+    base: str,
+) -> None:
+    """Check all tasks of a single session for stalls."""
+    hb_status = monitor.check(session.id)
+    if hb_status.last_heartbeat is not None:
+        session.heartbeat_ts = hb_status.last_heartbeat.timestamp()
+    log_summary = aggregator.parse_log(session.id)
+    latest_tasks = getattr(orch, "_latest_tasks_by_id", {})
+
+    for task_id in session.task_ids:
+        latest = _fetch_latest_snapshot(orch, task_id, base)
+        if latest is None:
+            continue
+        count = _update_stall_count(orch, task_id, latest, is_alive=hb_status.is_alive)
+        if count < 0:
+            continue
+        task_map = cast("dict[str, Task]", latest_tasks) if isinstance(latest_tasks, dict) else {}
+        task = task_map.get(task_id)
+        profile = compute_stall_profile(task, hb_status, log_summary)
+        _escalate_stall_profiled(orch, session, task_id, count, profile)
+
+
 def check_stalled_tasks(orch: Any) -> None:
     """Detect stalled agents via snapshots, heartbeat, and recent log activity."""
     workdir = getattr(orch, "_workdir", None)
@@ -392,29 +419,12 @@ def check_stalled_tasks(orch: Any) -> None:
     timeout_s = float(getattr(getattr(orch, "_config", None), "heartbeat_timeout_s", AGENT.heartbeat_stale_s))
     monitor = HeartbeatMonitor(workdir, timeout_s=timeout_s)
     aggregator = AgentLogAggregator(workdir)
-    latest_tasks = getattr(orch, "_latest_tasks_by_id", {})
     base = orch._config.server_url
 
     for session in orch._agents.values():
         if session.status == "dead":
             continue
-        hb_status = monitor.check(session.id)
-        if hb_status.last_heartbeat is not None:
-            session.heartbeat_ts = hb_status.last_heartbeat.timestamp()
-        log_summary = aggregator.parse_log(session.id)
-
-        for task_id in session.task_ids:
-            latest = _fetch_latest_snapshot(orch, task_id, base)
-            if latest is None:
-                continue
-            count = _update_stall_count(orch, task_id, latest, is_alive=hb_status.is_alive)
-            if count < 0:
-                continue
-
-            task_map = cast("dict[str, Task]", latest_tasks) if isinstance(latest_tasks, dict) else {}
-            task = task_map.get(task_id)
-            profile = compute_stall_profile(task, hb_status, log_summary)
-            _escalate_stall_profiled(orch, session, task_id, count, profile)
+        _check_session_stalls(orch, session, monitor, aggregator, base)
 
 
 def detect_idle_agents(

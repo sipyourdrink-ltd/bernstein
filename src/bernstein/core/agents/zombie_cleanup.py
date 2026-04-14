@@ -188,102 +188,91 @@ def scan_and_cleanup_zombies(
     for pid_file in pid_dir.iterdir():
         if not pid_file.is_file() or not pid_file.name.endswith(".json"):
             continue
-
-        result.scanned += 1
-        session_id = pid_file.stem
-
-        data = _read_pid_file(pid_file)
-        if not data:
-            # Corrupt PID file — remove it
-            try:
-                pid_file.unlink(missing_ok=True)
-                result.stale_removed += 1
-            except OSError:
-                pass
-            continue
-
-        # Count tasks associated with this session
-        task_ids_raw = data.get("task_ids")
-        if isinstance(task_ids_raw, list):
-            result.task_count += len(task_ids_raw)
-        else:
-            result.task_count += 1
-
-        # Check file age — very old PID files are just stale metadata
-        try:
-            file_mtime = pid_file.stat().st_mtime
-        except OSError:
-            file_mtime = 0.0
-        if file_mtime > 0 and (now - file_mtime) > MAX_PID_FILE_AGE_S:
-            logger.debug("Removing ancient PID file: %s (age %.0f days)", pid_file.name, (now - file_mtime) / 86400)
-            try:
-                pid_file.unlink(missing_ok=True)
-                result.stale_removed += 1
-            except OSError:
-                pass
-            continue
-
-        # Extract PIDs — check both worker_pid and pid
-        pids_to_check: list[int] = []
-        worker_pid = int(data.get("worker_pid", 0) or 0)
-        main_pid = int(data.get("pid", 0) or 0)
-        if worker_pid > 0:
-            pids_to_check.append(worker_pid)
-        if main_pid > 0 and main_pid != worker_pid:
-            pids_to_check.append(main_pid)
-
-        if not pids_to_check:
-            try:
-                pid_file.unlink(missing_ok=True)
-                result.stale_removed += 1
-            except OSError:
-                pass
-            continue
-
-        # Check if any recorded PID is still alive
-        alive_pids = [p for p in pids_to_check if process_alive(p)]
-
-        if not alive_pids:
-            # Process already dead — clean up the PID file
-            logger.debug("Stale PID file (process dead): %s", session_id)
-            try:
-                pid_file.unlink(missing_ok=True)
-                result.stale_removed += 1
-            except OSError:
-                pass
-            continue
-
-        # Orphaned process found
-        result.orphans_found += 1
-        role = str(data.get("role", "unknown"))
-
-        for alive_pid in alive_pids:
-            logger.warning(
-                "Orphaned agent process: session=%s pid=%d role=%s",
-                _sanitize_for_log(session_id),
-                alive_pid,
-                _sanitize_for_log(role),
-            )
-
-            if dry_run:
-                continue
-
-            killed = _terminate_process(alive_pid, grace_seconds=grace_seconds)
-            if killed:
-                result.orphans_killed += 1
-                logger.info(
-                    "Terminated orphaned agent: session=%s pid=%d",
-                    session_id,
-                    alive_pid,
-                )
-            else:
-                error_msg = f"Failed to terminate orphan: session={session_id} pid={alive_pid}"
-                result.errors.append(error_msg)
-                logger.error(error_msg)
-
-        # Clean up PID file after termination
-        if not dry_run:
-            with contextlib.suppress(OSError):
-                pid_file.unlink(missing_ok=True)
+        _process_pid_file(pid_file, result, now, grace_seconds, dry_run)
 
     return result
+
+
+def _remove_stale_pid_file(pid_file: Path, result: CleanupResult) -> None:
+    """Remove a stale PID file and increment the counter."""
+    try:
+        pid_file.unlink(missing_ok=True)
+        result.stale_removed += 1
+    except OSError:
+        pass
+
+
+def _extract_pids(data: dict[str, Any]) -> list[int]:
+    """Extract PIDs from a PID file data dict."""
+    pids: list[int] = []
+    worker_pid = int(data.get("worker_pid", 0) or 0)
+    main_pid = int(data.get("pid", 0) or 0)
+    if worker_pid > 0:
+        pids.append(worker_pid)
+    if main_pid > 0 and main_pid != worker_pid:
+        pids.append(main_pid)
+    return pids
+
+
+def _process_pid_file(
+    pid_file: Path,
+    result: CleanupResult,
+    now: float,
+    grace_seconds: int,
+    dry_run: bool,
+) -> None:
+    """Process a single PID file for zombie cleanup."""
+    result.scanned += 1
+    session_id = pid_file.stem
+
+    data = _read_pid_file(pid_file)
+    if not data:
+        _remove_stale_pid_file(pid_file, result)
+        return
+
+    task_ids_raw = data.get("task_ids")
+    result.task_count += len(task_ids_raw) if isinstance(task_ids_raw, list) else 1
+
+    try:
+        file_mtime = pid_file.stat().st_mtime
+    except OSError:
+        file_mtime = 0.0
+    if file_mtime > 0 and (now - file_mtime) > MAX_PID_FILE_AGE_S:
+        logger.debug("Removing ancient PID file: %s (age %.0f days)", pid_file.name, (now - file_mtime) / 86400)
+        _remove_stale_pid_file(pid_file, result)
+        return
+
+    pids_to_check = _extract_pids(data)
+    if not pids_to_check:
+        _remove_stale_pid_file(pid_file, result)
+        return
+
+    alive_pids = [p for p in pids_to_check if process_alive(p)]
+    if not alive_pids:
+        logger.debug("Stale PID file (process dead): %s", session_id)
+        _remove_stale_pid_file(pid_file, result)
+        return
+
+    result.orphans_found += 1
+    role = str(data.get("role", "unknown"))
+    for alive_pid in alive_pids:
+        logger.warning(
+            "Orphaned agent process: session=%s pid=%d role=%s",
+            _sanitize_for_log(session_id),
+            alive_pid,
+            _sanitize_for_log(role),
+        )
+        if dry_run:
+            continue
+        killed = _terminate_process(alive_pid, grace_seconds=grace_seconds)
+        if killed:
+            result.orphans_killed += 1
+            logger.info("Terminated orphaned agent: session=%s pid=%d", session_id, alive_pid)
+        else:
+            error_msg = f"Failed to terminate orphan: session={session_id} pid={alive_pid}"
+            result.errors.append(error_msg)
+            logger.error(error_msg)
+
+    if not dry_run:
+        with contextlib.suppress(OSError):
+            pid_file.unlink(missing_ok=True)

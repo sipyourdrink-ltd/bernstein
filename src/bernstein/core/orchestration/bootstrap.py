@@ -226,6 +226,158 @@ def _send_webhook(config: NotifyConfig, payload: dict[str, Any]) -> None:
         )
 
 
+def _run_git_hygiene(workdir: Path) -> None:
+    """Run pre-startup git hygiene, logging warnings on failure."""
+    try:
+        from bernstein.core.git_hygiene import run_hygiene
+
+        run_hygiene(workdir, full=True)
+    except ImportError as exc:
+        logger.warning("Git hygiene module unavailable — skipping: %s", exc)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(
+            "Pre-startup git hygiene failed (%s: %s) — continuing",
+            type(exc).__name__,
+            exc,
+        )
+
+
+def _index_codebase_with_timeout(workdir: Path, timeout: float = 10) -> None:
+    """Build codebase index with a hard timeout to avoid blocking startup."""
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(_build_codebase_index, workdir)
+    with contextlib.suppress(concurrent.futures.TimeoutError):
+        future.result(timeout=timeout)
+    pool.shutdown(wait=False)
+
+
+def _check_safety_invariants(workdir: Path) -> None:
+    """Verify locked-file invariants, logging warnings on failure."""
+    try:
+        from bernstein.evolution.invariants import verify_invariants, write_lockfile
+
+        ok, violations = verify_invariants(workdir)
+        if not ok:
+            console.print(f"[bold red]⚠ {len(violations)} locked file(s) modified[/bold red]")
+        write_lockfile(workdir)
+    except ImportError as exc:
+        logger.warning("Invariants module unavailable — skipping check: %s", exc)
+    except OSError as exc:
+        logger.warning(
+            "Invariant check failed (%s: %s) — continuing",
+            type(exc).__name__,
+            exc,
+        )
+
+
+def _apply_storage_env(seed: Any) -> None:
+    """Set storage-related environment variables from seed config."""
+    if seed.storage is None:
+        return
+    os.environ.setdefault("BERNSTEIN_STORAGE_BACKEND", seed.storage.backend)
+    if seed.storage.database_url:
+        os.environ.setdefault("BERNSTEIN_DATABASE_URL", seed.storage.database_url)
+    if seed.storage.redis_url:
+        os.environ.setdefault("BERNSTEIN_REDIS_URL", seed.storage.redis_url)
+
+
+def _apply_compliance_env() -> None:
+    """Apply compliance preset from BERNSTEIN_COMPLIANCE env var."""
+    compliance_env = os.environ.get("BERNSTEIN_COMPLIANCE")
+    if not compliance_env:
+        return
+    from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+
+    ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
+
+
+def _load_secrets_provider(seed: Any) -> None:
+    """Load secrets provider if configured in seed."""
+    if not seed.secrets:
+        return
+    from bernstein.core.secrets import SecretsRefresher, load_secrets
+
+    try:
+        load_secrets(seed.secrets)
+        refresher = SecretsRefresher(seed.secrets)
+        refresher.start()
+        import atexit
+
+        atexit.register(refresher.stop)
+        console.print(f"  [dim]secrets[/dim] load from {seed.secrets.provider} [green]ok[/green]")
+    except Exception as sec_exc:
+        console.print(f"  [red]✗[/red] [dim]secrets[/dim] load failed: {sec_exc}")
+        raise SystemExit(1) from sec_exc
+
+
+def _sync_and_plan_tasks(
+    seed: Any,
+    workdir: Path,
+    port: int,
+    server_url: str,
+    auth_token: str | None,
+    force_fresh: bool,
+) -> tuple[int, str, Any]:
+    """Sync backlog to server, import workflows, and determine planning mode.
+
+    Returns:
+        Tuple of (backlog_count, manager_task_id, prior_session).
+    """
+    from bernstein.core.session import check_resume_session
+    from bernstein.core.sync import sync_backlog_to_server
+
+    # Sync open GitHub Issues into .sdd/backlog/open/ before server sync.
+    try:
+        from bernstein.core.github import sync_github_issues_to_backlog
+
+        gh_count = sync_github_issues_to_backlog(workdir)
+        if gh_count > 0:
+            console.print(f"  [dim]github[/dim]  synced {gh_count} issue(s) to backlog")
+    except Exception as exc:
+        logger.debug("GitHub issue sync skipped: %s", exc)
+
+    _resume = seed.session.resume
+    _stale_minutes = seed.session.stale_after_minutes
+    prior_session = check_resume_session(
+        workdir,
+        force_fresh=force_fresh or not _resume,
+        stale_minutes=_stale_minutes,
+    )
+
+    task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
+    sync_result = sync_backlog_to_server(workdir, server_url=server_url, task_filter=task_filter)
+    backlog_count = len(sync_result.created) + len(sync_result.skipped)
+
+    # Import unchecked items from TODO.md / TASKS.md / .plan if present.
+    try:
+        from bernstein.core.workflow_importer import import_workflow_tasks
+
+        with httpx.Client(timeout=10.0) as _wf_client:
+            _wf_imported = import_workflow_tasks(workdir, _wf_client, server_url)
+        if _wf_imported:
+            console.print(f"  [dim]workflow[/dim] {_wf_imported} task(s) from workflow file(s)")
+            backlog_count += _wf_imported
+    except Exception as _wf_exc:
+        logger.debug("Workflow import skipped: %s", _wf_exc)
+
+    manager_task_id = ""
+    if prior_session is not None:
+        console.print(f"  [dim]resume[/dim]  {len(prior_session.completed_task_ids)} done previously")
+    elif backlog_count > 0:
+        console.print(f"  [dim]tasks[/dim]   {backlog_count} from backlog")
+    else:
+        manager_task_id = _inject_manager_task(
+            seed,
+            workdir,
+            port,
+            server_url=server_url,
+            auth_token=auth_token,
+        )
+        console.print("  [dim]plan[/dim]    manager agent will decompose goal")
+
+    return backlog_count, manager_task_id, prior_session
+
+
 def bootstrap_from_seed(
     seed_path: Path,
     workdir: Path,
@@ -280,18 +432,7 @@ def bootstrap_from_seed(
     # ── Compact bootstrap: all steps on one screen ──
 
     # 0. Pre-startup git hygiene — clean stale worktrees/branches from prior runs
-    try:
-        from bernstein.core.git_hygiene import run_hygiene
-
-        run_hygiene(workdir, full=True)
-    except ImportError as exc:
-        logger.warning("Git hygiene module unavailable — skipping: %s", exc)
-    except (OSError, subprocess.SubprocessError) as exc:
-        logger.warning(
-            "Pre-startup git hygiene failed (%s: %s) — continuing",
-            type(exc).__name__,
-            exc,
-        )
+    _run_git_hygiene(workdir)
 
     # 1. Parse seed
     seed = parse_seed(seed_path)
@@ -307,67 +448,20 @@ def bootstrap_from_seed(
     ensure_sdd(workdir)
     _clean_stale_runtime(workdir)
     _discover_catalog(workdir)
-
-    _idx_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    _idx_future = _idx_pool.submit(_build_codebase_index, workdir)
-    with contextlib.suppress(concurrent.futures.TimeoutError):
-        _idx_future.result(timeout=10)
-    _idx_pool.shutdown(wait=False)
-
-    # Safety invariants (silent unless violations)
-    try:
-        from bernstein.evolution.invariants import verify_invariants, write_lockfile
-
-        ok, violations = verify_invariants(workdir)
-        if not ok:
-            console.print(f"[bold red]⚠ {len(violations)} locked file(s) modified[/bold red]")
-        write_lockfile(workdir)
-    except ImportError as exc:
-        logger.warning("Invariants module unavailable — skipping check: %s", exc)
-    except OSError as exc:
-        logger.warning(
-            "Invariant check failed (%s: %s) — continuing",
-            type(exc).__name__,
-            exc,
-        )
+    _index_codebase_with_timeout(workdir)
+    _check_safety_invariants(workdir)
 
     # Storage + cluster config (env vars, no output)
-    if seed.storage is not None:
-        os.environ.setdefault("BERNSTEIN_STORAGE_BACKEND", seed.storage.backend)
-        if seed.storage.database_url:
-            os.environ.setdefault("BERNSTEIN_DATABASE_URL", seed.storage.database_url)
-        if seed.storage.redis_url:
-            os.environ.setdefault("BERNSTEIN_REDIS_URL", seed.storage.redis_url)
+    _apply_storage_env(seed)
 
     cluster_enabled = (seed.cluster is not None and seed.cluster.enabled) or os.environ.get(
         "BERNSTEIN_CLUSTER_ENABLED", ""
     ).lower() in ("1", "true", "yes")
 
-    # Compliance (env var override or seed)
-    compliance_env = os.environ.get("BERNSTEIN_COMPLIANCE")
-    if compliance_env:
-        from bernstein.core.compliance import ComplianceConfig, CompliancePreset
-
-        ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
+    _apply_compliance_env()
 
     # 3. Load secrets provider if configured
-    if seed.secrets:
-        from bernstein.core.secrets import SecretsRefresher, load_secrets
-
-        # Initial fetch to ensure we have keys before starting
-        try:
-            load_secrets(seed.secrets)
-            # Start background refresher
-            refresher = SecretsRefresher(seed.secrets)
-            refresher.start()
-            # Register for shutdown (best effort)
-            import atexit
-
-            atexit.register(refresher.stop)
-            console.print(f"  [dim]secrets[/dim] load from {seed.secrets.provider} [green]ok[/green]")
-        except Exception as sec_exc:
-            console.print(f"  [red]✗[/red] [dim]secrets[/dim] load failed: {sec_exc}")
-            raise SystemExit(1) from sec_exc
+    _load_secrets_provider(seed)
 
     # 4. Start server (compact output — single line)
     server_pid = supervised_server(
@@ -394,59 +488,14 @@ def bootstrap_from_seed(
         _register_mcp_discovery(workdir)
 
     # 4. Sync backlog / create manager task
-    from bernstein.core.session import check_resume_session
-    from bernstein.core.sync import sync_backlog_to_server
-
-    # Sync open GitHub Issues into .sdd/backlog/open/ before server sync.
-    # Non-fatal: if gh is missing or unauthenticated, we just skip.
-    try:
-        from bernstein.core.github import sync_github_issues_to_backlog
-
-        gh_count = sync_github_issues_to_backlog(workdir)
-        if gh_count > 0:
-            console.print(f"  [dim]github[/dim]  synced {gh_count} issue(s) to backlog")
-    except Exception as exc:
-        logger.debug("GitHub issue sync skipped: %s", exc)
-
-    _resume = seed.session.resume
-    _stale_minutes = seed.session.stale_after_minutes
-    prior_session = check_resume_session(
+    backlog_count, manager_task_id, _prior_session = _sync_and_plan_tasks(
+        seed,
         workdir,
-        force_fresh=force_fresh or not _resume,
-        stale_minutes=_stale_minutes,
+        port,
+        server_url,
+        auth_token,
+        force_fresh,
     )
-
-    task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
-    sync_result = sync_backlog_to_server(workdir, server_url=server_url, task_filter=task_filter)
-    backlog_count = len(sync_result.created) + len(sync_result.skipped)
-
-    # Import unchecked items from TODO.md / TASKS.md / .plan if present.
-    # Non-fatal: workflow import failure must never block the run.
-    try:
-        from bernstein.core.workflow_importer import import_workflow_tasks
-
-        with httpx.Client(timeout=10.0) as _wf_client:
-            _wf_imported = import_workflow_tasks(workdir, _wf_client, server_url)
-        if _wf_imported:
-            console.print(f"  [dim]workflow[/dim] {_wf_imported} task(s) from workflow file(s)")
-            backlog_count += _wf_imported
-    except Exception as _wf_exc:
-        logger.debug("Workflow import skipped: %s", _wf_exc)
-
-    manager_task_id = ""
-    if prior_session is not None:
-        console.print(f"  [dim]resume[/dim]  {len(prior_session.completed_task_ids)} done previously")
-    elif backlog_count > 0:
-        console.print(f"  [dim]tasks[/dim]   {backlog_count} from backlog")
-    else:
-        manager_task_id = _inject_manager_task(
-            seed,
-            workdir,
-            port,
-            server_url=server_url,
-            auth_token=auth_token,
-        )
-        console.print("  [dim]plan[/dim]    manager agent will decompose goal")
 
     # Cost estimate (single compact line)
     from bernstein.core.cost import estimate_run_cost
@@ -524,6 +573,65 @@ def _start_watchdog(workdir: Path, port: int) -> int:
     return proc.pid
 
 
+def _watchdog_check_process(
+    *,
+    name: str,
+    pid: int | None,
+    alive_since: float | None,
+    restarts: int,
+    give_up_logged: bool,
+    max_restarts: int,
+    reset_after_s: float,
+    now: float,
+    restart_fn: Any,
+    post_restart_fn: Any | None = None,
+) -> tuple[float | None, int, bool]:
+    """Check a single watchdog-monitored process and restart if dead.
+
+    Returns:
+        Updated (alive_since, restarts, give_up_logged) tuple.
+    """
+    if pid is not None and _is_alive(pid):
+        if alive_since is None:
+            return now, restarts, give_up_logged
+        if restarts > 0 and (now - alive_since) >= reset_after_s:
+            logger.info(
+                "%s has been healthy for %.0fs — resetting restart counter",
+                name,
+                now - alive_since,
+            )
+            return alive_since, 0, False
+        return alive_since, restarts, give_up_logged
+
+    # Process is dead
+    if restarts >= max_restarts:
+        if not give_up_logged:
+            logger.error(
+                "%s exceeded max restarts (%d), giving up; will resume monitoring once the process recovers",
+                name,
+                max_restarts,
+            )
+        return None, restarts, True
+
+    logger.warning("%s (PID %s) is dead, restarting...", name, pid)
+    try:
+        new_pid = restart_fn()
+        if new_pid == -1:
+            return None, restarts, give_up_logged  # skip (e.g. server not alive)
+        logger.info("%s restarted (PID %d)", name, new_pid)
+        restarts += 1
+        if post_restart_fn is not None:
+            post_restart_fn()
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.error(
+            "Failed to restart %s (%s: %s) — will retry next cycle",
+            name,
+            type(exc).__name__,
+            exc,
+        )
+    return None, restarts, give_up_logged
+
+
 def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
     """Monitor the server and orchestrator, restarting them if they die.
 
@@ -559,77 +667,39 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
 
         # Check server
         server_pid = _read_pid(server_pid_path)
-        if server_pid is not None and _is_alive(server_pid):
-            if server_alive_since is None:
-                server_alive_since = now
-            elif server_restarts > 0 and (now - server_alive_since) >= restart_reset_after_s:
-                logger.info(
-                    "Server has been healthy for %.0fs — resetting restart counter",
-                    now - server_alive_since,
-                )
-                server_restarts = 0
-                server_give_up_logged = False
-        else:
-            server_alive_since = None
-            if server_restarts >= max_restarts:
-                if not server_give_up_logged:
-                    logger.error(
-                        "Server exceeded max restarts (%d), giving up; "
-                        "will resume monitoring once the process recovers",
-                        max_restarts,
-                    )
-                    server_give_up_logged = True
-                continue
-            logger.warning("Server (PID %s) is dead, restarting...", server_pid)
-            try:
-                new_pid = _start_server(workdir, port)
-                logger.info("Server restarted (PID %d)", new_pid)
-                server_restarts += 1
-                _wait_for_server(port)
-            except (OSError, subprocess.SubprocessError) as exc:
-                logger.error(
-                    "Failed to restart server (%s: %s) — will retry next cycle",
-                    type(exc).__name__,
-                    exc,
-                )
+        server_alive_since, server_restarts, server_give_up_logged = _watchdog_check_process(
+            name="Server",
+            pid=server_pid,
+            alive_since=server_alive_since,
+            restarts=server_restarts,
+            give_up_logged=server_give_up_logged,
+            max_restarts=max_restarts,
+            reset_after_s=restart_reset_after_s,
+            now=now,
+            restart_fn=lambda: _start_server(workdir, port),
+            post_restart_fn=lambda: _wait_for_server(port),
+        )
 
-        # Check orchestrator/spawner
+        # Check orchestrator/spawner (only restart if server is alive)
         spawner_pid = _read_pid(spawner_pid_path)
-        if spawner_pid is not None and _is_alive(spawner_pid):
-            if spawner_alive_since is None:
-                spawner_alive_since = now
-            elif spawner_restarts > 0 and (now - spawner_alive_since) >= restart_reset_after_s:
-                logger.info(
-                    "Orchestrator has been healthy for %.0fs — resetting restart counter",
-                    now - spawner_alive_since,
-                )
-                spawner_restarts = 0
-                spawner_give_up_logged = False
-        else:
-            spawner_alive_since = None
-            if spawner_restarts >= max_restarts:
-                if not spawner_give_up_logged:
-                    logger.error(
-                        "Orchestrator exceeded max restarts (%d), giving up; "
-                        "will resume monitoring once the process recovers",
-                        max_restarts,
-                    )
-                    spawner_give_up_logged = True
-                continue
-            # Only restart orchestrator if server is alive
+
+        def _restart_spawner() -> int:
             cur_server_pid = _read_pid(server_pid_path)
-            if cur_server_pid is not None and _is_alive(cur_server_pid):
-                logger.warning("Orchestrator (PID %s) is dead, restarting...", spawner_pid)
-                try:
-                    new_pid = _start_spawner(workdir, port)
-                    logger.info("Orchestrator restarted (PID %d)", new_pid)
-                    spawner_restarts += 1
-                except (OSError, subprocess.SubprocessError) as exc:
-                    logger.error(
-                        "Failed to restart orchestrator (%s: %s) — will retry next cycle",
-                        type(exc).__name__,
-                        exc,
-                    )
+            if cur_server_pid is None or not _is_alive(cur_server_pid):
+                return -1  # signal: skip restart
+            return _start_spawner(workdir, port)
+
+        spawner_alive_since, spawner_restarts, spawner_give_up_logged = _watchdog_check_process(
+            name="Orchestrator",
+            pid=spawner_pid,
+            alive_since=spawner_alive_since,
+            restarts=spawner_restarts,
+            give_up_logged=spawner_give_up_logged,
+            max_restarts=max_restarts,
+            reset_after_s=restart_reset_after_s,
+            now=now,
+            restart_fn=_restart_spawner,
+        )
 
 
 def bootstrap_from_goal(
@@ -644,6 +714,150 @@ def bootstrap_from_goal(
     tasks: list[Task] | None = None,
 ) -> BootstrapResult:
     """Bootstrap from an inline goal string (no YAML file needed).
+
+    Creates a minimal SeedConfig from the goal and delegates to the
+    standard bootstrap flow.  When ``cli="auto"`` (the default), the best
+    available CLI agent is detected automatically — no configuration required.
+
+    Args:
+        goal: Plain-text project goal.
+        workdir: Project root directory.
+        port: TCP port for the task server.
+        cli: CLI backend to use, or "auto" to detect automatically.
+        cells: Number of parallel orchestration cells.
+        force_fresh: Ignore any saved session and start from scratch.
+        model: Optional model override (e.g. "opus", "sonnet").
+        tasks: Pre-defined tasks to execute (skips LLM planning).
+
+    Returns:
+        BootstrapResult with PIDs and task ID.
+    """
+    return _bootstrap_from_goal_impl(
+        goal=goal,
+        workdir=workdir,
+        port=port,
+        cli=cli,
+        cells=cells,
+        force_fresh=force_fresh,
+        model=model,
+        ab_test=ab_test,
+        tasks=tasks,
+    )
+
+
+def _goal_sync_and_plan(
+    *,
+    seed: Any,
+    workdir: Path,
+    port: int,
+    server_url: str,
+    auth_token: str | None,
+    force_fresh: bool,
+    tasks: list[Task] | None,
+    icons: Any,
+) -> tuple[int, str, Any]:
+    """Sync backlog, import workflows, post plan tasks for goal-based bootstrap.
+
+    Returns:
+        Tuple of (backlog_count, manager_task_id, sync_result).
+    """
+    from bernstein.core.session import check_resume_session
+    from bernstein.core.sync import sync_backlog_to_server
+
+    # Sync open GitHub Issues into .sdd/backlog/open/ before server sync.
+    try:
+        from bernstein.core.github import sync_github_issues_to_backlog
+
+        gh_count = sync_github_issues_to_backlog(workdir)
+        if gh_count > 0:
+            console.print(f"[green]{icons.arrow_right}[/green] Synced {gh_count} GitHub issue(s) to backlog")
+    except Exception as exc:
+        logger.debug("GitHub issue sync skipped: %s", exc)
+
+    prior_session = check_resume_session(workdir, force_fresh=force_fresh)
+
+    task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
+    with Status("[bold]Loading tasks...[/bold]", console=console):
+        sync_result = sync_backlog_to_server(workdir, server_url=server_url, task_filter=task_filter)
+    backlog_count = len(sync_result.created) + len(sync_result.skipped)
+
+    # Import unchecked items from TODO.md / TASKS.md / .plan if present.
+    try:
+        from bernstein.core.workflow_importer import import_workflow_tasks
+
+        with httpx.Client(timeout=10.0) as _wf_client:
+            _wf_imported = import_workflow_tasks(workdir, _wf_client, server_url)
+        if _wf_imported:
+            console.print(f"[green]{icons.arrow_right}[/green] Imported {_wf_imported} task(s) from workflow file(s)")
+            backlog_count += _wf_imported
+    except Exception as _wf_exc:
+        logger.debug("Workflow import skipped: %s", _wf_exc)
+
+    manager_task_id = ""
+    if prior_session is not None:
+        completed_count = len(prior_session.completed_task_ids)
+        console.print(
+            f"[bold cyan]Resuming from previous session[/bold cyan] "
+            f"({completed_count} task(s) already completed — skipping re-planning)"
+        )
+    elif tasks:
+        _post_plan_tasks(tasks, server_url, icons)
+        backlog_count = len(tasks)
+    elif backlog_count > 0:
+        console.print(
+            f"[green]{icons.arrow_right}[/green] Planning tasks ({backlog_count} found in backlog"
+            + (f", {len(sync_result.skipped)} already synced" if sync_result.skipped else "")
+            + ")"
+        )
+    else:
+        with Status("[bold]Creating planning task...[/bold]", console=console):
+            manager_task_id = _inject_manager_task(
+                seed,
+                workdir,
+                port,
+                server_url=server_url,
+                auth_token=auth_token,
+            )
+        console.print(f"[green]{icons.arrow_right}[/green] Planning tasks (manager agent will decompose goal)")
+
+    return backlog_count, manager_task_id, sync_result
+
+
+def _post_plan_tasks(tasks: list[Task], server_url: str, icons: Any) -> None:
+    """Post pre-defined plan tasks to the server."""
+    import asyncio
+
+    from bernstein.core.planner import _post_task_to_server
+
+    with Status(f"[bold]Posting {len(tasks)} tasks to server...[/bold]", console=console):
+
+        async def _post_all() -> None:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                id_map: dict[str, str] = {}
+                for t in tasks:
+                    t.depends_on = [id_map.get(dep, dep) for dep in t.depends_on]
+                    old_id = t.id
+                    server_id = await _post_task_to_server(client, server_url, t)
+                    t.id = server_id
+                    id_map[old_id] = server_id
+
+        asyncio.run(with_init_timeout(_post_all(), context="posting tasks from plan file"))
+    console.print(f"[green]{icons.arrow_right}[/green] Posted {len(tasks)} tasks from plan file")
+
+
+def _bootstrap_from_goal_impl(
+    *,
+    goal: str,
+    workdir: Path,
+    port: int = 8052,
+    cli: str = "auto",
+    cells: int = 1,
+    force_fresh: bool = False,
+    model: str | None = None,
+    ab_test: bool = False,
+    tasks: list[Task] | None = None,
+) -> BootstrapResult:
+    """Internal implementation of bootstrap_from_goal.
 
     Creates a minimal SeedConfig from the goal and delegates to the
     standard bootstrap flow.  When ``cli="auto"`` (the default), the best
@@ -764,88 +978,17 @@ def bootstrap_from_goal(
     with contextlib.suppress(OSError):
         _register_mcp_discovery(workdir)
 
-    # Sync backlog first; only use manager if backlog is empty and no prior session
-    from bernstein.core.session import check_resume_session
-    from bernstein.core.sync import sync_backlog_to_server
-
-    # Sync open GitHub Issues into .sdd/backlog/open/ before server sync.
-    # Non-fatal: if gh is missing or unauthenticated, we just skip.
-    try:
-        from bernstein.core.github import sync_github_issues_to_backlog
-
-        gh_count = sync_github_issues_to_backlog(workdir)
-        if gh_count > 0:
-            console.print(f"[green]{_icons.arrow_right}[/green] Synced {gh_count} GitHub issue(s) to backlog")
-    except Exception as exc:
-        logger.debug("GitHub issue sync skipped: %s", exc)
-
-    prior_session = check_resume_session(workdir, force_fresh=force_fresh)
-
-    task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
-    with Status("[bold]Loading tasks...[/bold]", console=console):
-        sync_result = sync_backlog_to_server(workdir, server_url=server_url, task_filter=task_filter)
-    backlog_count = len(sync_result.created) + len(sync_result.skipped)
-
-    # Import unchecked items from TODO.md / TASKS.md / .plan if present.
-    # Non-fatal: workflow import failure must never block the run.
-    try:
-        from bernstein.core.workflow_importer import import_workflow_tasks
-
-        with httpx.Client(timeout=10.0) as _wf_client:
-            _wf_imported = import_workflow_tasks(workdir, _wf_client, server_url)
-        if _wf_imported:
-            console.print(f"[green]{_icons.arrow_right}[/green] Imported {_wf_imported} task(s) from workflow file(s)")
-            backlog_count += _wf_imported
-    except Exception as _wf_exc:
-        logger.debug("Workflow import skipped: %s", _wf_exc)
-
-    manager_task_id = ""
-    if prior_session is not None:
-        completed_count = len(prior_session.completed_task_ids)
-        console.print(
-            f"[bold cyan]Resuming from previous session[/bold cyan] "
-            f"({completed_count} task(s) already completed — skipping re-planning)"
-        )
-    elif tasks:
-        # Pre-defined tasks from plan file
-        with Status(f"[bold]Posting {len(tasks)} tasks to server...[/bold]", console=console):
-            from bernstein.core.planner import _post_task_to_server
-
-            async def _post_all():
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    # Map: temporary plan ID -> server-assigned ID
-                    id_map: dict[str, str] = {}
-                    for t in tasks:
-                        # Update depends_on using the map
-                        t.depends_on = [id_map.get(dep, dep) for dep in t.depends_on]
-
-                        # Post to server
-                        old_id = t.id
-                        server_id = await _post_task_to_server(client, server_url, t)
-                        t.id = server_id
-                        id_map[old_id] = server_id
-
-            import asyncio
-
-            asyncio.run(with_init_timeout(_post_all(), context="posting tasks from plan file"))
-        console.print(f"[green]{_icons.arrow_right}[/green] Posted {len(tasks)} tasks from plan file")
-        backlog_count = len(tasks)
-    elif backlog_count > 0:
-        console.print(
-            f"[green]{_icons.arrow_right}[/green] Planning tasks ({backlog_count} found in backlog"
-            + (f", {len(sync_result.skipped)} already synced" if sync_result.skipped else "")
-            + ")"
-        )
-    else:
-        with Status("[bold]Creating planning task...[/bold]", console=console):
-            manager_task_id = _inject_manager_task(
-                seed,
-                workdir,
-                port,
-                server_url=server_url,
-                auth_token=auth_token,
-            )
-        console.print(f"[green]{_icons.arrow_right}[/green] Planning tasks (manager agent will decompose goal)")
+    # Sync backlog and determine planning mode
+    backlog_count, manager_task_id, _sync_result = _goal_sync_and_plan(
+        seed=seed,
+        workdir=workdir,
+        port=port,
+        server_url=server_url,
+        auth_token=auth_token,
+        force_fresh=force_fresh,
+        tasks=tasks,
+        icons=_icons,
+    )
 
     # Cost estimation — show before spawning agents
     from bernstein.core.cost import estimate_run_cost
@@ -923,7 +1066,8 @@ async def with_init_timeout[T](
         asyncio.TimeoutError: If the awaitable exceeds *timeout* seconds.
     """
     try:
-        return await _asyncio.wait_for(coro, timeout=timeout)
+        async with _asyncio.timeout(timeout):
+            return await coro
     except TimeoutError:
         logger.error(
             "Initialization timeout after %.0fs during '%s' — possible deadlock",

@@ -24,6 +24,7 @@ Examples::
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -133,6 +134,38 @@ def fingerprint_build_cmd(
     default=False,
     help="Output results as JSON.",
 )
+def _resolve_corpus_index(
+    index: str | None,
+    corpus_dir: str | None,
+    config: Any,
+    corpus_cls: type,
+) -> Any | None:
+    """Resolve and return a CorpusIndex, or None if unavailable."""
+    if index:
+        try:
+            ci = corpus_cls.load(Path(index), config)
+            console.print(f"[dim]Loaded index: {index} ({ci.size} entries)[/dim]")
+            return ci
+        except Exception as exc:
+            console.print(f"[red]Failed to load index {index}: {exc}[/red]")
+            raise SystemExit(1) from exc
+    if corpus_dir:
+        ci = corpus_cls(config)
+        indexed = ci.add_directory(Path(corpus_dir))
+        console.print(f"[dim]Built index from {corpus_dir}: {indexed} files[/dim]")
+        return ci
+    if _DEFAULT_INDEX.exists():
+        try:
+            ci = corpus_cls.load(_DEFAULT_INDEX, config)
+            console.print(f"[dim]Using default index: {_DEFAULT_INDEX} ({ci.size} entries)[/dim]")
+            return ci
+        except Exception as exc:
+            console.print(f"[yellow]Default index unreadable: {exc}. No corpus to compare against.[/yellow]")
+            return None
+    console.print("[yellow]No corpus index found. Use --index or --corpus-dir to specify one.[/yellow]")
+    return None
+
+
 def fingerprint_check_cmd(
     files: tuple[str, ...],
     index: str | None,
@@ -163,31 +196,9 @@ def fingerprint_check_cmd(
         block_on_match=block,
     )
 
-    # Resolve corpus index
-    corpus_index: CorpusIndex
-    if index:
-        try:
-            corpus_index = CorpusIndex.load(Path(index), config)
-            console.print(f"[dim]Loaded index: {index} ({corpus_index.size} entries)[/dim]")
-        except Exception as exc:
-            console.print(f"[red]Failed to load index {index}: {exc}[/red]")
-            raise SystemExit(1) from exc
-    elif corpus_dir:
-        corpus_index = CorpusIndex(config)
-        indexed = corpus_index.add_directory(Path(corpus_dir))
-        console.print(f"[dim]Built index from {corpus_dir}: {indexed} files[/dim]")
-    else:
-        # Check for default index
-        if _DEFAULT_INDEX.exists():
-            try:
-                corpus_index = CorpusIndex.load(_DEFAULT_INDEX, config)
-                console.print(f"[dim]Using default index: {_DEFAULT_INDEX} ({corpus_index.size} entries)[/dim]")
-            except Exception as exc:
-                console.print(f"[yellow]Default index unreadable: {exc}. No corpus to compare against.[/yellow]")
-                return
-        else:
-            console.print("[yellow]No corpus index found. Use --index or --corpus-dir to specify one.[/yellow]")
-            return
+    corpus_index = _resolve_corpus_index(index, corpus_dir, config, CorpusIndex)
+    if corpus_index is None:
+        return
 
     if corpus_index.size == 0:
         console.print("[yellow]Corpus index is empty — nothing to compare against.[/yellow]")

@@ -389,6 +389,7 @@ def find_call_sites(
     Returns:
         List of ``(function_name, lineno, call_text)`` tuples.
     """
+    _ = file  # For reporting only; not currently used
     try:
         tree = ast.parse(source)
     except SyntaxError:

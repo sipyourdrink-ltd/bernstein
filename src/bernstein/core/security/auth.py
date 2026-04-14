@@ -738,6 +738,61 @@ class AuthStore:
 # ---------------------------------------------------------------------------
 
 
+_SAML_NS = {
+    "samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
+    "saml": "urn:oasis:names:tc:SAML:2.0:assertion",
+}
+
+
+def _saml_status_ok(root: Any) -> bool:
+    """Return True if the SAML response status is Success."""
+    status_code = root.find(".//samlp:Status/samlp:StatusCode", _SAML_NS)
+    if status_code is None:
+        return True
+    status_value = status_code.get("Value", "")
+    if "Success" not in status_value:
+        logger.error("SAML response status: %s", status_value)
+        return False
+    return True
+
+
+def _extract_saml_claims(root: Any) -> tuple[str, dict[str, list[str]]]:
+    """Extract subject and attributes from a parsed SAML XML root."""
+    name_id_el = root.find(".//saml:Assertion/saml:Subject/saml:NameID", _SAML_NS)
+    subject = name_id_el.text if name_id_el is not None and name_id_el.text else ""
+
+    attributes: dict[str, list[str]] = {}
+    for attr_stmt in root.findall(
+        ".//saml:Assertion/saml:AttributeStatement/saml:Attribute", _SAML_NS
+    ):
+        attr_name = attr_stmt.get("Name", "")
+        values = [v.text for v in attr_stmt.findall("saml:AttributeValue", _SAML_NS) if v.text]
+        if attr_name and values:
+            attributes[attr_name] = values
+    return subject, attributes
+
+
+def _build_saml_assertion(
+    subject: str, attributes: dict[str, list[str]], saml_config: Any
+) -> ParsedSAMLAssertion | None:
+    """Build a ParsedSAMLAssertion from extracted claims, or None if invalid."""
+    email = (attributes.get(saml_config.attr_email, [""]) or [""])[0] or subject
+    display_name = (attributes.get(saml_config.attr_name, [""]) or [""])[0] or email
+    groups = attributes.get(saml_config.attr_groups, [])
+
+    if not subject and not email:
+        logger.error("SAML response missing both NameID and email attribute")
+        return None
+
+    return ParsedSAMLAssertion(
+        subject=subject or email,
+        email=email,
+        display_name=display_name,
+        groups=groups,
+        attributes=attributes,
+    )
+
+
 class AuthService:
     """Central authentication service.
 
@@ -917,49 +972,17 @@ class AuthService:
         """Parse a SAML assertion XML payload into normalized Bernstein claims."""
         import xml.etree.ElementTree as ET
 
-        saml = self.config.saml
         try:
             root = ET.fromstring(assertion_xml)
         except ET.ParseError as exc:
             logger.error("Failed to parse SAML assertion XML: %s", exc)
             return None
 
-        ns = {
-            "samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
-            "saml": "urn:oasis:names:tc:SAML:2.0:assertion",
-        }
-        status_code = root.find(".//samlp:Status/samlp:StatusCode", ns)
-        if status_code is not None:
-            status_value = status_code.get("Value", "")
-            if "Success" not in status_value:
-                logger.error("SAML response status: %s", status_value)
-                return None
-
-        name_id_el = root.find(".//saml:Assertion/saml:Subject/saml:NameID", ns)
-        subject = name_id_el.text if name_id_el is not None and name_id_el.text else ""
-
-        attributes: dict[str, list[str]] = {}
-        for attr_stmt in root.findall(".//saml:Assertion/saml:AttributeStatement/saml:Attribute", ns):
-            attr_name = attr_stmt.get("Name", "")
-            values = [value.text for value in attr_stmt.findall("saml:AttributeValue", ns) if value.text]
-            if attr_name and values:
-                attributes[attr_name] = values
-
-        email = (attributes.get(saml.attr_email, [""]) or [""])[0] or subject
-        display_name = (attributes.get(saml.attr_name, [""]) or [""])[0] or email
-        groups = attributes.get(saml.attr_groups, [])
-
-        if not subject and not email:
-            logger.error("SAML response missing both NameID and email attribute")
+        if not _saml_status_ok(root):
             return None
 
-        return ParsedSAMLAssertion(
-            subject=subject or email,
-            email=email,
-            display_name=display_name,
-            groups=groups,
-            attributes=attributes,
-        )
+        subject, attributes = _extract_saml_claims(root)
+        return _build_saml_assertion(subject, attributes, self.config.saml)
 
     def handle_saml_response(
         self, saml_response_b64: str, ip_address: str = "", user_agent: str = ""

@@ -174,6 +174,37 @@ def _group_key(event: SecurityEvent, pattern: CorrelationPattern) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _find_window_matches(
+    sorted_evts: list[SecurityEvent],
+    window: timedelta,
+    pattern: CorrelationPattern,
+) -> list[CorrelationMatch]:
+    """Find sliding-window matches in a sorted list of events."""
+    matches: list[CorrelationMatch] = []
+    i = 0
+    while i < len(sorted_evts):
+        j = i
+        while j < len(sorted_evts) and (
+            _parse_ts(sorted_evts[j].timestamp) - _parse_ts(sorted_evts[i].timestamp) <= window
+        ):
+            j += 1
+        window_events = sorted_evts[i:j]
+        if len(window_events) >= pattern.min_occurrences:
+            matches.append(
+                CorrelationMatch(
+                    pattern=pattern,
+                    events=window_events,
+                    first_seen=window_events[0].timestamp,
+                    last_seen=window_events[-1].timestamp,
+                    count=len(window_events),
+                )
+            )
+            i = j
+        else:
+            i += 1
+    return matches
+
+
 def correlate_events(
     events: list[SecurityEvent],
     patterns: list[CorrelationPattern] | None = None,
@@ -202,39 +233,15 @@ def correlate_events(
         if not relevant:
             continue
 
-        # Group events by pattern-specific key
         groups: dict[str, list[SecurityEvent]] = {}
         for evt in relevant:
             key = _group_key(evt, pattern)
             groups.setdefault(key, []).append(evt)
 
         window = timedelta(hours=pattern.time_window_hours)
-
         for group_events in groups.values():
             sorted_evts = sorted(group_events, key=lambda e: _parse_ts(e.timestamp))
-            # Sliding-window: find the largest contiguous cluster inside the window
-            i = 0
-            while i < len(sorted_evts):
-                j = i
-                while j < len(sorted_evts) and (
-                    _parse_ts(sorted_evts[j].timestamp) - _parse_ts(sorted_evts[i].timestamp) <= window
-                ):
-                    j += 1
-                window_events = sorted_evts[i:j]
-                if len(window_events) >= pattern.min_occurrences:
-                    matches.append(
-                        CorrelationMatch(
-                            pattern=pattern,
-                            events=window_events,
-                            first_seen=window_events[0].timestamp,
-                            last_seen=window_events[-1].timestamp,
-                            count=len(window_events),
-                        )
-                    )
-                    # Skip past this window to avoid duplicate matches
-                    i = j
-                else:
-                    i += 1
+            matches.extend(_find_window_matches(sorted_evts, window, pattern))
 
     return matches
 

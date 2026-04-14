@@ -157,6 +157,30 @@ def _patch(path: str, data: dict[str, Any]) -> dict[str, Any] | None:  # type: i
         return None
 
 
+def _compute_run_pct(summary: dict[str, Any], data: dict[str, Any]) -> float | None:
+    """Compute aggregate run-level progress percentage."""
+    tasks_total = int(summary.get("total", data.get("total", 0)))
+    if not tasks_total:
+        return None
+    tasks_done_count = int(summary.get("done", data.get("completed", 0)))
+    return (tasks_done_count / tasks_total) * 100.0
+
+
+def _extract_task_dicts(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract task dicts from status response, falling back to /tasks endpoint."""
+    tasks_section = data.get("tasks")
+    if isinstance(tasks_section, dict):
+        tasks_payload = cast(_CAST_DICT_STR_ANY, tasks_section)
+        items = tasks_payload.get("items")
+        if isinstance(items, list):
+            items_list = cast("list[object]", items)
+            return [cast(_CAST_DICT_STR_ANY, item) for item in items_list if isinstance(item, dict)]
+        return []
+    fallback = _get("/tasks")
+    fallback_items = fallback if isinstance(fallback, list) else []
+    return [cast(_CAST_DICT_STR_ANY, item) for item in fallback_items if isinstance(item, dict)]
+
+
 # ---------------------------------------------------------------------------
 # Toast overlay widget (TUI-009)
 # ---------------------------------------------------------------------------
@@ -436,11 +460,8 @@ class BernsteinApp(App[None]):
         if isinstance(transition_reasons_raw, dict):
             transition_reasons = cast("dict[str, dict[str, float]]", transition_reasons_raw)
         # TUI-010: compute aggregate run-level progress percentage
-        run_pct: float | None = None
         summary = cast(_CAST_DICT_STR_ANY, data.get("summary", {})) if isinstance(data.get("summary"), dict) else {}
-        if tasks_total := int(summary.get("total", data.get("total", 0))):
-            tasks_done_count = int(summary.get("done", data.get("completed", 0)))
-            run_pct = (tasks_done_count / tasks_total) * 100.0
+        run_pct = _compute_run_pct(summary, data)
 
         self.query_one(StatusBar).set_summary(
             agents_active=int(summary.get("active_agents", data.get("active_agents", 0))),
@@ -452,20 +473,7 @@ class BernsteinApp(App[None]):
             run_progress_pct=run_pct,
         )
 
-        task_dicts: list[dict[str, Any]]
-        tasks_section = data.get("tasks")
-        if isinstance(tasks_section, dict):
-            tasks_payload = cast(_CAST_DICT_STR_ANY, tasks_section)
-            items = tasks_payload.get("items")
-            if isinstance(items, list):
-                items_list = cast("list[object]", items)
-                task_dicts = [cast(_CAST_DICT_STR_ANY, item) for item in items_list if isinstance(item, dict)]
-            else:
-                task_dicts = []
-        else:
-            fallback = _get("/tasks")
-            fallback_items = fallback if isinstance(fallback, list) else []
-            task_dicts = [cast(_CAST_DICT_STR_ANY, item) for item in fallback_items if isinstance(item, dict)]
+        task_dicts = _extract_task_dicts(data)
         rows = [TaskRow.from_api(item) for item in task_dicts]
         self._all_rows = rows
         self._task_lookup = {row.task_id: row for row in rows}

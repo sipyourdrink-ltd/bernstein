@@ -363,6 +363,19 @@ def check_line_counts() -> tuple[int, list[str]]:
 # ---------------------------------------------------------------------------
 
 
+def _check_single_import(mod_name: str) -> str | None:
+    """Try importing a module, return a cycle description or None."""
+    try:
+        importlib.import_module(mod_name)
+    except ImportError as exc:
+        msg = str(exc).lower()
+        if "circular" in msg or "cannot import name" in msg:
+            return f"CYCLE  {mod_name} -> {exc}"
+    except Exception:
+        pass
+    return None
+
+
 def check_import_cycles() -> list[str]:
     """Detect circular imports among bernstein.core and bernstein.cli modules.
 
@@ -385,15 +398,9 @@ def check_import_cycles() -> list[str]:
             modules_to_check.append(mod_name)
 
     for mod_name in modules_to_check:
-        try:
-            importlib.import_module(mod_name)
-        except ImportError as exc:
-            # Only flag circular import errors, not missing optional deps
-            msg = str(exc).lower()
-            if "circular" in msg or "cannot import name" in msg:
-                cycles.append(f"CYCLE  {mod_name} -> {exc}")
-        except Exception:
-            pass  # Other errors handled by import verification
+        cycle = _check_single_import(mod_name)
+        if cycle:
+            cycles.append(cycle)
 
     return cycles
 
@@ -403,14 +410,8 @@ def check_import_cycles() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def main() -> int:
-    print("=" * 70)
-    print("  Bernstein Decomposition Verification")
-    print("=" * 70)
-
-    # --- Import checks ---
-    print("\n[1/3] Verifying symbol imports...")
-    passed, failed, import_errors = verify_imports()
+def _print_import_results(passed: int, failed: int, import_errors: list[str]) -> None:
+    """Print import verification results."""
     total_symbols = passed + failed
     print(f"       {passed}/{total_symbols} symbols imported successfully")
     if import_errors:
@@ -418,9 +419,9 @@ def main() -> int:
         for err in import_errors:
             print(f"       FAIL: {err}")
 
-    # --- Line count checks ---
-    print(f"\n[2/3] Checking line counts (max {MAX_LINES} per file)...")
-    files_checked, violations = check_line_counts()
+
+def _print_line_count_results(files_checked: int, violations: list[str]) -> None:
+    """Print line count check results."""
     print(f"       {files_checked} files checked")
     if violations:
         print(f"       {len(violations)} file(s) exceed {MAX_LINES} lines:")
@@ -429,7 +430,20 @@ def main() -> int:
     else:
         print(f"       All files within {MAX_LINES}-line limit")
 
-    # --- Cycle checks ---
+
+def main() -> int:
+    print("=" * 70)
+    print("  Bernstein Decomposition Verification")
+    print("=" * 70)
+
+    print("\n[1/3] Verifying symbol imports...")
+    passed, failed, import_errors = verify_imports()
+    _print_import_results(passed, failed, import_errors)
+
+    print(f"\n[2/3] Checking line counts (max {MAX_LINES} per file)...")
+    files_checked, violations = check_line_counts()
+    _print_line_count_results(files_checked, violations)
+
     print("\n[3/3] Checking for import cycles...")
     cycles = check_import_cycles()
     if cycles:
@@ -439,7 +453,6 @@ def main() -> int:
     else:
         print("       No import cycles detected")
 
-    # --- Summary ---
     print("\n" + "=" * 70)
     all_ok = failed == 0 and len(violations) == 0 and len(cycles) == 0
     if all_ok:

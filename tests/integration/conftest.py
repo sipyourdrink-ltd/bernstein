@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from bernstein.core.models import ModelConfig, OrchestratorConfig
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
 from fastapi.testclient import TestClient
+from httpx import Response as HttpxResponse
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 from bernstein.core.server import create_app
@@ -190,3 +192,71 @@ def orchestrator_factory(integration_sdd: Path):
         return Orchestrator(config, spawner, workdir=integration_sdd.parent)
 
     return _create
+
+
+def _auto_complete_done_markers(
+    test_client: TestClient,
+    integration_sdd: Path,
+    tasks_data: list[dict[str, Any]],
+    *,
+    slug_fn: Callable[[dict[str, Any]], str] | None = None,
+    complete_statuses: frozenset[str] = frozenset({"claimed", "working", "in_progress"}),
+) -> None:
+    """Auto-complete tasks that have a DONE_ marker file in runtime dir."""
+    for t in tasks_data:
+        if complete_statuses and t.get("status") not in complete_statuses:
+            continue
+        slug = slug_fn(t) if slug_fn else t["title"].lower().replace(" ", "-")
+        marker = integration_sdd / "runtime" / f"DONE_{slug}"
+        if marker.exists():
+            test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "done"})
+            marker.unlink()
+
+
+def make_proxy_handler(
+    test_client: TestClient,
+    integration_sdd: Path,
+    *,
+    slug_fn: Callable[[dict[str, Any]], str] | None = None,
+    complete_statuses: frozenset[str] = frozenset({"claimed", "working", "in_progress"}),
+    on_tasks_fetched: Callable[[list[dict[str, Any]]], None] | None = None,
+) -> Callable[..., HttpxResponse]:
+    """Build a standard request handler that proxies to test_client with auto-completion.
+
+    Args:
+        test_client: FastAPI test client.
+        integration_sdd: Path to .sdd directory.
+        slug_fn: Optional function to derive marker slug from a task dict.
+        complete_statuses: Status values eligible for auto-completion.
+        on_tasks_fetched: Optional callback invoked with tasks_data on GET /tasks.
+
+    Returns:
+        A handler function suitable for ``respx_mock.route().mock(side_effect=...)``.
+    """
+
+    def handler(request: Any) -> HttpxResponse:
+        method = request.method
+        path = request.url.path
+        api_path = path if path.startswith("/") else "/" + path
+
+        if method == "GET" and api_path == "/tasks":
+            resp = test_client.get("/tasks")
+            tasks_data = resp.json()
+            if on_tasks_fetched:
+                on_tasks_fetched(tasks_data)
+            _auto_complete_done_markers(
+                test_client,
+                integration_sdd,
+                tasks_data,
+                slug_fn=slug_fn,
+                complete_statuses=complete_statuses,
+            )
+            resp = test_client.get("/tasks")
+            return HttpxResponse(resp.status_code, content=resp.content, headers=dict(resp.headers))
+
+        content = request.read()
+        headers = dict(request.headers)
+        resp = test_client.request(method, api_path, content=content, headers=headers)
+        return HttpxResponse(resp.status_code, content=resp.content, headers=dict(resp.headers))
+
+    return handler

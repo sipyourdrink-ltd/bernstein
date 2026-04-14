@@ -143,6 +143,34 @@ def _guess_janitor_signals(_ticket_id: str, affected: list[str], body: str) -> l
     return signals[:5]
 
 
+def _parse_priority(priority_str: str | None) -> int:
+    """Parse priority string into an integer, defaulting to 2."""
+    if not priority_str:
+        return 2
+    try:
+        m = re.match(r"(\d+)", priority_str)
+        return int(m.group(1)) if m else 2
+    except (ValueError, AttributeError):
+        return 2
+
+
+def _normalize_scope(scope: str | None) -> str:
+    """Normalize scope to one of small/medium/large."""
+    if not scope:
+        return "medium"
+    normalized = scope.lower().split()[0]
+    return normalized if normalized in ("small", "medium", "large") else "medium"
+
+
+def _determine_model(complexity: str, priority: int, role: str) -> str:
+    """Determine model hint based on task attributes."""
+    if role == "security":
+        return "opus"
+    if complexity.lower() == "high" or priority <= 1:
+        return "sonnet"
+    return "auto"
+
+
 def convert_ticket(path: Path) -> None:
     """Convert a single ticket file to v1 format."""
     text = path.read_text(encoding="utf-8")
@@ -161,24 +189,11 @@ def convert_ticket(path: Path) -> None:
 
     # Extract metadata fields
     priority_str = _extract_field(text, "Priority")
-    scope = _extract_field(text, "Scope") or "medium"
+    scope = _normalize_scope(_extract_field(text, "Scope") or "medium")
     complexity = _extract_field(text, "Complexity") or COMPLEXITY_FROM_SCOPE.get(scope, "medium")
-    role = _extract_field(text, "Role") or "backend"
+    role = (_extract_field(text, "Role") or "backend").lower().split()[0]
     progress = _extract_field(text, "Progress")
-
-    # Parse priority (handle "0 (critical security)" etc.)
-    try:
-        priority = int(re.match(r"(\d+)", priority_str).group(1)) if priority_str else 2  # type: ignore[union-attr]
-    except (ValueError, AttributeError):
-        priority = 2
-
-    # Normalize scope
-    scope = scope.lower().split()[0] if scope else "medium"
-    if scope not in ("small", "medium", "large"):
-        scope = "medium"
-
-    # Normalize role
-    role = role.lower().split()[0] if role else "backend"
+    priority = _parse_priority(priority_str)
 
     # Extract sections
     sections = _extract_body_sections(text)
@@ -215,16 +230,10 @@ def convert_ticket(path: Path) -> None:
     ticket_type = _get_type(ticket_id, role)
 
     # Determine status
-    status = "open"
-    if progress:
-        status = "in_progress"
+    status = "in_progress" if progress else "open"
 
     # Determine model hint
-    model = "auto"
-    if complexity.lower() == "high" or priority <= 1:
-        model = "sonnet"  # important tasks get at least sonnet
-    if role == "security":
-        model = "opus"  # security tasks get opus
+    model = _determine_model(complexity, priority, role)
 
     # Estimated minutes
     est_min = MINUTES_FROM_SCOPE.get(scope, 45)

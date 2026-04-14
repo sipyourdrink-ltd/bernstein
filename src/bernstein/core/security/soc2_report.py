@@ -270,6 +270,139 @@ def _count_jsonl_entries(directory: Path, date_start: str, date_end: str) -> tup
     return file_count, entry_count
 
 
+def _collect_audit_evidence(
+    audit_dir: Path, period_start: str, period_end: str, evidence: list[EvidenceSummary]
+) -> None:
+    """Collect audit log evidence entries."""
+    if not audit_dir.is_dir():
+        return
+    file_count, entry_count = _count_jsonl_entries(audit_dir, period_start, period_end)
+    if file_count <= 0:
+        return
+    for control_id, desc in [
+        ("CC6.1", "HMAC-chained audit event log entries"),
+        ("CC6.3", "Authorization change audit trail"),
+        (_CC7_1, "Change management audit trail"),
+    ]:
+        evidence.append(
+            EvidenceSummary(
+                control_id=control_id,
+                evidence_type="audit_log",
+                description=desc,
+                file_count=file_count,
+                entry_count=entry_count,
+            )
+        )
+
+
+def _collect_hmac_evidence(audit_dir: Path, evidence: list[EvidenceSummary]) -> bool | None:
+    """Verify HMAC chain and append evidence. Returns validity or None."""
+    if not audit_dir.is_dir():
+        return None
+    try:
+        from bernstein.core.security.audit import AuditLog
+
+        audit_log = AuditLog(audit_dir)
+        valid, audit_errors = audit_log.verify()
+        evidence.append(
+            EvidenceSummary(
+                control_id=_CC9_1,
+                evidence_type="hmac_verification",
+                description="HMAC chain integrity verification",
+                integrity_verified=valid,
+                details={"errors": audit_errors} if audit_errors else {},
+            )
+        )
+        return valid
+    except Exception as exc:
+        evidence.append(
+            EvidenceSummary(
+                control_id=_CC9_1,
+                evidence_type="hmac_verification",
+                description="HMAC chain verification failed",
+                integrity_verified=False,
+                details={"error": str(exc)},
+            )
+        )
+        return False
+
+
+def _collect_merkle_evidence(
+    merkle_dir: Path, evidence: list[EvidenceSummary]
+) -> MerkleAttestation | None:
+    """Collect Merkle seal evidence and return attestation if available."""
+    if not merkle_dir.is_dir():
+        return None
+    from bernstein.core.merkle import load_latest_seal
+
+    loaded = load_latest_seal(merkle_dir)
+    if loaded is None:
+        return None
+    seal, seal_path = loaded
+    seal_root = str(seal.get("root_hash", ""))
+    seal_leaves = int(str(seal.get("leaf_count", 0)))
+    evidence.append(
+        EvidenceSummary(
+            control_id=_CC9_2,
+            evidence_type="merkle_seal",
+            description="Merkle tree integrity attestation",
+            integrity_verified=True,
+            details={"root_hash": seal_root, "leaf_count": seal_leaves},
+        )
+    )
+    return MerkleAttestation(
+        root_hash=seal_root,
+        leaf_count=seal_leaves,
+        algorithm="sha256",
+        attested_at=str(seal.get("sealed_at_iso", "")),
+        seal_path=str(seal_path),
+    )
+
+
+def _collect_wal_evidence(wal_dir: Path, evidence: list[EvidenceSummary]) -> None:
+    """Collect WAL evidence entries."""
+    if not wal_dir.is_dir():
+        return
+    wal_files = list(wal_dir.glob("*.wal.jsonl"))
+    if not wal_files:
+        return
+    wal_entries = sum(1 for wf in wal_files for line in wf.read_text().splitlines() if line.strip())
+    for control_id, desc in [
+        (_CC7_1, "Write-ahead log decision records"),
+        (_CC9_2, "Decision integrity via hash-chained WAL"),
+    ]:
+        evidence.append(
+            EvidenceSummary(
+                control_id=control_id,
+                evidence_type="wal",
+                description=desc,
+                file_count=len(wal_files),
+                entry_count=wal_entries,
+            )
+        )
+
+
+def _collect_metrics_evidence(metrics_dir: Path, evidence: list[EvidenceSummary]) -> None:
+    """Collect metrics evidence entries."""
+    if not metrics_dir.is_dir():
+        return
+    metrics_files = list(metrics_dir.glob("*"))
+    if not metrics_files:
+        return
+    for control_id, desc in [
+        ("CC7.2", "System monitoring and metrics data"),
+        ("CC8.1", "Capacity monitoring data"),
+    ]:
+        evidence.append(
+            EvidenceSummary(
+                control_id=control_id,
+                evidence_type="metrics",
+                description=desc,
+                file_count=len(metrics_files),
+            )
+        )
+
+
 def generate_soc2_report(
     sdd_dir: Path,
     period: str,
@@ -299,151 +432,17 @@ def generate_soc2_report(
     )
 
     evidence: list[EvidenceSummary] = []
-
-    # --- Audit log evidence ---
     audit_dir = sdd_dir / "audit"
-    if audit_dir.is_dir():
-        file_count, entry_count = _count_jsonl_entries(audit_dir, period_start, period_end)
-        if file_count > 0:
-            evidence.append(
-                EvidenceSummary(
-                    control_id="CC6.1",
-                    evidence_type="audit_log",
-                    description="HMAC-chained audit event log entries",
-                    file_count=file_count,
-                    entry_count=entry_count,
-                )
-            )
-            evidence.append(
-                EvidenceSummary(
-                    control_id="CC6.3",
-                    evidence_type="audit_log",
-                    description="Authorization change audit trail",
-                    file_count=file_count,
-                    entry_count=entry_count,
-                )
-            )
-            evidence.append(
-                EvidenceSummary(
-                    control_id=_CC7_1,
-                    evidence_type="audit_log",
-                    description="Change management audit trail",
-                    file_count=file_count,
-                    entry_count=entry_count,
-                )
-            )
 
-    # --- HMAC chain verification ---
-    hmac_valid: bool | None = None
-    if audit_dir.is_dir():
-        try:
-            from bernstein.core.security.audit import AuditLog
-
-            audit_log = AuditLog(audit_dir)
-            valid, audit_errors = audit_log.verify()
-            hmac_valid = valid
-            evidence.append(
-                EvidenceSummary(
-                    control_id=_CC9_1,
-                    evidence_type="hmac_verification",
-                    description="HMAC chain integrity verification",
-                    integrity_verified=valid,
-                    details={"errors": audit_errors} if audit_errors else {},
-                )
-            )
-        except Exception as exc:
-            hmac_valid = False
-            evidence.append(
-                EvidenceSummary(
-                    control_id=_CC9_1,
-                    evidence_type="hmac_verification",
-                    description="HMAC chain verification failed",
-                    integrity_verified=False,
-                    details={"error": str(exc)},
-                )
-            )
+    _collect_audit_evidence(audit_dir, period_start, period_end, evidence)
+    hmac_valid = _collect_hmac_evidence(audit_dir, evidence)
     report.hmac_chain_valid = hmac_valid
 
-    # --- Merkle seal attestation ---
     merkle_dir = audit_dir / "merkle" if audit_dir.is_dir() else sdd_dir / "audit" / "merkle"
-    if merkle_dir.is_dir():
-        from bernstein.core.merkle import load_latest_seal
+    report.merkle_attestation = _collect_merkle_evidence(merkle_dir, evidence)
 
-        loaded = load_latest_seal(merkle_dir)
-        if loaded is not None:
-            seal, seal_path = loaded
-            seal_root = str(seal.get("root_hash", ""))
-            seal_leaves = int(str(seal.get("leaf_count", 0)))
-            report.merkle_attestation = MerkleAttestation(
-                root_hash=seal_root,
-                leaf_count=seal_leaves,
-                algorithm="sha256",
-                attested_at=str(seal.get("sealed_at_iso", "")),
-                seal_path=str(seal_path),
-            )
-            evidence.append(
-                EvidenceSummary(
-                    control_id=_CC9_2,
-                    evidence_type="merkle_seal",
-                    description="Merkle tree integrity attestation",
-                    integrity_verified=True,
-                    details={
-                        "root_hash": seal_root,
-                        "leaf_count": seal_leaves,
-                    },
-                )
-            )
-
-    # --- WAL evidence ---
-    wal_dir = sdd_dir / "runtime" / "wal"
-    if wal_dir.is_dir():
-        wal_files = list(wal_dir.glob("*.wal.jsonl"))
-        wal_entries = 0
-        for wf in wal_files:
-            for line in wf.read_text().splitlines():
-                if line.strip():
-                    wal_entries += 1
-        if wal_files:
-            evidence.append(
-                EvidenceSummary(
-                    control_id=_CC7_1,
-                    evidence_type="wal",
-                    description="Write-ahead log decision records",
-                    file_count=len(wal_files),
-                    entry_count=wal_entries,
-                )
-            )
-            evidence.append(
-                EvidenceSummary(
-                    control_id=_CC9_2,
-                    evidence_type="wal",
-                    description="Decision integrity via hash-chained WAL",
-                    file_count=len(wal_files),
-                    entry_count=wal_entries,
-                )
-            )
-
-    # --- Metrics evidence ---
-    metrics_dir = sdd_dir / "metrics"
-    if metrics_dir.is_dir():
-        metrics_files = list(metrics_dir.glob("*"))
-        if metrics_files:
-            evidence.append(
-                EvidenceSummary(
-                    control_id="CC7.2",
-                    evidence_type="metrics",
-                    description="System monitoring and metrics data",
-                    file_count=len(metrics_files),
-                )
-            )
-            evidence.append(
-                EvidenceSummary(
-                    control_id="CC8.1",
-                    evidence_type="metrics",
-                    description="Capacity monitoring data",
-                    file_count=len(metrics_files),
-                )
-            )
+    _collect_wal_evidence(sdd_dir / "runtime" / "wal", evidence)
+    _collect_metrics_evidence(sdd_dir / "metrics", evidence)
 
     report.evidence = evidence
 
@@ -458,7 +457,6 @@ def generate_soc2_report(
     else:
         report.overall_status = "non_compliant"
 
-    # --- Compute package hash ---
     content = json.dumps(report.to_dict(), sort_keys=True, separators=(",", ":"))
     report.package_hash = hashlib.sha256(content.encode()).hexdigest()
 

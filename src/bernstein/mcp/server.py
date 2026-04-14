@@ -63,8 +63,8 @@ def _register_health_tool(mcp: FastMCP[None]) -> None:
         return json.dumps({"status": "ok"})
 
 
-def _register_crud_tools(mcp: FastMCP[None], server_url: str) -> None:
-    """Register run, status, tasks, cost, stop, approve, and create_subtask tools."""
+def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
+    """Register read-only query tools: run, status, tasks, cost."""
 
     @mcp.tool()
     async def bernstein_run(  # pyright: ignore[reportUnusedFunction]
@@ -173,6 +173,10 @@ def _register_crud_tools(mcp: FastMCP[None], server_url: str) -> None:
             return json.dumps(cost_summary, indent=2)
         except Exception as exc:
             return _error_response(exc)
+
+
+def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
+    """Register mutation tools: stop, approve, create_subtask."""
 
     @mcp.tool()
     async def bernstein_stop(  # pyright: ignore[reportUnusedFunction]
@@ -300,7 +304,8 @@ def create_mcp_server(
     """
     mcp: FastMCP[None] = FastMCP(name)
     _register_health_tool(mcp)
-    _register_crud_tools(mcp, server_url)
+    _register_query_tools(mcp, server_url)
+    _register_action_tools(mcp, server_url)
     return mcp
 
 

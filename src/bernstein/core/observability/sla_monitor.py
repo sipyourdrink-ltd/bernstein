@@ -144,6 +144,32 @@ class _MetricObservation:
     value: float
 
 
+_LOWER_BETTER_METRICS = frozenset(
+    {
+        SLAMetricKind.TASK_DURATION_P95,
+        SLAMetricKind.TASK_DURATION_P99,
+        SLAMetricKind.ERROR_RATE,
+        SLAMetricKind.RESPONSE_TIME,
+    }
+)
+
+
+def _evaluate_sla_status(defn: Any, current: float) -> SLAStatus:
+    """Determine SLA status based on metric type and thresholds."""
+    is_lower_better = defn.metric in _LOWER_BETTER_METRICS
+    if is_lower_better:
+        if current <= defn.target:
+            return SLAStatus.MET
+        if current <= defn.warning_threshold:
+            return SLAStatus.WARNING
+        return SLAStatus.BREACHED
+    if current >= defn.target:
+        return SLAStatus.MET
+    if current >= defn.warning_threshold:
+        return SLAStatus.WARNING
+    return SLAStatus.BREACHED
+
+
 class SLAMonitor:
     """Real-time SLA monitor with breach alerting.
 
@@ -290,30 +316,7 @@ class SLAMonitor:
                 )
                 continue
 
-            # Determine status based on metric type.
-            # For rates (completion, availability): higher is better.
-            # For durations/errors: lower is better.
-            is_lower_better = defn.metric in (
-                SLAMetricKind.TASK_DURATION_P95,
-                SLAMetricKind.TASK_DURATION_P99,
-                SLAMetricKind.ERROR_RATE,
-                SLAMetricKind.RESPONSE_TIME,
-            )
-
-            if is_lower_better:
-                if current <= defn.target:
-                    status = SLAStatus.MET
-                elif current <= defn.warning_threshold:
-                    status = SLAStatus.WARNING
-                else:
-                    status = SLAStatus.BREACHED
-            else:
-                if current >= defn.target:
-                    status = SLAStatus.MET
-                elif current >= defn.warning_threshold:
-                    status = SLAStatus.WARNING
-                else:
-                    status = SLAStatus.BREACHED
+            status = _evaluate_sla_status(defn, current)
 
             # Track breach duration.
             breach_duration = 0.0

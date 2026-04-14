@@ -29,6 +29,36 @@ def _get_sdd_dir(request: Request) -> Any:
     return getattr(request.app.state, "sdd_dir", None)
 
 
+def _read_task_counts(request: Request) -> tuple[int, int]:
+    """Return (tasks_done, tasks_remaining) from the live store, or (0, 0)."""
+    store = getattr(request.app.state, "store", None)
+    if store is None:
+        return 0, 0
+    try:
+        counts = store.count_by_status()
+        done = counts.get("done", 0)
+        remaining = counts.get("open", 0) + counts.get("in_progress", 0)
+        return done, remaining
+    except Exception:
+        return 0, 0
+
+
+def _read_run_start(sdd_dir: Any) -> float:
+    """Read the run start timestamp from supervisor state, or return 0.0."""
+    if sdd_dir is None:
+        return 0.0
+    sup_file = sdd_dir / "runtime" / "supervisor_state.json"
+    if not sup_file.exists():
+        return 0.0
+    import json
+
+    try:
+        state = json.loads(sup_file.read_text(encoding="utf-8"))
+        return float(state.get("started_at", 0))
+    except (OSError, ValueError, KeyError):
+        return 0.0
+
+
 @router.get("/metrics/predictions")
 def get_predictions(
     request: Request,
@@ -72,39 +102,14 @@ def get_predictions(
 
     cost_history: list[tuple[float, float]] = []
     completion_timestamps: list[float] = []
-    tasks_done = 0
-    tasks_remaining = 0
-    run_start_timestamp = 0.0
 
     if metrics_dir is not None and metrics_dir.exists():
         if budget_cap > 0:
             cost_history = load_cost_history(metrics_dir)
-
         completion_timestamps = load_completion_timestamps(metrics_dir)
 
-    # Pull live task counts from the store if available
-    store = getattr(request.app.state, "store", None)
-    if store is not None:
-        try:
-            counts = store.count_by_status()
-            tasks_done = counts.get("done", 0)
-            open_count = counts.get("open", 0)
-            in_progress_count = counts.get("in_progress", 0)
-            tasks_remaining = open_count + in_progress_count
-        except Exception:
-            pass
-
-    # Pull run start time from supervisor state if available
-    if sdd_dir is not None:
-        sup_file = sdd_dir / "runtime" / "supervisor_state.json"
-        if sup_file.exists():
-            import json
-
-            try:
-                state = json.loads(sup_file.read_text(encoding="utf-8"))
-                run_start_timestamp = float(state.get("started_at", 0))
-            except (OSError, ValueError, KeyError):
-                pass
+    tasks_done, tasks_remaining = _read_task_counts(request)
+    run_start_timestamp = _read_run_start(sdd_dir)
 
     alerts = _engine.evaluate_all(
         cost_history=cost_history if cost_history else None,

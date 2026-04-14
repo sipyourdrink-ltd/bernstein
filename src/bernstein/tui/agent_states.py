@@ -99,6 +99,20 @@ class AgentStateThresholds:
     spawn_timeout_s: float = DEFAULT_SPAWN_TIMEOUT_S
 
 
+_DEAD_STATUSES = frozenset({"done", "completed", "failed", "cancelled", "killed"})
+_IDLE_STATUSES = frozenset({"idle", "waiting", "paused"})
+_SPAWNING_STATUSES = frozenset({"claimed", "spawning"})
+_MERGING_STATUSES = frozenset({"merging", "committing", "pushing"})
+_RUNNING_STATUSES = frozenset({"in_progress", "running"})
+
+
+def _classify_spawning_with_pid(started_at: float | None, now: float, thresholds: AgentStateThresholds) -> AgentState:
+    """Classify a spawning agent that has a PID."""
+    if started_at is not None and (now - started_at) > thresholds.spawn_timeout_s:
+        return AgentState.DEAD
+    return AgentState.SPAWNING
+
+
 def classify_agent_state(
     *,
     pid: int | None = None,
@@ -126,42 +140,20 @@ def classify_agent_state(
     if thresholds is None:
         thresholds = AgentStateThresholds()
 
-    # Explicitly dead statuses
-    if status in ("done", "completed", "failed", "cancelled", "killed"):
+    if status in _DEAD_STATUSES:
         return AgentState.DEAD
-
-    # Idle status (waiting, paused, or unassigned)
-    if status in ("idle", "waiting", "paused"):
+    if status in _IDLE_STATUSES:
         return AgentState.IDLE
-
-    # No PID means either not spawned yet or already exited
     if pid is None:
-        if status in ("claimed", "open"):
-            return AgentState.SPAWNING
-        return AgentState.DEAD
-
-    # Has PID -- check if spawning
-    if status in ("claimed", "spawning"):
-        if started_at is not None:
-            elapsed = now - started_at
-            if elapsed > thresholds.spawn_timeout_s:
-                return AgentState.DEAD
-        return AgentState.SPAWNING
-
-    # Merging state (agent is committing/pushing changes)
-    if status in ("merging", "committing", "pushing"):
+        return AgentState.SPAWNING if status in ("claimed", "open") else AgentState.DEAD
+    if status in _SPAWNING_STATUSES:
+        return _classify_spawning_with_pid(started_at, now, thresholds)
+    if status in _MERGING_STATUSES:
         return AgentState.MERGING
-
-    # Running with heartbeat tracking
-    if last_heartbeat is not None:
-        heartbeat_age = now - last_heartbeat
-        if heartbeat_age > thresholds.stall_threshold_s:
-            return AgentState.STALLED
-
-    # Active status with PID
-    if status in ("in_progress", "running"):
+    if last_heartbeat is not None and (now - last_heartbeat) > thresholds.stall_threshold_s:
+        return AgentState.STALLED
+    if status in _RUNNING_STATUSES:
         return AgentState.RUNNING
-
     return AgentState.UNKNOWN
 
 

@@ -84,6 +84,20 @@ def _build_breakdowns(tracker: Any) -> dict[str, Any]:
     }
 
 
+def _extract_cost_event(message: str) -> str | None:
+    """Extract a cost SSE event from a bulletin message, if applicable."""
+    if "event: bulletin" not in message:
+        return None
+    try:
+        data_str = message.split("data: ", 1)[1].strip()
+        data = json.loads(data_str)
+    except (IndexError, json.JSONDecodeError):
+        return None
+    if data.get("type") == "status" and "live_cost_update" in data.get("content", ""):
+        return f"event: cost\ndata: {data_str}\n\n"
+    return None
+
+
 @router.get("/events/cost")
 def cost_events(request: Request) -> StreamingResponse:
     """SSE endpoint for real-time cost updates.
@@ -108,22 +122,11 @@ def cost_events(request: Request) -> StreamingResponse:
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=_READ_TIMEOUT_S)
                 except TimeoutError:
-                    # No message (not even a heartbeat) in _READ_TIMEOUT_S — client likely disconnected
                     break
                 sse_bus.mark_read(queue)
-                # Intercept bulletin events for cost updates
-                if "event: bulletin" in message:
-                    try:
-                        # Extract data part
-                        data_str = message.split("data: ", 1)[1].strip()
-                        data = json.loads(data_str)
-                        if data.get("type") == "status" and "live_cost_update" in data.get("content", ""):
-                            # Forward as a cost event
-                            yield f"event: cost\ndata: {data_str}\n\n"
-                    except (IndexError, json.JSONDecodeError):
-                        pass
-
-                # Pass through heartbeats
+                cost_event = _extract_cost_event(message)
+                if cost_event is not None:
+                    yield cost_event
                 if "event: heartbeat" in message:
                     yield message
         finally:
@@ -654,21 +657,17 @@ def cache_stats(request: Request) -> JSONResponse:
                 model = u.model
 
                 if model not in by_model:
-                    by_model[model] = {
-                        "calls": 0,
-                        "cache_hits": 0,
-                        "cached_tokens": 0,
-                        "total_tokens": 0,
-                    }
+                    by_model[model] = {"calls": 0, "cache_hits": 0, "cached_tokens": 0, "total_tokens": 0}
 
                 by_model[model]["calls"] += 1
                 by_model[model]["total_tokens"] += u.input_tokens + u.output_tokens
 
-                if u.cache_hit:
-                    cache_hits += 1
-                    by_model[model]["cache_hits"] += 1
-                    total_cached_tokens += u.cached_tokens
-                    by_model[model]["cached_tokens"] += u.cached_tokens
+                if not u.cache_hit:
+                    continue
+                cache_hits += 1
+                by_model[model]["cache_hits"] += 1
+                total_cached_tokens += u.cached_tokens
+                by_model[model]["cached_tokens"] += u.cached_tokens
 
     # Calculate hit rates
     hit_rate = (cache_hits / max(1, total_calls)) * 100
@@ -699,6 +698,45 @@ def cache_stats(request: Request) -> JSONResponse:
     )
 
 
+def _collect_model_costs(sdd_dir: Any, costs_dir: Any) -> dict[str, dict[str, Any]]:
+    """Collect per-model cost data from the most recent cost file."""
+    from bernstein.core.cost_tracker import CostTracker
+
+    model_costs: dict[str, dict[str, Any]] = {}
+    cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
+    for cost_file in cost_files[:1]:
+        tracker = CostTracker.load(sdd_dir, cost_file.stem)
+        if tracker is None:
+            continue
+        for u in tracker.usages:
+            if u.model not in model_costs:
+                model_costs[u.model] = {"actual_cost_usd": 0.0, "total_tokens": 0, "invocations": 0}
+            model_costs[u.model]["actual_cost_usd"] += u.cost_usd
+            model_costs[u.model]["total_tokens"] += u.input_tokens + u.output_tokens
+            model_costs[u.model]["invocations"] += 1
+    return model_costs
+
+
+def _compute_model_alternatives(
+    model: str, data: dict[str, Any], model_costs_per_1m: dict[str, Any]
+) -> dict[str, dict[str, float]]:
+    """Compute alternative model cost estimates for a single model's usage."""
+    avg_tokens = data["total_tokens"] / max(1, data["invocations"])
+    actual_cost = data["actual_cost_usd"]
+    alternatives: dict[str, dict[str, float]] = {}
+    for alt_model, costs in model_costs_per_1m.items():
+        if alt_model == model:
+            continue
+        input_cost = (avg_tokens * 0.5) / 1_000_000 * costs.get("input", 0.0)
+        output_cost = (avg_tokens * 0.5) / 1_000_000 * costs.get("output", 0.0)
+        estimated_cost = (input_cost + output_cost) * data["invocations"]
+        alternatives[alt_model] = {
+            "estimated_cost_usd": round(estimated_cost, 4),
+            "savings_usd": round(actual_cost - estimated_cost, 4),
+        }
+    return alternatives
+
+
 @router.get("/costs/model-comparison")
 def model_cost_comparison(request: Request) -> JSONResponse:
     """Return model cost comparison report.
@@ -715,46 +753,16 @@ def model_cost_comparison(request: Request) -> JSONResponse:
     model_costs: dict[str, dict[str, Any]] = {}
 
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
-        for cost_file in cost_files[:1]:  # Most recent run
-            from bernstein.core.cost_tracker import CostTracker
-
-            tracker = CostTracker.load(sdd_dir, cost_file.stem)
-            if tracker is None:
-                continue
-            for u in tracker.usages:
-                if u.model not in model_costs:
-                    model_costs[u.model] = {
-                        "actual_cost_usd": 0.0,
-                        "total_tokens": 0,
-                        "invocations": 0,
-                    }
-                model_costs[u.model]["actual_cost_usd"] += u.cost_usd
-                model_costs[u.model]["total_tokens"] += u.input_tokens + u.output_tokens
-                model_costs[u.model]["invocations"] += 1
+        model_costs = _collect_model_costs(sdd_dir, costs_dir)
 
     # Calculate alternatives
     comparison: list[dict[str, Any]] = []
     for model, data in model_costs.items():
-        avg_tokens = data["total_tokens"] / max(1, data["invocations"])
-        actual_cost = data["actual_cost_usd"]
-
-        alternatives = {}
-        for alt_model, costs in MODEL_COSTS_PER_1M_TOKENS.items():
-            if alt_model != model:
-                # Estimate cost based on average tokens
-                input_cost = (avg_tokens * 0.5) / 1_000_000 * costs.get("input", 0.0)
-                output_cost = (avg_tokens * 0.5) / 1_000_000 * costs.get("output", 0.0)
-                estimated_cost = (input_cost + output_cost) * data["invocations"]
-                alternatives[alt_model] = {
-                    "estimated_cost_usd": round(estimated_cost, 4),
-                    "savings_usd": round(actual_cost - estimated_cost, 4),
-                }
-
+        alternatives = _compute_model_alternatives(model, data, MODEL_COSTS_PER_1M_TOKENS)
         comparison.append(
             {
                 "model": model,
-                "actual_cost_usd": round(actual_cost, 4),
+                "actual_cost_usd": round(data["actual_cost_usd"], 4),
                 "total_tokens": data["total_tokens"],
                 "invocations": data["invocations"],
                 "alternatives": alternatives,
@@ -845,7 +853,6 @@ def get_costs_by_tag(request: Request, tag_key: str | None = None) -> JSONRespon
     Returns:
         JSON with ``by_tag`` mapping of tag keys to value-cost dicts.
     """
-    from bernstein.core.cost_tracker import CostTracker
 
     sdd_dir = _get_sdd_dir(request)
     costs_dir = sdd_dir / "runtime" / "costs"
@@ -854,20 +861,29 @@ def get_costs_by_tag(request: Request, tag_key: str | None = None) -> JSONRespon
     by_tag: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     if costs_dir.exists():
-        cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime)
-        for cost_file in cost_files:
-            tracker = CostTracker.load(sdd_dir, cost_file.stem)
-            if tracker is None:
-                continue
-            for u in tracker.usages:
-                for k, v in u.cost_tags.items():
-                    if tag_key is None or k == tag_key:
-                        by_tag[k][v] += u.cost_usd
+        _accumulate_tag_costs(sdd_dir, costs_dir, tag_key, by_tag)
 
     # Round values for output
     result: dict[str, dict[str, float]] = {k: {v: round(c, 6) for v, c in vals.items()} for k, vals in by_tag.items()}
 
     return JSONResponse(content={"by_tag": result})
+
+
+def _accumulate_tag_costs(
+    sdd_dir: Any, costs_dir: Any, tag_key: str | None, by_tag: dict[str, dict[str, float]]
+) -> None:
+    """Accumulate cost-tag data from all cost files into *by_tag*."""
+    from bernstein.core.cost_tracker import CostTracker
+
+    cost_files = sorted(costs_dir.glob(_JSON_GLOB), key=lambda p: p.stat().st_mtime)
+    for cost_file in cost_files:
+        tracker = CostTracker.load(sdd_dir, cost_file.stem)
+        if tracker is None:
+            continue
+        for u in tracker.usages:
+            for k, v in u.cost_tags.items():
+                if tag_key is None or k == tag_key:
+                    by_tag[k][v] += u.cost_usd
 
 
 def _find_session_breakdown(

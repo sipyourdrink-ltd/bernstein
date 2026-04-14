@@ -2177,7 +2177,6 @@ class Orchestrator:
         """
         from bernstein import get_templates_dir
         from bernstein.core.orchestration.manager import ManagerAgent
-        from bernstein.core.seed import parse_seed
 
         try:
             budget_pct = 1.0
@@ -2186,17 +2185,7 @@ class Orchestrator:
                 budget_pct = max(0.0, 1.0 - status.percentage_used)
 
             workdir = self._workdir
-            # Read internal LLM provider/model from seed config
-            _mgr_provider = "openrouter_free"
-            _mgr_model = "nvidia/nemotron-3-super-120b-a12b"
-            _seed_path = workdir / _BERNSTEIN_YAML
-            if _seed_path.exists():
-                try:
-                    _seed = parse_seed(_seed_path)
-                    _mgr_provider = _seed.internal_llm_provider
-                    _mgr_model = _seed.internal_llm_model
-                except Exception:
-                    pass
+            _mgr_provider, _mgr_model = _resolve_manager_llm(workdir)
             manager = ManagerAgent(
                 server_url=self._config.server_url,
                 workdir=workdir,
@@ -2218,109 +2207,14 @@ class Orchestrator:
             if result.skipped:
                 return
 
-            base = self._config.server_url
-
-            # Pre-validate corrections against actual server state so the
-            # LLM cannot cancel non-existent tasks, re-route to invalid
-            # roles, or operate on tasks in terminal states.
-            task_states: dict[str, str] = {}
-            try:
-                resp = self._client.get(f"{base}/tasks")
-                resp.raise_for_status()
-                for t in resp.json():
-                    task_states[t["id"]] = t.get("status", "unknown")
-            except httpx.HTTPError as exc:
-                logger.warning(
-                    "Manager review: failed to fetch task states for validation: %s",
-                    exc,
-                )
-                # Proceed without validation rather than silently dropping all corrections
-
-            valid_roles: set[str] | None = None
-            _cancellable_states = {"open", "claimed", "in_progress"}
-
-            for correction in result.corrections:
-                try:
-                    # Validate task_id exists in server state (skip add_task which has no task_id)
-                    if (
-                        correction.action != "add_task"
-                        and correction.task_id
-                        and task_states
-                        and correction.task_id not in task_states
-                    ):
-                        logger.warning(
-                            "Manager review: skipping %s for non-existent task %s",
-                            correction.action,
-                            correction.task_id,
-                        )
-                        continue
-
-                    if correction.action == "reassign" and correction.task_id and correction.new_role:
-                        # Validate target role exists
-                        if valid_roles is None:
-                            from bernstein import get_templates_dir
-                            from bernstein.core.context import available_roles
-
-                            valid_roles = set(available_roles(get_templates_dir(self._workdir) / "roles"))
-                        if correction.new_role not in valid_roles:
-                            logger.warning(
-                                "Manager review: skipping reassign to invalid role %r (valid: %s)",
-                                correction.new_role,
-                                ", ".join(sorted(valid_roles)),
-                            )
-                            continue
-                        self._client.patch(
-                            f"{base}/tasks/{correction.task_id}",
-                            json={"role": correction.new_role},
-                        )
-                        logger.info(
-                            "Manager review: reassigned %s to role=%s (%s)",
-                            correction.task_id,
-                            correction.new_role,
-                            correction.reason,
-                        )
-                    elif correction.action == "change_priority" and correction.task_id and correction.new_priority:
-                        self._client.patch(
-                            f"{base}/tasks/{correction.task_id}",
-                            json={"priority": correction.new_priority},
-                        )
-                        logger.info(
-                            "Manager review: changed priority of %s to %d (%s)",
-                            correction.task_id,
-                            correction.new_priority,
-                            correction.reason,
-                        )
-                    elif correction.action == "cancel" and correction.task_id:
-                        # Validate task is in a cancellable state
-                        status = task_states.get(correction.task_id)
-                        if status and status not in _cancellable_states:
-                            logger.warning(
-                                "Manager review: skipping cancel for task %s in non-cancellable state %r",
-                                correction.task_id,
-                                status,
-                            )
-                            continue
-                        self._client.post(
-                            f"{base}/tasks/{correction.task_id}/cancel",
-                            json={"reason": correction.reason or "manager review"},
-                        )
-                        logger.info(
-                            "Manager review: cancelled %s (%s)",
-                            correction.task_id,
-                            correction.reason,
-                        )
-                    elif correction.action == "add_task" and correction.new_task:
-                        self._client.post(
-                            f"{base}/tasks",
-                            json=correction.new_task,
-                        )
-                        logger.info(
-                            "Manager review: added task %r (%s)",
-                            correction.new_task.get("title"),
-                            correction.reason,
-                        )
-                except httpx.HTTPError as exc:
-                    logger.warning("Manager review: correction %s failed: %s", correction.action, exc)
+            task_states = _fetch_task_states(self._client, self._config.server_url)
+            _apply_manager_corrections(
+                self._client,
+                self._config.server_url,
+                self._workdir,
+                result.corrections,
+                task_states,
+            )
 
             if result.corrections:
                 self._post_bulletin(
@@ -3226,6 +3120,41 @@ class Orchestrator:
         src.unlink()
         logger.info("Synced backlog: %s -> closed/", best_match)
 
+    def _collect_backlog_files(self) -> list[Path]:
+        """Collect and filter backlog files from open/ and issues/ directories."""
+        open_dir = self._workdir / ".sdd" / "backlog" / "open"
+        issues_dir = self._workdir / ".sdd" / "backlog" / "issues"
+
+        backlog_files: list[Path] = []
+        for src_dir in (open_dir, issues_dir):
+            if src_dir.exists():
+                backlog_files.extend(src_dir.glob("*.md"))
+                backlog_files.extend(src_dir.glob("*.yaml"))
+                backlog_files.extend(src_dir.glob("*.yml"))
+        backlog_files.sort()
+
+        task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
+        if task_filter:
+            task_filter_lower = task_filter.lower()
+            backlog_files = [f for f in backlog_files if task_filter_lower in f.name.lower()]
+
+        return backlog_files
+
+    def _ensure_ingested_titles(self) -> set[str]:
+        """Lazily initialize and return the set of already-ingested task titles."""
+        if not hasattr(self, "_ingested_titles"):
+            self._ingested_titles: set[str] = set()
+            try:
+                resp = self._client.get(f"{self._config.server_url}/tasks")
+                resp.raise_for_status()
+                for task in resp.json():
+                    title = task.get("title", "")
+                    if title:
+                        self._ingested_titles.add(title.lower().strip())
+            except Exception:
+                pass
+        return self._ingested_titles
+
     def ingest_backlog(self) -> int:
         """Scan .sdd/backlog/open/ and .sdd/backlog/issues/ for new task files.
 
@@ -3241,48 +3170,16 @@ class Orchestrator:
             Number of files ingested this call.
         """
         open_dir = self._workdir / ".sdd" / "backlog" / "open"
-        issues_dir = self._workdir / ".sdd" / "backlog" / "issues"
         claimed_dir = self._workdir / ".sdd" / "backlog" / "claimed"
 
-        # Collect .md, .yaml, .yml from both directories
-        backlog_files: list[Path] = []
-        for src_dir in (open_dir, issues_dir):
-            if src_dir.exists():
-                backlog_files.extend(src_dir.glob("*.md"))
-                backlog_files.extend(src_dir.glob("*.yaml"))
-                backlog_files.extend(src_dir.glob("*.yml"))
-        backlog_files.sort()
-
-        # Apply task filter if BERNSTEIN_TASK_FILTER is set
-        task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
-        if task_filter:
-            task_filter_lower = task_filter.lower()
-            backlog_files = [f for f in backlog_files if task_filter_lower in f.name.lower()]
-
+        backlog_files = self._collect_backlog_files()
         if not backlog_files:
             return 0
 
         # Rate-limit ingestion: max 50 files per tick to prevent server overload.
-        # With 700+ backlog files, posting them all in one tick crashes the server.
         _MAX_INGEST_PER_TICK = 50
 
-        # Build title dedup set from existing server tasks (if available).
-        # Prevents re-creating tasks that already exist on the server after a
-        # restart or crash that prevented file move to claimed/.
-        existing_titles: set[str] = set()
-        if not hasattr(self, "_ingested_titles"):
-            self._ingested_titles: set[str] = set()
-            # Seed from server on first call
-            try:
-                resp = self._client.get(f"{self._config.server_url}/tasks")
-                resp.raise_for_status()
-                for task in resp.json():
-                    title = task.get("title", "")
-                    if title:
-                        self._ingested_titles.add(title.lower().strip())
-            except Exception:
-                pass  # Server may be starting up; dedup will be best-effort
-        existing_titles = self._ingested_titles
+        existing_titles = self._ensure_ingested_titles()
 
         claimed_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3858,15 +3755,199 @@ class TickResult:
         self.dry_run_planned: list[tuple[str, str, str | None, str | None]] = []
 
 
+def _resolve_manager_llm(workdir: Path) -> tuple[str, str]:
+    """Resolve internal LLM provider/model from seed config.
+
+    Returns:
+        Tuple of (provider, model).
+    """
+    from bernstein.core.seed import parse_seed
+
+    provider = "openrouter_free"
+    model = "nvidia/nemotron-3-super-120b-a12b"
+    seed_path = workdir / _BERNSTEIN_YAML
+    if seed_path.exists():
+        try:
+            seed = parse_seed(seed_path)
+            provider = seed.internal_llm_provider
+            model = seed.internal_llm_model
+        except Exception:
+            pass
+    return provider, model
+
+
+def _fetch_task_states(client: httpx.Client, server_url: str) -> dict[str, str]:
+    """Fetch task ID -> status map from server for validation."""
+    task_states: dict[str, str] = {}
+    try:
+        resp = client.get(f"{server_url}/tasks")
+        resp.raise_for_status()
+        for t in resp.json():
+            task_states[t["id"]] = t.get("status", "unknown")
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "Manager review: failed to fetch task states for validation: %s",
+            exc,
+        )
+    return task_states
+
+
+def _apply_manager_corrections(
+    client: httpx.Client,
+    server_url: str,
+    workdir: Path,
+    corrections: list[Any],
+    task_states: dict[str, str],
+) -> None:
+    """Apply manager review corrections to the task server."""
+    valid_roles: set[str] | None = None
+    _cancellable_states = {"open", "claimed", "in_progress"}
+
+    for correction in corrections:
+        try:
+            # Validate task_id exists in server state (skip add_task which has no task_id)
+            if (
+                correction.action != "add_task"
+                and correction.task_id
+                and task_states
+                and correction.task_id not in task_states
+            ):
+                logger.warning(
+                    "Manager review: skipping %s for non-existent task %s",
+                    correction.action,
+                    correction.task_id,
+                )
+                continue
+
+            if correction.action == "reassign":
+                valid_roles = _apply_reassign(client, server_url, workdir, correction, valid_roles)
+            elif correction.action == "change_priority":
+                _apply_change_priority(client, server_url, correction)
+            elif correction.action == "cancel":
+                _apply_cancel(client, server_url, correction, task_states, _cancellable_states)
+            elif correction.action == "add_task":
+                _apply_add_task(client, server_url, correction)
+        except httpx.HTTPError as exc:
+            logger.warning("Manager review: correction %s failed: %s", correction.action, exc)
+
+
+def _apply_reassign(
+    client: httpx.Client,
+    server_url: str,
+    workdir: Path,
+    correction: Any,
+    valid_roles: set[str] | None,
+) -> set[str] | None:
+    """Apply a reassign correction. Returns valid_roles (lazily populated)."""
+    if not correction.task_id or not correction.new_role:
+        return valid_roles
+    if valid_roles is None:
+        from bernstein import get_templates_dir
+        from bernstein.core.context import available_roles
+
+        valid_roles = set(available_roles(get_templates_dir(workdir) / "roles"))
+    if correction.new_role not in valid_roles:
+        logger.warning(
+            "Manager review: skipping reassign to invalid role %r (valid: %s)",
+            correction.new_role,
+            ", ".join(sorted(valid_roles)),
+        )
+        return valid_roles
+    client.patch(
+        f"{server_url}/tasks/{correction.task_id}",
+        json={"role": correction.new_role},
+    )
+    logger.info(
+        "Manager review: reassigned %s to role=%s (%s)",
+        correction.task_id,
+        correction.new_role,
+        correction.reason,
+    )
+    return valid_roles
+
+
+def _apply_change_priority(client: httpx.Client, server_url: str, correction: Any) -> None:
+    """Apply a change_priority correction."""
+    if not correction.task_id or not correction.new_priority:
+        return
+    client.patch(
+        f"{server_url}/tasks/{correction.task_id}",
+        json={"priority": correction.new_priority},
+    )
+    logger.info(
+        "Manager review: changed priority of %s to %d (%s)",
+        correction.task_id,
+        correction.new_priority,
+        correction.reason,
+    )
+
+
+def _apply_cancel(
+    client: httpx.Client,
+    server_url: str,
+    correction: Any,
+    task_states: dict[str, str],
+    cancellable_states: set[str],
+) -> None:
+    """Apply a cancel correction."""
+    if not correction.task_id:
+        return
+    status = task_states.get(correction.task_id)
+    if status and status not in cancellable_states:
+        logger.warning(
+            "Manager review: skipping cancel for task %s in non-cancellable state %r",
+            correction.task_id,
+            status,
+        )
+        return
+    client.post(
+        f"{server_url}/tasks/{correction.task_id}/cancel",
+        json={"reason": correction.reason or "manager review"},
+    )
+    logger.info(
+        "Manager review: cancelled %s (%s)",
+        correction.task_id,
+        correction.reason,
+    )
+
+
+def _apply_add_task(client: httpx.Client, server_url: str, correction: Any) -> None:
+    """Apply an add_task correction."""
+    if not correction.new_task:
+        return
+    client.post(
+        f"{server_url}/tasks",
+        json=correction.new_task,
+    )
+    logger.info(
+        "Manager review: added task %r (%s)",
+        correction.new_task.get("title"),
+        correction.reason,
+    )
+
+
 def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
     """Build a NotificationManager from seed notify/webhooks settings."""
     if seed is None:
         return None
 
     targets: list[NotificationTarget] = []
+    _collect_notify_targets(seed, targets)
+    _collect_webhook_targets(seed, targets)
+    _collect_smtp_targets(seed, targets)
 
+    if not targets:
+        return None
+    smtp_cfg = getattr(seed, "smtp", None)
+    return NotificationManager(targets, smtp_config=smtp_cfg)
+
+
+def _collect_notify_targets(seed: Any, targets: list[NotificationTarget]) -> None:
+    """Collect notification targets from seed.notify config."""
     notify_cfg = getattr(seed, "notify", None)
-    if notify_cfg is not None and getattr(notify_cfg, "webhook_url", None):
+    if notify_cfg is None:
+        return
+    if getattr(notify_cfg, "webhook_url", None):
         events: list[str] = []
         if bool(getattr(notify_cfg, "on_complete", True)):
             events.append(_EVENT_RUN_COMPLETED)
@@ -3880,8 +3961,7 @@ def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
                     events=events,
                 )
             )
-
-    if notify_cfg is not None and bool(getattr(notify_cfg, "desktop", False)):
+    if bool(getattr(notify_cfg, "desktop", False)):
         targets.append(
             NotificationTarget(
                 type="desktop",
@@ -3890,6 +3970,9 @@ def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
             )
         )
 
+
+def _collect_webhook_targets(seed: Any, targets: list[NotificationTarget]) -> None:
+    """Collect webhook targets from seed.webhooks list."""
     for webhook_cfg in getattr(seed, "webhooks", ()):
         url = str(getattr(webhook_cfg, "url", "")).strip()
         events = [str(event_name) for event_name in getattr(webhook_cfg, "events", ())]
@@ -3897,19 +3980,19 @@ def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
             continue
         targets.append(NotificationTarget(type="webhook", url=url, events=events))
 
-    smtp_cfg = getattr(seed, "smtp", None)
-    if smtp_cfg:
-        targets.append(
-            NotificationTarget(
-                type="email",
-                url="",
-                events=["task.completed", _EVENT_TASK_FAILED, "approval.needed", _EVENT_RUN_COMPLETED],
-            )
-        )
 
-    if not targets:
-        return None
-    return NotificationManager(targets, smtp_config=smtp_cfg)
+def _collect_smtp_targets(seed: Any, targets: list[NotificationTarget]) -> None:
+    """Collect email notification target from seed.smtp config."""
+    smtp_cfg = getattr(seed, "smtp", None)
+    if not smtp_cfg:
+        return
+    targets.append(
+        NotificationTarget(
+            type="email",
+            url="",
+            events=["task.completed", _EVENT_TASK_FAILED, "approval.needed", _EVENT_RUN_COMPLETED],
+        )
+    )
 
 
 if __name__ == "__main__":
