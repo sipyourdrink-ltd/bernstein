@@ -1,0 +1,24 @@
+id: deploy-verification
+name: Deploy Verification
+description: Post-deploy smoke tests and regression detection
+tags: [deploy, verify, ci, api]
+version: "1.0"
+tasks:
+  - title: API smoke tests
+    description: Run critical API endpoint smoke tests against the deployed environment
+    role: qa
+    priority: 0
+    scope: medium
+    complexity: moderate
+  - title: Error log scan
+    description: Scan error logs for new exceptions or regressions since deploy
+    role: devops
+    priority: 0
+    scope: small
+    complexity: simple
+  - title: Performance baseline check
+    description: Compare response times and resource usage against pre-deploy baseline
+    role: backend
+    priority: 1
+    scope: small
+    complexity: simple

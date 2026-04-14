@@ -1,0 +1,24 @@
+id: nightly-maintenance
+name: Nightly Maintenance
+description: Automated nightly maintenance — dependency updates, stale branch cleanup, lint fixes
+tags: [maintenance, ci, cleanup, schedule]
+version: "1.0"
+tasks:
+  - title: Dependency security audit
+    description: Check for known vulnerabilities in dependencies, update patch versions
+    role: security
+    priority: 0
+    scope: medium
+    complexity: moderate
+  - title: Lint and format fixes
+    description: Run linters and formatters, fix auto-fixable issues, commit results
+    role: backend
+    priority: 1
+    scope: small
+    complexity: simple
+  - title: Stale branch cleanup
+    description: Identify and delete merged or stale branches older than 30 days
+    role: devops
+    priority: 2
+    scope: small
+    complexity: simple

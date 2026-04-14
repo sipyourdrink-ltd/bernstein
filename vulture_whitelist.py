@@ -24,3 +24,24 @@ _print_static  # noqa
 _agents_from_dicts  # noqa
 # Parameter kept for API consistency (callers may pass it in future)
 qualified_prefix  # noqa
+# Claude Code Routine adapter — public API not yet wired into orchestrator
+RoutineCostTracker  # noqa
+build_fire_payload  # noqa
+build_fire_headers  # noqa
+build_fire_url  # noqa
+parse_fire_response  # noqa
+select_trigger  # noqa
+normalize_routine_webhook  # noqa
+# Dataclass fields and interface params used by callers
+fired_at  # noqa
+enabled  # noqa
+poll_interval_seconds  # noqa
+max_wait_minutes  # noqa
+branch_prefix  # noqa
+session_id  # noqa
+session_url  # noqa
+check_budget  # noqa
+record_fire  # noqa
+extract_github_context  # noqa
+list_scenarios  # noqa
+get_scenario_detail  # noqa

@@ -1,0 +1,30 @@
+id: pr-review-comprehensive
+name: Comprehensive PR Review
+description: Multi-role parallel PR review with security, performance, style, and test coverage checks
+tags: [review, ci, quality, github]
+version: "1.0"
+tasks:
+  - title: Security review
+    description: Review PR for security vulnerabilities, injection risks, auth issues, and sensitive data exposure
+    role: security
+    priority: 0
+    scope: medium
+    complexity: moderate
+  - title: Performance review
+    description: Review PR for performance regressions, N+1 queries, unnecessary allocations, and scalability concerns
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: moderate
+  - title: Style and standards review
+    description: Review PR for code style, naming conventions, documentation, and adherence to project standards
+    role: reviewer
+    priority: 1
+    scope: small
+    complexity: simple
+  - title: Test coverage analysis
+    description: Analyze test coverage for changed code, identify untested paths, suggest missing test cases
+    role: qa
+    priority: 2
+    scope: small
+    complexity: simple
