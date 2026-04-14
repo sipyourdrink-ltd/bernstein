@@ -67,9 +67,9 @@ class AgentLogAggregator:
     )
     _WARNING_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"(?i)\b(warn|warning|deprecated|retrying)\b")
     _TEST_SUMMARY_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"(?i)\b\d+\s+(?:passed|failed|skipped|error)")
-    _MEANINGFUL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
-        r"(?i)(?:^(?:Modified|Created|Wrote|Updated):\s+\S+|(?:uv run )?pytest|coverage|ruff|pyright)"
-    )
+    _MEANINGFUL_TOOLS: ClassVar[frozenset[str]] = frozenset({"pytest", "coverage", "ruff", "pyright"})
+    _MEANINGFUL_FILE_OP: ClassVar[re.Pattern[str]] = re.compile(r"(?i)^(?:Modified|Created|Wrote|Updated):\s+\S+")
+    _MEANINGFUL_TOOL_CMD: ClassVar[re.Pattern[str]] = re.compile(r"(?i)(?:uv run )?(?:pytest|coverage|ruff|pyright)\b")
 
     def __init__(self, workdir: Path) -> None:
         self._workdir = workdir
@@ -181,7 +181,9 @@ class AgentLogAggregator:
         stripped = raw_line.strip()
         if stripped:
             state["last_activity_line"] = line_no
-        if not state["first_action_line"] and self._MEANINGFUL_PATTERN.search(stripped):
+        if not state["first_action_line"] and (
+            self._MEANINGFUL_FILE_OP.search(stripped) or self._MEANINGFUL_TOOL_CMD.search(stripped)
+        ):
             state["first_action_line"] = line_no
 
         event = self._event_from_line(raw_line)
