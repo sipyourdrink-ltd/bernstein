@@ -40,6 +40,7 @@ from bernstein.core.agents.spawner_merge import (
 from bernstein.core.agents.spawner_merge import (
     update_trace_outcome as _update_trace_outcome,
 )
+from bernstein.core.agents.spawner_prompt_cache import CacheableBlock, mark_cacheable_prefix
 from bernstein.core.agents.spawner_warm_pool import _select_batch_config, _should_use_router
 from bernstein.core.agents.spawner_worktree import (
     cleanup_worktree as _cleanup_worktree,
@@ -520,7 +521,7 @@ def _render_prompt(
     task_graph: TaskGraph | None = None,
     token_budget: int = 0,
     meta_messages: list[str] | None = None,
-) -> str:
+) -> tuple[str, list[CacheableBlock]]:
     """Build the full agent prompt from role template + tasks + context.
 
     Uses the Jinja2-style template renderer for proper variable substitution.
@@ -546,7 +547,9 @@ def _render_prompt(
             context (INFORMS / TRANSFORMS outputs).
 
     Returns:
-        Complete prompt string ready for the CLI adapter.
+        Tuple of (complete prompt string, list of CacheableBlock).
+        The blocks annotate which prompt sections are static (cacheable)
+        vs dynamic, so adapters can apply provider-specific caching.
     """
     role = tasks[0].role
 
@@ -729,7 +732,11 @@ def _render_prompt(
         nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"
         sections.append(nudges_block)
 
-    return "".join(sections)
+    # Annotate prompt sections with cache hints so adapters can apply
+    # provider-specific caching (e.g. Anthropic's cache_control).
+    cache_blocks = mark_cacheable_prefix(sections)
+
+    return "".join(sections), cache_blocks
 
 
 def _render_fallback(
@@ -1434,12 +1441,13 @@ class AgentSpawner:
             # Multi-task batches with mode=batch are unusual but we handle them by
             # using the first task's goal as the primary directive.
             prompt = _render_batch_prompt(tasks[0])
+            cache_blocks: list[CacheableBlock] = []
             logger.info(
                 "Batch execution mode: spawning single agent with /batch prompt for task %s",
                 tasks[0].id,
             )
         else:
-            prompt = _render_prompt(
+            prompt, cache_blocks = _render_prompt(
                 tasks,
                 self._templates_dir,
                 self._workdir,
@@ -1725,6 +1733,10 @@ class AgentSpawner:
                             # Extract budget_multiplier from task metadata
                             # (set by retry logic when previous attempt hit budget cap).
                             _budget_mult = max(float(t.metadata.get("budget_multiplier", 1.0)) for t in tasks)
+                            # Build system addendum from cacheable prefix blocks.
+                            # Static role template + coding standards go into the
+                            # system prompt where the provider can cache them.
+                            _cacheable_prefix = "".join(b.content for b in cache_blocks if b.cacheable)
                             result = target_adapter.spawn(
                                 prompt=prompt,
                                 workdir=spawn_cwd,
@@ -1733,7 +1745,7 @@ class AgentSpawner:
                                 mcp_config=effective_mcp,
                                 task_scope=max_scope,
                                 budget_multiplier=_budget_mult,
-                                system_addendum="",
+                                system_addendum=_cacheable_prefix,
                             )
                         spawn_duration = time.perf_counter() - spawn_start
                         agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
@@ -1991,7 +2003,7 @@ class AgentSpawner:
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
 
         meta_messages = ["This is a crash recovery session. Continue from where the previous agent left off."]
-        prompt = _render_prompt(
+        prompt, _cache_blocks = _render_prompt(
             tasks,
             self._templates_dir,
             self._workdir,

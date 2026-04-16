@@ -704,6 +704,36 @@ class CostTracker:
             confidence=round(confidence, 3),
         )
 
+    def cache_savings_usd(self) -> float:
+        """Estimate USD saved by prompt caching across all recorded usages.
+
+        For each usage record with cache_read_tokens > 0, computes the
+        difference between what those tokens would have cost at full input
+        price vs the discounted cache-read price.
+
+        Returns:
+            Estimated savings in USD (always >= 0).
+        """
+        from bernstein.core.cost.cost import MODEL_COSTS_PER_1M_TOKENS
+
+        savings = 0.0
+        for u in self._usages:
+            if u.cache_read_tokens <= 0:
+                continue
+            model_lower = u.model.lower()
+            pricing: dict[str, float] | None = None
+            for key, costs in MODEL_COSTS_PER_1M_TOKENS.items():
+                if key in model_lower:
+                    pricing = costs
+                    break
+            if pricing is None:
+                continue
+            input_price = pricing.get("input", 0.0)
+            cache_read_price = pricing.get("cache_read", input_price)
+            # Savings = tokens * (full_price - discounted_price) per million
+            savings += (u.cache_read_tokens / 1_000_000.0) * (input_price - cache_read_price)
+        return max(0.0, savings)
+
     def report(self, tasks_done: int = 0, tasks_remaining: int = 0) -> RunCostReport:
         """Build a full cost report for this run.
 
@@ -725,6 +755,7 @@ class CostTracker:
             per_agent=self.agent_summaries(),
             per_model=self.model_breakdowns(),
             projection=projection,
+            cache_savings_usd=round(self.cache_savings_usd(), 6),
         )
 
     def save_metrics(self, metrics_dir: Path) -> Path:
