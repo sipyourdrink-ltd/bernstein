@@ -544,6 +544,9 @@ class RunCostReport:
         per_model: Per-model cost breakdowns, sorted by spend descending.
         projection: Run-end cost projection, or ``None`` if no task counts provided.
         timestamp: Unix timestamp when this report was generated.
+        cache_savings_usd: Estimated cost savings from prompt caching.
+            Computed as the difference between what cache-read tokens would
+            have cost at full input price vs the discounted cache-read price.
     """
 
     run_id: str
@@ -553,6 +556,7 @@ class RunCostReport:
     per_model: list[ModelCostBreakdown]
     projection: RunCostProjection | None
     timestamp: float = field(default_factory=time.time)
+    cache_savings_usd: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict."""
@@ -594,6 +598,7 @@ class RunCostReport:
                 for m in self.per_model
             ],
             "projection": proj,
+            "cache_savings_usd": round(self.cache_savings_usd, 6),
         }
 
     @classmethod
@@ -639,6 +644,7 @@ class RunCostReport:
             per_model=per_model,
             projection=proj,
             timestamp=float(d.get("timestamp", 0.0)),
+            cache_savings_usd=float(d.get("cache_savings_usd", 0.0)),
         )
 
 
