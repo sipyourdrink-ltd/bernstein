@@ -1,153 +1,205 @@
-"""Structured SSE event types for real-time streaming.
+"""Server-Sent Events (SSE) support for real-time task/agent updates.
 
-Defines typed events for task lifecycle, agent lifecycle, quality gates,
-cost updates, and merge operations. Each event has a structured JSON
-payload with consistent schema.
+Defines event types, a wire-format serialiser, and factory classmethods
+for all Bernstein SSE event categories.
 """
 
 from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
 
 class SSEEventType(StrEnum):
-    """Event types for Server-Sent Events stream."""
+    """SSE event type identifiers."""
 
-    TASK_CREATED = "task.created"
-    TASK_CLAIMED = "task.claimed"
-    TASK_PROGRESS = "task.progress"
-    TASK_COMPLETED = "task.completed"
-    TASK_FAILED = "task.failed"
-    AGENT_SPAWNED = "agent.spawned"
-    AGENT_COMPLETED = "agent.completed"
-    AGENT_FAILED = "agent.failed"
-    GATE_STARTED = "gate.started"
-    GATE_PASSED = "gate.passed"
-    GATE_FAILED = "gate.failed"
-    COST_UPDATE = "cost.update"
-    MERGE_COMPLETED = "merge.completed"
-    RUN_COMPLETED = "run.completed"
+    TASK_CREATED = "task_created"
+    TASK_CLAIMED = "task_claimed"
+    TASK_COMPLETED = "task_completed"
+    TASK_FAILED = "task_failed"
+    TASK_RETRIED = "task_retried"
+    AGENT_SPAWNED = "agent_spawned"
+    AGENT_EXITED = "agent_exited"
+    GATE_RESULT = "gate_result"
+    COST_UPDATE = "cost_update"
+    MERGE_STARTED = "merge_started"
+    MERGE_COMPLETED = "merge_completed"
+    RUN_STARTED = "run_started"
+    RUN_COMPLETED = "run_completed"
+    HEARTBEAT = "heartbeat"
 
 
 @dataclass
 class SSEEvent:
-    """A structured SSE event with type and payload."""
+    """A single SSE event ready for wire serialisation.
 
-    event_type: SSEEventType
-    data: dict[str, Any]
+    Args:
+        event: The event type identifier.
+        data: Arbitrary JSON-serialisable payload.
+        id: Optional event ID for Last-Event-ID reconnection.
+        timestamp: Epoch timestamp (defaults to now).
+    """
+
+    event: SSEEventType
+    data: dict[str, Any] = field(default_factory=dict)
+    id: str | None = None
     timestamp: float = 0.0
 
     def __post_init__(self) -> None:
-        if not self.timestamp:
+        if self.timestamp == 0.0:
             self.timestamp = time.time()
 
     def to_sse(self) -> str:
-        """Format as SSE wire format: event: type\\ndata: json\\n\\n"""
-        payload = {"timestamp": self.timestamp, **self.data}
-        return f"event: {self.event_type.value}\ndata: {json.dumps(payload)}\n\n"
+        """Serialise to SSE wire format.
+
+        Returns:
+            SSE-formatted string with event, data, and optional id fields,
+            terminated by a blank line.
+        """
+        lines: list[str] = []
+        if self.id is not None:
+            lines.append(f"id: {self.id}")
+        lines.append(f"event: {self.event.value}")
+        payload = dict(self.data)
+        payload["timestamp"] = self.timestamp
+        lines.append(f"data: {json.dumps(payload)}")
+        lines.append("")  # trailing blank line
+        return "\n".join(lines) + "\n"
+
+    # -- factory classmethods ------------------------------------------------
 
     @classmethod
-    def task_created(cls, task_id: str, goal: str, role: str, complexity: str) -> SSEEvent:
-        """Create a task-created event."""
+    def task_created(cls, task_id: str, title: str = "", **extra: Any) -> SSEEvent:
+        """Create a task_created event.
+
+        Args:
+            task_id: Task identifier.
+            title: Task title.
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
         return cls(
-            SSEEventType.TASK_CREATED,
-            {
-                "task_id": task_id,
-                "goal": goal,
-                "role": role,
-                "complexity": complexity,
-            },
+            event=SSEEventType.TASK_CREATED,
+            data={"task_id": task_id, "title": title, **extra},
         )
 
     @classmethod
-    def task_completed(
-        cls,
-        task_id: str,
-        agent_id: str,
-        model: str,
-        duration_s: float,
-        cost_usd: float,
-    ) -> SSEEvent:
-        """Create a task-completed event."""
+    def task_completed(cls, task_id: str, **extra: Any) -> SSEEvent:
+        """Create a task_completed event.
+
+        Args:
+            task_id: Task identifier.
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
         return cls(
-            SSEEventType.TASK_COMPLETED,
-            {
-                "task_id": task_id,
-                "agent_id": agent_id,
-                "model": model,
-                "duration_s": round(duration_s, 2),
-                "cost_usd": round(cost_usd, 4),
-            },
+            event=SSEEventType.TASK_COMPLETED,
+            data={"task_id": task_id, **extra},
         )
 
     @classmethod
-    def task_failed(cls, task_id: str, reason: str, will_retry: bool) -> SSEEvent:
-        """Create a task-failed event."""
+    def task_failed(cls, task_id: str, reason: str = "", **extra: Any) -> SSEEvent:
+        """Create a task_failed event.
+
+        Args:
+            task_id: Task identifier.
+            reason: Failure reason.
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
         return cls(
-            SSEEventType.TASK_FAILED,
-            {"task_id": task_id, "reason": reason, "will_retry": will_retry},
+            event=SSEEventType.TASK_FAILED,
+            data={"task_id": task_id, "reason": reason, **extra},
         )
 
     @classmethod
-    def agent_spawned(cls, agent_id: str, task_id: str, model: str, adapter: str) -> SSEEvent:
-        """Create an agent-spawned event."""
+    def agent_spawned(cls, agent_id: str, role: str = "", **extra: Any) -> SSEEvent:
+        """Create an agent_spawned event.
+
+        Args:
+            agent_id: Agent identifier.
+            role: Agent role.
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
         return cls(
-            SSEEventType.AGENT_SPAWNED,
-            {
-                "agent_id": agent_id,
-                "task_id": task_id,
-                "model": model,
-                "adapter": adapter,
-            },
+            event=SSEEventType.AGENT_SPAWNED,
+            data={"agent_id": agent_id, "role": role, **extra},
         )
 
     @classmethod
-    def gate_result(cls, task_id: str, gate_name: str, passed: bool, details: str = "") -> SSEEvent:
-        """Create a quality-gate result event."""
-        event_type = SSEEventType.GATE_PASSED if passed else SSEEventType.GATE_FAILED
+    def gate_result(cls, gate_name: str, passed: bool, **extra: Any) -> SSEEvent:
+        """Create a gate_result event.
+
+        Args:
+            gate_name: Quality gate name.
+            passed: Whether the gate passed.
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
         return cls(
-            event_type,
-            {
-                "task_id": task_id,
-                "gate": gate_name,
-                "passed": passed,
-                "details": details,
-            },
+            event=SSEEventType.GATE_RESULT,
+            data={"gate_name": gate_name, "passed": passed, **extra},
         )
 
     @classmethod
-    def cost_update(cls, total_usd: float, budget_usd: float, budget_pct: float) -> SSEEvent:
-        """Create a cost-update event."""
+    def cost_update(cls, total_usd: float, **extra: Any) -> SSEEvent:
+        """Create a cost_update event.
+
+        Args:
+            total_usd: Current total cost in USD.
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
         return cls(
-            SSEEventType.COST_UPDATE,
-            {
-                "total_usd": round(total_usd, 4),
-                "budget_usd": round(budget_usd, 2),
-                "budget_pct": round(budget_pct, 1),
-            },
+            event=SSEEventType.COST_UPDATE,
+            data={"total_usd": total_usd, **extra},
         )
 
     @classmethod
-    def merge_completed(cls, task_id: str, branch: str, commit_sha: str) -> SSEEvent:
-        """Create a merge-completed event."""
+    def merge_completed(cls, branch: str, result: str = "success", **extra: Any) -> SSEEvent:
+        """Create a merge_completed event.
+
+        Args:
+            branch: Branch that was merged.
+            result: Merge result.
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
         return cls(
-            SSEEventType.MERGE_COMPLETED,
-            {"task_id": task_id, "branch": branch, "commit_sha": commit_sha},
+            event=SSEEventType.MERGE_COMPLETED,
+            data={"branch": branch, "result": result, **extra},
         )
 
     @classmethod
-    def run_completed(cls, total_tasks: int, passed: int, failed: int, total_cost: float) -> SSEEvent:
-        """Create a run-completed event."""
+    def run_completed(cls, run_id: str, **extra: Any) -> SSEEvent:
+        """Create a run_completed event.
+
+        Args:
+            run_id: Run identifier.
+            **extra: Additional payload fields.
+
+        Returns:
+            SSEEvent instance.
+        """
         return cls(
-            SSEEventType.RUN_COMPLETED,
-            {
-                "total_tasks": total_tasks,
-                "passed": passed,
-                "failed": failed,
-                "total_cost_usd": round(total_cost, 4),
-            },
+            event=SSEEventType.RUN_COMPLETED,
+            data={"run_id": run_id, **extra},
         )
