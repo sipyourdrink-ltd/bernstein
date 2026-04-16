@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-MessageType = Literal["info", "warning", "discovery", "coordination"]
+MessageType = Literal["info", "warning", "discovery", "coordination", "fact", "finding", "blocker", "pattern"]
 
 
 @dataclass
@@ -29,6 +29,9 @@ class BulletinMessage:
     timestamp: float
     tags: list[str] = field(default_factory=list[str])
     expires_at: float | None = None
+    confidence: float = 0.5
+    scope: list[str] = field(default_factory=list)
+    source_model: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -36,8 +39,23 @@ class BulletinMessage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BulletinMessage:
-        """Create from dictionary."""
-        return cls(**data)
+        """Create from dictionary.
+
+        Handles backward compatibility by supplying defaults for new fields.
+        """
+        return cls(
+            id=data["id"],
+            sender_agent_id=data["sender_agent_id"],
+            sender_task_id=data["sender_task_id"],
+            message_type=data["message_type"],
+            content=data["content"],
+            timestamp=data["timestamp"],
+            tags=data.get("tags", []),
+            expires_at=data.get("expires_at"),
+            confidence=data.get("confidence", 0.5),
+            scope=data.get("scope", []),
+            source_model=data.get("source_model", ""),
+        )
 
     def is_expired(self) -> bool:
         """Check if message has expired."""
@@ -200,6 +218,112 @@ class BulletinBoard:
             relevant.append(message)
 
         return relevant
+
+    def query(
+        self,
+        *,
+        scope: str | None = None,
+        message_type: MessageType | None = None,
+        min_confidence: float = 0.0,
+        since: float | None = None,
+        limit: int = 50,
+    ) -> list[BulletinMessage]:
+        """Query messages with filtering.
+
+        Args:
+            scope: Filter by file path (exact or prefix match).
+            message_type: Filter by message type.
+            min_confidence: Minimum confidence threshold.
+            since: Only return messages after this timestamp.
+            limit: Maximum number of messages to return.
+
+        Returns:
+            List of matching BulletinMessage instances, newest first.
+        """
+        results: list[BulletinMessage] = []
+
+        for message in self._messages.values():
+            if message.is_expired():
+                continue
+
+            if message_type and message.message_type != message_type:
+                continue
+
+            if message.confidence < min_confidence:
+                continue
+
+            if since and message.timestamp < since:
+                continue
+
+            if (
+                scope
+                and message.scope
+                and not any(s == scope or s.startswith(scope + "/") or scope.startswith(s + "/") for s in message.scope)
+            ):
+                continue
+            # Messages with no scope are considered global — included by default
+
+            results.append(message)
+
+        results.sort(key=lambda m: m.timestamp, reverse=True)
+        return results[:limit]
+
+    def get_relevant_for_task(self, context_files: list[str], role: str) -> list[BulletinMessage]:
+        """Get messages relevant to a specific task based on file scope and role.
+
+        Args:
+            context_files: File paths the task works with.
+            role: Role of the agent (used for tag matching).
+
+        Returns:
+            List of relevant BulletinMessage instances, newest first.
+        """
+        results: list[BulletinMessage] = []
+
+        for message in self._messages.values():
+            if message.is_expired():
+                continue
+
+            # Check role match in tags
+            role_match = role.lower() in [t.lower() for t in message.tags]
+
+            # Check scope overlap with context files
+            scope_match = False
+            if not message.scope:
+                # No scope means global — always relevant
+                scope_match = True
+            else:
+                for msg_scope in message.scope:
+                    for ctx_file in context_files:
+                        if (
+                            msg_scope == ctx_file
+                            or ctx_file.startswith(msg_scope + "/")
+                            or msg_scope.startswith(ctx_file + "/")
+                        ):
+                            scope_match = True
+                            break
+                    if scope_match:
+                        break
+
+            if role_match or scope_match:
+                results.append(message)
+
+        results.sort(key=lambda m: m.timestamp, reverse=True)
+        return results
+
+    def apply_confidence_decay(self, decay_rate: float = 0.95, min_confidence: float = 0.1) -> None:
+        """Decay confidence of all messages over time.
+
+        Multiplies each message's confidence by decay_rate, flooring at
+        min_confidence. Call this periodically (e.g., each orchestrator tick).
+
+        Args:
+            decay_rate: Multiplier applied to each message's confidence.
+            min_confidence: Floor below which confidence will not drop.
+        """
+        for message in self._messages.values():
+            new_conf = message.confidence * decay_rate
+            message.confidence = max(new_conf, min_confidence)
 
     def cleanup_expired(self) -> int:
         """Clean up expired messages.
