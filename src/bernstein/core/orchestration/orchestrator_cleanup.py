@@ -14,7 +14,7 @@ import os
 import time
 from typing import Any, cast
 
-from bernstein.core.agent_lifecycle import (
+from bernstein.core.agent_recycling import (
     send_shutdown_signals,
 )
 from bernstein.core.orchestration.tick_pipeline import (

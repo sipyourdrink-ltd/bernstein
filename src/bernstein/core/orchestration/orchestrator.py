@@ -32,13 +32,15 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import httpx
 
 from bernstein.core.agent_lifecycle import (
+    reap_dead_agents,
+    refresh_agent_states,
+)
+from bernstein.core.agent_recycling import (
     check_kill_signals,
     check_loops_and_deadlocks,
     check_stale_agents,
     check_stalled_tasks,
-    reap_dead_agents,
     recycle_idle_agents,
-    refresh_agent_states,
     send_shutdown_signals,
 )
 from bernstein.core.agent_signals import AgentSignalManager

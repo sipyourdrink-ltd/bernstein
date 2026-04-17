@@ -35,6 +35,7 @@ from bernstein.core.agent_lifecycle import (
 from bernstein.core.agent_lifecycle import (
     recycle_idle_agents as lifecycle_recycle,
 )
+
 from bernstein.core.agents import agent_recycling
 
 
