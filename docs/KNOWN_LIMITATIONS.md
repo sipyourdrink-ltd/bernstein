@@ -6,7 +6,7 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 
 ## 1) Process and adapter parity is not perfect
 
-**What:** Bernstein ships 29 adapter modules (19 CLI agent adapters + 10 support modules), but different CLI agents expose different capabilities and process semantics.
+**What:** Bernstein ships 17 CLI adapters, but different CLI agents expose different capabilities and process semantics.
 
 **Impact:** Stop/restart behavior, output shape, structured output support, and error handling can vary by adapter. The conformance harness (`adapters/conformance.py`) helps catch regressions, but not all adapters have full golden-transcript coverage.
 
@@ -51,7 +51,7 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 
 **Workaround:**
 - Set explicit budgets.
-- Use robust completion signals/tests.
+- Use deterministic completion signals/tests.
 - Monitor early-run behavior and tune config for your environment.
 
 ---

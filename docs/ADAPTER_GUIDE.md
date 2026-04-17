@@ -1,8 +1,7 @@
 # Adapter Selection Guide
 
-Bernstein ships 29 adapter modules in `src/bernstein/adapters/`. Of these, 19 are
-CLI agent adapters for different coding agents, and 10 are support modules
-(caching, conformance testing, environment isolation, plugin SDK, etc.).
+Bernstein ships 17 CLI agent adapters in `src/bernstein/adapters/`, plus support
+modules (caching, conformance testing, environment isolation, plugin SDK, etc.).
 
 All CLI agent adapters implement the `CLIAdapter` interface (`adapters/base.py`):
 `spawn()`, process monitoring via PID, log capture to `.sdd/runtime/<session>.log`,
@@ -24,7 +23,7 @@ Every adapter can serve two roles in Bernstein:
 Set the scheduler model in `bernstein.yaml`:
 ```yaml
 internal_llm_provider: gemini            # any adapter name
-internal_llm_model: gemini-3.1-pro-preview
+internal_llm_model: gemini-pro
 ```
 
 This means you can run Bernstein with **zero Claude Code dependency** — use `qwen` or `gemini` for everything, or run fully air-gapped with `ollama`.
@@ -36,8 +35,8 @@ This means you can run Bernstein with **zero Claude Code dependency** — use `q
 | Adapter | Provider | Models | Reasoning | Cost Tier | Tool Use | Structured Output | MCP | Recommended Use Case |
 |---------|----------|--------|-----------|-----------|----------|-------------------|-----|----------------------|
 | `claude` | Anthropic | opus, sonnet, haiku | ★★★★★ (opus) / ★★★★ (sonnet) / ★★ (haiku) | $$–$$$ | Full (role-scoped) | JSON schema enforced | Yes | Primary workhorse — architecture, features, tests, docs |
-| `codex` | OpenAI | gpt-5.4, gpt-5.4-mini | ★★★★★ (5.4) / ★★★★ (5.4-mini) | $$–$$$ | Full | JSON (`--json`) | No | Provider diversity; OpenAI reasoning models |
-| `gemini` | Google | gemini-3.1-pro, gemini-3-flash | ★★★★★ (3.1-pro) / ★★★★ (3-flash) | Free–$$$ | Full | JSON (`--output-format json`) | No | Free-tier usage; cost-effective medium tasks |
+| `codex` | OpenAI | GPT-5, GPT-5 mini | ★★★★★ (GPT-5) / ★★★★ (mini) | $$–$$$ | Full | JSON (`--json`) | No | Provider diversity; OpenAI reasoning models |
+| `gemini` | Google | Gemini Pro, Gemini Flash | ★★★★★ (Pro) / ★★★★ (Flash) | Free–$$$ | Full | JSON (`--output-format json`) | No | Free-tier usage; cost-effective medium tasks |
 | `aider` | Multi | Any (Anthropic/OpenAI/Azure) | Inherited from model | $–$$$ | File editing | No | Commit-per-change workflows; focused file edits |
 | `amp` | Sourcegraph | Anthropic + OpenAI models | ★★★★★ (opus/o3) | $$–$$$ | Full | No | Sourcegraph-integrated teams; codebase-aware context |
 | `qwen` | Multi | qwen3-coder, qwen3.6-plus | ★★★ | Free–$$ | Full | No | Cost-sensitive; low-complexity tasks; free OpenRouter |
@@ -87,7 +86,7 @@ npm install -g @anthropic-ai/claude-code
 **Model mapping:**
 | Short name | Claude model ID |
 |------------|----------------|
-| `opus` | `claude-opus-4-6` |
+| `opus` | `claude-opus-4-7` |
 | `sonnet` | `claude-sonnet-4-6` |
 | `haiku` | `claude-haiku-4-5-20251001` |
 
@@ -110,7 +109,7 @@ npm install -g @openai/codex
 - Output written to a `.last-message.txt` file
 - Tier detection from API key format (`sk-proj` = Pro, `sk-` = Plus, other = Free)
 
-**Model mapping:** Direct pass-through of `model_config.model` (e.g., `gpt-5.4`, `gpt-5.4-mini`).
+**Model mapping:** Direct pass-through of `model_config.model` (e.g., `gpt-5`, `gpt-5-mini`).
 
 **Env vars:** `OPENAI_API_KEY` (required), `OPENAI_ORG_ID` (optional, triggers Enterprise tier), `OPENAI_BASE_URL` (optional).
 
@@ -131,7 +130,7 @@ npm install -g @google/gemini-cli
 - Tier detection: GCP project = Enterprise, `AIza` key prefix = Pro
 - Supports both `GOOGLE_API_KEY` and `GEMINI_API_KEY`
 
-**Model mapping:** Direct pass-through (e.g., `gemini-3.1-pro`, `gemini-3-flash`).
+**Model mapping:** Direct pass-through (e.g., `gemini-pro`, `gemini-flash`).
 
 **Env vars:** `GOOGLE_API_KEY` or `GEMINI_API_KEY` (one required), `GOOGLE_CLOUD_PROJECT` (optional, Enterprise tier), `GOOGLE_APPLICATION_CREDENTIALS` (optional).
 
@@ -158,11 +157,11 @@ pipx install aider-chat
 **Model mapping:**
 | Short name | Aider model ID |
 |------------|---------------|
-| `opus` | `anthropic/claude-opus-4-6` |
+| `opus` | `anthropic/claude-opus-4-7` |
 | `sonnet` | `anthropic/claude-sonnet-4-6` |
 | `haiku` | `anthropic/claude-haiku-4-5-20251001` |
-| `gpt-5.4` | `openai/gpt-5.4` |
-| `gpt-5.4-mini` | `openai/gpt-5.4-mini` |
+| `gpt-5` | `openai/gpt-5` |
+| `gpt-5-mini` | `openai/gpt-5-mini` |
 
 **Env vars:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY` (at least one).
 
@@ -184,9 +183,9 @@ npm install -g @sourcegraph/amp
 **Model mapping:**
 | Short name | Amp model ID |
 |------------|-------------|
-| `opus` | `anthropic:claude-opus-4-6` |
+| `opus` | `anthropic:claude-opus-4-7` |
 | `sonnet` | `anthropic:claude-sonnet-4-6` |
-| `gpt-5.4` | `openai:gpt-5.4` |
+| `gpt-5` | `openai:gpt-5` |
 | `o3` | `openai:o3` |
 
 **Env vars:** `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, plus optional `SRC_ENDPOINT`, `SRC_ACCESS_TOKEN` for Sourcegraph integration.
@@ -286,7 +285,7 @@ npm install -g @sourcegraph/cody
 - MCP config injection via `--add-mcp`
 - Auth via OAuth session in `~/.cursor/` (no env vars needed)
 
-**Best for:** Teams with Cursor subscriptions who want to leverage Cursor's model routing and built-in context features without managing API keys per agent.
+**Best for:** Teams with Cursor subscriptions who want to use Cursor's model routing and built-in context features without managing API keys per agent.
 
 ---
 
@@ -306,7 +305,7 @@ brew install block/tap/goose
 
 **Env vars:** Depends on configured model provider (e.g., `ANTHROPIC_API_KEY` for Claude models).
 
-**Best for:** Teams already using Block's Goose for autonomous task execution. Goose's extension ecosystem can be leveraged within Bernstein-orchestrated runs.
+**Best for:** Teams already using Block's Goose for autonomous task execution. Goose's extension ecosystem works within Bernstein-orchestrated runs.
 
 ---
 
@@ -485,8 +484,8 @@ Simulates agent behavior for unit and integration tests. Not for production use.
 
 ## Support Modules
 
-In addition to the 19 CLI agent adapters above, the adapter package includes
-10 support modules that provide cross-cutting infrastructure:
+In addition to the 17 CLI agent adapters above, the adapter package includes
+support modules that provide cross-cutting infrastructure:
 
 | Module | Purpose |
 |--------|---------|

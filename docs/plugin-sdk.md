@@ -835,7 +835,7 @@ providers:
         model: claude-sonnet-4-6
         effort: high
       opus:
-        model: claude-opus-4-6
+        model: claude-opus-4-7
         effort: max
     max_context_tokens: 200000
     supports_streaming: true
@@ -856,7 +856,7 @@ providers:
     cost_per_1k_tokens: 0.002
     models:
       gemini-pro:
-        model: gemini-3-pro
+        model: gemini-pro
         effort: high
     max_context_tokens: 128000
     supports_vision: true         # for tasks with image/diagram keywords

@@ -4,16 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bernstein — Agent-Independent Orchestration</title>
-  <meta name="description" content="Bernstein is an open-source multi-agent orchestration platform for AI coding agents. Supports Claude Code, Codex, Gemini, and 15+ CLI tools. Deterministic scheduling, SOC 2 audit trails, and cost optimization." />
+  <meta name="description" content="Bernstein is an open-source multi-agent orchestration platform for AI coding agents. Supports Claude Code, Codex, Gemini, and 17 CLI tools. Deterministic scheduling, SOC 2 audit trails, and cost optimization." />
   <link rel="canonical" href="https://chernistry.github.io/bernstein/" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Bernstein — Agent-Independent Orchestration" />
-  <meta property="og:description" content="Bernstein is an open-source multi-agent orchestration platform for AI coding agents. Supports Claude Code, Codex, Gemini, and 15+ CLI tools. Deterministic scheduling, SOC 2 audit trails, and cost optimization." />
+  <meta property="og:description" content="Bernstein is an open-source multi-agent orchestration platform for AI coding agents. Supports Claude Code, Codex, Gemini, and 17 CLI tools. Deterministic scheduling, SOC 2 audit trails, and cost optimization." />
   <meta property="og:url" content="https://chernistry.github.io/bernstein/" />
   <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Bernstein — Agent-Independent Orchestration" />
-  <meta name="twitter:description" content="Bernstein is an open-source multi-agent orchestration platform for AI coding agents. Supports Claude Code, Codex, Gemini, and 15+ CLI tools. Deterministic scheduling, SOC 2 audit trails, and cost optimization." />
+  <meta name="twitter:description" content="Bernstein is an open-source multi-agent orchestration platform for AI coding agents. Supports Claude Code, Codex, Gemini, and 17 CLI tools. Deterministic scheduling, SOC 2 audit trails, and cost optimization." />
   <meta name="twitter:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
   <meta property="article:modified_time" content="2026-04-06T09:00:00+03:00" />
   <script type="application/ld+json">
@@ -28,14 +28,14 @@
     "downloadUrl": "https://pypi.org/project/bernstein/",
     "codeRepository": "https://github.com/chernistry/bernstein",
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
-    "softwareVersion": "1.4.15",
+    "softwareVersion": "1.8.4",
     "datePublished": "2025-03-01",
     "dateModified": "2026-04-06",
     "programmingLanguage": "Python",
     "featureList": [
       "Multi-agent parallel orchestration",
       "Deterministic Python scheduling — zero LLM tokens on coordination",
-      "18+ CLI agent adapters (Claude Code, Codex, Gemini CLI, Cursor, Aider, and more)",
+      "17 CLI agent adapters (Claude Code, Codex, Gemini CLI, Cursor, Aider, and more)",
       "Git worktree isolation per agent",
       "Janitor verification system (tests, lint, types, PII scan)",
       "Cross-model code review",
@@ -85,7 +85,7 @@
       <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
       <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
       <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
-      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="api-reference.html" class="nav-link" data-page="api-reference.html">API Reference</a>
       <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
       <a href="compare/index.html" class="nav-link" data-page="compare/index.html">Compare</a>
       <a href="docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
@@ -114,7 +114,7 @@
       <div>
         <h1>Agent-independent orchestration. Ship while you sleep.</h1>
         <p class="hero-sub">
-          Bernstein is an open-source multi-agent orchestration platform that coordinates AI coding agents to work on software projects in parallel. It supports 18+ CLI agents including Claude Code, Codex, and Gemini CLI, uses deterministic Python scheduling, and ships with built-in verification, cost tracking, and SOC 2 audit trails.
+          Bernstein is an open-source multi-agent orchestration platform that coordinates AI coding agents to work on software projects in parallel. It supports 17 CLI agents including Claude Code, Codex, and Gemini CLI, uses deterministic Python scheduling, and ships with built-in verification, cost tracking, and SOC 2 audit trails.
         </p>
         <p class="hero-analogy" style="margin-top:1.25rem;font-size:0.9rem;color:var(--text-muted, #666);line-height:1.6;max-width:36rem;margin-left:auto;margin-right:auto;">
           <strong>Think of it as what Kubernetes did for containers, but for AI coding agents.</strong>
@@ -308,7 +308,7 @@
         <div class="feature-group-items">
           <div class="feature-item">
             <h4>Any CLI agent</h4>
-            <p>18 CLI coding agents supported via thin adapters: Claude Code, Codex, Gemini CLI, Aider, Amp, Roo Code, Cursor, Kilo, Kiro, OpenCode, Qwen, Cody, Continue.dev, Goose, Ollama, Tabby, IaC (Terraform/Pulumi), and a Generic adapter for any CLI tool. Mix models in the same run. No vendor lock-in. <a href="adapters.html">Full adapter reference and feature matrix</a></p>
+            <p>17 CLI coding agents supported via thin adapters: Claude Code, Codex, Gemini CLI, Aider, Amp, Cursor, Kilo, Kiro, OpenCode, Qwen, Cody, Continue.dev, Goose, Ollama, IaC (Terraform/Pulumi), and a Generic adapter for any CLI tool. Mix models in the same run. No vendor lock-in. <a href="adapters.html">Full adapter reference and feature matrix</a></p>
           </div>
           <div class="feature-item">
             <h4>Agent catalogs</h4>
@@ -720,7 +720,7 @@ bernstein run --evolve --max-cycles 10</code></pre>
   </details>
   <details>
     <summary>Can you run multiple AI agents on the same codebase at once?</summary>
-    <p>Yes. Bernstein spawns each agent in its own git worktree — an isolated copy of your repository. Agents work simultaneously without conflicts. The orchestrator merges verified results back to main. A single run can coordinate 18+ different AI coding agents. <a href="getting-started.html">Get started</a></p>
+    <p>Yes. Bernstein spawns each agent in its own git worktree — an isolated copy of your repository. Agents work simultaneously without conflicts. The orchestrator merges verified results back to main. A single run can coordinate 17 different AI coding agents. <a href="getting-started.html">Get started</a></p>
   </details>
   <details>
     <summary>How much does AI agent orchestration cost?</summary>

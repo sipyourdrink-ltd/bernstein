@@ -16,7 +16,7 @@ Do not allow agents to free-roam without a map. Agents must operate within a cle
 Garbage in, garbage out—but also, brilliant input can still result in garbage out. We must implement **Quality Gates** (linting, type-checking, semantic intent verification, and security scanning) that automatically review and reject poor agent output *before* it merges into the main state.
 
 ### 3. Provider-Agnostic Agility
-Never lock your architecture to a single foundation model provider. A robust agentic system routes tasks to the best, fastest, or cheapest model dynamically based on the specific job requirements (e.g., Sonnet for reasoning, Haiku for parsing, 4o for specific tooling). 
+Never lock your architecture to a single foundation model provider. A well-designed agentic system routes tasks to the best, fastest, or cheapest model dynamically based on the specific job requirements (e.g., Sonnet for reasoning, Haiku for parsing, 4o for specific tooling). 
 
 ### 4. Human Oversight and Approvals
 Autonomy is a gradient. High-risk actions (e.g., executing untested code, spending money, or mutating production data) require explicit **Risk-Based Approval Workflows**. Humans remain in the loop for critical decisions, enabling trust through verifiable guardrails.

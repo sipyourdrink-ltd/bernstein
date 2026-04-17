@@ -7,7 +7,7 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 ## Prerequisites
 
 - **Python 3.12+** (macOS, Linux, Windows)
-- **At least one CLI coding agent** installed and authenticated. Bernstein supports 18 adapters out of the box:
+- **At least one CLI coding agent** installed and authenticated. Bernstein supports 17 adapters out of the box:
 
 | Agent | Install |
 |-------|---------|
@@ -25,8 +25,6 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 | [Ollama](https://ollama.com) | `brew install ollama` |
 | [OpenCode](https://opencode.ai) | Install OpenCode CLI |
 | [Qwen](https://github.com/QwenLM/Qwen-Agent) | `npm install -g qwen-code` |
-| [Roo Code](https://github.com/RooVetGit/Roo-Code) | VS Code extension |
-| [Tabby](https://tabby.tabbyml.com) | Install Tabby |
 | Generic | Any CLI agent via `generic` adapter |
 | IaC | Infrastructure-as-code adapter |
 
@@ -143,7 +141,7 @@ tasks:
     depends_on: ["TSK-001"]
 ```
 
-Full seed file reference at [`templates/bernstein.yaml`](templates/bernstein.yaml).
+Full seed file reference at [`templates/bernstein.yaml`](https://github.com/chernistry/bernstein/blob/main/templates/bernstein.yaml).
 
 ### Path 3: Plan file (multi-stage projects)
 
@@ -153,7 +151,7 @@ For projects with known stages, write a plan file with stages and steps — like
 bernstein run plan.yaml
 ```
 
-Plan files skip the manager decomposition step and go straight to execution. See [`templates/plan.yaml`](templates/plan.yaml) for the format.
+Plan files skip the manager decomposition step and go straight to execution. See [`templates/plan.yaml`](https://github.com/chernistry/bernstein/blob/main/templates/plan.yaml) for the format.
 
 ---
 
@@ -198,8 +196,8 @@ bernstein cost --share              # generate shareable cost report link
 
 ```bash
 bernstein logs                      # tail recent agent output
-bernstein logs -f                   # follow mode (like tail -f)
-bernstein logs -a claude            # filter by agent name
+bernstein logs tail -f              # follow mode (like tail -f)
+bernstein logs tail -a claude       # filter by agent name
 ```
 
 ---
@@ -402,8 +400,8 @@ Make sure at least one agent is installed and you've run its login/auth flow (e.
 Check the agent logs:
 
 ```bash
-bernstein logs -f                   # follow all agent output
-bernstein logs -a claude            # filter by agent
+bernstein logs tail -f              # follow all agent output
+bernstein logs tail -a claude       # filter by agent
 tail -f .sdd/runtime/logs/*.log     # raw log files
 ```
 
@@ -414,7 +412,7 @@ Common causes: missing API key, expired auth token, or the agent's CLI returned 
 An agent likely crashed or was killed. Run janitor cleanup:
 
 ```bash
-bernstein stop && bernstein start   # restart with fresh state
+bernstein stop && bernstein         # restart with fresh state
 bernstein doctor --fix              # clear stale locks
 ```
 

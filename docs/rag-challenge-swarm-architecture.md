@@ -2,7 +2,7 @@
 
 ## Origin
 
-Bernstein's architecture was battle-tested during a 48-hour sprint: 12 AI agents on a single laptop, 737 tickets closed (15.7/hour), 826 commits. Every design decision in Bernstein is a direct response to what worked and what broke during that sprint. This document captures the patterns.
+Bernstein's architecture was battle-tested during a ~47-hour sprint: 12 AI agents on a single laptop, 737 tickets closed (~15.7/hour). Every design decision in Bernstein is a direct response to what worked and what broke during that sprint. This document captures the patterns.
 
 ---
 
