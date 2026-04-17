@@ -53,7 +53,7 @@ Before this workflow can start:
 A developer creates a git tag matching the pattern `ext-v*` (e.g., `ext-v0.1.0`):
 
 ```bash
-cd /Users/sasha/IdeaProjects/personal_projects/bernstein
+cd $REPO_ROOT
 git tag ext-v0.1.0
 git push origin ext-v0.1.0
 ```

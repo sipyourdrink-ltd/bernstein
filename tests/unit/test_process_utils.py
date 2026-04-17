@@ -31,10 +31,10 @@ def test_process_cwd_parses_lsof_output() -> None:
         return_value=subprocess.CompletedProcess(
             args=["lsof"],
             returncode=0,
-            stdout="p1234\nn/Users/sasha/IdeaProjects/personal_projects/bernstein\n",
+            stdout="p1234\nn/tmp/test_workspace\n",
             stderr="",
         ),
     ):
         cwd = process_cwd(1234)
 
-    assert cwd == Path("/Users/sasha/IdeaProjects/personal_projects/bernstein")
+    assert cwd == Path("/tmp/test_workspace")
