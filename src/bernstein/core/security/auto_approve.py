@@ -19,6 +19,7 @@ environment variable expansion, and Unicode homoglyph evasion.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -217,10 +218,20 @@ def normalize_command(cmd: str) -> str:
 
 # Allow patterns — safe, read-only or low-risk operations.
 # Each entry is a raw regex string matched against the stripped sub-command.
+#
+# IMPORTANT: Do NOT add bare `^<tool>\s` patterns for tools that can take
+# arbitrary paths or arguments (python, cat, cp, mv, mkdir, touch, rm).
+# Any such allowance effectively defeats the deny list — e.g. bare
+# `^python\s` lets an agent run `python /tmp/evil.py`, and bare `^cat\s`
+# lets it read `/etc/shadow`.  If an invocation is genuinely safe, encode
+# that safety into the regex (fixed sub-command, no caller-controlled
+# arguments), or surface it through the ``BERNSTEIN_AUTO_APPROVE_EXTRA``
+# escape hatch.
 _ALLOW_PATTERNS: Final[list[str]] = [
-    # Filesystem read-only
+    # Filesystem read-only (bare `cat`/`head`/`tail` intentionally NOT
+    # allowed here — see credential-read deny patterns below; operators
+    # can opt in via BERNSTEIN_AUTO_APPROVE_EXTRA if needed)
     r"^ls(\s|$)",
-    r"^cat\s",
     r"^head\s",
     r"^tail\s",
     r"^less\s",
@@ -259,17 +270,22 @@ _ALLOW_PATTERNS: Final[list[str]] = [
     r"^command\s",
     r"^ps\s",
     r"^top\s",
-    # Python / uv
-    r"^python(\d(\.\d+)?)?\s",
-    r"^python(\d(\.\d+)?)?$",
-    r"^uv\s+run\s",
-    r"^uv\s+(pip\s+(list|show|freeze)|version|tool\s+list)",
-    r"^pip(\d(\.\d+)?)?\s+(list|show|freeze|check|index|inspect)",
+    # Python / uv — restricted: only `-m <allowed_tool>` or version probe.
+    # Bare `python <script>` is NOT auto-approved because the script path
+    # is caller-controlled (agent could run python /tmp/evil.py).
+    r"^python(\d(\.\d+)?)?\s+--version$",
+    r"^python(\d(\.\d+)?)?\s+-V$",
+    r"^python(\d(\.\d+)?)?\s+-m\s+(pytest|ruff|mypy|pyright|pyflakes|black|isort|unittest|venv|pip\s+list|pip\s+show|pip\s+freeze|pip\s+check)(\s|$)",
+    r"^uv\s+(pip\s+(list|show|freeze|check|inspect|index)|version|tool\s+list|sync\s+--dry-run|lock\s+--check)(\s|$)",
+    r"^uv\s+run\s+python\s+-m\s+(pytest|ruff|mypy|pyright|pyflakes|black|isort|unittest)(\s|$)",
+    r"^uv\s+run\s+python\s+scripts/run_tests\.py(\s|$)",
+    r"^uv\s+run\s+(pytest|ruff|mypy|pyright|pyflakes|black|isort)(\s|$)",
+    r"^pip(\d(\.\d+)?)?\s+(list|show|freeze|check|index|inspect)(\s|$)",
     # Testing
     r"^pytest(\s|$)",
-    r"^uv\s+run\s+pytest(\s|$)",
-    r"^python\s+-m\s+pytest(\s|$)",
-    r"^uv\s+run\s+python\s+-m\s+pytest(\s|$)",
+    r"^ruff\s+(check|format\s+--check)(\s|$)",
+    r"^mypy(\s|$)",
+    r"^pyright(\s|$)",
     # Git read-only
     r"^git\s+(status|log|diff|show|branch|remote|tag|describe|stash\s+list|ls-files|ls-tree|rev-parse|config\s+--list|shortlog|blame|check-ignore|for-each-ref)(\s|$)",
     r"^git\s+log(\s|$)",
@@ -291,10 +307,6 @@ _ALLOW_PATTERNS: Final[list[str]] = [
     r"^export\s+\w+=",
     r"^cd\s",
     r"^cd$",
-    r"^mkdir\s",
-    r"^touch\s",
-    r"^cp\s",
-    r"^mv\s",
 ]
 
 # Deny patterns — destructive or high-risk operations.
@@ -343,7 +355,7 @@ _DENY_PATTERNS: Final[list[str]] = [
     r"\bkill\s+.*-SIGKILL\b",
     r"\bpkill\s",
     r"\bkillall\s",
-    # Writing to sensitive paths
+    # Writing to sensitive system paths (redirection)
     r">\s*/etc/",
     r">\s*/usr/",
     r">\s*/bin/",
@@ -351,16 +363,152 @@ _DENY_PATTERNS: Final[list[str]] = [
     r">\s*/lib/",
     r">\s*/proc/",
     r">\s*/sys/",
-    # Reading sensitive credentials from disk
-    r"\bcat\s+.*\.pem\b",
-    r"\bcat\s+.*\.key\b",
-    r"\bcat\s+.*id_rsa\b",
-    r"\bcat\s+.*id_ed25519\b",
-    r"\bcat\s+.*\.ppk\b",
+    r">\s*/var/",
+    r">\s*~/\.ssh/",
+    r">\s*/root/",
+    # Writing to Bernstein control-plane state (no agent should mutate these
+    # via raw shell — they are the orchestrator's source of truth)
+    r">\s*\.bernstein/",
+    r">\s*\.sdd/",
+    r">>\s*\.bernstein/",
+    r">>\s*\.sdd/",
+    # Any invocation of cp/mv/touch/mkdir/sed-inplace targeting control-plane
+    # or system credential paths, regardless of argument order.
+    r"\b(cp|mv|touch|mkdir|ln)\b\s+.*(?:\.bernstein/|\.sdd/|/etc/|/usr/|/bin/|/sbin/|/lib/|/var/|/root/|~/\.ssh/|~/\.aws/)",
+    r"\bsed\s+-i\b.*(?:\.bernstein/|\.sdd/|/etc/|/usr/|/bin/|/sbin/|/lib/|/var/|/root/|~/\.ssh/|~/\.aws/)",
+    # Reading sensitive credentials from disk (bare cat/head/tail/less/more)
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*(/etc/passwd|/etc/shadow|/etc/sudoers|/etc/gshadow)",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*~/\.ssh/",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*~/\.aws/credentials",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*~/\.netrc",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*~/\.docker/config\.json",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*\.pem\b",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*\.key\b",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*id_rsa\b",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*id_ed25519\b",
+    r"\b(cat|head|tail|less|more|bat)\b\s+.*\.ppk\b",
+    # Bare python running an arbitrary script from a world-writable location
+    r"^python(\d(\.\d+)?)?\s+/tmp/",
+    r"^python(\d(\.\d+)?)?\s+/var/tmp/",
+    r"^python(\d(\.\d+)?)?\s+/dev/shm/",
+    # Arbitrary shell sourcing from untrusted roots
+    r"^(bash|sh|zsh)\s+/tmp/",
+    r"^(bash|sh|zsh)\s+/var/tmp/",
+    r"\bsource\s+/tmp/",
+    r"\.\s+/tmp/",  # `. /tmp/foo` sources a script
+    # Network-modifying system tools
+    r"\biptables\b",
+    r"\bip\s+(route|addr|link)\s+(add|del|flush|change|replace)\b",
+    r"\broute\s+(add|del|flush)\b",
+    r"\bnetcat\b\s+.*-[eE]\b",  # reverse shell pattern
+    r"\bnc\b\s+.*-[eE]\b",
+    # Package installs (no --global-as-global needed — any install is review-worthy)
+    r"\bnpm\s+(install|i|add|uninstall|remove|ci)\b",
+    r"\byarn\s+(add|remove|install)\b",
+    r"\bpnpm\s+(add|remove|install)\b",
+    r"\buv\s+(add|remove|pip\s+install|pip\s+uninstall|tool\s+install)\b",
+    r"\bpip(\d(\.\d+)?)?\s+(install|uninstall)\b",
+    r"\bcargo\s+(install|uninstall)\b",
+    r"\bgo\s+install\b",
+    r"\bgem\s+(install|uninstall)\b",
+    # Git push without explicit branch/remote pattern — must be reviewed.
+    # We keep a narrow allow for `git push origin main`/`HEAD` via the
+    # deny-not-matching fall-through; any other `git push` falls into ASK.
+    r"\bgit\s+push\s+.*--mirror\b",
+    r"\bgit\s+push\s+.*--delete\b",
     # Fork bombs / resource exhaustion patterns
     r":\(\)\{.*:\|:&",
     r"\byes\b\s*\|",
 ]
+
+# ---------------------------------------------------------------------------
+# Operator-configurable escape hatch
+# ---------------------------------------------------------------------------
+#
+# Teams can opt specific patterns back into the auto-approve allow list
+# without patching the source.  Two mechanisms are supported:
+#
+# 1. Environment variable ``BERNSTEIN_AUTO_APPROVE_EXTRA``: newline- or
+#    ``::``-separated list of regex patterns.  ``,`` is intentionally NOT
+#    used as a separator because it appears in many regex character
+#    classes.  Example::
+#
+#        BERNSTEIN_AUTO_APPROVE_EXTRA='^make\s+test$::^docker\s+ps$'
+#
+# 2. :func:`set_extra_allow_patterns` — programmatic override, useful for
+#    tests and for operators loading config from a file.
+#
+# Deny patterns always take precedence over extra allow patterns: the
+# escape hatch cannot be used to allow a deny-listed command.
+
+_EXTRA_ALLOW_ENV_VAR: Final[str] = "BERNSTEIN_AUTO_APPROVE_EXTRA"
+_EXTRA_ALLOW_SEPARATOR: Final[str] = "::"
+
+
+def _parse_extra_patterns(raw: str | None) -> list[re.Pattern[str]]:
+    """Parse the ``BERNSTEIN_AUTO_APPROVE_EXTRA`` payload into patterns.
+
+    Accepts ``::`` or newline as separators.  Empty entries and entries
+    that fail to compile are silently dropped (a malformed regex must
+    never widen the allow list).
+
+    Args:
+        raw: Raw environment variable value, or ``None`` / empty string.
+
+    Returns:
+        List of compiled regex patterns (possibly empty).
+    """
+    if not raw:
+        return []
+    # Normalize newlines to the separator, then split
+    payload = raw.replace("\r\n", "\n").replace("\n", _EXTRA_ALLOW_SEPARATOR)
+    raw_entries = payload.split(_EXTRA_ALLOW_SEPARATOR)
+    out: list[re.Pattern[str]] = []
+    for entry in raw_entries:
+        pattern = entry.strip()
+        if not pattern:
+            continue
+        try:
+            out.append(re.compile(pattern))
+        except re.error:
+            # Malformed regex — never widen the allow list on bad input
+            continue
+    return out
+
+
+_extra_allow: list[re.Pattern[str]] = _parse_extra_patterns(os.environ.get(_EXTRA_ALLOW_ENV_VAR))
+
+
+def set_extra_allow_patterns(patterns: list[str] | None) -> None:
+    """Programmatically override operator-extra allow patterns.
+
+    Useful for tests and for config-file-driven bootstrap.  Pass ``None``
+    or an empty list to clear the extras.  Invalid regexes are skipped.
+
+    Args:
+        patterns: List of regex strings, or ``None`` to clear.
+    """
+    global _extra_allow
+    if not patterns:
+        _extra_allow = []
+        return
+    compiled: list[re.Pattern[str]] = []
+    for entry in patterns:
+        try:
+            compiled.append(re.compile(entry))
+        except re.error:
+            continue
+    _extra_allow = compiled
+
+
+def reload_extra_allow_patterns_from_env() -> None:
+    """Re-read ``BERNSTEIN_AUTO_APPROVE_EXTRA`` from the current environment.
+
+    Useful after mutating :data:`os.environ` at runtime (tests, hot-reload).
+    """
+    global _extra_allow
+    _extra_allow = _parse_extra_patterns(os.environ.get(_EXTRA_ALLOW_ENV_VAR))
+
 
 # ---------------------------------------------------------------------------
 # Compiled pattern caches
@@ -480,8 +628,17 @@ def _match_deny(cmd: str) -> str | None:
 
 
 def _match_allow(cmd: str) -> str | None:
-    """Return the first matching allow pattern string, or None."""
+    """Return the first matching allow pattern string, or None.
+
+    Checks the built-in allow list first, then the operator-extra allow
+    list loaded from :data:`BERNSTEIN_AUTO_APPROVE_EXTRA`.  Deny patterns
+    are evaluated independently and always win; the extras cannot
+    override a deny match.
+    """
     for pattern in _compiled_allow:
+        if pattern.search(cmd):
+            return pattern.pattern
+    for pattern in _extra_allow:
         if pattern.search(cmd):
             return pattern.pattern
     return None
