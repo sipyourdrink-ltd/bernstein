@@ -242,9 +242,9 @@ def _run_scheduled_dependency_scan(orch: Any) -> None:
     Args:
         orch: The orchestrator instance.
     """
-    from bernstein.core.orchestration.orchestrator_tick import _run_scheduled_dependency_scan as _impl
+    from bernstein.core.orchestration.dependency_scan_tasks import run_scheduled_dependency_scan
 
-    _impl(orch)
+    run_scheduled_dependency_scan(orch)
 
 
 def _load_existing_dependency_scan_task_titles(orch: Any) -> set[str]:
@@ -256,9 +256,11 @@ def _load_existing_dependency_scan_task_titles(orch: Any) -> set[str]:
     Returns:
         Set of existing task titles.
     """
-    from bernstein.core.orchestration.orchestrator_tick import _load_existing_dependency_scan_task_titles as _impl
+    from bernstein.core.orchestration.dependency_scan_tasks import (
+        load_existing_dependency_scan_task_titles,
+    )
 
-    return _impl(orch)
+    return load_existing_dependency_scan_task_titles(orch)
 
 
 def _create_dependency_fix_task(
@@ -276,6 +278,6 @@ def _create_dependency_fix_task(
     Returns:
         The title of the created task, or None if skipped/failed.
     """
-    from bernstein.core.orchestration.orchestrator_tick import _create_dependency_fix_task as _impl
+    from bernstein.core.orchestration.dependency_scan_tasks import create_dependency_fix_task
 
-    return _impl(orch, finding, existing_titles)
+    return create_dependency_fix_task(orch, finding, existing_titles)
