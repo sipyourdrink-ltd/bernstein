@@ -54,7 +54,31 @@ check_capability  # noqa
 DEFAULT_CAPABILITIES  # noqa
 DEFAULT_DENIED  # noqa
 # Agent identity card — dataclass fields and methods consumed by middleware
-created_at  # noqa
 card_hash  # noqa
 has_capability  # noqa
 in_scope  # noqa
+# Canary deployment API — exported for future orchestrator integration (#810)
+PromptVersion  # noqa
+CanaryState  # noqa
+hash_prompt  # noqa
+version_id  # noqa
+create_prompt_version  # noqa
+load_canary_state  # noqa
+save_canary_state  # noqa
+should_route_to_canary  # noqa
+record_result  # noqa
+evaluate_canary  # noqa
+promote_canary  # noqa
+rollback_canary  # noqa
+stable_version  # noqa
+canary_version  # noqa
+canary_percentage  # noqa
+canary_task_count  # noqa
+stable_task_count  # noqa
+canary_pass_count  # noqa
+stable_pass_count  # noqa
+auto_promote_threshold  # noqa
+auto_rollback_diff_pct  # noqa
+prompt_hash  # noqa
+created_at  # noqa
+notes  # noqa
