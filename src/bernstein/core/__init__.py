@@ -236,7 +236,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "health_score": "bernstein.core.observability.health_score",
     "heartbeat": "bernstein.core.agents.heartbeat",
     "heartbeat_escalation": "bernstein.core.agents.heartbeat_escalation",
-    "heartbeat_v2": "bernstein.core.agents.heartbeat_v2",
     "hijacker": "bernstein.core.routing.hijacker",
     "hipaa": "bernstein.core.security.hipaa",
     "home": "bernstein.core.config.home",
