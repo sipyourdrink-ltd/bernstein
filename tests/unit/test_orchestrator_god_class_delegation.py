@@ -25,7 +25,6 @@ from bernstein.core.orchestration import (
 )
 from bernstein.core.orchestration.orchestrator import Orchestrator
 
-
 # Each tuple is (method_name_on_class, module_level_function, module).
 #
 # These delegations were extracted from Orchestrator in audit-009 so the
@@ -99,7 +98,7 @@ def test_evolve_focus_areas_still_on_class() -> None:
 
 def test_replenish_constants_preserved() -> None:
     """Cooldown / max-task class constants stay on the class for back-compat."""
-    assert Orchestrator._REPLENISH_COOLDOWN_S == pytest.approx(60.0)
+    assert pytest.approx(60.0) == Orchestrator._REPLENISH_COOLDOWN_S
     assert Orchestrator._REPLENISH_MAX_TASKS == 5
 
 
