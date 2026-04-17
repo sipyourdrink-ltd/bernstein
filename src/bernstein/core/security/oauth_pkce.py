@@ -33,9 +33,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import logging
 import secrets
 import threading
+import time
 import urllib.parse
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -50,6 +52,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _VERIFIER_BYTES = 96  # 96 raw bytes → 128-char base64url (≥ 128 chars per spec)
+
+# Default time-to-live for a state token before it is considered expired.
+# RFC 6749 recommends short-lived anti-CSRF tokens; 10 minutes mirrors typical
+# IdP authorization session lifetimes.
+DEFAULT_STATE_TTL_SECONDS: float = 600.0
 
 
 def generate_code_verifier() -> str:
@@ -87,9 +94,10 @@ def generate_pkce_pair() -> tuple[str, str]:
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
-    """Minimal HTTP handler that captures ``?code=`` from the redirect."""
+    """Minimal HTTP handler that captures ``?code=`` and ``?state=`` from the redirect."""
 
     captured_code: str | None = None
+    captured_state: str | None = None
     captured_error: str | None = None
 
     def do_GET(self) -> None:  # type: ignore[override]
@@ -101,6 +109,11 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             body = b"<h2>Authorization failed. You may close this window.</h2>"
         elif "code" in params:
             _CallbackHandler.captured_code = params["code"][0]
+            # Capture state even if absent so the caller can detect its
+            # absence and reject the callback. Storing None here is the
+            # signal that the IdP omitted the parameter.
+            if "state" in params:
+                _CallbackHandler.captured_state = params["state"][0]
             body = b"<h2>Authorization successful! You may close this window.</h2>"
         else:
             body = b"<h2>Waiting for authorization...</h2>"
@@ -115,12 +128,23 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         pass  # silence default access log
 
 
-def _wait_for_callback(port: int, timeout: float = 120.0) -> str | None:
+def _wait_for_callback(port: int, timeout: float = 120.0) -> tuple[str | None, str | None]:
     """Start a one-shot local HTTP server and wait for the OAuth callback.
 
-    Returns the authorization code, or ``None`` on timeout / error.
+    Args:
+        port: TCP port to bind the local callback listener to.
+        timeout: Seconds to wait for a callback before giving up.
+
+    Returns:
+        A ``(code, state)`` tuple. Either element may be ``None`` if not
+        present in the callback. Callers MUST validate the returned state
+        against the flow's expected state before trusting the code.
+
+    Raises:
+        OAuthError: If the authorization server reported an error.
     """
     _CallbackHandler.captured_code = None
+    _CallbackHandler.captured_state = None
     _CallbackHandler.captured_error = None
 
     server = HTTPServer(("127.0.0.1", port), _CallbackHandler)
@@ -136,7 +160,7 @@ def _wait_for_callback(port: int, timeout: float = 120.0) -> str | None:
     if _CallbackHandler.captured_error:
         raise OAuthError(f"Authorization server returned error: {_CallbackHandler.captured_error}")
 
-    return _CallbackHandler.captured_code
+    return _CallbackHandler.captured_code, _CallbackHandler.captured_state
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +170,14 @@ def _wait_for_callback(port: int, timeout: float = 120.0) -> str | None:
 
 class OAuthError(Exception):
     """Raised when the OAuth flow encounters an unrecoverable error."""
+
+
+class OAuthStateError(OAuthError):
+    """Raised when the OAuth ``state`` parameter fails CSRF validation.
+
+    Subclass of :class:`OAuthError` so callers can either catch the
+    specific validation failure or the general OAuth failure.
+    """
 
 
 @dataclass
@@ -184,6 +216,9 @@ class PKCEFlow:
             For automatic mode this should be ``http://localhost:<port>/callback``.
         scopes: Space-separated list of OAuth scopes.
         client_secret: Optional client secret (public clients may omit it).
+        state_ttl_seconds: Lifetime of the anti-CSRF ``state`` token. After
+            this many seconds the state is considered expired and any
+            callback carrying it will be rejected.
     """
 
     def __init__(
@@ -194,6 +229,7 @@ class PKCEFlow:
         redirect_uri: str = "http://localhost:8099/callback",
         scopes: str = "openid profile email",
         client_secret: str = "",
+        state_ttl_seconds: float = DEFAULT_STATE_TTL_SECONDS,
     ) -> None:
         self.client_id = client_id
         self.authorization_endpoint = authorization_endpoint
@@ -201,20 +237,75 @@ class PKCEFlow:
         self.redirect_uri = redirect_uri
         self.scopes = scopes
         self.client_secret = client_secret
+        self.state_ttl_seconds = state_ttl_seconds
 
         # Generated per-flow (reset by start())
         self._code_verifier: str = ""
         self._code_challenge: str = ""
         self._state: str = ""
+        # Monotonic timestamp recorded when state was generated; used for
+        # expiry checks. 0.0 means "never started".
+        self._state_created_at: float | None = None
+        # Set to True once validate_state has accepted the state. Any
+        # subsequent validation attempt with the same state is treated as a
+        # replay and rejected.
+        self._state_consumed: bool = False
 
     # ------------------------------------------------------------------
     # Core operations
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Generate a fresh PKCE pair and CSRF state for this flow."""
+        """Generate a fresh PKCE pair and CSRF state for this flow.
+
+        Resets any previously stored state and clears the replay flag so
+        the flow can be re-run safely.
+        """
         self._code_verifier, self._code_challenge = generate_pkce_pair()
         self._state = secrets.token_urlsafe(32)
+        self._state_created_at = time.monotonic()
+        self._state_consumed = False
+
+    def validate_state(self, received_state: str | None) -> None:
+        """Validate a ``state`` value returned by the IdP callback.
+
+        Enforces four properties:
+
+        1. **Presence** — the callback MUST carry a ``state`` parameter.
+        2. **Freshness** — the flow's stored state must not be older than
+           :attr:`state_ttl_seconds`.
+        3. **Match** — the received value must byte-equal the stored
+           state, compared in constant time via :func:`hmac.compare_digest`.
+        4. **Single-use** — once a state has been accepted, any subsequent
+           validation attempt is rejected as a replay.
+
+        Args:
+            received_state: The raw ``state`` value parsed from the callback
+                query string, or ``None`` if absent.
+
+        Raises:
+            OAuthStateError: If the state is missing, expired, mismatched,
+                or already consumed.
+        """
+        if not self._state or self._state_created_at is None:
+            raise OAuthStateError("PKCE flow not started; cannot validate state before start()")
+        if self._state_consumed:
+            raise OAuthStateError("State replay detected: this state has already been consumed")
+        if received_state is None or received_state == "":
+            raise OAuthStateError("Missing state parameter in OAuth callback")
+
+        age = time.monotonic() - self._state_created_at
+        if age > self.state_ttl_seconds:
+            raise OAuthStateError(f"State expired after {age:.1f}s (ttl={self.state_ttl_seconds:.1f}s)")
+
+        # Constant-time comparison to defeat timing side-channels.
+        expected = self._state.encode("ascii")
+        received = received_state.encode("ascii")
+        if not hmac.compare_digest(expected, received):
+            raise OAuthStateError("State mismatch: received value does not match expected state")
+
+        # Mark the state as consumed so replays are rejected.
+        self._state_consumed = True
 
     def get_authorization_url(self) -> str:
         """Return the authorization URL the user must visit.
@@ -292,7 +383,8 @@ class PKCEFlow:
         """Run the full PKCE flow by opening the system browser.
 
         Starts a one-shot local HTTP server on the redirect URI port to
-        capture the authorization code, then exchanges it for tokens.
+        capture the authorization code, validates the returned CSRF state,
+        then exchanges the code for tokens.
 
         Args:
             open_browser: Set ``False`` to skip browser opening (useful for
@@ -303,6 +395,8 @@ class PKCEFlow:
 
         Raises:
             OAuthError: On authorization failure or timeout.
+            OAuthStateError: If the returned ``state`` parameter is missing,
+                expired, or does not match the one generated by :meth:`start`.
         """
         self.start()
         url = self.get_authorization_url()
@@ -317,9 +411,14 @@ class PKCEFlow:
         else:
             print(f"Open this URL in your browser:\n  {url}")
 
-        code = _wait_for_callback(port=port)
+        code, received_state = _wait_for_callback(port=port)
         if not code:
             raise OAuthError("No authorization code received (timeout or user cancelled)")
+
+        # CRITICAL: validate state BEFORE exchanging the code. A mismatched
+        # state means the callback may have been forged by an attacker; we
+        # must not forward an attacker-controlled code to the token endpoint.
+        self.validate_state(received_state)
 
         return await self.exchange_code(code)
 
@@ -327,18 +426,30 @@ class PKCEFlow:
     # Mode: manual (paste code)
     # ------------------------------------------------------------------
 
-    async def run_manual(self, code: str) -> PKCETokens:
+    async def run_manual(self, code: str, state: str | None = None) -> PKCETokens:
         """Exchange a manually pasted authorization code.
 
         Call :meth:`get_authorization_url` first to get the URL to give the
-        user, then call this method with the code they paste back.
+        user, then call this method with the code they paste back. When the
+        caller also has access to the ``state`` parameter from the redirect
+        URL it MUST be passed here so CSRF validation can run.
 
         Args:
             code: Authorization code copied from the IdP redirect URL.
+            state: The ``state`` value copied from the same redirect URL.
+                When provided it is validated via :meth:`validate_state`
+                before the code is exchanged. ``None`` skips the check to
+                preserve backward compatibility with callers that only have
+                the code (e.g. out-of-band paste workflows).
 
         Returns:
             :class:`PKCETokens` on success.
+
+        Raises:
+            OAuthStateError: When ``state`` is supplied but fails validation.
         """
         if not self._code_verifier:
             self.start()
+        if state is not None:
+            self.validate_state(state)
         return await self.exchange_code(code)
