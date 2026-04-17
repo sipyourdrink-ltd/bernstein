@@ -977,6 +977,11 @@ class TaskStore:
                 candidate = self._tasks.get(task_id)
                 if candidate is None or candidate.status != TaskStatus.OPEN:
                     continue
+                # Lazy-delete stale heap entries left by priority mutations
+                # (prioritize/update/update_task_priority/force_claim re-add the
+                # task with the new priority but do not clean up the old entry).
+                if candidate.priority != priority:
+                    continue
                 if normalized_tenant is not None and candidate.tenant_id != normalized_tenant:
                     blocked_entries.append((priority, task_id))
                     continue
@@ -1554,13 +1559,20 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
-            if role is not None and role != task.role:
-                # Role change requires re-indexing (role is part of secondary index key)
+            role_changed = role is not None and role != task.role
+            priority_changed = priority is not None and priority != task.priority
+            if role_changed or priority_changed:
+                # Role and priority are both inputs to the priority heap / role
+                # index; any change requires re-indexing so the heap entry
+                # reflects the new key.  A stale (old_priority, id) entry may
+                # remain in the old heap — claim_next lazy-deletes it on pop
+                # by comparing against the live task.priority.
                 self._index_remove(task)
-                task.role = role
+                if role_changed:
+                    task.role = cast("str", role)
+                if priority_changed:
+                    task.priority = cast("int", priority)
                 self._index_add(task)
-            if priority is not None:
-                task.priority = priority
             if model is not None:
                 task.model = model
             task.version += 1
@@ -1585,7 +1597,12 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
-            task.priority = 0
+            if task.priority != 0:
+                # Re-index so the priority heap learns about the new priority.
+                # The old (priority, id) heap entry is lazy-deleted on pop.
+                self._index_remove(task)
+                task.priority = 0
+                self._index_add(task)
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             return task
@@ -1616,12 +1633,21 @@ class TaskStore:
                 raise ValueError(
                     f"Task '{task_id}' is in terminal state '{task.status.value}' and cannot be force-claimed"
                 )
+            # Set priority *before* re-indexing so the heap entry carries the
+            # final priority — otherwise the pushed (old_priority, id) tuple
+            # diverges from task.priority and claim_next will skip it as
+            # lazy-deleted (or, worse, pop it at the wrong priority).
             if task.status != TaskStatus.OPEN:
                 # Reset claimed/in_progress back to open
                 self._index_remove(task)
                 transition_task(task, TaskStatus.OPEN, actor="task_store", reason="force_claim")
+                task.priority = 0
                 self._index_add(task)
-            task.priority = 0
+            elif task.priority != 0:
+                # Already OPEN — re-index to refresh heap with priority=0.
+                self._index_remove(task)
+                task.priority = 0
+                self._index_add(task)
             task.claimed_at = None  # Clear claim timestamp on force-claim
             task.claimed_by_session = None  # Clear ownership on force-claim
             task.version += 1
@@ -1726,9 +1752,13 @@ class TaskStore:
         if task.version != version:
             return None
 
-        task.priority = new_priority
+        if task.priority != new_priority:
+            # Refresh heap entry — the old (priority, id) tuple is lazy-deleted
+            # on pop via the priority mismatch check in claim_next.
+            self._index_remove(task)
+            task.priority = new_priority
+            self._index_add(task)
         task.version += 1
-        self._index_add(task)
 
         return task
 
