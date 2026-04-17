@@ -8,6 +8,8 @@
 
 <br>
 
+> *"To achieve great things, two things are needed: a plan and not quite enough time."* — Leonard Bernstein
+
 ### Orchestrate any AI coding agent. Any model. One command.
 
 <img alt="Bernstein in action — parallel AI agents orchestrated in real time" src="docs/assets/in-action.gif" width="700">
