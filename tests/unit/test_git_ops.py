@@ -414,6 +414,70 @@ class TestSafePush:
         result = safe_push(REPO, "main")
         assert result.ok
 
+    @patch("bernstein.core.git_basic.run_git")
+    @patch("bernstein.core.git.git_basic.fetch")
+    def test_merge_fallback_conflict_triggers_merge_abort(self, mock_fetch: MagicMock, mock_run: MagicMock) -> None:
+        """On rebase+merge fallback failure, repo must not be left in MERGING state.
+
+        Regression test for audit-096: previous implementation returned the
+        failed merge result without running ``git merge --abort``, so the
+        next safe_push iteration failed with
+        'you cannot start another merge until the current one is aborted'.
+        """
+        mock_fetch.return_value = GitResult(0, "", "")
+        mock_run.side_effect = [
+            GitResult(0, "2\n", ""),  # rev-list: 2 behind
+            GitResult(1, "", "rebase conflict"),  # rebase fails
+            GitResult(0, "", ""),  # rebase --abort (cleanup)
+            GitResult(1, "", "CONFLICT (content): Merge conflict in foo.py"),  # merge fails
+            GitResult(0, "", ""),  # merge --abort (the fix)
+        ]
+        result = safe_push(REPO, "main")
+
+        # safe_push must surface the merge failure to the caller
+        assert not result.ok
+        assert "CONFLICT" in result.stderr
+
+        # Verify the cleanup abort was invoked before returning
+        invoked = [call.args[0] for call in mock_run.call_args_list]
+        assert ["merge", "--abort"] in invoked, (
+            f"git merge --abort was not invoked on merge-conflict failure. Commands invoked: {invoked}"
+        )
+        # Rebase --abort must also run before attempting merge
+        assert ["rebase", "--abort"] in invoked
+        # And no push should have been attempted
+        assert not any(cmd[:1] == ["push"] for cmd in invoked)
+
+    @patch("bernstein.core.git_basic.run_git")
+    @patch("bernstein.core.git.git_basic.fetch")
+    def test_merge_fallback_subprocess_exception_still_aborts(self, mock_fetch: MagicMock, mock_run: MagicMock) -> None:
+        """If the merge subprocess itself raises, we still must call merge --abort."""
+        mock_fetch.return_value = GitResult(0, "", "")
+
+        calls: list[list[str]] = []
+
+        def _side_effect(args: list[str], _cwd: Path, **_kwargs: object) -> GitResult:
+            calls.append(args)
+            if args[0] == "rev-list":
+                return GitResult(0, "1\n", "")
+            if args == ["rebase", "origin/main"]:
+                return GitResult(1, "", "rebase conflict")
+            if args == ["rebase", "--abort"]:
+                return GitResult(0, "", "")
+            if args == ["merge", "origin/main", "--no-edit"]:
+                raise subprocess.TimeoutExpired(cmd="git", timeout=120)
+            if args == ["merge", "--abort"]:
+                return GitResult(0, "", "")
+            return GitResult(0, "", "")
+
+        mock_run.side_effect = _side_effect
+
+        result = safe_push(REPO, "main")
+
+        assert not result.ok
+        assert "merge raised" in result.stderr
+        assert ["merge", "--abort"] in calls
+
 
 class TestBranching:
     """Tests for branch operations."""

@@ -321,8 +321,30 @@ def fetch(cwd: Path, remote: str = "origin") -> GitResult:
     return run_git(["fetch", remote], cwd, timeout=60)
 
 
+def _safe_abort(cwd: Path, kind: str) -> None:
+    """Best-effort ``git <kind> --abort`` that never raises.
+
+    Used on fallback failure paths to guarantee the repository is not left
+    in a conflicted MERGING or REBASING state.  Swallows subprocess errors
+    so the caller can always surface the original failure to its caller.
+
+    Args:
+        cwd: Repository root.
+        kind: Either ``"rebase"`` or ``"merge"``.
+    """
+    try:
+        run_git([kind, "--abort"], cwd, timeout=10)
+    except (subprocess.SubprocessError, OSError) as exc:  # pragma: no cover - defensive
+        logger.warning("git %s --abort failed: %s", kind, exc)
+
+
 def _rebase_or_merge(cwd: Path, remote: str, branch: str) -> GitResult | None:
     """Attempt rebase, falling back to merge on failure.
+
+    On any failure path (rebase exception, merge exception, merge conflict)
+    the repository is cleaned up with ``git rebase --abort`` and/or
+    ``git merge --abort`` so the next caller does not trip over a
+    pre-existing MERGING/REBASING state.
 
     Args:
         cwd: Repository root.
@@ -332,14 +354,31 @@ def _rebase_or_merge(cwd: Path, remote: str, branch: str) -> GitResult | None:
     Returns:
         Failed merge result if both rebase and merge fail, else None.
     """
-    rebase_r = run_git(["rebase", f"{remote}/{branch}"], cwd, timeout=120)
+    try:
+        rebase_r = run_git(["rebase", f"{remote}/{branch}"], cwd, timeout=120)
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.error("Rebase raised %s; aborting rebase", exc)
+        _safe_abort(cwd, "rebase")
+        return GitResult(returncode=1, stdout="", stderr=f"rebase raised: {exc}")
+
     if rebase_r.ok:
         return None
+
     logger.warning("Rebase failed, aborting and falling back to merge")
-    run_git(["rebase", "--abort"], cwd)
-    merge_r = run_git(["merge", f"{remote}/{branch}", "--no-edit"], cwd, timeout=120)
+    _safe_abort(cwd, "rebase")
+
+    try:
+        merge_r = run_git(["merge", f"{remote}/{branch}", "--no-edit"], cwd, timeout=120)
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.error("Merge fallback raised %s; aborting merge", exc)
+        _safe_abort(cwd, "merge")
+        return GitResult(returncode=1, stdout="", stderr=f"merge raised: {exc}")
+
     if not merge_r.ok:
         logger.error("Merge fallback also failed: %s", merge_r.stderr)
+        # Ensure the repo is not left in a conflicted MERGING state so the
+        # next safe_push iteration (or any other git write) is not blocked.
+        _safe_abort(cwd, "merge")
         return merge_r
     return None
 
