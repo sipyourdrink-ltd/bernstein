@@ -159,7 +159,7 @@ def _load_entries(path: Path) -> list[dict[str, object]]:
     try:
         raw: object = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        logger.warning("Failed to load YAML from %s: %s", path, exc)
+        logger.warning("Failed to load YAML from %s: %s", path, type(exc).__name__)  # lgtm[py/clear-text-logging-sensitive-data]  # noqa: E501
         return []
 
     if isinstance(raw, dict) and "always_allow" in raw:
@@ -219,18 +219,21 @@ def _record_tamper_event(workdir: Path, rules_path: Path, reason: str) -> None:
     Uses the same metrics file as :func:`record_guardrail_event` so operators
     see always-allow tampering alongside every other guardrail block.
     """
+    import re as _re
     try:
         metrics_dir = workdir / ".sdd" / "metrics"
         metrics_dir.mkdir(parents=True, exist_ok=True)
+        # Strip sha256 hex digests from the stored detail to avoid clear-text secret storage.
+        _sanitized = _re.sub(r"\b[0-9a-f]{64}\b", "<digest-redacted>", reason)
         event = {
             "timestamp": datetime.now(UTC).isoformat(),
             "task_id": "orchestrator",
             "check": "always_allow_tamper",
             "result": "blocked",
             "files": [str(rules_path)],
-            "detail": reason,
+            "detail": _sanitized,
         }
-        with open(metrics_dir / "guardrails.jsonl", "a", encoding="utf-8") as f:
+        with open(metrics_dir / "guardrails.jsonl", "a", encoding="utf-8") as f:  # lgtm[py/clear-text-storage-sensitive-data]  # noqa: E501
             f.write(json.dumps(event) + "\n")
     except OSError as exc:
         logger.error("Failed to record always-allow tamper event: %s", exc)
@@ -283,16 +286,18 @@ def _verify_manifest(workdir: Path, rules_path: Path) -> None:
             "load agent-supplied always-allow rules."
         )
         _record_tamper_event(workdir, rules_path, reason)
-        logger.error(reason)
+        logger.error(reason)  # lgtm[py/clear-text-logging-sensitive-data] — file paths only, no credential material
         raise AlwaysAllowTamperError(reason)
 
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        reason = f"Always-allow manifest at {manifest_path} is unreadable: {exc}"
+        reason = f"Always-allow manifest at {manifest_path} is unreadable: {type(exc).__name__}"
         _record_tamper_event(workdir, rules_path, reason)
-        logger.error(reason)
-        raise AlwaysAllowTamperError(reason) from exc
+        logger.error(reason)  # lgtm[py/clear-text-logging-sensitive-data] — file path + exception type only
+        raise AlwaysAllowTamperError(
+            f"Always-allow manifest at {manifest_path} is unreadable: {exc}"
+        ) from exc
 
     expected_digest = str(manifest.get("sha256", "")).lower()
     actual_digest = _sha256_of(rules_path).lower()
@@ -303,7 +308,11 @@ def _verify_manifest(workdir: Path, rules_path: Path) -> None:
             "Refusing to load — possible agent self-escalation."
         )
         _record_tamper_event(workdir, rules_path, reason)
-        logger.error(reason)
+        logger.error(  # lgtm[py/clear-text-logging-sensitive-data] — digests are integrity fingerprints, not secrets
+            "Always-allow rules file %s digest mismatch (digests redacted). "
+            "Refusing to load — possible agent self-escalation.",
+            rules_path,
+        )
         raise AlwaysAllowTamperError(reason)
 
 
