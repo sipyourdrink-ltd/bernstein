@@ -149,7 +149,7 @@ def test_public_docs_guard_banned_claims_absent() -> None:
         "Bernstein results are simulated",
     ]
     public_docs = [
-        _REPO_ROOT / "docs" / "leaderboard.html",
+        _REPO_ROOT / "docs" / "benchmarks" / "leaderboard.html",
         _REPO_ROOT / "docs" / "blog" / "multi-agent-benchmark.md",
         _REPO_ROOT / "docs" / "blog" / "swe-bench-orchestration-thesis.md",
         _REPO_ROOT / "benchmarks" / "README.md",
@@ -163,5 +163,5 @@ def test_public_docs_guard_banned_claims_absent() -> None:
         for phrase in banned:
             assert phrase not in text, f"{phrase!r} leaked into {path}"
 
-    leaderboard = (_REPO_ROOT / "docs" / "leaderboard.html").read_text(encoding="utf-8")
+    leaderboard = (_REPO_ROOT / "docs" / "benchmarks" / "leaderboard.html").read_text(encoding="utf-8")
     assert "Verified public benchmark results: in progress" in leaderboard

@@ -17,8 +17,8 @@ class TestAliases:
         assert "r" in ALIASES
         assert "d" in ALIASES
 
-    def test_alias_s_maps_to_score(self) -> None:
-        assert ALIASES["s"] == "score"
+    def test_alias_s_maps_to_status(self) -> None:
+        assert ALIASES["s"] == "status"
 
     def test_alias_r_maps_to_run(self) -> None:
         assert ALIASES["r"] == "run"
@@ -30,7 +30,7 @@ class TestAliases:
         assert ALIASES["l"] == "live"
 
     def test_get_alias_found(self) -> None:
-        assert get_alias("s") == "score"
+        assert get_alias("s") == "status"
 
     def test_get_alias_not_found(self) -> None:
         assert get_alias("zzz") is None
@@ -56,7 +56,7 @@ class TestAliasesCmd:
         runner = CliRunner()
         result = runner.invoke(aliases_cmd, [])
         assert result.exit_code == 0
-        assert "score" in result.output
+        assert "status" in result.output
         assert "run" in result.output
         assert "doctor" in result.output
 
@@ -64,10 +64,10 @@ class TestAliasesCmd:
 class TestAliasResolution:
     """Tests for alias resolution in the main CLI."""
 
-    def test_s_resolves_to_score_help(self) -> None:
+    def test_s_resolves_to_status_help(self) -> None:
         runner = CliRunner()
         result = runner.invoke(cli, ["s", "--help"])
-        # Should resolve to score (score) command help
+        # Should resolve to status command help
         assert result.exit_code == 0
 
     def test_d_resolves_to_doctor_help(self) -> None:
