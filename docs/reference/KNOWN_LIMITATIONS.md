@@ -78,7 +78,7 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 **Workaround:**
 - Set hard budgets.
 - Monitor spend via `bernstein cost` and cost endpoints.
-- Use anomaly detection, quota tracking (`quota_tracker.py`), and budget thresholds as guardrails.
+- Use anomaly detection and budget thresholds as guardrails.
 - Use peak-hour routing (`peak_hour_router.py`) to reduce costs during expensive windows.
 
 ---

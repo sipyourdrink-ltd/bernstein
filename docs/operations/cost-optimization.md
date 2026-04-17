@@ -163,16 +163,6 @@ peak_hour_routing:
   enabled: true
 ```
 
-## Quota tracking
-
-Monitor per-provider spend limits to avoid surprise bills:
-
-```yaml
-# src/bernstein/core/cost/quota_tracker.py tracks provider quotas
-quota_tracking:
-  enabled: true
-```
-
 ## Cost monitoring and alerts
 
 ### Budget alerts
