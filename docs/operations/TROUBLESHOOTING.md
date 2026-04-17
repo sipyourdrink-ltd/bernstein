@@ -141,7 +141,6 @@ cat .sdd/runtime/cost_report.json
 - Enable `batch_eligible` for non-urgent tasks (approximately 50% cost reduction via batch APIs).
 - Review per-agent cost with `bernstein cost --by model` and kill runaway agents.
 - Use peak-hour routing (`core/cost/peak_hour_router.py`) to shift non-urgent work to off-peak windows.
-- Use quota tracking (`core/cost/quota_tracker.py`) to monitor per-provider spend limits.
 
 ---
 

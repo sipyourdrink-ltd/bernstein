@@ -50,7 +50,6 @@ Legend:
 | Session analytics | Shipped | Brief | `bernstein recap` shows session-level stats |
 | Agent activity tracking | Shipped | Brief | Activity metrics in `metrics/` |
 | Debug bundle | Shipped | Brief | `bernstein debug`, collects logs/state/config for triage |
-| Quota tracking | Shipped | Brief | `quota_tracker.py` — per-provider rate/spend quota monitoring |
 
 ## Safety and governance
 
