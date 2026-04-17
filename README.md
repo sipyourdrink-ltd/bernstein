@@ -212,6 +212,4 @@ If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chern
 
 ---
 
-> *"To achieve great things, two things are needed: a plan and not quite enough time."* — Leonard Bernstein
-
 <!-- mcp-name: io.github.chernistry/bernstein -->
