@@ -1,8 +1,17 @@
 """Disaster recovery: backup and restore .sdd/ state.
 
 Creates compressed tarballs of all persistent .sdd/ subdirectories,
-excluding ephemeral data (runtime, logs, worktrees).  Supports local
-file destinations and optional encryption via symmetric Fernet cipher.
+including the durable subset of ``runtime/`` (WAL, file locks, session
+state, team roster, task graph, budgets, incident history), and excluding
+only truly transient data — process-lifecycle markers (``runtime/pids/``,
+``runtime/signals/``, ``runtime/draining/``, ``*.kill`` files), liveness
+streams (``runtime/heartbeats/``, ``runtime/hooks/``), and log files
+(``*.log``, ``*.log.1``, ``access.jsonl*``, ``retrospective.md``,
+``summary.md``).  Worktrees, cached research, and per-role defaults are
+also excluded since they are derivable or workspace-specific.
+
+Supports local file destinations and optional encryption via symmetric
+Fernet cipher.
 
 Usage::
 
@@ -14,6 +23,7 @@ Usage::
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import logging
 import tarfile
@@ -27,7 +37,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Directories included in backup (persistent state only).
+# Top-level directories included in backup (persistent state only).
+#
+# ``runtime/`` is included — it hosts live state (WAL, file locks,
+# sessions, team roster, task graph, budgets) that makes the difference
+# between a warm restart and a cold start.  Transient contents inside
+# ``runtime/`` are filtered out by ``_EXCLUDE_PATTERNS`` below.
 _BACKUP_DIRS = (
     "backlog/open",
     "backlog/done",
@@ -48,11 +63,20 @@ _BACKUP_DIRS = (
     "models",
     "audit",
     "runs",
+    "runtime",
 )
 
-# Directories explicitly excluded (ephemeral / derivable).
+# Top-level directories excluded outright (ephemeral or derivable).
+#
+# - ``logs``        : rotated log files, rebuildable from observability.
+# - ``worktrees``   : per-branch git worktrees, rebuilt on demand.
+# - ``signals``     : top-level signal inbox (distinct from
+#   ``runtime/signals``); both are in-flight only.
+# - ``debug``       : ad-hoc debug dumps.
+# - ``research``    : cached retrieval results, regenerable.
+# - ``default``     : per-role default fallback workspaces.
+# - ``upgrades``    : in-progress upgrade staging.
 _EXCLUDE_DIRS = (
-    "runtime",
     "logs",
     "worktrees",
     "signals",
@@ -62,7 +86,50 @@ _EXCLUDE_DIRS = (
     "upgrades",
 )
 
+# Path globs (relative to ``.sdd/``) that should be excluded even when
+# their parent directory is in ``_BACKUP_DIRS``.  These cover transient
+# data inside ``runtime/`` that would otherwise be pulled into backups:
+#
+# - ``runtime/pids/*``       : PID files for live processes.
+# - ``runtime/signals/*``    : in-flight control signals.
+# - ``runtime/heartbeats/*`` : agent liveness beacons (seconds-old).
+# - ``runtime/hooks/*``      : per-agent hook streams (tail-only).
+# - ``runtime/draining/*``   : shutdown-in-progress markers.
+# - ``runtime/gates/*``      : ephemeral gate acquisition markers.
+# - ``runtime/completed/*``  : per-spawn completion stubs (replayable
+#   from backlog + WAL).
+# - ``runtime/*.log``        : log files (rotated and non-rotated).
+# - ``runtime/*.log.[0-9]*`` : rotated log suffixes.
+# - ``runtime/*.kill``       : agent kill markers (consumed once).
+# - ``runtime/*.pid``        : loose PID files at runtime root.
+# - ``runtime/access.jsonl*``: HTTP access log (can grow unbounded).
+# - ``runtime/retrospective.md`` / ``runtime/summary.md`` : derived
+#   human-readable reports regenerated each run.
+_EXCLUDE_PATTERNS = (
+    "runtime/pids/*",
+    "runtime/signals/*",
+    "runtime/heartbeats/*",
+    "runtime/hooks/*",
+    "runtime/draining/*",
+    "runtime/gates/*",
+    "runtime/completed/*",
+    "runtime/*.log",
+    "runtime/*.log.[0-9]*",
+    "runtime/*.kill",
+    "runtime/*.pid",
+    "runtime/access.jsonl*",
+    "runtime/retrospective.md",
+    "runtime/summary.md",
+)
+
 _MANIFEST_FILE = "manifest.json"
+
+
+def _is_excluded(rel_path: str) -> bool:
+    """Return True if *rel_path* (posix-style, relative to ``.sdd/``) matches
+    any entry in :data:`_EXCLUDE_PATTERNS`.
+    """
+    return any(fnmatch.fnmatchcase(rel_path, pat) for pat in _EXCLUDE_PATTERNS)
 
 
 _PBKDF2_SALT_LEN = 16
@@ -133,6 +200,7 @@ def backup_sdd(
         "created_at": time.time(),
         "included_dirs": list(_BACKUP_DIRS),
         "excluded_dirs": list(_EXCLUDE_DIRS),
+        "excluded_patterns": list(_EXCLUDE_PATTERNS),
     }
     file_count = 0
 
@@ -146,7 +214,7 @@ def backup_sdd(
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         file_count += 1
 
-        # Copy included directories
+        # Copy included directories, skipping per-pattern excludes.
         for rel_dir in _BACKUP_DIRS:
             src_dir = sdd_path / rel_dir
             dst_dir = tmp_path / rel_dir
@@ -155,12 +223,15 @@ def backup_sdd(
 
             dst_dir.mkdir(parents=True, exist_ok=True)
             for item in src_dir.rglob("*"):
-                if item.is_file():
-                    rel = item.relative_to(sdd_path)
-                    dst_file = tmp_path / rel
-                    dst_file.parent.mkdir(parents=True, exist_ok=True)
-                    dst_file.write_bytes(item.read_bytes())
-                    file_count += 1
+                if not item.is_file():
+                    continue
+                rel = item.relative_to(sdd_path)
+                if _is_excluded(rel.as_posix()):
+                    continue
+                dst_file = tmp_path / rel
+                dst_file.parent.mkdir(parents=True, exist_ok=True)
+                dst_file.write_bytes(item.read_bytes())
+                file_count += 1
 
         # Create tar.gz
         dest.parent.mkdir(parents=True, exist_ok=True)

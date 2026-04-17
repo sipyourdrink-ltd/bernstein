@@ -9,6 +9,7 @@ import pytest
 from bernstein.core.disaster_recovery import (
     _BACKUP_DIRS,
     _EXCLUDE_DIRS,
+    _EXCLUDE_PATTERNS,
     _MANIFEST_FILE,
     backup_sdd,
     restore_sdd,
@@ -16,22 +17,63 @@ from bernstein.core.disaster_recovery import (
 
 
 def _create_test_sdd(tmp_path: Path) -> Path:
-    """Create a minimal .sdd/ directory with test data."""
+    """Create a minimal .sdd/ directory with test data.
+
+    Populates both durable runtime state (WAL, file locks, team roster,
+    session, task graph) and transient runtime state (pids, signals,
+    logs) so backup inclusion/exclusion can be asserted.
+    """
     sdd = tmp_path / ".sdd"
     for d in _BACKUP_DIRS:
         (sdd / d).mkdir(parents=True, exist_ok=True)
     for d in _EXCLUDE_DIRS:
         (sdd / d).mkdir(parents=True, exist_ok=True)
 
-    # Create test files
+    # Persistent backlog / metrics / traces.
     (sdd / "backlog/open/task1.yaml").write_text("id: T1\n", encoding="utf-8")
     (sdd / "backlog/open/task2.yaml").write_text("id: T2\n", encoding="utf-8")
     (sdd / "backlog/done/task3.yaml").write_text("id: T3\n", encoding="utf-8")
     (sdd / "metrics/test.jsonl").write_text("{}", encoding="utf-8")
-    (sdd / "runtime/ephemeral.pid").write_text("12345\n", encoding="utf-8")
-    (sdd / "logs/app.log").write_text("log entry\n", encoding="utf-8")
     (sdd / "traces/trace.jsonl").write_text("{}", encoding="utf-8")
     (sdd / "config.yaml").write_text("workspace: test\n", encoding="utf-8")
+
+    # Durable runtime state — MUST be included in backups.
+    (sdd / "runtime/wal").mkdir(parents=True, exist_ok=True)
+    (sdd / "runtime/wal/20260101-000000.wal.jsonl").write_text('{"event": "task_started"}\n', encoding="utf-8")
+    (sdd / "runtime/file_locks.json").write_text('{"locks": []}', encoding="utf-8")
+    (sdd / "runtime/team.json").write_text('{"agents": []}', encoding="utf-8")
+    (sdd / "runtime/session.json").write_text('{"started_at": 0}', encoding="utf-8")
+    (sdd / "runtime/session_state.json").write_text('{"phase": "idle"}', encoding="utf-8")
+    (sdd / "runtime/task_graph.json").write_text('{"nodes": []}', encoding="utf-8")
+    (sdd / "runtime/completion_budgets.json").write_text("{}", encoding="utf-8")
+    (sdd / "runtime/watchdog_incidents.jsonl").write_text('{"incident": "stall"}\n', encoding="utf-8")
+
+    # Transient runtime state — MUST be excluded from backups.
+    (sdd / "runtime/pids").mkdir(parents=True, exist_ok=True)
+    (sdd / "runtime/pids/worker-99479").write_text("99479\n", encoding="utf-8")
+    (sdd / "runtime/signals").mkdir(parents=True, exist_ok=True)
+    (sdd / "runtime/signals/drain").write_text("now", encoding="utf-8")
+    (sdd / "runtime/heartbeats").mkdir(parents=True, exist_ok=True)
+    (sdd / "runtime/heartbeats/arch-1.json").write_text("{}", encoding="utf-8")
+    (sdd / "runtime/hooks").mkdir(parents=True, exist_ok=True)
+    (sdd / "runtime/hooks/arch-1.jsonl").write_text("{}\n", encoding="utf-8")
+    (sdd / "runtime/draining").mkdir(parents=True, exist_ok=True)
+    (sdd / "runtime/draining/agent-1").write_text("", encoding="utf-8")
+    (sdd / "runtime/gates").mkdir(parents=True, exist_ok=True)
+    (sdd / "runtime/gates/qa-gate").write_text("", encoding="utf-8")
+    (sdd / "runtime/completed").mkdir(parents=True, exist_ok=True)
+    (sdd / "runtime/completed/arch-1").write_text("", encoding="utf-8")
+    (sdd / "runtime/orchestrator.log").write_text("ts=1\n", encoding="utf-8")
+    (sdd / "runtime/server.log.1").write_text("ts=2\n", encoding="utf-8")
+    (sdd / "runtime/access.jsonl").write_text("{}\n", encoding="utf-8")
+    (sdd / "runtime/access.jsonl.1").write_text("{}\n", encoding="utf-8")
+    (sdd / "runtime/agent-1.kill").write_text("", encoding="utf-8")
+    (sdd / "runtime/agent-1.pid").write_text("123\n", encoding="utf-8")
+    (sdd / "runtime/retrospective.md").write_text("# notes\n", encoding="utf-8")
+    (sdd / "runtime/summary.md").write_text("# summary\n", encoding="utf-8")
+
+    # Top-level excluded directories.
+    (sdd / "logs/app.log").write_text("log entry\n", encoding="utf-8")
     return sdd
 
 
@@ -55,10 +97,9 @@ class TestBackupSdd:
 
         with tarfile.open(dest, "r:gz") as tar:
             names = tar.getnames()
-            # Should include persistent files but not runtime
+            # Backlog and top-level excluded dirs behave as expected.
             assert any("backlog/open/task1.yaml" in n for n in names)
-            assert not any("runtime/" in n for n in names)
-            assert not any("logs/" in n for n in names)
+            assert not any(n.startswith("logs/") or "/logs/" in n for n in names)
 
     def test_excludes_ephemeral_dirs(self, tmp_path: Path) -> None:
         sdd = _create_test_sdd(tmp_path)
@@ -69,6 +110,79 @@ class TestBackupSdd:
             names = tar.getnames()
             for excluded in _EXCLUDE_DIRS:
                 assert not any(excluded + "/" in n for n in names)
+
+    def test_includes_durable_runtime_state(self, tmp_path: Path) -> None:
+        """Regression for audit-074: backup MUST capture ``runtime/`` state.
+
+        WAL, file locks, session, team roster, task graph, budgets, and
+        incident history drive warm-restart behaviour — excluding them
+        turned restores into cold starts.
+        """
+        sdd = _create_test_sdd(tmp_path)
+        dest = tmp_path / "backup.tar.gz"
+        backup_sdd(sdd, dest)
+
+        with tarfile.open(dest, "r:gz") as tar:
+            names = tar.getnames()
+
+        expected = (
+            "runtime/wal/20260101-000000.wal.jsonl",
+            "runtime/file_locks.json",
+            "runtime/team.json",
+            "runtime/session.json",
+            "runtime/session_state.json",
+            "runtime/task_graph.json",
+            "runtime/completion_budgets.json",
+            "runtime/watchdog_incidents.jsonl",
+        )
+        for path in expected:
+            assert any(path in n for n in names), f"missing from backup: {path}"
+
+    def test_excludes_transient_runtime_artifacts(self, tmp_path: Path) -> None:
+        """Logs, pids, signals, hooks, heartbeats — stay out of backups."""
+        sdd = _create_test_sdd(tmp_path)
+        dest = tmp_path / "backup.tar.gz"
+        backup_sdd(sdd, dest)
+
+        with tarfile.open(dest, "r:gz") as tar:
+            names = tar.getnames()
+
+        forbidden = (
+            "runtime/pids/worker-99479",
+            "runtime/signals/drain",
+            "runtime/heartbeats/arch-1.json",
+            "runtime/hooks/arch-1.jsonl",
+            "runtime/draining/agent-1",
+            "runtime/gates/qa-gate",
+            "runtime/completed/arch-1",
+            "runtime/orchestrator.log",
+            "runtime/server.log.1",
+            "runtime/access.jsonl",
+            "runtime/access.jsonl.1",
+            "runtime/agent-1.kill",
+            "runtime/agent-1.pid",
+            "runtime/retrospective.md",
+            "runtime/summary.md",
+        )
+        for path in forbidden:
+            assert not any(n.endswith(path) for n in names), f"transient artifact leaked into backup: {path}"
+
+    def test_manifest_records_exclude_patterns(self, tmp_path: Path) -> None:
+        """The manifest should document which glob patterns were filtered."""
+        import json
+
+        sdd = _create_test_sdd(tmp_path)
+        dest = tmp_path / "backup.tar.gz"
+        backup_sdd(sdd, dest)
+
+        with tarfile.open(dest, "r:gz") as tar:
+            member = tar.getmember(_MANIFEST_FILE)
+            extracted = tar.extractfile(member)
+            assert extracted is not None
+            manifest = json.loads(extracted.read())
+
+        assert "runtime" in manifest["included_dirs"]
+        assert manifest["excluded_patterns"] == list(_EXCLUDE_PATTERNS)
 
     def test_contains_manifest(self, tmp_path: Path) -> None:
         sdd = _create_test_sdd(tmp_path)
@@ -107,8 +221,14 @@ class TestRestoreSdd:
         assert int(result["files_restored"]) > 0
         assert (restore_dir / "backlog/open/task1.yaml").exists()
         assert (restore_dir / "backlog/done/task3.yaml").exists()
-        # Ephemeral should NOT be restored
-        assert not (restore_dir / "runtime/ephemeral.pid").exists()
+        # Durable runtime state (audit-074) must round-trip.
+        assert (restore_dir / "runtime/wal/20260101-000000.wal.jsonl").exists()
+        assert (restore_dir / "runtime/file_locks.json").exists()
+        assert (restore_dir / "runtime/team.json").exists()
+        # Transient artifacts stay filtered.
+        assert not (restore_dir / "runtime/pids/worker-99479").exists()
+        assert not (restore_dir / "runtime/orchestrator.log").exists()
+        assert not (restore_dir / "runtime/access.jsonl").exists()
 
     def test_dry_run_lists_contents(self, tmp_path: Path) -> None:
         sdd = _create_test_sdd(tmp_path)
