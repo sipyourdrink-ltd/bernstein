@@ -291,6 +291,23 @@ def _apply_compliance_env() -> None:
     ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
 
 
+def _register_ci_parsers() -> None:
+    """Populate the CI log parser registry with all built-in adapters.
+
+    Without this call the registry is empty at runtime, so
+    ``bernstein ci fix --parser gitlab_ci`` and the self-healing CI
+    pipeline silently no-op (see audit-031). The helper in
+    :mod:`bernstein.adapters.ci` is idempotent, so calling it here on
+    top of the import-time side-effect is safe.
+    """
+    try:
+        from bernstein.adapters.ci import register_built_in_ci_parsers
+
+        register_built_in_ci_parsers()
+    except ImportError as exc:
+        logger.warning("CI adapters unavailable — skipping parser registration: %s", exc)
+
+
 def _load_secrets_provider(seed: Any) -> None:
     """Load secrets provider if configured in seed."""
     if not seed.secrets:
@@ -459,6 +476,10 @@ def bootstrap_from_seed(
     ).lower() in ("1", "true", "yes")
 
     _apply_compliance_env()
+
+    # Populate CI log parser registry so `bernstein ci fix` and pipeline
+    # self-healing can find GitHub Actions / GitLab CI parsers (audit-031).
+    _register_ci_parsers()
 
     # 3. Load secrets provider if configured
     _load_secrets_provider(seed)
@@ -956,6 +977,9 @@ def _bootstrap_from_goal_impl(
             for v in violations:
                 console.print(f"  [red]{v}[/red]")
         write_lockfile(workdir)
+
+    # Populate CI log parser registry (audit-031).
+    _register_ci_parsers()
 
     bind_host = _resolve_bind_host()
     auth_token = _resolve_auth_token()
