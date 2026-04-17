@@ -1834,8 +1834,7 @@ class Orchestrator:
             )
             self._post_bulletin(
                 "alert",
-                f"crash_recovery: preserved worktree with uncommitted changes at {dest} "
-                "(resume or reconcile manually)",
+                f"crash_recovery: preserved worktree with uncommitted changes at {dest} (resume or reconcile manually)",
             )
 
         return preserved
