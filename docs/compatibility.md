@@ -10,7 +10,7 @@ Last updated: 2026-04-13
 
 - Python: project targets Python 3.12+.
 - Task server/API: FastAPI-based local or remote server operation.
-- CLI adapters: 29 adapter modules (19 CLI agent adapters + 10 support modules) in `src/bernstein/adapters/`.
+- CLI adapters: 17 CLI agent adapters (16 third-party + generic) in `src/bernstein/adapters/`.
 
 ### Supported CLI agent adapters
 
@@ -34,7 +34,6 @@ Last updated: 2026-04-13
 | `tabby` | Self-hosted | No | No |
 | `iac` | N/A (Terraform/Pulumi) | No | No |
 | `generic` | Any | Depends on CLI | No |
-| `mock` | None (testing) | Simulated | Simulated |
 
 ### Support modules
 
@@ -89,7 +88,7 @@ Compatibility details can vary by adapter version and local toolchain.
 
 ## Quality gates
 
-Bernstein v1.7.0 ships an expanded quality gate pipeline in `src/bernstein/core/quality/`:
+Bernstein v1.8.4 ships an expanded quality gate pipeline in `src/bernstein/core/quality/`:
 
 - Standard gates: lint, type-check, tests, coverage
 - Architecture conformance (`arch_conformance.py`, `arch_rules.py`)

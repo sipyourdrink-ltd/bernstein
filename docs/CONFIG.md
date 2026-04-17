@@ -44,13 +44,13 @@ role_model_policy:
     effort: high
   security:
     cli: gemini
-    model: gemini-3.1-pro-preview
+    model: gemini-pro
     effort: high
 
 # Internal LLM for orchestrator scheduling decisions (plan decomposition,
 # cost estimation, auto-decompose). Accepts ANY supported adapter name.
 internal_llm_provider: gemini
-internal_llm_model: gemini-3.1-pro-preview
+internal_llm_model: gemini-pro
 ```
 
 ### `internal_llm_provider` — Orchestrator scheduling model
@@ -61,10 +61,10 @@ Any registered adapter CLI can serve as the internal LLM provider:
 
 | Provider | Model example | Notes |
 |----------|---------------|-------|
-| `gemini` | `gemini-3.1-pro-preview` | Free tier, 1M context, strong reasoning |
+| `gemini` | `gemini-pro` | Free tier, 1M context, strong reasoning |
 | `qwen` | `coder-model` | Free via Qwen OAuth, good for coding tasks |
 | `claude` | `claude-sonnet-4-6` | Strongest reasoning, requires Claude Code CLI |
-| `codex` | `gpt-5.4-mini` | OpenAI models via Codex CLI |
+| `codex` | `gpt-5-mini` | OpenAI models via Codex CLI |
 | `ollama` | `deepseek-r1:70b` | Fully local, no API calls |
 | `goose` | `claude-sonnet-4-6` | Block's Goose CLI |
 | `aider` | `claude-sonnet-4-6` | Aider CLI (any provider backend) |
@@ -73,7 +73,7 @@ Any registered adapter CLI can serve as the internal LLM provider:
 Set via `bernstein.yaml`:
 ```yaml
 internal_llm_provider: gemini          # adapter name
-internal_llm_model: gemini-3.1-pro-preview  # model passed to the CLI
+internal_llm_model: gemini-pro  # model passed to the CLI
 ```
 
 Or via environment:
@@ -94,7 +94,7 @@ role_model_policy:
     effort: max          # controls max_turns and budget
   backend:
     cli: gemini
-    model: gemini-3.1-pro-preview
+    model: gemini-pro
     effort: high
   docs:
     cli: claude

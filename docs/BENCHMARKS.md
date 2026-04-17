@@ -1,6 +1,6 @@
 # Bernstein Performance Benchmarks
 
-Real numbers, clear methodology, reproducible results.
+Simulated DAG scheduling, not measured runs. Clear methodology, reproducible results.
 
 ---
 

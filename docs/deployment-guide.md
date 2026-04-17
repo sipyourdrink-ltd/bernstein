@@ -1058,7 +1058,7 @@ An agent crashed before reporting completion. The task stays claimed until the j
 bernstein doctor --fix
 
 # Or restart cleanly
-bernstein stop && bernstein start
+bernstein stop && bernstein
 ```
 
 Stale claimed tasks appear in `bernstein status` with a "claimed for >5m" annotation.

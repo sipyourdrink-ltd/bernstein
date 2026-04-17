@@ -44,6 +44,8 @@ assignments. Here is what happened:
 | SMARTY real commits / claimed commits | 2 / 40 |
 | Times PAPA fell asleep | Multiple, unrecoverable without human |
 
+*Anecdote from a personal sprint. No raw data published.*
+
 PAPA fell asleep. When PAPA fell asleep, every downstream agent starved, because
 PAPA was responsible for keeping their task queues full. The system had a
 single non-deterministic point of failure, and it failed.
@@ -111,13 +113,15 @@ agents adds work linearly, not quadratically.
 
 ### The orchestrator is a scheduler, not a reasoner
 
-`core/orchestrator.py` is a thin façade over three subsystems:
+`core/orchestration/orchestrator.py` is a thin façade over three subsystems
+(resolved via `core.__init__` redirect map — legacy paths `core/orchestrator.py`,
+`core/task_lifecycle.py`, etc. still import correctly):
 
-- **Tick Pipeline** (`tick_pipeline.py`) — fetch tasks, group by role, compute
+- **Tick Pipeline** (`orchestration/tick_pipeline.py`) — fetch tasks, group by role, compute
   batch assignments using deterministic priority rules
-- **Task Lifecycle** (`task_lifecycle.py`) — state machine: OPEN → CLAIMED →
+- **Task Lifecycle** (`orchestration/task_lifecycle.py`) — state machine: OPEN → CLAIMED →
   IN_PROGRESS → DONE → CLOSED, with retry logic on failure or orphan
-- **Agent Lifecycle** (`agent_lifecycle.py`) — heartbeat monitoring, crash
+- **Agent Lifecycle** (`orchestration/agent_lifecycle.py`) — heartbeat monitoring, crash
   detection, stall detection, dead agent reaping
 
 None of these make LLM calls. They apply rules.
@@ -144,9 +148,11 @@ Three places in Bernstein call an LLM, all optional and named:
 
 | Module | Purpose | When called |
 |--------|---------|-------------|
-| `core/manager.py` | Decompose a high-level goal into tasks | Once per goal, if no plan file is provided |
-| `core/reviewer.py` | Review completed code for quality | After janitor verification, if `reviewer.enabled: true` |
-| `core/cross_model_verifier.py` | Independent diff verification | For high-stakes tasks, if configured |
+| `core/orchestration/manager.py` | Decompose a high-level goal into tasks | Once per goal, if no plan file is provided |
+| `core/orchestration/reviewer.py` | Review completed code for quality | After janitor verification, if `reviewer.enabled: true` |
+| `core/quality/cross_model_verifier.py` | Independent diff verification | For high-stakes tasks, if configured |
+
+*(Resolved via `core.__init__` redirect map — legacy imports `core/manager.py`, `core/reviewer.py`, `core/cross_model_verifier.py` still work via `_CoreRedirectFinder`.)*
 
 None of these are in the scheduling critical path. If the manager falls asleep
 mid-decomposition, the orchestrator is unaffected — you re-run the decomposition
@@ -182,8 +188,8 @@ task specs — which you need anyway for any automated system to do useful work.
 ## The boundary is enforced in code
 
 The `Orchestrator` class has no import of any LLM client. Any LLM call must
-go through an explicitly named module (`manager.py`, `reviewer.py`,
-`cross_model_verifier.py`). When you read the orchestrator code, there are no
+go through an explicitly named module (`orchestration/manager.py`, `orchestration/reviewer.py`,
+`quality/cross_model_verifier.py`). When you read the orchestrator code, there are no
 surprise model calls. When you grep for LLM usage, you find exactly three
 files, each clearly named for its purpose.
 

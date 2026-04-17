@@ -366,6 +366,6 @@ Model Policy gives enterprises surgical control over where code and data go. It'
 - **Transparent**: Policy is in YAML, auditable, version-controllable
 - **Enforced**: Denied providers never touch your code
 - **Validated**: `bernstein config validate` catches misconfigurations
-- **Integrated**: Works seamlessly with the existing router
+- **Integrated**: Plugs directly into the existing router
 
 Use it to enforce compliance, data residency, cost control, or preferred vendors.

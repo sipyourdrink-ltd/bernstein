@@ -255,6 +255,6 @@ Bernstein agents have built-in terminal access and can run any command directly.
 
 3. **Rely on the orchestrator.** Do not try to replicate LLM-based coordination. Bernstein's deterministic orchestrator handles task dispatch, retries, and resource management.
 
-4. **Leverage existing CLI agents.** Do not rewrite custom tools. Claude Code, Codex, and other agents already know how to edit files, run tests, and use git.
+4. **Use existing CLI agents.** Do not rewrite custom tools. Claude Code, Codex, and other agents already know how to edit files, run tests, and use git.
 
 5. **Use quality gates instead of LLM-based evaluation.** Instead of asking an LLM "is this good?", run concrete checks: tests pass, lint clean, type check clean.

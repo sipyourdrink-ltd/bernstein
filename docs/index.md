@@ -3,7 +3,7 @@ title: Bernstein — Open-Source Multi-Agent Orchestration Platform
 description: >-
   Bernstein is the open-source multi-agent orchestrator for AI coding agents.
   Run Claude Code, Codex, Gemini CLI in parallel. Deterministic scheduling,
-  21 adapters, Cloudflare cloud execution, zero vendor lock-in.
+  17 adapters, Cloudflare cloud execution, zero vendor lock-in.
 tags:
   - orchestration
   - multi-agent
@@ -72,7 +72,7 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 
     ---
 
-    21 CLI adapters: Claude Code, Codex, Gemini, Cursor, Aider, Cloudflare Agents, and more.
+    17 CLI adapters: Claude Code, Codex, Gemini, Cursor, Aider, Cloudflare Agents, and more.
     Mix cheap local models with cloud models in the same run.
 
 - :material-source-branch:{ .lg .middle } **Git worktree isolation**

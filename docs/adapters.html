@@ -20,7 +20,7 @@
   <link rel="author" href="https://alexchernysh.com" />
   <meta property="article:modified_time" content="2026-04-06T09:00:00+03:00" />
   <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"TechArticle","headline":"Bernstein Adapter Reference — 18+ AI Coding Agents","description":"Feature matrix and configuration for Claude Code, Codex, Gemini, Cursor, and 14 more CLI coding agents","datePublished":"2025-03-01","dateModified":"2026-04-06","author":{"@type":"Person","name":"Alex Chernysh","url":"https://alexchernysh.com"}}
+{"@context":"https://schema.org","@type":"TechArticle","headline":"Bernstein Adapter Reference — 17 AI Coding Agents","description":"Feature matrix and configuration for Claude Code, Codex, Gemini, Cursor, and 13 more CLI coding agents","datePublished":"2025-03-01","dateModified":"2026-04-06","author":{"@type":"Person","name":"Alex Chernysh","url":"https://alexchernysh.com"}}
 </script>
   <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Can I use Claude Code with Bernstein?","acceptedAnswer":{"@type":"Answer","text":"Yes. Bernstein has a native Claude Code adapter supporting Opus 4, Sonnet 4, and Haiku models. Install Claude Code globally, then Bernstein auto-discovers it."}},{"@type":"Question","name":"How do I add a custom AI agent to Bernstein?","acceptedAnswer":{"@type":"Answer","text":"Use the generic adapter: any CLI tool that accepts a --prompt flag works with Bernstein. Configure it in bernstein.yaml."}},{"@type":"Question","name":"Can I mix cheap and expensive AI models?","acceptedAnswer":{"@type":"Answer","text":"Yes. Bernstein's model routing assigns cheap local models (Ollama) to boilerplate tasks and expensive cloud models (Opus, GPT-5) to architecture decisions."}}]}
@@ -41,7 +41,7 @@
       <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
       <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
       <a href="adapters.html" class="nav-link active" data-page="adapters.html">Adapters</a>
-      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="api-reference.html" class="nav-link" data-page="api-reference.html">API Reference</a>
       <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
       <a href="compare/index.html" class="nav-link" data-page="compare/index.html">Compare</a>
       <a href="blog.html" class="nav-link" data-page="blog.html">Blog</a>
@@ -63,7 +63,7 @@
 <div class="page-hero">
   <div class="container">
     <h1>Adapters</h1>
-    <p>Bernstein adapters let you orchestrate 18+ AI coding agents from a single interface. Each adapter wraps an installed CLI tool -- Claude Code, Codex, Gemini CLI, Cursor, Aider, Amp, Roo Code, and more -- as a thin subprocess, so you can mix providers in one run and switch models without rewriting orchestration code.</p>
+    <p>Bernstein adapters let you orchestrate 17 AI coding agents from a single interface. Each adapter wraps an installed CLI tool — Claude Code, Codex, Gemini CLI, Cursor, Aider, Amp, and more — as a thin subprocess, so you can mix providers in one run and switch models without rewriting orchestration code.</p>
   </div>
 </div>
 
@@ -183,7 +183,7 @@
         <tr>
           <td><a href="#amp"><code>amp</code></a></td>
           <td>Sourcegraph</td>
-          <td>opus 4.6, sonnet, o3</td>
+          <td>opus 4.7, sonnet, o3</td>
           <td>★★★★★ opus/o3</td>
           <td>$$–$$$</td>
           <td>Full</td>
@@ -365,11 +365,11 @@
         <tr>
           <td>Model selection</td>
           <td>Any (via --model)</td>
-          <td>opus 4.6 / gpt-5.4</td>
+          <td>opus 4.7 / GPT-5</td>
           <td>opus / sonnet / haiku</td>
-          <td>gpt-5.4 / o3 / o4-mini</td>
-          <td>sonnet 4.6 / opus 4.6 / gpt-5.4</td>
-          <td>gemini-3-pro / 3-flash / 2.5-pro</td>
+          <td>GPT-5 / o3 / o4-mini</td>
+          <td>sonnet 4.6 / opus 4.7 / GPT-5</td>
+          <td>Gemini Pro / Gemini Flash / 2.5-pro</td>
           <td>Any (provider/model)</td>
           <td>Configured in CLI</td>
           <td>Provider/model string</td>
@@ -540,7 +540,7 @@ export ANTHROPIC_API_KEY=sk-ant-...</code></pre>
         <tr><th>Bernstein tier</th><th>Claude model</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>opus</code></td><td>claude-opus-4-6</td></tr>
+        <tr><td><code>opus</code></td><td>claude-opus-4-7</td></tr>
         <tr><td><code>sonnet</code></td><td>claude-sonnet-4-6</td></tr>
         <tr><td><code>haiku</code></td><td>claude-haiku-4-5-20251001</td></tr>
       </tbody>
@@ -555,7 +555,7 @@ export ANTHROPIC_API_KEY=sk-ant-...</code></pre>
 export OPENAI_API_KEY=sk-proj-...</code></pre>
     </div>
 
-    <p>Runs headlessly via <code>codex exec --full-auto -m &lt;model&gt; --json -o &lt;file&gt; &lt;prompt&gt;</code>. Pass any OpenAI model name directly via <code>--model</code>. Recommended model: <code>gpt-5.4</code> (Mar 2026). The o-series reasoning models (<code>o3</code>, <code>o4-mini</code>) are also supported. Tier detection checks for <code>OPENAI_ORG_ID</code> (enterprise) and key prefix (<code>sk-proj</code> = pro).</p>
+    <p>Runs headlessly via <code>codex exec --full-auto -m &lt;model&gt; --json -o &lt;file&gt; &lt;prompt&gt;</code>. Pass any OpenAI model name directly via <code>--model</code>. Recommended model: <code>gpt-5</code> or latest OpenAI. The o-series reasoning models (<code>o3</code>, <code>o4-mini</code>) are also supported. Tier detection checks for <code>OPENAI_ORG_ID</code> (enterprise) and key prefix (<code>sk-proj</code> = pro).</p>
 
     <h2 id="cursor">Cursor</h2>
 
@@ -580,7 +580,7 @@ cursor agent --version</code></pre>
 export GOOGLE_API_KEY=AIza...</code></pre>
     </div>
 
-    <p>Runs headlessly via <code>gemini -p &lt;prompt&gt; -m &lt;model&gt; --output-format json --yolo</code>. The default model is <code>gemini-3-pro</code> (preview, Mar 2026). Gemini 2.5 Pro/Flash are GA but <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" rel="noopener">deprecating June 2026</a>. For Vertex AI / enterprise use, set <code>GOOGLE_CLOUD_PROJECT</code> - tier detection will pick this up and apply higher rate limits accordingly.</p>
+    <p>Runs headlessly via <code>gemini -p &lt;prompt&gt; -m &lt;model&gt; --output-format json --yolo</code>. Pass any Gemini model string — e.g. <code>gemini-pro</code> or <code>gemini-flash</code>. For Vertex AI / enterprise use, set <code>GOOGLE_CLOUD_PROJECT</code> — tier detection will pick this up and apply higher rate limits accordingly.</p>
 
     <h2 id="kilo">Kilo</h2>
 
@@ -592,7 +592,7 @@ export KILO_API_KEY=...
 kilo --version</code></pre>
     </div>
 
-    <p>Kilo is a multi-provider agent CLI from Stackblitz. It supports headless mode, ACP/MCP protocols, and session management. Bernstein invokes it as <code>kilo run --prompt "&lt;task&gt;" --model &lt;provider/model&gt; --yes</code>. Pass any <code>provider/model</code> string — e.g. <code>anthropic/claude-sonnet-4-6</code>, <code>openai/gpt-5.4</code>, or <code>google/gemini-2.5-pro</code>.</p>
+    <p>Kilo is a multi-provider agent CLI from Stackblitz. It supports headless mode, ACP/MCP protocols, and session management. Bernstein invokes it as <code>kilo run --prompt "&lt;task&gt;" --model &lt;provider/model&gt; --yes</code>. Pass any <code>provider/model</code> string — e.g. <code>anthropic/claude-sonnet-4-6</code>, <code>openai/gpt-5</code>, or <code>google/gemini-pro</code>.</p>
 
     <p>Authentication is via <code>KILO_API_KEY</code> (preferred) or OAuth session stored in <code>~/.kilo/</code>. MCP server config is injected via <code>--mcp</code>. Tier detection reports Pro when any auth is found.</p>
 

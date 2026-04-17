@@ -56,7 +56,7 @@ export GITHUB_APP_PRIVATE_KEY=<path-to-pem-file>
 ### 4. Start the server
 
 ```bash
-bernstein start
+bernstein
 ```
 
 ### 5. Verify

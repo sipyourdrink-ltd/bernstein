@@ -97,7 +97,7 @@ Add the export to your shell profile (`~/.zshrc`, `~/.bashrc`) so it persists ac
 
 ## Step 4: Initialize a project
 
-Navigate to any git repository (or create one) and initialize Bernstein's state directory:
+cd to any git repository (or create one) and initialize Bernstein's state directory:
 
 ```bash
 cd your-project        # Must be a git repository

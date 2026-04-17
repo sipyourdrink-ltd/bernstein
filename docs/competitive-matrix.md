@@ -1,6 +1,6 @@
 # Competitive Feature Matrix
 
-How Bernstein compares to other multi-agent frameworks, as of March 2026.
+How Bernstein compares to other multi-agent frameworks, as of April 2026.
 
 ## Feature comparison
 
