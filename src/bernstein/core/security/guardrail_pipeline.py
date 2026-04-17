@@ -73,7 +73,7 @@ class PromptInjectionGuardrail:
             violations=violations,
         )
 
-    def check_output(self, output: str, context: dict[str, Any]) -> GuardrailResult:
+    def check_output(self, _output: str, _context: dict[str, Any]) -> GuardrailResult:
         return GuardrailResult(passed=True, guardrail_name=self.name)
 
 
@@ -82,10 +82,10 @@ class ScopeGuardrail:
 
     name = "scope"
 
-    def check_input(self, prompt: str, context: dict[str, Any]) -> GuardrailResult:
+    def check_input(self, _prompt: str, _context: dict[str, Any]) -> GuardrailResult:
         return GuardrailResult(passed=True, guardrail_name=self.name)
 
-    def check_output(self, output: str, context: dict[str, Any]) -> GuardrailResult:
+    def check_output(self, _output: str, context: dict[str, Any]) -> GuardrailResult:
         scope: list[str] = context.get("scope", [])
         modified_files: list[str] = context.get("modified_files", [])
         if not scope or not modified_files:
@@ -106,7 +106,7 @@ class CostGuardrail:
 
     name = "cost"
 
-    def check_input(self, prompt: str, context: dict[str, Any]) -> GuardrailResult:
+    def check_input(self, _prompt: str, context: dict[str, Any]) -> GuardrailResult:
         budget: float = context.get("budget_usd", 0)
         spent: float = context.get("spent_usd", 0)
         estimated: float = context.get("estimated_cost_usd", 0)
@@ -118,7 +118,7 @@ class CostGuardrail:
             )
         return GuardrailResult(passed=True, guardrail_name=self.name)
 
-    def check_output(self, output: str, context: dict[str, Any]) -> GuardrailResult:
+    def check_output(self, _output: str, _context: dict[str, Any]) -> GuardrailResult:
         return GuardrailResult(passed=True, guardrail_name=self.name)
 
 
@@ -137,10 +137,10 @@ class SecretLeakGuardrail:
     def __init__(self) -> None:
         self._compiled = [re.compile(p) for p in self.PATTERNS]
 
-    def check_input(self, prompt: str, context: dict[str, Any]) -> GuardrailResult:
+    def check_input(self, _prompt: str, _context: dict[str, Any]) -> GuardrailResult:
         return GuardrailResult(passed=True, guardrail_name=self.name)
 
-    def check_output(self, output: str, context: dict[str, Any]) -> GuardrailResult:
+    def check_output(self, output: str, _context: dict[str, Any]) -> GuardrailResult:
         violations: list[str] = []
         for pattern in self._compiled:
             if pattern.search(output):

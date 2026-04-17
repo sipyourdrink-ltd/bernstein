@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: TC003 - used at runtime for .exists(), .read_text(), etc.
+from pathlib import Path  # noqa: TC003
 from typing import Any
 
 logger = logging.getLogger(__name__)

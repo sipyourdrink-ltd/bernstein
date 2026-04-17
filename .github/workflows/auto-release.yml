@@ -12,16 +12,14 @@ concurrency:
   group: auto-release-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: true
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+permissions: {}
 
 jobs:
   gate:
     name: Release gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 5
     if: github.event.workflow_run.conclusion == 'success'
     outputs:
@@ -91,6 +89,11 @@ jobs:
     if: needs.gate.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
     environment:
       name: pypi
       url: https://pypi.org/p/bernstein

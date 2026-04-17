@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path  # noqa: TC003 - used at runtime, not just annotations
+from pathlib import Path  # noqa: TC003
 
 from bernstein.core.session import SessionState, load_session, save_session
 

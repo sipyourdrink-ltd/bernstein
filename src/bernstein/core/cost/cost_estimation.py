@@ -88,15 +88,15 @@ def _refine_with_history(
     source: str,
     confidence: float,
     _model_cost: Any,
-    EpsilonGreedyBandit: Any,
-    MIN_OBSERVATIONS: int,
+    epsilon_greedy_bandit: Any,
+    min_observations: int,
 ) -> tuple[int, int, str, float]:
     """Refine token estimates with historical bandit data."""
     if not metrics_dir or not metrics_dir.exists():
         return est_input, est_output, source, confidence
-    bandit = EpsilonGreedyBandit.load(metrics_dir)
+    bandit = epsilon_greedy_bandit.load(metrics_dir)
     arm = bandit.get_arm(task.role, model)
-    if not arm or arm.observations < MIN_OBSERVATIONS:
+    if not arm or arm.observations < min_observations:
         return est_input, est_output, source, confidence
     cost_per_1k = _model_cost(model)
     if cost_per_1k <= 0:

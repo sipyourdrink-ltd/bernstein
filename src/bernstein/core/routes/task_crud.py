@@ -1051,7 +1051,7 @@ def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEntry]:
     ]
 
 
-@router.get("/tasks")
+@router.get("/tasks", responses=_TENANT_RESPONSES)
 def list_tasks(
     request: Request,
     status: str | None = None,
@@ -1110,7 +1110,7 @@ def list_tasks(
     return [task_to_response(t) for t in all_tasks]
 
 
-@router.get("/tasks/counts")
+@router.get("/tasks/counts", responses=_TENANT_RESPONSES)
 def task_counts(
     request: Request,
     tenant: str | None = None,
@@ -1134,14 +1134,14 @@ def task_counts(
     )
 
 
-@router.get("/tasks/archive")
+@router.get("/tasks/archive", responses=_TENANT_RESPONSES)
 def get_archive(request: Request, limit: int = 50, tenant: str | None = None) -> list[ArchiveRecord]:
     """Return the last N archived (done/failed) task records."""
     store = _get_store(request)
     return store.read_archive(limit=limit, tenant_id=_resolve_request_tenant_scope(request, tenant))
 
 
-@router.get("/tasks/graph")
+@router.get("/tasks/graph", responses=_TENANT_RESPONSES)
 def get_task_graph(request: Request) -> JSONResponse:
     """Return the task dependency graph as JSON (nodes + edges + critical path).
 

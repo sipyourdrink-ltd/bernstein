@@ -189,7 +189,7 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
 
 # Precompute terminal statuses (no outbound transitions).
 TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
-    s for s in TaskStatus if s not in {frm for frm, _to in TASK_TRANSITIONS}
+    s for s in TaskStatus if s not in {frm for (frm, _to), _guard in TASK_TRANSITIONS.items()}
 )
 
 

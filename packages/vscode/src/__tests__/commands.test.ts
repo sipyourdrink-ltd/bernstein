@@ -33,9 +33,9 @@ const BASE_TASK: BernsteinTask = {
 
 describe('bernstein.inspectAgent', () => {
   let registeredCommands: Record<string, (...args: unknown[]) => unknown>;
-  let mockClient: Partial<BernsteinClient>;
-  let mockOutputManager: Partial<OutputManager>;
-  let mockContext: Partial<vscode.ExtensionContext>;
+  let mockClient: BernsteinClient;
+  let mockOutputManager: OutputManager;
+  let mockContext: vscode.ExtensionContext;
 
   beforeEach(() => {
     registeredCommands = {};
@@ -53,20 +53,20 @@ describe('bernstein.inspectAgent', () => {
       prioritizeTask: jest.fn(),
       approveTask: jest.fn(),
       rejectTask: jest.fn(),
-    };
+    } as unknown as BernsteinClient;
 
     mockOutputManager = {
       show: jest.fn(),
-    };
+    } as unknown as OutputManager;
 
     mockContext = {
       subscriptions: [],
-    };
+    } as unknown as vscode.ExtensionContext;
 
     registerCommands(
-      mockContext as vscode.ExtensionContext,
-      mockClient as BernsteinClient,
-      mockOutputManager as OutputManager,
+      mockContext,
+      mockClient,
+      mockOutputManager,
       jest.fn(),
     );
   });
@@ -122,9 +122,9 @@ describe('bernstein.inspectAgent', () => {
 
 describe('bernstein.approveTask', () => {
   let registeredCommands: Record<string, (...args: unknown[]) => unknown>;
-  let mockClient: Partial<BernsteinClient>;
-  let mockOutputManager: Partial<OutputManager>;
-  let mockContext: Partial<vscode.ExtensionContext>;
+  let mockClient: BernsteinClient;
+  let mockOutputManager: OutputManager;
+  let mockContext: vscode.ExtensionContext;
   let mockRefresh: jest.Mock;
 
   beforeEach(() => {
@@ -143,16 +143,16 @@ describe('bernstein.approveTask', () => {
       prioritizeTask: jest.fn(),
       approveTask: jest.fn().mockResolvedValue(undefined),
       rejectTask: jest.fn(),
-    };
+    } as unknown as BernsteinClient;
 
-    mockOutputManager = { show: jest.fn() };
-    mockContext = { subscriptions: [] };
+    mockOutputManager = { show: jest.fn() } as unknown as OutputManager;
+    mockContext = { subscriptions: [] } as unknown as vscode.ExtensionContext;
     mockRefresh = jest.fn();
 
     registerCommands(
-      mockContext as vscode.ExtensionContext,
-      mockClient as BernsteinClient,
-      mockOutputManager as OutputManager,
+      mockContext,
+      mockClient,
+      mockOutputManager,
       mockRefresh,
     );
   });
@@ -195,9 +195,9 @@ describe('bernstein.approveTask', () => {
 
 describe('bernstein.rejectTask', () => {
   let registeredCommands: Record<string, (...args: unknown[]) => unknown>;
-  let mockClient: Partial<BernsteinClient>;
-  let mockOutputManager: Partial<OutputManager>;
-  let mockContext: Partial<vscode.ExtensionContext>;
+  let mockClient: BernsteinClient;
+  let mockOutputManager: OutputManager;
+  let mockContext: vscode.ExtensionContext;
   let mockRefresh: jest.Mock;
 
   beforeEach(() => {
@@ -216,16 +216,16 @@ describe('bernstein.rejectTask', () => {
       prioritizeTask: jest.fn(),
       approveTask: jest.fn(),
       rejectTask: jest.fn().mockResolvedValue(undefined),
-    };
+    } as unknown as BernsteinClient;
 
-    mockOutputManager = { show: jest.fn() };
-    mockContext = { subscriptions: [] };
+    mockOutputManager = { show: jest.fn() } as unknown as OutputManager;
+    mockContext = { subscriptions: [] } as unknown as vscode.ExtensionContext;
     mockRefresh = jest.fn();
 
     registerCommands(
-      mockContext as vscode.ExtensionContext,
-      mockClient as BernsteinClient,
-      mockOutputManager as OutputManager,
+      mockContext,
+      mockClient,
+      mockOutputManager,
       mockRefresh,
     );
   });

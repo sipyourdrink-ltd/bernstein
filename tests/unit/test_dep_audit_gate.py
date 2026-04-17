@@ -185,7 +185,6 @@ class TestDepAuditGateRunner:
         with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
             asyncio.run(runner.run_all(task, tmp_path))
 
-        assert captured_command
         assert captured_command == "pip-audit --strict"
 
     def test_dep_audit_command_override_from_pipeline_step(self, tmp_path: Path) -> None:
@@ -215,7 +214,6 @@ class TestDepAuditGateRunner:
         with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
             asyncio.run(runner.run_all(task, tmp_path))
 
-        assert captured_command
         assert captured_command == "safety check"
 
     def test_dep_audit_non_required_does_not_block(self, tmp_path: Path) -> None:

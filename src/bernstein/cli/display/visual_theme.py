@@ -124,10 +124,11 @@ def sample_gradient(colors: tuple[str, ...], steps: int) -> tuple[str, ...]:
     Returns:
         Tuple of hex colors sized to ``steps`` (or empty when ``steps <= 0``).
     """
+    empty: tuple[str, ...] = ()
     if steps <= 0:
-        return ()
+        return empty
     if not colors:
-        return ()
+        return empty
     if len(colors) == 1:
         return tuple(colors[0] for _ in range(steps))
 
