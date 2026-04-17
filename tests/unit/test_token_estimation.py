@@ -192,3 +192,43 @@ class TestEstimateTokensForFile:
 
     def test_binary_file_returns_zero(self) -> None:
         assert estimate_tokens_for_file("image.png", b"\x89PNG\r\n\x1a\n") == 0
+
+
+# --- Consolidation: single source of truth (audit-063) ---
+
+
+class TestCanonicalEstimatorOnly:
+    """Ensure the codebase has exactly one token estimator implementation.
+
+    The legacy ``bernstein.core.tokens.token_estimator`` module was deleted in
+    audit-063; ``bernstein.core.tokens.token_estimation`` is the canonical
+    source.  Guard against accidental reintroduction of a duplicate module.
+    """
+
+    def test_legacy_token_estimator_module_is_gone(self) -> None:
+        import importlib
+
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("bernstein.core.tokens.token_estimator")
+
+    def test_legacy_shim_is_removed_from_redirect_map(self) -> None:
+        from bernstein.core import _REDIRECT_MAP
+
+        assert "token_estimator" not in _REDIRECT_MAP
+        assert _REDIRECT_MAP["token_estimation"] == "bernstein.core.tokens.token_estimation"
+
+    def test_canonical_module_exposes_public_api(self) -> None:
+        from bernstein.core.tokens import token_estimation as canonical
+
+        for name in (
+            "bytes_per_token_for_file_type",
+            "estimate_tokens_for_file_size",
+            "estimate_tokens_for_text",
+            "estimate_tokens_for_file",
+            "JSON_BYTES_PER_TOKEN",
+            "CODE_BYTES_PER_TOKEN",
+            "TEXT_BYTES_PER_TOKEN",
+            "MINIFIED_BYTES_PER_TOKEN",
+            "DEFAULT_BYTES_PER_TOKEN",
+        ):
+            assert hasattr(canonical, name), f"canonical estimator missing {name}"

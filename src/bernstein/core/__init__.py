@@ -514,7 +514,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "token_binding": "bernstein.core.tokens.token_binding",
     "token_counter": "bernstein.core.tokens.token_counter",
     "token_estimation": "bernstein.core.tokens.token_estimation",
-    "token_estimator": "bernstein.core.tokens.token_estimator",
     "token_monitor": "bernstein.core.tokens.token_monitor",
     "token_waste_report": "bernstein.core.tokens.token_waste_report",
     "tool_timing": "bernstein.core.observability.tool_timing",
