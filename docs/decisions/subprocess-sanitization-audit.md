@@ -61,7 +61,6 @@ All core `subprocess.run/Popen` calls use list-based args (except the 7 justifie
 |------|-------|-------|
 | core/spawner.py | (indirect) | Delegates to adapter.spawn(), no direct subprocess |
 | core/orchestrator.py | 1600, 1694, 1803 | All literal list args: `["uv", "run", ...]` |
-| core/evolve_mode.py | 243, 307, 416 | All literal list args |
 | core/server_launch.py | 287, 411 | All literal list args |
 | core/worker.py | 81 | `Popen(cmd)` — cmd from argparse REMAINDER (list) |
 | core/preflight.py | 73, 95, 162 | All literal list args (version checks) |

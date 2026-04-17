@@ -219,7 +219,6 @@ include = ["src"]
 exclude = [
     "src/bernstein/core/trigger_manager.py",
     "src/bernstein/core/trigger_sources/",
-    "src/bernstein/core/evolve_mode.py",
     "src/bernstein/core/circuit_breaker.py",
     "src/bernstein/core/task_store.py",
     "src/bernstein/core/task_store_core.py",
