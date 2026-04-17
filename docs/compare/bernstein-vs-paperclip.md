@@ -34,7 +34,7 @@
 | **Audit trail** | HMAC-chained, file-based | Activity logs |
 | **Self-evolution** | Yes — `--evolve` mode | No |
 | **Protocol support** | MCP, A2A | Not documented |
-| **Web UI** | No (CLI + status endpoint) | Yes — React dashboard |
+| **Web UI** | TUI + web dashboard | Yes — React dashboard |
 | **Cluster mode** | Yes | Not documented |
 
 ---
@@ -94,7 +94,7 @@ These are genuinely different problems. Paperclip cares about organizational str
 
 **Organizational modeling.** If you're running dozens of AI agents across multiple projects with different budgets, teams, and governance requirements, Paperclip's org-chart model gives you structure that Bernstein doesn't attempt. Bernstein has no concept of "teams" or "reporting lines."
 
-**Web UI.** Paperclip ships a React dashboard. Bernstein is CLI-only with a JSON status endpoint. If you want a visual overview for non-technical stakeholders, Paperclip wins.
+**Web UI.** Paperclip ships a React dashboard. Bernstein ships both a TUI (`bernstein live`) and a web dashboard (`bernstein dashboard`). Paperclip's React UI is more polished for non-technical stakeholders; Bernstein's dashboard is developer-oriented (logs, traces, cost).
 
 **Community size.** 55k+ stars means a large ecosystem of contributors, integrations, and community support. More eyes on bugs, more plugins, more documentation.
 

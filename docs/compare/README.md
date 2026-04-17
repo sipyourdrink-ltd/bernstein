@@ -23,7 +23,7 @@ How Bernstein compares to other tools in the multi-agent coding space.
 | Agent-to-agent chat | Bulletin board | Yes | Yes | No |
 | Web UI | TUI + web dashboard | Yes (AMP) | Yes (Studio) | Yes (Studio + LangSmith) |
 | Cloud hosted | Yes (Cloudflare) | Yes (AMP) | Via Microsoft Agent Framework | Yes (LangSmith Deployment) |
-| Built-in RAG | No | Yes | Yes | Yes |
+| Built-in RAG | Yes (codebase FTS5 + BM25) | Yes | Yes | Yes |
 
 *Last verified: 2026-04-17. AutoGen entered maintenance mode in 2025; successor is Microsoft Agent Framework 1.0 (April 3, 2026).*
 
