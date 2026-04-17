@@ -160,10 +160,10 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md)
 | Declarative plans (YAML) | Yes | Yes | No | Partial (JSON config) |
 | Model routing per task | Yes | No | No | Manual |
 | MCP support | Yes | Yes | Yes (client) | Yes (client + server) |
-| Agent-to-agent chat | No | Yes | Yes | No |
-| Web UI | No | Yes | Yes | Yes (Studio + LangSmith) |
+| Agent-to-agent chat | Bulletin board | Yes | Yes | No |
+| Web UI | TUI + web dashboard | Yes | Yes | Yes (Studio + LangSmith) |
 | Cloud hosted option | Yes (Cloudflare) | Yes | No | Yes |
-| Built-in RAG/retrieval | No | Yes | Yes | Yes |
+| Built-in RAG/retrieval | Yes (codebase FTS5 + BM25) | Yes | Yes | Yes |
 
 *Last verified: 2026-04-17. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
 
