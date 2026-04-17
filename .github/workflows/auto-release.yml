@@ -173,19 +173,38 @@ jobs:
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.final.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
-          # Build notes from recent commit messages since last tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            NOTES=$(git log --oneline "$PREV_TAG"..HEAD | head -10)
-          else
-            NOTES=$(git log --oneline -5)
+          # Delete any pre-existing *draft* release with the same tag
+          # (release-drafter often has one queued). Skip if it's a real
+          # published release — never touch cleanup-tag on a real tag.
+          IS_DRAFT=$(gh release view "v${VERSION}" --json isDraft --jq '.isDraft' 2>/dev/null || echo "none")
+          if [ "$IS_DRAFT" = "true" ]; then
+            gh release delete "v${VERSION}" --yes
           fi
-          gh release create "v${{ steps.final.outputs.version }}" dist/* \
-            --title "v${{ steps.final.outputs.version }}" \
-            --notes "Patch release. Changes since previous version:
 
-          $NOTES"
+          # Build human-readable notes from conventional-commit messages
+          # since the previous release tag. Commits are grouped by prefix
+          # (feat/fix/refactor/perf/docs/ci/chore/test); their subject
+          # lines — not raw hashes — become bullet points.
+          PREV_TAG=$(git describe --tags --abbrev=0 "HEAD^" 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            git log --no-merges --pretty='%s' -20 > /tmp/commits.txt
+          else
+            git log --no-merges --pretty='%s' "${PREV_TAG}..HEAD" > /tmp/commits.txt
+          fi
+
+          python3 scripts/format_release_notes.py \
+            --version "$VERSION" \
+            --prev-tag "$PREV_TAG" \
+            --repo "$REPO" \
+            --commits /tmp/commits.txt \
+            > RELEASE_NOTES.md
+
+          gh release create "v${VERSION}" dist/* \
+            --title "v${VERSION}" \
+            --notes-file RELEASE_NOTES.md
 
       # --- npm wrapper ---
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6

@@ -104,10 +104,13 @@ on:
       - "scripts/gen_roadmap_*.py"
       - "scripts/generate_benchmark_docs.py"
 
-# New push cancels in-progress run.
+# On branch pushes (incl. main after PR merges): cancel the old run so only
+# the latest commit's CI matters. auto-release.yml depends on success on the
+# final commit; keeping older runs alive delays or skips the release.
+# On pull_request: also cancel — reviewers only care about the latest push.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: false
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ─── Fast checks (never cancelled, <2 min each) ───────────────────────
