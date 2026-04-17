@@ -37,8 +37,7 @@ quality_gates:
   type_check: false
   tests: false
 context_files:
-- docs/DESIGN.md
+- docs/architecture/DESIGN.md
 - CLAUDE.md
-- docs/the-bernstein-way.md
 agency:
   path: ${BERNSTEIN_AGENCY_PATH:-./external/agency-agents}  # replace with your agency-agents clone path

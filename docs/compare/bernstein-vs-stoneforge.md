@@ -104,5 +104,5 @@ The risk: if that provider raises prices, introduces rate limits, or you want to
 ## See also
 
 - [Bernstein benchmark: multi-agent vs single-agent](../../benchmarks/README.md)
-- [Zero lock-in: model-agnostic orchestration](../../docs/zero-lock-in.md)
+- [Bernstein vs. CrewAI](../migrations/migration-from-crewai.md)
 - [Bernstein vs. single agent](./bernstein-vs-single-agent.md)

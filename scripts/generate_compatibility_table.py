@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate protocol compatibility matrix table for docs/compatibility.md
+Generate protocol compatibility matrix table for docs/adapters/compatibility.md
 
 This script reads protocol test results and generates a markdown table
 showing which MCP, A2A, and ACP versions are compatible with each Bernstein release.
@@ -8,7 +8,7 @@ showing which MCP, A2A, and ACP versions are compatible with each Bernstein rele
 Usage:
     python scripts/generate_compatibility_table.py \
         --results path/to/protocol-compat-results.json \
-        --output docs/compatibility.md
+        --output docs/adapters/compatibility.md
 """
 
 import argparse
@@ -103,7 +103,7 @@ via {summary.get("total_combinations", 0)} matrix combinations to ensure compreh
 def main():
     parser = argparse.ArgumentParser(description="Generate protocol compatibility table")
     parser.add_argument("--results", required=True, help="Path to protocol-compat-results.json")
-    parser.add_argument("--output", default="docs/compatibility.md", help="Output file path")
+    parser.add_argument("--output", default="docs/adapters/compatibility.md", help="Output file path")
     args = parser.parse_args()
 
     results_file = Path(args.results)

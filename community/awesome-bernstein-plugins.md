@@ -17,7 +17,7 @@ plugins:
   - my_package.hooks:MyPlugin
 ```
 
-See [docs/plugin-sdk.md](../docs/plugin-sdk.md) for the full authoring guide.
+See [docs/integrations/plugin-sdk.md](../docs/integrations/plugin-sdk.md) for the full authoring guide.
 
 ---
 
@@ -262,7 +262,7 @@ Adapters connect Bernstein to a specific CLI agent executable. Bernstein ships a
 |---------|-------|--------|
 | _(your adapter here)_ | _(agent name)_ | _(link)_ |
 
-See [docs/ADAPTER_GUIDE.md](../docs/ADAPTER_GUIDE.md) to write your own adapter.
+See [docs/adapters/ADAPTER_GUIDE.md](../docs/adapters/ADAPTER_GUIDE.md) to write your own adapter.
 
 ---
 
@@ -394,7 +394,7 @@ my-plugin = "my_package.hooks:MyPlugin"
 
 Entry-point plugins auto-load when installed alongside Bernstein. No `bernstein.yaml` change required.
 
-Full guide: [docs/plugin-sdk.md](../docs/plugin-sdk.md)
+Full guide: [docs/integrations/plugin-sdk.md](../docs/integrations/plugin-sdk.md)
 
 ---
 

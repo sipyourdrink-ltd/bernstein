@@ -19,7 +19,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/github/license/chernistry/bernstein)](LICENSE)
 
-[Documentation](https://bernstein.readthedocs.io/) &middot; [Getting Started](docs/GETTING_STARTED.md) &middot; [Glossary](docs/GLOSSARY.md) &middot; [Limitations](docs/KNOWN_LIMITATIONS.md)
+[Documentation](https://bernstein.readthedocs.io/) &middot; [Getting Started](docs/getting-started/GETTING_STARTED.md) &middot; [Glossary](docs/reference/GLOSSARY.md) &middot; [Limitations](docs/reference/KNOWN_LIMITATIONS.md)
 
 </div>
 
@@ -144,7 +144,7 @@ A `bernstein cloud init` scaffold for `wrangler.toml` and bindings is planned.
 
 **Ecosystem**. MCP server mode, A2A protocol support, GitHub App integration, plugin system, multi-repo workspaces, cluster mode for distributed execution, self-evolution via `--evolve` (experimental).
 
-Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
+Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md)
 
 ## How it compares
 

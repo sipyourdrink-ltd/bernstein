@@ -95,12 +95,12 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 
 | | |
 |---|---|
-| :material-rocket-launch: [Getting Started](GETTING_STARTED.md) | Install and run your first orchestration |
-| :material-wrench: [Configuration](CONFIG.md) | bernstein.yaml reference |
-| :material-puzzle: [Adapter Guide](ADAPTER_GUIDE.md) | Supported agents and how to add your own |
-| :material-api: [API Reference](openapi-reference.md) | Task server REST API |
-| :material-sitemap: [Architecture](ARCHITECTURE.md) | How Bernstein works under the hood |
-| :material-state-machine: [Lifecycle FSM](LIFECYCLE.md) | Task and agent state machines with transition tables |
+| :material-rocket-launch: [Getting Started](getting-started/GETTING_STARTED.md) | Install and run your first orchestration |
+| :material-wrench: [Configuration](operations/CONFIG.md) | bernstein.yaml reference |
+| :material-puzzle: [Adapter Guide](adapters/ADAPTER_GUIDE.md) | Supported agents and how to add your own |
+| :material-api: [API Reference](reference/openapi-reference.md) | Task server REST API |
+| :material-sitemap: [Architecture](architecture/ARCHITECTURE.md) | How Bernstein works under the hood |
+| :material-state-machine: [Lifecycle FSM](architecture/LIFECYCLE.md) | Task and agent state machines with transition tables |
 | :material-text-box-check: [Changelog](CHANGELOG.md) | What's new |
 
 ## Links
