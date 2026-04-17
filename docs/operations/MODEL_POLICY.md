@@ -340,10 +340,6 @@ for name, info in summary.items():
 
 Peak-hour routing (`src/bernstein/core/cost/peak_hour_router.py`) extends model policy with time-based constraints. It can automatically shift non-urgent tasks to cheaper providers or off-peak windows, complementing the static allow/deny policy.
 
-## Quota Tracking
-
-Provider quota tracking (`src/bernstein/core/cost/quota_tracker.py`) monitors per-provider spend and request counts. When a provider approaches its quota, the router can automatically shift traffic to other allowed providers within the model policy.
-
 ## Future: Dynamic Policy Updates
 
 Model Policy is currently static (loaded at startup). Future versions may support:

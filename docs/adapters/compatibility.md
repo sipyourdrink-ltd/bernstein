@@ -107,7 +107,6 @@ Bernstein v1.8.4 ships an expanded quality gate pipeline in `src/bernstein/core/
 
 ## Cost and quota management
 
-- Per-provider quota tracking (`cost/quota_tracker.py`)
 - Peak-hour scheduling (`cost/peak_hour_router.py`) for time-of-day cost optimization
 - Cost anomaly detection, forecasting, and root cause analysis
 - Budget actions and completion budgets

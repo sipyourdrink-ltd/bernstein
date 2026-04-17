@@ -56,10 +56,6 @@ Runtime handshake that determines which protocol version (MCP, A2A, ACP) a conne
 
 Automated checks (lint, type-check, tests, coverage) that must pass before work is accepted or merged. Gates run in sequence and any failure blocks the pipeline. Implemented in `src/bernstein/core/quality_gates.py`.
 
-### Quota Tracker
-
-Monitors per-provider rate limits and spend quotas, preventing agents from exceeding API limits. Tracks RPM, TPM, and budget thresholds. Implemented in `src/bernstein/core/cost/quota_tracker.py`.
-
 ### Reap
 
 Killing or collecting agents that have exceeded their timeout or become unresponsive. Part of the agent lifecycle management. Implemented in `src/bernstein/core/agent_lifecycle.py`.
