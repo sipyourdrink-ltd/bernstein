@@ -418,15 +418,20 @@ def maybe_retry_task(
     if task.id in retried_task_ids:
         return False
 
+    # audit-017: ``task.retry_count`` is the single source of truth.  Title
+    # prefixes and ``[retry:N]`` description markers are no longer consulted
+    # or written.  Legacy tasks with a stale ``[RETRY N]`` prefix retain it
+    # in the title until they complete, but the counter they report is the
+    # typed field — never the regex match.
     retry_count = task.retry_count
+    effective_max = min(task.max_retries, max_task_retries) if max_task_retries > 0 else task.max_retries
 
-    if retry_count >= task.max_retries:
-        base_title = re.sub(r"^\[RETRY \d+\] ", "", task.title)
-        quarantine.record_failure(base_title, "Max retries exhausted")
+    if retry_count >= effective_max:
+        quarantine.record_failure(task.title, "Max retries exhausted")
         logger.warning(
             "Task %r exhausted %d retries -- recorded cross-run failure in quarantine",
-            base_title,
-            max_task_retries,
+            task.title,
+            effective_max,
         )
         return False
 
@@ -439,15 +444,16 @@ def maybe_retry_task(
 
     new_model, new_effort = _choose_retry_escalation(task, next_retry, current_model, current_effort)
 
-    base_title = re.sub(r"^\[RETRY \d+\] ", "", task.title)
-    new_title = f"[RETRY {next_retry}] {base_title}"
-
     failure_context = _extract_failure_context(task, workdir, session_id)
 
-    new_description = f"[RETRY {next_retry}] {task.description}"
+    # Title is preserved unchanged so every retry of the same task carries
+    # the same title — downstream dedup / lineage keys no longer need to
+    # strip a prefix.  The retry_count field carries the attempt number.
+    new_title = task.title
+    new_description = task.description
     if failure_context:
         new_description = (
-            f"[RETRY {next_retry}] {task.description}\n\n"
+            f"{task.description}\n\n"
             "## Previous attempt failed\n"
             f"{failure_context}\n\n"
             "Avoid the same mistakes. If you hit the same error, try a different approach."
@@ -462,6 +468,7 @@ def maybe_retry_task(
 
     retry_metadata = dict(task.metadata)
     retry_metadata["budget_multiplier"] = budget_multiplier
+    retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
 
     payload: dict[str, Any] = {
         "title": new_title,
@@ -480,6 +487,8 @@ def maybe_retry_task(
         "retry_delay_s": base_delay,
         "terminal_reason": None,
         "metadata": retry_metadata,
+        "meta_messages": list(task.meta_messages),
+        "max_output_tokens": task.max_output_tokens,
     }
 
     try:
@@ -544,24 +553,26 @@ def retry_or_fail_task(
 ) -> None:
     """Re-queue a task for retry, or fail it permanently if max retries reached.
 
-    Reads the current retry count from a ``[retry:N]`` marker in the task
-    description.  If the count is below ``max_task_retries`` a new open task
-    is created (clone of the original with the marker bumped) and the old
-    task is failed silently.  Once the limit is hit the task is failed with
-    a "Max retries exceeded" reason.
+    Reads the current retry count from the typed ``task.retry_count`` field —
+    the single source of truth (audit-017).  Title and description are copied
+    verbatim; no ``[RETRY N]`` / ``[retry:N]`` markers are written.  If the
+    typed counter is below ``min(task.max_retries, dynamic_limit(reason))`` a
+    new open task is created with ``retry_count`` incremented; otherwise the
+    task is failed with a "Max retries exceeded" reason (DLQ threshold).
 
     Args:
         task_id: ID of the task to retry or fail.
         reason: Human-readable reason for the failure / retry.
         client: httpx client.
         server_url: Task server base URL.
-        max_task_retries: Maximum number of retries allowed.
+        max_task_retries: Orchestrator-wide retry ceiling.  The effective
+            limit is ``min(task.max_retries, dynamic_limit(reason))``.
         retried_task_ids: Set of already-retried task IDs (mutated in-place).
         tasks_snapshot: Optional pre-fetched tasks snapshot to avoid an
             extra HTTP round-trip when the task is already in cache.
     """
     base = server_url
-    max_retries = _dynamic_retry_limit(reason, max_task_retries)
+    dynamic_limit = _dynamic_retry_limit(reason, max_task_retries)
 
     # Try the pre-fetched snapshot first to avoid an extra GET
     task: Task | None = None
@@ -591,18 +602,12 @@ def retry_or_fail_task(
         return
     retried_task_ids.add(task_id)
 
-    # Extract current retry count from description marker
-    marker_re = re.compile(r"^\[retry:(\d+)\]\s*")
-    m = marker_re.match(task.description)
-    retry_count = int(m.group(1)) if m else 0
-    base_description = marker_re.sub("", task.description)
+    # audit-017: source of truth is ``task.retry_count`` (typed field).
+    retry_count = task.retry_count
+    per_task_limit = task.max_retries if task.max_retries > 0 else max_task_retries
+    effective_limit = min(per_task_limit, dynamic_limit)
 
-    if retry_count < max_retries:
-        failure_note = (
-            f"\n\n## Previous attempt failed\nReason: {reason}\n"
-            "Avoid the same mistake. If you hit the same error, try a different approach."
-        )
-        new_description = f"[retry:{retry_count + 1}] {base_description}{failure_note}"
+    if retry_count < effective_limit:
         # Escalate model on retry: large/architect/security always opus/max;
         # other roles: sonnet->opus on 2nd retry, effort->high on 1st retry.
         from bernstein.core.tasks.models import Scope as _Scope
@@ -631,7 +636,9 @@ def retry_or_fail_task(
                 new_max_output_tokens,
             )
 
-        # Meta messages / Nudges (T423)
+        # Meta messages / Nudges (T423) — append the failure reason so the
+        # retry agent sees the previous attempt's outcome without us having
+        # to pollute the description with ``[retry:N]`` markers.
         new_meta_messages = list(task.meta_messages)
         new_meta_messages.append(f"Retry {retry_count + 1}: Previous attempt failed with reason: {reason}")
 
@@ -648,10 +655,13 @@ def retry_or_fail_task(
             budget_multiplier = prev_multiplier
         retry_metadata = dict(task.metadata)
         retry_metadata["budget_multiplier"] = budget_multiplier
+        retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
 
+        # Title and description are passed through verbatim (no prefix
+        # mutation).  The retry agent sees the reason via meta_messages.
         task_body: dict[str, Any] = {
-            "title": f"[RETRY {retry_count + 1}] {task.title}",
-            "description": new_description,
+            "title": task.title,
+            "description": task.description,
             "role": task.role,
             "priority": task.priority,
             "scope": task.scope.value,
@@ -665,6 +675,9 @@ def retry_or_fail_task(
             "max_output_tokens": new_max_output_tokens,
             "meta_messages": new_meta_messages,
             "metadata": retry_metadata,
+            "retry_count": retry_count + 1,
+            "max_retries": task.max_retries,
+            "retry_delay_s": task.retry_delay_s,
         }
         # Preserve completion signals on retry
         if task.completion_signals:
@@ -675,7 +688,7 @@ def retry_or_fail_task(
                 "Retrying task %s (attempt %d/%d): %s",
                 task_id,
                 retry_count + 1,
-                max_retries,
+                effective_limit,
                 reason,
             )
         except httpx.HTTPError as exc:
@@ -730,13 +743,18 @@ def should_auto_decompose(
     if task.title.startswith("[DECOMPOSE]"):
         return False
 
-    # Extract retry count from title prefix like "[RETRY 2]"
+    # audit-017: use the typed retry counter (source of truth), falling back
+    # to a legacy ``[RETRY N]`` title prefix only when the typed field is 0
+    # (so in-flight pre-migration tasks still decompose correctly).
     import re
 
     from bernstein.core.tasks.models import Scope as _Scope
 
-    retry_match = re.match(r"^\[RETRY\s+(\d+)\]", task.title)
-    retry_count = int(retry_match.group(1)) if retry_match else 0
+    retry_count = task.retry_count
+    if retry_count == 0:
+        retry_match = re.match(r"^\[RETRY\s+(\d+)\]", task.title)
+        if retry_match is not None:
+            retry_count = int(retry_match.group(1))
 
     # Decompose if LARGE scope or 2+ retries
     return task.scope == _Scope.LARGE or retry_count >= 2

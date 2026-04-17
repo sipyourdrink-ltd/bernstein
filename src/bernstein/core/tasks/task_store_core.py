@@ -16,7 +16,7 @@ import uuid
 from collections import deque
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, cast
 
 from fastapi import HTTPException
 from typing_extensions import TypedDict
@@ -83,6 +83,14 @@ class TaskRecord(TypedDict):
     parent_session_id: str | None
     subtask_wait_started_at: float | None
     parent_context: str | None
+    # audit-017: typed retry bookkeeping (optional for backward compat).
+    retry_count: NotRequired[int]
+    max_retries: NotRequired[int]
+    retry_delay_s: NotRequired[float]
+    terminal_reason: NotRequired[str | None]
+    max_output_tokens: NotRequired[int | None]
+    meta_messages: NotRequired[list[str]]
+    metadata: NotRequired[dict[str, Any]]
 
 
 class ArchiveRecord(TypedDict):
@@ -172,6 +180,19 @@ class TaskCreateRequest(Protocol):
 
     parent_session_id: str | None
     parent_context: str | None
+
+    # Retry bookkeeping (audit-017): typed retry fields are the single source
+    # of truth.  When orchestrator clones a task for retry, it passes
+    # ``retry_count=previous+1`` in the request.  These fields are optional on
+    # the wire (``None`` / missing => fall back to the Task dataclass default).
+    retry_count: int | None
+    max_retries: int | None
+    retry_delay_s: float | None
+    terminal_reason: str | None
+    max_output_tokens: int | None
+
+    @property
+    def meta_messages(self) -> Sequence[str] | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +557,14 @@ class TaskStore:
             "claimed_by_session": task.claimed_by_session,
             "parent_session_id": task.parent_session_id,
             "subtask_wait_started_at": task.subtask_wait_started_at,
+            # audit-017: retry bookkeeping (typed source of truth).
+            "retry_count": task.retry_count,
+            "max_retries": task.max_retries,
+            "retry_delay_s": task.retry_delay_s,
+            "terminal_reason": task.terminal_reason,
+            "max_output_tokens": task.max_output_tokens,
+            "meta_messages": list(task.meta_messages),
+            "metadata": dict(task.metadata),
         }
 
     # -- public API ---------------------------------------------------------
@@ -624,6 +653,13 @@ class TaskStore:
             _cls = classify_task(_probe)
             batch_eligible = _cls.level in (TaskLevel.L0, TaskLevel.L1)
 
+        # audit-017: Forward retry bookkeeping so the typed fields survive
+        # across task clones.  ``None`` => keep Task dataclass default.
+        retry_count_raw = getattr(req, "retry_count", None)
+        max_retries_raw = getattr(req, "max_retries", None)
+        retry_delay_raw = getattr(req, "retry_delay_s", None)
+        meta_messages_raw = getattr(req, "meta_messages", None)
+
         task = Task(
             id=uuid.uuid4().hex[:12],
             title=req.title,
@@ -653,6 +689,12 @@ class TaskStore:
             metadata=getattr(req, "metadata", None) or {},
             parent_session_id=getattr(req, "parent_session_id", None),
             parent_context=getattr(req, "parent_context", None),
+            retry_count=int(retry_count_raw) if retry_count_raw is not None else 0,
+            max_retries=int(max_retries_raw) if max_retries_raw is not None else 3,
+            retry_delay_s=float(retry_delay_raw) if retry_delay_raw is not None else 0.0,
+            terminal_reason=getattr(req, "terminal_reason", None),
+            max_output_tokens=getattr(req, "max_output_tokens", None),
+            meta_messages=list(meta_messages_raw) if meta_messages_raw is not None else [],
         )
         async with self._lock:
             if task.depends_on:

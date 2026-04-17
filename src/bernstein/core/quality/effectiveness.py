@@ -70,7 +70,7 @@ class EffectivenessScorer:
         wall_time_s = max(0.0, self._session_end_ts(session) - session.spawn_ts)
         estimated_time_s = max(float(task.estimated_minutes * 60), 1.0)
         tokens_used = max(session.tokens_used, 0)
-        retry_count = self._retry_count(task.title)
+        retry_count = self._retry_count(task)
         fix_count = 1 if task.title.startswith("Fix: ") else 0
         gate_pass_rate, quality_score = self._quality_from_gate_report(gate_report)
 
@@ -293,9 +293,17 @@ class EffectivenessScorer:
             return (passes / len(results)) if results else 0.0
         return 1.0 if total == 100 else 0.0
 
-    def _retry_count(self, title: str) -> int:
-        """Extract retry count markers from the task title."""
-        match = re.match(r"^\[RETRY (\d+)\]\s*", title)
+    def _retry_count(self, task: Task) -> int:
+        """Return the retry count for a task.
+
+        audit-017: prefer the typed ``task.retry_count`` field; fall back to
+        a legacy ``[RETRY N]`` title prefix only when the typed field is 0
+        so historical tasks still score correctly.
+        """
+        count = task.retry_count
+        if count:
+            return count
+        match = re.match(r"^\[RETRY (\d+)\]\s*", task.title)
         return int(match.group(1)) if match else 0
 
     def _grade(self, total: int) -> str:

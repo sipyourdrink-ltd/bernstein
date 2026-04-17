@@ -245,14 +245,24 @@ _RETRY_PATTERNS = (
 
 
 def _task_retry_count(task: dict[str, Any]) -> int:
-    """Extract the retry count encoded in a task title or description."""
+    """Return the retry count for a task dict from the API.
+
+    audit-017: prefer the typed ``retry_count`` field (single source of
+    truth).  Fall back to scanning legacy ``[RETRY N]`` / ``[retry:N]``
+    markers in the title or description when the typed field is missing
+    or zero, so historical tasks still render a correct counter in the
+    dashboard.
+    """
+    typed = task.get("retry_count")
+    if isinstance(typed, int) and typed > 0:
+        return typed
     for field in ("title", "description"):
         value = str(task.get(field, ""))
         for pattern in _RETRY_PATTERNS:
             match = pattern.search(value)
             if match is not None:
                 return int(match.group(1))
-    return 0
+    return int(typed) if isinstance(typed, int) else 0
 
 
 def _format_elapsed_label(elapsed_s: int) -> str:

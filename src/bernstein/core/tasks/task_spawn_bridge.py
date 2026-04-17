@@ -54,13 +54,17 @@ def should_auto_decompose(
     if task.title.startswith("[DECOMPOSE]"):
         return False
 
-    # Extract retry count from title prefix like "[RETRY 2]"
+    # audit-017: prefer the typed retry counter; fall back to a legacy
+    # ``[RETRY N]`` title prefix only when the typed field is 0.
     import re
 
     from bernstein.core.tasks.models import Scope as _Scope
 
-    retry_match = re.match(r"^\[RETRY\s+(\d+)\]", task.title)
-    retry_count = int(retry_match.group(1)) if retry_match else 0
+    retry_count = task.retry_count
+    if retry_count == 0:
+        retry_match = re.match(r"^\[RETRY\s+(\d+)\]", task.title)
+        if retry_match is not None:
+            retry_count = int(retry_match.group(1))
 
     # Decompose if LARGE scope or 2+ retries
     return task.scope == _Scope.LARGE or retry_count >= 2

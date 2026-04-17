@@ -574,14 +574,26 @@ def _patch_retry_with_compaction(
         logger.warning("Failed to list open tasks for compaction patch: %s", exc)
         return
 
-    # Find the retry task: title starts with [RETRY and contains original title
-    base_title = original_task.title.removeprefix("[RETRY 1] ").removeprefix("[RETRY 2] ").removeprefix("[RETRY 3] ")
+    # audit-017: look the retry task up by metadata.original_task_id and an
+    # incremented retry_count.  Falls back to a title-prefix match for
+    # legacy tasks whose retry clones still carry the old ``[RETRY N]``
+    # prefix (no new ones are created by the orchestrator).
     retry_task_id: str | None = None
+    lineage_id = original_task.metadata.get("original_task_id", original_task.id)
     for t in open_tasks:
-        title = t.get("title", "")
-        if title.startswith("[RETRY") and base_title in title:
+        meta = t.get("metadata") or {}
+        same_lineage = meta.get("original_task_id") == lineage_id
+        bumped = int(t.get("retry_count") or 0) > original_task.retry_count
+        if same_lineage and bumped:
             retry_task_id = t.get("id")
-            # Take the most recently found (last in list)
+    if retry_task_id is None:
+        base_title = (
+            original_task.title.removeprefix("[RETRY 1] ").removeprefix("[RETRY 2] ").removeprefix("[RETRY 3] ")
+        )
+        for t in open_tasks:
+            title = t.get("title", "")
+            if title == base_title or (title.startswith("[RETRY") and base_title in title):
+                retry_task_id = t.get("id")
 
     if retry_task_id is None:
         logger.debug("No retry task found to patch with compaction for %s", original_task.id)

@@ -40,6 +40,11 @@ class MockTask:
         self.meta_messages = []
         self.completion_signals = []
         self.metadata = {}
+        # audit-017: typed retry fields are the source of truth.
+        self.retry_count = 0
+        self.max_retries = 3
+        self.retry_delay_s = 0.0
+        self.terminal_reason = None
 
 
 @pytest.mark.parametrize("retry_func", [retry_lifecycle, retry_completion])

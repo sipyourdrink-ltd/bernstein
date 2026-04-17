@@ -158,6 +158,14 @@ def task_to_response(task: Task) -> TaskResponse:
         progress_log=list(cast("list[ProgressEntry]", task.progress_log)),  # type: ignore[reportUnknownMemberType]
         version=task.version,
         parent_session_id=task.parent_session_id,
+        # audit-017: expose typed retry bookkeeping so clients read the
+        # single source of truth rather than regex-ing the title.
+        retry_count=task.retry_count,
+        max_retries=task.max_retries,
+        retry_delay_s=task.retry_delay_s,
+        terminal_reason=task.terminal_reason,
+        max_output_tokens=task.max_output_tokens,
+        meta_messages=list(task.meta_messages),
     )
 
 

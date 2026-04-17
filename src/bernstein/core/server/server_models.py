@@ -58,6 +58,14 @@ class TaskCreate(BaseModel):
     deadline: float | None = None  # Epoch timestamp when task must be complete
     parent_session_id: str | None = None  # Coordinator session that owns this task (namespace scope)
     parent_context: str | None = None  # Parent agent's context summary for subtask agents (AGENT-012)
+    # Retry bookkeeping (audit-017): retry_count is the single source of truth.
+    # When a retry task is created, the orchestrator sets retry_count=previous+1.
+    retry_count: int | None = None  # Current retry attempt number (0 = first attempt)
+    max_retries: int | None = None  # Per-task override of default retry limit
+    retry_delay_s: float | None = None  # Delay between retries (exponential backoff base)
+    terminal_reason: str | None = None  # Why the previous attempt ended (carried across retries)
+    max_output_tokens: int | None = None  # Per-task output-token cap (escalated on retry)
+    meta_messages: list[str] | None = None  # Operational nudges/hints carried across retries
 
 
 class TaskSelfCreate(BaseModel):
@@ -124,6 +132,13 @@ class TaskResponse(BaseModel):
     progress_log: list[ProgressEntry] = Field(default_factory=list)
     version: int = 1
     parent_session_id: str | None = None  # Coordinator session that owns this task
+    # Retry bookkeeping (audit-017): typed fields are the single source of truth.
+    retry_count: int = 0
+    max_retries: int = 3
+    retry_delay_s: float = 0.0
+    terminal_reason: str | None = None
+    max_output_tokens: int | None = None
+    meta_messages: list[str] = Field(default_factory=list)
 
 
 class WebhookTaskResponse(BaseModel):

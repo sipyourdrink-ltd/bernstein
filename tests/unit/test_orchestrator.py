@@ -59,6 +59,8 @@ def _make_task(
     complexity: str = "medium",
     status: str = "open",
     task_type: TaskType = TaskType.STANDARD,
+    retry_count: int = 0,
+    max_retries: int = 3,
 ) -> Task:
     return Task(
         id=id,
@@ -70,6 +72,8 @@ def _make_task(
         complexity=Complexity(complexity),
         status=TaskStatus(status),
         task_type=task_type,
+        retry_count=retry_count,
+        max_retries=max_retries,
     )
 
 
@@ -90,6 +94,10 @@ def _task_as_dict(task: Task) -> dict[str, object]:
         "assigned_agent": task.assigned_agent,
         "result_summary": task.result_summary,
         "task_type": task.task_type.value,
+        # audit-017: ship typed retry fields so the orchestrator reads the
+        # single source of truth on GET /tasks/{id}.
+        "retry_count": task.retry_count,
+        "max_retries": task.max_retries,
     }
     return result
 
@@ -3435,25 +3443,28 @@ class TestRetryOrFailTask:
         return orch, posted
 
     def test_first_retry_creates_new_task(self, tmp_path: Path) -> None:
+        # audit-017: retry_count is the typed source of truth (no description marker).
         task = _make_task(id="T-retry", description="Do the thing.")
         orch, posted = self._build(tmp_path, task, max_retries=2)
 
         orch._retry_or_fail_task("T-retry", "agent crashed")
 
         assert len(posted) == 1
-        assert posted[0]["description"].startswith("[retry:1] Do the thing.")
+        assert posted[0]["description"] == "Do the thing."
+        assert posted[0]["retry_count"] == 1
 
     def test_second_retry_increments_counter(self, tmp_path: Path) -> None:
-        task = _make_task(id="T-retry", description="[retry:1] Do the thing.")
+        task = _make_task(id="T-retry", description="Do the thing.", retry_count=1)
         orch, posted = self._build(tmp_path, task, max_retries=2)
 
         orch._retry_or_fail_task("T-retry", "agent crashed again")
 
         assert len(posted) == 1
-        assert posted[0]["description"].startswith("[retry:2] Do the thing.")
+        assert posted[0]["description"] == "Do the thing."
+        assert posted[0]["retry_count"] == 2
 
     def test_max_retries_exceeded_does_not_create_new_task(self, tmp_path: Path) -> None:
-        task = _make_task(id="T-retry", description="[retry:2] Do the thing.")
+        task = _make_task(id="T-retry", description="Do the thing.", retry_count=2)
         orch, posted = self._build(tmp_path, task, max_retries=2)
 
         orch._retry_or_fail_task("T-retry", "agent crashed yet again")
@@ -3488,7 +3499,8 @@ class TestRetryOrFailTask:
         assert body["priority"] == 1
         assert body["scope"] == "large"
         assert body["complexity"] == "high"
-        assert task.title in body["title"]  # may have [RETRY N] prefix
+        # audit-017: title is passed through verbatim (no `[RETRY N]` prefix).
+        assert body["title"] == task.title
 
 
 # --- _maybe_retry_task ---
@@ -3537,7 +3549,9 @@ class TestMaybeRetryTask:
         assert body["model"] == "sonnet"  # model unchanged
         assert body["effort"] == "medium"  # low → medium
 
-    def test_first_retry_title_prefixed(self, tmp_path: Path) -> None:
+    def test_first_retry_title_unchanged(self, tmp_path: Path) -> None:
+        # audit-017: retry_count tracks attempts — no `[RETRY N]` prefix on
+        # title or description.
         task = Task(
             id="T-fail",
             title="Do work",
@@ -3549,8 +3563,9 @@ class TestMaybeRetryTask:
 
         orch._maybe_retry_task(task)
 
-        assert posted[0]["title"] == "[RETRY 1] Do work"
-        assert posted[0]["description"].startswith("[RETRY 1]")
+        assert posted[0]["title"] == "Do work"
+        assert posted[0]["description"] == "Do the thing."
+        assert posted[0]["retry_count"] == 1
 
     def test_second_retry_escalates_model(self, tmp_path: Path) -> None:
         task = Task(

@@ -46,6 +46,7 @@ def _make_task(
     estimated_minutes: int = 30,
     model: str | None = None,
     effort: str | None = None,
+    retry_count: int = 0,
 ) -> Task:
     return Task(
         id=id,
@@ -59,6 +60,7 @@ def _make_task(
         estimated_minutes=estimated_minutes,
         model=model,
         effort=effort,
+        retry_count=retry_count,
     )
 
 
@@ -100,6 +102,12 @@ def _build_orchestrator(
                 "task_type": task.task_type.value,
                 "model": task.model,
                 "effort": task.effort,
+                # audit-017: typed retry fields must ride along with the
+                # serialised task so retry_or_fail_task sees the real counter.
+                "retry_count": task.retry_count,
+                "max_retries": task.max_retries,
+                "retry_delay_s": task.retry_delay_s,
+                "terminal_reason": task.terminal_reason,
             }
             return httpx.Response(200, json=raw)
         if request.method == "POST" and path == "/tasks":
@@ -145,10 +153,12 @@ class TestProgressiveTimeout:
         assert posted[0]["estimated_minutes"] == 60  # 30 * 2
 
     def test_second_retry_triples_estimated_minutes(self, tmp_path: Path) -> None:
+        # audit-017: retry_count is the typed source of truth.
         task = _make_task(
             id="T-prog-2",
-            description="[retry:1] Do the thing.",
+            description="Do the thing.",
             estimated_minutes=30,
+            retry_count=1,
         )
         orch, posted = _build_orchestrator(tmp_path, task)
 
@@ -161,8 +171,9 @@ class TestProgressiveTimeout:
     def test_progressive_timeout_not_applied_when_max_retries_exceeded(self, tmp_path: Path) -> None:
         task = _make_task(
             id="T-prog-3",
-            description="[retry:2] Do the thing.",
+            description="Do the thing.",
             estimated_minutes=30,
+            retry_count=2,
         )
         orch, posted = _build_orchestrator(tmp_path, task, max_retries=2)
 

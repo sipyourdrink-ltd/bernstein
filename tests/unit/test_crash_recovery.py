@@ -334,8 +334,9 @@ def test_orchestrator_fails_task_after_max_crash_retries(tmp_path: Path):
     """Task should be failed permanently once _crash_counts[task_id] >= max_crash_retries."""
     task = _make_task(id="T-exhaust", status="claimed")
     task_dict = _task_as_dict(task)
-    # Pre-seed the retry marker so _retry_or_fail_task sees max retries exceeded
-    task_dict["description"] = f"[retry:{2}] Write the code."
+    # audit-017: retry_count is the typed source of truth — no markers.
+    task_dict["retry_count"] = 2
+    task_dict["max_retries"] = 2
 
     orch, task_store = _make_orchestrator(
         tmp_path,

@@ -60,7 +60,12 @@ def test_retry_without_log(tmp_path: Path, make_task: Any) -> None:
         session_id="missing",
     )
 
-    assert client.post.call_args.kwargs["json"]["description"] == "[RETRY 1] Do the thing."
+    # audit-017: description is passed through verbatim; retry attempt is
+    # tracked in the typed ``retry_count`` field (no ``[RETRY N]`` prefix).
+    payload = client.post.call_args.kwargs["json"]
+    assert payload["description"] == "Do the thing."
+    assert payload["retry_count"] == 1
+    assert "[RETRY" not in payload["title"]
 
 
 def test_retry_logs_failure_category(tmp_path: Path, make_task: Any) -> None:
