@@ -101,3 +101,11 @@ complexity  # noqa
 timestamp  # noqa
 avg_duration_s  # noqa
 avg_cost_usd  # noqa
+# Agent checkpoint (WAL crash recovery) — public API used across orchestrator
+crash_recoverable  # noqa
+checkpointed_at  # noqa
+build_resume_prompt  # noqa
+scan_orphaned_checkpoints  # noqa
+is_checkpoint_recoverable  # noqa
+load_checkpoint  # noqa
+save_checkpoint  # noqa
