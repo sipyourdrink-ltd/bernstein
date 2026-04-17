@@ -7,8 +7,10 @@ Can be used with any ASGI server (uvicorn, Cloudflare Workers via Python worker)
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -28,19 +30,92 @@ _METHOD_NOT_FOUND = -32601
 _INTERNAL_ERROR = -32603
 _CONTENT_TYPE_JSON = "application/json"
 
+# Hostnames considered safe for listening without a configured auth token.
+_LOCALHOST_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+# Env var names used to pick up the bearer auth token if not provided explicitly.
+_TOKEN_ENV_VARS = ("BERNSTEIN_MCP_TOKEN", "BERNSTEIN_MCP_AUTH_TOKEN")
+
+
+class RemoteMCPConfigError(RuntimeError):
+    """Raised when an MCP remote transport config is unsafe to start with.
+
+    Examples: binding a non-loopback host without a configured auth token, or
+    explicitly setting auth_type='none' on a non-loopback host.
+    """
+
+
+def _resolve_token_from_env() -> str:
+    """Return the first non-empty token found in the well-known env vars."""
+    for name in _TOKEN_ENV_VARS:
+        value = os.environ.get(name, "")
+        if value:
+            return value
+    return ""
+
+
+def _is_localhost(host: str) -> bool:
+    """Return True if ``host`` refers to the loopback interface only."""
+    return host in _LOCALHOST_HOSTS
+
+
+def _constant_time_eq(left: str, right: str) -> bool:
+    """Constant-time string compare that tolerates length differences."""
+    return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+
 
 @dataclass(frozen=True)
 class RemoteMCPConfig:
-    """Configuration for remote MCP server transport."""
+    """Configuration for remote MCP server transport.
 
-    host: str = "0.0.0.0"
+    Safe-by-default: binds to localhost only and requires a bearer token.
+    When constructed without an explicit ``auth_token`` the value is pulled
+    from ``BERNSTEIN_MCP_TOKEN`` (or ``BERNSTEIN_MCP_AUTH_TOKEN``).
+
+    Validation (in ``__post_init__``) refuses any combination that would
+    expose MCP JSON-RPC without authentication:
+
+    * ``auth_type='none'`` on a non-loopback host → :class:`RemoteMCPConfigError`
+    * ``auth_type='bearer'`` with an empty token on a non-loopback host →
+      :class:`RemoteMCPConfigError`
+    """
+
+    host: str = "127.0.0.1"
     port: int = 8053
     path: str = "/mcp"
-    auth_type: str = "none"  # "none", "bearer", "oauth"
+    auth_type: str = "bearer"  # "none", "bearer", "oauth"
     auth_token: str = ""
-    cors_origins: list[str] = field(default_factory=lambda: ["*"])
+    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:*"])
     max_sessions: int = 100
     session_timeout_seconds: int = 3600
+
+    def __post_init__(self) -> None:
+        """Enforce safe-by-default policy and pick up env-provided tokens."""
+        # Pull token from env when not explicitly provided. Use object.__setattr__
+        # because the dataclass is frozen.
+        if self.auth_type == "bearer" and not self.auth_token:
+            env_token = _resolve_token_from_env()
+            if env_token:
+                object.__setattr__(self, "auth_token", env_token)
+
+        localhost = _is_localhost(self.host)
+
+        if self.auth_type == "none" and not localhost:
+            msg = (
+                f"Refusing to start MCP remote transport: host={self.host!r} is "
+                "not loopback and auth_type='none'. Set auth_type='bearer' and "
+                "provide a token via BERNSTEIN_MCP_TOKEN, or bind to 127.0.0.1."
+            )
+            raise RemoteMCPConfigError(msg)
+
+        if self.auth_type == "bearer" and not self.auth_token and not localhost:
+            msg = (
+                f"Refusing to start MCP remote transport: host={self.host!r} is "
+                "not loopback but no bearer token is configured. Set "
+                "BERNSTEIN_MCP_TOKEN (or pass auth_token=...) before binding to "
+                "a public interface."
+            )
+            raise RemoteMCPConfigError(msg)
 
 
 @dataclass
@@ -552,11 +627,17 @@ class StreamableHTTPTransport:
             return True
 
         if self._config.auth_type == "bearer":
+            expected = self._config.auth_token
+            if not expected:
+                # Defence in depth: never treat a blank token as valid even
+                # when callers have (incorrectly) reached this branch on a
+                # localhost-only bind.
+                return False
             auth_header = headers.get("authorization", "")
             if not auth_header.startswith("Bearer "):
                 return False
             token = auth_header[7:]
-            return token == self._config.auth_token
+            return _constant_time_eq(token, expected)
 
         # Unknown auth type — deny.
         return False
@@ -691,18 +772,29 @@ async def _send_response(
 
 def run_remote(
     server_url: str = _DEFAULT_SERVER_URL,
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8053,
+    auth_token: str | None = None,
 ) -> None:
     """Start MCP server with streamable HTTP transport for remote access.
 
     Args:
         server_url: Bernstein task server URL to proxy tool calls to.
-        host: Host to bind to.
+        host: Host to bind to. Defaults to loopback; binding to ``0.0.0.0``
+            requires a bearer token (passed via ``auth_token`` or the
+            ``BERNSTEIN_MCP_TOKEN`` env var), otherwise a
+            :class:`RemoteMCPConfigError` is raised at startup.
         port: Port to bind to.
+        auth_token: Explicit bearer token. Falls back to
+            ``BERNSTEIN_MCP_TOKEN`` / ``BERNSTEIN_MCP_AUTH_TOKEN`` env vars.
+
+    Raises:
+        RemoteMCPConfigError: When the host/token combination would expose
+            the MCP endpoint without authentication.
     """
     import uvicorn
 
-    config = RemoteMCPConfig(host=host, port=port)
+    token = auth_token if auth_token is not None else _resolve_token_from_env()
+    config = RemoteMCPConfig(host=host, port=port, auth_token=token)
     app = create_asgi_app(server_url=server_url, config=config)
     uvicorn.run(app, host=host, port=port)
