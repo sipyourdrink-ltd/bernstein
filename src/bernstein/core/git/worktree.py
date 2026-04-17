@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
+from bernstein.core.git.salvage import SalvageResult, salvage_worktree
 from bernstein.core.git.worktree_isolation import validate_worktree_isolation
 from bernstein.core.platform_compat import process_alive
 
@@ -351,11 +352,17 @@ class WorktreeManager:
         self,
         repo_root: Path,
         setup_config: WorktreeSetupConfig | None = None,
+        *,
+        salvage_on_cleanup: bool = True,
+        salvage_push: bool = True,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self._base_dir = self.repo_root / _WORKTREE_BASE
         self._setup_config = setup_config
+        self._salvage_on_cleanup = salvage_on_cleanup
+        self._salvage_push = salvage_push
         self._shutdown_event: threading.Event | None = None
+        self._last_salvage: SalvageResult | None = None
 
     def set_shutdown_event(self, shutdown_event: threading.Event | None) -> None:
         """Attach a shutdown event used to reject new worktree creation."""
@@ -440,11 +447,34 @@ class WorktreeManager:
         Best-effort: logs warnings for individual failures but does not raise.
         Safe to call even if the worktree was never created or already cleaned.
 
+        Before the destructive ``git worktree remove --force`` call, any
+        uncommitted work in the worktree is salvaged via
+        :func:`~bernstein.core.git.salvage.salvage_worktree` so the diff is
+        recoverable post-cleanup (audit-088).  The salvage step is purely
+        best-effort: on failure the original cleanup proceeds as before.
+
         Args:
             session_id: The session whose worktree should be removed.
         """
         worktree_path = self._base_dir / session_id
         branch_name = f"agent/{session_id}"
+
+        # 0. Salvage uncommitted work BEFORE anything destructive happens (audit-088).
+        self._last_salvage = None
+        if self._salvage_on_cleanup and worktree_path.exists():
+            try:
+                self._last_salvage = salvage_worktree(
+                    self.repo_root,
+                    worktree_path,
+                    session_id,
+                    push=self._salvage_push,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Salvage step crashed for %s (continuing cleanup): %s",
+                    session_id,
+                    exc,
+                )
 
         # 1. Remove the worktree (--force handles dirty state)
         try:
@@ -459,6 +489,9 @@ class WorktreeManager:
             logger.warning("Failed to remove worktree for %s: %s", session_id, exc)
 
         # 2. Delete the branch
+        #    When salvage moved the branch to salvage/<id> the original agent
+        #    branch no longer exists; branch_delete will report "not found"
+        #    which we already swallow below.
         try:
             result = branch_delete(self.repo_root, branch_name)
             if not result.ok and "not found" not in result.stderr:
@@ -474,6 +507,16 @@ class WorktreeManager:
         remove_worktree_lock(self.repo_root, session_id)
 
         logger.info("Cleaned up worktree for session %s", session_id)
+
+    @property
+    def last_salvage(self) -> SalvageResult | None:
+        """Return the salvage result from the most recent cleanup call.
+
+        ``None`` if no cleanup has been invoked yet or salvage was disabled.
+        Useful for tests and for operators who want to log/emit metrics on
+        the salvage outcome.
+        """
+        return self._last_salvage
 
     def cleanup_all_stale(self) -> int:
         """Remove all worktrees under the base dir from prior runs.
