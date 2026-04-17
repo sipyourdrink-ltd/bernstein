@@ -38,8 +38,13 @@ _CATEGORIES: OrderedDict[str, str] = OrderedDict(
 )
 
 _SKIP_PREFIXES: tuple[str, ...] = ("chore: auto-bump",)
-_PR_SUFFIX_RE = re.compile(r"\s*\(#\d+\)\s*$")
-_CC_RE = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]+)\))?!?:\s*(?P<subject>.+)$")
+# Trailing PR ref, e.g. " (#123)". Inputs come from ``git log --pretty='%s'``
+# so subjects are a single line — the explicit ``[^\n]`` bound and required
+# single leading space avoid any quadratic-backtracking surface Sonar flags.
+_PR_SUFFIX_RE = re.compile(r" \(#\d+\)$")
+_CC_RE = re.compile(
+    r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)\n]+)\))?!?: (?P<subject>[^\n]+)$"
+)
 
 
 def format_notes(version: str, prev_tag: str, repo: str, commits: list[str]) -> str:
