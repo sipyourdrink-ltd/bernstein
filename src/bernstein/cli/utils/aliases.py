@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 ALIASES: dict[str, str] = {
-    "s": "score",
+    "s": "status",
     "r": "run",
     "d": "doctor",
     "l": "live",
