@@ -246,6 +246,25 @@ def _is_allowlisted(line: str, allowlist_prefixes: list[str] | None = None) -> b
     return any(p.search(line) for p in _ALLOWLIST_PATTERNS) or _contains_allowlist_prefix(line, allowlist_prefixes)
 
 
+def _passes_rule_filters(
+    rule_label: str,
+    m: re.Match[str],
+) -> bool:
+    """Return True if a match survives rule-specific post-filters.
+
+    Some rules (credit cards, high-entropy assignments) have additional checks
+    beyond the regex itself. This is split from the matching step so callers can
+    iterate multiple matches per line and still apply the filters per-match.
+    """
+    if rule_label == "credit_card_number" and not _looks_like_credit_card(m.group(0)):
+        return False
+    if rule_label == "high_entropy_assignment":
+        value = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0)
+        if not _has_mixed_case_and_digits(value):
+            return False
+    return True
+
+
 def _check_rule_match(
     rule_label: str,
     pattern: re.Pattern[str],
@@ -253,18 +272,12 @@ def _check_rule_match(
 ) -> re.Match[str] | None:
     """Check a single rule against a line, applying rule-specific filters.
 
-    Returns the match object if the rule fires, or None if it does not apply.
+    Returns the first match that passes rule-specific filters, or None.
     """
-    m = pattern.search(line)
-    if not m:
-        return None
-    if rule_label == "credit_card_number" and not _looks_like_credit_card(m.group(0)):
-        return None
-    if rule_label == "high_entropy_assignment":
-        value = m.group(1) if m.lastindex and m.lastindex >= 1 else m.group(0)
-        if not _has_mixed_case_and_digits(value):
-            return None
-    return m
+    for m in pattern.finditer(line):
+        if _passes_rule_filters(rule_label, m):
+            return m
+    return None
 
 
 def _build_redacted_excerpt(line: str, m: re.Match[str]) -> str:
@@ -283,30 +296,39 @@ def _build_redacted_excerpt(line: str, m: re.Match[str]) -> str:
 def _scan_line(
     line: str,
     line_num: int,
-    seen_rules: set[str],
+    seen_matches: set[tuple[str, int, int, int]],
     allowlist_prefixes: list[str] | None,
     findings: list[SecretFinding],
 ) -> None:
-    """Scan a single line against all secret rules, appending any findings."""
+    """Scan a single line against all secret rules, appending any findings.
+
+    Deduplication keys on ``(rule, line_num, match_start, match_end)`` so that
+    multiple distinct secrets of the same rule (e.g. two different AWS keys) are
+    each reported, while exact duplicates (same rule hitting the same span —
+    possible if scans ever overlap) are not counted twice. This prevents the
+    scanner-evasion bug where a single rule's dedup would silently drop the
+    second/third secret of the same type (audit-044).
+    """
     if _is_allowlisted(line, allowlist_prefixes):
         return
     for rule_label, pattern, severity, description in _SECRET_RULES:
-        if rule_label in seen_rules:
-            continue
-        m = _check_rule_match(rule_label, pattern, line)
-        if m is None:
-            continue
-        redacted = _build_redacted_excerpt(line, m)
-        findings.append(
-            SecretFinding(
-                rule=rule_label,
-                severity=severity,
-                line_number=line_num,
-                redacted_match=redacted,
-                description=description,
+        for m in pattern.finditer(line):
+            if not _passes_rule_filters(rule_label, m):
+                continue
+            match_key = (rule_label, line_num, m.start(), m.end())
+            if match_key in seen_matches:
+                continue
+            redacted = _build_redacted_excerpt(line, m)
+            findings.append(
+                SecretFinding(
+                    rule=rule_label,
+                    severity=severity,
+                    line_number=line_num,
+                    redacted_match=redacted,
+                    description=description,
+                )
             )
-        )
-        seen_rules.add(rule_label)
+            seen_matches.add(match_key)
 
 
 def scan_text(
@@ -331,10 +353,10 @@ def scan_text(
         return []
 
     findings: list[SecretFinding] = []
-    seen_rules: set[str] = set()
+    seen_matches: set[tuple[str, int, int, int]] = set()
 
     for line_num, line in enumerate(text.splitlines(), start=1):
-        _scan_line(line, line_num, seen_rules, allowlist_prefixes, findings)
+        _scan_line(line, line_num, seen_matches, allowlist_prefixes, findings)
 
     return findings
 
@@ -357,7 +379,7 @@ def scan_diff(
         List of SecretFinding objects found in added lines.
     """
     findings: list[SecretFinding] = []
-    seen_rules: set[str] = set()
+    seen_matches: set[tuple[str, int, int, int]] = set()
     diff_line_num = 0
 
     for raw_line in diff_text.splitlines():
@@ -368,7 +390,7 @@ def scan_diff(
             continue
 
         line = raw_line[1:]  # strip the leading "+"
-        _scan_line(line, diff_line_num, seen_rules, allowlist_prefixes, findings)
+        _scan_line(line, diff_line_num, seen_matches, allowlist_prefixes, findings)
 
     return findings
 

@@ -233,11 +233,80 @@ class TestFindingProperties:
         assert "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in gh.redacted_match
         assert "***" in gh.redacted_match
 
-    def test_each_rule_fires_at_most_once(self) -> None:
+    def test_same_rule_fires_for_each_distinct_match(self) -> None:
+        """Regression for audit-044: the scanner used to dedup per rule_id,
+        silently dropping the second secret of the same type. A rule must now
+        fire once per distinct (rule, line, span) match."""
         text = "key1@real.com\nkey2@real.com\n"
         findings = scan_text(text)
         email_findings = [f for f in findings if f.rule == "email_address"]
-        assert len(email_findings) <= 1
+        assert len(email_findings) == 2
+        assert {f.line_number for f in email_findings} == {1, 2}
+
+    def test_duplicate_identical_line_deduped(self) -> None:
+        """Exact same span on the same line must not be reported twice —
+        ``(rule, line_num, start, end)`` dedup still applies."""
+        text = "alert@real.com"
+        findings = scan_text(text)
+        email_findings = [f for f in findings if f.rule == "email_address"]
+        assert len(email_findings) == 1
+
+
+# ---------------------------------------------------------------------------
+# audit-044 regression: per-rule dedup must not swallow distinct secrets
+# ---------------------------------------------------------------------------
+
+
+class TestAudit044PerRuleDedup:
+    """Regression tests for audit-044.
+
+    Prior to the fix, ``_scan_line`` skipped any rule after its first hit
+    (``if rule_label in seen_rules: continue``), so a file with two different
+    AWS keys or two different credit-card numbers would report only one —
+    scanner evasion. Dedup now keys on ``(rule, line_num, span)`` instead.
+    """
+
+    def test_two_distinct_aws_keys_both_reported(self) -> None:
+        text = 'honeypot = "AKIAIOSFODNN7EXAMPLE"\nreal = "AKIAI44QH8DHBEXAMPLE"\n'
+        findings = scan_text(text)
+        aws = [f for f in findings if f.rule == "aws_access_key"]
+        assert len(aws) == 2, f"expected 2 aws_access_key findings, got {len(aws)}: {aws}"
+        assert {f.line_number for f in aws} == {1, 2}
+
+    def test_two_distinct_credit_cards_both_reported(self) -> None:
+        # Two different Luhn-valid numbers on separate lines.
+        text = "card_a = '4111 1111 1111 1111'\ncard_b = '5500 0000 0000 0004'\n"
+        findings = scan_text(text)
+        cards = [f for f in findings if f.rule == "credit_card_number"]
+        assert len(cards) == 2, f"expected 2 credit_card_number findings, got {len(cards)}: {cards}"
+        assert {f.line_number for f in cards} == {1, 2}
+
+    def test_two_distinct_github_tokens_both_reported(self) -> None:
+        text = 'a = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\nb = "ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"\n'
+        findings = scan_text(text)
+        toks = [f for f in findings if f.rule == "github_token"]
+        assert len(toks) == 2
+        assert {f.line_number for f in toks} == {1, 2}
+
+    def test_two_distinct_aws_keys_on_same_line_both_reported(self) -> None:
+        """Even on the same line, two distinct matches (different spans) fire."""
+        text = 'pair = ("AKIAIOSFODNN7EXAMPLE", "AKIAI44QH8DHBEXAMPLE")'
+        findings = scan_text(text)
+        aws = [f for f in findings if f.rule == "aws_access_key"]
+        assert len(aws) == 2
+
+    def test_diff_with_two_distinct_aws_keys_both_reported(self) -> None:
+        diff = (
+            "--- a/config.py\n"
+            "+++ b/config.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            ' previous = "AKIAI44QH8DHBEXAMPLE"\n'
+            '+honeypot = "AKIAIOSFODNN7EXAMPLE"\n'
+            '+real = "AKIAI44QH8DHBPREVIEW"\n'
+        )
+        findings = scan_diff(diff)
+        aws = [f for f in findings if f.rule == "aws_access_key"]
+        assert len(aws) == 2
 
 
 # ---------------------------------------------------------------------------
