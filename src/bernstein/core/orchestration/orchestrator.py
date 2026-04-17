@@ -1246,7 +1246,8 @@ class Orchestrator:
             try:
                 from bernstein.core.git_hygiene import run_hygiene
 
-                run_hygiene(self._workdir)
+                active_ids = {s.id for s in self._agents.values() if s.status != "dead"}
+                run_hygiene(self._workdir, active_session_ids=active_ids)
             except Exception:
                 pass
 

@@ -168,22 +168,44 @@ def _format_relative_age(timestamp: float) -> str:
     help="Project root containing .sdd/runtime and .sdd/worktrees.",
 )
 @click.option("--yes", is_flag=True, default=False, help="Skip the confirmation prompt.")
-def cleanup_cmd(workdir: Path, yes: bool) -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also delete agent branches that are NOT merged into main. Dangerous — "
+        "may discard in-flight work. Only use after manually confirming the "
+        "branches contain nothing you want to keep."
+    ),
+)
+def cleanup_cmd(workdir: Path, yes: bool, force: bool) -> None:
     """Remove Bernstein worktrees that no longer back active tasks."""
     resolved_workdir = workdir.resolve()
     if not yes and not click.confirm("Remove inactive Bernstein worktrees and prune git state?", default=True):
         raise SystemExit(1)
+    if force and not yes and not click.confirm("--force will DELETE unmerged agent branches. Continue?", default=False):
+        raise SystemExit(1)
 
-    candidates = _cleanup_candidates(resolved_workdir)
+    store = _load_task_store(resolved_workdir)
+    active_sessions = _active_session_ids(store)
     manager = WorktreeManager(resolved_workdir)
+    candidates = sorted(session_id for session_id in manager.list_active() if session_id not in active_sessions)
     for session_id in candidates:
         manager.cleanup(session_id)
 
-    hygiene = run_hygiene(resolved_workdir, full=True)
+    hygiene = run_hygiene(
+        resolved_workdir,
+        full=True,
+        active_session_ids=active_sessions,
+        force_unmerged=force,
+    )
+    skipped = hygiene.get("branches_skipped", 0)
     console.print(
         "[green]Cleanup complete.[/green] "
         f"Removed {len(candidates)} inactive worktree(s); "
-        f"pruned {hygiene['branches_deleted']} branch(es) and {hygiene['stash_dropped']} stash(es)."
+        f"pruned {hygiene['branches_deleted']} branch(es), "
+        f"preserved {skipped} unmerged branch(es), "
+        f"dropped {hygiene['stash_dropped']} stash(es)."
     )
 
 

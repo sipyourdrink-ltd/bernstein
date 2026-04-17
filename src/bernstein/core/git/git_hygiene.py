@@ -121,28 +121,57 @@ def _rmtree_powershell_fallback(path: Path) -> bool:
         return False
 
 
-def run_hygiene(workdir: Path, *, full: bool = False) -> dict[str, int]:
+DEFAULT_TARGET_BRANCH = "main"
+
+
+def run_hygiene(
+    workdir: Path,
+    *,
+    full: bool = False,
+    target_branch: str = DEFAULT_TARGET_BRANCH,
+    active_session_ids: frozenset[str] | set[str] | None = None,
+    force_unmerged: bool = False,
+) -> dict[str, int]:
     """Run git hygiene checks and cleanup.
 
     Args:
         workdir: Repository root.
         full: If True, run all checks (shutdown mode).
               If False, only quick checks (periodic mode).
+        target_branch: Branch that agent work must be merged into before a
+            local agent/* branch can be safely deleted. Defaults to ``main``.
+        active_session_ids: Session identifiers whose branches must be
+            preserved regardless of merge status (branches currently being
+            committed to by live agents).
+        force_unmerged: **Dangerous.** When True, delete agent branches even
+            if they are not merged into ``target_branch``. This is a
+            privileged opt-in — automated periodic/bootstrap/shutdown
+            cleanup must never set it. Only an explicit CLI command with a
+            ``--force`` flag should pass ``True``.
 
     Returns:
-        Dict with counts: worktrees_cleaned, branches_deleted, stash_dropped.
+        Dict with counts: worktrees_cleaned, branches_deleted, stash_dropped,
+        branches_skipped (new: unmerged branches left alone for safety).
     """
     stats: dict[str, int] = {
         "worktrees_cleaned": 0,
         "branches_deleted": 0,
+        "branches_skipped": 0,
         "stash_dropped": 0,
     }
 
     # 1. Clean stale worktrees
     stats["worktrees_cleaned"] = _clean_stale_worktrees(workdir)
 
-    # 2. Delete merged agent branches
-    stats["branches_deleted"] = _delete_merged_agent_branches(workdir)
+    # 2. Delete merged agent branches (preserves unmerged work by default)
+    deleted, skipped = _delete_merged_agent_branches(
+        workdir,
+        target_branch=target_branch,
+        active_session_ids=active_session_ids or frozenset(),
+        force_unmerged=force_unmerged,
+    )
+    stats["branches_deleted"] = deleted
+    stats["branches_skipped"] = skipped
 
     # 3. Prune git worktree registry
     run_git(["worktree", "prune"], workdir, timeout=10)
@@ -157,9 +186,11 @@ def run_hygiene(workdir: Path, *, full: bool = False) -> dict[str, int]:
     total = sum(stats.values())
     if total > 0:
         logger.info(
-            "Git hygiene: cleaned %d worktree(s), %d branch(es), %d stash(es)",
+            "Git hygiene: cleaned %d worktree(s), %d branch(es) deleted, "
+            "%d branch(es) preserved (unmerged), %d stash(es)",
             stats["worktrees_cleaned"],
             stats["branches_deleted"],
+            stats["branches_skipped"],
             stats["stash_dropped"],
         )
 
@@ -193,24 +224,131 @@ def _clean_stale_worktrees(workdir: Path) -> int:
     return cleaned
 
 
-def _delete_merged_agent_branches(workdir: Path) -> int:
-    """Delete local agent/* branches that have been merged or are stale."""
+def _is_branch_merged(workdir: Path, branch: str, target_branch: str) -> bool:
+    """Return True when *branch* is fully contained in *target_branch*.
+
+    Uses ``git merge-base --is-ancestor`` which reports success (exit 0)
+    only when every commit on *branch* is reachable from *target_branch* —
+    i.e. there is no unmerged work that would be lost by deleting *branch*.
+
+    Args:
+        workdir: Repository root.
+        branch: Candidate branch name (e.g. ``agent/abc123``).
+        target_branch: Integration branch (usually ``main``).
+
+    Returns:
+        True iff *branch* is an ancestor of *target_branch*; False when the
+        branch still has unique commits or the check could not be run
+        (missing target, transient git failure). When in doubt we return
+        False — callers must preserve the branch on uncertainty.
+    """
+    result = run_git(
+        ["merge-base", "--is-ancestor", branch, target_branch],
+        workdir,
+        timeout=10,
+    )
+    return result.ok
+
+
+def _session_id_from_branch(branch: str) -> str:
+    """Extract the session id suffix from an ``agent/<session>`` branch.
+
+    Args:
+        branch: Branch name.
+
+    Returns:
+        Portion after the ``agent/`` prefix, or the original branch when it
+        does not match the expected layout.
+    """
+    prefix = "agent/"
+    return branch[len(prefix) :] if branch.startswith(prefix) else branch
+
+
+def _delete_merged_agent_branches(
+    workdir: Path,
+    *,
+    target_branch: str = DEFAULT_TARGET_BRANCH,
+    active_session_ids: frozenset[str] | set[str] = frozenset(),
+    force_unmerged: bool = False,
+) -> tuple[int, int]:
+    """Delete local ``agent/*`` branches that are safe to remove.
+
+    A branch is only deleted when ALL of the following hold:
+
+    1. Its session id is NOT in *active_session_ids* (no live agent is
+       committing to it).
+    2. Every commit on it is already reachable from *target_branch* (i.e.
+       ``git merge-base --is-ancestor`` succeeds) — unless *force_unmerged*
+       is explicitly True.
+
+    Args:
+        workdir: Repository root.
+        target_branch: Branch to check ancestry against. Defaults to
+            :data:`DEFAULT_TARGET_BRANCH`.
+        active_session_ids: Session identifiers whose branches must not be
+            touched because live agents are still using them.
+        force_unmerged: **Dangerous.** Skip the merge-ancestry check and
+            delete unmerged branches too. Reserved for privileged CLI paths
+            that explicitly opt in; automated cleanup MUST leave this False.
+
+    Returns:
+        ``(deleted_count, skipped_count)`` — skipped counts branches that
+        were preserved because they were unmerged or in use.
+    """
     result = run_git(["branch", "--list", "agent/*"], workdir, timeout=10)
     if not result.ok or not result.stdout.strip():
-        return 0
+        return 0, 0
 
     deleted = 0
+    skipped = 0
     for line in result.stdout.strip().splitlines():
         branch = line.strip().lstrip("* ")
         if not branch.startswith("agent/"):
             continue
-        # Force delete — these are disposable agent branches
-        del_result = run_git(["branch", "-D", branch], workdir, timeout=10)
+
+        # Guard 1: live agents own these branches — never touch them.
+        session_id = _session_id_from_branch(branch)
+        if session_id in active_session_ids:
+            logger.info(
+                "Preserving agent branch %s — session %s is active",
+                branch,
+                session_id,
+            )
+            skipped += 1
+            continue
+
+        # Guard 2: only delete fully-merged branches unless force was given.
+        merged = _is_branch_merged(workdir, branch, target_branch)
+        if not merged and not force_unmerged:
+            logger.warning(
+                "Preserving unmerged agent branch %s — not an ancestor of %s; "
+                "pass force_unmerged=True via a privileged CLI path to override",
+                branch,
+                target_branch,
+            )
+            skipped += 1
+            continue
+
+        del_args = ["branch", "-D"] if (force_unmerged and not merged) else ["branch", "-d"]
+        del_result = run_git([*del_args, branch], workdir, timeout=10)
         if del_result.ok:
             deleted += 1
-            logger.debug("Deleted agent branch: %s", branch)
+            if merged:
+                logger.info("Deleted merged agent branch: %s", branch)
+            else:
+                logger.warning(
+                    "Force-deleted UNMERGED agent branch %s (force_unmerged=True)",
+                    branch,
+                )
+        else:
+            logger.warning(
+                "Failed to delete agent branch %s: %s",
+                branch,
+                del_result.stderr.strip() or del_result.stdout.strip(),
+            )
+            skipped += 1
 
-    return deleted
+    return deleted, skipped
 
 
 def _drop_stale_stashes(workdir: Path) -> int:
