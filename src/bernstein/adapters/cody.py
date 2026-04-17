@@ -127,9 +127,7 @@ class CodyAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "cody not found in PATH. Install with: npm install -g @sourcegraph/cody"
-                ) from exc
+                raise RuntimeError("cody not found in PATH. Install with: npm install -g @sourcegraph/cody") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing cody: {exc}") from exc
 

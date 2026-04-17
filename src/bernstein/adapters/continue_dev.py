@@ -120,9 +120,7 @@ class ContinueDevAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "cn not found in PATH. Install with: npm install -g @continuedev/cli"
-                ) from exc
+                raise RuntimeError("cn not found in PATH. Install with: npm install -g @continuedev/cli") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing cn: {exc}") from exc
 
