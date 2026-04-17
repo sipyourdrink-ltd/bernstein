@@ -175,7 +175,11 @@ class CachingAdapter(CLIAdapter):
                 log_path=workdir / f"{session_id}.log",
             )
 
-        # 4. Cache miss: delegate to inner adapter
+        # 4. Cache miss: delegate to inner adapter.
+        # Forward ALL kwargs from the base CLIAdapter.spawn interface explicitly
+        # so that type checkers catch future drift — missing budget_multiplier
+        # or system_addendum silently broke retry budgets and role-scoped
+        # system prompts (audit-129).
         return self._inner.spawn(
             prompt=prompt,
             workdir=workdir,
@@ -184,6 +188,8 @@ class CachingAdapter(CLIAdapter):
             mcp_config=mcp_config,
             timeout_seconds=timeout_seconds,
             task_scope=task_scope,
+            budget_multiplier=budget_multiplier,
+            system_addendum=system_addendum,
         )
 
     def name(self) -> str:

@@ -151,6 +151,37 @@ def test_is_alive_always_false_for_pid_0(adapter: CachingAdapter, mock_inner: Ma
     mock_inner.is_alive.assert_called_with(1234)
 
 
+def test_spawn_forwards_budget_multiplier_and_system_addendum(
+    adapter: CachingAdapter,
+    mock_inner: MagicMock,
+) -> None:
+    """Regression for audit-129: cache miss must forward all base-interface kwargs.
+
+    The wrapper previously dropped ``budget_multiplier`` and ``system_addendum``
+    when delegating to the inner adapter, silently disabling retry budget
+    scaling and role-scoped system prompt injection.
+    """
+    res = adapter.spawn(
+        prompt="task that will miss the cache",
+        workdir=Path("/tmp"),
+        model_config=_model_config("sonnet"),
+        session_id="audit-129",
+        budget_multiplier=2.5,
+        system_addendum="x",
+    )
+
+    assert res.pid == 1234
+    assert mock_inner.spawn.call_count == 1
+
+    kwargs = mock_inner.spawn.call_args.kwargs
+    assert kwargs["budget_multiplier"] == 2.5
+    assert kwargs["system_addendum"] == "x"
+    # Sanity: other kwargs from the base interface are still forwarded.
+    assert kwargs["prompt"] == "task that will miss the cache"
+    assert kwargs["session_id"] == "audit-129"
+    assert kwargs["task_scope"] == "medium"
+
+
 def test_concurrency_safe_spawns(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
     """Verify that multiple threads can safely spawn through the adapter."""
     import threading
