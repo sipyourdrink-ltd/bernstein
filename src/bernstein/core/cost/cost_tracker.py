@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -42,6 +44,41 @@ logger = logging.getLogger(__name__)
 DEFAULT_WARN_THRESHOLD: float = 0.80
 DEFAULT_CRITICAL_THRESHOLD: float = 0.95
 DEFAULT_HARD_STOP_THRESHOLD: float = 1.00
+
+# ---------------------------------------------------------------------------
+# Usage history buffer (audit-057)
+# ---------------------------------------------------------------------------
+
+# Default number of recent ``TokenUsage`` records kept in memory per tracker.
+# Older rows are evicted (and optionally rotated to JSONL) so that a long-
+# running orchestrator does not grow its RSS without bound. Analytics
+# (totals, per-agent, per-model, cache savings) are maintained via
+# accumulators and remain correct after eviction.
+DEFAULT_USAGE_BUFFER: int = 10_000
+
+
+def _resolve_usage_buffer_size() -> int:
+    """Read ``BERNSTEIN_COST_USAGE_BUFFER`` with a safe default/fallback.
+
+    Returns:
+        A positive integer buffer size. Invalid or non-positive values fall
+        back to :data:`DEFAULT_USAGE_BUFFER`.
+    """
+    raw = os.environ.get("BERNSTEIN_COST_USAGE_BUFFER")
+    if raw is None or raw == "":
+        return DEFAULT_USAGE_BUFFER
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid BERNSTEIN_COST_USAGE_BUFFER=%r; using default %d",
+            raw,
+            DEFAULT_USAGE_BUFFER,
+        )
+        return DEFAULT_USAGE_BUFFER
+    if value <= 0:
+        return DEFAULT_USAGE_BUFFER
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -243,14 +280,45 @@ class CostTracker:
     warn_threshold: float = DEFAULT_WARN_THRESHOLD
     critical_threshold: float = DEFAULT_CRITICAL_THRESHOLD
     hard_stop_threshold: float = DEFAULT_HARD_STOP_THRESHOLD
+    # audit-057: bound in-memory usage history. ``None`` → resolve from
+    # ``BERNSTEIN_COST_USAGE_BUFFER`` env var (default 10_000). 0 disables
+    # the cap (unbounded) for legacy/test use only; not recommended.
+    usage_buffer_size: int | None = None
+    # Optional: directory to rotate evicted rows into as JSONL. When None,
+    # evicted rows are dropped (accumulators still carry their stats).
+    rotation_dir: Path | None = None
 
     # Mutable tracking state (not constructor args)
     _spent_usd: float = field(default=0.0, init=False, repr=False)
-    _usages: list[TokenUsage] = field(default_factory=list[TokenUsage], init=False, repr=False)
+    _usages: deque[TokenUsage] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_USAGE_BUFFER),
+        init=False,
+        repr=False,
+    )
+    _total_usages_recorded: int = field(default=0, init=False, repr=False)
     _warned: bool = field(default=False, init=False, repr=False)
     _critical_warned: bool = field(default=False, init=False, repr=False)
     _spent_by_agent: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
     _spent_by_model: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
+    # Per-agent analytics accumulator: total cost, invocation count, and
+    # per-model breakdown. Populated incrementally so that analytics stay
+    # correct after older usages are evicted from ``_usages``.
+    _agent_accum: dict[str, dict[str, Any]] = field(
+        default_factory=dict[str, dict[str, Any]],
+        init=False,
+        repr=False,
+    )
+    # Per-model analytics accumulator: cost + token buckets (input/output/
+    # cache_read/cache_write) and invocation count.
+    _model_accum: dict[str, dict[str, float]] = field(
+        default_factory=dict[str, dict[str, float]],
+        init=False,
+        repr=False,
+    )
+    # Running total of savings from prompt-cache reads (USD) and savings vs
+    # an all-Opus baseline — kept so reports survive usage eviction.
+    _cache_savings_usd: float = field(default=0.0, init=False, repr=False)
+    _opus_baseline_savings_usd: float = field(default=0.0, init=False, repr=False)
     _cumulative_tokens: dict[tuple[str, str, str], tuple[int, ...]] = field(
         default_factory=dict[tuple[str, str, str], tuple[int, ...]],
         init=False,
@@ -260,6 +328,18 @@ class CostTracker:
     # Prevents race where two concurrent agents both pass the budget check
     # before either's cost is recorded, causing budget overshoot.
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Resolve the usage buffer size and rebuild the deque accordingly."""
+        resolved = self.usage_buffer_size
+        if resolved is None:
+            resolved = _resolve_usage_buffer_size()
+        # A non-positive value means "unbounded" — store as ``None`` maxlen.
+        maxlen: int | None = resolved if resolved > 0 else None
+        # Preserve any usages that may have been pre-seeded (load path).
+        seed = list(self._usages)
+        self._usages = deque(seed, maxlen=maxlen)
+        self.usage_buffer_size = resolved
 
     # ---- recording --------------------------------------------------------
 
@@ -315,13 +395,22 @@ class CostTracker:
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
         )
+        evicted: TokenUsage | None = None
         with self._lock:
+            # Ring-buffer append: capture the row that would be evicted so we
+            # can rotate it to JSONL before it falls off the end (audit-057).
+            if self._usages.maxlen is not None and len(self._usages) >= self._usages.maxlen:
+                evicted = self._usages[0]
             self._usages.append(usage)
+            self._total_usages_recorded += 1
             self._spent_usd += cost_usd
             self._spent_by_agent[agent_id] = self._spent_by_agent.get(agent_id, 0.0) + cost_usd
             self._spent_by_model[model] = self._spent_by_model.get(model, 0.0) + cost_usd
+            self._update_accumulators(usage)
             status = self.status()
 
+        if evicted is not None:
+            self._rotate_evicted(evicted)
         self._emit_threshold_warnings(status)
         return status
 
@@ -462,8 +551,21 @@ class CostTracker:
 
     @property
     def usages(self) -> list[TokenUsage]:
-        """All recorded token usage entries (read-only copy)."""
+        """Recent token usage entries (read-only copy).
+
+        Returns at most :attr:`usage_buffer_size` rows; older rows are
+        evicted to keep memory bounded (see audit-057). Per-agent and
+        per-model analytics remain exact via accumulators, but anyone
+        iterating this list for raw per-row analysis should consult the
+        JSONL rotation files under :attr:`rotation_dir` if full history is
+        required.
+        """
         return list(self._usages)
+
+    @property
+    def total_usages_recorded(self) -> int:
+        """Total usage records ever appended, including evicted rows."""
+        return self._total_usages_recorded
 
     def spent_for_agent(self, agent_id: str) -> float:
         """Return cumulative spend for one agent session."""
@@ -576,15 +678,10 @@ class CostTracker:
         Returns:
             Multi-line markdown string.
         """
-        opus_cost_per_1k = _MODEL_COST_USD_PER_1K["opus"]
-        savings = 0.0
-        for u in self._usages:
-            if "opus" not in u.model.lower():
-                total_tokens = u.input_tokens + u.output_tokens
-                if total_tokens > 0:
-                    opus_est = (total_tokens / 1000.0) * opus_cost_per_1k
-                    savings += max(opus_est - u.cost_usd, 0.0)
-
+        # audit-057: consult the running accumulator so the summary reflects
+        # the entire run history even after older rows are evicted from the
+        # in-memory ring buffer.
+        savings = max(0.0, self._opus_baseline_savings_usd)
         actual = self._spent_usd
         single_agent = actual + savings
         savings_pct = (savings / single_agent * 100) if single_agent > 0 else 0.0
@@ -607,60 +704,37 @@ class CostTracker:
     # ---- breakdowns & projection ------------------------------------------
 
     def agent_summaries(self) -> list[AgentCostSummary]:
-        """Build per-agent cost summaries from recorded usages.
+        """Build per-agent cost summaries from the accumulators.
+
+        Uses the running per-agent accumulator so that summaries stay exact
+        even after older ``_usages`` have been evicted (audit-057).
 
         Returns:
             List of :class:`AgentCostSummary` sorted by total cost descending.
         """
-        data: dict[str, dict[str, Any]] = {}
-        for u in self._usages:
-            if u.agent_id not in data:
-                data[u.agent_id] = {"total": 0.0, "count": 0, "models": {}}
-            data[u.agent_id]["total"] += u.cost_usd
-            data[u.agent_id]["count"] += 1
-            bucket: dict[str, float] = data[u.agent_id]["models"]
-            bucket[u.model] = bucket.get(u.model, 0.0) + u.cost_usd
-
         return [
             AgentCostSummary(
                 agent_id=aid,
-                total_cost_usd=round(d["total"], 6),
+                total_cost_usd=round(float(d["total"]), 6),
                 task_count=int(d["count"]),
-                model_breakdown={m: round(c, 6) for m, c in d["models"].items()},
+                model_breakdown={m: round(float(c), 6) for m, c in cast("dict[str, float]", d["models"]).items()},
             )
-            for aid, d in sorted(data.items(), key=lambda kv: kv[1]["total"], reverse=True)
+            for aid, d in sorted(self._agent_accum.items(), key=lambda kv: float(kv[1]["total"]), reverse=True)
         ]
 
     def model_breakdowns(self) -> list[ModelCostBreakdown]:
-        """Build per-model cost breakdowns from recorded usages.
+        """Build per-model cost breakdowns from the accumulators.
+
+        Uses the running per-model accumulator so that breakdowns stay
+        exact even after older ``_usages`` have been evicted (audit-057).
 
         Returns:
             List of :class:`ModelCostBreakdown` sorted by total cost descending.
         """
-        data: dict[str, dict[str, Any]] = {}
-        for u in self._usages:
-            if u.model not in data:
-                data[u.model] = {
-                    "total": 0.0,
-                    "tokens": 0,
-                    "count": 0,
-                    "input": 0,
-                    "output": 0,
-                    "cache_read": 0,
-                    "cache_write": 0,
-                }
-            data[u.model]["total"] += u.cost_usd
-            data[u.model]["tokens"] += u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens
-            data[u.model]["count"] += 1
-            data[u.model]["input"] += u.input_tokens
-            data[u.model]["output"] += u.output_tokens
-            data[u.model]["cache_read"] += u.cache_read_tokens
-            data[u.model]["cache_write"] += u.cache_write_tokens
-
         return [
             ModelCostBreakdown(
                 model=model,
-                total_cost_usd=round(d["total"], 6),
+                total_cost_usd=round(float(d["total"]), 6),
                 total_tokens=int(d["tokens"]),
                 invocation_count=int(d["count"]),
                 input_tokens=int(d["input"]),
@@ -668,7 +742,7 @@ class CostTracker:
                 cache_read_tokens=int(d["cache_read"]),
                 cache_write_tokens=int(d["cache_write"]),
             )
-            for model, d in sorted(data.items(), key=lambda kv: kv[1]["total"], reverse=True)
+            for model, d in sorted(self._model_accum.items(), key=lambda kv: float(kv[1]["total"]), reverse=True)
         ]
 
     def project(self, tasks_done: int, tasks_remaining: int) -> RunCostProjection:
@@ -705,34 +779,16 @@ class CostTracker:
         )
 
     def cache_savings_usd(self) -> float:
-        """Estimate USD saved by prompt caching across all recorded usages.
+        """Estimate USD saved by prompt caching across the entire run.
 
-        For each usage record with cache_read_tokens > 0, computes the
-        difference between what those tokens would have cost at full input
-        price vs the discounted cache-read price.
+        Uses the running :attr:`_cache_savings_usd` accumulator so the
+        reported figure covers every usage ever recorded — not just the
+        ones currently held in the bounded in-memory buffer (audit-057).
 
         Returns:
             Estimated savings in USD (always >= 0).
         """
-        from bernstein.core.cost.cost import MODEL_COSTS_PER_1M_TOKENS
-
-        savings = 0.0
-        for u in self._usages:
-            if u.cache_read_tokens <= 0:
-                continue
-            model_lower = u.model.lower()
-            pricing: dict[str, float] | None = None
-            for key, costs in MODEL_COSTS_PER_1M_TOKENS.items():
-                if key in model_lower:
-                    pricing = costs
-                    break
-            if pricing is None:
-                continue
-            input_price = pricing.get("input", 0.0)
-            cache_read_price = pricing.get("cache_read", input_price)
-            # Savings = tokens * (full_price - discounted_price) per million
-            savings += (u.cache_read_tokens / 1_000_000.0) * (input_price - cache_read_price)
-        return max(0.0, savings)
+        return max(0.0, self._cache_savings_usd)
 
     def report(self, tasks_done: int = 0, tasks_remaining: int = 0) -> RunCostReport:
         """Build a full cost report for this run.
@@ -781,6 +837,91 @@ class CostTracker:
         return file_path
 
     # ---- internal ---------------------------------------------------------
+
+    def _update_accumulators(self, usage: TokenUsage) -> None:
+        """Update running analytics counters for a single usage record.
+
+        Called under :attr:`_lock` so callers do not need additional
+        synchronisation. The accumulators let analytics survive eviction of
+        older rows from the bounded :attr:`_usages` buffer (audit-057).
+
+        Args:
+            usage: The newly-recorded :class:`TokenUsage`.
+        """
+        # Per-agent accumulator
+        agent_bucket = self._agent_accum.get(usage.agent_id)
+        if agent_bucket is None:
+            agent_bucket = {"total": 0.0, "count": 0, "models": {}}
+            self._agent_accum[usage.agent_id] = agent_bucket
+        agent_bucket["total"] = float(agent_bucket["total"]) + usage.cost_usd
+        agent_bucket["count"] = int(agent_bucket["count"]) + 1
+        models_bucket = cast("dict[str, float]", agent_bucket["models"])
+        models_bucket[usage.model] = models_bucket.get(usage.model, 0.0) + usage.cost_usd
+
+        # Per-model accumulator
+        model_bucket = self._model_accum.get(usage.model)
+        if model_bucket is None:
+            model_bucket = {
+                "total": 0.0,
+                "tokens": 0.0,
+                "count": 0.0,
+                "input": 0.0,
+                "output": 0.0,
+                "cache_read": 0.0,
+                "cache_write": 0.0,
+            }
+            self._model_accum[usage.model] = model_bucket
+        model_bucket["total"] += usage.cost_usd
+        model_bucket["tokens"] += (
+            usage.input_tokens + usage.output_tokens + usage.cache_read_tokens + usage.cache_write_tokens
+        )
+        model_bucket["count"] += 1
+        model_bucket["input"] += usage.input_tokens
+        model_bucket["output"] += usage.output_tokens
+        model_bucket["cache_read"] += usage.cache_read_tokens
+        model_bucket["cache_write"] += usage.cache_write_tokens
+
+        # Running cache-read savings
+        if usage.cache_read_tokens > 0:
+            from bernstein.core.cost.cost import MODEL_COSTS_PER_1M_TOKENS
+
+            model_lower = usage.model.lower()
+            pricing: dict[str, float] | None = None
+            for key, costs in MODEL_COSTS_PER_1M_TOKENS.items():
+                if key in model_lower:
+                    pricing = costs
+                    break
+            if pricing is not None:
+                input_price = pricing.get("input", 0.0)
+                cache_read_price = pricing.get("cache_read", input_price)
+                self._cache_savings_usd += (usage.cache_read_tokens / 1_000_000.0) * (input_price - cache_read_price)
+
+        # Running "vs all-Opus" baseline savings
+        if "opus" not in usage.model.lower():
+            total_tokens = usage.input_tokens + usage.output_tokens
+            if total_tokens > 0:
+                opus_cost_per_1k = _MODEL_COST_USD_PER_1K["opus"]
+                opus_est = (total_tokens / 1000.0) * opus_cost_per_1k
+                self._opus_baseline_savings_usd += max(opus_est - usage.cost_usd, 0.0)
+
+    def _rotate_evicted(self, usage: TokenUsage) -> None:
+        """Append an evicted usage row to a JSONL rotation file.
+
+        Does nothing when :attr:`rotation_dir` is unset — in that case the
+        row is simply dropped (its stats are still carried in the
+        accumulators). Failures are logged and swallowed so that telemetry
+        IO never blocks the orchestrator hot path (audit-057).
+        """
+        rotation_dir = self.rotation_dir
+        if rotation_dir is None:
+            return
+        try:
+            rotation_dir.mkdir(parents=True, exist_ok=True)
+            rotation_file = rotation_dir / f"usages-{self.run_id}.jsonl"
+            with rotation_file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(usage.to_dict()) + "\n")
+        except OSError as exc:  # pragma: no cover - best-effort IO
+            logger.debug("Failed to rotate evicted cost usage for run %s: %s", self.run_id, exc)
 
     def _emit_threshold_warnings(self, status: BudgetStatus) -> None:
         """Log warnings when budget thresholds are crossed.
