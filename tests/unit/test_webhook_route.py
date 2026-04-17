@@ -18,13 +18,21 @@ def jsonl_path(tmp_path: Path) -> Path:
     return tmp_path / "tasks.jsonl"
 
 
+_WEBHOOK_SECRET = "top-secret"
+
+
 @pytest.fixture()
-def app(jsonl_path: Path):
+def app(jsonl_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # audit-042: /webhook requires BERNSTEIN_WEBHOOK_SECRET to be
+    # configured — the endpoint 503s without it.  Set a stable secret
+    # so the "happy path" tests in this file can exercise the route.
+    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", _WEBHOOK_SECRET)
     return create_app(jsonl_path=jsonl_path)
 
 
 @pytest.fixture()
-def app_with_auth(jsonl_path: Path):
+def app_with_auth(jsonl_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", _WEBHOOK_SECRET)
     return create_app(jsonl_path=jsonl_path, auth_token="server-token")
 
 
@@ -42,11 +50,15 @@ async def auth_client(app_with_auth) -> AsyncClient:
         yield c
 
 
+_SECRET_HEADERS = {"x-bernstein-webhook-secret": _WEBHOOK_SECRET}
+
+
 @pytest.mark.anyio
 async def test_generic_webhook_creates_task_with_defaults(client: AsyncClient) -> None:
     response = await client.post(
         "/webhook",
         json={"title": "Fix flaky login", "description": "Investigate the login test flake."},
+        headers=_SECRET_HEADERS,
     )
 
     assert response.status_code == 201
@@ -63,6 +75,7 @@ async def test_generic_webhook_is_public_when_server_auth_is_enabled(auth_client
     response = await auth_client.post(
         "/webhook",
         json={"title": "Create task", "description": "This should bypass bearer auth."},
+        headers=_SECRET_HEADERS,
     )
 
     assert response.status_code == 201
@@ -71,7 +84,7 @@ async def test_generic_webhook_is_public_when_server_auth_is_enabled(auth_client
 
 @pytest.mark.anyio
 async def test_generic_webhook_enforces_shared_secret(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", "top-secret")
+    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", _WEBHOOK_SECRET)
 
     missing = await client.post(
         "/webhook",
@@ -89,7 +102,7 @@ async def test_generic_webhook_enforces_shared_secret(client: AsyncClient, monke
     allowed = await client.post(
         "/webhook",
         json={"title": "Allowed", "description": "Correct shared secret header."},
-        headers={"x-bernstein-webhook-secret": "top-secret"},
+        headers=_SECRET_HEADERS,
     )
     assert allowed.status_code == 201
     assert allowed.json()["task"]["title"] == "Allowed"

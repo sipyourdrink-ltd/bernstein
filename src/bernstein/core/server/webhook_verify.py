@@ -60,12 +60,28 @@ class WebhookSignatureVerifier:
         return os.environ.get(self._secret_env_var, "")
 
     async def __call__(self, request: Request) -> None:
-        """Verify the webhook signature or raise 401/403."""
+        """Verify the webhook signature or raise 401/403/503.
+
+        Fail-closed (audit-042): when no secret is configured (neither
+        constructor argument, ``request.app.state.webhook_secret``, nor
+        the configured environment variable) the dependency raises HTTP
+        503 — the endpoint is considered disabled and unsigned requests
+        must never be accepted.
+        """
         secret = self._resolve_secret(request)
         if not secret:
-            # No secret configured — skip verification (dev mode)
-            logger.debug("Webhook verification skipped: no secret configured")
-            return
+            logger.error(
+                "Rejecting webhook request: no secret configured (checked app state and %s). Endpoint is disabled.",
+                self._secret_env_var,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Webhook endpoint is not configured: set "
+                    f"{self._secret_env_var} to the shared secret "
+                    "used by the caller."
+                ),
+            )
 
         signature = request.headers.get(self._header, "")
         if not signature:

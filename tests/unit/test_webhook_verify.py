@@ -40,14 +40,18 @@ class TestWebhookSignatureVerifier:
     """Test the FastAPI dependency class."""
 
     @pytest.mark.anyio()
-    async def test_no_secret_skips_verification(self) -> None:
-        """When no secret is configured, verification should pass."""
+    async def test_no_secret_disables_endpoint(self) -> None:
+        """audit-042: when no secret is configured, verifier raises 503.
+
+        Fail-closed — a missing secret means the endpoint is *disabled*,
+        not silently open.  Unsigned webhooks must never be accepted.
+        """
         verifier = WebhookSignatureVerifier(secret="")
         request = MagicMock()
         request.app.state = MagicMock(spec=[])  # No webhook_secret attr
-        # Should not raise
-        with patch.dict("os.environ", {}, clear=True):
+        with patch.dict("os.environ", {}, clear=True), pytest.raises(HTTPException) as exc_info:
             await verifier(request)
+        assert exc_info.value.status_code == 503
 
     @pytest.mark.anyio()
     async def test_missing_header_raises_401(self) -> None:

@@ -413,15 +413,30 @@ _WORKFLOW_RUN_FAILURE_PAYLOAD = {
 }
 
 
+# audit-042: /webhooks/github requires GITHUB_WEBHOOK_SECRET to be set
+# and every request must carry a matching HMAC signature.  These helpers
+# keep the CI-routing tests readable while exercising the real auth path.
+_CI_WEBHOOK_SECRET = "ci-routing-webhook-secret"
+
+
+def _gh_sign(body: bytes, secret: str = _CI_WEBHOOK_SECRET) -> str:
+    import hashlib
+    import hmac as _hmac
+
+    digest = _hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
+
+
 @pytest.fixture()
 def _jsonl(tmp_path: Path) -> Path:
     return tmp_path / "tasks.jsonl"
 
 
 @pytest.fixture()
-def _app(_jsonl: Path) -> Any:
+def _app(_jsonl: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     from bernstein.core.server import create_app
 
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", _CI_WEBHOOK_SECRET)
     return create_app(jsonl_path=_jsonl)
 
 
@@ -458,7 +473,10 @@ async def test_webhook_workflow_run_creates_task(_client: Any) -> None:
         resp = await _client.post(
             "/webhooks/github",
             content=body,
-            headers={"X-GitHub-Event": "workflow_run"},
+            headers={
+                "X-GitHub-Event": "workflow_run",
+                "X-Hub-Signature-256": _gh_sign(body),
+            },
         )
 
     assert resp.status_code == 200
@@ -473,7 +491,10 @@ async def test_webhook_workflow_run_success_no_task(_client: Any) -> None:
     resp = await _client.post(
         "/webhooks/github",
         content=body,
-        headers={"X-GitHub-Event": "workflow_run"},
+        headers={
+            "X-GitHub-Event": "workflow_run",
+            "X-Hub-Signature-256": _gh_sign(body),
+        },
     )
     assert resp.status_code == 200
     assert resp.json()["tasks_created"] == 0
@@ -517,7 +538,10 @@ async def test_webhook_workflow_run_retry_cap_enforced(_client: Any) -> None:
         resp = await _client.post(
             "/webhooks/github",
             content=body,
-            headers={"X-GitHub-Event": "workflow_run"},
+            headers={
+                "X-GitHub-Event": "workflow_run",
+                "X-Hub-Signature-256": _gh_sign(body),
+            },
         )
 
     assert resp.status_code == 200
@@ -528,9 +552,13 @@ async def test_webhook_workflow_run_retry_cap_enforced(_client: Any) -> None:
 
 @pytest.mark.anyio
 async def test_webhook_workflow_run_bad_json_returns_400(_client: Any) -> None:
+    body = b"not json"
     resp = await _client.post(
         "/webhooks/github",
-        content=b"not json",
-        headers={"X-GitHub-Event": "workflow_run"},
+        content=body,
+        headers={
+            "X-GitHub-Event": "workflow_run",
+            "X-Hub-Signature-256": _gh_sign(body),
+        },
     )
     assert resp.status_code == 400

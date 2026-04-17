@@ -66,13 +66,22 @@ async def test_create_task_persists_header_tenant(client: AsyncClient, app: Fast
 
 
 @pytest.mark.anyio
-async def test_webhook_task_persists_header_tenant(client: AsyncClient, app: FastAPI, jsonl_path: Path) -> None:
+async def test_webhook_task_persists_header_tenant(
+    client: AsyncClient, app: FastAPI, jsonl_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Generic webhook task creation should tag tasks with the inbound tenant header."""
 
+    # audit-042: /webhook now requires a configured shared secret.  The
+    # tenant-id header still controls routing, but the endpoint itself
+    # must authenticate first.
+    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", "tenant-tagging-secret")
     response = await client.post(
         "/webhook",
         json={"title": "Webhook task", "description": "Created from webhook."},
-        headers={"x-tenant-id": "tenant-beta"},
+        headers={
+            "x-tenant-id": "tenant-beta",
+            "x-bernstein-webhook-secret": "tenant-tagging-secret",
+        },
     )
     await app.state.store.flush_buffer()
 

@@ -35,11 +35,36 @@ def _get_store(request: Request) -> TaskStore:
 
 
 def _verify_generic_webhook_secret(request: Request, body: bytes) -> JSONResponse | None:
-    """Validate the optional shared secret or HMAC for POST /webhook."""
+    """Verify the shared secret or HMAC signature for POST ``/webhook``.
+
+    Fail-closed semantics (audit-042): when
+    ``BERNSTEIN_WEBHOOK_SECRET`` is not configured the endpoint is
+    disabled and every POST returns 503 — an unsigned, unauthenticated
+    webhook is indistinguishable from an agent-dispatch RCE and must
+    never be silently allowed.  When a secret is configured, callers
+    must supply either a valid HMAC-SHA256 signature in
+    ``X-Bernstein-Webhook-Signature-256`` or the raw shared secret in
+    ``X-Bernstein-Webhook-Secret``; anything else returns 401.
+    """
 
     configured_secret = os.environ.get(_GENERIC_WEBHOOK_SECRET_ENV, "")
     if not configured_secret:
-        return None
+        logger.error(
+            "Rejecting POST /webhook: %s is not configured. "
+            "Set the env var to enable the endpoint; unsigned "
+            "webhooks are not accepted.",
+            _GENERIC_WEBHOOK_SECRET_ENV,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": (
+                    "Webhook endpoint is not configured: set "
+                    f"{_GENERIC_WEBHOOK_SECRET_ENV} to the shared "
+                    "secret used by the caller."
+                ),
+            },
+        )
     provided_signature = request.headers.get(_GENERIC_WEBHOOK_SIGNATURE_HEADER, "")
     if provided_signature:
         if verify_hmac_sha256(body, provided_signature, configured_secret, prefix="sha256="):
@@ -231,22 +256,41 @@ async def github_webhook(request: Request) -> JSONResponse:
       ``MAX_CI_RETRIES`` active attempts per branch.
 
     Reads ``GITHUB_WEBHOOK_SECRET`` from environment for HMAC verification.
-    Returns 200 on success, 401 on bad/missing signature, 400 on parse error.
+    Fail-closed (audit-042): when the secret is not configured the
+    endpoint is disabled and returns 503; unsigned GitHub webhooks are
+    never accepted.
+    Returns 200 on success, 401 on bad/missing signature, 400 on parse
+    error, 503 when the endpoint is not configured.
     """
     from bernstein.github_app.webhooks import parse_webhook, verify_signature
 
     store = _get_store(request)
     body = await request.body()
 
-    # Verify HMAC signature if a webhook secret is configured
+    # Verify HMAC signature — secret MUST be configured (audit-042).
     gh_webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-    if gh_webhook_secret:
-        signature = request.headers.get("x-hub-signature-256", "")
-        if not signature or not verify_signature(body, signature, gh_webhook_secret):
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid webhook signature"},
-            )
+    if not gh_webhook_secret:
+        logger.error(
+            "Rejecting POST /webhooks/github: GITHUB_WEBHOOK_SECRET is "
+            "not configured. Set the env var to enable the endpoint; "
+            "unsigned webhooks are not accepted.",
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": (
+                    "GitHub webhook endpoint is not configured: set "
+                    "GITHUB_WEBHOOK_SECRET to the shared secret "
+                    "registered with the GitHub App."
+                ),
+            },
+        )
+    signature = request.headers.get("x-hub-signature-256", "")
+    if not signature or not verify_signature(body, signature, gh_webhook_secret):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid webhook signature"},
+        )
 
     # Parse the webhook event
     headers = dict(request.headers)
@@ -370,14 +414,35 @@ def _gitlab_pipeline_to_task(payload: dict[str, Any], retry_count: int) -> dict[
 
 
 def _verify_gitlab_token(request: Request) -> JSONResponse | None:
-    """Verify the GitLab webhook token. Returns an error response or None."""
+    """Verify the GitLab webhook token.
+
+    Fail-closed semantics (audit-042): when ``GITLAB_WEBHOOK_TOKEN`` is
+    not configured the endpoint is disabled and every POST returns 503;
+    unsigned / unauthenticated GitLab webhooks are never accepted.
+    Missing / mismatched tokens return 401.
+    """
     gitlab_token = os.environ.get("GITLAB_WEBHOOK_TOKEN", "")
+    if not gitlab_token:
+        logger.error(
+            "Rejecting POST /webhooks/gitlab: GITLAB_WEBHOOK_TOKEN is "
+            "not configured. Set the env var to enable the endpoint; "
+            "unauthenticated webhooks are not accepted.",
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": (
+                    "GitLab webhook endpoint is not configured: set "
+                    "GITLAB_WEBHOOK_TOKEN to the shared token "
+                    "registered with the GitLab project."
+                ),
+            },
+        )
     provided_token = request.headers.get("x-gitlab-token", "")
-    if gitlab_token and provided_token:
-        if not hmac.compare_digest(provided_token, gitlab_token):
-            return JSONResponse(status_code=401, content={"detail": "Invalid GitLab webhook token"})
-    elif gitlab_token and not provided_token:
+    if not provided_token:
         return JSONResponse(status_code=401, content={"detail": "Missing GitLab webhook token"})
+    if not hmac.compare_digest(provided_token, gitlab_token):
+        return JSONResponse(status_code=401, content={"detail": "Invalid GitLab webhook token"})
     return None
 
 
