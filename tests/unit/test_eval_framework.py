@@ -157,7 +157,7 @@ def test_per_model_accuracy_pass_rate() -> None:
 
 def test_per_model_accuracy_pass_rate_zero_when_no_records() -> None:
     acc = ModelAccuracy(model="haiku")
-    assert acc.pass_rate == 0.0
+    assert acc.pass_rate == 0
 
 
 def test_per_model_accuracy_pass_rate_perfect() -> None:
@@ -283,9 +283,9 @@ def test_benchmark_summary_empty_records() -> None:
     assert isinstance(baseline, dict)
     assert isinstance(routed, dict)
     assert baseline["count"] == 0
-    assert baseline["pass_rate"] == 0.0
+    assert baseline["pass_rate"] == 0
     assert routed["count"] == 0
-    assert routed["pass_rate"] == 0.0
+    assert routed["pass_rate"] == 0
 
 
 def test_benchmark_summary_only_baseline() -> None:
@@ -336,8 +336,8 @@ def test_eval_record_default_quality_gates_empty() -> None:
         result="pass",
     )
     assert r.quality_gate_results == {}
-    assert r.duration_s == 0.0
-    assert r.cost_usd == 0.0
+    assert r.duration_s == 0
+    assert r.cost_usd == 0
     assert r.step_count == 0
 
 
