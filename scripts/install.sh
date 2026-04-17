@@ -1,5 +1,5 @@
-#!/usr/bin/env sh
-set -e
+#!/bin/sh
+set -eu
 
 # Detect OS and architecture
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -13,47 +13,53 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-PYTHON_VERSION=$(python3 --version | awk '{print $2}')
-if [ "$(printf '%s\n' "3.12" "$PYTHON_VERSION" | sort -V | head -n1)" != "3.12" ]; then
+PYTHON_BIN="python3"
+if ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
+  PYTHON_VERSION=$("$PYTHON_BIN" -c 'import sys; print(".".join(str(part) for part in sys.version_info[:3]))')
   echo "Error: Python 3.12+ required. Current version: $PYTHON_VERSION"
   exit 1
 fi
 
-# Install pipx if not present
-if ! command -v pipx >/dev/null 2>&1; then
-  echo "pipx not found. Installing..."
-
-  if [ "$OS" = "darwin" ]; then
-    if ! command -v brew >/dev/null 2>&1; then
-      echo "Error: Homebrew is not installed. Install it from https://brew.sh/"
-      exit 1
-    fi
-    brew install pipx
-  else
-    python3 -m pip install --user pipx
-  fi
+if ! "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
+  "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true
 fi
 
-# Ensure pipx is usable in THIS shell (critical fix)
-export PATH="$HOME/.local/bin:$PATH"
+# Install pipx if not present
+if ! command -v pipx >/dev/null 2>&1 && ! "$PYTHON_BIN" -m pipx --version >/dev/null 2>&1; then
+  echo "pipx not found. Installing..."
+  "$PYTHON_BIN" -m pip install --user --upgrade pipx
+fi
+
+# Ensure pipx/bernstein bin paths are usable in THIS shell
+USER_BIN=$("$PYTHON_BIN" -c 'import os, site; print(os.path.join(site.USER_BASE, "bin"))')
+export PATH="$USER_BIN:$HOME/.local/bin:$PATH"
+
+run_pipx() {
+  if command -v pipx >/dev/null 2>&1; then
+    pipx "$@"
+  else
+    "$PYTHON_BIN" -m pipx "$@"
+  fi
+}
 
 # Also ensure pipx paths are configured
-python3 -m pipx ensurepath >/dev/null 2>&1 || true
+run_pipx ensurepath >/dev/null 2>&1 || true
 
 # Verify pipx works
-if ! command -v pipx >/dev/null 2>&1; then
+if ! run_pipx --version >/dev/null 2>&1; then
   echo "Error: pipx is installed but not available in PATH."
-  echo "Try restarting your terminal or running:"
-  echo "export PATH=\"\$HOME/.local/bin:\$PATH\""
+  echo "Try restarting your terminal or running: python3 -m pipx ensurepath"
   exit 1
 fi
 
 # Install Bernstein
 echo "Installing Bernstein..."
-pipx install bernstein
+if ! run_pipx install bernstein; then
+  run_pipx upgrade bernstein
+fi
 
 echo ""
-echo "Bernstein installed successfully! 🎉"
+echo "Bernstein installed successfully!"
 echo ""
 echo "Try:"
 echo "  bernstein --version"
