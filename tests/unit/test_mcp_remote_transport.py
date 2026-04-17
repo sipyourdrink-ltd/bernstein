@@ -11,6 +11,7 @@ import pytest
 from bernstein.mcp.remote_transport import (
     MCPSession,
     RemoteMCPConfig,
+    RemoteMCPConfigError,
     StreamableHTTPTransport,
     _cors_headers,
     create_asgi_app,
@@ -22,8 +23,18 @@ from bernstein.mcp.remote_transport import (
 
 
 @pytest.fixture
-def config() -> RemoteMCPConfig:
-    return RemoteMCPConfig(path="/mcp", auth_type="none")
+def _clear_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure env-provided tokens don't leak between tests."""
+    monkeypatch.delenv("BERNSTEIN_MCP_TOKEN", raising=False)
+    monkeypatch.delenv("BERNSTEIN_MCP_AUTH_TOKEN", raising=False)
+
+
+@pytest.fixture
+def config(_clear_token_env: None) -> RemoteMCPConfig:
+    # Loopback + bearer token is the new safe default. Keeping auth_type='none'
+    # only works for loopback binds, which is still useful for tests that focus
+    # on routing/session behaviour without auth overhead.
+    return RemoteMCPConfig(host="127.0.0.1", path="/mcp", auth_type="none")
 
 
 @pytest.fixture
@@ -32,7 +43,7 @@ def transport(config: RemoteMCPConfig) -> StreamableHTTPTransport:
 
 
 @pytest.fixture
-def bearer_config() -> RemoteMCPConfig:
+def bearer_config(_clear_token_env: None) -> RemoteMCPConfig:
     return RemoteMCPConfig(path="/mcp", auth_type="bearer", auth_token="secret-token")
 
 
@@ -66,20 +77,52 @@ def _jsonrpc_notification(method: str, params: dict | None = None) -> bytes:
 
 
 class TestRemoteMCPConfig:
-    def test_defaults(self) -> None:
+    def test_defaults_bind_localhost_with_bearer_auth(self, _clear_token_env: None) -> None:
+        """Default config must be safe: loopback + bearer auth required.
+
+        This is the contract for audit-116: no ambient network exposure and
+        no anonymous dispatch even if someone forgets to override the defaults.
+        """
         cfg = RemoteMCPConfig()
-        assert cfg.host == "0.0.0.0"
+        assert cfg.host == "127.0.0.1"
         assert cfg.port == 8053
         assert cfg.path == "/mcp"
-        assert cfg.auth_type == "none"
-        assert cfg.cors_origins == ["*"]
+        assert cfg.auth_type == "bearer"
+        assert cfg.auth_token == ""
+        assert cfg.cors_origins == ["http://localhost:*"]
         assert cfg.max_sessions == 100
         assert cfg.session_timeout_seconds == 3600
 
-    def test_frozen(self) -> None:
+    def test_frozen(self, _clear_token_env: None) -> None:
         cfg = RemoteMCPConfig()
         with pytest.raises(AttributeError):
             cfg.port = 9999  # type: ignore[misc]
+
+    def test_explicit_public_bind_without_token_refuses(self, _clear_token_env: None) -> None:
+        """Binding to 0.0.0.0 with no token must be refused at config time."""
+        with pytest.raises(RemoteMCPConfigError, match="not loopback"):
+            RemoteMCPConfig(host="0.0.0.0", auth_type="bearer", auth_token="")
+
+    def test_public_bind_with_auth_none_refuses(self, _clear_token_env: None) -> None:
+        """auth_type='none' on a public interface must be refused."""
+        with pytest.raises(RemoteMCPConfigError, match="auth_type='none'"):
+            RemoteMCPConfig(host="0.0.0.0", auth_type="none")
+
+    def test_public_bind_with_explicit_token_allowed(self, _clear_token_env: None) -> None:
+        cfg = RemoteMCPConfig(host="0.0.0.0", auth_type="bearer", auth_token="abc")
+        assert cfg.auth_token == "abc"
+
+    def test_public_bind_picks_up_token_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_MCP_TOKEN", "from-env")
+        monkeypatch.delenv("BERNSTEIN_MCP_AUTH_TOKEN", raising=False)
+        cfg = RemoteMCPConfig(host="0.0.0.0")
+        assert cfg.auth_token == "from-env"
+
+    def test_localhost_with_auth_none_allowed(self, _clear_token_env: None) -> None:
+        # Binding to loopback with auth disabled is still allowed: any caller
+        # is already on-box and the attack surface is equivalent to stdio.
+        cfg = RemoteMCPConfig(host="127.0.0.1", auth_type="none")
+        assert cfg.host == "127.0.0.1"
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +170,49 @@ class TestAuthentication:
     async def test_bearer_auth_wrong_scheme(self, bearer_transport: StreamableHTTPTransport) -> None:
         assert bearer_transport._authenticate({"authorization": "Basic secret-token"}) is False
 
+    @pytest.mark.anyio
+    async def test_bearer_auth_empty_expected_rejects_all(self, _clear_token_env: None) -> None:
+        """Defence in depth: even if someone forces bearer+empty-token on
+        localhost, no request may pass auth with a blank token."""
+        cfg = RemoteMCPConfig(host="127.0.0.1", auth_type="bearer", auth_token="")
+        t = StreamableHTTPTransport(config=cfg)
+        assert t._authenticate({"authorization": "Bearer "}) is False
+        assert t._authenticate({"authorization": "Bearer anything"}) is False
+
+
+# ---------------------------------------------------------------------------
+# End-to-end auth at HTTP layer
+# ---------------------------------------------------------------------------
+
+
+class TestHTTPAuthEnforcement:
+    @pytest.mark.anyio
+    async def test_missing_token_returns_401(self, bearer_transport: StreamableHTTPTransport) -> None:
+        status, _, body = await bearer_transport.handle_request("POST", "/mcp", {}, _jsonrpc_request("ping"))
+        assert status == 401
+        assert b"unauthorized" in body
+
+    @pytest.mark.anyio
+    async def test_wrong_token_returns_401(self, bearer_transport: StreamableHTTPTransport) -> None:
+        status, _, _ = await bearer_transport.handle_request(
+            "POST",
+            "/mcp",
+            {"authorization": "Bearer not-the-right-one"},
+            _jsonrpc_request("ping"),
+        )
+        assert status == 401
+
+    @pytest.mark.anyio
+    async def test_valid_token_accepted(self, bearer_transport: StreamableHTTPTransport) -> None:
+        status, _, body = await bearer_transport.handle_request(
+            "POST",
+            "/mcp",
+            {"authorization": "Bearer secret-token"},
+            _jsonrpc_request("ping"),
+        )
+        assert status == 200
+        assert json.loads(body)["result"] == {}
+
 
 # ---------------------------------------------------------------------------
 # Session management tests
@@ -151,8 +237,8 @@ class TestSessionManagement:
         assert s.session_id != "nonexistent-id"
 
     @pytest.mark.anyio
-    async def test_max_sessions_enforced(self) -> None:
-        cfg = RemoteMCPConfig(max_sessions=2)
+    async def test_max_sessions_enforced(self, _clear_token_env: None) -> None:
+        cfg = RemoteMCPConfig(host="127.0.0.1", auth_type="none", max_sessions=2)
         t = StreamableHTTPTransport(config=cfg)
         await t._get_or_create_session(None)
         await t._get_or_create_session(None)
@@ -160,8 +246,13 @@ class TestSessionManagement:
             await t._get_or_create_session(None)
 
     @pytest.mark.anyio
-    async def test_expired_sessions_pruned(self) -> None:
-        cfg = RemoteMCPConfig(max_sessions=1, session_timeout_seconds=0)
+    async def test_expired_sessions_pruned(self, _clear_token_env: None) -> None:
+        cfg = RemoteMCPConfig(
+            host="127.0.0.1",
+            auth_type="none",
+            max_sessions=1,
+            session_timeout_seconds=0,
+        )
         t = StreamableHTTPTransport(config=cfg)
         s1 = await t._get_or_create_session(None)
         # Force expiry by backdating.
@@ -384,13 +475,13 @@ class TestToolExecution:
 
 
 class TestCORSHeaders:
-    def test_default_cors(self) -> None:
+    def test_default_cors_localhost_only(self, _clear_token_env: None) -> None:
         cfg = RemoteMCPConfig()
         headers = _cors_headers(cfg)
-        assert headers["access-control-allow-origin"] == "*"
+        assert headers["access-control-allow-origin"] == "http://localhost:*"
         assert "mcp-session-id" in headers["access-control-expose-headers"]
 
-    def test_custom_origins(self) -> None:
+    def test_custom_origins(self, _clear_token_env: None) -> None:
         cfg = RemoteMCPConfig(cors_origins=["https://example.com"])
         headers = _cors_headers(cfg)
         assert headers["access-control-allow-origin"] == "https://example.com"
@@ -402,11 +493,11 @@ class TestCORSHeaders:
 
 
 class TestASGIApp:
-    def test_create_asgi_app_returns_callable(self) -> None:
+    def test_create_asgi_app_returns_callable(self, _clear_token_env: None) -> None:
         app = create_asgi_app()
         assert callable(app)
 
-    def test_create_asgi_app_with_config(self) -> None:
-        cfg = RemoteMCPConfig(port=9999)
+    def test_create_asgi_app_with_config(self, _clear_token_env: None) -> None:
+        cfg = RemoteMCPConfig(host="127.0.0.1", port=9999, auth_type="none")
         app = create_asgi_app(config=cfg)
         assert callable(app)
