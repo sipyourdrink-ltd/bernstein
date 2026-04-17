@@ -15,6 +15,7 @@
 [![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/chernistry/bernstein?style=social)](https://github.com/chernistry/bernstein/stargazers)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/bernstein?left_color=GREY)](https://pepy.tech/projects/bernstein)
 [![npm](https://img.shields.io/npm/v/bernstein-orchestrator)](https://www.npmjs.com/package/bernstein-orchestrator)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/github/license/chernistry/bernstein)](LICENSE)
@@ -198,6 +199,10 @@ PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and code style.
 ## Support
 
 If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry) &middot; [Open Collective](https://opencollective.com/bernstein)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=chernistry/bernstein&type=Date)](https://star-history.com/#chernistry/bernstein&Date)
 
 ## License
 
