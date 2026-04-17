@@ -1,6 +1,6 @@
 {
   "name": "bernstein-orchestrator",
-  "version": "1.7.0",
+  "version": "1.8.3",
   "description": "Declarative agent orchestration for engineering teams. Spawn parallel AI coding agents, verify with tests, commit clean code.",
   "keywords": [
     "ai",
