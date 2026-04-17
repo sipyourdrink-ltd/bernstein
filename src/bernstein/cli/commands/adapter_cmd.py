@@ -27,7 +27,6 @@ _DEFAULT_SMOKE_MODELS: dict[str, str] = {
     "kilo": "sonnet",
     "opencode": "gpt-5.4-mini",
     "qwen": "qwen-coder",
-    "roo-code": "sonnet",
 }
 
 

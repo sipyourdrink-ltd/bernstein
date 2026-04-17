@@ -33,16 +33,14 @@ _KNOWN_BINARIES: dict[str, str] = {
     "aider": "aider",
     "amp": "amp",
     "qwen": "qwen",
-    "roo-code": "roo-code",
     "cody": "cody",
     "cursor": "cursor",
-    "continue": "continue",
+    "cn": "continue",
     "goose": "goose",
     "kilo": "kilo",
     "kiro": "kiro",
     "ollama": "ollama",
     "opencode": "opencode",
-    "tabby": "tabby",
 }
 
 

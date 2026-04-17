@@ -25,8 +25,6 @@ from bernstein.adapters.mock import MockAgentAdapter
 from bernstein.adapters.ollama import OllamaAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
 from bernstein.adapters.qwen import QwenAdapter
-from bernstein.adapters.roo_code import RooCodeAdapter
-from bernstein.adapters.tabby import TabbyAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +46,6 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "ollama": OllamaAdapter,
     "opencode": OpenCodeAdapter,
     "qwen": QwenAdapter,
-    "roo-code": RooCodeAdapter,
-    "tabby": TabbyAdapter,
 }
 
 _entrypoints_loaded = False
@@ -81,7 +77,7 @@ def _load_entrypoint_adapters() -> None:
 
 
 def get_adapter(cli_name: str) -> CLIAdapter:
-    """Get adapter by name, e.g. 'aider', 'claude', 'cody', 'codex', 'continue', 'gemini', 'tabby', or 'generic'.
+    """Get adapter by name, e.g. 'aider', 'claude', 'cody', 'codex', 'continue', 'gemini', or 'generic'.
 
     For 'generic', returns a GenericAdapter with default settings.
     For known adapters, instantiates the corresponding class.

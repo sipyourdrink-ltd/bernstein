@@ -18,7 +18,6 @@ from bernstein.adapters.cursor import CursorAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.qwen import QwenAdapter
-from bernstein.adapters.roo_code import RooCodeAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -206,9 +205,6 @@ class TestAllAdaptersHaveTimeout:
 
     def test_gemini_has_timer(self, tmp_path: Path) -> None:
         self._assert_has_timer(GeminiAdapter, "bernstein.adapters.gemini.subprocess.Popen", tmp_path)
-
-    def test_roo_code_has_timer(self, tmp_path: Path) -> None:
-        self._assert_has_timer(RooCodeAdapter, "bernstein.adapters.roo_code.subprocess.Popen", tmp_path)
 
     def test_generic_has_timer(self, tmp_path: Path) -> None:
         self._assert_has_timer(

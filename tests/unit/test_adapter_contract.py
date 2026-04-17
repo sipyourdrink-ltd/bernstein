@@ -19,7 +19,6 @@ from bernstein.adapters.cursor import CursorAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.kilo import KiloAdapter
-from bernstein.adapters.roo_code import RooCodeAdapter
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,7 +50,6 @@ _ADAPTER_FACTORIES: list[tuple[str, Any]] = [
     ("GeminiAdapter", lambda: GeminiAdapter()),
     ("GenericAdapter", lambda: GenericAdapter(cli_command="test-cli")),
     ("KiloAdapter", lambda: KiloAdapter()),
-    ("RooCodeAdapter", lambda: RooCodeAdapter()),
 ]
 
 

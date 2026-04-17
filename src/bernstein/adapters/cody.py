@@ -1,11 +1,12 @@
 """Sourcegraph Cody CLI adapter.
 
 Cody (https://sourcegraph.com/cody) is Sourcegraph's AI coding assistant.
-This adapter drives Cody via the Sourcegraph CLI (``sg cody``), which supports
-non-interactive chat sessions suitable for batch task execution.
+This adapter drives the standalone Cody CLI (``cody``) in non-interactive
+chat mode.
 
-Installation: https://github.com/sourcegraph/sourcegraph/tree/main/dev/sg
-Authentication: ``SRC_ACCESS_TOKEN`` and ``SRC_ENDPOINT`` environment variables.
+Installation: ``npm install -g @sourcegraph/cody``
+Authentication: ``SRC_ACCESS_TOKEN`` and ``SRC_ENDPOINT`` environment
+variables, or ``cody auth login``.
 """
 
 from __future__ import annotations
@@ -36,17 +37,13 @@ _MODEL_MAP: dict[str, str] = {
     "gemini-pro": "google::v1::gemini-3.1-pro",
 }
 
-# Default Sourcegraph endpoint — override with SRC_ENDPOINT for self-hosted
-_DEFAULT_SRC_ENDPOINT = "https://sourcegraph.com"
-
 
 class CodyAdapter(CLIAdapter):
     """Spawn and monitor Sourcegraph Cody CLI sessions.
 
-    Cody is invoked via the ``sg cody chat`` sub-command in non-interactive
-    mode. Authentication is read from ``SRC_ACCESS_TOKEN`` and
-    ``SRC_ENDPOINT`` environment variables (or ``~/.config/sg/sg.config.yaml``
-    after running ``sg auth login``).
+    Cody is invoked via ``cody chat -m <prompt>`` in non-interactive mode.
+    Authentication is read from ``SRC_ACCESS_TOKEN`` and ``SRC_ENDPOINT``
+    environment variables, or from credentials saved by ``cody auth login``.
     """
 
     def spawn(
@@ -76,7 +73,7 @@ class CodyAdapter(CLIAdapter):
             SpawnResult with the process PID and log file path.
 
         Raises:
-            RuntimeError: If ``sg`` is not found in PATH.
+            RuntimeError: If ``cody`` is not found in PATH.
         """
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +81,7 @@ class CodyAdapter(CLIAdapter):
         if not os.environ.get("SRC_ACCESS_TOKEN"):
             logger.warning(
                 "CodyAdapter: SRC_ACCESS_TOKEN not set — spawn may fail. "
-                "Run 'sg auth login' or set SRC_ACCESS_TOKEN and SRC_ENDPOINT."
+                "Run 'cody auth login' or set SRC_ACCESS_TOKEN and SRC_ENDPOINT."
             )
         if mcp_config:
             logger.debug("CodyAdapter ignoring runtime MCP config for session %s", session_id)
@@ -92,12 +89,10 @@ class CodyAdapter(CLIAdapter):
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
 
         cmd = [
-            "sg",
             "cody",
             "chat",
-            "--stdin",
-            # Sourcegraph's sg cody chat reads the prompt from stdin when --stdin is set.
-            # Alternatively: --message flag on newer sg versions.
+            "-m",
+            prompt,
         ]
         if model_id:
             cmd.extend(["--model", model_id])
@@ -127,26 +122,16 @@ class CodyAdapter(CLIAdapter):
                     wrapped_cmd,
                     cwd=workdir,
                     env=env,
-                    stdin=subprocess.PIPE,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError(
-                    "sg not found in PATH. Install the Sourcegraph CLI: "
-                    "https://github.com/sourcegraph/sourcegraph/tree/main/dev/sg"
+                    "cody not found in PATH. Install with: npm install -g @sourcegraph/cody"
                 ) from exc
             except PermissionError as exc:
-                raise RuntimeError(f"Permission denied executing sg: {exc}") from exc
-
-        # Write the prompt to stdin and close the pipe so the process can start.
-        if proc.stdin:
-            try:
-                proc.stdin.write(prompt.encode("utf-8"))
-                proc.stdin.close()
-            except OSError:
-                pass  # stdin may already be closed by the process
+                raise RuntimeError(f"Permission denied executing cody: {exc}") from exc
 
         result = SpawnResult(pid=proc.pid, log_path=log_path)
         if timeout_seconds > 0:

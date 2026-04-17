@@ -1,11 +1,13 @@
 """Continue.dev CLI adapter.
 
 Continue (https://www.continue.dev/) is an open-source AI coding assistant
-for VS Code and JetBrains. This adapter invokes Continue's headless CLI mode
-for non-interactive task execution.
+for VS Code and JetBrains. This adapter invokes the Continue CLI (``cn``)
+in headless mode for non-interactive task execution.
 
-Installation: npm install -g @continuedev/continue-cli
-Authentication: ``~/.continue/config.yaml`` or ``CONTINUE_API_KEY`` env var.
+Installation: ``npm install -g @continuedev/cli`` (binary is ``cn``).
+Authentication: ``~/.continue/config.yaml`` or provider API keys in the env.
+Model selection is driven by the Continue config; ``cn`` has no CLI flag for
+per-invocation model override, so ``model_config.model`` is logged only.
 """
 
 from __future__ import annotations
@@ -24,28 +26,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Map Bernstein logical model names to Continue provider/model identifiers.
-# These follow Continue's ``provider/model`` format used in config.yaml.
-_MODEL_MAP: dict[str, str] = {
-    "opus": "anthropic/claude-opus-4-6",
-    "sonnet": "anthropic/claude-sonnet-4-6",
-    "haiku": "anthropic/claude-haiku-4-5-20251001",
-    "gpt-5.4": "openai/gpt-5.4",
-    "gpt-5.4-mini": "openai/gpt-5.4-mini",
-    "gemini-pro": "google/gemini-3-flash",
-}
-
 
 class ContinueDevAdapter(CLIAdapter):
     """Spawn and monitor Continue.dev CLI sessions.
 
-    Uses Continue's headless mode (``continue run --no-interactive``) to
-    execute coding tasks in batch. Continue reads its model and context
-    configuration from ``~/.continue/config.yaml``.
+    Uses the Continue CLI binary ``cn`` with the ``-p`` (headless prompt) flag
+    to run coding tasks non-interactively. Model and context are configured
+    through ``~/.continue/config.yaml``.
 
-    The ``CONTINUE_API_KEY`` environment variable is forwarded when present;
-    per-provider API keys (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, etc.)
-    are also forwarded so Continue can authenticate automatically.
+    Provider API keys (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, etc.) are
+    forwarded so Continue can authenticate against its configured model
+    providers.
     """
 
     def spawn(
@@ -66,34 +57,37 @@ class ContinueDevAdapter(CLIAdapter):
         Args:
             prompt: Task description passed to the agent.
             workdir: Working directory (project root).
-            model_config: Model and effort settings chosen by the orchestrator.
+            model_config: Model and effort settings (model name logged only;
+                Continue selects the model from its config file).
             session_id: Unique identifier for this agent session.
-            mcp_config: Optional MCP config (ignored; Continue manages MCP via config.yaml).
+            mcp_config: Optional MCP config (ignored; Continue manages MCP
+                through config.yaml).
             timeout_seconds: Hard kill timeout in seconds.
 
         Returns:
             SpawnResult with the process PID and log file path.
 
         Raises:
-            RuntimeError: If the Continue CLI binary is not found.
+            RuntimeError: If the ``cn`` binary is not found in PATH.
         """
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
         if mcp_config:
             logger.debug("ContinueDevAdapter ignoring runtime MCP config for session %s", session_id)
-
-        model_id = _MODEL_MAP.get(model_config.model, model_config.model)
+        if model_config.model:
+            logger.info(
+                "ContinueDevAdapter: requested model %s for session %s; "
+                "Continue CLI selects the model from ~/.continue/config.yaml",
+                model_config.model,
+                session_id,
+            )
 
         cmd = [
-            "continue",
-            "run",
-            "--no-interactive",
-            "--message",
+            "cn",
+            "-p",
             prompt,
         ]
-        if model_id:
-            cmd.extend(["--model", model_id])
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
@@ -103,7 +97,7 @@ class ContinueDevAdapter(CLIAdapter):
             pid_dir=pid_dir,
             workdir=workdir,
             log_path=log_path,
-            model=model_id,
+            model=model_config.model,
         )
 
         env = build_filtered_env(
@@ -127,10 +121,10 @@ class ContinueDevAdapter(CLIAdapter):
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError(
-                    "continue not found in PATH. Install with: npm install -g @continuedev/continue-cli"
+                    "cn not found in PATH. Install with: npm install -g @continuedev/cli"
                 ) from exc
             except PermissionError as exc:
-                raise RuntimeError(f"Permission denied executing continue: {exc}") from exc
+                raise RuntimeError(f"Permission denied executing cn: {exc}") from exc
 
         result = SpawnResult(pid=proc.pid, log_path=log_path)
         if timeout_seconds > 0:

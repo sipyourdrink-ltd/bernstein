@@ -102,7 +102,7 @@ def _resolve_model_and_cli(seed_file: str | None, model_override: str | None) ->
     return est_model, est_cli
 
 
-_FREE_ADAPTERS = frozenset(("qwen", "gemini", "ollama", "tabby"))
+_FREE_ADAPTERS = frozenset(("qwen", "gemini", "ollama"))
 
 
 def _estimate_run_preview(

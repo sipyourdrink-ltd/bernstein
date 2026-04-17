@@ -40,8 +40,8 @@ _KNOWN_TOPICS: dict[str, str] = {
         "**CLI Agent Adapters**\n"
         "Bernstein ships adapters for many CLI agents:\n"
         "Claude Code, Codex, Gemini CLI, Aider, AMP, Qwen, "
-        "Roo Code, Cursor, Cody, Continue, Goose, Kilo, Kiro, "
-        "Ollama, OpenCode, Tabby, and a generic fallback.\n"
+        "Cursor, Cody, Continue, Goose, Kilo, Kiro, "
+        "Ollama, OpenCode, and a generic fallback.\n"
         "Set `adapter:` in your plan or `bernstein.yaml`."
     ),
     "quality-gates": (

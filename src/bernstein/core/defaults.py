@@ -303,7 +303,7 @@ class PlanDefaults:
             "high": "opus",
         }
     )
-    free_adapters: tuple[str, ...] = ("qwen", "gemini", "ollama", "tabby")
+    free_adapters: tuple[str, ...] = ("qwen", "gemini", "ollama")
 
 
 # ---------------------------------------------------------------------------
