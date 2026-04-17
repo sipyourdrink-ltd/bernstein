@@ -1,8 +1,25 @@
-"""In-memory request rate limiting helpers for Bernstein."""
+"""In-memory request rate limiting helpers for Bernstein.
+
+Rate-limit buckets are keyed by the REAL TCP peer IP (``request.client.host``)
+by default. Client-supplied headers such as ``X-Forwarded-For`` are **ignored**
+unless upstream proxies are explicitly trusted via the
+``BERNSTEIN_TRUSTED_PROXY_IPS`` environment variable (comma-separated list of
+proxy IPs). When trusted, the limiter walks the ``X-Forwarded-For`` chain from
+right to left and uses the right-most IP that is NOT a trusted proxy — i.e.
+the closest original client address that the trusted proxy chain forwarded
+for us.
+
+Historically this module also honoured an ``X-Bernstein-Internal: true``
+header to bypass rate limiting for loopback callers. That header was
+attacker-controllable behind a reverse proxy on the same host and has been
+removed. Internal callers must now reach the server from loopback WITHOUT
+sending ``X-Forwarded-For``; proxied traffic is always rate-limited.
+"""
 
 from __future__ import annotations
 
 import math
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -19,6 +36,25 @@ if TYPE_CHECKING:
     from starlette.types import ASGIApp
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+# Environment variable used to declare IP addresses of reverse proxies whose
+# ``X-Forwarded-For`` header we trust. Comma-separated list, e.g.
+# ``BERNSTEIN_TRUSTED_PROXY_IPS=10.0.0.1,10.0.0.2``. Loopback (``127.0.0.1``,
+# ``::1``) is NEVER implicitly trusted — an operator must opt in explicitly
+# if they terminate a reverse proxy on the same host.
+_TRUSTED_PROXY_ENV = "BERNSTEIN_TRUSTED_PROXY_IPS"
+
+
+def _trusted_proxies() -> frozenset[str]:
+    """Return the configured set of trusted-proxy peer IPs.
+
+    Read lazily from the environment on every call so tests (and config
+    reloads) can change the value without restarting the process.
+    """
+    raw = os.environ.get(_TRUSTED_PROXY_ENV, "")
+    if not raw:
+        return frozenset()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
 @dataclass(frozen=True)
@@ -132,6 +168,10 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
     - POST/PUT/DELETE: 30 requests/minute per client
     - GET: 300 requests/minute per client
     - /events SSE: max 10 concurrent connections
+
+    Clients are identified by the real TCP peer (``request.client.host``).
+    ``X-Forwarded-For`` is only consulted when the direct peer itself is a
+    trusted proxy declared via ``BERNSTEIN_TRUSTED_PROXY_IPS``.
     """
 
     def __init__(
@@ -183,13 +223,12 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
 
         # Exempt loopback clients (orchestrator, spawner, agents) from rate
         # limiting — they are internal components, not external callers.
-        # Also exempt requests that carry the X-Bernstein-Internal header from
-        # loopback — these are spawner/lifecycle calls (e.g. retry task
-        # creation) that must never be 429'd even when X-Forwarded-For is set.
+        # The exemption applies ONLY when the TCP peer is loopback AND no
+        # X-Forwarded-For header is present. If a request arrives on
+        # loopback but carries XFF, it came through a local reverse proxy
+        # and must be rate-limited like any other external caller.
         direct_ip = request.client.host if request.client else "unknown"
-        if direct_ip in _LOOPBACK_HOSTS and (
-            not request.headers.get("X-Forwarded-For") or request.headers.get("X-Bernstein-Internal") == "true"
-        ):
+        if direct_ip in _LOOPBACK_HOSTS and not request.headers.get("X-Forwarded-For"):
             return await call_next(request)
 
         # Try seed_config buckets first
@@ -253,15 +292,32 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
 
 
 def _request_client_id(request: Request) -> str:
-    """Return a stable request client identifier.
+    """Return a stable rate-limit key for *request*.
 
-    Trust forwarded headers only when the direct peer is local.
+    Default: the real TCP peer IP (``request.client.host``). Client-supplied
+    headers are IGNORED — rotating ``X-Forwarded-For`` values must never let
+    an attacker create unbounded buckets.
+
+    Opt-in proxy mode: if ``BERNSTEIN_TRUSTED_PROXY_IPS`` is set and the
+    direct peer IP is in that set, walk the ``X-Forwarded-For`` chain from
+    right to left and return the right-most IP that is NOT itself a trusted
+    proxy (i.e. the closest original client).
     """
     direct_client_ip = request.client.host if request.client else "unknown"
-    if direct_client_ip in _LOOPBACK_HOSTS:
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return forwarded_for.split(",", maxsplit=1)[0].strip()
+    trusted = _trusted_proxies()
+    if direct_client_ip not in trusted:
+        return direct_client_ip
+
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if not forwarded_for:
+        return direct_client_ip
+    # XFF is ordered: "client, proxy1, proxy2". Walk right-to-left past
+    # trusted proxies and return the first non-trusted hop.
+    hops = [hop.strip() for hop in forwarded_for.split(",") if hop.strip()]
+    for hop in reversed(hops):
+        if hop not in trusted:
+            return hop
+    # Every hop was a trusted proxy — fall back to the direct peer.
     return direct_client_ip
 
 
@@ -270,8 +326,13 @@ _auth_limiter = AuthRateLimiter()
 
 
 def check_auth_rate_limit(request: Request) -> None:
-    """FastAPI dependency that enforces the auth rate limit."""
-    ip = request.client.host if request.client else "unknown"
+    """FastAPI dependency that enforces the auth rate limit.
+
+    Keys the bucket on the same peer identity used by the request middleware:
+    the real TCP peer IP by default, or the right-most non-trusted hop from
+    ``X-Forwarded-For`` when the direct peer is a configured trusted proxy.
+    """
+    ip = _request_client_id(request)
     retry_after = _auth_limiter.check(ip)
     if retry_after is not None:
         raise HTTPException(
