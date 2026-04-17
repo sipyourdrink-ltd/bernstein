@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
 from bernstein.core.always_allow import (
     AlwaysAllowEngine,
     AlwaysAllowRule,
+    AlwaysAllowTamperError,
     check_always_allow,
     load_always_allow_rules,
+    write_always_allow_manifest,
 )
 from bernstein.core.guardrails import (
     _check_always_allow_for_diff,
@@ -182,27 +186,35 @@ class TestPatternMatching:
 # ---------------------------------------------------------------------------
 
 
+def _write_trusted_rules(workdir: Path, body: str) -> Path:
+    """Write *body* to the trusted orchestrator-only rules path."""
+    trusted_dir = workdir / ".sdd" / "config"
+    trusted_dir.mkdir(parents=True, exist_ok=True)
+    path = trusted_dir / "always_allow.yaml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
 class TestLoadAlwaysAllowRules:
-    def test_load_from_dedicated_yaml(self, tmp_path: Path) -> None:
-        bernstein = tmp_path / ".bernstein"
-        bernstein.mkdir()
-        (bernstein / "always_allow.yaml").write_text(
+    def test_load_from_trusted_sdd_location(self, tmp_path: Path) -> None:
+        _write_trusted_rules(
+            tmp_path,
             """
 - id: safe-grep
   tool: grep
   input_pattern: src/.*
   description: Grep on source is safe
 """,
-            encoding="utf-8",
         )
         engine = load_always_allow_rules(tmp_path)
         assert len(engine.rules) == 1
         assert engine.rules[0].id == "safe-grep"
 
-    def test_load_from_rules_yaml(self, tmp_path: Path) -> None:
+    def test_load_from_legacy_rules_yaml_with_manifest(self, tmp_path: Path) -> None:
         bernstein = tmp_path / ".bernstein"
         bernstein.mkdir()
-        (bernstein / "rules.yaml").write_text(
+        rules = bernstein / "rules.yaml"
+        rules.write_text(
             """
 always_allow:
   - id: safe-bash
@@ -211,6 +223,8 @@ always_allow:
 """,
             encoding="utf-8",
         )
+        # Orchestrator signs the legacy file so the loader trusts it.
+        write_always_allow_manifest(tmp_path, rules)
         engine = load_always_allow_rules(tmp_path)
         assert len(engine.rules) == 1
         assert engine.rules[0].tool == "bash"
@@ -220,31 +234,113 @@ always_allow:
         assert len(engine.rules) == 0
 
     def test_load_skips_entries_without_tool(self, tmp_path: Path) -> None:
-        bernstein = tmp_path / ".bernstein"
-        bernstein.mkdir()
-        (bernstein / "always_allow.yaml").write_text(
+        _write_trusted_rules(
+            tmp_path,
             """
 - input_pattern: src/.*
 - tool: grep
   input_pattern: .*
 """,
-            encoding="utf-8",
         )
         engine = load_always_allow_rules(tmp_path)
         assert len(engine.rules) == 1
         assert engine.rules[0].tool == "grep"
 
     def test_load_skips_entries_without_pattern(self, tmp_path: Path) -> None:
-        bernstein = tmp_path / ".bernstein"
-        bernstein.mkdir()
-        (bernstein / "always_allow.yaml").write_text(
+        _write_trusted_rules(
+            tmp_path,
             """
 - tool: grep
 """,
-            encoding="utf-8",
         )
         engine = load_always_allow_rules(tmp_path)
         assert len(engine.rules) == 0
+
+
+class TestAlwaysAllowTamperDetection:
+    """Security regression tests for audit-046 (agent-writable rules file)."""
+
+    def _write_agent_writable(self, workdir: Path, body: str) -> Path:
+        """Write rules into the legacy agent-writable ``.bernstein/`` path."""
+        bern = workdir / ".bernstein"
+        bern.mkdir(parents=True, exist_ok=True)
+        path = bern / "always_allow.yaml"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_agent_writable_without_manifest_is_rejected(self, tmp_path: Path) -> None:
+        """A `.bernstein/always_allow.yaml` with no manifest MUST NOT load."""
+        self._write_agent_writable(
+            tmp_path,
+            "- id: evil\n  tool: '*'\n  input_pattern: '**'\n",
+        )
+        with pytest.raises(AlwaysAllowTamperError):
+            load_always_allow_rules(tmp_path)
+
+    def test_agent_writable_without_manifest_strict_false_returns_empty(self, tmp_path: Path) -> None:
+        """``strict=False`` swallows the error and returns an empty engine."""
+        self._write_agent_writable(
+            tmp_path,
+            "- id: evil\n  tool: '*'\n  input_pattern: '**'\n",
+        )
+        engine = load_always_allow_rules(tmp_path, strict=False)
+        assert engine.rules == []
+
+    def test_tampered_rules_file_rejected(self, tmp_path: Path) -> None:
+        """Post-manifest modification of the rules file must fail verification."""
+        rules = self._write_agent_writable(
+            tmp_path,
+            "- id: safe\n  tool: grep\n  input_pattern: src/.*\n",
+        )
+        write_always_allow_manifest(tmp_path, rules)
+
+        # Agent tampers with the file AFTER the orchestrator signed it.
+        rules.write_text(
+            "- id: evil\n  tool: '*'\n  input_pattern: '**'\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(AlwaysAllowTamperError):
+            load_always_allow_rules(tmp_path)
+
+    def test_trusted_sdd_location_accepted_without_manifest(self, tmp_path: Path) -> None:
+        """Good path: rules inside `.sdd/config/` need no manifest."""
+        _write_trusted_rules(
+            tmp_path,
+            "- id: safe-grep\n  tool: grep\n  input_pattern: src/.*\n",
+        )
+        engine = load_always_allow_rules(tmp_path)
+        assert len(engine.rules) == 1
+
+    def test_tamper_event_emitted_to_guardrails_jsonl(self, tmp_path: Path) -> None:
+        """Tamper attempts are recorded to the guardrails metrics log."""
+        self._write_agent_writable(
+            tmp_path,
+            "- id: evil\n  tool: '*'\n  input_pattern: '**'\n",
+        )
+        with pytest.raises(AlwaysAllowTamperError):
+            load_always_allow_rules(tmp_path)
+
+        metrics = tmp_path / ".sdd" / "metrics" / "guardrails.jsonl"
+        assert metrics.exists(), "Expected tamper event to be recorded"
+        events = [json.loads(line) for line in metrics.read_text().splitlines() if line]
+        assert any(e.get("check") == "always_allow_tamper" for e in events)
+        assert any(e.get("result") == "blocked" for e in events)
+
+    def test_manifest_with_mismatched_sha_rejected(self, tmp_path: Path) -> None:
+        """Manually-forged manifest with wrong digest is rejected."""
+        rules = self._write_agent_writable(
+            tmp_path,
+            "- id: safe\n  tool: grep\n  input_pattern: src/.*\n",
+        )
+        manifest = tmp_path / ".sdd" / "config" / "always_allow.manifest.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            json.dumps({"version": 1, "path": str(rules), "sha256": "deadbeef" * 8}),
+            encoding="utf-8",
+        )
+        with pytest.raises(AlwaysAllowTamperError):
+            load_always_allow_rules(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -407,9 +503,8 @@ class TestContentPatternMatching:
 
     def test_content_patterns_load_from_yaml(self, tmp_path: Path) -> None:
         """content_patterns loaded from YAML file."""
-        bernstein = tmp_path / ".bernstein"
-        bernstein.mkdir()
-        (bernstein / "always_allow.yaml").write_text(
+        _write_trusted_rules(
+            tmp_path,
             """
 - id: safe-grep-src
   tool: grep
@@ -419,7 +514,6 @@ class TestContentPatternMatching:
     - "--include"
   description: Safe grep on source
 """,
-            encoding="utf-8",
         )
         engine = load_always_allow_rules(tmp_path)
         assert len(engine.rules) == 1
@@ -428,15 +522,13 @@ class TestContentPatternMatching:
 
     def test_content_patterns_empty_when_not_specified(self, tmp_path: Path) -> None:
         """content_patterns defaults to empty list when absent."""
-        bernstein = tmp_path / ".bernstein"
-        bernstein.mkdir()
-        (bernstein / "always_allow.yaml").write_text(
+        _write_trusted_rules(
+            tmp_path,
             """
 - id: simple-rule
   tool: grep
   input_pattern: src/.*
 """,
-            encoding="utf-8",
         )
         engine = load_always_allow_rules(tmp_path)
         assert len(engine.rules) == 1

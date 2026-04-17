@@ -8,21 +8,67 @@ triggers an ask or deny.
 Rules take **highest precedence** — an ALLOW from this engine overrides
 any ASK or DENY from other guardrails (except IMMUNE and SAFETY which
 remain bypass-immune).
+
+Security model (audit-046):
+    ALLOW decisions from this engine override almost every other guardrail,
+    so the rules file must be *read-only from the agent's perspective*. The
+    loader enforces this by:
+
+    1. Preferring an orchestrator-only location (``.sdd/config/always_allow.yaml``
+       or whatever ``BERNSTEIN_ALWAYS_ALLOW_PATH`` points at). ``.sdd/*`` is
+       already an IMMUNE path, so agents cannot modify it.
+    2. Accepting the legacy agent-writable path
+       (``.bernstein/always_allow.yaml``) **only** when a companion manifest
+       sitting in the orchestrator-only ``.sdd/config/`` directory pins the
+       exact sha256 of the rules file. Any drift between file and manifest is
+       treated as tampering: the loader refuses the file, emits a SAFETY
+       audit event, and raises :class:`AlwaysAllowTamperError`.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import json
 import logging
+import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import cast
 
 from bernstein.core.security.policy_engine import DecisionType, PermissionDecision
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 logger = logging.getLogger(__name__)
+
+
+#: Environment variable that points to an orchestrator-controlled rules file.
+#: When set, it takes priority over every default search path. The loader will
+#: still verify the path is not inside the agent's writable workspace.
+ENV_ALWAYS_ALLOW_PATH = "BERNSTEIN_ALWAYS_ALLOW_PATH"
+
+#: Relative orchestrator-only location for the rules file. ``.sdd/*`` is an
+#: IMMUNE path — agents cannot modify anything there without being hard-blocked.
+TRUSTED_RULES_REL = Path(".sdd") / "config" / "always_allow.yaml"
+
+#: Relative orchestrator-only location for the manifest that pins the sha256
+#: of any agent-writable rules file (legacy ``.bernstein/always_allow.yaml``).
+TRUSTED_MANIFEST_REL = Path(".sdd") / "config" / "always_allow.manifest.json"
+
+#: Path prefixes the agent can write to. A rules file found here requires a
+#: valid manifest in the trusted location or it is rejected as tampered.
+_AGENT_WRITABLE_PREFIXES: tuple[str, ...] = (".bernstein", ".claude")
+
+
+class AlwaysAllowTamperError(RuntimeError):
+    """Raised when the always-allow rules file fails tamper verification.
+
+    This is a SAFETY-critical condition: the file either lives in an
+    agent-writable location without an orchestrator-signed manifest, or its
+    sha256 diverged from the manifest value. Callers MUST treat this as a
+    refusal-to-load (no rules loaded) rather than fall back silently.
+    """
+
 
 #: A PermissionDecision indicating a match by an always-allow rule.
 ALWAYS_ALLOW_DECISION = PermissionDecision(
@@ -132,15 +178,207 @@ def _load_entries(path: Path) -> list[dict[str, object]]:
     return []
 
 
-def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
-    """Load always-allow rules from ``.bernstein/always_allow.yaml`` or ``.bernstein/rules.yaml``."""
-    default_path = workdir / ".bernstein" / "always_allow.yaml"
-    raw_items = _load_entries(default_path) if default_path.exists() else []
+def _sha256_of(path: Path) -> str:
+    """Return the sha256 hex digest of *path*'s bytes."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
-    if not raw_items:
-        rules_path = workdir / ".bernstein" / "rules.yaml"
-        if rules_path.exists():
-            raw_items = _load_entries(rules_path)
+
+def _is_agent_writable(rules_path: Path, workdir: Path) -> bool:
+    """Return True when *rules_path* sits inside an agent-writable location.
+
+    The agent's worktree is the primary writable surface; any file under
+    ``.bernstein/`` or ``.claude/`` below *workdir* is assumed reachable by
+    a compromised agent.  Paths that resolve outside *workdir* (e.g. the
+    orchestrator's ``.sdd/config/`` when rules live there, or an absolute
+    path passed via env var) are treated as trusted.
+    """
+    try:
+        resolved_rules = rules_path.resolve()
+        resolved_workdir = workdir.resolve()
+    except OSError:
+        # If we cannot resolve, err on the side of caution: treat as writable.
+        return True
+
+    try:
+        rel = resolved_rules.relative_to(resolved_workdir)
+    except ValueError:
+        # File lives outside the agent workdir — trusted.
+        return False
+
+    parts = rel.parts
+    return bool(parts) and parts[0] in _AGENT_WRITABLE_PREFIXES
+
+
+def _record_tamper_event(workdir: Path, rules_path: Path, reason: str) -> None:
+    """Append a SAFETY-level tamper event to ``.sdd/metrics/guardrails.jsonl``.
+
+    Uses the same metrics file as :func:`record_guardrail_event` so operators
+    see always-allow tampering alongside every other guardrail block.
+    """
+    try:
+        metrics_dir = workdir / ".sdd" / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        event = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "task_id": "orchestrator",
+            "check": "always_allow_tamper",
+            "result": "blocked",
+            "files": [str(rules_path)],
+            "detail": reason,
+        }
+        with open(metrics_dir / "guardrails.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(event) + "\n")
+    except OSError as exc:
+        logger.error("Failed to record always-allow tamper event: %s", exc)
+
+
+def write_always_allow_manifest(workdir: Path, rules_path: Path) -> Path:
+    """Pin the sha256 of *rules_path* in the orchestrator-only manifest.
+
+    Call this from the orchestrator (never from an agent process) immediately
+    after authoring or updating the rules file. The resulting manifest lives
+    under ``.sdd/config/`` which is an IMMUNE path — agents cannot forge a
+    matching manifest without already breaking a higher guardrail.
+
+    Args:
+        workdir: Project root.
+        rules_path: Path whose digest should be recorded.
+
+    Returns:
+        The absolute path of the manifest that was written.
+    """
+    manifest_path = workdir / TRUSTED_MANIFEST_REL
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "path": str(rules_path.resolve().relative_to(workdir.resolve()))
+        if rules_path.resolve().is_relative_to(workdir.resolve())
+        else str(rules_path.resolve()),
+        "sha256": _sha256_of(rules_path),
+        "size": rules_path.stat().st_size,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return manifest_path
+
+
+def _verify_manifest(workdir: Path, rules_path: Path) -> None:
+    """Verify the sha256 of *rules_path* matches the trusted manifest.
+
+    Raises:
+        AlwaysAllowTamperError: if the manifest is missing, malformed, or does
+            not match the current file. A SAFETY event is logged before the
+            exception is raised so the tamper attempt is auditable even when
+            the caller swallows the error.
+    """
+    manifest_path = workdir / TRUSTED_MANIFEST_REL
+    if not manifest_path.exists():
+        reason = (
+            f"Rules file {rules_path} lives in an agent-writable location but "
+            f"no orchestrator manifest exists at {manifest_path}. Refusing to "
+            "load agent-supplied always-allow rules."
+        )
+        _record_tamper_event(workdir, rules_path, reason)
+        logger.error(reason)
+        raise AlwaysAllowTamperError(reason)
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        reason = f"Always-allow manifest at {manifest_path} is unreadable: {exc}"
+        _record_tamper_event(workdir, rules_path, reason)
+        logger.error(reason)
+        raise AlwaysAllowTamperError(reason) from exc
+
+    expected_digest = str(manifest.get("sha256", "")).lower()
+    actual_digest = _sha256_of(rules_path).lower()
+    if not expected_digest or expected_digest != actual_digest:
+        reason = (
+            f"Always-allow rules file {rules_path} sha256={actual_digest} "
+            f"does not match manifest sha256={expected_digest or '<missing>'}. "
+            "Refusing to load — possible agent self-escalation."
+        )
+        _record_tamper_event(workdir, rules_path, reason)
+        logger.error(reason)
+        raise AlwaysAllowTamperError(reason)
+
+
+def _resolve_rules_path(workdir: Path) -> tuple[Path | None, bool]:
+    """Return ``(rules_path, is_trusted)`` for the highest-priority source.
+
+    Priority order:
+        1. ``$BERNSTEIN_ALWAYS_ALLOW_PATH`` (always treated as explicit, but
+           still verified against agent-writable heuristics).
+        2. ``.sdd/config/always_allow.yaml`` — orchestrator-only trusted path.
+        3. ``.bernstein/always_allow.yaml`` — legacy, requires manifest.
+        4. ``.bernstein/rules.yaml`` — legacy combined file, requires manifest.
+
+    Returns:
+        Tuple of (path, is_trusted). ``path`` is ``None`` when no rules file
+        exists on disk. ``is_trusted`` is ``True`` when the file sits outside
+        the agent's writable surface.
+    """
+    env_value = os.environ.get(ENV_ALWAYS_ALLOW_PATH, "").strip()
+    if env_value:
+        candidate = Path(env_value).expanduser()
+        if candidate.exists():
+            return candidate, not _is_agent_writable(candidate, workdir)
+
+    trusted = workdir / TRUSTED_RULES_REL
+    if trusted.exists():
+        return trusted, not _is_agent_writable(trusted, workdir)
+
+    legacy_dedicated = workdir / ".bernstein" / "always_allow.yaml"
+    if legacy_dedicated.exists():
+        return legacy_dedicated, not _is_agent_writable(legacy_dedicated, workdir)
+
+    legacy_combined = workdir / ".bernstein" / "rules.yaml"
+    if legacy_combined.exists():
+        return legacy_combined, not _is_agent_writable(legacy_combined, workdir)
+
+    return None, False
+
+
+def load_always_allow_rules(workdir: Path, *, strict: bool = True) -> AlwaysAllowEngine:
+    """Load always-allow rules with tamper-aware source selection.
+
+    The loader walks a priority list (env var, ``.sdd/config/``, legacy
+    ``.bernstein/``) and — for any source that lives in the agent's writable
+    surface — verifies the sha256 against an orchestrator-signed manifest in
+    ``.sdd/config/always_allow.manifest.json`` before parsing.
+
+    Args:
+        workdir: Project root.
+        strict: When ``True`` (default), tamper detection raises
+            :class:`AlwaysAllowTamperError`. When ``False``, the error is
+            swallowed and an empty engine is returned — useful for callers
+            that prefer a safe-default (no ALLOW overrides) over a crash.
+
+    Returns:
+        A populated :class:`AlwaysAllowEngine`, or an empty one when no rules
+        are configured (or when ``strict=False`` and tampering is detected).
+
+    Raises:
+        AlwaysAllowTamperError: when ``strict=True`` and the rules file lives
+            in an agent-writable location without a matching manifest.
+    """
+    rules_path, is_trusted = _resolve_rules_path(workdir)
+    if rules_path is None:
+        return AlwaysAllowEngine(rules=[])
+
+    if not is_trusted:
+        try:
+            _verify_manifest(workdir, rules_path)
+        except AlwaysAllowTamperError:
+            if strict:
+                raise
+            return AlwaysAllowEngine(rules=[])
+
+    raw_items = _load_entries(rules_path)
 
     parsed: list[AlwaysAllowRule] = []
     for i, entry in enumerate(raw_items, start=1):

@@ -858,10 +858,13 @@ def run_guardrails(
         config: Which checks to run and their thresholds.
         workdir: Project root for writing metrics.
         bypass_enabled: Whether non-immune checks can be bypassed.
-        always_allow_engine: Loaded always-allow rules (loaded from
-            ``.bernstein/always_allow.yaml``).  When a modified file matches
-            an always-allow rule, scope and permission checks are skipped
-            for that file.
+        always_allow_engine: Loaded always-allow rules (see
+            :func:`bernstein.core.security.always_allow.load_always_allow_rules`
+            — primary source is orchestrator-only
+            ``.sdd/config/always_allow.yaml``; legacy agent-writable paths
+            must be pinned by a manifest in ``.sdd/config/``).  When a
+            modified file matches an always-allow rule, scope and permission
+            checks are skipped for that file.
 
     Returns:
         List of GuardrailResult, one per enabled check.
