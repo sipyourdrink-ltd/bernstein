@@ -331,8 +331,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "orchestrator_config": "bernstein.core.orchestration.orchestrator_config",
     "orchestrator_evolve": "bernstein.core.orchestration.orchestrator_evolve",
     "orchestrator_health": "bernstein.core.orchestration.orchestrator_health",
-    "orchestrator_lifecycle": "bernstein.core.orchestration.orchestrator_lifecycle",
-    "orchestrator_recovery": "bernstein.core.orchestration.orchestrator_recovery",
     "orchestrator_run": "bernstein.core.orchestration.orchestrator_run",
     "orchestrator_summary": "bernstein.core.orchestration.orchestrator_summary",
     "orchestrator_tick": "bernstein.core.orchestration.orchestrator_tick",
