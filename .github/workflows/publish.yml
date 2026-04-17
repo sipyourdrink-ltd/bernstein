@@ -200,10 +200,12 @@ jobs:
           cd packaging/npm
           npm version "$VERSION" --no-git-tag-version --allow-same-version
       - name: Publish to npm
-        # continue-on-error: npm token may be expired or package may already exist
-        continue-on-error: true
         run: cd packaging/npm && npm publish --access public
         env:
+          # packaging/npm/.npmrc uses ${NPM_TOKEN} for interpolation, so
+          # both variables must be set. NODE_AUTH_TOKEN is kept for
+          # compatibility with actions/setup-node's default config.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # COPR RPM rebuild — triggers a new build from the updated PyPI release.

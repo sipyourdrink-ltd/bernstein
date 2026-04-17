@@ -88,3 +88,4 @@ docs/openapi.json
 
 # pytest-benchmark output
 .benchmarks/
+.env
