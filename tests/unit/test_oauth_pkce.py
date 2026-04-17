@@ -315,6 +315,7 @@ class TestPKCEStateValidation:
 
         # Force the stored created-at deep into the past so the TTL check trips
         # without forcing the test to sleep.
+        assert flow._state_created_at is not None
         flow._state_created_at -= 10.0
 
         with pytest.raises(OAuthStateError, match="State expired"):

@@ -245,7 +245,7 @@ class PKCEFlow:
         self._state: str = ""
         # Monotonic timestamp recorded when state was generated; used for
         # expiry checks. 0.0 means "never started".
-        self._state_created_at: float = 0.0
+        self._state_created_at: float | None = None
         # Set to True once validate_state has accepted the state. Any
         # subsequent validation attempt with the same state is treated as a
         # replay and rejected.
@@ -287,7 +287,7 @@ class PKCEFlow:
             OAuthStateError: If the state is missing, expired, mismatched,
                 or already consumed.
         """
-        if not self._state or self._state_created_at == 0.0:
+        if not self._state or self._state_created_at is None:
             raise OAuthStateError("PKCE flow not started; cannot validate state before start()")
         if self._state_consumed:
             raise OAuthStateError("State replay detected: this state has already been consumed")
