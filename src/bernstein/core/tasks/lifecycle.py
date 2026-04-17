@@ -150,10 +150,12 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     # Plan mode
     (TaskStatus.PLANNED, TaskStatus.OPEN): _always,
     (TaskStatus.PLANNED, TaskStatus.CANCELLED): _always,
+    (TaskStatus.PLANNED, TaskStatus.FAILED): _always,  # batch stage failure
     # Claiming
     (TaskStatus.OPEN, TaskStatus.CLAIMED): _always,
     (TaskStatus.OPEN, TaskStatus.WAITING_FOR_SUBTASKS): _always,
     (TaskStatus.OPEN, TaskStatus.CANCELLED): _always,
+    (TaskStatus.OPEN, TaskStatus.FAILED): _always,  # batch stage failure on unclaimed task
     # Work progression from CLAIMED
     (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS): _always,
     (TaskStatus.CLAIMED, TaskStatus.OPEN): _always,  # force-claim / unclaim
@@ -177,9 +179,11 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     # Recovery from blocked
     (TaskStatus.BLOCKED, TaskStatus.OPEN): _always,
     (TaskStatus.BLOCKED, TaskStatus.CANCELLED): _always,
+    (TaskStatus.BLOCKED, TaskStatus.FAILED): _always,  # batch stage failure
     (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.DONE): _always,
     (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.BLOCKED): _always,  # subtask timeout escalation
     (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.CANCELLED): _always,
+    (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.FAILED): _always,  # batch stage failure
     # Retry from failed
     (TaskStatus.FAILED, TaskStatus.OPEN): _always,
     # Verification gate (orchestrator closes after janitor + merge)

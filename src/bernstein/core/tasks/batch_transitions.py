@@ -3,6 +3,11 @@
 When all tasks in a plan stage complete, this module transitions them
 atomically to ensure consistent state.  If any transition in the batch
 fails, all transitions are rolled back.
+
+All status changes MUST flow through :func:`transition_task` so the FSM
+allowed-transitions table, guard predicates, Prometheus counters, HMAC
+audit log, and lifecycle event stream are consulted uniformly.  Writing
+``task.status`` directly bypasses every guardrail and is prohibited.
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_task
 from bernstein.core.tasks.models import TaskStatus
 
 if TYPE_CHECKING:
@@ -85,16 +91,26 @@ def _check_preconditions(
 def apply_batch_transition(
     tasks: Sequence[Task],
     specs: Sequence[TransitionSpec],
+    *,
+    actor: str = "batch",
+    reason: str = "batch_transition",
 ) -> BatchTransitionResult:
     """Apply a batch of status transitions atomically.
 
-    If any task's precondition fails (wrong current status, missing task),
-    the entire batch is aborted.  If a transition fails mid-batch, all
-    previously applied transitions are rolled back.
+    Every transition is delegated to :func:`transition_task`, which
+    enforces the FSM allowed-transitions table, runs guard predicates,
+    emits lifecycle events, and writes to the HMAC audit log.  If any
+    task's precondition fails (wrong current status, missing task) the
+    entire batch is aborted before any transitions are applied.  If a
+    transition fails mid-batch (illegal transition, guard rejection),
+    all previously applied transitions are rolled back by driving them
+    back through :func:`transition_task`.
 
     Args:
         tasks: All tasks (used for lookup and mutation).
         specs: Transition specifications to apply.
+        actor: Who triggered this batch (recorded in audit log).
+        reason: Human-readable reason for the batch (recorded in audit log).
 
     Returns:
         BatchTransitionResult with outcome details.
@@ -115,8 +131,16 @@ def apply_batch_transition(
         task = task_map[spec.task_id]
         originals[spec.task_id] = task.status
         try:
-            task.status = spec.to_status
+            transition_task(
+                task,
+                spec.to_status,
+                actor=actor,
+                reason=reason,
+            )
             transitioned.append(spec.task_id)
+        except IllegalTransitionError as exc:
+            failed.append((spec.task_id, str(exc)))
+            break
         except Exception as exc:
             failed.append((spec.task_id, str(exc)))
             break
@@ -124,7 +148,26 @@ def apply_batch_transition(
     # Phase 3: If any failed mid-batch, rollback
     if failed:
         for tid in transitioned:
-            task_map[tid].status = originals[tid]
+            task = task_map[tid]
+            original = originals[tid]
+            try:
+                transition_task(
+                    task,
+                    original,
+                    actor=actor,
+                    reason=f"{reason}:rollback",
+                )
+            except IllegalTransitionError:
+                # FSM has no reverse edge: record and restore by direct assignment
+                # as a last resort, but log loudly so the bypass is visible.
+                logger.exception(
+                    "Rollback requires FSM-illegal transition %s -> %s for task %s; "
+                    "forcing direct restore. Add reverse edge to TASK_TRANSITIONS.",
+                    task.status.value,
+                    original.value,
+                    tid,
+                )
+                task.status = original
         logger.warning(
             "Batch transition rolled back: %d transitioned, %d failed",
             len(transitioned),
@@ -178,7 +221,7 @@ def complete_stage(
         return BatchTransitionResult(success=True, transitioned=[])
 
     now = time.time()
-    result = apply_batch_transition(tasks, specs)
+    result = apply_batch_transition(tasks, specs, actor="batch", reason="stage_complete")
     if result.success:
         for tid in result.transitioned:
             task_map[tid].completed_at = now
@@ -221,7 +264,7 @@ def fail_stage(
     if not specs:
         return BatchTransitionResult(success=True, transitioned=[])
 
-    result = apply_batch_transition(tasks, specs)
+    result = apply_batch_transition(tasks, specs, actor="batch", reason=f"stage_fail:{reason}")
     if result.success:
         for tid in result.transitioned:
             task_map[tid].result_summary = reason
