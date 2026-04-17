@@ -35,7 +35,7 @@ You are working on Bernstein, a multi-agent orchestration system for CLI coding 
   - `memory/` — semantic caching, session memory
   - `trigger_sources/` — external trigger integrations
   - `grpc_gen/` — generated gRPC stubs
-  - Top-level shims: `orchestrator.py`, `spawner.py`, `task_lifecycle.py` etc. re-export from sub-packages
+  - Back-compat: `from bernstein.core.<old> import X` works via a `sys.meta_path` finder in `core/__init__.py` (`_CoreRedirectFinder`, `_REDIRECT_MAP`). No physical shim files exist for `orchestrator.py`, `spawner.py`, `task_lifecycle.py`, etc. WARNING: new aliases MUST be added to `_REDIRECT_MAP` in `src/bernstein/core/__init__.py`; creating physical shim files will shadow the finder and drift from sub-package sources.
   - `defaults.py` — 150+ configurable constants
 - `src/bernstein/adapters/` — 18 CLI agent adapters (claude, codex, gemini, qwen, aider, amp, roo_code, cursor, cody, continue_dev, goose, iac, kilo, kiro, ollama, opencode, tabby, generic)
 - `src/bernstein/cli/` — CLI entry points, decomposed into `commands/` sub-package (run_cmd, stop_cmd, status_cmd, agents_cmd, evolve_cmd, advanced_cmd, debug_cmd, etc.)
