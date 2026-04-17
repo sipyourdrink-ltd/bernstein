@@ -368,21 +368,68 @@ class TaskStore:
         fresh agent can pick them up.  Call this once after ``replay_jsonl()``
         during startup.
 
+        The release is persisted to the JSONL log synchronously (bug
+        ``audit-015``): without this, the in-memory reset is lost on crash and
+        the stale CLAIMED line replays on the next restart, enabling duplicate
+        execution.
+
         Returns:
             Number of tasks reset to open.
         """
         reset_count = 0
+        reset_tasks: list[Task] = []
         for stale_status in (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
             for task in list(self._by_status.get(stale_status, {}).values()):
                 self._index_remove(task)
-                task.status = TaskStatus.OPEN
+                # Use the FSM for the transition so audit/telemetry fire and
+                # any illegal jump is caught.  CLAIMED→OPEN and
+                # IN_PROGRESS→OPEN are both allow-listed in
+                # ``lifecycle.TASK_TRANSITIONS``.
+                transition_task(
+                    task,
+                    TaskStatus.OPEN,
+                    actor="task_store",
+                    reason="recover_stale_after_restart",
+                )
                 task.claimed_at = None
                 task.claimed_by_session = None
                 self._index_add(task)
+                reset_tasks.append(task)
                 reset_count += 1
         if reset_count:
+            # Flush release records to the JSONL log so the reset survives a
+            # subsequent crash.  Without this flush, a kill before the task's
+            # next mutation replays the CLAIMED line and a new agent can claim
+            # a task another agent was already running (work duplication).
+            for task in reset_tasks:
+                self._append_jsonl_sync(self._task_to_record(task))
             logger.info("recover_stale_claimed_tasks: reset %d task(s) to open after restart", reset_count)
         return reset_count
+
+    def _append_jsonl_sync(self, record: TaskRecord) -> None:
+        """Synchronously append a record to the JSONL log.
+
+        Used during startup recovery where the async
+        :meth:`_append_jsonl` cannot be awaited (the caller is sync) and we
+        still need the mutation durable on disk before returning.  Mirrors
+        the tenant-scoped backlog file the async path writes.
+        """
+        line = json.dumps(record, default=str) + "\n"
+        self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._jsonl_path.open("a") as handle:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        try:
+            tenant_paths = ensure_tenant_layout(self._sdd_dir, str(record["tenant_id"]))
+            target_path = tenant_paths.backlog_dir / "tasks.jsonl"
+            with target_path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+        except OSError as exc:
+            # Tenant mirror is best-effort during recovery; the authoritative
+            # JSONL log above is already durable.
+            logger.warning("Failed to mirror recover_stale record to tenant backlog: %s", exc)
 
     _BUFFER_MAX: int = 1
 
