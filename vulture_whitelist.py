@@ -45,3 +45,16 @@ record_fire  # noqa
 extract_github_context  # noqa
 list_scenarios  # noqa
 get_scenario_detail  # noqa
+# Agent identity card — public API
+AgentIdentityCard  # noqa
+issue_identity_card  # noqa
+save_identity_card  # noqa
+load_identity_card  # noqa
+check_capability  # noqa
+DEFAULT_CAPABILITIES  # noqa
+DEFAULT_DENIED  # noqa
+# Agent identity card — dataclass fields and methods consumed by middleware
+created_at  # noqa
+card_hash  # noqa
+has_capability  # noqa
+in_scope  # noqa
