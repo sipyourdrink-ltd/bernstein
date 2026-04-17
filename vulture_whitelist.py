@@ -109,3 +109,24 @@ scan_orphaned_checkpoints  # noqa
 is_checkpoint_recoverable  # noqa
 load_checkpoint  # noqa
 save_checkpoint  # noqa
+# Plan-and-Execute architecture — public API wired via plan runner / review gate
+PLANNING_MODELS  # noqa
+EXECUTION_MODELS  # noqa
+select_planning_model  # noqa
+select_execution_model  # noqa
+estimate_plan_cost  # noqa
+save_plan  # noqa
+load_plan  # noqa
+build_plan  # noqa
+format_plan_review  # noqa
+to_yaml  # noqa
+recommended_model  # noqa
+estimated_minutes  # noqa
+estimated_total_minutes  # noqa
+estimated_cost_usd  # noqa
+planning_model  # noqa
+goal_hash  # noqa
+description  # noqa
+priority  # noqa
+scope  # noqa
+depends_on  # noqa
