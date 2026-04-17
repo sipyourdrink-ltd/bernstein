@@ -31,7 +31,7 @@ max_agents: 4
 
 # Extra files appended to the manager's context.
 # context_files:
-#   - docs/DESIGN.md
+#   - docs/architecture/DESIGN.md
 #   - CLAUDE.md
 
 # ---------------------------------------------------------------------------

@@ -89,3 +89,7 @@ docs/openapi.json
 # pytest-benchmark output
 .benchmarks/
 .env
+
+# Local benchmark run artifacts (simulation/eval outputs — regenerated on demand)
+benchmarks/results/
+benchmarks/swe_bench/results/

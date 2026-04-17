@@ -152,6 +152,6 @@ If we miss a deadline we communicate proactively and you retain the right to dis
 ## Acknowledgments
 
 Researchers who discover and responsibly disclose valid vulnerabilities are listed in
-[`docs/security-acknowledgments.md`](security-acknowledgments.md).
+[`docs/security/security-acknowledgments.md`](security-acknowledgments.md).
 
 We also issue CVEs for confirmed vulnerabilities of Medium severity and above.

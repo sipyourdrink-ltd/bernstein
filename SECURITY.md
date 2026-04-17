@@ -103,7 +103,7 @@ The script spins up a Docker Compose stack with:
 - Ephemeral filesystem — nothing persists after `./scripts/researcher_sandbox.sh stop`
 - Pre-loaded demo tasks and synthetic agent tokens for testing
 
-See [`docs/bug-bounty.md`](docs/bug-bounty.md) for the full sandbox guide.
+See [`docs/security/bug-bounty.md`](docs/security/bug-bounty.md) for the full sandbox guide.
 
 ---
 
@@ -121,6 +121,6 @@ Security patches are backported to the current minor version only. Always run th
 
 ## Hall of Fame
 
-Acknowledged researchers are listed in [`docs/security-acknowledgments.md`](docs/security-acknowledgments.md).
+Acknowledged researchers are listed in [`docs/security/security-acknowledgments.md`](docs/security/security-acknowledgments.md).
 
 Thank you to everyone who has responsibly disclosed vulnerabilities.

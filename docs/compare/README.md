@@ -99,4 +99,4 @@ Earlier drafts of this page cited larger deltas that were not reproducible at n=
 
 ## Broader ecosystem comparison
 
-For a comparison against Python agent frameworks beyond Table A (OpenAI Agents SDK, Google ADK, Microsoft Agent Framework 1.0), see [docs/competitive-matrix.md](../competitive-matrix.md).
+For a comparison against Python agent frameworks beyond Table A (OpenAI Agents SDK, Google ADK, Microsoft Agent Framework 1.0), see [docs/reference/competitive-matrix.md](../reference/competitive-matrix.md).

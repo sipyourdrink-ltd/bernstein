@@ -89,7 +89,7 @@ role_model_policy:
 # Share context files with all agents
 context_files:
   - README.md
-  - docs/ARCHITECTURE.md
+  - docs/architecture/ARCHITECTURE.md
 ```
 
 ### Verify the install
@@ -204,7 +204,7 @@ jobs:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-See `docs/github-action.md` for the full parameter reference.
+See `docs/integrations/github-action.md` for the full parameter reference.
 
 ### Storing secrets
 
@@ -547,7 +547,7 @@ kubectl get pods -n bernstein
 kubectl port-forward -n bernstein svc/bernstein-server 8052:8052
 ```
 
-For the full Helm chart parameter reference, see `docs/HELM_DEPLOYMENT.md`.
+For the full Helm chart parameter reference, see `docs/operations/HELM_DEPLOYMENT.md`.
 
 ### Raw Kubernetes manifests (without Helm)
 
@@ -949,7 +949,7 @@ print(status.healthy)        # True / False
 3. Install the new version: `pip install --upgrade bernstein`
 4. Start: `bernstein run`
 
-State format is forward-compatible between minor versions. For major version upgrades, check `docs/migration-guides.md` for breaking changes.
+State format is forward-compatible between minor versions. For major version upgrades, check `docs/migrations/migration-guides.md` for breaking changes.
 
 To roll back: `pip install bernstein==<previous-version>` and restore `.sdd.backup/`.
 

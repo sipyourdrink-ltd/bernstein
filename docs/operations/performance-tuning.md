@@ -177,7 +177,7 @@ cache:
 ```yaml
 context_files:
   - README.md
-  - docs/ARCHITECTURE.md
+  - docs/architecture/ARCHITECTURE.md
   - src/bernstein/core/models.py
 ```
 

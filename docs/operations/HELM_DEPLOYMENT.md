@@ -210,6 +210,6 @@ kubectl delete namespace bernstein
 
 ## Next Steps
 
-- Check [DESIGN.md](../docs/DESIGN.md) for architecture details
-- Review [README.md](../README.md) for usage patterns
+- Check [DESIGN.md](../architecture/DESIGN.md) for architecture details
+- Review [README.md](../../README.md) for usage patterns
 - Enable observability: [Prometheus setup guide](#advanced-custom-metrics-for-hpa)

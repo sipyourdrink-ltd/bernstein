@@ -141,53 +141,54 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started:
-      - Quickstart: GETTING_STARTED.md
-      - Tutorial: quickstart-tutorial.md
-      - Install on Linux: install-linux.md
-      - Configuration: CONFIG.md
+      - Quickstart: getting-started/GETTING_STARTED.md
+      - Tutorial: getting-started/quickstart-tutorial.md
+      - Install on Linux: getting-started/install-linux.md
+      - Configuration: operations/CONFIG.md
   - Concepts:
-      - Architecture: ARCHITECTURE.md
-      - Design: DESIGN.md
-      - Task Lifecycle: LIFECYCLE.md
-      - The Bernstein Way: the-bernstein-way.md
-      - Glossary: GLOSSARY.md
+      - Architecture: architecture/ARCHITECTURE.md
+      - Design: architecture/DESIGN.md
+      - Task Lifecycle: architecture/LIFECYCLE.md
+      - Why Deterministic: architecture/WHY_DETERMINISTIC.md
+      - Glossary: reference/GLOSSARY.md
   - Guides:
-      - Adapter Guide: ADAPTER_GUIDE.md
-      - Plan Files: plans.md
-      - Hook System: hook-system.md
-      - Plugin SDK: plugin-sdk.md
-      - Cost Optimization: cost-optimization.md
-      - Performance Tuning: performance-tuning.md
-      - Security Hardening: security-hardening.md
-      - GitHub Action: github-action.md
-      - GitHub App Setup: github-app-setup.md
+      - Adapter Guide: adapters/ADAPTER_GUIDE.md
+      - Hook System: integrations/hook-system.md
+      - Plugin SDK: integrations/plugin-sdk.md
+      - Cost Optimization: operations/cost-optimization.md
+      - Performance Tuning: operations/performance-tuning.md
+      - Security Hardening: security/security-hardening.md
+      - GitHub Action: integrations/github-action.md
+      - GitHub App Setup: integrations/github-app-setup.md
   - Deployment:
-      - Deployment Guide: deployment-guide.md
-      - Cluster Mode: CLUSTER.md
-      - Helm Deployment: HELM_DEPLOYMENT.md
+      - Deployment Guide: operations/deployment-guide.md
+      - Deployment Reference: operations/DEPLOYMENT.md
+      - Runbooks: operations/runbooks.md
+      - Cluster Mode: architecture/CLUSTER.md
+      - Helm Deployment: operations/HELM_DEPLOYMENT.md
   - Cloud / Cloudflare:
-      - Overview: cloudflare-overview.md
-      - Setup: cloudflare-setup.md
-      - Bridges: cloudflare-bridges.md
-      - Adapters: cloudflare-adapters.md
-      - Workers AI: cloudflare-ai.md
-      - Analytics & Caching: cloudflare-analytics.md
-      - Cloud CLI: cloudflare-cli.md
-      - MCP Remote: cloudflare-mcp.md
+      - Overview: cloudflare/cloudflare-overview.md
+      - Setup: cloudflare/cloudflare-setup.md
+      - Bridges: cloudflare/cloudflare-bridges.md
+      - Adapters: cloudflare/cloudflare-adapters.md
+      - Workers AI: cloudflare/cloudflare-ai.md
+      - Analytics & Caching: cloudflare/cloudflare-analytics.md
+      - Cloud CLI: cloudflare/cloudflare-cli.md
+      - MCP Remote: cloudflare/cloudflare-mcp.md
   - Reference:
-      - API Reference: openapi-reference.md
-      - Feature Matrix: FEATURE_MATRIX.md
-      - Model Policy: MODEL_POLICY.md
-      - Compatibility: compatibility.md
-      - Dependency Resolver: DEPENDENCY_RESOLVER.md
-      - Known Limitations: KNOWN_LIMITATIONS.md
-      - Troubleshooting: TROUBLESHOOTING.md
+      - API Reference: reference/openapi-reference.md
+      - Feature Matrix: reference/FEATURE_MATRIX.md
+      - Model Policy: operations/MODEL_POLICY.md
+      - Compatibility: adapters/compatibility.md
+      - Dependency Resolver: architecture/DEPENDENCY_RESOLVER.md
+      - Known Limitations: reference/KNOWN_LIMITATIONS.md
+      - Competitive Matrix: reference/competitive-matrix.md
+      - Troubleshooting: operations/TROUBLESHOOTING.md
       - Changelog: CHANGELOG.md
   - Migration:
-      - Migration Guides: migration-guides.md
-      - From CrewAI: migration-from-crewai.md
-      - From LangGraph: migration-from-langgraph.md
-      - Zero Lock-in: zero-lock-in.md
+      - Migration Guides: migrations/migration-guides.md
+      - From CrewAI: migrations/migration-from-crewai.md
+      - From LangGraph: migrations/migration-from-langgraph.md
   - Blog:
       - Zero-LLM Coordination: blog/zero-llm-coordination.md
       - Multi-Agent Benchmark: blog/multi-agent-benchmark.md
@@ -203,7 +204,7 @@ nav:
       - vs Parallel Code: compare/bernstein-vs-parallel-code.md
       - vs Single Agent: compare/bernstein-vs-single-agent.md
       - vs Stoneforge: compare/bernstein-vs-stoneforge.md
-      - Competitive Matrix: competitive-matrix.md
+      - Competitive Matrix: reference/competitive-matrix.md
   - Decisions:
       - Agent Lifecycle: decisions/001-agent-lifecycle.md
       - UX and Distribution: decisions/002-ux-and-distribution.md
@@ -214,9 +215,8 @@ nav:
       - Pluggy Plugin System: decisions/007-pluggy-plugin-system.md
       - Click for CLI: decisions/008-click-for-cli.md
   - Contributing: CONTRIBUTING.md
-  - Audit: AUDIT.md
-  - Benchmarks: BENCHMARKS.md
-  - Agentic Manifesto: AGENTIC_MANIFESTO.md
+  - Audit: security/AUDIT.md
+  - Benchmarks: benchmarks/BENCHMARKS.md
 
 docs_dir: docs
 strict: false
