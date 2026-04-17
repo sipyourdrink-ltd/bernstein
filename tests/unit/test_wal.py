@@ -651,3 +651,142 @@ class TestWALRecoveryScanAll:
         task_ids = [e.inputs["task_id"] for _, e in result]
         assert "T-1" in task_ids
         assert "T-2" in task_ids
+
+
+# ---------------------------------------------------------------------------
+# TestWALRecoveryClosedMarker (audit-072)
+# ---------------------------------------------------------------------------
+
+
+class TestWALRecoveryClosedMarker:
+    """Tests for the ``.closed`` sidecar marker (audit-072).
+
+    Regression: without a close step, every previous run's uncommitted
+    entries are re-returned on every boot, growing unboundedly.  After
+    recovery the orchestrator MUST write a ``.closed`` marker so that
+    subsequent scans skip the WAL.
+    """
+
+    def test_is_wal_closed_false_without_marker(self, tmp_path: Path) -> None:
+        """Fresh WAL with no sidecar is not closed."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w = WALWriter(run_id="r-1", sdd_dir=sdd)
+        w.append("d", {}, {}, "a", committed=False)
+        assert WALRecovery.is_wal_closed("r-1", sdd) is False
+
+    def test_close_wal_writes_marker_file(self, tmp_path: Path) -> None:
+        """close_wal writes a JSON sidecar next to the WAL file."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        WALWriter(run_id="r-1", sdd_dir=sdd).append("d", {}, {}, "a", committed=False)
+
+        marker = WALRecovery.close_wal(
+            "r-1",
+            sdd,
+            reason="unit_test",
+            uncommitted_count=1,
+            orphaned_count=0,
+        )
+        assert marker.exists()
+        assert marker.name == "r-1.wal.closed"
+        payload = json.loads(marker.read_text())
+        assert payload["run_id"] == "r-1"
+        assert payload["reason"] == "unit_test"
+        assert payload["uncommitted_count"] == 1
+        assert payload["orphaned_count"] == 0
+        assert "closed_at" in payload
+        assert WALRecovery.is_wal_closed("r-1", sdd) is True
+
+    def test_scan_skips_closed_wals(self, tmp_path: Path) -> None:
+        """scan_all_uncommitted returns nothing for a closed WAL."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w = WALWriter(run_id="old", sdd_dir=sdd)
+        w.append("task_claimed", {"task_id": "T-1"}, {}, "lifecycle", committed=False)
+        w.append("task_claimed", {"task_id": "T-2"}, {}, "lifecycle", committed=False)
+
+        # Before closing: uncommitted entries are visible.
+        assert len(WALRecovery.scan_all_uncommitted(sdd)) == 2
+
+        WALRecovery.close_wal("old", sdd)
+
+        # After closing: the WAL is skipped entirely.
+        assert WALRecovery.scan_all_uncommitted(sdd) == []
+
+    def test_find_orphaned_claims_skips_closed_wals(self, tmp_path: Path) -> None:
+        """find_orphaned_claims also respects the .closed marker."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w = WALWriter(run_id="old", sdd_dir=sdd)
+        # Orphan: claim with no matching spawn_confirmed.
+        w.append("task_claimed", {"task_id": "T-orphan"}, {}, "lifecycle", committed=False)
+
+        assert len(WALRecovery.find_orphaned_claims(sdd)) == 1
+        WALRecovery.close_wal("old", sdd)
+        assert WALRecovery.find_orphaned_claims(sdd) == []
+
+    def test_recovery_then_close_is_noop_on_next_scan(self, tmp_path: Path) -> None:
+        """Fresh WAL (2 committed + 3 uncommitted): recover, close, re-scan is empty.
+
+        This is the core audit-072 regression test: after a recovery
+        cycle the next scan on the same WAL must return zero entries,
+        so the orchestrator does not re-process the same uncommitted
+        entries on every boot.
+        """
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+
+        run_id = "audit-072-run"
+        w = WALWriter(run_id=run_id, sdd_dir=sdd)
+        # 2 committed entries
+        w.append("tick_started", {"tick": 0}, {}, "orchestrator", committed=True)
+        w.append("task_spawn_confirmed", {"task_id": "T-ok"}, {}, "lifecycle", committed=True)
+        # 3 uncommitted entries (simulated crashes between claim and spawn)
+        w.append("task_claimed", {"task_id": "T-1"}, {}, "lifecycle", committed=False)
+        w.append("task_claimed", {"task_id": "T-2"}, {}, "lifecycle", committed=False)
+        w.append("task_claimed", {"task_id": "T-3"}, {}, "lifecycle", committed=False)
+
+        # First recovery pass: scan sees all 3 uncommitted entries.
+        first_pass = WALRecovery.scan_all_uncommitted(sdd)
+        assert len(first_pass) == 3
+        task_ids = sorted(e.inputs["task_id"] for _, e in first_pass)
+        assert task_ids == ["T-1", "T-2", "T-3"]
+
+        # Orchestrator finishes recovery by closing the WAL.
+        marker = WALRecovery.close_wal(
+            run_id,
+            sdd,
+            reason="recovered_by_orchestrator",
+            uncommitted_count=len(first_pass),
+            orphaned_count=len(first_pass),
+        )
+        assert marker.exists()
+        assert WALRecovery.is_wal_closed(run_id, sdd) is True
+
+        # Second recovery pass on the SAME state: the WAL is skipped,
+        # so no entries are returned -- the unbounded re-scan is fixed.
+        second_pass = WALRecovery.scan_all_uncommitted(sdd)
+        assert second_pass == []
+        assert WALRecovery.find_orphaned_claims(sdd) == []
+
+        # And the WAL file itself is untouched -- close is non-destructive.
+        wal_file = sdd / "runtime" / "wal" / f"{run_id}.wal.jsonl"
+        assert wal_file.exists()
+        lines = [ln for ln in wal_file.read_text().splitlines() if ln.strip()]
+        assert len(lines) == 5  # 2 committed + 3 uncommitted, preserved
+
+    def test_close_wal_does_not_affect_other_runs(self, tmp_path: Path) -> None:
+        """Closing one run's WAL leaves other runs visible to the scan."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w1 = WALWriter(run_id="run-a", sdd_dir=sdd)
+        w1.append("task_claimed", {"task_id": "T-a"}, {}, "lifecycle", committed=False)
+        w2 = WALWriter(run_id="run-b", sdd_dir=sdd)
+        w2.append("task_claimed", {"task_id": "T-b"}, {}, "lifecycle", committed=False)
+
+        WALRecovery.close_wal("run-a", sdd)
+
+        result = WALRecovery.scan_all_uncommitted(sdd)
+        run_ids = [r for r, _ in result]
+        assert run_ids == ["run-b"]

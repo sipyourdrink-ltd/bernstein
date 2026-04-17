@@ -294,6 +294,12 @@ class WALRecovery:
         for entry in recovery.get_uncommitted_entries():
             # re-execute or quarantine
             ...
+        WALRecovery.close_wal(run_id, sdd_dir, reason="recovered")
+
+    Once ``close_wal`` has been called, subsequent scans (via
+    :meth:`scan_all_uncommitted` / :meth:`find_orphaned_claims`) skip the
+    WAL so the same uncommitted entries are not re-reported forever
+    (audit-072).
     """
 
     def __init__(self, run_id: str, sdd_dir: Path) -> None:
@@ -309,6 +315,74 @@ class WALRecovery:
         except FileNotFoundError:
             return []
 
+    # ------------------------------------------------------------------
+    # Closed-WAL sidecar marker (audit-072)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _closed_marker_path(run_id: str, sdd_dir: Path) -> Path:
+        """Return the ``.closed`` sidecar marker path for *run_id*."""
+        return sdd_dir / "runtime" / "wal" / f"{run_id}.wal.closed"
+
+    @staticmethod
+    def is_wal_closed(run_id: str, sdd_dir: Path) -> bool:
+        """Return True when a ``.closed`` marker exists for *run_id*.
+
+        A closed marker signals that a previous recovery cycle has
+        already observed and handled every uncommitted entry in the
+        corresponding WAL — future scans must skip it to prevent
+        unbounded re-scanning of the same entries (audit-072).
+        """
+        return WALRecovery._closed_marker_path(run_id, sdd_dir).exists()
+
+    @staticmethod
+    def close_wal(
+        run_id: str,
+        sdd_dir: Path,
+        *,
+        reason: str = "recovered",
+        uncommitted_count: int = 0,
+        orphaned_count: int = 0,
+    ) -> Path:
+        """Write a ``.closed`` sidecar marker next to ``{run_id}.wal.jsonl``.
+
+        After this call, :meth:`scan_all_uncommitted` and
+        :meth:`find_orphaned_claims` will skip ``run_id`` on every
+        subsequent invocation.  The marker is a small JSON document
+        recording when and why the WAL was closed so operators can audit
+        recovery history.
+
+        The write is ``fsync``'d to guarantee that a crash immediately
+        after recovery cannot undo the close (which would reintroduce
+        the unbounded re-scan bug).
+
+        Args:
+            run_id: Run ID whose WAL is being closed.
+            sdd_dir: The ``.sdd`` directory root.
+            reason: Free-form string recorded in the marker body.
+            uncommitted_count: Number of uncommitted entries that were
+                observed during recovery (for audit trail).
+            orphaned_count: Number of orphaned claims that were observed
+                during recovery (for audit trail).
+
+        Returns:
+            Path to the ``.closed`` marker.
+        """
+        marker = WALRecovery._closed_marker_path(run_id, sdd_dir)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "run_id": run_id,
+            "closed_at": time.time(),
+            "reason": reason,
+            "uncommitted_count": int(uncommitted_count),
+            "orphaned_count": int(orphaned_count),
+        }
+        with marker.open("w") as f:
+            f.write(json.dumps(payload, separators=(",", ":")))
+            f.flush()
+            os.fsync(f.fileno())
+        return marker
+
     @staticmethod
     def scan_all_uncommitted(
         sdd_dir: Path,
@@ -318,8 +392,11 @@ class WALRecovery:
         """Scan all WAL files for uncommitted entries from previous runs.
 
         Iterates over every ``*.wal.jsonl`` file in the WAL directory, skipping
-        *exclude_run_id* (typically the current run). Returns a flat list of
-        ``(run_id, WALEntry)`` pairs for every entry with ``committed=False``.
+        *exclude_run_id* (typically the current run) and any WAL whose
+        ``.closed`` sidecar marker is present (audit-072 — prevents
+        unbounded re-scanning of already-recovered WALs). Returns a flat
+        list of ``(run_id, WALEntry)`` pairs for every entry with
+        ``committed=False``.
 
         Returns an empty list when the WAL directory does not exist (fresh
         project with no prior runs).
@@ -339,6 +416,8 @@ class WALRecovery:
         for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
             run_id = wal_file.name.removesuffix(".wal.jsonl")
             if run_id == exclude_run_id:
+                continue
+            if WALRecovery.is_wal_closed(run_id, sdd_dir):
                 continue
             recovery = WALRecovery(run_id=run_id, sdd_dir=sdd_dir)
             for entry in recovery.get_uncommitted_entries():
@@ -361,6 +440,9 @@ class WALRecovery:
         task would otherwise sit in *claimed* forever (or be abandoned by
         ``_reconcile_claimed_tasks`` without a dedicated retry audit trail).
 
+        WALs with a ``.closed`` sidecar marker are skipped (audit-072) so
+        that orphans handled by a prior recovery are not retried forever.
+
         Args:
             sdd_dir: The ``.sdd`` directory root.
             exclude_run_id: Run ID to skip (the in-progress run).
@@ -376,6 +458,8 @@ class WALRecovery:
         for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
             run_id = wal_file.name.removesuffix(".wal.jsonl")
             if run_id == exclude_run_id:
+                continue
+            if WALRecovery.is_wal_closed(run_id, sdd_dir):
                 continue
             reader = WALReader(run_id=run_id, sdd_dir=sdd_dir)
             try:

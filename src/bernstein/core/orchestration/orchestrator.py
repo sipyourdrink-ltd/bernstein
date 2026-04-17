@@ -1710,6 +1710,32 @@ class Orchestrator:
         # so a fresh agent can resume them (audit-001 fix part b).
         preserved_paths = self._preserve_prior_worktrees_with_wip()
 
+        # Close every prior-run WAL we observed so future boots do not
+        # re-scan the same uncommitted entries forever (audit-072).
+        # We close the union of run_ids that held uncommitted entries and
+        # run_ids that held orphaned claims -- in practice these are the
+        # only WALs whose entries were returned by the scan helpers.
+        closed_run_ids = sorted({r for r, _ in uncommitted} | {r for r, _ in orphaned})
+        for closed_run_id in closed_run_ids:
+            run_uncommitted = sum(1 for r, _ in uncommitted if r == closed_run_id)
+            run_orphaned = sum(1 for r, _ in orphaned if r == closed_run_id)
+            try:
+                WALRecovery.close_wal(
+                    closed_run_id,
+                    sdd_dir,
+                    reason="recovered_by_orchestrator",
+                    uncommitted_count=run_uncommitted,
+                    orphaned_count=run_orphaned,
+                )
+            except OSError as exc:
+                # Never block orchestrator startup on marker write failure;
+                # next boot will simply re-run recovery for this WAL.
+                logger.warning(
+                    "WAL recovery: failed to write .closed marker for run=%s: %s",
+                    closed_run_id,
+                    exc,
+                )
+
         self._recorder.record(
             "wal_recovery",
             uncommitted_count=len(uncommitted),
@@ -1717,6 +1743,7 @@ class Orchestrator:
             retried_count=retried,
             preserved_worktrees=[str(p) for p in preserved_paths],
             run_ids=sorted({r for r, _ in uncommitted}),
+            closed_run_ids=closed_run_ids,
         )
         if retried:
             logger.warning(
