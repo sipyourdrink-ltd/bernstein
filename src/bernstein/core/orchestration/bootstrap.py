@@ -408,8 +408,10 @@ def bootstrap_from_seed(
         cells: Number of parallel cells. If None, reads from seed config.
         remote: If True, bind to 0.0.0.0 for remote access.
         force_fresh: Ignore any saved session and start from scratch.
-        evolve_mode: When True, start the server with ``--reload`` so that
-            source changes by agents are picked up without killing agents.
+        evolve_mode: Retained for back-compat. Uvicorn ``--reload`` was
+            removed 2026-04-17 (audit-115); this flag no longer alters
+            the server launch. Agents pick up source changes only when
+            the supervisor restarts the server for real (crash/health).
         cli: Optional CLI override (e.g. "claude", "codex"). Overrides seed config.
         model: Optional model override (e.g. "opus", "sonnet"). Overrides seed config.
 

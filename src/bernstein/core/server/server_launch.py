@@ -230,9 +230,12 @@ def _start_server(
         bind_host: Host to bind to. Use "0.0.0.0" for remote access.
         cluster_enabled: Enable cluster endpoints and node reaper.
         auth_token: Bearer token for API auth.
-        evolve_mode: When True, start uvicorn with ``--reload`` so that
-            source changes made by agents are picked up automatically
-            without killing running agents (they communicate via HTTP).
+        evolve_mode: Retained for signature compatibility. Uvicorn
+            ``--reload`` was removed 2026-04-17 per audit-115 because
+            auto-reload is catastrophic in self-modifying runs
+            (file writes → restart → dropped HTTP connections → WAL
+            replay duplicate claims). The flag no longer affects the
+            launched uvicorn argv.
 
     Returns:
         PID of the server process.
@@ -271,12 +274,13 @@ def _start_server(
         "--port",
         str(port),
     ]
-    if evolve_mode:
-        # In self-development mode, let uvicorn watch for source changes
-        # and auto-reload.  Agents survive because they communicate via
-        # HTTP — they see a brief connection error during reload and retry.
-        src_dir = str(workdir / "src" / "bernstein")
-        server_cmd.extend(["--reload", "--reload-dir", src_dir])
+    # ``--reload`` was removed 2026-04-17 per audit-115 / incident
+    # 2026-04-11.  Bernstein agents continuously edit src/bernstein/*.py,
+    # so auto-reload causes a uvicorn restart on every write — in-flight
+    # requests drop, the bind port races, and WAL replay produces
+    # duplicate task claims.  evolve_mode is preserved in the signature
+    # for back-compat but no longer toggles reload.
+    _ = evolve_mode  # intentional: parameter retained for compatibility
 
     log_path = workdir / ".sdd" / "runtime" / "server.log"
     rotate_log_file(log_path)
