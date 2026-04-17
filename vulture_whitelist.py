@@ -82,3 +82,22 @@ auto_rollback_diff_pct  # noqa
 prompt_hash  # noqa
 created_at  # noqa
 notes  # noqa
+# Eval framework — public API, consumed by bandit router and benchmark mode
+append_eval_record  # noqa
+load_eval_records  # noqa
+per_model_accuracy  # noqa
+per_role_accuracy  # noqa
+head_to_head  # noqa
+benchmark_summary  # noqa
+EvalRecord  # noqa
+ModelAccuracy  # noqa
+EvalResult  # noqa
+pass_rate  # noqa
+quality_gate_results  # noqa
+step_count  # noqa
+retried  # noqa
+task_id  # noqa
+complexity  # noqa
+timestamp  # noqa
+avg_duration_s  # noqa
+avg_cost_usd  # noqa
