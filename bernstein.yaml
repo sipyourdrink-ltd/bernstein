@@ -41,4 +41,4 @@ context_files:
 - CLAUDE.md
 - docs/the-bernstein-way.md
 agency:
-  path: /Users/sasha/IdeaProjects/cloned/agency-agents
+  path: ${BERNSTEIN_AGENCY_PATH:-./external/agency-agents}  # replace with your agency-agents clone path

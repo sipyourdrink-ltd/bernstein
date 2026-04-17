@@ -7,8 +7,9 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 
-BACKLOG_DIR = "/Users/sasha/IdeaProjects/personal_projects/bernstein/.sdd/backlog/open"
+BACKLOG_DIR = Path(__file__).resolve().parent.parent / ".sdd" / "backlog" / "open"
 REPO = "chernistry/bernstein"
 
 # Map filename prefix to GitHub label(s)
