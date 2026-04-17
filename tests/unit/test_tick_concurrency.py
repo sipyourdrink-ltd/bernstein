@@ -1,68 +1,17 @@
 """TEST-003: Concurrency tests for tick processing.
 
-Simulates concurrent access to task store, agent sessions, WAL, and the
-ConcurrencyGuard to verify thread-safety and generation-based stale detection.
+Covers WAL write integrity and crash-recovery detection under simulated
+concurrent access. The orchestrator's tick loop is serial (see
+``orchestrator.py``), so there is no concurrent-tick guard to exercise here.
 """
 
 from __future__ import annotations
 
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import pytest
-from bernstein.core.concurrency_guard import ConcurrencyGuard, GuardState
 from bernstein.core.wal import GENESIS_HASH, WALEntry, WALReader, WALWriter
-
-# ---------------------------------------------------------------------------
-# TEST-003a: ConcurrencyGuard basic semantics
-# ---------------------------------------------------------------------------
-
-
-class TestConcurrencyGuardBasics:
-    """Verify generation-counted guard behaviour."""
-
-    def test_initial_state_is_idle(self) -> None:
-        guard = ConcurrencyGuard()
-        assert guard.state == GuardState.IDLE
-        assert guard.generation == 0
-
-    def test_start_increments_generation(self) -> None:
-        guard = ConcurrencyGuard()
-        gen = guard.start()
-        assert gen == 1
-        assert guard.state == GuardState.RUNNING
-
-    def test_double_start_raises(self) -> None:
-        guard = ConcurrencyGuard()
-        guard.start()
-        with pytest.raises(RuntimeError, match="already running"):
-            guard.start()
-
-    def test_finish_returns_to_idle(self) -> None:
-        guard = ConcurrencyGuard()
-        guard.start()
-        guard.finish()
-        assert guard.state == GuardState.IDLE
-
-    def test_stale_detection(self) -> None:
-        guard = ConcurrencyGuard()
-        gen1 = guard.start()
-        guard.finish()
-        gen2 = guard.start()
-        assert guard.is_stale(gen1) is True
-        assert guard.is_stale(gen2) is False
-
-    def test_sequential_generations(self) -> None:
-        guard = ConcurrencyGuard()
-        generations: list[int] = []
-        for _ in range(5):
-            g = guard.start()
-            generations.append(g)
-            guard.finish()
-        assert generations == [1, 2, 3, 4, 5]
-
 
 # ---------------------------------------------------------------------------
 # TEST-003b: WAL concurrent writes from multiple threads
@@ -221,60 +170,6 @@ class TestWALUncommittedEntries:
 
 
 # ---------------------------------------------------------------------------
-# TEST-003d: Concurrent guard with simulated tasks
-# ---------------------------------------------------------------------------
-
-
-class TestConcurrencyGuardThreaded:
-    """Simulate concurrent tick processing with generation checks."""
-
-    def test_stale_callback_detection_across_threads(self) -> None:
-        guard = ConcurrencyGuard()
-        stale_detected = threading.Event()
-        results: list[bool] = []
-
-        def worker(captured_gen: int) -> None:
-            # Simulate some work delay
-            time.sleep(0.01)
-            is_stale = guard.is_stale(captured_gen)
-            results.append(is_stale)
-            if is_stale:
-                stale_detected.set()
-
-        gen1 = guard.start()
-        guard.finish()
-
-        # Start a "worker" for gen1 (which is now stale)
-        guard.start()
-
-        t = threading.Thread(target=worker, args=(gen1,))
-        t.start()
-        t.join(timeout=5.0)
-
-        guard.finish()
-
-        assert len(results) == 1
-        assert results[0] is True  # gen1 should be stale
-
-    def test_current_generation_is_not_stale(self) -> None:
-        guard = ConcurrencyGuard()
-        gen = guard.start()
-
-        results: list[bool] = []
-
-        def worker() -> None:
-            results.append(guard.is_stale(gen))
-
-        t = threading.Thread(target=worker)
-        t.start()
-        t.join(timeout=5.0)
-
-        guard.finish()
-
-        assert results == [False]
-
-
-# ---------------------------------------------------------------------------
 # TEST-003e: WAL entry hash computation consistency
 # ---------------------------------------------------------------------------
 
@@ -315,124 +210,6 @@ class TestWALHashConsistency:
         }
         modified = {**base, "inputs": {"a": 2}}
         assert _compute_entry_hash(base) != _compute_entry_hash(modified)
-
-
-# ---------------------------------------------------------------------------
-# TEST-003f: TickGuard non-blocking concurrency
-# ---------------------------------------------------------------------------
-
-
-class TestTickGuardConcurrency:
-    """TickGuard prevents overlapping ticks under concurrent access."""
-
-    def test_single_tick_acquires_lock(self) -> None:
-        from bernstein.core.tick_guard import TickGuard
-
-        guard = TickGuard()
-        with guard.try_acquire() as acquired:
-            assert acquired is True
-            assert guard.is_tick_running is True
-        assert guard.is_tick_running is False
-
-    def test_second_concurrent_tick_is_skipped(self) -> None:
-        from bernstein.core.tick_guard import TickGuard
-
-        guard = TickGuard()
-        inner_acquired: list[bool] = []
-        barrier = threading.Barrier(2)
-
-        def slow_tick() -> None:
-            with guard.try_acquire() as acquired:
-                if acquired:
-                    barrier.wait()  # Signal that we hold the lock
-                    time.sleep(0.05)  # Hold it briefly
-
-        def concurrent_tick() -> None:
-            barrier.wait()  # Wait until slow_tick holds lock
-            with guard.try_acquire() as acquired:
-                inner_acquired.append(acquired)
-
-        t1 = threading.Thread(target=slow_tick)
-        t2 = threading.Thread(target=concurrent_tick)
-        t1.start()
-        t2.start()
-        t1.join(timeout=5.0)
-        t2.join(timeout=5.0)
-
-        # Second concurrent tick should have been skipped
-        assert len(inner_acquired) == 1
-        assert inner_acquired[0] is False
-
-    def test_stats_track_skipped_ticks(self) -> None:
-        from bernstein.core.tick_guard import TickGuard
-
-        guard = TickGuard()
-        barrier = threading.Barrier(2)
-        ready = threading.Event()
-
-        def holding_tick() -> None:
-            with guard.try_acquire() as acquired:
-                if acquired:
-                    ready.set()
-                    barrier.wait()
-
-        def skipping_tick() -> None:
-            ready.wait(timeout=5.0)
-            with guard.try_acquire():
-                pass  # Acquire and immediately release the guard
-            barrier.wait()
-
-        t1 = threading.Thread(target=holding_tick)
-        t2 = threading.Thread(target=skipping_tick)
-        t1.start()
-        t2.start()
-        t1.join(timeout=5.0)
-        t2.join(timeout=5.0)
-
-        assert guard.stats.total_acquired >= 1
-        assert guard.stats.total_skipped >= 1
-        assert guard.stats.total_attempts == guard.stats.total_acquired + guard.stats.total_skipped
-
-    def test_sequential_ticks_all_succeed(self) -> None:
-        from bernstein.core.tick_guard import TickGuard
-
-        guard = TickGuard()
-        results: list[bool] = []
-
-        for _ in range(5):
-            with guard.try_acquire() as acquired:
-                results.append(acquired)
-
-        assert all(results), f"All sequential ticks should succeed, got: {results}"
-        assert guard.stats.total_acquired == 5
-        assert guard.stats.total_skipped == 0
-
-    def test_force_release_unblocks_subsequent_ticks(self) -> None:
-        from bernstein.core.tick_guard import TickGuard
-
-        guard = TickGuard()
-        # Manually acquire to simulate a stuck tick
-        guard._lock.acquire()
-        assert guard.is_tick_running is True
-
-        released = guard.force_release()
-        assert released is True
-        assert guard.is_tick_running is False
-
-        # Subsequent tick should now succeed
-        with guard.try_acquire() as acquired:
-            assert acquired is True
-
-    def test_duration_stats_are_recorded(self) -> None:
-        from bernstein.core.tick_guard import TickGuard
-
-        guard = TickGuard()
-        with guard.try_acquire() as acquired:
-            assert acquired is True
-            time.sleep(0.02)
-
-        assert guard.stats.last_tick_duration_s >= 0.01
-        assert guard.stats.longest_tick_duration_s >= 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -480,20 +257,3 @@ class TestWALThreadedWriteRace:
 
         ok, errors = reader.verify_chain()
         assert ok is True, f"Chain broken: {errors}"
-
-    def test_generation_guard_prevents_stale_callbacks(self) -> None:
-        """Stale callbacks from old generations are discarded across threads."""
-        from bernstein.core.concurrency_guard import ConcurrencyGuard
-
-        guard = ConcurrencyGuard()
-
-        # Run 3 generations; capture gen from each
-        gens: list[int] = []
-        for _ in range(3):
-            g = guard.start()
-            gens.append(g)
-            guard.finish()
-
-        # All captured gens except the last should be stale
-        stale = [guard.is_stale(g) for g in gens]
-        assert stale == [True, True, False]

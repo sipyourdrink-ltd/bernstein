@@ -3,6 +3,11 @@
 The orchestrator is DETERMINISTIC CODE, not an LLM. It matches tasks to agents
 via the spawner and verifies completion via the janitor. See ADR-001.
 
+Design note: the tick loop is single-threaded (``while self._running`` in
+``run``), so no concurrent-tick guard is required. If threaded ticks are ever
+introduced, reintroduce a non-blocking guard (see git history for the removed
+``tick_guard`` / ``concurrency_guard`` modules).
+
 This module is the public facade. Heavy lifting lives in:
 - tick_pipeline.py   — task fetching, batching, server interaction, TypedDicts
 - task_lifecycle.py  — claim/spawn, completion processing, retry/decompose
