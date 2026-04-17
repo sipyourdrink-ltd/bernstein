@@ -15,12 +15,29 @@ Design:
   rather than waiting for stream-json parsing).
 - ``PostToolUse`` events update an activity timestamp file so the heartbeat
   monitor has a second source of liveness signals.
+
+Security (audit-114):
+- ``session_id`` arrives from an untrusted URL path parameter and is used
+  verbatim as a filename for marker/sidecar/heartbeat files.  An attacker
+  who can reach the endpoint (which is explicitly public because hooks
+  fire from localhost) could otherwise submit values such as
+  ``..%2F..%2Fruntime%2Fsignals%2FSHUTDOWN`` to escape the intended
+  directory and forge completion markers or clobber runtime state.
+- Primary defense: validate ``session_id`` with a conservative
+  ``^[A-Za-z0-9_-]{1,128}$`` regex.  This rejects dots, slashes,
+  backslashes, null bytes, whitespace, and every URL-decoded traversal
+  character before any filesystem access happens.
+- Defense in depth: every file write resolves the candidate path and
+  verifies ``is_relative_to`` the intended base directory, so a symlink
+  pointing outside or a future code change cannot silently reintroduce
+  traversal.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -30,6 +47,88 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Strict pattern for session_id values arriving from the URL path.
+# Allows alphanumerics, underscore, and dash only — rejects dots, slashes,
+# backslashes, null bytes, whitespace, and any URL-decoded traversal chars.
+_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+class InvalidSessionIdError(ValueError):
+    """Raised when a session_id fails validation.
+
+    The HTTP layer maps this to a 400 response.  Callers that touch the
+    filesystem also raise this defensively before opening any files.
+    """
+
+
+def validate_session_id(session_id: str) -> str:
+    """Validate that ``session_id`` is a safe filename component.
+
+    Args:
+        session_id: The raw session identifier (typically from the URL
+            path parameter).
+
+    Returns:
+        The validated ``session_id`` unchanged.
+
+    Raises:
+        InvalidSessionIdError: If the value is empty, too long, contains
+            a null byte, contains any path separator or traversal
+            character, or otherwise fails the strict allowlist regex.
+    """
+    if not isinstance(session_id, str):
+        raise InvalidSessionIdError("session_id must be a string")
+    # Fast-fail on the most dangerous characters so the error message is
+    # precise even if the regex would have caught them anyway.
+    if "\x00" in session_id:
+        raise InvalidSessionIdError("session_id contains a null byte")
+    if "/" in session_id or "\\" in session_id:
+        raise InvalidSessionIdError("session_id contains a path separator")
+    if ".." in session_id:
+        raise InvalidSessionIdError("session_id contains '..'")
+    if not _SESSION_ID_PATTERN.fullmatch(session_id):
+        raise InvalidSessionIdError(
+            "session_id must match ^[A-Za-z0-9_-]{1,128}$",
+        )
+    return session_id
+
+
+def _safe_child(base: Path, session_id: str, *, suffix: str = "") -> Path:
+    """Build a path under ``base`` for ``session_id`` and verify containment.
+
+    The candidate path is resolved (following symlinks) and compared with
+    the resolved base via ``Path.is_relative_to``.  Any path that escapes
+    the base — whether through traversal characters, symlinks pointing
+    elsewhere, or case-folding tricks on case-insensitive filesystems —
+    raises :class:`InvalidSessionIdError`.
+
+    Args:
+        base: The intended containing directory (will be created if
+            necessary by the caller before this function resolves it).
+        session_id: A value that must already have passed
+            :func:`validate_session_id`.
+        suffix: Optional filename suffix (e.g. ``".jsonl"``).
+
+    Returns:
+        The validated, contained child path.
+
+    Raises:
+        InvalidSessionIdError: If the resolved child escapes ``base``.
+    """
+    validate_session_id(session_id)
+    candidate = base / f"{session_id}{suffix}"
+    try:
+        resolved_base = base.resolve()
+        # ``strict=False`` so we can resolve a file that does not yet exist.
+        resolved_candidate = candidate.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:  # pragma: no cover — defensive
+        raise InvalidSessionIdError(f"could not resolve path: {exc}") from exc
+    if not resolved_candidate.is_relative_to(resolved_base):
+        raise InvalidSessionIdError(
+            "resolved path escapes the hook base directory",
+        )
+    return resolved_candidate
 
 
 class HookEventType(Enum):
@@ -120,10 +219,14 @@ def write_hook_event(event: HookEvent, workdir: Path) -> None:
     Args:
         event: The parsed hook event to persist.
         workdir: Project working directory.
+
+    Raises:
+        InvalidSessionIdError: If ``event.session_id`` fails validation
+            or resolves outside the hooks directory (defense in depth).
     """
     hooks_dir = workdir / ".sdd" / "runtime" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    sidecar = hooks_dir / f"{event.session_id}.jsonl"
+    sidecar = _safe_child(hooks_dir, event.session_id, suffix=".jsonl")
 
     record: dict[str, Any] = {
         "ts": event.timestamp,
@@ -151,10 +254,14 @@ def write_stop_marker(session_id: str, workdir: Path) -> None:
     Args:
         session_id: Agent session identifier.
         workdir: Project working directory.
+
+    Raises:
+        InvalidSessionIdError: If ``session_id`` fails validation or
+            resolves outside the completion marker directory.
     """
     completed_dir = workdir / ".sdd" / "runtime" / "completed"
     completed_dir.mkdir(parents=True, exist_ok=True)
-    marker = completed_dir / session_id
+    marker = _safe_child(completed_dir, session_id)
     try:
         marker.write_text("hook:Stop", encoding="utf-8")
     except OSError:
@@ -170,11 +277,15 @@ def touch_heartbeat(session_id: str, workdir: Path) -> None:
     Args:
         session_id: Agent session identifier.
         workdir: Project working directory.
+
+    Raises:
+        InvalidSessionIdError: If ``session_id`` fails validation or
+            resolves outside the heartbeats directory.
     """
     heartbeat_dir = workdir / ".sdd" / "runtime" / "heartbeats"
+    heartbeat_dir.mkdir(parents=True, exist_ok=True)
+    hb_path = _safe_child(heartbeat_dir, session_id, suffix=".json")
     try:
-        heartbeat_dir.mkdir(parents=True, exist_ok=True)
-        hb_path = heartbeat_dir / f"{session_id}.json"
         hb_path.write_text(str(int(time.time())), encoding="utf-8")
     except OSError:
         logger.debug("Failed to touch heartbeat for session %s", session_id)
