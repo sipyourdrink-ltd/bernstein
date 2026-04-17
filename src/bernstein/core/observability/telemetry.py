@@ -223,7 +223,7 @@ def init_telemetry(otlp_endpoint: str | None = None, *, insecure: bool = True) -
         _meter = metrics.get_meter(SERVICE_NAME)
 
         _enabled = True
-        logger.info("OpenTelemetry telemetry enabled (endpoint=%s)", otlp_endpoint.split("?")[0])
+        logger.info("OpenTelemetry telemetry enabled")  # endpoint omitted — avoids logging deployment topology
     except ImportError:
         logger.warning(_OTEL_NOT_INSTALLED)
         _enabled = False
@@ -313,7 +313,7 @@ def _init_http_telemetry(
         _meter = metrics.get_meter(service_name)
 
         _enabled = True
-        logger.info("OpenTelemetry HTTP telemetry enabled (endpoint=%s)", endpoint.split("?")[0])
+        logger.info("OpenTelemetry HTTP telemetry enabled")  # endpoint omitted — avoids logging deployment topology
     except ImportError:
         logger.warning(_OTEL_NOT_INSTALLED)
         _enabled = False
