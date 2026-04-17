@@ -13,7 +13,33 @@ This file captures the human-curated highlights.
 ## [Unreleased]
 
 ### Added
-- Placeholder section for changes landing on `main` between releases.
+- Honest 3-line terminal transcript in README hero area alongside the GIF.
+
+### Changed
+- README adapter table reduced to 17 entries (16 real + generic wrapper) after
+  removing `roo_code` and `tabby`; fixed Qwen link to `qwen-code` npm, Continue
+  install to `@continuedev/cli` (binary `cn`), and Cody invocation.
+- README model column dropped stale patch versions: Claude uses `Opus 4`,
+  `Sonnet 4.6`, `Haiku 4.5`; Codex uses `GPT-5` / `GPT-5 mini`; Gemini uses
+  `Gemini 2.5 Pro` / `Gemini Flash`.
+- README install one-liner now uses `pipx install bernstein` and runs
+  `bernstein init` before `bernstein -g`.
+- README compare table updated for 2026-04-17: CrewAI `In-memory + SQLite
+  checkpoint`, AutoGen maintenance-mode footnote, LangGraph `Yes (Studio +
+  LangSmith)` web UI and MCP `client + server`.
+- Softened README claims per backlog findings: "zero LLM tokens on scheduling"
+  to "no LLM calls in selection, retry, or reap decisions"; dropped
+  "tamper-evident" from audit logs, "no silent data loss" from WAL recovery,
+  "learns optimal ... over time" from bandit router, "Z-score flagging" from
+  cost anomaly detection, "pluggy-based" from plugin system. Marked Workers
+  AI and `--evolve` as experimental.
+- README badge row trimmed to CI, PyPI, Python 3.12+, and License.
+- `CONTRIBUTING.md` adapter count updated from 18 to 17 and the adapter table
+  was trimmed to match.
+
+### Removed
+- README rows for Roo Code, Tabby, and Codex on Cloudflare (not a `CLIAdapter`).
+- Dead `opencollective.com/bernstein` link from the Support section.
 
 ## [1.7.0] - 2026-04-13
 

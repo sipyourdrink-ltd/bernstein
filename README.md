@@ -12,68 +12,78 @@
 
 ### Orchestrate any AI coding agent. Any model. One command.
 
-<img alt="Bernstein in action — parallel AI agents orchestrated in real time" src="docs/assets/in-action.gif" width="700">
+<img alt="Bernstein in action: parallel AI agents orchestrated in real time" src="docs/assets/in-action.gif" width="700">
 
 [![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
-[![GitHub stars](https://img.shields.io/github/stars/chernistry/bernstein?style=social)](https://github.com/chernistry/bernstein/stargazers)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/bernstein?left_color=GREY)](https://pepy.tech/projects/bernstein)
-[![npm](https://img.shields.io/npm/v/bernstein-orchestrator)](https://www.npmjs.com/package/bernstein-orchestrator)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/github/license/chernistry/bernstein)](LICENSE)
-[![MCP Compatible](https://img.shields.io/badge/MCP-1.0%2C%201.1-blue)](docs/compatibility.md)
-[![A2A Compatible](https://img.shields.io/badge/A2A-0.2%2C%200.3-blue)](docs/compatibility.md)
-[![Share on X](https://img.shields.io/badge/share-on%20X-black?logo=x&logoColor=white)](https://x.com/intent/tweet?text=Bernstein%20%E2%80%94%20orchestrate%20parallel%20AI%20coding%20agents.%20Any%20model.%20One%20command.&url=https%3A%2F%2Fgithub.com%2Fchernistry%2Fbernstein&hashtags=ai,opensource,devtools)
-[![SaaSHub](https://img.shields.io/badge/SaaSHub-Approved-brightgreen)](https://www.saashub.com/bernstein?utm_source=badge&utm_campaign=badge&utm_content=bernstein&badge_variant=color&badge_kind=approved)
-[![Built with Bernstein](https://img.shields.io/badge/Built%20with-Bernstein%20%F0%9F%8E%BC-blue)](https://github.com/chernistry/bernstein)
 
 [Documentation](https://bernstein.readthedocs.io/) &middot; [Getting Started](docs/GETTING_STARTED.md) &middot; [Glossary](docs/GLOSSARY.md) &middot; [Limitations](docs/KNOWN_LIMITATIONS.md)
-
-#### Wall of fame
-
-> *"lol, good luck, keep vibecoding shit that you have no idea about xD"* — [PeaceFirePL](https://www.reddit.com/r/coolgithubprojects/comments/1sc7pxn/comment/oel89qf/), Reddit
 
 </div>
 
 ---
 
-Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history.
+Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and merges the results. When agents succeed, the janitor merges verified work into main. Failed tasks retry or route to a different model.
 
-No framework to learn. No vendor lock-in. Agents are interchangeable workers — swap any agent, any model, any provider. The orchestrator itself is deterministic Python code. Zero LLM tokens on scheduling.
+No framework to learn. No vendor lock-in. Agents are interchangeable workers. Swap any agent, any model, any provider. The task scheduler is plain Python. No LLM calls in selection, retry, or reap decisions.
 
 ```bash
-pip install bernstein
+pipx install bernstein
+cd your-project && bernstein init
 bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 ```
 
-Also available via `pipx`, `uv tool install`, `brew`, `dnf copr`, and `npx bernstein-orchestrator`. See [install options](#install).
+```
+$ bernstein -g "Add JWT auth"
+[manager] decomposed into 4 tasks
+[agent-1] claude-sonnet: src/auth/middleware.py  (done, 2m 14s)
+[agent-2] codex:         tests/test_auth.py      (done, 1m 58s)
+[verify]  all gates pass. merging to main.
+```
+
+Also available via `pip`, `uv tool install`, `brew`, `dnf copr`, and `npx bernstein-orchestrator`. See [install options](#install).
+
+#### Wall of fame
+
+> *"lol, good luck, keep vibecoding shit that you have no idea about xD"* — [PeaceFirePL](https://www.reddit.com/r/coolgithubprojects/comments/1sc7pxn/comment/oel89qf/), Reddit
 
 ## Supported agents
 
-Bernstein auto-discovers installed CLI agents. Mix them in the same run — cheap local models for boilerplate, heavy cloud models for architecture.
+Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
+
+17 CLI coding agents plus a generic wrapper for anything with `--prompt`.
 
 | Agent | Models | Install |
 |-------|--------|---------|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | opus 4.6, sonnet 4.6, haiku 4.5 | `npm install -g @anthropic-ai/claude-code` |
-| [Codex CLI](https://github.com/openai/codex) | gpt-5.4, gpt-5.4-mini | `npm install -g @openai/codex` |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | gemini-3.1-pro, gemini-3-flash | `npm install -g @google/gemini-cli` |
-| [Cursor](https://www.cursor.com) | sonnet 4.6, opus 4.6, gpt-5.4 | [Cursor app](https://www.cursor.com) |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Opus 4, Sonnet 4.6, Haiku 4.5 | `npm install -g @anthropic-ai/claude-code` |
+| [Codex CLI](https://github.com/openai/codex) | GPT-5, GPT-5 mini | `npm install -g @openai/codex` |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 2.5 Pro, Gemini Flash | `npm install -g @google/gemini-cli` |
+| [Cursor](https://www.cursor.com) | Sonnet 4.6, Opus 4, GPT-5 | [Cursor app](https://www.cursor.com) |
 | [Aider](https://aider.chat) | Any OpenAI/Anthropic-compatible | `pip install aider-chat` |
+| [Amp](https://ampcode.com) | Amp-managed | `npm install -g @sourcegraph/amp` |
+| [Cody](https://sourcegraph.com/cody) | Sourcegraph-hosted | `npm install -g @sourcegraph/cody` |
+| [Continue](https://continue.dev) | Any OpenAI/Anthropic-compatible | `npm install -g @continuedev/cli` (binary: `cn`) |
+| [Goose](https://block.github.io/goose/) | Any provider Goose supports | See [Goose docs](https://block.github.io/goose/) |
+| [IaC](https://www.terraform.io/) (Terraform/Pulumi) | Any provider the base agent uses | Built-in |
+| [Kilo](https://kilo.dev) | Kilo-hosted | See [Kilo docs](https://kilo.dev) |
+| [Kiro](https://kiro.dev) | Kiro-hosted | See [Kiro docs](https://kiro.dev) |
 | [Ollama](https://ollama.ai) + Aider | Local models (offline) | `brew install ollama` |
-| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | Workers AI models | `bernstein cloud init` |
-| [Codex on Cloudflare](https://developers.cloudflare.com/agents/) | gpt-5.4 via CF gateway | `bernstein cloud init` |
-| [Amp](https://ampcode.com), [Cody](https://sourcegraph.com/cody), [Continue.dev](https://continue.dev), [Goose](https://block.github.io/goose/), [IaC](https://www.terraform.io/) (Terraform/Pulumi), [Kilo](https://kilo.dev), [Kiro](https://kiro.dev), [OpenCode](https://opencode.ai), [Qwen](https://github.com/QwenLM/Qwen-Agent), [Roo Code](https://github.com/RooVetGit/Roo-Code), [Tabby](https://tabby.tabbyml.com) | Various | See docs |
+| [OpenCode](https://opencode.ai) | Any provider OpenCode supports | See [OpenCode docs](https://opencode.ai) |
+| [Qwen](https://github.com/QwenLM/qwen-code) | Qwen Code models | `npm install -g @qwen-code/qwen-code` |
+| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | Workers AI models | `bernstein cloud login` |
 | **Generic** | Any CLI with `--prompt` | Built-in |
 
-Any adapter also works as the **internal scheduler LLM** — run the entire stack without any specific provider:
+Any adapter also works as the **internal scheduler LLM**. Run the entire stack without any specific provider:
 
 ```yaml
 internal_llm_provider: gemini            # or qwen, ollama, codex, goose, ...
-internal_llm_model: gemini-3.1-pro-preview
+internal_llm_model: gemini-2.5-pro
 ```
 
 > [!TIP]
-> Run `bernstein --headless` for CI pipelines — no TUI, structured JSON output, non-zero exit on failure.
+> Run `bernstein --headless` for CI pipelines. No TUI, structured JSON output, non-zero exit on failure.
 
 ## Quick start
 
@@ -94,10 +104,10 @@ bernstein run --dry-run plan.yaml # preview tasks and estimated cost
 
 ## How it works
 
-1. **Decompose** — the manager breaks your goal into tasks with roles, owned files, and completion signals
-2. **Spawn** — agents start in isolated git worktrees, one per task. Main branch stays clean.
-3. **Verify** — the janitor checks concrete signals: tests pass, files exist, lint clean, types correct
-4. **Merge** — verified work lands in main. Failed tasks get retried or routed to a different model.
+1. **Decompose**. The manager breaks your goal into tasks with roles, owned files, and completion signals.
+2. **Spawn**. Agents start in isolated git worktrees, one per task. Main branch stays clean.
+3. **Verify**. The janitor checks concrete signals: tests pass, files exist, lint clean, types correct.
+4. **Merge**. Verified work lands in main. Failed tasks get retried or routed to a different model.
 
 The orchestrator is a Python scheduler, not an LLM. Scheduling decisions are deterministic, auditable, and reproducible.
 
@@ -105,55 +115,59 @@ The orchestrator is a Python scheduler, not an LLM. Scheduling decisions are det
 
 Bernstein can run agents on Cloudflare Workers instead of locally. The `bernstein cloud` CLI handles deployment and lifecycle.
 
-- **Workers** — agent execution on Cloudflare's edge, with Durable Workflows for multi-step tasks and automatic retry
-- **V8 sandbox isolation** — each agent runs in its own isolate, no container overhead
-- **R2 workspace sync** — local worktree state syncs to R2 object storage so cloud agents see the same files
-- **Workers AI** — use Cloudflare-hosted models as the LLM provider (no external API keys required)
-- **D1 analytics** — task metrics and cost data stored in D1 for querying
-- **Vectorize** — semantic cache backed by Cloudflare's vector database
-- **Browser rendering** — headless Chrome on Workers for agents that need to inspect web output
-- **MCP remote transport** — expose or consume MCP servers over Cloudflare's network
+- **Workers**. Agent execution on Cloudflare's edge, with Durable Workflows for multi-step tasks and automatic retry.
+- **V8 sandbox isolation**. Each agent runs in its own isolate, no container overhead.
+- **R2 workspace sync**. Local worktree state syncs to R2 object storage so cloud agents see the same files.
+- **Workers AI** (experimental). Use Cloudflare-hosted models as the LLM provider, no external API keys required.
+- **D1 analytics**. Task metrics and cost data stored in D1 for querying.
+- **Vectorize**. Semantic cache backed by Cloudflare's vector database.
+- **Browser rendering**. Headless Chrome on Workers for agents that need to inspect web output.
+- **MCP remote transport**. Expose or consume MCP servers over Cloudflare's network.
 
 ```bash
-bernstein cloud init       # scaffold wrangler.toml + bindings
+bernstein cloud login      # authenticate with Bernstein Cloud
 bernstein cloud deploy     # push agent workers
 bernstein cloud run plan.yaml  # execute a plan on Cloudflare
 ```
 
+A `bernstein cloud init` scaffold for `wrangler.toml` and bindings is planned.
+
 ## Capabilities
 
-**Core orchestration** — parallel execution, git worktree isolation, janitor verification, quality gates (lint + types + PII scan), cross-model code review, circuit breaker for misbehaving agents, token growth monitoring with auto-intervention.
+**Core orchestration**. Parallel execution, git worktree isolation, janitor verification, quality gates (lint, types, PII scan), cross-model code review, circuit breaker for misbehaving agents, token growth monitoring with auto-intervention.
 
-**Intelligence** — contextual bandit router learns optimal model/effort pairs over time. Knowledge graph for codebase impact analysis. Semantic caching saves tokens on repeated patterns. Cost anomaly detection with Z-score flagging.
+**Intelligence**. Contextual bandit router for model/effort selection. Knowledge graph for codebase impact analysis. Semantic caching saves tokens on repeated patterns. Cost anomaly detection (burn-rate alerts).
 
-**Enterprise** — HMAC-chained tamper-evident audit logs. Policy limits with fail-open defaults and multi-tenant isolation. PII output gating. OAuth 2.0 PKCE. SSO/SAML/OIDC auth. WAL crash recovery — no silent data loss.
+**Controls**. HMAC-chained audit logs, policy engine, PII output gating, WAL-backed crash recovery (experimental multi-worker safety), OAuth 2.0 PKCE. SSO/SAML/OIDC support is in progress.
 
-**Observability** — Prometheus `/metrics`, OTel exporter presets, Grafana dashboards. Per-model cost tracking (`bernstein cost`). Terminal TUI and web dashboard. Agent process visibility in `ps`.
+**Observability**. Prometheus `/metrics`, OTel exporter presets, Grafana dashboards. Per-model cost tracking (`bernstein cost`). Terminal TUI and web dashboard. Agent process visibility in `ps`.
 
-**Ecosystem** — MCP server mode, A2A protocol support, GitHub App integration, pluggy-based plugin system, multi-repo workspaces, cluster mode for distributed execution, self-evolution via `--evolve`.
+**Ecosystem**. MCP server mode, A2A protocol support, GitHub App integration, plugin system, multi-repo workspaces, cluster mode for distributed execution, self-evolution via `--evolve` (experimental).
 
 Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
 
 ## How it compares
 
-| Feature | Bernstein | CrewAI | AutoGen | LangGraph |
+| Feature | Bernstein | CrewAI | AutoGen [^autogen] | LangGraph |
 |---------|-----------|--------|---------|-----------|
 | Orchestrator | Deterministic code | LLM-driven | LLM-driven | Graph + LLM |
-| Works with | Any CLI agent (20 adapters) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (17 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
 | Verification | Janitor + quality gates | No | No | Conditional edges |
 | Cost tracking | Built-in | No | No | No |
-| State model | File-based (.sdd/) | In-memory | In-memory | Checkpointer |
+| State model | File-based (.sdd/) | In-memory + SQLite checkpoint | In-memory | Checkpointer |
 | Self-evolution | Built-in | No | No | No |
-| Declarative plans (YAML) | Yes | Partial | No | Yes |
+| Declarative plans (YAML) | Yes | Yes | No | Partial (JSON config) |
 | Model routing per task | Yes | No | No | Manual |
-| MCP support | Yes | No | No | No |
+| MCP support | Yes | Yes | Yes (client) | Yes (client + server) |
 | Agent-to-agent chat | No | Yes | Yes | No |
-| Web UI | No | Yes | Yes | Partial |
+| Web UI | No | Yes | Yes | Yes (Studio + LangSmith) |
 | Cloud hosted option | Yes (Cloudflare) | Yes | No | Yes |
 | Built-in RAG/retrieval | No | Yes | Yes | Yes |
 
-*Last verified: 2026-04-14. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
+*Last verified: 2026-04-17. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
+
+[^autogen]: AutoGen is in maintenance mode; successor is Microsoft Agent Framework 1.0.
 
 ## Monitoring
 
@@ -200,7 +214,7 @@ PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and code style.
 
 ## Support
 
-If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry) &middot; [Open Collective](https://opencollective.com/bernstein)
+If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry)
 
 ## Star History
 
