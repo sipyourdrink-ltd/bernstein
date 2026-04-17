@@ -76,6 +76,9 @@ class IncrementalMergeResult:
         uncommitted_files: Files the agent has not yet committed to its branch
             (skipped — caller must commit them in the worktree first).
         conflicting_files: Files whose content conflicted during checkout.
+        dirty_files: Files the operator has modified in the main workdir
+            (staged or unstaged) and that would be clobbered by the merge.
+            When non-empty, the merge aborts without touching the working tree.
         commit_sha: SHA of the incremental commit, or empty string if nothing
             was committed (e.g. all files skipped).
         error: Human-readable error message on failure, empty on success.
@@ -88,6 +91,7 @@ class IncrementalMergeResult:
     conflicting_files: list[str]
     commit_sha: str
     error: str
+    dirty_files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -243,6 +247,59 @@ def _checkout_files_from_branch(workdir: Path, branch: str, files: list[str]) ->
     return list(files)
 
 
+def _dirty_target_files(workdir: Path, files: list[str]) -> list[str]:
+    """Return which of *files* have uncommitted changes (staged or unstaged) in *workdir*.
+
+    ``git checkout <branch> -- <files>`` unconditionally overwrites the working
+    tree, so if an operator has local edits to any of the target files the
+    incremental merge would silently clobber them.  We must refuse the merge
+    in that case.
+
+    Args:
+        workdir: Main repository root.
+        files: Repo-relative paths the merge wants to overwrite.
+
+    Returns:
+        Subset of *files* that appear as modified/added/staged in
+        ``git status --porcelain``.  An empty list means it is safe to proceed.
+    """
+    if not files:
+        return []
+    # Use path-scoped porcelain status so we only see entries for *files*.
+    result = run_git(["status", "--porcelain", "--", *files], workdir)
+    if not result.ok:
+        # Conservative fallback: if we cannot inspect the status, treat every
+        # requested file as dirty so we do not silently overwrite operator work.
+        logger.warning(
+            "git status --porcelain failed for %s; refusing incremental merge: %s",
+            workdir,
+            result.stderr.strip(),
+        )
+        return list(files)
+    dirty: list[str] = []
+    requested = set(files)
+    for line in result.stdout.splitlines():
+        # Porcelain v1 format: "XY <path>" where XY are two status codes and the
+        # path starts at column 3.  Untracked entries ("??") are not a conflict
+        # with checkout, so we skip them.
+        if len(line) < 4:
+            continue
+        xy = line[:2]
+        path = line[3:].strip()
+        # Strip renames: "XY old -> new" — we care about the destination path.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip()
+        # Remove surrounding quotes that git adds for paths with special chars.
+        if path.startswith('"') and path.endswith('"'):
+            path = path[1:-1]
+        if xy == "??":
+            continue
+        if path in requested:
+            dirty.append(path)
+    # Preserve the caller's input order so error messages are deterministic.
+    return [f for f in files if f in set(dirty)]
+
+
 def _rev_parse(workdir: Path, ref: str) -> str:
     """Return the full SHA of *ref*, or empty string on failure."""
     result = run_git(["rev-parse", ref], workdir)
@@ -340,8 +397,32 @@ def incremental_merge_files(
                 error=(f"None of the requested files are committed in {branch}. Commit them in the worktree first."),
             )
 
-        # Perform the checkout under the external merge_lock (if provided)
+        # Perform the checkout under the external merge_lock (if provided).
+        # The dirty-workdir check MUST run under the same lock as the checkout:
+        # otherwise an operator edit that lands between the check and the
+        # checkout would still be silently clobbered.
         def _do_merge() -> IncrementalMergeResult:
+            dirty = _dirty_target_files(workdir, to_checkout)
+            if dirty:
+                logger.warning(
+                    "Incremental merge aborted for %s: dirty target files in main workdir: %s",
+                    session_id,
+                    ", ".join(dirty),
+                )
+                return IncrementalMergeResult(
+                    success=False,
+                    merged_files=[],
+                    skipped_already_merged=already_merged_requested,
+                    uncommitted_files=uncommitted,
+                    conflicting_files=[],
+                    commit_sha="",
+                    error=(
+                        f"Refusing incremental merge: main workdir has uncommitted changes to "
+                        f"{len(dirty)} target file(s) ({', '.join(dirty[:3])}"
+                        f"{' ...' if len(dirty) > 3 else ''}). Commit, stash, or discard them first."
+                    ),
+                    dirty_files=dirty,
+                )
             return _execute_incremental_merge(
                 workdir,
                 branch,
