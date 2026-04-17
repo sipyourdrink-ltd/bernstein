@@ -66,6 +66,10 @@ dependencies = [
     "pyfiglet>=1.0",
     "terminaltexteffects>=0.11",
     "websockets>=14.0",
+    # SAML XML signature verification. Pure-Python via lxml+cryptography.
+    # Required to validate IdP assertions in src/bernstein/core/security/auth.py;
+    # enabling SAML without this library installed is a hard error.
+    "signxml>=4.0",
 ]
 
 [project.urls]

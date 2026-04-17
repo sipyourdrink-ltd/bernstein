@@ -6,6 +6,17 @@ Provides:
 - Token-based CLI authentication via device authorization flow
 - SSO group → Bernstein role mapping (admin / operator / viewer)
 - Backwards-compatible legacy bearer token support
+
+SAML signature validation
+-------------------------
+SAML responses are validated against the IdP's X.509 certificate before
+any claim is trusted. The certificate is read from
+``BERNSTEIN_SAML_IDP_X509_CERT`` (see :class:`SAMLConfig`) and must be a
+PEM-encoded X.509 certificate (newlines encoded as ``\\n`` when provided
+via an environment variable). The ``signxml`` library performs the W3C
+XML Signature verification. If the env var is empty while
+``BERNSTEIN_SAML_ENABLED=true``, every assertion is rejected — Bernstein
+will not silently accept unsigned SAML responses.
 """
 
 from __future__ import annotations
@@ -42,6 +53,24 @@ _PERM_TASKS_READ = "tasks:read"
 _JSON_GLOB = "*.json"
 
 logger = logging.getLogger(__name__)
+
+
+class AuthenticationError(Exception):
+    """Raised when an incoming authentication attempt must be rejected.
+
+    Used for security-critical failures (e.g. SAML signature invalid,
+    missing IdP cert) where allowing the request through would bypass
+    authentication.
+    """
+
+
+class SAMLSignatureError(AuthenticationError):
+    """Raised when a SAML assertion's XML signature cannot be validated.
+
+    Covers: missing ``<ds:Signature>``, signature over unexpected element,
+    mismatched IdP certificate, tampered payload, or no IdP certificate
+    configured on the service provider.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -741,7 +770,93 @@ class AuthStore:
 _SAML_NS = {
     "samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
     "saml": "urn:oasis:names:tc:SAML:2.0:assertion",
+    "ds": "http://www.w3.org/2000/09/xmldsig#",
 }
+
+
+def _normalize_idp_cert(raw: str) -> str:
+    """Normalize an IdP X.509 certificate from config into PEM form.
+
+    Accepts either a full PEM block or a bare base64 body (as often
+    pasted in env vars). ``\\n`` escape sequences are expanded into
+    real newlines so that ``BERNSTEIN_SAML_IDP_X509_CERT`` values stored
+    in ``.env`` files parse correctly.
+    """
+    cert = raw.strip()
+    if not cert:
+        return ""
+    # Decode literal "\n" sequences to real newlines (common in .env files).
+    cert = cert.replace("\\n", "\n")
+    if "BEGIN CERTIFICATE" in cert:
+        return cert
+    # Re-wrap bare base64 payloads as a standard PEM block.
+    body = "".join(cert.split())
+    lines = [body[i : i + 64] for i in range(0, len(body), 64)]
+    return "-----BEGIN CERTIFICATE-----\n" + "\n".join(lines) + "\n-----END CERTIFICATE-----\n"
+
+
+def _verify_saml_signature(xml_bytes: bytes, idp_x509_cert: str) -> bytes:
+    """Verify the XML signature on a SAML response/assertion.
+
+    Args:
+        xml_bytes: The raw (base64-decoded) SAML XML payload.
+        idp_x509_cert: The IdP signing certificate (PEM) from
+            :attr:`SAMLConfig.idp_x509_cert`.
+
+    Returns:
+        The canonical bytes of the element covered by the signature — the
+        ``signed_xml`` returned by ``signxml``. Only this payload may be
+        trusted; the raw input must not be parsed for claims.
+
+    Raises:
+        SAMLSignatureError: If no certificate is configured, the signxml
+            library is unavailable, the signature is missing, or the
+            signature does not verify (tampered, forged, or signed by
+            another key).
+    """
+    if not idp_x509_cert.strip():
+        msg = (
+            "SAML is enabled but BERNSTEIN_SAML_IDP_X509_CERT is not set; "
+            "refusing to accept assertions without a configured IdP cert"
+        )
+        raise SAMLSignatureError(msg)
+
+    try:
+        from lxml import etree
+        from signxml import InvalidInput, InvalidSignature, XMLVerifier
+    except ImportError as exc:  # pragma: no cover - hard dependency
+        msg = "signxml/lxml not installed; cannot validate SAML signatures"
+        raise SAMLSignatureError(msg) from exc
+
+    cert_pem = _normalize_idp_cert(idp_x509_cert)
+
+    try:
+        # resolve_entities=False mitigates XXE; see audit-054.
+        parser = etree.XMLParser(resolve_entities=False, no_network=True)
+        root = etree.fromstring(xml_bytes, parser=parser)
+    except etree.XMLSyntaxError as exc:
+        msg = f"SAML assertion is not well-formed XML: {exc}"
+        raise SAMLSignatureError(msg) from exc
+
+    try:
+        verified = XMLVerifier().verify(root, x509_cert=cert_pem)
+    except (InvalidSignature, InvalidInput) as exc:
+        # signxml raises InvalidSignature for tampered / untrusted / missing
+        # <ds:Signature>. InvalidInput covers malformed signature structure.
+        msg = f"SAML signature verification failed: {exc}"
+        raise SAMLSignatureError(msg) from exc
+    except Exception as exc:  # signxml wraps lower-level crypto errors broadly
+        msg = f"SAML signature verification error: {exc}"
+        raise SAMLSignatureError(msg) from exc
+
+    signed_element = verified.signed_xml
+    if signed_element is None:
+        msg = "SAML signature verification returned no signed payload"
+        raise SAMLSignatureError(msg)
+
+    # Return the canonical bytes of the element that was actually signed —
+    # following signxml's "see what is signed" guidance.
+    return etree.tostring(signed_element)  # type: ignore[no-any-return]
 
 
 def _saml_status_ok(root: Any) -> bool:
@@ -757,12 +872,22 @@ def _saml_status_ok(root: Any) -> bool:
 
 
 def _extract_saml_claims(root: Any) -> tuple[str, dict[str, list[str]]]:
-    """Extract subject and attributes from a parsed SAML XML root."""
-    name_id_el = root.find(".//saml:Assertion/saml:Subject/saml:NameID", _SAML_NS)
+    """Extract subject and attributes from a parsed SAML XML tree.
+
+    Accepts either a ``<samlp:Response>`` root (existing callers) or a
+    bare ``<saml:Assertion>`` root (produced by ``signxml`` when only the
+    inner assertion is signed).
+    """
+    _assertion_tag = f"{{{_SAML_NS['saml']}}}Assertion"
+    assertion = root if root.tag == _assertion_tag else root.find(".//saml:Assertion", _SAML_NS)
+    if assertion is None:
+        return "", {}
+
+    name_id_el = assertion.find("saml:Subject/saml:NameID", _SAML_NS)
     subject = name_id_el.text if name_id_el is not None and name_id_el.text else ""
 
     attributes: dict[str, list[str]] = {}
-    for attr_stmt in root.findall(".//saml:Assertion/saml:AttributeStatement/saml:Attribute", _SAML_NS):
+    for attr_stmt in assertion.findall("saml:AttributeStatement/saml:Attribute", _SAML_NS):
         attr_name = attr_stmt.get("Name", "")
         values = [v.text for v in attr_stmt.findall("saml:AttributeValue", _SAML_NS) if v.text]
         if attr_name and values:
@@ -987,22 +1112,35 @@ class AuthService:
     ) -> tuple[AuthUser, str] | None:
         """Process SAML Response from IdP ACS POST.
 
-        Parses the SAML assertion to extract user attributes.
-        Returns (user, jwt_token) or None on failure.
+        Validates the XML signature on the SAML payload against the IdP's
+        configured X.509 certificate (see :attr:`SAMLConfig.idp_x509_cert`),
+        then parses the signed assertion to extract user attributes.
 
-        Note: In production, signature validation against idp_x509_cert
-        should be performed. This implementation extracts claims and validates
-        basic structure.
+        Returns ``(user, jwt_token)`` on success, ``None`` on any failure
+        (malformed input, missing / invalid signature, missing IdP cert,
+        malformed assertion). Failures are logged; the caller surfaces a
+        401 to the SAML ACS endpoint.
+
+        The raw (potentially attacker-controlled) XML is never parsed for
+        claims. Only the subtree returned by ``signxml.XMLVerifier.verify``
+        is trusted, per the "see what is signed" best practice.
         """
         import base64
 
         try:
             xml_bytes = base64.b64decode(saml_response_b64)
         except Exception as exc:
-            logger.error("Failed to parse SAML response: %s", exc)
+            logger.error("Failed to base64-decode SAML response: %s", exc)
             return None
 
-        assertion = self.parse_saml_assertion(xml_bytes.decode("utf-8"))
+        try:
+            signed_bytes = _verify_saml_signature(xml_bytes, self.config.saml.idp_x509_cert)
+        except SAMLSignatureError as exc:
+            # SECURITY: reject — do NOT fall back to parsing the unsigned XML.
+            logger.error("Rejecting SAML response: %s", exc)
+            return None
+
+        assertion = self.parse_saml_assertion(signed_bytes.decode("utf-8"))
         if assertion is None:
             return None
 
