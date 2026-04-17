@@ -13,7 +13,7 @@ When orchestrating multiple LLM agents (Claude Code instances) working in parall
 
 ### Evidence from rag_challenge (real production data)
 
-- **Scale**: 12 named agents, 737+ tickets completed, ~47 hours wall clock time.
+- **Scale**: 12 named agents, hundreds of tickets completed over a multi-day sprint.
 - **Sleep problem**: Agents that exhausted their TASK_QUEUE.jsonl stopped working silently. MUFFY alone produced 283 BULLETIN messages, most of them "STARVING/DYING/FEED ME" spam, with 0 code commits. SMARTY went to "polling for tasks" status (sleeping with a label) and produced 2 real code commits out of 40 claimed.
 - **Quantified waste**: 138 "STARVING/DYING/FEED ME" messages in the BULLETIN archive. 23 separate "sleeping/idle/polling" status entries. Each message consumes tokens but produces zero work.
 - **Phantom agents**: Unregistered names (pido, phoenix, penny, victor, goku) generated 200+ noise messages -- agents that spawned, had no identity or tasks, and thrashed.
@@ -188,7 +188,7 @@ The hunger model was not a bad idea in theory. It failed because of three compou
 
 ### Why Pure Pull is not quite right either
 
-Pure pull (Model B) solves the sleep and spam problems completely but sacrifices context reuse. For tasks that require understanding the codebase (reading 5-10 files before making a change), respawning per task means re-reading those files every time. At ~3-5K tokens per spawn and 737 tasks, that is 2-4M tokens spent on re-orientation alone.
+Pure pull (Model B) solves the sleep and spam problems completely but sacrifices context reuse. For tasks that require understanding the codebase (reading 5-10 files before making a change), respawning per task means re-reading those files every time. At ~3-5K tokens per spawn and a large task backlog, spawn overhead accumulates quickly into millions of wasted tokens.
 
 ### Why Short-Lived is the sweet spot
 
@@ -240,7 +240,7 @@ Model D's "retirement after N tasks" concept is worth incorporating as a safety 
 2. Define the spawn prompt template: identity + context + tasks + exit instructions.
 3. Run a pilot with 3 agents on a bounded task set (e.g., 30 tasks).
 4. Measure: tokens per task, tasks per hour, zero-output rate, drift rate.
-5. Compare against rag_challenge baselines: 737 tasks / 47 hours = ~15.7 tasks/hour across 12 agents = ~1.3 tasks/agent/hour.
+5. Compare against rag_challenge baselines (see Appendix): roughly 1.3 tasks/agent/hour across 12 agents, with significant idle waste.
 6. Target: >= 2.0 tasks/agent/hour with zero sleep incidents.
 
 ---

@@ -62,10 +62,7 @@ the bug is reproducible and fixable.
 
 ### 2. Token cost of coordination
 
-Every scheduling decision by an LLM costs tokens. In a system running 737 tasks
-over 47 hours (the rag_challenge numbers), LLM-based scheduling would have spent
-tens of thousands of tokens on coordination overhead — tokens that produce no
-code, no tests, no value.
+Every scheduling decision by an LLM costs tokens. In a system running hundreds of tasks over days (the rag_challenge experience), LLM-based scheduling would have spent tens of thousands of tokens on coordination overhead — tokens that produce no code, no tests, no value.
 
 The deterministic orchestrator spends zero tokens on scheduling. The only tokens
 spent are on actual task execution.
@@ -86,7 +83,7 @@ verify the correct output.
 
 An LLM manager reading status from 12 agents, reasoning about priorities, and
 issuing instructions has a context window proportional to the number of agents
-and tasks. At 12 agents and 737 tasks, PAPA's context was enormous and
+and tasks. At 12 agents with a large task backlog, PAPA's context was enormous and
 expensive. At 30 agents, it would be unmanageable.
 
 A deterministic scheduler's coordination cost is O(1) per agent per tick — a

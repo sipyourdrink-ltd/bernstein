@@ -13,7 +13,7 @@
 ```bash
 pip install bernstein
 bernstein init
-bernstein start "Build a REST API for user management"
+bernstein -g "Build a REST API for user management"
 bernstein status
 bernstein add-task "Add rate limiting"
 ```
@@ -33,7 +33,7 @@ bernstein add-task "Add rate limiting"
 ### Option B: CLI + Web Dashboard
 
 ```bash
-bernstein start --dashboard
+bernstein --dashboard
 # Opens localhost:8080 with real-time agent status, task board, cost tracker
 ```
 
@@ -133,7 +133,7 @@ Ship with both interaction modes from day one:
 
 ```bash
 # Imperative mode — full control
-bernstein start "Build a REST API"
+bernstein -g "Build a REST API"
 bernstein status
 bernstein add-task "Add rate limiting"
 
@@ -150,7 +150,7 @@ The `bernstein.yaml` name echoes `docker-compose.yml` -- developers immediately 
 
 ### Phase 2: Web Dashboard
 
-Once the task server is stable, add `bernstein start --dashboard`:
+Once the task server is stable, add `bernstein --dashboard`:
 
 - Real-time agent status grid (heartbeat indicators)
 - Task Kanban board (backlog / in-progress / done)

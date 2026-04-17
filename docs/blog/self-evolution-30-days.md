@@ -6,7 +6,7 @@
 ---
 
 *Note: This post documents a real 30-day run of `bernstein --evolve` on the Bernstein codebase itself.
-All numbers are from `.sdd/metrics/` — the same file-based state store Bernstein uses for everything else.
+All numbers are from `.sdd/metrics/`, the same file-based state store Bernstein uses for everything else.
 The raw JSONL is in the repo if you want to verify.*
 
 ---
@@ -20,7 +20,7 @@ on a codebase, and you have metrics on how those agents perform, you can run the
 This is the first time we ran it for a sustained period. 30 days, on the Bernstein repo, with a $5/day
 budget cap and strict safety gates.
 
-Before describing what happened, here's what we expected to happen — and how that differed from reality.
+Before describing what happened, here's what we expected, and how that differed from reality.
 
 ---
 
@@ -80,7 +80,7 @@ The interesting finding: Haiku on documentation tasks passed the janitor at 96%,
 at 3.2x lower cost. The router had been sending docs tasks to Sonnet because the default complexity
 threshold was set conservatively.
 
-That's a L0 change waiting to happen (configuration — lowest risk level). The detector flagged it on
+That's a L0 change waiting to happen (configuration, the lowest risk level). The detector flagged it on
 day 9.
 
 **Anomalies detected during observation:**
@@ -88,12 +88,12 @@ day 9.
 17 CUSUM alerts fired during the observation period. Most were noise. Two were real:
 
 1. A spike in `qa` role task duration on day 11. Root cause: a task in the backlog required
-   analyzing a large file that exceeded the model's effective context window. The agent didn't fail —
-   it completed — but it took 3x longer and produced lower-quality output. The janitor caught it.
+   analyzing a large file that exceeded the model's effective context window. The agent didn't fail: it
+   completed, but it took 3x longer and produced lower-quality output. The janitor caught it.
 
 2. A cost drift on day 14. Cost per task crept up 8% over 3 days. Root cause: the test
    suite had grown and the `qa` role was running the full test suite on every task rather than the
-   relevant subset. Not a routing problem — a prompt problem.
+   relevant subset. Not a routing problem. A prompt problem.
 
 Both anomalies were logged to `.sdd/analysis/anomalies.json`. Neither triggered proposals until Phase 3.
 
@@ -102,7 +102,7 @@ Both anomalies were logged to `.sdd/analysis/anomalies.json`. Neither triggered 
 ## Days 15–28: Analysis phase
 
 At the end of week two, the system had collected enough data to establish stable baselines. It entered
-**Phase 2: Analyze** — the same metrics, but now with trend analysis and improvement opportunity
+**Phase 2: Analyze**: the same metrics, but now with trend analysis and improvement opportunity
 detection running.
 
 The opportunity detector compares current performance to baseline using thresholds:
@@ -129,17 +129,17 @@ The proposals from weeks 3–4:
 **Proposal 2 (L1, template): Add file-size guard to QA role prompt**
 - Confidence: 87%
 - Expected improvement: 23% reduction in QA task duration for large files
-- Risk: modifying agent system prompts — A/B test required before applying
+- Risk: modifying agent system prompts (A/B test required before applying)
 - Status: queued for Phase 3
 
 **Proposal 3 (L1, template): Scope test runs in QA prompt**
 - Confidence: 82%
 - Expected improvement: 18% cost reduction for QA tasks
-- Risk: template change — might break tasks that need full test coverage
+- Risk: template change; might break tasks that need full test coverage
 - Status: queued for Phase 3
 
 The system did not generate any L2 (logic change) or L3 (structural change) proposals during the
-first 30 days. This was expected — the safety spec requires 80%+ acceptance rate over 20+ proposals
+first 30 days. This was expected: the safety spec requires 80%+ acceptance rate over 20+ proposals
 before the loop advances past L0/L1.
 
 ---
@@ -222,7 +222,7 @@ Rollback: git revert a7b3f2e in .sdd/evolution/rollback.sh
 
 **The system was more conservative than expected.**
 
-We expected the evolution loop to be aggressive — proposing many changes, auto-applying configurations
+We expected the evolution loop to be aggressive, proposing many changes and auto-applying configurations
 constantly. In practice, the system spent 28 of 30 days watching and analyzing. One change was applied.
 Three more are queued waiting for more A/B data.
 
@@ -232,7 +232,7 @@ intervention, was oddly reassuring.
 
 **The anomaly detector found things we'd missed.**
 
-The docs-to-Haiku routing opportunity had been obvious in retrospect for a while — we'd noticed Haiku
+The docs-to-Haiku routing opportunity had been obvious in retrospect for a while. We'd noticed Haiku
 worked fine for docs tasks but never got around to updating the config. The cost drift anomaly (qa role
 running full test suites) was less obvious. We'd seen the qa tasks running long, assumed it was the
 tasks themselves. The CUSUM alert on day 14 pointed at a trend we'd normalized.
@@ -240,7 +240,7 @@ tasks themselves. The CUSUM alert on day 14 pointed at a trend we'd normalized.
 **Some anomalies were false positives.**
 
 15 of the 17 CUSUM alerts were noise. The detector is tuned for sensitivity, not
-precision, at this stage — better to flag and discard than to miss a real trend. The cost of a false
+precision, at this stage. Better to flag and discard than to miss a real trend. The cost of a false
 positive is a log entry. The cost of a missed anomaly is a degraded system running for days before
 anyone notices.
 

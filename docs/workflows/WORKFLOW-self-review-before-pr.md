@@ -526,7 +526,7 @@ for the approval gate to reference in PR descriptions.
 | A1 | `call_llm` supports OpenRouter provider with the reviewer models listed in `_WRITER_TO_REVIEWER` | Verified: `cross_model_verifier.py` already uses this | Low |
 | A2 | Agent worktree persists until `process_completed_tasks` runs | Verified: `_preserved_worktrees` in orchestrator keeps worktrees alive | Low — STEP 1 handles worktree_gone |
 | A3 | Guardrail scope-violation detection and self-review scope detection can coexist without conflicts | Not verified | Medium — if guardrails already blocked the task, self-review never runs (fine). If guardrails miss a violation, self-review catches it (desired). No conflict path identified. |
-| A4 | Reviewer models (Gemini Flash, Claude Haiku) can produce structured JSON output reliably | Partially verified: existing `_parse_response` has robust fallback parsing | Medium — unparseable responses default to approve |
+| A4 | Reviewer models (Gemini Flash, Claude Haiku) can produce structured JSON output reliably | Partially verified: existing `_parse_response` has fallback parsing for unparseable responses | Medium — unparseable responses default to approve |
 | A5 | 1024 max_tokens is sufficient for 5-dimension JSON response | Not verified — current 512 is for 3-field response | Medium — if truncated, JSON may be incomplete, triggering unparseable fallback (approve). Monitor in production. |
 | A6 | `task.owned_files` is always populated for scope-violation detection | Not verified — may be empty for tasks without explicit file ownership | Low — if empty, scope detection degrades gracefully (no violations flagged by pre-check, reviewer still evaluates from diff) |
 

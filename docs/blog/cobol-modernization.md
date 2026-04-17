@@ -60,14 +60,9 @@ bernstein run examples/plans/cobol-modernization.yaml
 
 ## Numbers
 
-From our internal benchmarks on a 47-hour sprint (different codebase, same orchestrator):
+In a multi-day sprint on a different codebase (same orchestrator), running several agents in parallel finished significantly more tasks per hour than a single-agent sequential approach. The exact speedup depended on the task dependency graph: independent tasks parallelized freely, tightly coupled ones serialized as expected.
 
-- 12 agents in parallel
-- 737 tasks completed
-- 15.7 tasks/hour throughput
-- 1.78x faster than single-agent sequential
-
-Applied to COBOL: a 500-program migration that takes one agent 3 months could finish in ~6 weeks with 8 agents, assuming similar task independence. Actual speedup depends on the dependency graph — tightly coupled programs serialize, independent ones parallelize.
+Applied to COBOL: a 500-program migration that takes one agent three months could finish considerably faster with eight agents, assuming similar task independence. Actual speedup depends on the dependency graph — tightly coupled programs serialize, independent ones parallelize.
 
 ## Getting started
 

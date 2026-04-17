@@ -91,7 +91,7 @@ Not all tasks need the same model. Bernstein routes based on task complexity:
 
 This is configurable. The routing rules live in `src/bernstein/core/router.py` — a plain Python function, not a model call.
 
-On a representative benchmark (JWT auth + tests + docs), this routing saved ~60% of token cost compared to sending all tasks to Sonnet, with no measurable quality difference on the test and docs tasks.
+On a representative pilot (JWT auth + tests + docs), this routing reduced token cost meaningfully compared to sending all tasks to Sonnet, with no measurable quality difference on the test and docs tasks. Exact savings vary by workload; your mileage will differ.
 
 ---
 
@@ -107,7 +107,7 @@ After each agent completes, a verification pass runs:
 
 If any check fails, the task is marked failed and optionally retried. The merge to main only happens when all checks pass.
 
-In benchmarks, the verification pass raised CI pass rate from 52% to 80% on medium-complexity tasks. The gap represents cases where an agent produced code that passed its own tests but broke something elsewhere — exactly the class of bugs that reviews catch.
+In practice, the verification pass catches a meaningful fraction of failures — cases where an agent produced code that passed its own tests but broke something elsewhere. That is exactly the class of bugs that reviews catch. We haven't run a controlled benchmark with enough sample size to publish pass-rate numbers, but the directional effect is real.
 
 ---
 
@@ -127,18 +127,9 @@ If your use case needs dynamic re-planning or agent collaboration, Bernstein is 
 
 ## The numbers
 
-On a representative benchmark (10 runs, fresh repo each time, medium-complexity tasks):
+Scheduling overhead is genuinely zero. The orchestrator spends no tokens on coordination — it's pure Python. Agent work costs more when you run three agents in parallel than one sequentially, because you're doing more work concurrently. The scheduling cost stays at $0 regardless of scale.
 
-| Metric | Single agent | Bernstein (3 agents) |
-|--------|-------------|----------------------|
-| Wall-clock time | ~3 min | ~47 sec |
-| CI pass rate | 52% | 80% |
-| Cost per run | $0.18 | $0.42 |
-| Scheduling LLM cost | $0 | $0 |
-
-The scheduling cost is genuinely zero. The $0.24 delta is entirely agent work.
-
-Full methodology and raw data are in `benchmarks/` in the repository.
+We haven't published a controlled benchmark yet. The `benchmarks/` directory has infrastructure for reproducible runs if you want to measure against your own workloads.
 
 ---
 
@@ -150,7 +141,7 @@ bernstein init
 bernstein -g "add tests for the auth module"
 ```
 
-The orchestrator source is `src/bernstein/core/orchestrator.py` — ~200 lines. It's the best documentation of the architecture.
+The orchestrator source lives in `src/bernstein/core/orchestration/`. It's the best documentation of the architecture.
 
 GitHub: [link]
 

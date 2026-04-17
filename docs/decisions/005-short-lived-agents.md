@@ -21,7 +21,7 @@ the right balance?
 
 ADR-001 evaluated four lifecycle models in detail. This ADR documents the final
 implemented model and its rationale, building on the data from ADR-001's
-production analysis of the rag_challenge system (12 agents, 737 tasks, 47 hours).
+production analysis of the rag_challenge system (multi-agent sprint with 12 agents; see ADR-001 Appendix for full metrics).
 
 ---
 
@@ -87,7 +87,7 @@ either sleep or post status messages.
 
 **Why rejected:**
 
-The rag_challenge data is definitive. 12 named agents, 47 hours of operation.
+The rag_challenge data is definitive. A multi-day sprint with 12 agents.
 Observed failure modes:
 
 - **Sleep problem**: Agents that exhausted their task queue stopped working
@@ -116,8 +116,7 @@ zero idle waste.
 
 **Why not chosen as the primary model:**
 
-At 737 tasks and ~3–5K tokens per spawn for context loading, pure pull costs
-~2–4M tokens in spawn overhead alone. Many tasks are related (e.g., "implement
+With many tasks and ~3–5K tokens per spawn for context loading, pure pull accumulates significant spawn overhead. Many tasks are related (e.g., "implement
 function X" followed by "write tests for function X") — context learned on the
 first task is directly applicable to the second. Batching 2–3 related tasks
 amortizes spawn cost and preserves useful context.
