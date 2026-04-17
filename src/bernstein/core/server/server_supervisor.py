@@ -23,11 +23,14 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.platform_compat import kill_process
 from bernstein.core.process_utils import is_process_alive
 from bernstein.core.runtime_state import SupervisorStateSnapshot, rotate_log_file, write_supervisor_state
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -155,19 +158,16 @@ def _launch_server(state: _SupervisorState) -> int:
         "--port",
         str(port),
     ]
-    # ``--reload`` is gated on ``evolve_mode``. In a self-modifying system
-    # (bernstein agents constantly edit src/bernstein/*.py) ``--reload``
-    # is catastrophic: every file write triggers a uvicorn restart, which
-    # drops in-flight HTTP connections, races on port 8052 ("Address already
-    # in use"), and replays the WAL with duplicate task claims. Incident
-    # 2026-04-11 03:19 — server hung 127s, orchestrator gave up. Production
-    # runs MUST not auto-reload; only the explicit dev/evolve flow may.
-    if state.evolve_mode:
-        src_dir = str(workdir / "src" / "bernstein")
-        if Path(src_dir).is_dir():
-            server_cmd.extend(["--reload", "--reload-dir", src_dir])
-        else:
-            server_cmd.append("--reload")
+    # ``--reload`` was removed 2026-04-17 per audit-115 / incident 2026-04-11.
+    # In a self-modifying system (bernstein agents constantly edit
+    # src/bernstein/*.py) uvicorn --reload is catastrophic: every file write
+    # triggers a uvicorn restart, which drops in-flight HTTP connections,
+    # races on the bind port ("Address already in use"), and replays the WAL
+    # with duplicate task claims. Evolve cycles already restart via the
+    # supervisor on real crashes — auto-reload is never wanted here.
+    # ``state.evolve_mode`` is intentionally not consulted when building the
+    # uvicorn argv; if you're tempted to re-add --reload, read audit-115
+    # first.
 
     log_path = workdir / ".sdd" / "runtime" / "server.log"
     rotate_log_file(log_path)
