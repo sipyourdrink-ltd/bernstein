@@ -1630,9 +1630,16 @@ class Orchestrator:
         task claims where the agent was never successfully spawned (crash
         between claim and spawn).
 
-        Each uncommitted entry is logged for operator awareness and an
-        acknowledgement entry is written to the current run's WAL so the
-        recovery is itself auditable.
+        For each uncommitted entry an acknowledgement record is appended to
+        the current run's WAL so the recovery itself is auditable.  In
+        addition, orphaned ``task_claimed`` entries (no matching
+        ``task_spawn_confirmed``) are actively retried: a ``task_retry`` WAL
+        entry is recorded and ``POST /tasks/{id}/force-claim`` is called with
+        reason ``crash_recovery`` so the task returns to the *open* queue
+        instead of being silently abandoned (audit-001).  Any prior
+        worktrees with uncommitted work are moved to
+        ``.sdd/worktrees/preserved/`` and surfaced on the bulletin board so
+        fresh agents can resume that work.
 
         Returns:
             List of (run_id, WALEntry) tuples for all uncommitted entries found.
@@ -1643,19 +1650,35 @@ class Orchestrator:
             exclude_run_id=self._run_id,
         )
         if not uncommitted:
+            # No uncommitted WAL entries, but abandoned worktrees from a
+            # prior crash may still carry unsaved work -- preserve them.
+            self._preserve_prior_worktrees_with_wip()
             return []
 
         logger.warning(
             "WAL recovery: found %d uncommitted entries from previous run(s)",
             len(uncommitted),
         )
+
+        # Identify orphaned claims: uncommitted task_claimed entries with
+        # no matching task_spawn_confirmed in the same run.  These are the
+        # work-loss cases the prior implementation only logged and acked
+        # (audit-001).  Use a (run_id, seq) key for O(1) membership checks.
+        orphaned = WALRecovery.find_orphaned_claims(
+            sdd_dir,
+            exclude_run_id=self._run_id,
+        )
+        orphaned_keys = {(run_id, entry.seq) for run_id, entry in orphaned}
+
         for run_id, entry in uncommitted:
+            is_orphan = (run_id, entry.seq) in orphaned_keys
             logger.info(
-                "WAL uncommitted [run=%s seq=%d]: %s %s",
+                "WAL uncommitted [run=%s seq=%d]: %s %s%s",
                 run_id,
                 entry.seq,
                 entry.decision_type,
                 entry.inputs,
+                " (orphan: no spawn_confirmed)" if is_orphan else "",
             )
             # Record acknowledgement in current run's WAL for auditability
             try:
@@ -1667,19 +1690,170 @@ class Orchestrator:
                         "original_decision_type": entry.decision_type,
                         "original_inputs": entry.inputs,
                     },
-                    output={"action": "acknowledged"},
+                    output={"action": "acknowledged", "orphan": is_orphan},
                     actor="orchestrator",
                     committed=True,
                 )
             except OSError:
                 logger.debug("WAL write failed for recovery ack (run=%s seq=%d)", run_id, entry.seq)
 
+        # Actively retry orphaned claims so each task returns to the open
+        # queue instead of being silently abandoned (audit-001 fix part a).
+        retried = 0
+        for run_id, entry in orphaned:
+            if self._retry_orphaned_claim(run_id, entry):
+                retried += 1
+
+        # Preserve any prior worktrees that still have uncommitted changes
+        # so a fresh agent can resume them (audit-001 fix part b).
+        preserved_paths = self._preserve_prior_worktrees_with_wip()
+
         self._recorder.record(
             "wal_recovery",
             uncommitted_count=len(uncommitted),
+            orphaned_count=len(orphaned),
+            retried_count=retried,
+            preserved_worktrees=[str(p) for p in preserved_paths],
             run_ids=sorted({r for r, _ in uncommitted}),
         )
+        if retried:
+            logger.warning(
+                "WAL recovery: retried %d orphaned claim(s) via /tasks/{id}/force-claim",
+                retried,
+            )
         return uncommitted
+
+    def _retry_orphaned_claim(self, run_id: str, entry: Any) -> bool:
+        """Re-queue a single orphaned claim from a crashed prior run.
+
+        Writes a committed ``task_retry`` WAL entry and POSTs
+        ``/tasks/{task_id}/force-claim`` with reason ``crash_recovery`` so
+        the task transitions back to *open* on the task server and can be
+        claimed again by a fresh agent.  Any network / WAL failure is
+        logged and swallowed -- the surrounding recovery loop must continue.
+
+        Args:
+            run_id: Run ID of the WAL file the orphan was found in.
+            entry: The ``task_claimed`` WAL entry (committed=False) with no
+                matching ``task_spawn_confirmed`` in the same run.
+
+        Returns:
+            True when the force-claim POST succeeded.
+        """
+        task_id = str(entry.inputs.get("task_id", ""))
+        if not task_id:
+            return False
+
+        # WAL: record the retry intent (auditable, committed).
+        try:
+            self._wal_writer.write_entry(
+                decision_type="task_retry",
+                inputs={
+                    "task_id": task_id,
+                    "reason": "crash_recovery",
+                    "original_run_id": run_id,
+                    "original_seq": entry.seq,
+                },
+                output={"action": "force_claim_requested"},
+                actor="orchestrator",
+                committed=True,
+            )
+        except OSError:
+            logger.debug("WAL write failed for task_retry (run=%s task=%s)", run_id, task_id)
+
+        try:
+            resp = self._client.post(
+                f"{self._config.server_url}/tasks/{task_id}/force-claim",
+                params={"reason": "crash_recovery"},
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "WAL recovery: force-claim failed for orphaned task %s (run=%s): %s",
+                task_id,
+                run_id,
+                exc,
+            )
+            return False
+
+        logger.info(
+            "WAL recovery: force-claimed orphaned task %s (run=%s, original_seq=%d)",
+            task_id,
+            run_id,
+            entry.seq,
+        )
+        return True
+
+    def _preserve_prior_worktrees_with_wip(self) -> list[Path]:
+        """Move worktrees from prior runs with uncommitted work to preserved/.
+
+        Scans ``.sdd/worktrees/`` for directories whose name is not in the
+        current run's active sessions.  For any such directory with a
+        non-empty ``git status --porcelain`` the directory is renamed into
+        ``.sdd/worktrees/preserved/<session_id>-<timestamp>`` and a bulletin
+        message is posted so a fresh agent can pick it up.  Worktrees with
+        a clean status are left untouched -- the normal zombie cleanup will
+        remove them.
+
+        Errors are logged at debug level and swallowed; this runs on the
+        startup hot-path and must never block orchestrator boot.
+
+        Returns:
+            List of preserved worktree paths (after the move).
+        """
+        import subprocess
+
+        worktree_base = self._workdir / ".sdd" / "worktrees"
+        if not worktree_base.is_dir():
+            return []
+
+        preserved_root = worktree_base / "preserved"
+        active_session_ids = set(self._agents.keys())
+        preserved: list[Path] = []
+
+        for entry in worktree_base.iterdir():
+            if not entry.is_dir():
+                continue
+            # Skip bookkeeping dirs (.locks) and the preserved root itself
+            if entry.name.startswith(".") or entry.name == "preserved":
+                continue
+            if entry.name in active_session_ids:
+                continue
+            try:
+                result = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=entry,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.debug("git status failed for %s: %s", entry, exc)
+                continue
+            if result.returncode != 0 or not result.stdout.strip():
+                # Clean or non-git; let zombie cleanup handle it.
+                continue
+
+            try:
+                preserved_root.mkdir(parents=True, exist_ok=True)
+                dest = preserved_root / f"{entry.name}-{int(time.time())}"
+                entry.rename(dest)
+            except OSError as exc:
+                logger.debug("Failed to preserve worktree %s: %s", entry, exc)
+                continue
+
+            preserved.append(dest)
+            logger.warning(
+                "WAL recovery: preserved worktree with uncommitted work at %s",
+                dest,
+            )
+            self._post_bulletin(
+                "alert",
+                f"crash_recovery: preserved worktree with uncommitted changes at {dest} (resume or reconcile manually)",
+            )
+
+        return preserved
 
     def stop(self) -> None:
         """Delegate to orchestrator_cleanup.stop."""

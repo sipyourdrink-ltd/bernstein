@@ -345,6 +345,58 @@ class WALRecovery:
                 results.append((run_id, entry))
         return results
 
+    @staticmethod
+    def find_orphaned_claims(
+        sdd_dir: Path,
+        *,
+        exclude_run_id: str | None = None,
+    ) -> list[tuple[str, WALEntry]]:
+        """Return uncommitted ``task_claimed`` entries with no matching spawn.
+
+        Scans each prior run's WAL for ``task_claimed`` entries written with
+        ``committed=False`` that do NOT have a subsequent ``task_spawn_confirmed``
+        entry for the same ``task_id`` in the same run.  These represent the
+        work-loss window where the server moved a task to *claimed* but the
+        orchestrator crashed before the agent was spawned -- on restart the
+        task would otherwise sit in *claimed* forever (or be abandoned by
+        ``_reconcile_claimed_tasks`` without a dedicated retry audit trail).
+
+        Args:
+            sdd_dir: The ``.sdd`` directory root.
+            exclude_run_id: Run ID to skip (the in-progress run).
+
+        Returns:
+            List of ``(run_id, WALEntry)`` tuples for each orphaned claim.
+        """
+        wal_dir = sdd_dir / "runtime" / "wal"
+        if not wal_dir.is_dir():
+            return []
+
+        orphans: list[tuple[str, WALEntry]] = []
+        for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
+            run_id = wal_file.name.removesuffix(".wal.jsonl")
+            if run_id == exclude_run_id:
+                continue
+            reader = WALReader(run_id=run_id, sdd_dir=sdd_dir)
+            try:
+                entries = list(reader.iter_entries())
+            except FileNotFoundError:
+                continue
+
+            confirmed_task_ids: set[str] = {
+                str(e.inputs.get("task_id", ""))
+                for e in entries
+                if e.decision_type == "task_spawn_confirmed" and e.committed
+            }
+            for entry in entries:
+                if entry.decision_type != "task_claimed" or entry.committed:
+                    continue
+                task_id = str(entry.inputs.get("task_id", ""))
+                if not task_id or task_id in confirmed_task_ids:
+                    continue
+                orphans.append((run_id, entry))
+        return orphans
+
 
 # ---------------------------------------------------------------------------
 # ExecutionFingerprint
