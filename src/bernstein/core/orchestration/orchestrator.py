@@ -1379,6 +1379,19 @@ class Orchestrator:
         #     or no heartbeat for idle threshold). SHUTDOWN → 30s grace → SIGKILL.
         recycle_idle_agents(self, tasks_by_status)
 
+        # 4e-ii. Log-growth idle heuristic (audit-006): catch agents wedged in a
+        #     dead MCP/tool call that still emit heartbeats from a side thread but
+        #     produce no log output or git activity. Complements recycle_idle_agents
+        #     (heartbeat-based) — gated behind _run_normal since the log tail scan
+        #     is IO-heavy and does not need every-tick granularity.
+        if _run_normal:
+            try:
+                from bernstein.core.agents.idle_detection import integrate_idle_detection
+
+                integrate_idle_detection(self)
+            except Exception as exc:  # tick-level safety net
+                logger.warning("Log-growth idle detection failed: %s", exc)
+
         # 5. Reap dead/stale agents and fail their tasks
         reap_dead_agents(self, result, tasks_by_status)
 
