@@ -4,24 +4,32 @@ Every audit event carries an HMAC that chains to the previous event's HMAC,
 forming a tamper-evident sequence.  Daily log rotation produces one JSONL
 file per day; the chain carries across file boundaries.
 
-HMAC key is read from ``.sdd/config/audit-key`` (auto-generated if absent).
+Security (audit-043): the HMAC key lives OUTSIDE the audit log directory so
+an attacker with write access to ``.sdd/audit/*.jsonl`` cannot also read or
+rotate the signing key. The default key location is
+``$XDG_STATE_HOME/bernstein/audit.key`` (falling back to
+``~/.local/state/bernstein/audit.key``) and is overridable via the
+``BERNSTEIN_AUDIT_KEY_PATH`` environment variable. The key file is required
+to be mode ``0600``; a world- or group-readable key is treated as a hard
+error at load time.
 """
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import hashlib
 import hmac as _hmac
 import json
 import logging
+import os
 import secrets
 import shutil
+import stat
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any
 
 _JSONL_GLOB = "*.jsonl"
 
@@ -30,6 +38,100 @@ logger = logging.getLogger(__name__)
 _GENESIS_HMAC = "0" * 64
 
 DEFAULT_RETENTION_DAYS = 90
+
+#: Environment variable that overrides the audit key path.
+AUDIT_KEY_ENV = "BERNSTEIN_AUDIT_KEY_PATH"
+
+#: Required mode for the audit key file (0600 — owner read/write only).
+_REQUIRED_KEY_MODE = 0o600
+
+
+class AuditKeyPermissionError(RuntimeError):
+    """Raised when the audit key file has permissions looser than 0600."""
+
+
+def _default_audit_key_path() -> Path:
+    """Return the default HMAC key path outside of ``.sdd/``.
+
+    Resolution order:
+
+    1. ``$BERNSTEIN_AUDIT_KEY_PATH`` (explicit override).
+    2. ``$XDG_STATE_HOME/bernstein/audit.key`` if ``XDG_STATE_HOME`` is set.
+    3. ``~/.local/state/bernstein/audit.key`` (XDG default).
+    """
+    override = os.environ.get(AUDIT_KEY_ENV)
+    if override:
+        return Path(override).expanduser()
+
+    xdg_state = os.environ.get("XDG_STATE_HOME")
+    base = Path(xdg_state).expanduser() if xdg_state else Path.home() / ".local" / "state"
+    return base / "bernstein" / "audit.key"
+
+
+def _enforce_key_permissions(key_path: Path) -> None:
+    """Ensure the key file is readable only by its owner (mode 0600).
+
+    Raises:
+        AuditKeyPermissionError: If group or world bits are set on the file.
+    """
+    try:
+        file_mode = stat.S_IMODE(key_path.stat().st_mode)
+    except OSError as exc:  # pragma: no cover - filesystem race
+        raise AuditKeyPermissionError(f"Cannot stat audit key {key_path}: {exc}") from exc
+
+    if file_mode & 0o077:
+        raise AuditKeyPermissionError(
+            f"Audit key {key_path} has insecure permissions {file_mode:04o}; "
+            f"required {_REQUIRED_KEY_MODE:04o} (owner-only)."
+        )
+
+
+def load_or_create_audit_key(key_path: Path | None = None) -> bytes:
+    """Load the audit HMAC key, generating one on first boot if absent.
+
+    The key path is resolved by the following precedence:
+
+    1. Explicit ``key_path`` argument.
+    2. ``$BERNSTEIN_AUDIT_KEY_PATH`` environment variable.
+    3. ``$XDG_STATE_HOME/bernstein/audit.key`` (or the XDG default).
+
+    On first boot, a fresh 32-byte hex key is generated, the parent directory
+    is created with mode ``0700``, and the key file is written with mode
+    ``0600``. On subsequent boots the existing permissions are enforced.
+
+    Args:
+        key_path: Optional explicit override. Useful for tests.
+
+    Returns:
+        The raw key bytes suitable for ``hmac.new``.
+
+    Raises:
+        AuditKeyPermissionError: If the existing key file is readable by
+            anyone besides its owner.
+    """
+    resolved = key_path if key_path is not None else _default_audit_key_path()
+
+    if resolved.exists():
+        _enforce_key_permissions(resolved)
+        return resolved.read_bytes().strip()
+
+    parent = resolved.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    # Best-effort harden the directory: owner-only if we just created it.
+    with contextlib.suppress(PermissionError, OSError):
+        parent.chmod(0o700)
+
+    key = secrets.token_hex(32).encode()
+    # Create with restrictive mode from the start — never widen then narrow.
+    fd = os.open(str(resolved), os.O_WRONLY | os.O_CREAT | os.O_EXCL, _REQUIRED_KEY_MODE)
+    try:
+        os.write(fd, key)
+    finally:
+        os.close(fd)
+    # Re-assert mode in case umask or filesystem behavior dropped bits.
+    resolved.chmod(_REQUIRED_KEY_MODE)
+    logger.info("Generated new audit HMAC key at %s", resolved)
+    return key
 
 
 @dataclass(frozen=True)
@@ -144,28 +246,33 @@ class AuditLog:
 
     Args:
         audit_dir: Directory for daily JSONL log files.
-        key: HMAC key bytes.  If ``None``, the key is loaded from
-            ``<audit_dir>/../config/audit-key`` (created if absent).
+        key: HMAC key bytes.  If ``None``, the key is loaded from the path
+            resolved by :func:`load_or_create_audit_key` — which by default
+            lives *outside* ``audit_dir`` so a log-writer cannot also read
+            or rotate the signing key.
+        key_path: Optional explicit key file path. Overrides the environment
+            variable ``BERNSTEIN_AUDIT_KEY_PATH``. Ignored if ``key`` is
+            provided directly.
+
+    Raises:
+        AuditKeyPermissionError: If the resolved key file exists on disk but
+            is readable by anyone besides its owner.
     """
 
-    def __init__(self, audit_dir: Path, key: bytes | None = None) -> None:
+    def __init__(
+        self,
+        audit_dir: Path,
+        key: bytes | None = None,
+        *,
+        key_path: Path | None = None,
+    ) -> None:
         self._audit_dir = audit_dir
         self._audit_dir.mkdir(parents=True, exist_ok=True)
-        self._key = key if key is not None else self._load_or_create_key()
+        if key is not None:
+            self._key = key
+        else:
+            self._key = load_or_create_audit_key(key_path)
         self._prev_hmac = self._recover_chain_tail()
-
-    # -- key management -----------------------------------------------------
-
-    def _load_or_create_key(self) -> bytes:
-        """Read the HMAC key from disk, or generate one."""
-        key_path = self._audit_dir.parent / "config" / "audit-key"
-        if key_path.exists():
-            return key_path.read_bytes().strip()
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        key = secrets.token_hex(32).encode()
-        key_path.write_bytes(key)
-        key_path.chmod(0o600)
-        return key
 
     # -- chain recovery -----------------------------------------------------
 

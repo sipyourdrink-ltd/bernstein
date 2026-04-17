@@ -119,6 +119,27 @@ def _stable_adaptive_parallelism(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_audit_key(
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Point the audit HMAC key path at a per-test tmpdir.
+
+    Without this, ``AuditLog(...)`` calls that omit ``key=`` would read or
+    create a file at ``~/.local/state/bernstein/audit.key`` — polluting the
+    developer's home directory with state from the test run. Tests that
+    specifically exercise key-path resolution opt out via
+    ``pytest.mark.audit_key_real``.
+    """
+
+    if request.node.get_closest_marker("audit_key_real") is not None:
+        return
+    key_path = tmp_path_factory.mktemp("audit-key") / "audit.key"
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_path))
+
+
+@pytest.fixture(autouse=True)
 def _disable_auth_for_tests(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Disable Bernstein auth by default in the test suite.
 

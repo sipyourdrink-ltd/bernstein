@@ -13,6 +13,13 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.audit import (
+    AUDIT_KEY_ENV,
+    AuditKeyPermissionError,
+    _default_audit_key_path,
+    _enforce_key_permissions,
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -115,18 +122,44 @@ def _compute_hmac(key: bytes, prev_hmac: str, entry: dict[str, Any]) -> str:
 
 
 def _load_audit_key(audit_dir: Path) -> bytes | None:
-    """Load the HMAC key from the config directory.
+    """Load the HMAC key for integrity verification.
+
+    Resolution order:
+
+    1. ``$BERNSTEIN_AUDIT_KEY_PATH`` environment variable.
+    2. XDG state default (``~/.local/state/bernstein/audit.key``).
+    3. Legacy location ``<audit_dir>/../config/audit-key`` — retained as a
+       read-only fallback so systems that have not yet migrated can still
+       verify their chain. Permissions are enforced in all cases.
 
     Args:
-        audit_dir: Audit log directory (key is at ``../config/audit-key``).
+        audit_dir: Audit log directory. Used only for the legacy fallback.
 
     Returns:
-        Key bytes, or None if the key file is missing.
+        Key bytes, or ``None`` if no key file is found.
+
+    Raises:
+        AuditKeyPermissionError: If the key file exists but is readable by
+            anyone besides its owner.
     """
-    key_path = audit_dir.parent / "config" / "audit-key"
-    if not key_path.exists():
-        return None
-    return key_path.read_bytes().strip()
+    primary = _default_audit_key_path()
+    if primary.exists():
+        _enforce_key_permissions(primary)
+        return primary.read_bytes().strip()
+
+    legacy = audit_dir.parent / "config" / "audit-key"
+    if legacy.exists():
+        _enforce_key_permissions(legacy)
+        logger.warning(
+            "Loading audit key from legacy co-located path %s. "
+            "Move it to %s (or set %s) to restore tamper-evidence guarantees.",
+            legacy,
+            primary,
+            AUDIT_KEY_ENV,
+        )
+        return legacy.read_bytes().strip()
+
+    return None
 
 
 def _verify_entry_chain(
@@ -204,10 +237,16 @@ def verify_audit_integrity(
     Args:
         audit_dir: Directory containing audit log files.
         count: Number of tail entries to verify (default 100).
-        key: HMAC key bytes. If None, loaded from ``audit_dir/../config/audit-key``.
+        key: HMAC key bytes. If None, loaded via ``_load_audit_key`` which
+            consults ``$BERNSTEIN_AUDIT_KEY_PATH`` and the XDG default.
 
     Returns:
         IntegrityCheckResult with verification outcome.
+
+    Raises:
+        AuditKeyPermissionError: If the key file exists but has insecure
+            permissions. This is surfaced to callers so the orchestrator
+            refuses to start on a compromised key.
     """
     start = time.monotonic()
     errors: list[str] = []
@@ -277,9 +316,17 @@ def verify_on_startup(
 
     Returns:
         IntegrityCheckResult.
+
+    Raises:
+        AuditKeyPermissionError: If the audit key file is readable by
+            anyone besides its owner. Orchestrator must refuse to start.
     """
     audit_dir = sdd_dir / "audit"
-    result = verify_audit_integrity(audit_dir, count=count)
+    try:
+        result = verify_audit_integrity(audit_dir, count=count)
+    except AuditKeyPermissionError:
+        logger.exception("AUDIT KEY REJECTED: insecure permissions on HMAC key; refusing to start.")
+        raise
 
     if not result.valid:
         logger.warning(

@@ -436,8 +436,12 @@ Rotate the JWT signing secret and audit log HMAC key periodically:
 export BERNSTEIN_JWT_SECRET="$(openssl rand -hex 32)"
 bernstein stop && bernstein run   # Restart to pick up new secret
 
-# Rotate the audit log HMAC key
-cp .sdd/config/audit-key .sdd/config/audit-key.bak
+# Rotate the audit log HMAC key (audit-043: key lives OUTSIDE .sdd/ by default).
+# Default location: $XDG_STATE_HOME/bernstein/audit.key
+#   (falls back to ~/.local/state/bernstein/audit.key)
+# Override with: export BERNSTEIN_AUDIT_KEY_PATH=/secure/path/audit.key
+KEY_PATH="${BERNSTEIN_AUDIT_KEY_PATH:-${XDG_STATE_HOME:-$HOME/.local/state}/bernstein/audit.key}"
+cp "$KEY_PATH" "${KEY_PATH}.bak"
 bernstein admin rotate-audit-key
 ```
 

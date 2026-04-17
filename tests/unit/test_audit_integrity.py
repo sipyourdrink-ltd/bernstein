@@ -67,11 +67,16 @@ def audit_dir(sdd_dir: Path) -> Path:
 
 
 @pytest.fixture()
-def hmac_key(sdd_dir: Path) -> bytes:
+def hmac_key(sdd_dir: Path, monkeypatch: pytest.MonkeyPatch) -> bytes:
     key = b"test-hmac-key-for-audit"
     key_dir = sdd_dir / "config"
     key_dir.mkdir(parents=True)
-    (key_dir / "audit-key").write_bytes(key)
+    key_file = key_dir / "audit-key"
+    key_file.write_bytes(key)
+    # audit-043: the loader enforces 0600 on all key paths (primary and legacy).
+    key_file.chmod(0o600)
+    # Also expose via the split-key env so verifiers use this fixture's key.
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_file))
     return key
 
 
