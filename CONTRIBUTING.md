@@ -87,16 +87,17 @@ When adding a new CLI command, create a new `*_cmd.py` module in `cli/commands/`
 
 ## Supported CLI Adapters
 
-Bernstein ships with 18 adapters (17 specific + 1 generic). When writing a new adapter, check that it isn't already implemented:
+Bernstein ships with 17 adapters (16 specific + 1 generic). When writing a new adapter, check that it isn't already implemented:
 
 | Adapter | File | Agent |
 |---------|------|-------|
 | `aider` | `adapters/aider.py` | [Aider](https://aider.chat) |
 | `amp` | `adapters/amp.py` | [Amp](https://ampcode.com) |
 | `claude` | `adapters/claude.py` | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) |
+| `cloudflare` | `adapters/cloudflare_agents.py` | [Cloudflare Agents](https://developers.cloudflare.com/agents/) |
 | `codex` | `adapters/codex.py` | [Codex CLI](https://github.com/openai/codex) |
 | `cody` | `adapters/cody.py` | [Cody](https://sourcegraph.com/cody) |
-| `continue` | `adapters/continue_dev.py` | [Continue.dev](https://continue.dev) |
+| `continue` | `adapters/continue_dev.py` | [Continue](https://continue.dev) |
 | `cursor` | `adapters/cursor.py` | [Cursor](https://www.cursor.com) |
 | `gemini` | `adapters/gemini.py` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
 | `goose` | `adapters/goose.py` | [Goose](https://block.github.io/goose/) |
@@ -105,9 +106,7 @@ Bernstein ships with 18 adapters (17 specific + 1 generic). When writing a new a
 | `kiro` | `adapters/kiro.py` | [Kiro](https://kiro.dev) |
 | `ollama` | `adapters/ollama.py` | [Ollama](https://ollama.ai) (local models) |
 | `opencode` | `adapters/opencode.py` | [OpenCode](https://opencode.ai) |
-| `qwen` | `adapters/qwen.py` | [Qwen](https://github.com/QwenLM/Qwen-Agent) |
-| `roo_code` | `adapters/roo_code.py` | [Roo Code](https://github.com/RooVetGit/Roo-Code) |
-| `tabby` | `adapters/tabby.py` | [Tabby](https://tabby.tabbyml.com) |
+| `qwen` | `adapters/qwen.py` | [Qwen Code](https://github.com/QwenLM/qwen-code) |
 | `generic` | `adapters/generic.py` | Any CLI agent (catch-all) |
 
 ### Writing a Custom Adapter
