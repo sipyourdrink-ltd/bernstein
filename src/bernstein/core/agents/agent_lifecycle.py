@@ -1453,217 +1453,20 @@ def reap_dead_agents(
 # ---------------------------------------------------------------------------
 # Idle agent detection and recycling
 # ---------------------------------------------------------------------------
-
-#: Seconds to wait after sending SHUTDOWN before force-killing an idle agent.
-_IDLE_GRACE_S: float = 30.0
-
-#: Default no-heartbeat idle threshold (seconds).
-#: CLI agents (claude, qwen) need time to boot, read context, and start
-#: producing heartbeats — 90s was too aggressive and caused a death spiral.
-_IDLE_HEARTBEAT_THRESHOLD_S: float = 300.0
-
-#: Idle threshold used when evolve mode is active.
-#: Was 120s which was too aggressive — agents killed before their first
-#: stream-json event, causing a WIP-commit / resume / kill death spiral.
-_IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S: float = 300.0
-
-#: Extended idle tolerance when the process is confirmed alive (PID running).
-#: Gives slow-starting models (e.g. Claude Code thinking 2-5 min before first
-#: event) extra runway before being recycled.
-_IDLE_LIVENESS_EXTENSION_S: float = 600.0
-
-
-def _detect_idle_reason(
-    orch: Any,
-    session: AgentSession,
-    now: float,
-    hb_idle_s: float,
-    resolved_ids: set[str],
-    open_per_role: dict[str, int],
-    active_per_role: dict[str, int],
-) -> str | None:
-    """Determine why an agent is idle, or return None if it is not."""
-    # Case 1: all tasks already resolved on server
-    if session.task_ids and all(tid in resolved_ids for tid in session.task_ids):
-        return "task_already_resolved"
-
-    # Case 2: stale heartbeat (with liveness extension)
-    hb = orch._signal_mgr.read_heartbeat(session.id)
-    if hb is not None and (now - hb.timestamp) >= hb_idle_s:
-        pid = session.pid
-        if pid is not None and _is_process_alive(pid) and (now - hb.timestamp) < _IDLE_LIVENESS_EXTENSION_S:
-            return None  # still alive, within extended window
-        return f"no_heartbeat_{int(hb_idle_s)}s"
-
-    # Case 3: no assigned tasks and role queue empty
-    if not session.task_ids and open_per_role.get(session.role, 0) == 0:
-        return "role_queue_empty_no_tasks"
-
-    # Case 4: role fully drained (rebalancing)
-    if active_per_role.get(session.role, 0) == 0:
-        return "role_drained_rebalance"
-
-    return None
-
-
-def recycle_idle_agents(
-    orch: Any,
-    tasks_snapshot: dict[str, list[Task]],
-) -> None:
-    """Detect and recycle agents that are idle but consuming a slot.
-
-    An agent is considered idle when:
-    - All of its tasks are already resolved (done/failed) on the server
-      while the process is still alive, OR
-    - The process has not written a heartbeat for ``_IDLE_HEARTBEAT_THRESHOLD_S``
-      seconds (60 s in evolve mode for faster agent turnover), OR
-    - The agent's role has zero active tasks (open + claimed + in_progress),
-      meaning the role is fully drained and the agent should exit so its
-      slot can be used by under-served roles (rebalancing).
-
-    Recycling protocol:
-    1. Send SHUTDOWN signal — agent has 30 s to save WIP and exit cleanly.
-    2. If still alive after 30 s → SIGKILL.
-    3. Clear signal files and release the slot.
-
-    Args:
-        orch: Orchestrator instance.
-        tasks_snapshot: Pre-fetched tasks bucketed by status from this tick.
-    """
-    now = time.time()
-
-    # Build resolved task ID set from snapshot (done / failed / blocked)
-    resolved_ids: set[str] = set()
-    for status in ("done", "failed", "blocked"):
-        for t in tasks_snapshot.get(status, []):
-            resolved_ids.add(t.id)
-
-    # Count open tasks per role — used in Case 3 to detect empty role queues.
-    open_per_role: dict[str, int] = {}
-    for t in tasks_snapshot.get("open", []):
-        open_per_role[t.role] = open_per_role.get(t.role, 0) + 1
-
-    # Count active tasks per role (open + claimed + in_progress) — used in
-    # Case 4 to detect fully drained roles for rebalancing (#333d-03).
-    active_per_role: dict[str, int] = {}
-    for status in ("open", "claimed", "in_progress"):
-        for t in tasks_snapshot.get(status, []):
-            active_per_role[t.role] = active_per_role.get(t.role, 0) + 1
-
-    # Heartbeat-idle threshold — tighter in evolve mode for fast turnover
-    hb_idle_s = _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S if orch._config.evolve_mode else _IDLE_HEARTBEAT_THRESHOLD_S
-
-    # Completion marker directory — written by the wrapper script when the
-    # agent emits a stream-json ``result`` event.  Presence means the agent
-    # finished its work and can be reaped immediately (no 300s wait).
-    completed_dir = orch._workdir / ".sdd" / "runtime" / "completed"
-
-    for session in list(orch._agents.values()):
-        if session.status == "dead":
-            continue
-        if not orch._spawner.check_alive(session):
-            continue  # Already dead — refresh_agent_states handles it next tick
-
-        # Fast path: completion marker written by the wrapper script.
-        # The agent already emitted a ``result`` event — reap immediately
-        # via SIGTERM instead of waiting for the heartbeat to go stale.
-        # This saves up to 300s per agent (CRITICAL-002).
-        completion_file = completed_dir / session.id
-        if completion_file.exists():
-            logger.info(
-                "Agent %s has completion marker — reaping immediately",
-                session.id,
-            )
-            _reap_completed_agent(orch, session, completion_file)
-            continue
-
-        idle_reason = _detect_idle_reason(
-            orch,
-            session,
-            now,
-            hb_idle_s,
-            resolved_ids,
-            open_per_role,
-            active_per_role,
-        )
-        if idle_reason is None:
-            continue
-
-        _recycle_or_kill(orch, session, now, idle_reason)
-
-
-def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Path) -> None:
-    """Immediately reap an agent that wrote a completion marker.
-
-    Called when the wrapper script detected a ``result`` event in the
-    stream-json output and wrote a marker file.  Unlike the normal
-    SHUTDOWN -> grace-period -> SIGKILL path, this sends SIGTERM directly
-    because the agent has already finished its work.
-
-    Args:
-        orch: Orchestrator instance.
-        session: The completed agent session.
-        completion_file: Path to the completion marker (cleaned up after reap).
-    """
-    _save_partial_work(orch._spawner, session)
-    with contextlib.suppress(Exception):
-        orch._spawner.kill(session)
-    _propagate_abort_to_children(orch, session.id)
-    orch._idle_shutdown_ts.pop(session.id, None)
-    with contextlib.suppress(OSError):
-        orch._signal_mgr.clear_signals(session.id)
-    with contextlib.suppress(OSError):
-        completion_file.unlink()
-    with contextlib.suppress(Exception):
-        orch._spawner.cleanup_worktree(session.id)
-    get_collector().end_agent(session.id)
-
-
-def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) -> None:
-    """Send SHUTDOWN or SIGKILL to an idle agent.
-
-    On first call: writes the SHUTDOWN signal file and records the timestamp.
-    On subsequent calls once grace period elapsed: force-kills the process and
-    clears the tracking entry.
-
-    Args:
-        orch: Orchestrator instance.
-        session: The idle agent session.
-        now: Current Unix timestamp.
-        reason: Human-readable reason for recycling (used in log and signal).
-    """
-    shutdown_sent_ts: float = orch._idle_shutdown_ts.get(session.id, 0.0)
-
-    if shutdown_sent_ts == 0:
-        # First detection — send SHUTDOWN and record timestamp
-        task_title = ", ".join(session.task_ids) if session.task_ids else "unknown task"
-        with contextlib.suppress(OSError):
-            orch._signal_mgr.write_shutdown(session.id, reason=reason, task_title=task_title)
-        orch._idle_shutdown_ts[session.id] = now
-        logger.info(
-            "Idle agent %s detected (%s) — SHUTDOWN signal sent, waiting %ds",
-            session.id,
-            reason,
-            int(_IDLE_GRACE_S),
-        )
-    elif now - shutdown_sent_ts >= _IDLE_GRACE_S:
-        # Grace period elapsed — force-kill
-        logger.warning(
-            "Recycled idle agent %s (%s — no exit after %ds SHUTDOWN grace)",
-            session.id,
-            reason,
-            int(_IDLE_GRACE_S),
-        )
-        _save_partial_work(orch._spawner, session)
-        with contextlib.suppress(Exception):
-            orch._spawner.kill(session)
-        _propagate_abort_to_children(orch, session.id)
-        orch._idle_shutdown_ts.pop(session.id, None)
-        with contextlib.suppress(OSError):
-            orch._signal_mgr.clear_signals(session.id)
-        with contextlib.suppress(Exception):
-            orch._spawner.cleanup_worktree(session.id)
-        get_collector().end_agent(session.id)
+#
+# The canonical implementation lives in
+# :mod:`bernstein.core.agents.agent_recycling`.  Its symbols are re-exported
+# from the bottom of this module (see the ``from agent_recycling import ...``
+# block at EOF) so existing importers of ``bernstein.core.agent_lifecycle``
+# continue to work while the constants and algorithm have a single source
+# of truth.  This closes audit-010 — previously ``_detect_idle_reason`` and
+# its four ``_IDLE_*`` thresholds existed in parallel copies that could
+# (and did) silently diverge when one was tuned and the other was not.
+#
+# The import lives at EOF because ``agent_recycling`` pulls in
+# ``agent_reaping``, which imports several helpers defined later in *this*
+# module; deferring the import until after those definitions avoids the
+# circular-import failure.
 
 
 # ---------------------------------------------------------------------------
@@ -1757,3 +1560,22 @@ def _release_task_to_session(orch: Any, task_ids: list[str]) -> None:
     """
     for tid in task_ids:
         orch._task_to_session.pop(tid, None)
+
+
+# ---------------------------------------------------------------------------
+# Re-exports: canonical idle-detection / recycling implementation.
+#
+# Deferred to end-of-module to avoid a circular import via
+# ``agent_recycling -> agent_reaping -> agent_lifecycle``.  See audit-010.
+# ---------------------------------------------------------------------------
+
+from bernstein.core.agents.agent_recycling import (  # noqa: E402, F401 — re-exported for back-compat
+    _IDLE_GRACE_S,
+    _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S,
+    _IDLE_HEARTBEAT_THRESHOLD_S,
+    _IDLE_LIVENESS_EXTENSION_S,
+    _detect_idle_reason,
+    _reap_completed_agent,
+    _recycle_or_kill,
+    recycle_idle_agents,
+)
