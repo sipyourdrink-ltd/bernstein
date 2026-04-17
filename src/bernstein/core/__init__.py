@@ -160,7 +160,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "cost_estimation": "bernstein.core.cost.cost_estimation",
     "cost_forecast": "bernstein.core.cost.cost_forecast",
     "cost_history": "bernstein.core.cost.cost_history",
-    "cost_hooks": "bernstein.core.cost.cost_hooks",
     "cost_per_line": "bernstein.core.cost.cost_per_line",
     "cost_root_cause": "bernstein.core.cost.cost_root_cause",
     "cost_tracker": "bernstein.core.cost.cost_tracker",
