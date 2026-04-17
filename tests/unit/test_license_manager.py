@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 import pytest
 from bernstein.core.license_manager import (
+    LICENSE_DISABLED_ENV,
     Feature,
     LicenseManager,
     LicenseTier,
@@ -124,10 +126,133 @@ class TestLoadLicense:
         assert len(result.warnings) > 0
         assert any("expires" in w.lower() for w in result.warnings)
 
-    def test_no_signing_key_skips_validation(self) -> None:
+    def test_empty_signing_key_rejects_license(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """audit-050: empty signing key must fail closed, not skip check."""
+        monkeypatch.delenv(LICENSE_DISABLED_ENV, raising=False)
         mgr = LicenseManager(signing_key="")
         result = mgr.load_license(_make_license_str())
+        assert not result.valid
+        assert "signing key" in result.error.lower()
+
+    def test_missing_signing_key_rejects_forged_license(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """audit-050: a license forged with empty-string HMAC key is rejected.
+
+        Regression guard: the reproducer in the ticket was
+        ``LicenseManager(signing_key='').load_license(forged_unlimited)``.
+        """
+        monkeypatch.delenv(LICENSE_DISABLED_ENV, raising=False)
+        # Forge a license signed with the empty key (what an attacker would do
+        # to exploit the old bypass path).
+        forged = encode_license(
+            org_id="attacker",
+            tier=LicenseTier.UNLIMITED,
+            features=frozenset({Feature.SSO_OIDC}),
+            max_seats=0,
+            max_nodes=0,
+            expires_at=time.time() + 86400 * 365 * 100,
+            signing_key="x",  # encode_license now refuses "", so use any key
+        )
+        mgr = LicenseManager()  # no signing key configured
+        result = mgr.load_license(forged)
+        assert not result.valid
+        assert mgr.current_license is None
+
+    def test_valid_key_valid_signature_accepts(self) -> None:
+        mgr = LicenseManager(signing_key=SIGNING_KEY)
+        result = mgr.load_license(_make_license_str())
         assert result.valid
+        assert result.license is not None
+        assert result.license.tier == LicenseTier.ENTERPRISE
+
+    def test_valid_key_tampered_payload_rejected(self) -> None:
+        """audit-050: tampered payloads must be rejected even with valid key."""
+        encoded = _make_license_str()
+        payload = decode_license(encoded)
+        # Flip the tier to UNLIMITED without re-signing.
+        payload["tier"] = "unlimited"
+        import base64
+        import json
+
+        tampered = base64.urlsafe_b64encode(
+            json.dumps(payload, sort_keys=True).encode(),
+        ).decode()
+        mgr = LicenseManager(signing_key=SIGNING_KEY)
+        result = mgr.load_license(tampered)
+        assert not result.valid
+        assert "signature" in result.error.lower()
+
+    def test_disabled_env_skips_validation_with_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """audit-050: explicit opt-in disables signature check + logs warning."""
+        monkeypatch.setenv(LICENSE_DISABLED_ENV, "1")
+        # Forge a license with a different key; with validation disabled it
+        # should still load.
+        forged = encode_license(
+            org_id="dev",
+            tier=LicenseTier.ENTERPRISE,
+            features=frozenset(),
+            max_seats=10,
+            max_nodes=1,
+            expires_at=time.time() + 86400,
+            signing_key="not-the-real-key",
+        )
+        mgr = LicenseManager(signing_key=SIGNING_KEY)
+        with caplog.at_level(logging.WARNING):
+            result = mgr.load_license(forged)
+        assert result.valid
+        assert any(LICENSE_DISABLED_ENV in rec.getMessage() for rec in caplog.records)
+        assert any(LICENSE_DISABLED_ENV in w for w in result.warnings)
+
+    def test_disabled_env_wrong_value_still_enforces(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """audit-050: only "1" opts out — "true", "0", "" stay enforcing."""
+        for bad_val in ("0", "true", "yes", "", "TRUE"):
+            monkeypatch.setenv(LICENSE_DISABLED_ENV, bad_val)
+            mgr = LicenseManager(signing_key="")
+            result = mgr.load_license(_make_license_str())
+            assert not result.valid, f"Expected rejection for env value {bad_val!r}"
+
+
+class TestEncodeLicenseValidation:
+    """audit-050: encode_license refuses empty signing keys."""
+
+    def test_empty_signing_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            encode_license(
+                org_id="acme",
+                tier=LicenseTier.COMMUNITY,
+                features=frozenset(),
+                max_seats=1,
+                max_nodes=1,
+                expires_at=time.time() + 3600,
+                signing_key="",
+            )
+
+
+class TestValidateSignatureFailClosed:
+    """audit-050: validate_license_signature fails closed on empty key."""
+
+    def test_empty_key_returns_false(self) -> None:
+        encoded = _make_license_str()
+        payload = decode_license(encoded)
+        assert validate_license_signature(payload, "") is False
+
+    def test_empty_signature_returns_false(self) -> None:
+        encoded = _make_license_str()
+        payload = decode_license(encoded)
+        payload["signature"] = ""
+        assert validate_license_signature(payload, SIGNING_KEY) is False
 
 
 # ---------------------------------------------------------------------------

@@ -15,12 +15,19 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, cast
 
 logger = logging.getLogger(__name__)
+
+# Environment variable that must be set to "1" to explicitly disable license
+# signature validation (e.g. in local dev). Any other value — including unset —
+# means validation is enforced. This prevents silent bypass when a signing key
+# is accidentally omitted from production config.
+LICENSE_DISABLED_ENV = "BERNSTEIN_LICENSE_DISABLED"
 
 # ---------------------------------------------------------------------------
 # License tiers and features
@@ -166,11 +173,17 @@ def encode_license(
         max_seats: Maximum seats.
         max_nodes: Maximum cluster nodes.
         expires_at: Expiration timestamp.
-        signing_key: HMAC signing key.
+        signing_key: HMAC signing key. Must be non-empty.
 
     Returns:
         Base64-encoded signed license string.
+
+    Raises:
+        ValueError: If ``signing_key`` is empty.
     """
+    if not signing_key:
+        msg = "signing_key must be a non-empty string"
+        raise ValueError(msg)
     payload: dict[str, Any] = {
         "org_id": org_id,
         "tier": tier,
@@ -217,14 +230,24 @@ def validate_license_signature(
 ) -> bool:
     """Validate the HMAC signature on a license payload.
 
+    This function fails closed: an empty or missing ``signing_key`` always
+    returns ``False``, regardless of the payload contents. Callers that
+    intentionally want to skip validation (e.g. in dev mode) must do so
+    explicitly via the :data:`LICENSE_DISABLED_ENV` opt-in.
+
     Args:
         payload: Decoded license payload (including signature).
-        signing_key: Expected signing key.
+        signing_key: Expected signing key. Must be non-empty.
 
     Returns:
-        True if the signature is valid.
+        True if the signature is valid; False if ``signing_key`` is empty
+        or the signature does not match.
     """
+    if not signing_key:
+        return False
     signature = payload.get("signature", "")
+    if not isinstance(signature, str) or not signature:
+        return False
     verify_payload = {k: v for k, v in payload.items() if k != "signature"}
     payload_json = json.dumps(verify_payload, sort_keys=True)
     expected = hmac.new(
@@ -240,11 +263,30 @@ def validate_license_signature(
 # ---------------------------------------------------------------------------
 
 
+def _license_validation_disabled() -> bool:
+    """Return True if signature validation has been explicitly disabled.
+
+    Only the exact value ``"1"`` in :data:`LICENSE_DISABLED_ENV` counts as an
+    opt-in. All other values (including empty string, ``"0"``, ``"true"``,
+    etc.) leave validation enabled. Requiring an exact value prevents silent
+    misconfiguration from disabling signature checks in production.
+    """
+    return os.environ.get(LICENSE_DISABLED_ENV, "") == "1"
+
+
 class LicenseManager:
     """Manages enterprise licenses and feature gates.
 
+    Signature validation is fail-closed: if ``signing_key`` is empty and
+    :envvar:`BERNSTEIN_LICENSE_DISABLED` is not set to ``"1"``, every
+    ``load_license`` call returns ``valid=False``. This prevents the
+    historical bug where an unconfigured signing key silently bypassed
+    signature verification and accepted forged licenses.
+
     Args:
-        signing_key: Key used to validate license signatures.
+        signing_key: Key used to validate license signatures. Must be a
+            non-empty string unless signature validation has been explicitly
+            disabled via :envvar:`BERNSTEIN_LICENSE_DISABLED` = ``"1"``.
     """
 
     def __init__(self, signing_key: str = "") -> None:
@@ -258,6 +300,13 @@ class LicenseManager:
 
     def load_license(self, encoded: str) -> LicenseValidationResult:
         """Load and validate a license from an encoded string.
+
+        Validation rules:
+          * If :envvar:`BERNSTEIN_LICENSE_DISABLED` is ``"1"``, signature
+            validation is skipped and a warning is logged.
+          * Otherwise, the signing key must be non-empty and the HMAC
+            signature on the payload must match. An empty or unset signing
+            key causes the license to be rejected.
 
         Args:
             encoded: Base64-encoded license string.
@@ -273,18 +322,40 @@ class LicenseManager:
                 error=str(exc),
             )
 
-        # Validate signature
-        if self._signing_key and not validate_license_signature(
-            payload,
-            self._signing_key,
-        ):
+        warnings: list[str] = []
+
+        # Decide signature policy. Fail-closed: missing key + no explicit
+        # opt-in means we reject.
+        if _license_validation_disabled():
+            logger.warning(
+                "License signature validation disabled via %s=1; accepting license without signature check",
+                LICENSE_DISABLED_ENV,
+            )
+            warnings.append(
+                f"License signature validation disabled via {LICENSE_DISABLED_ENV}=1",
+            )
+        elif not self._signing_key:
+            logger.error(
+                "License signing key is empty; refusing to validate. "
+                "Configure a signing key or set %s=1 to explicitly disable "
+                "signature validation.",
+                LICENSE_DISABLED_ENV,
+            )
+            return LicenseValidationResult(
+                valid=False,
+                error=(
+                    "License signing key not configured; refusing to "
+                    "validate. Set a signing key or opt out explicitly "
+                    f"with {LICENSE_DISABLED_ENV}=1."
+                ),
+            )
+        elif not validate_license_signature(payload, self._signing_key):
             return LicenseValidationResult(
                 valid=False,
                 error="Invalid license signature",
             )
 
         # Parse fields
-        warnings: list[str] = []
         now = time.time()
         expires_at = float(payload.get("expires_at", 0))
         if expires_at < now:
