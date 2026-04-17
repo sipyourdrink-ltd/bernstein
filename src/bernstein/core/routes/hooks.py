@@ -154,7 +154,7 @@ async def receive_hook(session_id: str, request: Request) -> JSONResponse:
             "Rejected hook POST with unsafe session_id: %s",
             exc,
         )
-        return _reject(f"invalid session_id: {exc}")
+        return _reject("invalid session_id")
 
     try:
         body: dict[str, Any] = json.loads(raw_body.decode("utf-8")) if raw_body else {}
@@ -170,5 +170,5 @@ async def receive_hook(session_id: str, request: Request) -> JSONResponse:
         # already caught this, but we re-map any downstream rejection
         # from the receiver to a 400 rather than a 500.
         logger.warning("Hook receiver rejected session_id downstream: %s", exc)
-        return _reject(f"invalid session_id: {exc}")
+        return _reject("invalid session_id")
     return JSONResponse(content=result, status_code=200)
