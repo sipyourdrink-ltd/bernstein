@@ -460,8 +460,33 @@ def _resolve_bind_host() -> str:
 
 
 def _resolve_auth_token() -> str | None:
-    """Read auth token from env var."""
-    return os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    """Resolve the Bearer token used by bootstrap to talk to its own server.
+
+    Precedence:
+        1. Explicit ``BERNSTEIN_AUTH_TOKEN`` env var (operator-configured).
+        2. Ephemeral auto-generated token when auth is enabled but no token is
+           set and no opt-out is active. The generated token is written into
+           ``os.environ`` so both the server subprocess (which inherits env in
+           ``_start_server``) and the bootstrap client see the same value.
+        3. ``None`` when ``BERNSTEIN_AUTH_DISABLED=1`` — the middleware
+           short-circuits in that mode so no header is required.
+    """
+    existing = os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    if existing:
+        return existing
+    # Honour the explicit opt-out — the middleware will accept anonymous
+    # requests, so we do not auto-generate a token that no one will check.
+    if os.environ.get("BERNSTEIN_AUTH_DISABLED", "").strip().lower() in ("1", "true", "yes"):
+        return None
+    import secrets
+
+    token = secrets.token_urlsafe(32)
+    os.environ["BERNSTEIN_AUTH_TOKEN"] = token
+    logger.info(
+        "Auto-generated BERNSTEIN_AUTH_TOKEN for this session (not persisted; "
+        "set BERNSTEIN_AUTH_TOKEN to pin or BERNSTEIN_AUTH_DISABLED=1 to opt out).",
+    )
+    return token
 
 
 def _detect_project_type(workdir: Path) -> str:

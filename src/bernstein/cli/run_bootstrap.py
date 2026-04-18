@@ -142,8 +142,16 @@ def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
             console.print(f"[red]Plan load error:[/red] {exc}")
             raise SystemExit(1) from exc
 
+    _headers: dict[str, str] = {}
+    _token = os.environ.get("BERNSTEIN_AUTH_TOKEN", "")
+    if _token:
+        _headers["Authorization"] = f"Bearer {_token}"
     try:
-        resp = httpx.get("http://127.0.0.1:8052/tasks?status=open", timeout=5.0)
+        resp = httpx.get(
+            "http://127.0.0.1:8052/tasks?status=open",
+            headers=_headers,
+            timeout=5.0,
+        )
         resp.raise_for_status()
         tasks_data = resp.json()
     except httpx.ConnectError as err:
