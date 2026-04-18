@@ -79,7 +79,6 @@ Trigger config path: `.sdd/config/triggers.yaml`
 ### Retry, scheduling, and lifecycle workflows
 
 - `src/bernstein/core/task_lifecycle.py`
-- `src/bernstein/core/task_completion.py`
 - `src/bernstein/core/lifecycle.py` — deterministic FSM, transition validation, event emission
 - `src/bernstein/core/task_store.py` — in-memory task store, JSONL persistence, status indices
 - `src/bernstein/core/models.py` — `TaskStatus` enum, `Task` dataclass, `LifecycleEvent`
