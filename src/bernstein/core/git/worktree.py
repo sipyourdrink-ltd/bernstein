@@ -412,8 +412,7 @@ class WorktreeManager:
             stderr = result.stderr.strip()
             if "already exists" in stderr:
                 raise WorktreeError(
-                    f"Branch '{branch_name}' already exists. "
-                    "Delete it manually or call cleanup() first. Git: {stderr}"
+                    f"Branch '{branch_name}' already exists. Delete it manually or call cleanup() first. Git: {stderr}"
                 )
             raise WorktreeError(f"git worktree add failed for session '{session_id}': {stderr}")
 
