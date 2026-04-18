@@ -431,7 +431,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "seed_config": "bernstein.core.config.seed_config",
     "seed_parser": "bernstein.core.config.seed_parser",
     "seed_validators": "bernstein.core.config.seed_validators",
-    "self_healing": "bernstein.core.observability.self_healing",
     "semantic_cache": "bernstein.core.knowledge.semantic_cache",
     "semantic_diff": "bernstein.core.knowledge.semantic_diff",
     "semantic_graph": "bernstein.core.knowledge.semantic_graph",
