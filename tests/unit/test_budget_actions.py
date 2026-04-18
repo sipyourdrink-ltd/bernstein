@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from bernstein.core.budget_actions import (
     BudgetAction,
     BudgetActionResult,
     BudgetPolicy,
     BudgetThresholdRule,
+    apply_policy,
     suggest_downgrade,
 )
+
+
+@dataclass
+class _FakeTask:
+    """Minimal task-like object used to exercise apply_policy() mutation."""
+
+    id: str
+    model: str = ""
 
 
 def test_default_policy_creation() -> None:
@@ -118,3 +129,94 @@ def test_suggest_downgrade_haiku() -> None:
 def test_suggest_downgrade_unknown() -> None:
     """Unknown model returns None."""
     assert suggest_downgrade("unknown-model-xyz") is None
+
+
+# ---------------------------------------------------------------------------
+# apply_policy() — policy evaluation + task-model mutation (audit-058)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_policy_continue_leaves_tasks_untouched() -> None:
+    """Under all thresholds no tasks are mutated and action is CONTINUE."""
+    policy = BudgetPolicy.default()
+    tasks = [_FakeTask(id="t1", model="opus"), _FakeTask(id="t2", model="sonnet")]
+    result = apply_policy(policy, 0.2, tasks=tasks)
+    assert result.action == BudgetAction.CONTINUE
+    assert tasks[0].model == "opus"
+    assert tasks[1].model == "sonnet"
+
+
+def test_apply_policy_pause_does_not_mutate_tasks() -> None:
+    """PAUSE is a spawn-gate signal and must not rewrite model fields."""
+    policy = BudgetPolicy.default()
+    tasks = [_FakeTask(id="t1", model="opus")]
+    result = apply_policy(policy, 0.85, tasks=tasks)
+    assert result.action == BudgetAction.PAUSE
+    assert tasks[0].model == "opus"
+
+
+def test_apply_policy_downgrade_rewrites_task_model() -> None:
+    """DOWNGRADE_MODEL mutates each task's model to the cheaper tier."""
+    policy = BudgetPolicy.default()
+    tasks = [
+        _FakeTask(id="t1", model="opus"),
+        _FakeTask(id="t2", model="sonnet"),
+        _FakeTask(id="t3", model="haiku"),
+    ]
+    result = apply_policy(policy, 0.92, tasks=tasks)
+    assert result.action == BudgetAction.DOWNGRADE_MODEL
+    assert tasks[0].model == "sonnet"  # opus -> sonnet
+    assert tasks[1].model == "haiku"  # sonnet -> haiku
+    assert tasks[2].model == "haiku"  # already cheapest, unchanged
+
+
+def test_apply_policy_downgrade_defaults_empty_model_to_cheapest() -> None:
+    """Tasks with an unset model get the cheapest tier explicitly set."""
+    policy = BudgetPolicy.default()
+    tasks = [_FakeTask(id="t1", model="")]
+    result = apply_policy(policy, 0.95, tasks=tasks)
+    assert result.action == BudgetAction.DOWNGRADE_MODEL
+    assert tasks[0].model == "haiku"
+
+
+def test_apply_policy_abort_leaves_tasks_untouched() -> None:
+    """ABORT is a spawn-stop signal; mutation is pointless and must not occur."""
+    policy = BudgetPolicy.default()
+    tasks = [_FakeTask(id="t1", model="opus")]
+    result = apply_policy(policy, 1.05, tasks=tasks)
+    assert result.action == BudgetAction.ABORT
+    assert tasks[0].model == "opus"
+
+
+def test_apply_policy_handles_none_tasks() -> None:
+    """apply_policy without a task list is a pure evaluation."""
+    policy = BudgetPolicy.default()
+    result = apply_policy(policy, 0.92, tasks=None)
+    assert result.action == BudgetAction.DOWNGRADE_MODEL
+
+
+def test_apply_policy_custom_policy_switch_model_rule() -> None:
+    """A single switch-model rule triggers downgrade at its threshold."""
+    policy = BudgetPolicy(
+        rules=[
+            BudgetThresholdRule(
+                threshold_pct=0.5,
+                action=BudgetAction.DOWNGRADE_MODEL,
+                message="Half-budget; switch model.",
+            ),
+        ]
+    )
+    tasks = [_FakeTask(id="t1", model="opus")]
+    result = apply_policy(policy, 0.6, tasks=tasks)
+    assert result.action == BudgetAction.DOWNGRADE_MODEL
+    assert tasks[0].model == "sonnet"
+
+
+def test_apply_policy_returns_result_with_metadata() -> None:
+    """The returned BudgetActionResult carries threshold + spend data."""
+    policy = BudgetPolicy.default()
+    result = apply_policy(policy, 0.82, tasks=None)
+    assert isinstance(result, BudgetActionResult)
+    assert result.threshold_pct == 0.80
+    assert abs(result.percentage_used - 0.82) < 1e-9
+    assert result.message != ""

@@ -51,6 +51,7 @@ from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.cluster import NodeHeartbeatClient
 from bernstein.core.context import refresh_knowledge_base
 from bernstein.core.context_recommendations import RecommendationEngine
+from bernstein.core.cost.budget_actions import BudgetAction, BudgetPolicy, apply_policy
 from bernstein.core.cost_tracker import CostTracker
 from bernstein.core.defaults import ORCHESTRATOR
 from bernstein.core.dep_validator import DependencyValidator
@@ -447,6 +448,13 @@ class Orchestrator:
             budget_usd=config.budget_usd,
         )
         self._cost_cap_killed_agents: set[str] = set()
+
+        # Budget enforcement policy: evaluated each tick against the cost
+        # tracker to decide whether to pause, downgrade, or abort spawning.
+        # Kept as an attribute so tests (and seed config) can override.
+        self._budget_policy: BudgetPolicy = BudgetPolicy.default()
+        # Track last-seen policy action so we only notify on transitions.
+        self._last_budget_action: BudgetAction = BudgetAction.CONTINUE
 
         # Cost anomaly detector: layered on top of cost_tracker, fires
         # AnomalySignals the orchestrator acts on (log/stop/kill).
@@ -880,6 +888,51 @@ class Orchestrator:
         payload = NotificationPayload(event=event, title=title, body=body, metadata=dict(metadata))
         self._notifier.notify(event, payload)
 
+    def _evaluate_budget_policy(self, tasks: list[Task]) -> Any | None:
+        """Evaluate the budget policy for this tick and apply model downgrades.
+
+        When ``budget_usd`` is 0 (unlimited) the policy is not evaluated and
+        ``None`` is returned. Otherwise the policy is evaluated against the
+        current spend ratio; on ``DOWNGRADE_MODEL`` the task model fields are
+        rewritten in place so downstream spawn code picks up the cheaper
+        tier. Transitions between actions emit a single notification so the
+        operator is warned on escalation without log spam.
+
+        Args:
+            tasks: Ready tasks eligible for spawn this tick.
+
+        Returns:
+            The :class:`BudgetActionResult` produced by
+            :func:`apply_policy`, or ``None`` when no budget is configured.
+        """
+        if self._cost_tracker.budget_usd <= 0:
+            return None
+        status = self._cost_tracker.status()
+        result = apply_policy(self._budget_policy, status.percentage_used, tasks=tasks)
+        if result.action != self._last_budget_action:
+            logger.info(
+                "Budget policy transition: %s -> %s at %.1f%% spend (threshold %.0f%%) — %s",
+                self._last_budget_action.value,
+                result.action.value,
+                result.percentage_used * 100,
+                result.threshold_pct * 100,
+                result.message,
+            )
+            # Fire a structured notification on every transition so operators
+            # have a single event per escalation (pause/downgrade/abort).
+            if result.action != BudgetAction.CONTINUE:
+                self._notify(
+                    f"budget.policy.{result.action.value}",
+                    f"Budget policy: {result.action.value}",
+                    result.message
+                    or (f"{result.percentage_used * 100:.1f}% of budget used; action={result.action.value}."),
+                    action=result.action.value,
+                    threshold_pct=round(result.threshold_pct, 4),
+                    percentage_used=round(result.percentage_used, 4),
+                )
+            self._last_budget_action = result.action
+        return result
+
     # -- Core tick -----------------------------------------------------------
 
     def tick(self) -> TickResult:
@@ -1203,7 +1256,14 @@ class Orchestrator:
             },
         )
 
-        # 3c. Claim tasks and spawn agents for ready batches (skip if budget is exhausted)
+        # 3c. Claim tasks and spawn agents for ready batches. Consult the
+        # BudgetPolicy first: evaluate() maps the current spend ratio to a
+        # PAUSE / DOWNGRADE_MODEL / ABORT action. apply_policy() mutates
+        # batched tasks' model fields in place for DOWNGRADE_MODEL so the
+        # spawner picks up the cheaper tier.
+        budget_decision = self._evaluate_budget_policy(
+            [t for b in batches for t in b],
+        )
         if self._config.dry_run:
             for batch in batches:
                 for task in batch:
@@ -1215,7 +1275,7 @@ class Orchestrator:
                         task.effort,
                     )
                     result.dry_run_planned.append((task.role, task.title, task.model, task.effort))
-        elif self._cost_tracker.budget_usd > 0 and self._cost_tracker.status().should_stop:
+        elif budget_decision is not None and budget_decision.action == BudgetAction.ABORT:
             _bs = self._cost_tracker.status()
             logger.warning(
                 "Budget exhausted — $%.2f spent of $%.2f budget. "
@@ -1233,6 +1293,14 @@ class Orchestrator:
                 spent_usd=round(_bs.spent_usd, 4),
                 percent_used=round(_bs.percentage_used * 100, 1),
             )
+        elif budget_decision is not None and budget_decision.action == BudgetAction.PAUSE:
+            _bs = self._cost_tracker.status()
+            logger.warning(
+                "Budget policy PAUSE triggered at %.1f%% — holding spawns until approval",
+                _bs.percentage_used * 100,
+            )
+            # Fire a one-shot notification when the action first transitions.
+            # (apply_policy writes this into self._last_budget_action.)
         else:
             claim_and_spawn_batches(self, batches, alive_count, assigned_task_ids, done_ids, result)
 

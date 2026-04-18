@@ -204,3 +204,61 @@ def suggest_downgrade(current_model: str) -> str | None:
         if tier in current_lower and i > 0:
             return _MODEL_TIER_ORDER[i - 1]
     return None
+
+
+# ---------------------------------------------------------------------------
+# Policy application (wires BudgetPolicy into orchestrator spawn decisions)
+# ---------------------------------------------------------------------------
+
+
+def apply_policy(
+    policy: BudgetPolicy,
+    percentage_used: float,
+    *,
+    tasks: list[Any] | None = None,
+) -> BudgetActionResult:
+    """Evaluate ``policy`` and mutate task model fields if downgrade is required.
+
+    This is the integration point used by the orchestrator tick: given the
+    current spend ratio and the pending task batch, this returns the policy
+    action and — for ``DOWNGRADE_MODEL`` — rewrites each task's ``model``
+    attribute to a cheaper tier where possible.  Callers use the returned
+    :class:`BudgetActionResult` to gate spawning (``ABORT``/``PAUSE``) or
+    emit warnings.
+
+    Mutation of tasks is deliberate: downstream spawn code already consults
+    ``task.model``, so mutating here ensures the downgrade takes effect
+    without threading a separate override parameter through every spawn
+    path.
+
+    Args:
+        policy: The budget policy to evaluate.
+        percentage_used: Current spend as a fraction of the budget
+            (0.0-1.0+).
+        tasks: Optional list of task-like objects with a mutable ``model``
+            attribute.  Only used when the evaluated action is
+            ``DOWNGRADE_MODEL``; safely ignored otherwise.
+
+    Returns:
+        The :class:`BudgetActionResult` produced by
+        :meth:`BudgetPolicy.evaluate`.
+    """
+    result = policy.evaluate(percentage_used)
+    if result.action == BudgetAction.DOWNGRADE_MODEL and tasks:
+        for task in tasks:
+            current = getattr(task, "model", None) or ""
+            if not current:
+                # Task uses default model — mark with cheapest tier so the
+                # spawner picks it up.
+                try:
+                    task.model = _MODEL_TIER_ORDER[0]
+                except (AttributeError, TypeError):
+                    continue
+                continue
+            cheaper = suggest_downgrade(current)
+            if cheaper is not None:
+                try:
+                    task.model = cheaper
+                except (AttributeError, TypeError):
+                    continue
+    return result
