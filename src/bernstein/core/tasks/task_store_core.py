@@ -257,6 +257,28 @@ DEFAULT_ARCHIVE_PATH = Path(".sdd/archive/tasks.jsonl")
 # before any cleanup pass may evict them from the active task set.
 PANEL_GRACE_MS: int = 30_000
 
+# audit-028: reason used when auto-failing a task due to empty result_summary.
+_EMPTY_COMPLETION_REASON = "completion missing summary"
+
+
+class EmptyCompletionError(Exception):
+    """Raised when ``complete()`` is called with an empty ``result_summary``.
+
+    Before raising, ``complete()`` auto-transitions the task to ``FAILED``
+    with ``reason=_EMPTY_COMPLETION_REASON`` so the slot is freed and the
+    watchdog does not need to flip the task later.  The HTTP layer maps
+    this to a 422 response so the client knows the task was marked failed.
+    """
+
+    def __init__(self, task_id: str, task: Task | None = None) -> None:
+        self.task_id = task_id
+        self.task = task
+        super().__init__(
+            f"Cannot complete task {task_id!r}: result_summary must be non-empty "
+            f"(provide diff or log reference). Task auto-failed with "
+            f"reason={_EMPTY_COMPLETION_REASON!r}."
+        )
+
 
 class TaskStore:
     """Thread-safe in-memory task store with JSONL persistence.
@@ -1141,13 +1163,47 @@ class TaskStore:
 
         Raises:
             KeyError: If task_id does not exist.
-            ValueError: If *result_summary* is empty (TASK-004).
+            EmptyCompletionError: If *result_summary* is empty (audit-028).
+                The task is auto-transitioned to ``FAILED`` with
+                ``reason='completion missing summary'`` before this is
+                raised, so the slot is released atomically and the
+                watchdog does not need to intervene.  The HTTP layer
+                maps this to a 422 response.
         """
-        # TASK-004: guard — completion requires non-empty data
+        # audit-028: when result_summary is empty/None, auto-fail the task
+        # under the lock so the slot is freed atomically.  A caller that
+        # bailed out of ``complete()`` previously left the task CLAIMED
+        # until the watchdog flipped it, allowing a fresh agent to
+        # duplicate work that was already committed.
         if not result_summary or not result_summary.strip():
-            raise ValueError(
-                f"Cannot complete task {task_id!r}: result_summary must be non-empty (provide diff or log reference)"
-            )
+            async with self._lock:
+                task = self._tasks.get(task_id)
+                if task is None:
+                    raise KeyError(task_id)
+                # If the task is already in a terminal state, do not re-fail.
+                if task.status in (
+                    TaskStatus.DONE,
+                    TaskStatus.FAILED,
+                    TaskStatus.CANCELLED,
+                    TaskStatus.CLOSED,
+                ):
+                    raise EmptyCompletionError(task_id, task)
+                self._index_remove(task)
+                transition_task(
+                    task,
+                    TaskStatus.FAILED,
+                    actor="task_store",
+                    reason=_EMPTY_COMPLETION_REASON,
+                )
+                task.result_summary = _EMPTY_COMPLETION_REASON
+                task.completed_at = time.time()
+                task.version += 1
+                self._index_add(task)
+                completed_at = task.completed_at
+                await self._append_jsonl(self._task_to_record(task))
+                await self._append_archive(task, completed_at)
+            raise EmptyCompletionError(task_id, task)
+
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is None:

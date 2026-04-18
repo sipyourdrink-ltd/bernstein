@@ -26,7 +26,7 @@ from bernstein.core.lifecycle import (
     transition_task,
 )
 from bernstein.core.models import AgentSession, Task, TaskStatus
-from bernstein.core.task_store import TaskStore
+from bernstein.core.task_store import EmptyCompletionError, TaskStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -428,25 +428,65 @@ class TestFileOwnershipValidation:
 
 
 class TestCompletionDataGuard:
-    """Completing a task requires non-empty result_summary."""
+    """Completing a task requires non-empty result_summary.
+
+    audit-028: empty/whitespace summaries auto-transition the task to
+    ``FAILED`` (rather than raising with the task stuck in ``CLAIMED``)
+    so the slot is freed atomically before ``EmptyCompletionError`` is
+    raised for the HTTP layer to map to 422.
+    """
 
     @pytest.mark.anyio
-    async def test_complete_rejects_empty_string(self, tmp_path: Path) -> None:
+    async def test_complete_empty_string_auto_fails_task(self, tmp_path: Path) -> None:
         store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
         task = await store.create(_task_request())
         await store.claim_by_id(task.id, expected_version=task.version)
 
-        with pytest.raises(ValueError, match="result_summary must be non-empty"):
+        with pytest.raises(EmptyCompletionError) as exc_info:
             await store.complete(task.id, "")
 
+        assert exc_info.value.task_id == task.id
+        assert exc_info.value.task is not None
+        # Task must have been transitioned to FAILED with the audit reason
+        # so the watchdog does not need to flip it later and no fresh
+        # agent can double-claim the already-committed work.
+        failed = store.get_task(task.id)
+        assert failed is not None
+        assert failed.status == TaskStatus.FAILED
+        assert failed.result_summary == "completion missing summary"
+        assert failed.completed_at is not None
+
     @pytest.mark.anyio
-    async def test_complete_rejects_whitespace_only(self, tmp_path: Path) -> None:
+    async def test_complete_whitespace_only_auto_fails_task(self, tmp_path: Path) -> None:
         store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
         task = await store.create(_task_request())
         await store.claim_by_id(task.id, expected_version=task.version)
 
-        with pytest.raises(ValueError, match="result_summary must be non-empty"):
+        with pytest.raises(EmptyCompletionError):
             await store.complete(task.id, "   \n\t  ")
+
+        failed = store.get_task(task.id)
+        assert failed is not None
+        assert failed.status == TaskStatus.FAILED
+        assert failed.result_summary == "completion missing summary"
+
+    @pytest.mark.anyio
+    async def test_complete_empty_releases_lock(self, tmp_path: Path) -> None:
+        """After an EmptyCompletionError, the store lock must be released.
+
+        A bug that left ``self._lock`` held would deadlock every subsequent
+        operation; we verify by running a normal mutation immediately.
+        """
+        store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
+        task = await store.create(_task_request())
+        await store.claim_by_id(task.id, expected_version=task.version)
+
+        with pytest.raises(EmptyCompletionError):
+            await store.complete(task.id, "")
+
+        # Should not deadlock — if the lock leaked we would hang here.
+        followup = await store.create(_task_request(title="followup"))
+        assert followup.status == TaskStatus.OPEN
 
     @pytest.mark.anyio
     async def test_complete_accepts_valid_summary(self, tmp_path: Path) -> None:
