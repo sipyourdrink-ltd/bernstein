@@ -1139,6 +1139,7 @@ class OrchestratorConfig:
     # while per-tenant caps prevent any tenant from monopolising the worker pool.
     # Default off; enable once multi-tenant workloads exist.
     fair_scheduling_enabled: bool = False
+    cost_autopilot: bool = False  # Wire CostAutopilot when True (audit-060)
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

@@ -459,6 +459,17 @@ class Orchestrator:
         )
         self._cost_cap_killed_agents: set[str] = set()
 
+        # Cost autopilot: when cost_autopilot=True in bernstein.yaml, evaluates
+        # spend each tick and downgrades task models once budget exceeds 80%.
+        self._cost_autopilot: Any | None = None
+        if config.cost_autopilot and config.budget_usd > 0:
+            from bernstein.core.cost.cost_autopilot import CostAutopilot, CostAutopilotConfig
+
+            self._cost_autopilot = CostAutopilot(
+                CostAutopilotConfig(enabled=True, budget_usd=config.budget_usd),
+                self._cost_tracker,
+            )
+
         # Budget enforcement policy: evaluated each tick against the cost
         # tracker to decide whether to pause, downgrade, or abort spawning.
         # Kept as an attribute so tests (and seed config) can override.
@@ -1334,6 +1345,13 @@ class Orchestrator:
         budget_decision = self._evaluate_budget_policy(
             [t for b in batches for t in b],
         )
+        if self._cost_autopilot is not None:
+            _ap_override = self._cost_autopilot.evaluate()
+            if _ap_override is not None:
+                logger.info("CostAutopilot: %s", _ap_override.reason)
+                for _task in [t for b in batches for t in b]:
+                    if not _task.model or _task.model == _ap_override.from_model:
+                        _task.model = _ap_override.to_model
         if self._config.dry_run:
             for batch in batches:
                 for task in batch:
@@ -4523,6 +4541,7 @@ if __name__ == "__main__":
             batch=seed.batch if seed else BatchConfig(),
             max_cost_per_agent=seed.max_cost_per_agent if seed else 0.0,
             test_agent=seed.test_agent if seed else TestAgentConfig(),
+            cost_autopilot=seed.cost_autopilot if seed else False,
         )
 
         if args.cells > 1:
