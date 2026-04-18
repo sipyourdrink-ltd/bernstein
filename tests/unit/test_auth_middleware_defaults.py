@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 from bernstein.core.auth_middleware import (
+    AUTH_DEV_ONLY_PUBLIC_PATHS,
     AUTH_HMAC_PATH_PREFIXES,
     AUTH_HMAC_PATHS,
     AUTH_PUBLIC_PATHS,
@@ -57,7 +58,7 @@ def test_public_paths_do_not_include_dashboard_or_events_or_webhook() -> None:
     assert "/hooks/" in AUTH_HMAC_PATH_PREFIXES
 
 
-def test_public_paths_still_contain_health_and_docs() -> None:
+def test_public_paths_still_contain_health_and_login_flow() -> None:
     """Trivially-public endpoints stay reachable without a token."""
     for path in (
         "/health",
@@ -65,13 +66,23 @@ def test_public_paths_still_contain_health_and_docs() -> None:
         "/health/live",
         "/ready",
         "/alive",
-        "/docs",
-        "/openapi.json",
         "/.well-known/agent.json",
         "/auth/login",
         "/auth/cli/device",
     ):
         assert path in AUTH_PUBLIC_PATHS, path
+
+
+def test_docs_and_openapi_are_dev_only_public() -> None:
+    """API docs and the OpenAPI schema are no longer unconditionally public.
+
+    Audit-047 requires that ``/docs`` and ``/openapi.json`` only be
+    anonymously reachable in true dev mode (no auth backend).  Once any
+    authenticator is wired up they must require viewer-level auth.
+    """
+    for path in ("/docs", "/redoc", "/openapi.json", "/openapi.yaml"):
+        assert path not in AUTH_PUBLIC_PATHS, path
+        assert path in AUTH_DEV_ONLY_PUBLIC_PATHS, path
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +109,18 @@ def _build_app(
     async def health() -> dict[str, str]:
         return {"ok": "yes"}
 
+    @app.get("/dashboard")
+    async def dashboard_index() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    @app.get("/dashboard/data")
+    async def dashboard_data() -> dict[str, str]:
+        return {"tasks": "secret-metadata"}
+
+    @app.get("/dashboard/file_locks")
+    async def dashboard_file_locks() -> dict[str, str]:
+        return {"locks": "secret"}
+
     @app.get("/dashboard/events")
     async def dashboard_events() -> dict[str, str]:
         return {"stream": "ok"}
@@ -105,6 +128,14 @@ def _build_app(
     @app.get("/events")
     async def status_events() -> dict[str, str]:
         return {"stream": "ok"}
+
+    @app.get("/docs")
+    async def docs() -> dict[str, str]:
+        return {"docs": "ok"}
+
+    @app.get("/openapi.json")
+    async def openapi_json() -> dict[str, str]:
+        return {"openapi": "3.0.0"}
 
     @app.post("/broadcast")
     async def broadcast(request: Request) -> dict[str, str]:
@@ -191,6 +222,167 @@ def test_health_is_public_without_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# audit-047: dashboard / events / openapi surface gating
+# ---------------------------------------------------------------------------
+
+
+def test_unauth_dashboard_data_returns_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a bearer token, GET /dashboard/data must be 401 (audit-047).
+
+    ``/dashboard/data`` leaks the task list, cost data and agent metadata,
+    so it MUST require auth whenever the server has an auth backend
+    configured.
+    """
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    client = _build_app(legacy_token="secret")
+
+    response = client.get("/dashboard/data")
+
+    assert response.status_code == 401
+
+
+def test_auth_dashboard_data_returns_200_with_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a valid bearer token, GET /dashboard/data is allowed (audit-047)."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    client = _build_app(legacy_token="secret")
+
+    response = client.get(
+        "/dashboard/data",
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tasks"] == "secret-metadata"
+
+
+def test_unauth_dashboard_file_locks_returns_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: /dashboard/file_locks must require auth when configured."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    client = _build_app(legacy_token="secret")
+
+    response = client.get("/dashboard/file_locks")
+
+    assert response.status_code == 401
+
+
+def test_unauth_dashboard_index_returns_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: /dashboard must require auth when auth backend is configured."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    client = _build_app(legacy_token="secret")
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 401
+
+
+def test_unauth_openapi_returns_401_when_auth_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: /openapi.json must require auth when a backend is configured.
+
+    Leaking the OpenAPI schema reveals the attack surface (all routes and
+    parameter shapes).  With a legacy bearer token configured the server is
+    considered production-ready and the schema is gated behind viewer auth.
+    """
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    client = _build_app(legacy_token="secret")
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 401
+
+
+def test_unauth_docs_returns_401_when_auth_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: /docs is dev-only-public; requires auth in production."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    client = _build_app(legacy_token="secret")
+
+    response = client.get("/docs")
+
+    assert response.status_code == 401
+
+
+def test_openapi_is_anonymous_in_dev_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: in true dev mode (no auth backend) /openapi.json is reachable."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    client = _build_app()  # no legacy_token, no SSO, no agent store
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+
+
+def test_docs_is_anonymous_in_dev_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: in true dev mode (no auth backend) /docs is reachable."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    client = _build_app()
+
+    response = client.get("/docs")
+
+    assert response.status_code == 200
+
+
+def test_openapi_with_bearer_token_returns_200(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: valid bearer token unlocks /openapi.json when auth is configured."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    client = _build_app(legacy_token="secret")
+
+    response = client.get(
+        "/openapi.json",
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_env_legacy_token_is_detected_as_auth_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: BERNSTEIN_AUTH_TOKEN in env counts as "auth configured".
+
+    Even when the middleware is constructed without an explicit
+    ``legacy_token`` argument, finding ``BERNSTEIN_AUTH_TOKEN`` in the
+    environment must flip the middleware into "production" mode so the
+    dev-only public paths are gated.
+    """
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "env-secret")
+    client = _build_app()  # no explicit legacy_token
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 401
+
+
+def test_health_live_stays_public_for_probes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """audit-047: k8s probes must keep working even with auth configured."""
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    client = _build_app(legacy_token="secret")
+
+    assert client.get("/health").status_code == 200
 
 
 # ---------------------------------------------------------------------------
