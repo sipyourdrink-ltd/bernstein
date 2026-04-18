@@ -15,10 +15,17 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 
 # Bundled default templates — present inside the wheel after pip install.
 # In dev/editable mode, fall back to <repo>/templates/ at the project root.
+#
+# The wheel ships the full tree under src/bernstein/_default_templates/ via
+# hatch force-include (templates/prompts, templates/bernstein.yaml). In a
+# source checkout only ascii_logo.md lives there directly, so the presence
+# of that single file is not enough — probe for a real template subtree
+# (prompts/) before deciding we're inside a wheel install. If not, fall
+# back to <repo>/templates/ which contains the full dev copy.
 _bundled_templates_dir = _PACKAGE_DIR / "_default_templates"
-if not _bundled_templates_dir.is_dir():
-    # Dev mode: src/bernstein/../../templates → <repo>/templates
-    _bundled_templates_dir = _PACKAGE_DIR.parent.parent / "templates"
+_dev_templates_dir = _PACKAGE_DIR.parent.parent / "templates"
+if not (_bundled_templates_dir / "prompts").is_dir() and _dev_templates_dir.is_dir():
+    _bundled_templates_dir = _dev_templates_dir
 
 # Public access via uppercase constant
 _BUNDLED_TEMPLATES_DIR = _bundled_templates_dir
