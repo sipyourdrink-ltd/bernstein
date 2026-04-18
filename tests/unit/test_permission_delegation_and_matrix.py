@@ -1,11 +1,9 @@
-"""Tests for mailbox, permission delegation, and permission matrix."""
+"""Tests for permission delegation and permission matrix."""
 
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
-from bernstein.core.mailbox import MailboxMessage, MailboxQueue, MailboxSystem
 from bernstein.core.permission_delegation import (
     PermissionDelegator,
     should_delegate,
@@ -17,155 +15,6 @@ from bernstein.core.permission_matrix import (
     ResolutionResult,
     resolve_permission,
 )
-
-
-class TestMailboxSystem:
-    """Test MailboxSystem functionality."""
-
-    def test_send_and_receive(self, tmp_path: Path) -> None:
-        """Test sending and receiving messages."""
-        mailbox = MailboxSystem(tmp_path)
-
-        msg_id = mailbox.send(
-            sender_id="agent-1",
-            recipient_id="agent-2",
-            subject="Test",
-            content="Hello from agent 1",
-        )
-
-        assert msg_id is not None
-
-        messages = mailbox.receive("agent-2")
-
-        assert len(messages) == 1
-        assert messages[0].subject == "Test"
-        assert messages[0].content == "Hello from agent 1"
-
-    def test_priority_ordering(self, tmp_path: Path) -> None:
-        """Test messages are ordered by priority."""
-        mailbox = MailboxSystem(tmp_path)
-
-        # Send in reverse priority order
-        mailbox.send("agent-1", "agent-2", "Low", "Low priority", priority="low")
-        mailbox.send("agent-1", "agent-2", "High", "High priority", priority="high")
-        mailbox.send("agent-1", "agent-2", "Normal", "Normal priority", priority="normal")
-
-        messages = mailbox.receive("agent-2")
-
-        assert len(messages) == 3
-        assert messages[0].priority == "high"
-        assert messages[1].priority == "normal"
-        assert messages[2].priority == "low"
-
-    def test_message_ttl(self, tmp_path: Path) -> None:
-        """Test message expiration."""
-        mailbox = MailboxSystem(tmp_path, default_ttl_seconds=0.1)
-
-        mailbox.send("agent-1", "agent-2", "Test", "Content")
-
-        # Wait for expiration
-        time.sleep(0.2)
-
-        messages = mailbox.receive("agent-2")
-
-        assert len(messages) == 0
-
-    def test_unread_count(self, tmp_path: Path) -> None:
-        """Test unread message count."""
-        mailbox = MailboxSystem(tmp_path)
-
-        mailbox.send("agent-1", "agent-2", "Test 1", "Content 1")
-        mailbox.send("agent-1", "agent-2", "Test 2", "Content 2")
-
-        assert mailbox.unread_count("agent-2") == 2
-
-        mailbox.receive("agent-2")
-
-        assert mailbox.unread_count("agent-2") == 0
-
-    def test_cleanup_agent(self, tmp_path: Path) -> None:
-        """Test agent mailbox cleanup."""
-        mailbox = MailboxSystem(tmp_path)
-
-        mailbox.send("agent-1", "agent-2", "Test", "Content")
-
-        count = mailbox.cleanup_agent("agent-2")
-
-        assert count == 1
-        assert mailbox.unread_count("agent-2") == 0
-
-
-class TestMailboxQueue:
-    """Test MailboxQueue functionality."""
-
-    def test_add_message(self) -> None:
-        """Test adding messages to queue."""
-        queue = MailboxQueue(agent_id="test-agent")
-
-        msg = MailboxMessage(
-            id="msg-1",
-            sender_id="sender",
-            recipient_id="test-agent",
-            subject="Test",
-            content="Content",
-        )
-
-        added = queue.add(msg)
-
-        assert added is True
-        assert len(queue.messages) == 1
-
-    def test_queue_max_size(self) -> None:
-        """Test queue respects max size."""
-        queue = MailboxQueue(agent_id="test-agent", max_size=2)
-
-        for i in range(3):
-            msg = MailboxMessage(
-                id=f"msg-{i}",
-                sender_id="sender",
-                recipient_id="test-agent",
-                subject="Test",
-                content="Content",
-            )
-            queue.add(msg)
-
-        assert len(queue.messages) == 2
-
-    def test_peek_doesnt_mark_read(self) -> None:
-        """Test peek doesn't mark messages as read."""
-        queue = MailboxQueue(agent_id="test-agent")
-
-        msg = MailboxMessage(
-            id="msg-1",
-            sender_id="sender",
-            recipient_id="test-agent",
-            subject="Test",
-            content="Content",
-        )
-        queue.add(msg)
-
-        messages = queue.peek()
-
-        assert len(messages) == 1
-        assert messages[0].read is False
-
-    def test_receive_marks_read(self) -> None:
-        """Test receive marks messages as read."""
-        queue = MailboxQueue(agent_id="test-agent")
-
-        msg = MailboxMessage(
-            id="msg-1",
-            sender_id="sender",
-            recipient_id="test-agent",
-            subject="Test",
-            content="Content",
-        )
-        queue.add(msg)
-
-        messages = queue.receive()
-
-        assert len(messages) == 1
-        assert messages[0].read is True
 
 
 class TestPermissionDelegator:

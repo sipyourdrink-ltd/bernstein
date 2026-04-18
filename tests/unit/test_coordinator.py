@@ -1,4 +1,4 @@
-"""Tests for coordinator mode, scratchpad, and synthesis."""
+"""Tests for coordinator mode and synthesis."""
 
 from __future__ import annotations
 
@@ -10,95 +10,11 @@ from bernstein.core.coordinator import (
     is_coordinator_task,
     is_worker_task,
 )
-from bernstein.core.scratchpad import ScratchpadManager
 from bernstein.core.synthesis import (
     SynthesisEngine,
     SynthesisResult,
     should_synthesize,
 )
-
-
-class TestScratchpadManager:
-    """Test ScratchpadManager functionality."""
-
-    def test_create_scratchpad(self, tmp_path: Path) -> None:
-        """Test creating scratchpad directory."""
-        manager = ScratchpadManager(tmp_path, run_id="test-run")
-        scratchpad = manager.create_scratchpad()
-
-        assert scratchpad.exists()
-        assert "test-run" in str(scratchpad)
-        assert manager.scratchpad_path == scratchpad
-
-    def test_get_worker_scratchpad(self, tmp_path: Path) -> None:
-        """Test getting worker-specific scratchpad."""
-        manager = ScratchpadManager(tmp_path, run_id="test-run")
-        manager.create_scratchpad()
-
-        worker_scratchpad = manager.get_worker_scratchpad("worker-1")
-
-        assert worker_scratchpad.exists()
-        assert "worker-1" in str(worker_scratchpad)
-
-    def test_write_read_shared_note(self, tmp_path: Path) -> None:
-        """Test writing and reading shared notes."""
-        manager = ScratchpadManager(tmp_path, run_id="test-run")
-        manager.create_scratchpad()
-
-        manager.write_shared_note("test.txt", "Hello from worker 1")
-        content = manager.read_shared_note("test.txt")
-
-        assert content == "Hello from worker 1"
-
-    def test_read_nonexistent_note(self, tmp_path: Path) -> None:
-        """Test reading nonexistent note."""
-        manager = ScratchpadManager(tmp_path, run_id="test-run")
-        manager.create_scratchpad()
-
-        content = manager.read_shared_note("nonexistent.txt")
-
-        assert content is None
-
-    def test_cleanup(self, tmp_path: Path) -> None:
-        """Test cleanup removes scratchpad."""
-        manager = ScratchpadManager(tmp_path, run_id="test-run")
-        scratchpad = manager.create_scratchpad()
-
-        # Write some files
-        manager.write_shared_note("test.txt", "content")
-        manager.get_worker_scratchpad("worker-1")
-
-        count = manager.cleanup()
-
-        assert count > 0
-        assert not scratchpad.exists()
-        assert manager.scratchpad_path is None
-
-    def test_context_manager(self, tmp_path: Path) -> None:
-        """Test context manager auto-cleanup."""
-        with ScratchpadManager(tmp_path, run_id="test-run") as manager:
-            scratchpad = manager.scratchpad_path
-            assert scratchpad is not None
-            assert scratchpad.exists()
-
-        # Should be cleaned up after exit
-        assert not scratchpad.exists()
-
-    def test_get_env_vars(self, tmp_path: Path) -> None:
-        """Test getting environment variables."""
-        with ScratchpadManager(tmp_path, run_id="test-run") as manager:
-            env_vars = manager.get_env_vars()
-
-            assert "BERNSTEIN_SCRATCHPAD" in env_vars
-            assert "BERNSTEIN_SCRATCHPAD_SHARED" in env_vars
-
-    def test_get_prompt_contract(self, tmp_path: Path) -> None:
-        """Test getting prompt contract."""
-        with ScratchpadManager(tmp_path, run_id="test-run") as manager:
-            contract = manager.get_prompt_contract()
-
-            assert "Scratchpad Directory" in contract
-            assert "shared" in contract
 
 
 class TestCoordinatorMode:

@@ -253,7 +253,8 @@ _REDIRECT_MAP: dict[str, str] = {
     "log_search": "bernstein.core.observability.log_search",
     "log_search_engine": "bernstein.core.observability.log_search_engine",
     "loop_detector": "bernstein.core.observability.loop_detector",
-    "mailbox": "bernstein.core.communication.mailbox",
+    # mailbox: removed in audit-176 — dead code, superseded by bulletin.py +
+    # signals.py; no production importers.
     "manager": "bernstein.core.orchestration.manager",
     "manager_models": "bernstein.core.orchestration.manager_models",
     "manager_parsing": "bernstein.core.orchestration.manager_parsing",
@@ -394,7 +395,8 @@ _REDIRECT_MAP: dict[str, str] = {
     "sanitize": "bernstein.core.security.sanitize",
     "sbom": "bernstein.core.security.sbom",
     "scenario_library": "bernstein.core.planning.scenario_library",
-    "scratchpad": "bernstein.core.communication.scratchpad",
+    # scratchpad: removed in audit-176 — dead code, cross-worker state
+    # superseded by bulletin.py + signals.py; no production importers.
     "sdk_generator": "bernstein.core.plugins_core.sdk_generator",
     "seccomp_profiles": "bernstein.core.security.seccomp_profiles",
     "secrets": "bernstein.core.security.secrets",
