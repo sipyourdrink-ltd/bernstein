@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import py_compile
+import shlex
 import shutil
 import stat
 import subprocess
@@ -562,28 +563,99 @@ def apply_diff(cwd: Path, diff: str) -> GitResult:
 # ------------------------------------------------------------------
 
 
+def _validate_git_ref(ref: str, cwd: Path) -> None:
+    """Validate a git reference name via ``git check-ref-format``.
+
+    Rejects malformed or malicious ref names (e.g., ``--upload-pack=x``)
+    that could otherwise be smuggled into a subsequent git invocation.
+
+    Args:
+        ref: Candidate ref name (branch, tag, or revision expression).
+        cwd: Working directory for the git invocation.
+
+    Raises:
+        ValueError: If ``ref`` is empty, starts with ``-``, or git refuses it.
+    """
+    if not ref:
+        raise ValueError("git ref must be a non-empty string")
+    if ref.startswith("-"):
+        raise ValueError(f"git ref must not start with '-': {ref!r}")
+    # Strip revision suffixes (e.g., HEAD~10, main^1) before asking git to
+    # validate the ref shape. check-ref-format only understands plain names.
+    bare = ref.split("~", 1)[0].split("^", 1)[0]
+    if not bare or bare.startswith("-"):
+        raise ValueError(f"invalid git ref: {ref!r}")
+    # HEAD and bare SHAs are accepted without check-ref-format since the
+    # command rejects them despite being valid revisions.
+    if bare == "HEAD" or (len(bare) >= 7 and all(c in "0123456789abcdef" for c in bare.lower())):
+        return
+    proc = subprocess.run(
+        ["git", "check-ref-format", "--branch", bare],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+    if proc.returncode != 0:
+        raise ValueError(f"invalid git ref {ref!r}: {proc.stderr.strip() or 'rejected by git'}")
+
+
 def bisect_regression(
     cwd: Path,
-    test_cmd: str,
+    test_cmd: str | None = None,
     good_ref: str = "HEAD~10",
+    bad_ref: str = "HEAD",
+    test_argv: list[str] | None = None,
 ) -> str | None:
     """Find which commit introduced a test regression via ``git bisect``.
 
     Args:
         cwd: Repository root.
-        test_cmd: Shell command to run as the bisect test.
-        good_ref: Known-good reference (default HEAD~10).
+        test_cmd: Shell-style command string to run as the bisect test.
+            Parsed with :func:`shlex.split` (POSIX rules, no shell).
+        good_ref: Known-good reference (default ``HEAD~10``).
+        bad_ref: Known-bad reference (default ``HEAD``).
+        test_argv: Pre-tokenised argv for the bisect test command. When
+            supplied, it takes precedence over ``test_cmd`` and bypasses
+            shell-style parsing entirely. Preferred for callers that
+            already have a list of arguments.
 
     Returns:
         The first bad commit hash, or None if bisect failed.
+
+    Raises:
+        ValueError: If no command is supplied, ``test_cmd`` cannot be
+            parsed by ``shlex``, or either ref fails validation.
     """
     import re
 
+    # Resolve argv: explicit list wins; otherwise shlex-parse the string.
+    if test_argv is not None:
+        argv = list(test_argv)
+    else:
+        if test_cmd is None:
+            raise ValueError("bisect_regression requires test_cmd or test_argv")
+        try:
+            argv = shlex.split(test_cmd, posix=True)
+        except ValueError as exc:
+            raise ValueError(f"failed to parse test_cmd: {exc}") from exc
+    if not argv:
+        raise ValueError("bisect test command must not be empty")
+    if argv[0].startswith("-"):
+        # Refuse leading flags so they can't be reinterpreted as args to
+        # `git bisect run` itself (e.g., --log-file=/tmp/x).
+        raise ValueError(f"bisect test command must not start with a flag: {argv[0]!r}")
+
+    # Validate refs before invoking git bisect start.
+    _validate_git_ref(good_ref, cwd)
+    _validate_git_ref(bad_ref, cwd)
+
     try:
-        run_git(["bisect", "start", "HEAD", good_ref], cwd, timeout=10)
+        run_git(["bisect", "start", bad_ref, good_ref], cwd, timeout=10)
 
         result = subprocess.run(
-            ["git", "bisect", "run", *test_cmd.split()],
+            ["git", "bisect", "run", *argv],
             cwd=cwd,
             capture_output=True,
             text=True,

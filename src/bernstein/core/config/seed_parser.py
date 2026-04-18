@@ -274,6 +274,42 @@ def _parse_network_config(raw: object) -> NetworkConfig | None:
     return NetworkConfig(allowed_ips=allowed_ips)
 
 
+# audit-118: Accepted glob origin shape — scheme and host are literal, only
+# the port may be a ``*`` wildcard (e.g. ``http://localhost:*``).  Anything
+# outside this shape is rejected with a clear error because
+# ``starlette.middleware.cors.CORSMiddleware`` compares ``allow_origins``
+# literally and would silently break the origin check.
+_CORS_PORT_GLOB_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://[^/\s*]+:\*$")
+
+
+def _validate_cors_origin(origin: str) -> None:
+    """Reject CORS origin strings CORSMiddleware cannot match literally.
+
+    A bare ``*`` is allowed (starlette treats it specially).  A glob that
+    matches ``scheme://host:*`` is allowed — ``server_app._split_cors_origins``
+    will translate it into an ``allow_origin_regex`` argument.  Any other
+    use of ``*`` is rejected because CORSMiddleware would compare it
+    literally and silently drop the origin header.
+
+    Args:
+        origin: One origin entry from ``cors.allowed_origins``.
+
+    Raises:
+        SeedError: When the origin contains an unsupported glob pattern.
+    """
+    if "*" not in origin or origin == "*":
+        return
+    if _CORS_PORT_GLOB_RE.match(origin):
+        return
+    raise SeedError(
+        f"cors.allowed_origins entry {origin!r} contains an unsupported "
+        f"wildcard; starlette CORSMiddleware matches allow_origins "
+        f"literally. Use the port-glob form 'scheme://host:*' (e.g. "
+        f"'http://localhost:*') or remove the '*' and rely on the "
+        f"allow_origin_regex translation."
+    )
+
+
 def _parse_cors_config(raw: object) -> CORSConfig | None:
     """Parse the optional CORS config block from ``bernstein.yaml``.
 
@@ -298,6 +334,8 @@ def _parse_cors_config(raw: object) -> CORSConfig | None:
     origins = _parse_string_list(cors_dict.get("allowed_origins"), "cors.allowed_origins")
     if not origins:
         origins = CORSConfig.allowed_origins
+    for origin in origins:
+        _validate_cors_origin(origin)
 
     methods = _parse_string_list(cors_dict.get("allow_methods"), "cors.allow_methods")
     if not methods:

@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import signal
 import threading
 import time
@@ -330,6 +331,64 @@ def read_log_tail(path: Path, offset: int = 0) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _split_cors_origins(
+    allowed_origins: tuple[str, ...] | list[str],
+) -> tuple[list[str], str | None]:
+    """Separate literal CORS origins from glob patterns and build a regex.
+
+    ``starlette.middleware.cors.CORSMiddleware`` compares ``allow_origins``
+    literally — ``"http://localhost:*"`` never matches a real browser
+    origin such as ``"http://localhost:3000"``.  audit-118 requires us to
+    translate glob-style origins into an ``allow_origin_regex`` that
+    CORSMiddleware actually honors.
+
+    Args:
+        allowed_origins: Origins as configured in bernstein.yaml, possibly
+            mixing literal URLs (``https://app.example.com``) with glob
+            patterns (``http://localhost:*``).
+
+    Returns:
+        A ``(literal_origins, origin_regex)`` tuple.  ``literal_origins`` is
+        the subset containing no ``*`` — safe to pass to ``allow_origins``.
+        ``origin_regex`` is ``None`` when no globs were present; otherwise
+        it is a single combined regex matching any of the glob origins.
+    """
+    literal_origins: list[str] = []
+    glob_origins: list[str] = []
+    for origin in allowed_origins:
+        if "*" in origin:
+            glob_origins.append(origin)
+        else:
+            literal_origins.append(origin)
+
+    if not glob_origins:
+        return literal_origins, None
+
+    # Translate each glob origin to a regex fragment.  Escape everything
+    # except ``*`` — and translate ``*`` to either ``\d+`` (when it is the
+    # port component, i.e. follows ``:``) or the generic ``[^/]*`` match.
+    fragments: list[str] = []
+    for origin in glob_origins:
+        parts: list[str] = []
+        i = 0
+        while i < len(origin):
+            ch = origin[i]
+            if ch == "*":
+                # A ``:*`` suffix means "any port" — restrict to digits so we
+                # don't accept pathological inputs like ``http://localhost:evil``.
+                if parts and parts[-1].endswith(":"):
+                    parts.append(r"\d+")
+                else:
+                    parts.append(r"[^/]*")
+            else:
+                parts.append(re.escape(ch))
+            i += 1
+        fragments.append("".join(parts))
+
+    combined = "^(?:" + "|".join(fragments) + ")$"
+    return literal_origins, combined
+
+
 def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) -> dict[str, Any]:
     """Reload and persist bernstein.yaml metadata without restarting."""
     from bernstein.core.config_diff import (
@@ -618,14 +677,24 @@ def create_app(
 
     from starlette.middleware.cors import CORSMiddleware
 
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=list(cors_config.allowed_origins),
-        allow_methods=list(cors_config.allow_methods),
-        allow_headers=list(cors_config.allow_headers),
-        allow_credentials=cors_config.allow_credentials,
-        max_age=cors_config.max_age,
-    )
+    # audit-118: starlette.middleware.cors.CORSMiddleware compares
+    # ``allow_origins`` LITERALLY — so ``http://localhost:*`` never matches
+    # a real ``http://localhost:3000``.  Detect glob patterns, strip them
+    # from the literal list, and translate them to a regex passed via
+    # ``allow_origin_regex`` so wildcard ports actually work.
+    literal_origins, origin_regex = _split_cors_origins(cors_config.allowed_origins)
+
+    cors_kwargs: dict[str, Any] = {
+        "allow_origins": literal_origins,
+        "allow_methods": list(cors_config.allow_methods),
+        "allow_headers": list(cors_config.allow_headers),
+        "allow_credentials": cors_config.allow_credentials,
+        "max_age": cors_config.max_age,
+    }
+    if origin_regex is not None:
+        cors_kwargs["allow_origin_regex"] = origin_regex
+
+    application.add_middleware(CORSMiddleware, **cors_kwargs)
 
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()

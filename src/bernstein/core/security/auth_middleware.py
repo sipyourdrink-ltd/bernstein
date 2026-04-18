@@ -59,10 +59,13 @@ _TASK_ID_PATH_RE = re.compile(r"^/tasks/([^/]+)/(?:complete|fail|progress|cancel
 
 # Paths that are always accessible without any authentication.
 # Keep this list tiny — only trivially public endpoints (health probes,
-# discovery metadata, docs, login flow) belong here.
+# discovery metadata, login flow) belong here.  API docs and the OpenAPI
+# schema are gated via ``AUTH_DEV_ONLY_PUBLIC_PATHS`` below so that they
+# require viewer auth whenever the server is running with a configured
+# auth backend (see ``_compute_auth_configured`` and ``dispatch``).
 AUTH_PUBLIC_PATHS = frozenset(
     {
-        # Health / readiness probes
+        # Health / readiness probes (k8s / load-balancer probes)
         "/health",
         "/health/ready",
         "/health/live",
@@ -73,11 +76,6 @@ AUTH_PUBLIC_PATHS = frozenset(
         "/.well-known/agent.json",
         "/.well-known/acp.json",
         "/acp/v0/agents",
-        # API docs
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        "/openapi.yaml",
         # Auth flow endpoints (must be public for login to work)
         "/auth/login",
         "/auth/oidc/callback",
@@ -86,6 +84,20 @@ AUTH_PUBLIC_PATHS = frozenset(
         "/auth/cli/device",
         "/auth/cli/token",
         "/auth/providers",
+    }
+)
+
+# Paths that are anonymous ONLY in true dev mode (no auth backend
+# configured).  When any auth backend is present (SSO service, legacy
+# bearer token, or agent identity store) these require a valid token with
+# at least viewer permissions.  This avoids leaking the API attack surface
+# in production while keeping ``uvicorn …`` hello-world runs friendly.
+AUTH_DEV_ONLY_PUBLIC_PATHS = frozenset(
+    {
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/openapi.yaml",
     }
 )
 
@@ -214,6 +226,7 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         # should be passed in via ``auth_disabled=True`` from the factory.
         resolved_disabled = bool(auth_disabled) or auth_disabled_via_opt_out()
         self._auth_disabled = resolved_disabled
+        self._auth_configured = self._compute_auth_configured()
         if resolved_disabled and not SSOAuthMiddleware._warned_disabled:
             logger.warning(
                 "SECURITY: Bernstein auth is DISABLED — every request is "
@@ -222,6 +235,28 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
                 "Do NOT run this configuration on any network-exposed host.",
             )
             SSOAuthMiddleware._warned_disabled = True
+
+    def _compute_auth_configured(self) -> bool:
+        """Return True when any auth backend is available.
+
+        ``/docs``, ``/openapi.json`` and friends stay anonymous only when no
+        authenticator is wired up — i.e. true dev mode (developer runs the
+        server by hand with no ``BERNSTEIN_AUTH_TOKEN``, no SSO, no agent
+        identity store).  As soon as any backend is configured the server is
+        assumed to face a real network and these paths require a bearer
+        token with viewer permissions.
+        """
+        if self._auth_service is not None:
+            return True
+        if self._legacy_token:
+            return True
+        if self._agent_identity_store is not None:
+            return True
+        # Fallback: if an env-level legacy token is set somewhere outside the
+        # middleware's own init path (e.g. the server factory reads it from
+        # the environment but hasn't threaded it here), treat auth as
+        # configured to fail closed.
+        return bool(os.environ.get("BERNSTEIN_AUTH_TOKEN", "").strip())
 
     async def dispatch(
         self,
@@ -237,6 +272,14 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
 
         # Truly-public paths are always accessible.
         if path in AUTH_PUBLIC_PATHS:
+            response = await call_next(request)
+            return response
+
+        # Dev-only public paths (API docs, OpenAPI schema) — anonymous
+        # access only when no auth backend is configured.  When auth IS
+        # configured we fall through to the normal bearer-token path so the
+        # request is gated behind a viewer-level permission.
+        if path in AUTH_DEV_ONLY_PUBLIC_PATHS and not self._auth_configured:
             response = await call_next(request)
             return response
 
