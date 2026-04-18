@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -138,7 +139,6 @@ class IdempotencyStore:
         if key in self._executed:
             return
 
-        self._executed.add(key)
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("a", encoding="utf-8") as f:
@@ -149,8 +149,12 @@ class IdempotencyStore:
                     "marked_at": time.time(),
                 }
                 f.write(json.dumps(record) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
         except OSError as exc:
             logger.warning("Failed to persist idempotency marker: %s", exc)
+            return
+        self._executed.add(key)
 
     def clear(self) -> None:
         """Clear all execution markers (for testing)."""
