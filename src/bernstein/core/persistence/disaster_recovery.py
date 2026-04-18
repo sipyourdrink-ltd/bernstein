@@ -191,7 +191,15 @@ def backup_sdd(
 
     Returns:
         Dict with ``path``, ``size_bytes``, ``file_count``, ``sha256``.
+
+    Raises:
+        ValueError: If ``encrypt`` is True but no ``password`` is provided.
+            Without a password, encryption would derive an ephemeral random
+            Fernet key that is never persisted, making restore impossible.
     """
+    if encrypt and not password:
+        raise ValueError("encryption requires a password")
+
     sdd_path = sdd_path.resolve()
     if not sdd_path.is_dir():
         raise FileNotFoundError(f".sdd/ directory not found: {sdd_path}")
@@ -333,13 +341,19 @@ def restore_sdd(
 
     import io
 
-    with tarfile.open(
-        fileobj=io.BytesIO(data) if decrypt else source.open("rb"),
-        mode="r:*",
-    ) as tar:
-        # filter="data" (Python 3.12+) blocks absolute paths, ".."
-        # components, and special file types — mitigating path traversal.
-        tar.extractall(path=sdd_path, filter="data")
+    if decrypt:
+        # In-memory BytesIO — no OS file descriptor to leak.
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tar:
+            # filter="data" (Python 3.12+) blocks absolute paths, ".."
+            # components, and special file types — mitigating path traversal.
+            tar.extractall(path=sdd_path, filter="data")
+    else:
+        # Bind the source fd to a context manager so it is closed even if
+        # tarfile.open raises.  tarfile does not own fileobj-supplied fds.
+        with source.open("rb") as fh, tarfile.open(fileobj=fh, mode="r:*") as tar:
+            # filter="data" (Python 3.12+) blocks absolute paths, ".."
+            # components, and special file types — mitigating path traversal.
+            tar.extractall(path=sdd_path, filter="data")
 
     # Count restored files
     restored = sum(1 for _ in sdd_path.rglob("*") if _.is_file())
