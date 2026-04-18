@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from bernstein.core.security.auth import AuthService
 
 _PERM_TASKS_WRITE = "tasks:write"
+_PERM_ADMIN_MANAGE = "admin:manage"
 
 logger = logging.getLogger(__name__)
 
@@ -130,15 +131,26 @@ _AUTH_DISABLED_TRUTHY = frozenset({"1", "true", "yes", "on"})
 # Read-only methods that viewers can access
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-# Route → required permission mapping for write operations
+# Route → required permission mapping for write operations.
+#
+# Every write endpoint that Bernstein exposes MUST have an explicit entry
+# here.  Any request that falls through without a match is treated as
+# operator-only (``admin:manage``) — fail closed, not open.
+#
+# Operator-sensitive endpoints (``/shutdown``, ``/broadcast``, ``/drain``,
+# ``/config``) require ``admin:manage``, which is only granted to the
+# ``admin`` role — operator and agent tokens cannot reach them.
 _ROUTE_PERMISSIONS: dict[str, str] = {
     "/tasks": _PERM_TASKS_WRITE,
     "/agents": "agents:write",
     "/cluster": "cluster:write",
     "/bulletin": "bulletin:write",
     "/auth": "auth:manage",
-    "/config": "config:write",
+    "/config": _PERM_ADMIN_MANAGE,
     "/webhooks": "webhooks:manage",
+    "/shutdown": _PERM_ADMIN_MANAGE,
+    "/broadcast": _PERM_ADMIN_MANAGE,
+    "/drain": _PERM_ADMIN_MANAGE,
 }
 
 
@@ -170,6 +182,13 @@ def _get_required_permission(path: str, method: str) -> str | None:
                 return perm.replace(":write", ":read").replace(":manage", ":read")
         return "status:read"  # Default read permission
 
+    # Admin-only prefixes always win over substring heuristics so that, e.g.,
+    # ``/drain/cancel`` does not fall through to ``tasks:write`` just because
+    # it contains ``/cancel``.
+    for prefix, perm in _ROUTE_PERMISSIONS.items():
+        if perm == _PERM_ADMIN_MANAGE and path.startswith(prefix):
+            return perm
+
     # Write operations — check specific action paths before prefix
     if "/complete" in path or "/fail" in path or "/cancel" in path or "/block" in path:
         return _PERM_TASKS_WRITE
@@ -178,7 +197,10 @@ def _get_required_permission(path: str, method: str) -> str | None:
         if path.startswith(prefix):
             return perm
 
-    return _PERM_TASKS_WRITE  # Default write permission
+    # Fail CLOSED: unknown write routes require operator-level
+    # ``admin:manage`` rather than the old ``tasks:write`` open fallback.
+    # Any new endpoint MUST be added to ``_ROUTE_PERMISSIONS`` explicitly.
+    return _PERM_ADMIN_MANAGE
 
 
 class SSOAuthMiddleware(BaseHTTPMiddleware):
@@ -379,6 +401,25 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
             "task_ids": agent_identity.task_ids,
         }
         request.state.agent_identity = agent_identity  # type: ignore[attr-defined]
+
+        # Agent identity JWTs — even manager-role / unrestricted ones — must
+        # never reach operator-only endpoints (shutdown, broadcast, drain,
+        # config writer).  These mutate process-wide state and require an
+        # admin SSO user or the legacy operator bearer.
+        if request.method not in _READ_METHODS and _get_required_permission(path, request.method) == _PERM_ADMIN_MANAGE:
+            logger.warning(
+                "Agent %s denied operator-only path %s (admin:manage required)",
+                agent_identity.id,
+                path,
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "Agent tokens cannot access operator-only endpoints",
+                    "required_permission": _PERM_ADMIN_MANAGE,
+                    "agent_id": agent_identity.id,
+                },
+            )
 
         # Zero-trust: enforce task scope for mutating task operations.
         # Agents with a non-empty task_ids list may only act on their assigned

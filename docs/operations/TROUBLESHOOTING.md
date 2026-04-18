@@ -477,7 +477,7 @@ print(yaml.dump(plan, default_flow_style=False))
 | `.sdd/runtime/pids/<session>.json` | PID metadata for `bernstein ps` |
 | `.sdd/backlog.jsonl` | Persistent task backlog |
 | `.sdd/runtime/cost_report.json` | Run cost tracking |
-| `.sdd/runtime/access.jsonl` | HTTP request log (caution: grows unbounded) |
+| `.sdd/runtime/access.jsonl` | HTTP request log (rotated at 10 MiB, 1 backup retained) |
 | `.sdd/runtime/server.log` | Task server logs |
 | `.sdd/runtime/heartbeats/<session>.json` | Live agent progress (updated every 15s) |
 

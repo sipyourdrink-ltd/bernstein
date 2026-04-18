@@ -21,13 +21,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from pathlib import Path  # noqa: TC003 (runtime use in Path.glob / dir traversal)
+from typing import Any
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
+from bernstein.core.defaults import JANITOR
+from bernstein.core.persistence.runtime_state import rotate_log_file
 from bernstein.core.persistence.wal import WALEntry, WALRecovery, WALWriter
 
 logger = logging.getLogger(__name__)
@@ -91,20 +92,34 @@ class IdempotencyStore:
         self._load()
 
     def _load(self) -> None:
-        """Load previously recorded execution markers from disk."""
-        if not self._path.exists():
+        """Load previously recorded execution markers from disk.
+
+        Scans the live ``idempotency.jsonl`` plus any rotated ``.N`` backups
+        (audit-081) so that rotation never silently forgets a marker.
+        """
+        candidates: list[Path] = []
+        if self._path.exists():
+            candidates.append(self._path)
+        backup_parent = self._path.parent
+        if backup_parent.exists():
+            candidates.extend(sorted(backup_parent.glob(f"{self._path.name}.*")))
+        if not candidates:
             return
-        try:
-            for line in self._path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                data = json.loads(line)
-                key = str(data.get("key", ""))
-                if key:
-                    self._executed.add(key)
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Failed to load idempotency store: %s", exc)
+        for candidate in candidates:
+            try:
+                for line in candidate.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    key = str(data.get("key", ""))
+                    if key:
+                        self._executed.add(key)
+            except OSError as exc:
+                logger.warning("Failed to load idempotency markers from %s: %s", candidate, exc)
 
     def _make_key(self, entry: WALEntry) -> str:
         """Create a unique key for an entry.
@@ -138,9 +153,11 @@ class IdempotencyStore:
         if key in self._executed:
             return
 
-        self._executed.add(key)
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
+            # audit-081: cap unbounded idempotency.jsonl. _load() scans
+            # rotated .N backups as well so rotation does not lose markers.
+            rotate_log_file(self._path, max_bytes=JANITOR.idempotency_rotate_bytes)
             with self._path.open("a", encoding="utf-8") as f:
                 record = {
                     "key": key,
@@ -149,8 +166,12 @@ class IdempotencyStore:
                     "marked_at": time.time(),
                 }
                 f.write(json.dumps(record) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
         except OSError as exc:
             logger.warning("Failed to persist idempotency marker: %s", exc)
+            return
+        self._executed.add(key)
 
     def clear(self) -> None:
         """Clear all execution markers (for testing)."""

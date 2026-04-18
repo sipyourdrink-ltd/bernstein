@@ -9,9 +9,20 @@ from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import Any, Literal
 
+from bernstein.core import defaults as _defaults
 from bernstein.core.defaults import AGENT
 
 logger = logging.getLogger(__name__)
+
+
+def _default_poll_interval_s() -> int:
+    """Return the current canonical tick interval (cast to int).
+
+    Reads from :mod:`bernstein.core.defaults` each call so that runtime
+    overrides and :func:`bernstein.core.defaults.reset` (which rebinds
+    ``ORCHESTRATOR`` at module scope) are honoured.
+    """
+    return int(_defaults.ORCHESTRATOR.tick_interval_s)
 
 
 class TaskStoreUnavailable(Exception):
@@ -1056,7 +1067,9 @@ class OrchestratorConfig:
     """
 
     max_agents: int = 6
-    poll_interval_s: int = 3
+    # Derived from ORCHESTRATOR.tick_interval_s (float, canonical) so overrides
+    # via ``tuning.orchestrator.tick_interval_s`` actually change the tick rate.
+    poll_interval_s: int = field(default_factory=_default_poll_interval_s)
     smtp: SmtpConfig | None = None
     # Unified with AGENT.heartbeat_stale_s (audit-147). Previously 900s; now defaults to 120s.
     # Deployments that explicitly relied on the 900s value must set this field explicitly.
@@ -1072,6 +1085,7 @@ class OrchestratorConfig:
     kill_on_memory_leak: bool = False
     evolve_mode: bool = False
     budget_usd: float = 0.0  # Stop spawning when cumulative cost reaches this (0 = unlimited)
+    budget_aware_routing_enabled: bool = True  # audit-102: downgrade opus→sonnet near budget cap
     dry_run: bool = False  # Preview planned spawns without actually spawning agents
     auth_token: str | None = None  # Bearer token for authenticated API calls
     merge_strategy: str = "pr"  # "pr" | "direct" — how agent work reaches the main branch

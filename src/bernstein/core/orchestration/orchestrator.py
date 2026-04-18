@@ -140,7 +140,8 @@ from bernstein.core.task_lifecycle import (
     should_auto_decompose,
 )
 from bernstein.core.token_monitor import check_token_growth
-from bernstein.core.wal import WALRecovery, WALWriter
+from bernstein.core.wal import WALEntry, WALRecovery, WALWriter
+from bernstein.core.wal_replay import WALReplayEngine
 from bernstein.core.watchdog import WatchdogManager, collect_watchdog_findings
 from bernstein.core.workflow import WorkflowExecutor, load_workflow
 from bernstein.evolution.governance import AdaptiveGovernor
@@ -461,6 +462,12 @@ class Orchestrator:
         self._budget_policy: BudgetPolicy = BudgetPolicy.default()
         # Track last-seen policy action so we only notify on transitions.
         self._last_budget_action: BudgetAction = BudgetAction.CONTINUE
+        # audit-056: kill-switch state.  When ``should_stop`` transitions
+        # True we record the timestamp here and SHUTDOWN all live agents;
+        # subsequent ticks that run ``kill_grace_period_s`` seconds later
+        # SIGKILL any session still alive so budget overrun stays bounded.
+        self._budget_stop_fired_at: float | None = None
+        self._budget_stop_killed_agents: set[str] = set()
 
         # Cost anomaly detector: layered on top of cost_tracker, fires
         # AnomalySignals the orchestrator acts on (log/stop/kill).
@@ -1353,6 +1360,11 @@ class Orchestrator:
                 spent_usd=round(_bs.spent_usd, 4),
                 percent_used=round(_bs.percentage_used * 100, 1),
             )
+            # audit-056: ABORT used to only skip spawn, so in-flight agents
+            # kept draining budget until they completed on their own.  Now
+            # we SHUTDOWN every live session and (after ``kill_grace_period_s``)
+            # SIGKILL any still alive so overruns stay bounded.
+            self._enforce_budget_killswitch()
         elif budget_decision is not None and budget_decision.action == BudgetAction.PAUSE:
             _bs = self._cost_tracker.status()
             logger.warning(
@@ -1792,10 +1804,27 @@ class Orchestrator:
         ``.sdd/worktrees/preserved/`` and surfaced on the bulletin board so
         fresh agents can resume that work.
 
+        Before the legacy acknowledgement path runs, the
+        :class:`WALReplayEngine` (audit-073) performs an idempotent replay:
+        uncommitted ``task_claimed`` entries whose task the server still
+        reports as *claimed* are transitioned to FAILED with reason
+        ``claimed but never spawned`` so the standard retry machinery picks
+        them up.  Idempotency markers persisted by the engine prevent
+        double-execution across subsequent boots.
+
         Returns:
             List of (run_id, WALEntry) tuples for all uncommitted entries found.
         """
         sdd_dir = self._workdir / ".sdd"
+        # audit-073: run the WALReplayEngine first so uncommitted task_claimed
+        # entries that are still claimed on the server are transitioned to
+        # FAILED (reason "claimed but never spawned") with idempotency
+        # protection.  Any failure is logged and swallowed so startup is never
+        # blocked by a corrupted WAL -- ops can replay manually.
+        try:
+            self._replay_wal_with_engine(sdd_dir)
+        except Exception:
+            logger.exception("WAL replay engine failed (non-fatal) — continuing with legacy recovery")
         uncommitted = WALRecovery.scan_all_uncommitted(
             sdd_dir,
             exclude_run_id=self._run_id,
@@ -1900,6 +1929,116 @@ class Orchestrator:
                 retried,
             )
         return uncommitted
+
+    def _replay_wal_with_engine(self, sdd_dir: Path) -> None:
+        """Run :class:`WALReplayEngine` to transition orphaned claims to FAILED.
+
+        audit-073: wires :meth:`WALReplayEngine.scan_and_replay` into startup
+        so uncommitted ``task_claimed`` entries from a crashed prior run are
+        not only logged.  For each orphan whose task is still reported as
+        *claimed* on the server, the engine's replay handler:
+
+        1. POSTs ``/tasks/{task_id}/fail`` with reason
+           ``claimed but never spawned`` (the standard fail path runs the
+           existing retry machinery via ``retry_or_fail_task``).
+        2. Appends a ``task_retry`` entry to the current WAL for auditability.
+
+        The engine's :class:`IdempotencyStore` records the entry hash so
+        subsequent orchestrator boots skip already-handled entries -- this
+        prevents double-fails if a recovery cycle completes but the
+        ``.closed`` marker write fails.
+
+        Args:
+            sdd_dir: The ``.sdd`` directory root.
+        """
+        # Fetch the set of task IDs currently marked as claimed on the
+        # server.  If the server is unreachable we treat the set as empty
+        # which means the replay handler will decline to fail anything and
+        # fall back to the legacy force-claim path (audit-001) below.
+        claimed_on_server: set[str] = set()
+        try:
+            resp = self._client.get(f"{self._config.server_url}/tasks?status=claimed")
+            resp.raise_for_status()
+            payload = resp.json()
+            tasks_iter = payload if isinstance(payload, list) else payload.get("tasks", [])
+            for task in tasks_iter:
+                tid = str(task.get("id", ""))
+                if tid:
+                    claimed_on_server.add(tid)
+        except Exception as exc:
+            logger.debug(
+                "WAL replay: unable to fetch claimed tasks from server (%s); falling back to legacy force-claim path",
+                exc,
+            )
+
+        engine = WALReplayEngine(
+            sdd_dir=sdd_dir,
+            current_run_id=self._run_id,
+            wal_writer=self._wal_writer,
+        )
+
+        def _handler(entry: WALEntry) -> bool:
+            """Replay a single WAL entry.  Return True to mark executed."""
+            # Only task_claimed entries are actionable during recovery.
+            # Other replay-worthy decision types (task_created,
+            # task_completed, agent_spawned, ...) are marked executed so the
+            # idempotency store short-circuits them on subsequent boots.
+            if entry.decision_type != "task_claimed":
+                return True
+            task_id = str(entry.inputs.get("task_id", ""))
+            if not task_id:
+                # Malformed entry; mark as handled so we never revisit it.
+                return True
+            # Only fail tasks the server still considers claimed.  Anything
+            # else is either already resolved or will be handled by the
+            # legacy recovery path below (which force-claims back to open).
+            if task_id not in claimed_on_server:
+                return True
+            try:
+                resp = self._client.post(
+                    f"{self._config.server_url}/tasks/{task_id}/fail",
+                    json={"reason": "claimed but never spawned"},
+                )
+                resp.raise_for_status()
+            except Exception as exc:
+                logger.warning(
+                    "WAL replay: /tasks/%s/fail failed (%s) — orphan will be handled by legacy force-claim recovery",
+                    task_id,
+                    exc,
+                )
+                return False
+            # Record the retry intent in the current WAL so the fail->retry
+            # transition is auditable end-to-end.
+            try:
+                self._wal_writer.write_entry(
+                    decision_type="task_retry",
+                    inputs={
+                        "task_id": task_id,
+                        "reason": "claimed_but_never_spawned",
+                        "source": "wal_replay_engine",
+                    },
+                    output={"action": "failed_for_retry"},
+                    actor="orchestrator",
+                    committed=True,
+                )
+            except OSError:
+                logger.debug("WAL replay: task_retry write failed (task=%s)", task_id)
+            logger.info(
+                "WAL replay: failed orphan task %s (claimed but never spawned)",
+                task_id,
+            )
+            return True
+
+        summary = engine.scan_and_replay(replay_handler=_handler)
+        if summary.total_uncommitted:
+            logger.info(
+                "WAL replay engine: total=%d replayed=%d idempotent=%d stale=%d failed=%d",
+                summary.total_uncommitted,
+                summary.replayed,
+                summary.skipped_idempotent,
+                summary.skipped_stale,
+                summary.failed,
+            )
 
     def _retry_orphaned_claim(self, run_id: str, entry: Any) -> bool:
         """Re-queue a single orphaned claim from a crashed prior run.
@@ -2270,6 +2409,100 @@ class Orchestrator:
                     retried_task_ids=self._retried_task_ids,
                     workdir=self._workdir,
                 )
+
+    def _enforce_budget_killswitch(self) -> None:
+        """Terminate in-flight agents once the budget kill-switch has fired.
+
+        audit-056: prior to this hook the ABORT branch only blocked new
+        spawns, so any agents still running when ``should_stop`` flipped
+        kept consuming budget (overruns of 150%+ observed).  The new
+        contract is:
+
+        * On the first tick where ``should_stop`` is True we SHUTDOWN
+          every live session so they can commit WIP, stamp
+          ``_budget_stop_fired_at``, and emit a single ``budget.exhaust``
+          bulletin + notification carrying the final spend.
+        * On any later tick where at least ``kill_grace_period_s`` have
+          elapsed we SIGKILL remaining live sessions via the spawner.
+          Each agent is only killed once (``_budget_stop_killed_agents``).
+        * When spend drops back under the threshold (e.g. after a hot
+          reload of ``budget_usd``) the state is reset so the switch can
+          re-arm.
+        """
+        status = self._cost_tracker.status()
+        if not status.should_stop:
+            # Budget was increased or the tracker reset — re-arm so a
+            # future exhaustion triggers a fresh SHUTDOWN wave.
+            if self._budget_stop_fired_at is not None:
+                logger.info("Budget kill-switch re-armed (spend back under threshold)")
+                self._budget_stop_fired_at = None
+                self._budget_stop_killed_agents.clear()
+            return
+
+        live_sessions = [s for s in self._agents.values() if s.status != "dead"]
+
+        # First transition: SHUTDOWN everyone and emit the exhaust event.
+        if self._budget_stop_fired_at is None:
+            self._budget_stop_fired_at = time.time()
+            reason = (
+                f"budget exhausted: ${status.spent_usd:.4f} of ${status.budget_usd:.2f} "
+                f"({status.percentage_used * 100:.1f}%)"
+            )
+            logger.warning(
+                "Budget kill-switch fired — sending SHUTDOWN to %d live agent(s); SIGKILL after %ds grace period",
+                len(live_sessions),
+                self._cost_tracker.kill_grace_period_s,
+            )
+            if live_sessions:
+                with contextlib.suppress(Exception):
+                    self._send_shutdown_signals(reason)
+            self._post_bulletin(
+                "alert",
+                f"budget.exhaust: ${status.spent_usd:.4f}/${status.budget_usd:.2f} "
+                f"({status.percentage_used * 100:.1f}%); "
+                f"SHUTDOWN sent to {len(live_sessions)} agent(s)",
+            )
+            self._notify(
+                "budget.exhaust",
+                "Budget exhausted — terminating agents",
+                (
+                    f"Spent ${status.spent_usd:.4f} of ${status.budget_usd:.2f} "
+                    f"({status.percentage_used * 100:.1f}%). SHUTDOWN sent to "
+                    f"{len(live_sessions)} in-flight agent(s); SIGKILL after "
+                    f"{self._cost_tracker.kill_grace_period_s}s grace."
+                ),
+                budget_usd=round(status.budget_usd, 4),
+                spent_usd=round(status.spent_usd, 6),
+                percent_used=round(status.percentage_used * 100, 2),
+                live_agents=len(live_sessions),
+                grace_period_s=int(self._cost_tracker.kill_grace_period_s),
+            )
+            return
+
+        # Subsequent ticks: once the grace window has elapsed, SIGKILL
+        # anything still alive so unbounded overrun is prevented.
+        elapsed = time.time() - self._budget_stop_fired_at
+        if elapsed < self._cost_tracker.kill_grace_period_s:
+            return
+
+        pending_kill = [s for s in live_sessions if s.id not in self._budget_stop_killed_agents]
+        if not pending_kill:
+            return
+
+        logger.warning(
+            "Budget kill-switch grace period expired (%.1fs elapsed); SIGKILLing %d agent(s) still alive",
+            elapsed,
+            len(pending_kill),
+        )
+        for session in pending_kill:
+            self._budget_stop_killed_agents.add(session.id)
+            with contextlib.suppress(Exception):
+                self._spawner.kill(session)
+        self._post_bulletin(
+            "alert",
+            f"budget.exhaust: SIGKILLed {len(pending_kill)} agent(s) after "
+            f"{int(self._cost_tracker.kill_grace_period_s)}s grace",
+        )
 
     def _reap_dead_agents(self, result: TickResult, tasks_snapshot: dict[str, list[Task]]) -> None:
         """Delegate to agent_lifecycle.reap_dead_agents."""

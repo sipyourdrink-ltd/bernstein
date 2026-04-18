@@ -28,6 +28,12 @@ class TestRolePermissions:
         assert not role_has_permission(AuthRole.VIEWER, "tasks:delete")
         assert not role_has_permission(AuthRole.VIEWER, "agents:kill")
 
+    def test_admin_manage_held_only_by_admin(self) -> None:
+        """admin:manage gates shutdown/broadcast/drain/config — admin only (audit-119)."""
+        assert role_has_permission(AuthRole.ADMIN, "admin:manage")
+        assert not role_has_permission(AuthRole.OPERATOR, "admin:manage")
+        assert not role_has_permission(AuthRole.VIEWER, "admin:manage")
+
     def test_unknown_permission_denied(self) -> None:
         assert not role_has_permission(AuthRole.VIEWER, "nonexistent:perm")
         assert not role_has_permission(AuthRole.ADMIN, "totally:made:up")

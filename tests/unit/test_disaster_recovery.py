@@ -207,6 +207,25 @@ class TestBackupSdd:
         # Original should be deleted
         assert not dest.exists()
 
+    def test_encrypt_without_password_raises(self, tmp_path: Path) -> None:
+        """Regression for audit-075: encrypt=True without a password must fail.
+
+        Previously, ``_get_crypto`` silently fell back to an ephemeral
+        ``Fernet.generate_key()`` — the random key was never persisted, so
+        restore could never succeed (silent data-loss bug).
+        """
+        sdd = _create_test_sdd(tmp_path)
+        dest = tmp_path / "backup.tar.gz"
+        with pytest.raises(ValueError, match="encryption requires a password"):
+            backup_sdd(sdd, dest, encrypt=True, password=None)
+
+    def test_encrypt_with_empty_password_raises(self, tmp_path: Path) -> None:
+        """Empty string password is also rejected (falsy)."""
+        sdd = _create_test_sdd(tmp_path)
+        dest = tmp_path / "backup.tar.gz"
+        with pytest.raises(ValueError, match="encryption requires a password"):
+            backup_sdd(sdd, dest, encrypt=True, password="")
+
 
 class TestRestoreSdd:
     def test_restores_backup(self, tmp_path: Path) -> None:
@@ -271,3 +290,49 @@ class TestRestoreSdd:
         restore_dir = tmp_path / "restore" / ".sdd"
         with pytest.raises((ValueError, tarfile.OutsideDestinationError)):
             restore_sdd(malicious_tar, restore_dir)
+
+    def test_restore_sdd_no_fd_leak_non_decrypt(self, tmp_path: Path) -> None:
+        """Regression for audit-079: non-decrypt restore must close source fd.
+
+        Previously, ``tarfile.open(fileobj=source.open('rb'), mode='r:*')``
+        left the underlying file descriptor dangling — tarfile does not own
+        fds passed via ``fileobj``.  Repeated restores accumulated leaked
+        fds until the process hit ``EMFILE``.
+        """
+        import gc
+        import os
+
+        sdd = _create_test_sdd(tmp_path)
+        dest = tmp_path / "backup.tar.gz"
+        backup_sdd(sdd, dest)
+
+        fd_dir = Path(f"/proc/{os.getpid()}/fd")
+
+        def _open_fd_count() -> int:
+            if fd_dir.is_dir():
+                return sum(1 for _ in fd_dir.iterdir())
+            # Fallback for platforms without /proc (e.g. macOS): count via
+            # sentinel file descriptor allocation.  If fds leaked, the next
+            # freshly opened fd number grows unbounded across iterations.
+            import tempfile as _tempfile
+
+            with _tempfile.TemporaryFile() as tf:
+                return tf.fileno()
+
+        # Warm-up: pay one-time allocations before sampling the baseline.
+        for _ in range(3):
+            restore_sdd(dest, tmp_path / "restore_warmup" / ".sdd")
+        gc.collect()
+        baseline = _open_fd_count()
+
+        for i in range(100):
+            restore_sdd(dest, tmp_path / f"restore_{i}" / ".sdd")
+
+        gc.collect()
+        after = _open_fd_count()
+
+        # Tight bound: the restore itself must close its own fd.  Allow a
+        # small slack for unrelated transient fds opened by pytest/logging.
+        assert after - baseline < 10, (
+            f"FD leak: baseline={baseline} after 100 restores={after} (delta={after - baseline})"
+        )

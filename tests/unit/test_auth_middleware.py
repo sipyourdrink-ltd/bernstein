@@ -46,6 +46,76 @@ def test_get_required_permission_maps_read_write_and_kill_routes() -> None:
     assert _get_required_permission("/agents/abc/kill", "POST") == "agents:kill"
 
 
+def test_admin_only_routes_require_admin_manage() -> None:
+    """/shutdown, /broadcast, /drain, and /config map to admin:manage (audit-119)."""
+    assert _get_required_permission("/shutdown", "POST") == "admin:manage"
+    assert _get_required_permission("/broadcast", "POST") == "admin:manage"
+    assert _get_required_permission("/drain", "POST") == "admin:manage"
+    assert _get_required_permission("/drain/cancel", "POST") == "admin:manage"
+    assert _get_required_permission("/config", "POST") == "admin:manage"
+
+
+def test_unknown_write_route_falls_closed_to_admin_manage() -> None:
+    """Unknown write routes require admin:manage — fail CLOSED (audit-119)."""
+    # Previously fell through to tasks:write; now requires operator-level access.
+    assert _get_required_permission("/some/unmapped/write/path", "POST") == "admin:manage"
+    assert _get_required_permission("/brand-new-endpoint", "DELETE") == "admin:manage"
+
+
+def test_tasks_write_token_denied_on_shutdown_route() -> None:
+    """A token with only tasks:write is rejected by /shutdown with 403 (audit-119)."""
+
+    def _has_tasks_write_only(permission: str) -> bool:
+        return permission == "tasks:write"
+
+    user = SimpleNamespace(role=SimpleNamespace(value="operator"), has_permission=_has_tasks_write_only)
+
+    def _validate_token(token: str) -> tuple[Any, dict[str, str]]:
+        del token
+        return user, {"sub": "op1"}
+
+    auth_service = SimpleNamespace(validate_token=_validate_token)
+    app = FastAPI()
+    app.add_middleware(SSOAuthMiddleware, auth_service=auth_service)
+
+    @app.post("/shutdown")
+    async def shutdown() -> dict[str, str]:
+        return {"status": "shutting_down"}
+
+    client = TestClient(app)
+    response = client.post("/shutdown", headers={"Authorization": "Bearer token"})
+
+    assert response.status_code == 403
+    assert "admin:manage" in response.json()["detail"]
+
+
+def test_admin_manage_token_accepted_on_shutdown_route() -> None:
+    """A token with admin:manage is accepted by /shutdown (audit-119)."""
+
+    def _has_admin_manage(permission: str) -> bool:
+        return permission == "admin:manage"
+
+    user = SimpleNamespace(role=SimpleNamespace(value="admin"), has_permission=_has_admin_manage)
+
+    def _validate_token(token: str) -> tuple[Any, dict[str, str]]:
+        del token
+        return user, {"sub": "admin1"}
+
+    auth_service = SimpleNamespace(validate_token=_validate_token)
+    app = FastAPI()
+    app.add_middleware(SSOAuthMiddleware, auth_service=auth_service)
+
+    @app.post("/shutdown")
+    async def shutdown() -> dict[str, str]:
+        return {"status": "shutting_down"}
+
+    client = TestClient(app)
+    response = client.post("/shutdown", headers={"Authorization": "Bearer token"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "shutting_down"
+
+
 def test_public_paths_bypass_authentication() -> None:
     """Public paths are reachable without any auth configuration."""
     client = _app_with_middleware(auth_service=object())
@@ -216,6 +286,60 @@ def test_check_agent_task_scope_allows_scoped_task() -> None:
 
     assert _check_agent_task_scope("/tasks/task-abc/complete", ["task-abc", "task-def"]) is None
     assert _check_agent_task_scope("/tasks/task-def/fail", ["task-abc", "task-def"]) is None
+
+
+def test_agent_jwt_denied_on_shutdown_route(tmp_path: Any) -> None:
+    """Agent identity JWTs are rejected on admin:manage routes (audit-119).
+
+    Even an unrestricted manager-role agent JWT (``task_ids=[]``) must not
+    be able to SIGTERM the server via ``/shutdown``.
+    """
+    from pathlib import Path
+
+    from bernstein.core.agent_identity import AgentIdentityStore
+
+    store = AgentIdentityStore(Path(str(tmp_path)))
+    _, token = store.create_identity("manager-1", "manager", task_ids=[])
+
+    app = FastAPI()
+    app.add_middleware(SSOAuthMiddleware, agent_identity_store=store)
+
+    @app.post("/shutdown")
+    async def shutdown() -> dict[str, str]:
+        return {"status": "shutting_down"}
+
+    client = TestClient(app)
+    response = client.post("/shutdown", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+    assert response.json()["required_permission"] == "admin:manage"
+
+
+def test_agent_jwt_denied_on_broadcast_and_drain(tmp_path: Any) -> None:
+    """Agent identity JWTs are blocked from /broadcast and /drain (audit-119)."""
+    from pathlib import Path
+
+    from bernstein.core.agent_identity import AgentIdentityStore
+
+    store = AgentIdentityStore(Path(str(tmp_path)))
+    _, token = store.create_identity("mgr-2", "manager", task_ids=[])
+
+    app = FastAPI()
+    app.add_middleware(SSOAuthMiddleware, agent_identity_store=store)
+
+    @app.post("/broadcast")
+    async def broadcast() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    @app.post("/drain")
+    async def drain() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    client = TestClient(app)
+    for path in ("/broadcast", "/drain"):
+        response = client.post(path, headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 403, path
+        assert response.json()["required_permission"] == "admin:manage"
 
 
 def test_check_agent_task_scope_denies_out_of_scope_task() -> None:

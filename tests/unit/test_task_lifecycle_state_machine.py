@@ -26,7 +26,7 @@ from bernstein.core.lifecycle import (
     transition_task,
 )
 from bernstein.core.models import AgentSession, Task, TaskStatus
-from bernstein.core.task_store import TaskStore
+from bernstein.core.task_store import EmptyCompletionError, TaskStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -241,6 +241,106 @@ class TestSubtaskTimeout:
 
 
 # ===========================================================================
+# audit-029: _complete_parent_if_ready must bubble up through ancestors
+# ===========================================================================
+
+
+class TestRecursiveParentCompletion:
+    """Completing a subtask bubbles DONE up the full ancestor chain."""
+
+    @pytest.mark.anyio
+    async def test_grandparent_completes_when_leaf_subtasks_finish(self, tmp_path: Path) -> None:
+        """G -> P1 -> S1,S2: completing S1+S2 must promote P1 AND G to DONE."""
+        store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
+
+        # Build a three-level tree: G -> P1 -> {S1, S2}.
+        grandparent = await store.create(_task_request(title="grandparent"))
+        await store.claim_by_id(grandparent.id, expected_version=grandparent.version)
+        await store.wait_for_subtasks(grandparent.id, subtask_count=1)
+
+        parent = await store.create(_task_request(title="parent", parent_task_id=grandparent.id))
+        await store.claim_by_id(parent.id, expected_version=parent.version)
+        await store.wait_for_subtasks(parent.id, subtask_count=2)
+
+        s1 = await store.create(_task_request(title="s1", parent_task_id=parent.id))
+        s2 = await store.create(_task_request(title="s2", parent_task_id=parent.id))
+        await store.claim_by_id(s1.id, expected_version=s1.version)
+        await store.claim_by_id(s2.id, expected_version=s2.version)
+
+        # Complete both leaves — the second completion should bubble all the way up.
+        await store.complete(s1.id, result_summary="s1 done")
+        parent_after_s1 = store.get_task(parent.id)
+        grandparent_after_s1 = store.get_task(grandparent.id)
+        assert parent_after_s1 is not None
+        assert grandparent_after_s1 is not None
+        assert parent_after_s1.status == TaskStatus.WAITING_FOR_SUBTASKS
+        assert grandparent_after_s1.status == TaskStatus.WAITING_FOR_SUBTASKS
+
+        await store.complete(s2.id, result_summary="s2 done")
+
+        parent_final = store.get_task(parent.id)
+        grandparent_final = store.get_task(grandparent.id)
+        assert parent_final is not None
+        assert grandparent_final is not None
+        assert parent_final.status == TaskStatus.DONE
+        assert grandparent_final.status == TaskStatus.DONE
+        assert parent_final.result_summary == "Completed via 2 subtasks"
+        assert grandparent_final.result_summary == "Completed via 1 subtasks"
+
+    @pytest.mark.anyio
+    async def test_grandparent_not_completed_if_sibling_subtree_incomplete(self, tmp_path: Path) -> None:
+        """G has two children P1, P2; finishing P1's subtree must NOT complete G."""
+        store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
+
+        grandparent = await store.create(_task_request(title="grandparent"))
+        await store.claim_by_id(grandparent.id, expected_version=grandparent.version)
+        await store.wait_for_subtasks(grandparent.id, subtask_count=2)
+
+        p1 = await store.create(_task_request(title="p1", parent_task_id=grandparent.id))
+        await store.claim_by_id(p1.id, expected_version=p1.version)
+        await store.wait_for_subtasks(p1.id, subtask_count=1)
+
+        p2 = await store.create(_task_request(title="p2", parent_task_id=grandparent.id))
+        await store.claim_by_id(p2.id, expected_version=p2.version)
+
+        s1 = await store.create(_task_request(title="s1", parent_task_id=p1.id))
+        await store.claim_by_id(s1.id, expected_version=s1.version)
+        await store.complete(s1.id, result_summary="s1 done")
+
+        # P1 is DONE but P2 still CLAIMED → G must remain WAITING.
+        assert store.get_task(p1.id).status == TaskStatus.DONE  # type: ignore[union-attr]
+        assert store.get_task(p2.id).status == TaskStatus.CLAIMED  # type: ignore[union-attr]
+        assert store.get_task(grandparent.id).status == TaskStatus.WAITING_FOR_SUBTASKS  # type: ignore[union-attr]
+
+    @pytest.mark.anyio
+    async def test_parent_cycle_does_not_infinite_loop(self, tmp_path: Path) -> None:
+        """A corrupt parent_task_id cycle must not hang the iterative walk."""
+        store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
+
+        a = await store.create(_task_request(title="a"))
+        b = await store.create(_task_request(title="b", parent_task_id=a.id))
+        await store.claim_by_id(a.id, expected_version=a.version)
+        await store.claim_by_id(b.id, expected_version=b.version)
+        await store.wait_for_subtasks(a.id, subtask_count=1)
+        await store.wait_for_subtasks(b.id, subtask_count=1)
+
+        # Introduce a cycle: a -> b -> a. This is pathological but the visited
+        # guard must prevent an infinite loop. Neither node has a DONE subtask
+        # (each other is WAITING_FOR_SUBTASKS), so the walk must still terminate
+        # without raising.
+        task_a = store.get_task(a.id)
+        assert task_a is not None
+        task_a.parent_task_id = b.id
+
+        # Call directly — this is the private helper but we're testing the guard.
+        await store._complete_parent_if_ready(b.id)
+
+        # Both should remain WAITING (no subtasks DONE).
+        assert store.get_task(a.id).status == TaskStatus.WAITING_FOR_SUBTASKS  # type: ignore[union-attr]
+        assert store.get_task(b.id).status == TaskStatus.WAITING_FOR_SUBTASKS  # type: ignore[union-attr]
+
+
+# ===========================================================================
 # TASK-003: File ownership validation before claim
 # ===========================================================================
 
@@ -328,25 +428,65 @@ class TestFileOwnershipValidation:
 
 
 class TestCompletionDataGuard:
-    """Completing a task requires non-empty result_summary."""
+    """Completing a task requires non-empty result_summary.
+
+    audit-028: empty/whitespace summaries auto-transition the task to
+    ``FAILED`` (rather than raising with the task stuck in ``CLAIMED``)
+    so the slot is freed atomically before ``EmptyCompletionError`` is
+    raised for the HTTP layer to map to 422.
+    """
 
     @pytest.mark.anyio
-    async def test_complete_rejects_empty_string(self, tmp_path: Path) -> None:
+    async def test_complete_empty_string_auto_fails_task(self, tmp_path: Path) -> None:
         store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
         task = await store.create(_task_request())
         await store.claim_by_id(task.id, expected_version=task.version)
 
-        with pytest.raises(ValueError, match="result_summary must be non-empty"):
+        with pytest.raises(EmptyCompletionError) as exc_info:
             await store.complete(task.id, "")
 
+        assert exc_info.value.task_id == task.id
+        assert exc_info.value.task is not None
+        # Task must have been transitioned to FAILED with the audit reason
+        # so the watchdog does not need to flip it later and no fresh
+        # agent can double-claim the already-committed work.
+        failed = store.get_task(task.id)
+        assert failed is not None
+        assert failed.status == TaskStatus.FAILED
+        assert failed.result_summary == "completion missing summary"
+        assert failed.completed_at is not None
+
     @pytest.mark.anyio
-    async def test_complete_rejects_whitespace_only(self, tmp_path: Path) -> None:
+    async def test_complete_whitespace_only_auto_fails_task(self, tmp_path: Path) -> None:
         store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
         task = await store.create(_task_request())
         await store.claim_by_id(task.id, expected_version=task.version)
 
-        with pytest.raises(ValueError, match="result_summary must be non-empty"):
+        with pytest.raises(EmptyCompletionError):
             await store.complete(task.id, "   \n\t  ")
+
+        failed = store.get_task(task.id)
+        assert failed is not None
+        assert failed.status == TaskStatus.FAILED
+        assert failed.result_summary == "completion missing summary"
+
+    @pytest.mark.anyio
+    async def test_complete_empty_releases_lock(self, tmp_path: Path) -> None:
+        """After an EmptyCompletionError, the store lock must be released.
+
+        A bug that left ``self._lock`` held would deadlock every subsequent
+        operation; we verify by running a normal mutation immediately.
+        """
+        store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
+        task = await store.create(_task_request())
+        await store.claim_by_id(task.id, expected_version=task.version)
+
+        with pytest.raises(EmptyCompletionError):
+            await store.complete(task.id, "")
+
+        # Should not deadlock — if the lock leaked we would hang here.
+        followup = await store.create(_task_request(title="followup"))
+        assert followup.status == TaskStatus.OPEN
 
     @pytest.mark.anyio
     async def test_complete_accepts_valid_summary(self, tmp_path: Path) -> None:

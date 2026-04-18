@@ -23,6 +23,7 @@ from typing_extensions import TypedDict
 
 from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
+from bernstein.core.persistence.runtime_state import rotate_log_file
 from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_agent, transition_task
 from bernstein.core.tasks.models import (
     AgentSession,
@@ -257,6 +258,33 @@ DEFAULT_ARCHIVE_PATH = Path(".sdd/archive/tasks.jsonl")
 # before any cleanup pass may evict them from the active task set.
 PANEL_GRACE_MS: int = 30_000
 
+# audit-028: reason used when auto-failing a task due to empty result_summary.
+_EMPTY_COMPLETION_REASON = "completion missing summary"
+
+# audit-023: rotate the per-task progress JSONL file once it exceeds 5 MiB.
+# Old rollovers become ``{task_id}.jsonl.1``; replay also reads them so no
+# history is silently dropped between restarts.
+_PROGRESS_ROTATE_BYTES: int = 5 * 1024 * 1024
+
+
+class EmptyCompletionError(Exception):
+    """Raised when ``complete()`` is called with an empty ``result_summary``.
+
+    Before raising, ``complete()`` auto-transitions the task to ``FAILED``
+    with ``reason=_EMPTY_COMPLETION_REASON`` so the slot is freed and the
+    watchdog does not need to flip the task later.  The HTTP layer maps
+    this to a 422 response so the client knows the task was marked failed.
+    """
+
+    def __init__(self, task_id: str, task: Task | None = None) -> None:
+        self.task_id = task_id
+        self.task = task
+        super().__init__(
+            f"Cannot complete task {task_id!r}: result_summary must be non-empty "
+            f"(provide diff or log reference). Task auto-failed with "
+            f"reason={_EMPTY_COMPLETION_REASON!r}."
+        )
+
 
 class TaskStore:
     """Thread-safe in-memory task store with JSONL persistence.
@@ -295,6 +323,11 @@ class TaskStore:
         self._cost_cache_offset: int = 0
         # In-memory progress snapshots for stall detection (last 10 per task)
         self._progress_snapshots: dict[str, deque[ProgressSnapshot]] = {}
+        # audit-023: directory for per-task progress JSONL files.  Each
+        # ``add_progress``/``add_snapshot`` call appends (and fsyncs) a line
+        # here so that progress history survives a server crash.  Rebuilt on
+        # startup by ``replay_progress()``.
+        self._progress_dir: Path = jsonl_path.parent / "progress"
 
     # -- index helpers -------------------------------------------------------
 
@@ -324,42 +357,48 @@ class TaskStore:
 
         Each line is a JSON object with at least ``id`` and ``status``.
         Lines are replayed in order so the last write wins.
+
+        audit-023: after the task log is replayed we also replay the
+        per-task progress JSONL files so ``progress_log`` and
+        ``_progress_snapshots`` survive a server restart.  Progress replay
+        runs unconditionally so fresh installations with only progress on
+        disk (no committed task log yet) still hydrate correctly.
         """
-        if not self._jsonl_path.exists():
-            return
-        try:
-            lines = self._jsonl_path.read_text().splitlines()
-        except OSError as exc:
-            raise TaskStoreUnavailable(f"Cannot read task JSONL at {self._jsonl_path}: {exc}") from exc
-        for line_num, raw_line in enumerate(lines, 1):
-            line = raw_line.strip()
-            if not line:
-                continue
+        if self._jsonl_path.exists():
             try:
-                record: TaskRecord = json.loads(line)
-            except json.JSONDecodeError:
-                logger.error(
-                    "Corrupted JSONL record at %s:%d — skipping: %s",
-                    self._jsonl_path,
-                    line_num,
-                    raw_line[:500],
-                )
-                continue
-            task_id: str = record.get("id", "")
-            if not task_id:
-                continue
-            if task_id in self._tasks:
-                task = self._tasks[task_id]
-                self._index_remove(task)
-                task.status = TaskStatus(record.get("status", task.status.value))
-                task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
-                task.result_summary = record.get("result_summary", task.result_summary)
-                task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
-                self._index_add(task)
-            else:
-                task = Task.from_dict(cast("dict[str, Any]", record))
-                self._tasks[task_id] = task
-                self._index_add(task)
+                lines = self._jsonl_path.read_text().splitlines()
+            except OSError as exc:
+                raise TaskStoreUnavailable(f"Cannot read task JSONL at {self._jsonl_path}: {exc}") from exc
+            for line_num, raw_line in enumerate(lines, 1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    record: TaskRecord = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.error(
+                        "Corrupted JSONL record at %s:%d — skipping: %s",
+                        self._jsonl_path,
+                        line_num,
+                        raw_line[:500],
+                    )
+                    continue
+                task_id: str = record.get("id", "")
+                if not task_id:
+                    continue
+                if task_id in self._tasks:
+                    task = self._tasks[task_id]
+                    self._index_remove(task)
+                    task.status = TaskStatus(record.get("status", task.status.value))
+                    task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
+                    task.result_summary = record.get("result_summary", task.result_summary)
+                    task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
+                    self._index_add(task)
+                else:
+                    task = Task.from_dict(cast("dict[str, Any]", record))
+                    self._tasks[task_id] = task
+                    self._index_add(task)
+        self.replay_progress()
 
     def recover_stale_claimed_tasks(self) -> int:
         """Reset CLAIMED and IN_PROGRESS tasks to OPEN after a server restart.
@@ -569,6 +608,121 @@ class TaskStore:
                 handle.write(line)
 
         await _retry_io(_write)
+
+    # -- audit-023: per-task progress JSONL persistence ---------------------
+
+    def _progress_file(self, task_id: str) -> Path:
+        """Return the JSONL file storing progress/snapshot records for *task_id*.
+
+        The parent directory is created on demand so callers never have to
+        check it first.
+        """
+        self._progress_dir.mkdir(parents=True, exist_ok=True)
+        return self._progress_dir / f"{task_id}.jsonl"
+
+    def _append_progress_record(self, task_id: str, record: dict[str, Any]) -> None:
+        """Append *record* to the task's progress JSONL file with fsync.
+
+        The write is synchronous on purpose: progress is often posted from
+        short-lived agents that may be SIGKILL'd seconds later.  Rotation is
+        attempted before every append so that a single hot task cannot grow
+        the file without bound.
+        """
+        path = self._progress_file(task_id)
+        rotate_log_file(path, max_bytes=_PROGRESS_ROTATE_BYTES, max_backups=1)
+        line = json.dumps(record, default=str) + "\n"
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            # Progress is advisory: the in-memory log is already updated and
+            # the task itself has its own durable JSONL.  Log and move on so
+            # a full disk cannot break ``/progress``.
+            logger.warning("Failed to persist progress for %s: %s", task_id, exc)
+
+    def replay_progress(self) -> None:
+        """Rebuild ``progress_log`` and ``_progress_snapshots`` from disk.
+
+        Scans ``.sdd/runtime/progress/*.jsonl`` (and any rotated ``*.jsonl.N``
+        companions) and replays each record into the matching in-memory
+        task.  Safe to call multiple times: entries are appended in file
+        order, so the resulting list matches what was on disk.
+
+        Callers are expected to invoke this after ``replay_jsonl()`` so the
+        target tasks exist before progress is applied.
+        """
+        if not self._progress_dir.exists():
+            return
+        # Collect the live file plus any rotated backups, grouped by task id.
+        per_task: dict[str, list[Path]] = {}
+        for entry in self._progress_dir.iterdir():
+            if not entry.is_file():
+                continue
+            name = entry.name
+            if name.endswith(".jsonl"):
+                task_id = name[: -len(".jsonl")]
+                per_task.setdefault(task_id, []).append(entry)
+            elif ".jsonl." in name:
+                base, _, _ = name.rpartition(".jsonl.")
+                per_task.setdefault(base, []).append(entry)
+
+        def _order(path: Path) -> tuple[int, str]:
+            # Rotated backups sort before the live file: ``.jsonl.2`` before
+            # ``.jsonl.1`` before ``.jsonl`` (older entries first).
+            suffix = path.suffix.lstrip(".")
+            if suffix.isdigit():
+                return (-int(suffix), path.name)
+            return (0, path.name)
+
+        for task_id, paths in per_task.items():
+            task = self._tasks.get(task_id)
+            if task is None:
+                # Owning task has been purged — progress is orphaned, skip.
+                continue
+            progress: list[ProgressEntry] = cast("list[ProgressEntry]", task.progress_log)  # type: ignore[reportUnknownMemberType]
+            snap_q = self._progress_snapshots.setdefault(task_id, deque(maxlen=10))
+            for path in sorted(paths, key=_order):
+                try:
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                except OSError as exc:
+                    logger.warning("Cannot read progress file %s: %s", path, exc)
+                    continue
+                for line_num, raw in enumerate(lines, 1):
+                    stripped = raw.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        record = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        logger.error(
+                            "Corrupted progress record at %s:%d — skipping: %s",
+                            path,
+                            line_num,
+                            stripped[:500],
+                        )
+                        continue
+                    kind = record.get("kind")
+                    if kind == "entry":
+                        progress.append(
+                            {
+                                "timestamp": float(record.get("timestamp", 0.0)),
+                                "message": str(record.get("message", "")),
+                                "percent": int(record.get("percent", 0)),
+                            }
+                        )
+                    elif kind == "snapshot":
+                        snap_q.append(
+                            ProgressSnapshot(
+                                timestamp=float(record.get("timestamp", 0.0)),
+                                files_changed=int(record.get("files_changed", 0)),
+                                tests_passing=int(record.get("tests_passing", -1)),
+                                errors=int(record.get("errors", 0)),
+                                last_file=str(record.get("last_file", "")),
+                            )
+                        )
+                    # Unknown kinds are tolerated for forward compatibility.
 
     def _task_to_record(self, task: Task) -> TaskRecord:
         """Serialise a Task to a dict suitable for JSONL storage."""
@@ -1141,13 +1295,47 @@ class TaskStore:
 
         Raises:
             KeyError: If task_id does not exist.
-            ValueError: If *result_summary* is empty (TASK-004).
+            EmptyCompletionError: If *result_summary* is empty (audit-028).
+                The task is auto-transitioned to ``FAILED`` with
+                ``reason='completion missing summary'`` before this is
+                raised, so the slot is released atomically and the
+                watchdog does not need to intervene.  The HTTP layer
+                maps this to a 422 response.
         """
-        # TASK-004: guard — completion requires non-empty data
+        # audit-028: when result_summary is empty/None, auto-fail the task
+        # under the lock so the slot is freed atomically.  A caller that
+        # bailed out of ``complete()`` previously left the task CLAIMED
+        # until the watchdog flipped it, allowing a fresh agent to
+        # duplicate work that was already committed.
         if not result_summary or not result_summary.strip():
-            raise ValueError(
-                f"Cannot complete task {task_id!r}: result_summary must be non-empty (provide diff or log reference)"
-            )
+            async with self._lock:
+                task = self._tasks.get(task_id)
+                if task is None:
+                    raise KeyError(task_id)
+                # If the task is already in a terminal state, do not re-fail.
+                if task.status in (
+                    TaskStatus.DONE,
+                    TaskStatus.FAILED,
+                    TaskStatus.CANCELLED,
+                    TaskStatus.CLOSED,
+                ):
+                    raise EmptyCompletionError(task_id, task)
+                self._index_remove(task)
+                transition_task(
+                    task,
+                    TaskStatus.FAILED,
+                    actor="task_store",
+                    reason=_EMPTY_COMPLETION_REASON,
+                )
+                task.result_summary = _EMPTY_COMPLETION_REASON
+                task.completed_at = time.time()
+                task.version += 1
+                self._index_add(task)
+                completed_at = task.completed_at
+                await self._append_jsonl(self._task_to_record(task))
+                await self._append_archive(task, completed_at)
+            raise EmptyCompletionError(task_id, task)
+
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
@@ -1264,29 +1452,44 @@ class TaskStore:
             return task
 
     async def _complete_parent_if_ready(self, parent_task_id: str | None) -> None:
-        """Complete a waiting parent task when all of its subtasks are done."""
-        if parent_task_id is None:
-            return
-        parent = self._tasks.get(parent_task_id)
-        if parent is None or parent.status != TaskStatus.WAITING_FOR_SUBTASKS:
-            return
-        subtasks = [task for task in self._tasks.values() if task.parent_task_id == parent_task_id]
-        if not subtasks or any(task.status != TaskStatus.DONE for task in subtasks):
-            return
-        self._index_remove(parent)
-        transition_task(
-            parent,
-            TaskStatus.DONE,
-            actor="task_store",
-            reason="all subtasks completed",
-        )
-        parent.result_summary = f"Completed via {len(subtasks)} subtasks"
-        parent.completed_at = time.time()
-        parent.version += 1
-        self._index_add(parent)
-        completed_at = parent.completed_at
-        await self._append_jsonl(self._task_to_record(parent))
-        await self._append_archive(parent, completed_at)
+        """Complete a waiting ancestor chain when all descendant subtasks are done.
+
+        Walks up the ``parent_task_id`` chain iteratively (not recursively) and
+        promotes each ancestor to ``DONE`` as long as it is ``WAITING_FOR_SUBTASKS``
+        and every direct child is already ``DONE``. The iterative form avoids
+        re-entering ``self._lock`` (``asyncio.Lock`` is not re-entrant) and the
+        ``visited`` set guards against parent_task_id cycles from bad data.
+
+        Fix for audit-029: previously only the immediate parent was promoted, so
+        a grandparent G never bubbled up and stayed ``WAITING_FOR_SUBTASKS``
+        until timeout escalation forced it to ``BLOCKED``.
+        """
+        current_id = parent_task_id
+        visited: set[str] = set()
+        while current_id is not None and current_id not in visited:
+            visited.add(current_id)
+            parent = self._tasks.get(current_id)
+            if parent is None or parent.status != TaskStatus.WAITING_FOR_SUBTASKS:
+                return
+            subtasks = [task for task in self._tasks.values() if task.parent_task_id == current_id]
+            if not subtasks or any(task.status != TaskStatus.DONE for task in subtasks):
+                return
+            self._index_remove(parent)
+            transition_task(
+                parent,
+                TaskStatus.DONE,
+                actor="task_store",
+                reason="all subtasks completed",
+            )
+            parent.result_summary = f"Completed via {len(subtasks)} subtasks"
+            parent.completed_at = time.time()
+            parent.version += 1
+            self._index_add(parent)
+            completed_at = parent.completed_at
+            await self._append_jsonl(self._task_to_record(parent))
+            await self._append_archive(parent, completed_at)
+            # Bubble up: attempt to complete this task's own parent.
+            current_id = parent.parent_task_id
 
     async def add_progress(self, task_id: str, message: str, percent: int) -> Task:
         """Append an intermediate progress update to a task.
@@ -1309,6 +1512,14 @@ class TaskStore:
             entry: ProgressEntry = {"timestamp": time.time(), "message": message, "percent": percent}
             progress: list[ProgressEntry] = cast("list[ProgressEntry]", task.progress_log)  # type: ignore[reportUnknownMemberType]
             progress.append(entry)
+            # audit-023: durably record the entry so progress history survives
+            # a server crash.  I/O happens inside the lock (like
+            # ``_append_jsonl``) to preserve ordering with in-memory state.
+            await asyncio.to_thread(
+                self._append_progress_record,
+                task_id,
+                {"kind": "entry", **entry},
+            )
             return task
 
     def add_snapshot(
@@ -1340,6 +1551,20 @@ class TaskStore:
         )
         q = self._progress_snapshots.setdefault(task_id, deque(maxlen=10))
         q.append(snap)
+        # audit-023: persist alongside progress entries so snapshot history
+        # is recovered after a crash.  Keeping snapshots and entries in the
+        # same file simplifies replay (one pass per task).
+        self._append_progress_record(
+            task_id,
+            {
+                "kind": "snapshot",
+                "timestamp": snap.timestamp,
+                "files_changed": snap.files_changed,
+                "tests_passing": snap.tests_passing,
+                "errors": snap.errors,
+                "last_file": snap.last_file,
+            },
+        )
         return snap
 
     def get_snapshots(self, task_id: str) -> list[ProgressSnapshot]:

@@ -62,7 +62,7 @@ from bernstein.core.server import (
     read_log_tail,
     task_to_response,
 )
-from bernstein.core.task_store import ArchiveRecord, SnapshotEntry
+from bernstein.core.task_store import ArchiveRecord, EmptyCompletionError, SnapshotEntry
 from bernstein.core.telemetry import start_span
 from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
 from bernstein.plugins.manager import HookBlockingError, get_plugin_manager
@@ -687,10 +687,20 @@ async def claim_task(
 
 @router.post(
     "/tasks/{task_id}/complete",
-    responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
+    responses={
+        404: {"description": "Task not found"},
+        409: {"description": "Invalid state transition"},
+        422: {"description": "Empty result_summary — task auto-failed"},
+    },
 )
 async def complete_task(task_id: str, body: TaskCompleteRequest, request: Request) -> TaskResponse:
-    """Mark a task as done with a result summary."""
+    """Mark a task as done with a result summary.
+
+    If ``result_summary`` is empty the task is auto-transitioned to
+    ``FAILED`` with ``reason='completion missing summary'`` (audit-028) and
+    a 422 is returned with the failed task payload so the client knows the
+    slot was released.
+    """
     with start_span("task.complete", {"task.id": task_id}):
         store = _get_store(request)
         sse_bus = _get_sse_bus(request)
@@ -706,6 +716,35 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             task = await store.complete(task_id, body.result_summary)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except EmptyCompletionError as exc:
+            # audit-028: empty summary is handled inside ``complete()``
+            # (task is auto-failed under the lock).  Surface a structured
+            # 422 so the client knows the slot was released.
+            failed_task = exc.task
+            detail: dict[str, Any] = {
+                "error": "empty_result_summary",
+                "message": str(exc),
+                "task_id": task_id,
+                "reason": "completion missing summary",
+                "status": failed_task.status.value if failed_task is not None else "failed",
+            }
+            if failed_task is not None:
+                sse_bus.publish(
+                    "task_update",
+                    json.dumps({"id": failed_task.id, "status": failed_task.status.value}),
+                )
+                get_plugin_manager().fire_task_failed(
+                    task_id=failed_task.id,
+                    role=failed_task.role,
+                    error="completion missing summary",
+                )
+                _update_file_health(
+                    request,
+                    failed_task.id,
+                    list(failed_task.owned_files),
+                    "failure",
+                )
+            raise HTTPException(status_code=422, detail=detail) from None
         except IllegalTransitionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))

@@ -740,6 +740,30 @@ def _handle_failure_detection(
     return False
 
 
+def _resolve_budget_remaining_usd(orch: Any) -> float | None:
+    """Return the orchestrator's current remaining budget in USD, or None.
+
+    audit-102: used to wire budget-awareness into both the cascade fallback
+    manager and the module-level router guard.  Returns ``None`` when the
+    orchestrator has no cost tracker, the budget is unlimited, or the
+    lookup fails for any reason — callers must treat ``None`` as "unknown"
+    rather than "exhausted".
+    """
+    tracker = getattr(orch, "_cost_tracker", None)
+    if tracker is None:
+        return None
+    try:
+        status = tracker.status()
+    except Exception:  # pragma: no cover - defensive
+        return None
+    remaining = getattr(status, "remaining_usd", None)
+    if remaining is None:
+        return None
+    # Unlimited budgets surface as +inf; downstream code treats None == unknown
+    # and inf == unlimited identically, so pass inf straight through.
+    return float(remaining)
+
+
 def _run_cascade_fallback(
     orch: Any,
     task: Task,
@@ -750,11 +774,25 @@ def _run_cascade_fallback(
 ) -> str | None:
     """Run cascade fallback logic and return the fallback model (or None)."""
     from bernstein.core.cascade import CascadeDecision, CascadeFallbackManager
+    from bernstein.core.routing.router_core import set_budget_context
+
+    # audit-102: thread budget awareness into cascade + module-level router
+    # guard so that a single opus task near the cap cannot overshoot by 150%+.
+    _budget_remaining = _resolve_budget_remaining_usd(orch)
+    _budget_flag = bool(getattr(orch._config, "budget_aware_routing_enabled", True))
+    set_budget_context(_budget_remaining, enabled=_budget_flag)
 
     _cascade = getattr(orch, "_cascade_manager", None)
     if _cascade is None:
-        _cascade = CascadeFallbackManager(rate_limit_tracker=_rl_tracker)
+        _cascade = CascadeFallbackManager(
+            rate_limit_tracker=_rl_tracker,
+            budget_remaining=_budget_remaining,
+        )
         orch._cascade_manager = _cascade  # type: ignore[attr-defined]
+    else:
+        # Keep the sticky manager's budget view current on every cascade event.
+        if _budget_remaining is not None:
+            _cascade.update_budget(_budget_remaining)
 
     _throttled = frozenset(p for p in _rl_tracker.throttle_summary() if _rl_tracker.is_throttled(p))
     _current_entry = getattr(task, "model", None) or session.provider or None
