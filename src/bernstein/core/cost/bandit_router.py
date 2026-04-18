@@ -6,6 +6,13 @@ it delegates to the same static heuristics used by ``CascadeRouter``.  After
 warm-up, the LinUCB policy takes over, using the task's feature vector to
 select the model that maximises the composite quality-cost reward.
 
+Effort level (``low``/``high``/``max``) is learned by a separate UCB1
+``EffortBandit`` keyed on ``(task_type, model)``.  It falls back to a static
+model-derived heuristic until it has seen at least
+``_EFFORT_MIN_PULLS_PER_KEY`` completions for the active key.  Rewards for
+both bandits are fed from the same ``record_outcome`` call, so effort
+preferences converge alongside model preferences (see audit-111).
+
 Feature vector (``TaskContext.to_vector()``):
     [complexity_norm, scope_norm, priority_norm, log_repo_size,
      log_est_tokens, bias_term, task_type_one_hot..., language_one_hot...,
@@ -67,6 +74,17 @@ _DEFAULT_ALPHA: float = 0.3
 _DEFAULT_WARMUP_MIN: int = 50
 _EXPLORATION_HISTORY_LIMIT: int = 100
 _POLICY_FORMAT_VERSION: int = 2
+
+# Effort arms the bandit may choose from. ``"medium"`` is omitted only because
+# Claude Code exposes it as the default when nothing is specified — adding it
+# would just dilute the exploration budget without a distinct reward signal.
+_EFFORT_ARMS: tuple[str, ...] = ("low", "high", "max")
+# UCB1 exploration constant for the effort bandit. The classical value is
+# ``sqrt(2)``; 1.0 keeps exploration modest while still escaping local optima.
+_EFFORT_UCB_C: float = 1.0
+# Minimum pulls per (task_type, model) before the effort bandit takes over
+# from the static heuristic. Small because UCB1 converges quickly on 3 arms.
+_EFFORT_MIN_PULLS_PER_KEY: int = 6
 
 # Adapters whose model names match the default bandit arms (haiku/sonnet/opus).
 # The bandit router only produces meaningful selections for these adapters;
@@ -677,6 +695,204 @@ class BanditPolicy:
 
 
 # ---------------------------------------------------------------------------
+# EffortBandit (UCB1 over effort levels, keyed by (task_type, model))
+# ---------------------------------------------------------------------------
+
+
+class EffortBandit:
+    """UCB1 bandit that learns which effort level works best per task context.
+
+    The model bandit (``BanditPolicy`` above) already learns which *model*
+    arm maximises reward for a given context vector. Effort level was
+    historically a fixed ``if/else`` on the chosen model, so the system never
+    explored whether ``"max"`` beats ``"high"`` on a given task type (see
+    audit-111).  This class closes that loop with a lightweight, independent
+    policy: one UCB1 bandit per ``(task_type, model)`` key over the effort
+    arms defined in :data:`_EFFORT_ARMS`.
+
+    UCB1 (vs. LinUCB) is intentional here:
+
+    * Only 3 arms and a coarse key space, so tabular counts converge fast.
+    * Effort choice depends mostly on task-type and model, not the full
+      feature vector already consumed by ``BanditPolicy``.
+    * Keeps reward-feedback cheap — no matrix inversions on the hot path.
+
+    Attributes:
+        arms: Effort arm names considered by the bandit.
+        c: Exploration constant for the UCB1 upper bound.
+        min_pulls_per_key: Threshold below which the bandit yields to the
+            static heuristic for a given key (so we never ship an
+            under-explored effort choice to production).
+    """
+
+    def __init__(
+        self,
+        arms: tuple[str, ...] = _EFFORT_ARMS,
+        c: float = _EFFORT_UCB_C,
+        min_pulls_per_key: int = _EFFORT_MIN_PULLS_PER_KEY,
+    ) -> None:
+        self.arms = tuple(arms)
+        self.c = c
+        self.min_pulls_per_key = min_pulls_per_key
+        # Per-key counters keyed by "task_type|model".  Two parallel tables
+        # keep the JSON payload human-inspectable.
+        self._pulls: dict[str, dict[str, int]] = {}
+        self._reward_sum: dict[str, dict[str, float]] = {}
+
+    # ------------------------------------------------------------------
+    # Key helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _key(task_type: str, model: str) -> str:
+        """Compose a stable key for the per-context bandit table."""
+        return f"{task_type}|{model}"
+
+    def _ensure_key(self, key: str) -> None:
+        """Initialise zero counters for an unseen key."""
+        if key not in self._pulls:
+            self._pulls[key] = {arm: 0 for arm in self.arms}
+            self._reward_sum[key] = {arm: 0.0 for arm in self.arms}
+
+    def total_pulls(self, task_type: str, model: str) -> int:
+        """Return the total pull count for ``(task_type, model)``."""
+        key = self._key(task_type, model)
+        if key not in self._pulls:
+            return 0
+        return sum(self._pulls[key].values())
+
+    def is_warmed_up(self, task_type: str, model: str) -> bool:
+        """Return whether the bandit has enough signal for this key."""
+        return self.total_pulls(task_type, model) >= self.min_pulls_per_key
+
+    # ------------------------------------------------------------------
+    # Selection + updates
+    # ------------------------------------------------------------------
+
+    def select(self, task_type: str, model: str) -> str:
+        """Pick an effort arm using UCB1 for the given ``(task_type, model)``.
+
+        Always returns one of ``self.arms``. During cold-start (any arm
+        unpulled for this key), returns the first unpulled arm so every
+        effort level gets at least one trial before exploitation kicks in.
+
+        Args:
+            task_type: Fixed task taxonomy value (``TaskType.value``).
+            model: Model arm selected for the task.
+
+        Returns:
+            Effort string from :data:`_EFFORT_ARMS`.
+        """
+        key = self._key(task_type, model)
+        self._ensure_key(key)
+        pulls = self._pulls[key]
+        rewards = self._reward_sum[key]
+
+        # Force every arm to be tried at least once.
+        for arm in self.arms:
+            if pulls[arm] == 0:
+                return arm
+
+        total = sum(pulls.values())
+        log_total = math.log(total)
+        best_arm = self.arms[0]
+        best_score = -math.inf
+        for arm in self.arms:
+            mean = rewards[arm] / pulls[arm]
+            bonus = self.c * math.sqrt(log_total / pulls[arm])
+            score = mean + bonus
+            if score > best_score:
+                best_score = score
+                best_arm = arm
+        return best_arm
+
+    def update(self, task_type: str, model: str, effort: str, reward: float) -> None:
+        """Record an observed reward for the selected effort arm.
+
+        Unknown effort strings (e.g. ``"medium"`` from a manager override)
+        are silently ignored — they map to no arm in the bandit's action
+        space, so feeding them in would only contaminate the counters.
+
+        Args:
+            task_type: Fixed task taxonomy value.
+            model: Model arm that was used.
+            effort: Effort arm that was used.
+            reward: Observed reward in ``[0, 1]``.
+        """
+        if effort not in self.arms:
+            return
+        key = self._key(task_type, model)
+        self._ensure_key(key)
+        self._pulls[key][effort] += 1
+        self._reward_sum[key][effort] += reward
+
+    def mean_rewards(self, task_type: str, model: str) -> dict[str, float]:
+        """Return ``{arm: mean_reward}`` for a given key (0.0 when unpulled)."""
+        key = self._key(task_type, model)
+        if key not in self._pulls:
+            return {arm: 0.0 for arm in self.arms}
+        out: dict[str, float] = {}
+        for arm in self.arms:
+            pulls = self._pulls[key][arm]
+            out[arm] = (self._reward_sum[key][arm] / pulls) if pulls else 0.0
+        return out
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable snapshot for persistence."""
+        return {
+            "arms": list(self.arms),
+            "c": self.c,
+            "min_pulls_per_key": self.min_pulls_per_key,
+            "pulls": self._pulls,
+            "reward_sum": self._reward_sum,
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> EffortBandit:
+        """Restore an ``EffortBandit`` from a persisted snapshot.
+
+        Falls back to a fresh instance if ``data`` is missing or malformed.
+        Unknown arms in the payload are ignored so the bandit stays tied to
+        the current :data:`_EFFORT_ARMS` action space.
+        """
+        bandit = cls()
+        if not isinstance(data, dict):
+            return bandit
+        raw = cast(_CAST_DICT_STR_OBJ, data)
+        raw_c = raw.get("c", _EFFORT_UCB_C)
+        if isinstance(raw_c, int | float | str):
+            with_c = float(raw_c)
+            bandit.c = with_c
+        raw_min = raw.get("min_pulls_per_key", _EFFORT_MIN_PULLS_PER_KEY)
+        if isinstance(raw_min, int | float | str):
+            bandit.min_pulls_per_key = int(float(raw_min))
+        raw_pulls = raw.get("pulls")
+        raw_rewards = raw.get("reward_sum")
+        if isinstance(raw_pulls, dict) and isinstance(raw_rewards, dict):
+            pulls_map = cast(_CAST_DICT_STR_OBJ, raw_pulls)
+            reward_map = cast(_CAST_DICT_STR_OBJ, raw_rewards)
+            for key, raw_arm_pulls in pulls_map.items():
+                raw_arm_rewards = reward_map.get(key, {})
+                if not isinstance(raw_arm_pulls, dict) or not isinstance(raw_arm_rewards, dict):
+                    continue
+                arm_pulls = cast(_CAST_DICT_STR_OBJ, raw_arm_pulls)
+                arm_rewards = cast(_CAST_DICT_STR_OBJ, raw_arm_rewards)
+                bandit._ensure_key(str(key))
+                for arm in bandit.arms:
+                    pulls_value = arm_pulls.get(arm, 0)
+                    reward_value = arm_rewards.get(arm, 0.0)
+                    if isinstance(pulls_value, int | float):
+                        bandit._pulls[str(key)][arm] = int(pulls_value)
+                    if isinstance(reward_value, int | float):
+                        bandit._reward_sum[str(key)][arm] = float(reward_value)
+        return bandit
+
+
+# ---------------------------------------------------------------------------
 # BanditRoutingDecision
 # ---------------------------------------------------------------------------
 
@@ -760,6 +976,7 @@ class BanditRouter:
         self._policy_dir = policy_dir
         self._alpha = alpha
         self._policy: BanditPolicy | None = None
+        self._effort_bandit: EffortBandit = EffortBandit()
         self._total_completions: int = 0
         self._selection_counts: dict[str, int] = {}
         self._exploration_history: dict[str, list[float]] = {}
@@ -840,7 +1057,7 @@ class BanditRouter:
 
         if not self.is_warmed_up or _is_high_stakes(task):
             model, static_reason = _static_select(task)
-            effort = _effort_for_task(model, task)
+            effort = self._select_effort(model, task)
             mode = "guardrail" if self.is_warmed_up else "cold-start"
             decision = BanditRoutingDecision(
                 model=model,
@@ -855,7 +1072,7 @@ class BanditRouter:
             best_score = scores[0]
             runner_up = scores[1] if len(scores) > 1 else None
             model = best_score.arm
-            effort = _effort_for_task(model, task)
+            effort = self._select_effort(model, task)
             runner_reason = f"; runner_up={runner_up.arm} total={runner_up.total:.3f}" if runner_up is not None else ""
             decision = BanditRoutingDecision(
                 model=model,
@@ -873,6 +1090,24 @@ class BanditRouter:
         logger.debug("BanditRouter.select: task=%s → %s (%s)", task.id, model, decision.reason)
         return decision
 
+    def _select_effort(self, model: str, task: Task) -> str:
+        """Choose an effort arm, preferring learned rewards over the heuristic.
+
+        Order of precedence:
+
+        1. Manager-specified ``task.effort`` override (respected as-is, even
+           if it is not one of the bandit's arms).
+        2. Learned UCB1 choice once the ``(task_type, model)`` key has seen
+           at least ``min_pulls_per_key`` completions.
+        3. Static model-derived heuristic (original behaviour).
+        """
+        if task.effort:
+            return task.effort
+        task_type = task.task_type.value
+        if self._effort_bandit.is_warmed_up(task_type, model):
+            return self._effort_bandit.select(task_type, model)
+        return _effort_for_task(model, task)
+
     def record_outcome(
         self,
         task: Task,
@@ -883,6 +1118,10 @@ class BanditRouter:
         budget_ceiling: float = 1.0,
     ) -> None:
         """Record a task completion and feed the reward back to the bandit policy.
+
+        Both the model bandit (``BanditPolicy``) and the effort bandit
+        (``EffortBandit``) are updated so effort-level preferences can
+        converge alongside model preferences.
 
         Args:
             task: The completed task.
@@ -901,6 +1140,12 @@ class BanditRouter:
         ctx = TaskContext.from_task(task)
         assert self._policy is not None
         self._policy.update(arm=model, context=ctx, reward=reward)
+        self._effort_bandit.update(
+            task_type=task.task_type.value,
+            model=model,
+            effort=effort,
+            reward=reward,
+        )
         self._total_completions += 1
         self._record_shadow_outcome(
             task_id=task.id,
@@ -955,6 +1200,7 @@ class BanditRouter:
                         "shadow_pending": self._shadow_pending,
                         "shadow_counters": self._shadow_counters,
                         "shadow_stats": self._shadow_stats(),
+                        "effort_bandit": self._effort_bandit.to_dict(),
                         "saved_at": time.time(),
                     }
                 ),
@@ -1027,6 +1273,7 @@ class BanditRouter:
             "selection_frequency": dict(self._selection_counts),
             "exploration_stats": self._exploration_stats(),
             "shadow_stats": self._shadow_stats(),
+            "effort_bandit": self._effort_bandit.to_dict(),
         }
 
     # ------------------------------------------------------------------
@@ -1056,6 +1303,7 @@ class BanditRouter:
                     )
                     self._shadow_pending = _load_shadow_pending(state.get("shadow_pending", {}))
                     self._shadow_counters = _load_shadow_counters(state.get("shadow_counters", {}))
+                    self._effort_bandit = EffortBandit.from_dict(state.get("effort_bandit", {}))
                 except Exception as exc:
                     logger.warning("BanditRouter: could not load state from %s: %s", state_path, exc)
             else:
@@ -1237,7 +1485,12 @@ def _static_select(task: Task) -> tuple[str, str]:
 
 
 def _effort_for_task(model: str, task: Task) -> str:
-    """Select an effort level appropriate for the model and task.
+    """Return a static fallback effort level for the cold-start phase.
+
+    This is the deterministic heuristic used before the ``EffortBandit`` has
+    collected enough signal for a given ``(task_type, model)`` key. Once the
+    bandit warms up, ``BanditRouter._select_effort`` takes over and explores
+    the full ``low``/``high``/``max`` action space from live reward data.
 
     Args:
         model: Model name (e.g. ``"haiku"``, ``"sonnet"``, ``"opus"``).

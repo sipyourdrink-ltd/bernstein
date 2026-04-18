@@ -563,3 +563,196 @@ class TestComputeReward:
 
         reward = compute_reward(quality_score=1.0, cost_usd=0.5, budget_ceiling=0.0)
         assert 0.0 <= reward <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# EffortBandit (audit-111)
+# ---------------------------------------------------------------------------
+
+
+class TestEffortBandit:
+    """UCB1 effort bandit learns optimal effort per (task_type, model) key."""
+
+    def test_cold_start_pulls_each_arm_at_least_once(self) -> None:
+        from bernstein.core.bandit_router import EffortBandit
+
+        bandit = EffortBandit()
+        seen: set[str] = set()
+        for _ in range(len(bandit.arms)):
+            arm = bandit.select("standard", "sonnet")
+            seen.add(arm)
+            # Simulate observing reward 0.5 so arm counts advance.
+            bandit.update("standard", "sonnet", arm, 0.5)
+        assert seen == set(bandit.arms)
+
+    def test_not_warmed_up_below_threshold(self) -> None:
+        from bernstein.core.bandit_router import EffortBandit
+
+        bandit = EffortBandit(min_pulls_per_key=6)
+        for _ in range(5):
+            bandit.update("standard", "sonnet", "high", 1.0)
+        assert bandit.is_warmed_up("standard", "sonnet") is False
+
+    def test_warmed_up_at_threshold(self) -> None:
+        from bernstein.core.bandit_router import EffortBandit
+
+        bandit = EffortBandit(min_pulls_per_key=6)
+        for _ in range(6):
+            bandit.update("standard", "sonnet", "high", 1.0)
+        assert bandit.is_warmed_up("standard", "sonnet") is True
+
+    def test_ignores_unknown_effort_arm(self) -> None:
+        """Unknown effort strings (e.g. 'medium') must not poison counters."""
+        from bernstein.core.bandit_router import EffortBandit
+
+        bandit = EffortBandit()
+        bandit.update("standard", "sonnet", "medium", 1.0)
+        assert bandit.total_pulls("standard", "sonnet") == 0
+
+    def test_convergence_prefers_high_reward_effort(self) -> None:
+        """Feed synthetic rewards: 'high' is best for sonnet — bandit learns it."""
+        from bernstein.core.bandit_router import EffortBandit
+
+        bandit = EffortBandit(c=0.2, min_pulls_per_key=3)
+        ground_truth = {"low": 0.2, "high": 0.9, "max": 0.4}
+
+        for _ in range(200):
+            arm = bandit.select("standard", "sonnet")
+            bandit.update("standard", "sonnet", arm, ground_truth[arm])
+
+        final_selections = [bandit.select("standard", "sonnet") for _ in range(50)]
+        # Ground-truth best arm ("high") should dominate steady-state selections.
+        assert final_selections.count("high") > final_selections.count("low")
+        assert final_selections.count("high") > final_selections.count("max")
+        # Mean rewards should reflect the ground truth ordering.
+        means = bandit.mean_rewards("standard", "sonnet")
+        assert means["high"] > means["max"] > means["low"]
+
+    def test_keys_are_isolated_per_task_type_and_model(self) -> None:
+        """Rewards for one (task_type, model) key must not leak into another."""
+        from bernstein.core.bandit_router import EffortBandit
+
+        bandit = EffortBandit()
+        # Fix bug tasks: max is best.
+        fix_truth = {"low": 0.1, "high": 0.3, "max": 0.95}
+        # Standard tasks: low is best.
+        std_truth = {"low": 0.9, "high": 0.3, "max": 0.1}
+
+        for _ in range(200):
+            arm_fix = bandit.select("fix", "sonnet")
+            bandit.update("fix", "sonnet", arm_fix, fix_truth[arm_fix])
+            arm_std = bandit.select("standard", "sonnet")
+            bandit.update("standard", "sonnet", arm_std, std_truth[arm_std])
+
+        fix_selections = [bandit.select("fix", "sonnet") for _ in range(40)]
+        std_selections = [bandit.select("standard", "sonnet") for _ in range(40)]
+        assert fix_selections.count("max") >= fix_selections.count("low")
+        assert std_selections.count("low") >= std_selections.count("max")
+
+    def test_roundtrip_to_dict_from_dict(self) -> None:
+        from bernstein.core.bandit_router import EffortBandit
+
+        bandit = EffortBandit()
+        for _ in range(4):
+            bandit.update("standard", "haiku", "low", 0.8)
+            bandit.update("standard", "haiku", "high", 0.3)
+
+        restored = EffortBandit.from_dict(bandit.to_dict())
+        assert restored.total_pulls("standard", "haiku") == 8
+        means = restored.mean_rewards("standard", "haiku")
+        assert means["low"] == pytest.approx(0.8)
+        assert means["high"] == pytest.approx(0.3)
+
+    def test_from_dict_tolerates_malformed_payload(self) -> None:
+        from bernstein.core.bandit_router import EffortBandit
+
+        assert isinstance(EffortBandit.from_dict(None), EffortBandit)
+        assert isinstance(EffortBandit.from_dict({"pulls": "nope"}), EffortBandit)
+
+
+# ---------------------------------------------------------------------------
+# BanditRouter effort-learning wiring (audit-111)
+# ---------------------------------------------------------------------------
+
+
+class TestBanditRouterEffortLearning:
+    """Router-level wiring: effort rewards flow into EffortBandit, selection
+    prefers learned arm once warmed up."""
+
+    def test_record_outcome_feeds_effort_bandit(self) -> None:
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=0)
+        task = _task(task_type=TaskType.STANDARD)
+        router.record_outcome(task=task, model="sonnet", effort="high", cost_usd=0.0, quality_score=1.0)
+        summary = router.summary()
+        pulls = summary["effort_bandit"]["pulls"]["standard|sonnet"]
+        assert pulls["high"] == 1
+
+    def test_select_uses_learned_effort_after_warmup(self) -> None:
+        """Once a (task_type, model) key is warmed up, effort comes from bandit."""
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=0)
+        task = _task(task_type=TaskType.STANDARD)
+
+        # Ground truth: max is the best effort for (standard, sonnet).
+        ground_truth = {"low": 0.1, "high": 0.3, "max": 0.95}
+        # Feed enough outcomes so the effort bandit converges and model-arm
+        # learning prefers "sonnet".
+        for _ in range(80):
+            for effort, reward in ground_truth.items():
+                router.record_outcome(
+                    task=task,
+                    model="sonnet",
+                    effort=effort,
+                    cost_usd=0.0,
+                    quality_score=reward,
+                )
+
+        # Force the model arm to "sonnet" for deterministic effort inspection:
+        # because we can't directly steer the LinUCB model choice here, we
+        # instead check the effort bandit's select directly (this mirrors
+        # what the router does internally).
+        chosen_effort = router._effort_bandit.select("standard", "sonnet")
+        assert chosen_effort == "max"
+
+    def test_explicit_task_effort_overrides_bandit(self) -> None:
+        """Manager-specified task.effort must always win, even with a hot bandit."""
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=0)
+        # Saturate the bandit toward "max".
+        task = _task(task_type=TaskType.STANDARD, effort=None)
+        for _ in range(50):
+            router.record_outcome(task=task, model="sonnet", effort="max", cost_usd=0.0, quality_score=1.0)
+
+        override_task = _task(task_type=TaskType.STANDARD, effort="low")
+        decision = router.select(override_task)
+        assert decision.effort == "low"
+
+    def test_effort_state_persists_across_router_instances(self, tmp_path: Path) -> None:
+        from bernstein.core.bandit_router import BanditRouter
+
+        router1 = BanditRouter(warmup_min=0, policy_dir=tmp_path)
+        task = _task(task_type=TaskType.STANDARD)
+        for _ in range(5):
+            router1.record_outcome(task=task, model="sonnet", effort="high", cost_usd=0.0, quality_score=1.0)
+        router1.save()
+
+        router2 = BanditRouter(warmup_min=0, policy_dir=tmp_path)
+        summary = router2.summary()
+        pulls = summary["effort_bandit"]["pulls"]["standard|sonnet"]
+        assert pulls["high"] == 5
+
+    def test_cold_start_effort_uses_static_heuristic(self) -> None:
+        """Below the per-key threshold, router falls back to the static heuristic."""
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=100)  # stay in cold-start forever
+        task = _task(task_type=TaskType.STANDARD)
+        decision = router.select(task)
+        # No pulls recorded → fallback heuristic for the selected model.
+        assert decision.effort in {"low", "high", "max"}
+        # Effort bandit must not have been consulted (no pulls yet).
+        assert router._effort_bandit.total_pulls("standard", decision.model) == 0
