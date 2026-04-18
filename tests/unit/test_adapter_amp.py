@@ -90,7 +90,7 @@ class TestAmpAdapterSpawn:
                 session_id="amp-s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert inner[inner.index("--model") + 1] == "anthropic:claude-opus-4-6"
+        assert inner[inner.index("--model") + 1] == "anthropic:claude-opus-4-7"
 
     def test_model_map_haiku(self, tmp_path: Path) -> None:
         adapter = AmpAdapter()

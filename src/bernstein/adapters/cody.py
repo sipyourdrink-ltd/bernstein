@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 
 # Map Bernstein logical model names to Cody model identifiers.
 # Cody uses Sourcegraph model IDs in the form ``provider::version::model``.
+# Updated 2026-04-17 (audit-140) — keep Opus alias in sync with claude.py canonical ID.
 _MODEL_MAP: dict[str, str] = {
-    "opus": "anthropic::2025-05-14::claude-opus-4-6",
+    "opus": "anthropic::2025-05-14::claude-opus-4-7",
+    "opus-4-6": "anthropic::2025-05-14::claude-opus-4-6",  # pinned fallback
     "sonnet": "anthropic::2025-05-14::claude-sonnet-4-6",
     "haiku": "anthropic::2024-10-22::claude-haiku-4-5-20251001",
     "gpt-5.4": "openai::2026-03-05::gpt-5.4",
