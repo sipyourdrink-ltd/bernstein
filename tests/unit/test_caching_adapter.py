@@ -174,7 +174,7 @@ def test_spawn_forwards_budget_multiplier_and_system_addendum(
     assert mock_inner.spawn.call_count == 1
 
     kwargs = mock_inner.spawn.call_args.kwargs
-    assert kwargs["budget_multiplier"] == 2.5
+    assert kwargs["budget_multiplier"] == pytest.approx(2.5)
     assert kwargs["system_addendum"] == "x"
     # Sanity: other kwargs from the base interface are still forwarded.
     assert kwargs["prompt"] == "task that will miss the cache"
