@@ -284,6 +284,7 @@ def sync_backlog_to_server(
     *,
     client: httpx.Client | None = None,
     task_filter: str | None = None,
+    auth_token: str | None = None,
 ) -> SyncResult:
     """Sync ``.sdd/backlog/open/`` and ``issues/`` files with the task server.
 
@@ -315,7 +316,10 @@ def sync_backlog_to_server(
     backlog_done.mkdir(parents=True, exist_ok=True)
 
     owned_client = client is None
-    _client = client or httpx.Client(timeout=10.0)
+    _client_headers: dict[str, str] = {}
+    if auth_token:
+        _client_headers["Authorization"] = f"Bearer {auth_token}"
+    _client = client or httpx.Client(timeout=10.0, headers=_client_headers)
 
     try:
         # Build a set of slugs for all existing server tasks

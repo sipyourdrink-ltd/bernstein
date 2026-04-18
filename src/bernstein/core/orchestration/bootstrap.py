@@ -362,7 +362,12 @@ def _sync_and_plan_tasks(
     )
 
     task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
-    sync_result = sync_backlog_to_server(workdir, server_url=server_url, task_filter=task_filter)
+    sync_result = sync_backlog_to_server(
+        workdir,
+        server_url=server_url,
+        task_filter=task_filter,
+        auth_token=auth_token,
+    )
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
 
     # Import unchecked items from TODO.md / TASKS.md / .plan if present.
@@ -801,7 +806,12 @@ def _goal_sync_and_plan(
 
     task_filter = os.environ.get("BERNSTEIN_TASK_FILTER")
     with Status("[bold]Loading tasks...[/bold]", console=console):
-        sync_result = sync_backlog_to_server(workdir, server_url=server_url, task_filter=task_filter)
+        sync_result = sync_backlog_to_server(
+            workdir,
+            server_url=server_url,
+            task_filter=task_filter,
+            auth_token=auth_token,
+        )
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
 
     # Import unchecked items from TODO.md / TASKS.md / .plan if present.
