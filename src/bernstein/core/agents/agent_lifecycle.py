@@ -431,6 +431,7 @@ def _try_compact_and_retry(
             max_task_retries=0,  # force permanent fail
             retried_task_ids=orch._retried_task_ids,
             tasks_snapshot=tasks_snapshot,
+            workdir=getattr(orch, "_workdir", None),
         )
         return False
 
@@ -468,6 +469,7 @@ def _try_compact_and_retry(
             max_task_retries=orch._config.max_task_retries,
             retried_task_ids=orch._retried_task_ids,
             tasks_snapshot=tasks_snapshot,
+            workdir=getattr(orch, "_workdir", None),
         )
         return False
 
@@ -498,6 +500,7 @@ def _try_compact_and_retry(
         max_task_retries=orch._config.max_task_retries,
         retried_task_ids=orch._retried_task_ids,
         tasks_snapshot=tasks_snapshot,
+        workdir=getattr(orch, "_workdir", None),
     )
 
     # Patch the newly created retry task with compacted description and meta-message.
@@ -882,6 +885,7 @@ def _handle_orphan_no_signals(
             server_url=base,
             max_task_retries=orch._config.max_task_retries,
             retried_task_ids=orch._retried_task_ids,
+            workdir=getattr(orch, "_workdir", None),
         )
         logger.warning(
             "Task '%s' failed — agent died without output. "
@@ -1046,6 +1050,7 @@ def handle_orphaned_task(
                     server_url=base,
                     max_task_retries=orch._config.max_task_retries,
                     retried_task_ids=orch._retried_task_ids,
+                    workdir=getattr(orch, "_workdir", None),
                 )
                 logger.info(
                     "Orphaned task %s retry/failed (janitor failed: %s) after agent %s died",
@@ -1406,6 +1411,7 @@ def _reap_heartbeat_timeout(
                 max_task_retries=orch._config.max_task_retries,
                 retried_task_ids=orch._retried_task_ids,
                 tasks_snapshot=tasks_snapshot,
+                workdir=getattr(orch, "_workdir", None),
             )
         except httpx.HTTPError as exc:
             logger.error("Failed to retry/fail task %s: %s", task_id, exc)

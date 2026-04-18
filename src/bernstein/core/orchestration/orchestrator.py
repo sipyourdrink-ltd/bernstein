@@ -2120,6 +2120,7 @@ class Orchestrator:
                     server_url=self._config.server_url,
                     max_task_retries=self._config.max_task_retries,
                     retried_task_ids=self._retried_task_ids,
+                    workdir=self._workdir,
                 )
 
     def _reap_dead_agents(self, result: TickResult, tasks_snapshot: dict[str, list[Task]]) -> None:
@@ -2411,6 +2412,7 @@ class Orchestrator:
             max_task_retries=self._config.max_task_retries,
             retried_task_ids=self._retried_task_ids,
             tasks_snapshot=tasks_snapshot,
+            workdir=self._workdir,
         )
 
     def _check_file_overlap(self, batch: list[Task]) -> bool:

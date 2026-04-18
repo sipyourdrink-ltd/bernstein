@@ -541,6 +541,60 @@ def _dynamic_retry_limit(reason: str, default_max: int) -> int:
     return default_max
 
 
+def _enqueue_dlq_if_workdir(
+    *,
+    workdir: Path | None,
+    task: Task,
+    retry_count: int,
+    reason: str,
+    original_error: str,
+) -> None:
+    """Record a permanently-failed task in the Dead Letter Queue (audit-019).
+
+    Looks up ``<workdir>/.sdd`` and appends an entry to ``runtime/dlq.jsonl``.
+    A ``None`` workdir preserves legacy behaviour (no DLQ), and any OS or
+    serialisation error is logged and suppressed — the DLQ must never block
+    the primary failure path.
+
+    Args:
+        workdir: Orchestrator working directory, or ``None`` to skip.
+        task: The task being moved to the DLQ.
+        retry_count: Number of retries already attempted.
+        reason: Short failure tag (e.g. ``"max_retries_exceeded"``).
+        original_error: Last error / reason string from the final attempt.
+    """
+    if workdir is None:
+        return
+    try:
+        from bernstein.core.tasks.dead_letter_queue import DeadLetterQueue
+
+        dlq = DeadLetterQueue(sdd_dir=workdir / ".sdd")
+        dlq.enqueue(
+            task_id=task.id,
+            title=task.title,
+            role=task.role,
+            reason=reason,
+            retry_count=retry_count,
+            original_error=original_error,
+            metadata={
+                "priority": task.priority,
+                "scope": task.scope.value,
+                "complexity": task.complexity.value,
+                "model": task.model or "",
+                "effort": task.effort or "",
+                "original_task_id": task.metadata.get("original_task_id", task.id),
+            },
+        )
+    except Exception as exc:
+        # DLQ must never break the primary failure path — log and swallow.
+        logger.warning(
+            "DLQ enqueue failed for task %s (%s): %s",
+            task.id,
+            reason,
+            exc,
+        )
+
+
 def retry_or_fail_task(
     task_id: str,
     reason: str,
@@ -550,6 +604,7 @@ def retry_or_fail_task(
     max_task_retries: int,
     retried_task_ids: set[str],
     tasks_snapshot: dict[str, list[Task]] | None = None,
+    workdir: Path | None = None,
 ) -> None:
     """Re-queue a task for retry, or fail it permanently if max retries reached.
 
@@ -558,7 +613,8 @@ def retry_or_fail_task(
     verbatim; no ``[RETRY N]`` / ``[retry:N]`` markers are written.  If the
     typed counter is below ``min(task.max_retries, dynamic_limit(reason))`` a
     new open task is created with ``retry_count`` incremented; otherwise the
-    task is failed with a "Max retries exceeded" reason (DLQ threshold).
+    task is moved to the Dead Letter Queue (audit-019) and failed with a
+    ``"Max retries exceeded"`` reason.
 
     Args:
         task_id: ID of the task to retry or fail.
@@ -570,6 +626,11 @@ def retry_or_fail_task(
         retried_task_ids: Set of already-retried task IDs (mutated in-place).
         tasks_snapshot: Optional pre-fetched tasks snapshot to avoid an
             extra HTTP round-trip when the task is already in cache.
+        workdir: Orchestrator working directory.  When provided, tasks that
+            exhaust their retry budget are also enqueued into the Dead Letter
+            Queue under ``<workdir>/.sdd/runtime/dlq.jsonl`` (audit-019).
+            Callers without a workdir (e.g. ad-hoc scripts or legacy tests)
+            fall back to the historical behaviour of plain failure.
     """
     base = server_url
     dynamic_limit = _dynamic_retry_limit(reason, max_task_retries)
@@ -693,13 +754,31 @@ def retry_or_fail_task(
             )
         except httpx.HTTPError as exc:
             logger.error("Failed to re-create task %s for retry: %s", task_id, exc)
-            # Fall through to permanent fail
+            # Fall through to permanent fail (DLQ-eligible: re-create failure
+            # is effectively an exhausted retry — the task will not run again).
+            _enqueue_dlq_if_workdir(
+                workdir=workdir,
+                task=task,
+                retry_count=retry_count,
+                reason=f"retry_recreate_failed: {exc}",
+                original_error=reason,
+            )
             fail_task(client, base, task_id, f"Max retries exceeded: {reason}")
             return
         # Fail the old task silently (it has been replaced)
         with contextlib.suppress(httpx.HTTPError):
             fail_task(client, base, task_id, f"Retried: {reason}")
     else:
+        # audit-019: retry budget exhausted — move to Dead Letter Queue
+        # before marking the task failed so permanently-failed work is not
+        # silently dropped.
+        _enqueue_dlq_if_workdir(
+            workdir=workdir,
+            task=task,
+            retry_count=retry_count,
+            reason="max_retries_exceeded",
+            original_error=reason,
+        )
         fail_task(client, base, task_id, f"Max retries exceeded: {reason}")
 
 
