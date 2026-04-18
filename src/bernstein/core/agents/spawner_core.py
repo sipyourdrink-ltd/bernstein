@@ -87,7 +87,7 @@ if TYPE_CHECKING:
     from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
     from bernstein.core.bulletin import BulletinBoard
     from bernstein.core.git_ops import MergeResult
-    from bernstein.core.graph import TaskGraph
+    from bernstein.core.knowledge.task_graph import TaskGraph
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.resource_limits import ResourceLimits

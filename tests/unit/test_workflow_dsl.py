@@ -10,7 +10,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from bernstein.core.graph import EdgeType
+from bernstein.core.knowledge.task_graph import EdgeType
 from bernstein.core.models import Task, TaskStatus
 from bernstein.core.workflow import WorkflowDefinition, WorkflowPhase
 from bernstein.core.workflow_dsl import (

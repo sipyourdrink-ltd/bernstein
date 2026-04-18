@@ -1221,7 +1221,7 @@ def get_task_graph(request: Request) -> JSONResponse:
     - ``parallel_width``: max tasks that can run concurrently
     - ``bottlenecks``: task IDs that block the most downstream work
     """
-    from bernstein.core.graph import TaskGraph
+    from bernstein.core.knowledge.task_graph import TaskGraph
 
     store = _get_store(request)
     tasks = store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))

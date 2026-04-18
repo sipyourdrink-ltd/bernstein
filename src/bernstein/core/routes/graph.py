@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
-from bernstein.core.knowledge_graph import query_impact
+from bernstein.core.knowledge.knowledge_graph import query_impact
 
 router = APIRouter(tags=["graph"])
 

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from bernstein.core.agency_loader import AgencyAgent
     from bernstein.core.context import TaskContextBuilder
-    from bernstein.core.graph import TaskGraph
+    from bernstein.core.knowledge.task_graph import TaskGraph
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
