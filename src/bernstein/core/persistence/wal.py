@@ -90,20 +90,82 @@ class WALWriter:
         """Return (last_seq, last_entry_hash) from an existing WAL file.
 
         Returns (-1, GENESIS_HASH) for a new or empty WAL.
+
+        Implementation (audit-082): seeks to end and reads backward in
+        fixed-size chunks until a complete non-empty line is recovered
+        (or the start of the file is reached). Avoids an O(N) full-file
+        read on every construction of a ``WALWriter``.
         """
         if not self._path.exists():
             return -1, GENESIS_HASH
 
-        non_empty = [ln for ln in self._path.read_text().splitlines() if ln.strip()]
-        if not non_empty:
+        last_line = self._read_last_nonempty_line()
+        if last_line is None:
             return -1, GENESIS_HASH
 
         try:
-            data = json.loads(non_empty[-1])
+            data = json.loads(last_line)
             return int(data["seq"]), str(data["entry_hash"])
         except (KeyError, ValueError):
             logger.warning("WAL tail unreadable at %s; chain will continue from truncation point", self._path)
-            return len(non_empty) - 1, GENESIS_HASH
+            # Fall back to a streaming count of non-empty lines so the
+            # next append receives seq = count (matching prior behaviour:
+            # ``len(non_empty) - 1`` → next seq = ``len(non_empty)``).
+            count = 0
+            try:
+                with self._path.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            count += 1
+            except OSError:
+                return -1, GENESIS_HASH
+            return count - 1, GENESIS_HASH
+
+    def _read_last_nonempty_line(self, chunk_size: int = 4096) -> str | None:
+        """Return the last non-empty line of the WAL via backward seeking.
+
+        Reads chunks from the end of the file until a newline precedes a
+        non-empty trailing segment. Handles files that end mid-line (no
+        trailing ``\\n``) by treating the unterminated tail as a candidate
+        line. Returns ``None`` for an empty or whitespace-only file.
+        """
+        try:
+            with self._path.open("rb") as f:
+                f.seek(0, os.SEEK_END)
+                file_size = f.tell()
+                if file_size == 0:
+                    return None
+
+                buffer = b""
+                pos = file_size
+                # Read chunks backward until we have at least one full line
+                # (i.e. a newline before the accumulated buffer) or reach
+                # the start of the file.
+                while pos > 0:
+                    read_size = min(chunk_size, pos)
+                    pos -= read_size
+                    f.seek(pos)
+                    buffer = f.read(read_size) + buffer
+
+                    # Strip trailing newlines/whitespace so we can look for
+                    # the newline that *precedes* the last non-empty line.
+                    stripped = buffer.rstrip(b"\r\n \t")
+                    if not stripped:
+                        # Entire tail so far is whitespace — keep reading back.
+                        continue
+                    nl = stripped.rfind(b"\n")
+                    if nl != -1:
+                        candidate = stripped[nl + 1 :]
+                        text = candidate.decode("utf-8", errors="replace").strip()
+                        return text or None
+                    # No newline in what we've read yet — if we're already
+                    # at the file start, the whole buffer is one line.
+                    if pos == 0:
+                        text = stripped.decode("utf-8", errors="replace").strip()
+                        return text or None
+        except OSError:
+            return None
+        return None
 
     def write_entry(
         self,
@@ -197,28 +259,38 @@ class WALReader:
     def iter_entries(self) -> Iterator[WALEntry]:
         """Yield all :class:`WALEntry` objects in write order.
 
+        Streams the WAL file line-by-line (audit-082): entries are parsed
+        lazily so memory usage is O(1) in the WAL size. A malformed
+        trailing line (e.g. torn write after a crash) is logged and
+        skipped rather than aborting the iteration.
+
         Raises:
             FileNotFoundError: If the WAL file does not exist.
         """
         if not self._path.exists():
             raise FileNotFoundError(f"WAL file not found: {self._path}")
 
-        for line in self._path.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            data = json.loads(line)
-            yield WALEntry(
-                seq=int(data["seq"]),
-                prev_hash=str(data["prev_hash"]),
-                entry_hash=str(data["entry_hash"]),
-                timestamp=float(data["timestamp"]),
-                decision_type=str(data["decision_type"]),
-                inputs=dict(data["inputs"]),
-                output=dict(data["output"]),
-                actor=str(data["actor"]),
-                committed=bool(data.get("committed", True)),
-            )
+        with self._path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning("WAL line unparseable at %s; skipping", self._path)
+                    continue
+                yield WALEntry(
+                    seq=int(data["seq"]),
+                    prev_hash=str(data["prev_hash"]),
+                    entry_hash=str(data["entry_hash"]),
+                    timestamp=float(data["timestamp"]),
+                    decision_type=str(data["decision_type"]),
+                    inputs=dict(data["inputs"]),
+                    output=dict(data["output"]),
+                    actor=str(data["actor"]),
+                    committed=bool(data.get("committed", True)),
+                )
 
     def verify_chain(self) -> tuple[bool, list[str]]:
         """Verify hash chain integrity of the entire WAL.
@@ -226,6 +298,10 @@ class WALReader:
         Checks that:
         1. Each entry's ``prev_hash`` equals the previous entry's ``entry_hash``.
         2. Each entry's ``entry_hash`` matches the SHA-256 of its payload.
+
+        Streams the WAL line-by-line (audit-082): only the running
+        ``prev_hash`` and the collected error list are held in memory,
+        so verification is O(1) in working set regardless of WAL size.
 
         Returns:
             ``(True, [])`` if the chain is intact; ``(False, errors)`` otherwise.
@@ -239,37 +315,40 @@ class WALReader:
         errors: list[str] = []
         prev_hash = GENESIS_HASH
 
-        for line in self._path.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        with self._path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
 
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError as exc:
-                errors.append(f"Invalid JSON (seq unknown): {exc}")
-                continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    errors.append(f"Invalid JSON (seq unknown): {exc}")
+                    continue
 
-            seq = data.get("seq", "?")
-            stored_hash = str(data.get("entry_hash", ""))
+                seq = data.get("seq", "?")
+                stored_hash = str(data.get("entry_hash", ""))
 
-            # Check prev_hash linkage
-            if data.get("prev_hash") != prev_hash:
-                errors.append(
-                    f"Chain broken at seq {seq}: "
-                    f"expected prev_hash {prev_hash[:8]}..., "
-                    f"got {str(data.get('prev_hash', ''))[:8]}..."
-                )
+                # Check prev_hash linkage
+                if data.get("prev_hash") != prev_hash:
+                    errors.append(
+                        f"Chain broken at seq {seq}: "
+                        f"expected prev_hash {prev_hash[:8]}..., "
+                        f"got {str(data.get('prev_hash', ''))[:8]}..."
+                    )
 
-            # Recompute entry_hash from payload (exclude the stored entry_hash)
-            payload = {k: v for k, v in data.items() if k != "entry_hash"}
-            expected_hash = _compute_entry_hash(payload)
+                # Recompute entry_hash from payload (exclude the stored entry_hash)
+                payload = {k: v for k, v in data.items() if k != "entry_hash"}
+                expected_hash = _compute_entry_hash(payload)
 
-            if stored_hash != expected_hash:
-                errors.append(f"Hash mismatch at seq {seq}: expected {expected_hash[:8]}..., got {stored_hash[:8]}...")
+                if stored_hash != expected_hash:
+                    errors.append(
+                        f"Hash mismatch at seq {seq}: expected {expected_hash[:8]}..., got {stored_hash[:8]}..."
+                    )
 
-            # Advance prev_hash using stored value to detect cascading errors
-            prev_hash = stored_hash
+                # Advance prev_hash using stored value to detect cascading errors
+                prev_hash = stored_hash
 
         return len(errors) == 0, errors
 
