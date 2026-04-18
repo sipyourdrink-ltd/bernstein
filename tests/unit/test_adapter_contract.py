@@ -55,10 +55,16 @@ def _popen_path(adapter: CLIAdapter) -> str:
 def _discover_registered_names() -> list[str]:
     """Return sorted adapter names registered in the adapter registry.
 
-    Excludes the ``mock`` adapter (spawns a real subprocess) and the
-    ``generic`` placeholder (constructed with explicit kwargs below).
+    Excludes:
+    - ``mock`` — spawns a real subprocess (live conformance fixture).
+    - ``generic`` — constructed with explicit kwargs below.
+    - ``iac`` — spawn() raises RuntimeError unless terraform or pulumi is
+      on PATH; CI runners (especially macOS) don't have these and the
+      contract test mocks Popen but can't mock the binary-availability
+      check.  The adapter has its own integration test that skips when
+      no tool is installed.
     """
-    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic"})
+    return sorted(n for n in _ADAPTERS if n not in {"mock", "generic", "iac"})
 
 
 def _make_factory(name: str) -> Any:
