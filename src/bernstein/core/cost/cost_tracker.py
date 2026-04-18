@@ -45,6 +45,11 @@ DEFAULT_WARN_THRESHOLD: float = 0.80
 DEFAULT_CRITICAL_THRESHOLD: float = 0.95
 DEFAULT_HARD_STOP_THRESHOLD: float = 1.00
 
+# audit-056: default grace window between SHUTDOWN signals and SIGKILL
+# once ``should_stop`` flips.  Kept here (rather than on OrchestratorConfig)
+# because the kill-switch semantics are owned by the cost tracker.
+DEFAULT_KILL_GRACE_PERIOD_S: int = 30
+
 # ---------------------------------------------------------------------------
 # Usage history buffer (audit-057)
 # ---------------------------------------------------------------------------
@@ -280,6 +285,12 @@ class CostTracker:
     warn_threshold: float = DEFAULT_WARN_THRESHOLD
     critical_threshold: float = DEFAULT_CRITICAL_THRESHOLD
     hard_stop_threshold: float = DEFAULT_HARD_STOP_THRESHOLD
+    # audit-056: once ``should_stop`` transitions True the orchestrator
+    # sends SHUTDOWN to every live agent, waits ``kill_grace_period_s``
+    # for them to commit WIP, and SIGKILLs any still alive afterwards.
+    # 0 disables the grace window (immediate SIGKILL — not recommended
+    # outside tests).
+    kill_grace_period_s: int = DEFAULT_KILL_GRACE_PERIOD_S
     # audit-057: bound in-memory usage history. ``None`` → resolve from
     # ``BERNSTEIN_COST_USAGE_BUFFER`` env var (default 10_000). 0 disables
     # the cap (unbounded) for legacy/test use only; not recommended.

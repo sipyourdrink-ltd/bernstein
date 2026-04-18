@@ -461,6 +461,12 @@ class Orchestrator:
         self._budget_policy: BudgetPolicy = BudgetPolicy.default()
         # Track last-seen policy action so we only notify on transitions.
         self._last_budget_action: BudgetAction = BudgetAction.CONTINUE
+        # audit-056: kill-switch state.  When ``should_stop`` transitions
+        # True we record the timestamp here and SHUTDOWN all live agents;
+        # subsequent ticks that run ``kill_grace_period_s`` seconds later
+        # SIGKILL any session still alive so budget overrun stays bounded.
+        self._budget_stop_fired_at: float | None = None
+        self._budget_stop_killed_agents: set[str] = set()
 
         # Cost anomaly detector: layered on top of cost_tracker, fires
         # AnomalySignals the orchestrator acts on (log/stop/kill).
@@ -1322,6 +1328,11 @@ class Orchestrator:
                 spent_usd=round(_bs.spent_usd, 4),
                 percent_used=round(_bs.percentage_used * 100, 1),
             )
+            # audit-056: ABORT used to only skip spawn, so in-flight agents
+            # kept draining budget until they completed on their own.  Now
+            # we SHUTDOWN every live session and (after ``kill_grace_period_s``)
+            # SIGKILL any still alive so overruns stay bounded.
+            self._enforce_budget_killswitch()
         elif budget_decision is not None and budget_decision.action == BudgetAction.PAUSE:
             _bs = self._cost_tracker.status()
             logger.warning(
@@ -2224,6 +2235,102 @@ class Orchestrator:
                     retried_task_ids=self._retried_task_ids,
                     workdir=self._workdir,
                 )
+
+    def _enforce_budget_killswitch(self) -> None:
+        """Terminate in-flight agents once the budget kill-switch has fired.
+
+        audit-056: prior to this hook the ABORT branch only blocked new
+        spawns, so any agents still running when ``should_stop`` flipped
+        kept consuming budget (overruns of 150%+ observed).  The new
+        contract is:
+
+        * On the first tick where ``should_stop`` is True we SHUTDOWN
+          every live session so they can commit WIP, stamp
+          ``_budget_stop_fired_at``, and emit a single ``budget.exhaust``
+          bulletin + notification carrying the final spend.
+        * On any later tick where at least ``kill_grace_period_s`` have
+          elapsed we SIGKILL remaining live sessions via the spawner.
+          Each agent is only killed once (``_budget_stop_killed_agents``).
+        * When spend drops back under the threshold (e.g. after a hot
+          reload of ``budget_usd``) the state is reset so the switch can
+          re-arm.
+        """
+        status = self._cost_tracker.status()
+        if not status.should_stop:
+            # Budget was increased or the tracker reset — re-arm so a
+            # future exhaustion triggers a fresh SHUTDOWN wave.
+            if self._budget_stop_fired_at is not None:
+                logger.info("Budget kill-switch re-armed (spend back under threshold)")
+                self._budget_stop_fired_at = None
+                self._budget_stop_killed_agents.clear()
+            return
+
+        live_sessions = [s for s in self._agents.values() if s.status != "dead"]
+
+        # First transition: SHUTDOWN everyone and emit the exhaust event.
+        if self._budget_stop_fired_at is None:
+            self._budget_stop_fired_at = time.time()
+            reason = (
+                f"budget exhausted: ${status.spent_usd:.4f} of ${status.budget_usd:.2f} "
+                f"({status.percentage_used * 100:.1f}%)"
+            )
+            logger.warning(
+                "Budget kill-switch fired — sending SHUTDOWN to %d live agent(s); "
+                "SIGKILL after %ds grace period",
+                len(live_sessions),
+                self._cost_tracker.kill_grace_period_s,
+            )
+            if live_sessions:
+                with contextlib.suppress(Exception):
+                    self._send_shutdown_signals(reason)
+            self._post_bulletin(
+                "alert",
+                f"budget.exhaust: ${status.spent_usd:.4f}/${status.budget_usd:.2f} "
+                f"({status.percentage_used * 100:.1f}%); "
+                f"SHUTDOWN sent to {len(live_sessions)} agent(s)",
+            )
+            self._notify(
+                "budget.exhaust",
+                "Budget exhausted — terminating agents",
+                (
+                    f"Spent ${status.spent_usd:.4f} of ${status.budget_usd:.2f} "
+                    f"({status.percentage_used * 100:.1f}%). SHUTDOWN sent to "
+                    f"{len(live_sessions)} in-flight agent(s); SIGKILL after "
+                    f"{self._cost_tracker.kill_grace_period_s}s grace."
+                ),
+                budget_usd=round(status.budget_usd, 4),
+                spent_usd=round(status.spent_usd, 6),
+                percent_used=round(status.percentage_used * 100, 2),
+                live_agents=len(live_sessions),
+                grace_period_s=int(self._cost_tracker.kill_grace_period_s),
+            )
+            return
+
+        # Subsequent ticks: once the grace window has elapsed, SIGKILL
+        # anything still alive so unbounded overrun is prevented.
+        elapsed = time.time() - self._budget_stop_fired_at
+        if elapsed < self._cost_tracker.kill_grace_period_s:
+            return
+
+        pending_kill = [s for s in live_sessions if s.id not in self._budget_stop_killed_agents]
+        if not pending_kill:
+            return
+
+        logger.warning(
+            "Budget kill-switch grace period expired (%.1fs elapsed); "
+            "SIGKILLing %d agent(s) still alive",
+            elapsed,
+            len(pending_kill),
+        )
+        for session in pending_kill:
+            self._budget_stop_killed_agents.add(session.id)
+            with contextlib.suppress(Exception):
+                self._spawner.kill(session)
+        self._post_bulletin(
+            "alert",
+            f"budget.exhaust: SIGKILLed {len(pending_kill)} agent(s) after "
+            f"{int(self._cost_tracker.kill_grace_period_s)}s grace",
+        )
 
     def _reap_dead_agents(self, result: TickResult, tasks_snapshot: dict[str, list[Task]]) -> None:
         """Delegate to agent_lifecycle.reap_dead_agents."""
