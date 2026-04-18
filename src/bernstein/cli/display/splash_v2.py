@@ -24,11 +24,20 @@ from bernstein.core.visual_config import VisualConfig
 
 
 def _load_logo() -> list[str]:
-    """Load logo from docs/assets/ascii_logo.md, stripping empty lines."""
-    asset = Path(__file__).resolve().parent.parent.parent.parent / "docs" / "assets" / "ascii_logo.md"
-    if not asset.exists():
-        return ["  BERNSTEIN"]
-    return [line for line in asset.read_text(encoding="utf-8").splitlines() if line.strip()]
+    """Load logo from docs/assets/ascii_logo.md (dev) or packaged copy (wheel).
+
+    Dev layout: <repo>/src/bernstein/cli/display/splash_v2.py -> <repo>/docs/assets/…
+    Wheel: bernstein/_default_templates/ascii_logo.md via pyproject force-include.
+    """
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent.parent.parent.parent.parent / "docs" / "assets" / "ascii_logo.md",
+        here.parent.parent.parent / "_default_templates" / "ascii_logo.md",
+    ]
+    for asset in candidates:
+        if asset.exists():
+            return [line for line in asset.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return ["  BERNSTEIN"]
 
 
 def _empty_agents() -> list[dict[str, object]]:

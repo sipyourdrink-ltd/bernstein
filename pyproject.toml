@@ -160,6 +160,7 @@ packages = ["src/bernstein"]
 [tool.hatch.build.targets.wheel.force-include]
 "templates/prompts" = "bernstein/_default_templates/prompts"
 "templates/bernstein.yaml" = "bernstein/_default_templates/bernstein.yaml"
+"docs/assets/ascii_logo.md" = "bernstein/_default_templates/ascii_logo.md"
 
 [tool.ruff]
 target-version = "py312"
