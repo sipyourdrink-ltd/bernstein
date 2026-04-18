@@ -16,8 +16,10 @@ from bernstein.adapters.env_isolation import build_filtered_env
 # Map Bernstein short model names to aider model identifiers.
 # Aider accepts provider-prefixed names (e.g. "openai/gpt-5.4", "anthropic/claude-3-5-sonnet").
 # Short names are mapped to the most common aider-compatible IDs; unknown names pass through.
+# Updated 2026-04-17 (audit-140) — keep Opus alias in sync with claude.py canonical ID.
 _MODEL_MAP: dict[str, str] = {
-    "opus": "anthropic/claude-opus-4-6",
+    "opus": "anthropic/claude-opus-4-7",
+    "opus-4-6": "anthropic/claude-opus-4-6",  # pinned fallback
     "sonnet": "anthropic/claude-sonnet-4-6",
     "haiku": "anthropic/claude-haiku-4-5-20251001",
     "gpt-5.4": "openai/gpt-5.4",

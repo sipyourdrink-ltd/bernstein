@@ -95,7 +95,7 @@ class TestAiderAdapterSpawn:
                 session_id="aider-s4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert inner[inner.index("--model") + 1] == "anthropic/claude-opus-4-6"
+        assert inner[inner.index("--model") + 1] == "anthropic/claude-opus-4-7"
 
     def test_unknown_model_passes_through(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
