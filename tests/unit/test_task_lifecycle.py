@@ -13,11 +13,21 @@ from unittest.mock import MagicMock, patch
 import httpx
 from bernstein.core.convergence_guard import ConvergenceGuard
 from bernstein.core.graph import TaskGraph
-from bernstein.core.models import AgentSession, Complexity, ConvergenceGuardConfig, ModelConfig, Scope, TaskStatus
+from bernstein.core.models import (
+    AgentSession,
+    Complexity,
+    CompletionSignal,
+    ConvergenceGuardConfig,
+    ModelConfig,
+    Scope,
+    TaskStatus,
+)
 from bernstein.core.orchestrator import TickResult
 from bernstein.core.task_lifecycle import (
     _enqueue_paired_test_task,
+    _has_llm_judge_signal,
     _move_backlog_ticket,
+    _verify_via_janitor,
     claim_and_spawn_batches,
     prepare_speculative_warm_pool,
     process_completed_tasks,
@@ -583,3 +593,127 @@ def test_enqueue_paired_test_task_is_idempotent(make_task: Any) -> None:
     assert payload["role"] == "qa"
     assert payload["depends_on"] == ["T-impl"]
     assert payload["model"] == "sonnet"
+
+
+# ---------------------------------------------------------------------------
+# llm_judge dispatch (audit-034)
+# ---------------------------------------------------------------------------
+
+
+def test_has_llm_judge_signal_detects_judge_signal(make_task: Any) -> None:
+    """_has_llm_judge_signal returns True iff any completion signal is type 'llm_judge'."""
+    task_with = make_task(id="T-judge")
+    task_with.completion_signals = [
+        CompletionSignal(type="path_exists", value="foo.py"),
+        CompletionSignal(type="llm_judge", value="Check correctness"),
+    ]
+    task_without = make_task(id="T-no-judge")
+    task_without.completion_signals = [CompletionSignal(type="path_exists", value="foo.py")]
+    task_empty = make_task(id="T-empty")
+
+    assert _has_llm_judge_signal(task_with) is True
+    assert _has_llm_judge_signal(task_without) is False
+    assert _has_llm_judge_signal(task_empty) is False
+
+
+def test_process_completed_tasks_dispatches_llm_judge_to_run_janitor(
+    tmp_path: Path,
+    make_task: Any,
+) -> None:
+    """Tasks carrying llm_judge signals route through run_janitor, not verify_task.
+
+    Regression for audit-034: verify_task returns False for llm_judge signals,
+    causing silent verification failure. task_lifecycle must hand those tasks
+    off to the async run_janitor pipeline (wrapped via _verify_via_janitor)
+    instead.
+    """
+    open_dir = tmp_path / ".sdd" / "backlog" / "open"
+    open_dir.mkdir(parents=True)
+    ticket = open_dir / "judge-ticket.md"
+    ticket.write_text("# Judge ticket\n", encoding="utf-8")
+
+    judge_task_obj = make_task(
+        id="T-judge",
+        title="Refactor retrieval pipeline",
+        description="Done.\n<!-- source: judge-ticket.md -->",
+        status=TaskStatus.DONE,
+    )
+    judge_task_obj.completion_signals = [
+        CompletionSignal(type="llm_judge", value="Preserved correctness of retrieval ranking."),
+    ]
+
+    sync_task_obj = make_task(
+        id="T-sync",
+        title="Add sentinel file",
+        description="Done.",
+        status=TaskStatus.DONE,
+    )
+    sync_task_obj.completion_signals = [CompletionSignal(type="path_exists", value="sentinel.txt")]
+
+    session = _session_for(judge_task_obj.id, exit_code=0)
+    orch = _process_orch(tmp_path, session)
+
+    # Capture submit() calls and short-circuit verification so the test stays
+    # focused on dispatch routing rather than downstream reap/merge.
+    submitted: list[tuple[Any, ...]] = []
+
+    def _submit(fn: Any, *args: Any, **kwargs: Any) -> MagicMock:
+        submitted.append((fn, args, kwargs))
+        fut = MagicMock()
+        fut.result.return_value = (True, [])
+        return fut
+
+    orch._executor.submit.side_effect = _submit
+
+    with patch("bernstein.core.tasks.task_lifecycle._process_single_completed_task") as mock_process:
+        result = TickResult()
+        process_completed_tasks(orch, [judge_task_obj, sync_task_obj], result)
+
+    assert mock_process.call_count == 2
+    assert len(submitted) == 2
+
+    dispatched = {args[0].id: fn for fn, args, _ in submitted}
+    assert dispatched["T-judge"] is _verify_via_janitor
+    # Non-judge tasks keep the sync verify_task fast path.
+    from bernstein.core.janitor import verify_task as _expected_verify_task
+
+    assert dispatched["T-sync"] is _expected_verify_task
+
+
+def test_verify_via_janitor_runs_run_janitor_for_llm_judge(
+    tmp_path: Path,
+    make_task: Any,
+) -> None:
+    """_verify_via_janitor wraps the async run_janitor and returns (passed, failures)."""
+    task = make_task(id="T-vj")
+    task.completion_signals = [CompletionSignal(type="llm_judge", value="Check correctness")]
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_run_janitor(
+        tasks: list[Any],
+        workdir: Path,
+        *,
+        server_url: str | None = None,
+    ) -> list[Any]:
+        captured["tasks"] = tasks
+        captured["workdir"] = workdir
+        captured["server_url"] = server_url
+        return [
+            SimpleNamespace(
+                task_id=tasks[0].id,
+                passed=False,
+                signal_results=[
+                    ("llm_judge: Check correctness", False, "retry: needs more tests"),
+                ],
+            )
+        ]
+
+    with patch("bernstein.core.tasks.task_lifecycle.run_janitor", side_effect=_fake_run_janitor):
+        passed, failed = _verify_via_janitor(task, tmp_path, "http://server")
+
+    assert passed is False
+    assert failed == ["llm_judge: Check correctness"]
+    assert captured["tasks"][0].id == "T-vj"
+    assert captured["workdir"] == tmp_path
+    assert captured["server_url"] == "http://server"

@@ -7,6 +7,7 @@ as explicit arguments so the Orchestrator methods can delegate to them.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import math
@@ -34,7 +35,7 @@ from bernstein.core.fast_path import (
     try_fast_path_batch,
 )
 from bernstein.core.hook_events import HookEvent
-from bernstein.core.janitor import verify_task
+from bernstein.core.janitor import run_janitor, verify_task
 from bernstein.core.metrics import get_collector
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
@@ -2505,6 +2506,48 @@ def _record_evolution_completion(
         _set_downstream_affinity(orch, task)
 
 
+def _has_llm_judge_signal(task: Task) -> bool:
+    """Return True when any completion signal requires async llm_judge evaluation.
+
+    The sync ``verify_task`` path cannot evaluate ``llm_judge`` signals and
+    always reports them as failed. Such tasks must be routed through the
+    async ``run_janitor`` pipeline instead.
+
+    Args:
+        task: Task to inspect.
+
+    Returns:
+        True if any completion signal has type ``"llm_judge"``.
+    """
+    return any(signal.type == "llm_judge" for signal in task.completion_signals)
+
+
+def _verify_via_janitor(task: Task, workdir: Path, server_url: str | None) -> tuple[bool, list[str]]:
+    """Run the async ``run_janitor`` pipeline for a single task synchronously.
+
+    Translates a ``JanitorResult`` back into the ``(passed, failed_signals)``
+    shape expected by the rest of ``process_completed_tasks``. Executed inside
+    the orchestrator's thread-pool executor, so a dedicated event loop is used
+    per invocation to avoid touching any ambient loop from the caller.
+
+    Args:
+        task: Task to evaluate.
+        workdir: Project root for signal evaluation and git diff lookups.
+        server_url: Optional task-server URL forwarded to ``run_janitor`` for
+            fix-task creation.
+
+    Returns:
+        Tuple of (all_passed, list_of_failed_signal_descriptions).
+    """
+    results = asyncio.run(run_janitor([task], workdir, server_url=server_url))
+    if not results:
+        # Task had no completion signals (shouldn't reach here in practice).
+        return True, []
+    janitor_result = results[0]
+    failed_descs = [desc for desc, passed, _ in janitor_result.signal_results if not passed]
+    return janitor_result.passed, failed_descs
+
+
 def process_completed_tasks(
     orch: Any,  # Orchestrator instance
     done_tasks: list[Task],
@@ -2513,9 +2556,15 @@ def process_completed_tasks(
     """Run janitor verification and record evolution metrics for done tasks.
 
     Skips tasks already processed in a prior tick. For each new done task,
-    submits verify_task() calls in parallel via orch._executor, then
+    submits verification calls in parallel via ``orch._executor``, then
     processes post-verification steps (sync backlog, append decision,
     record evolution) after all verifications complete.
+
+    Tasks whose completion signals include any ``llm_judge`` entry dispatch
+    to the async ``run_janitor`` pipeline (wrapped via ``asyncio.run`` in a
+    worker thread), since ``verify_task`` is sync-only and rejects
+    ``llm_judge`` signals outright. All other tasks keep the sync
+    ``verify_task`` fast path.
 
     Args:
         orch: Orchestrator instance.
@@ -2533,10 +2582,19 @@ def process_completed_tasks(
     if not new_tasks:
         return
 
-    # Fan-out: submit all verify_task() calls in parallel.
+    server_url: str | None = getattr(orch._config, "server_url", None)
+
+    # Fan-out: submit verification calls in parallel. llm_judge signals need
+    # the async run_janitor pipeline; everything else uses verify_task.
     verify_futures: dict[str, concurrent.futures.Future[tuple[bool, list[str]]]] = {}
     for task in new_tasks:
-        if task.completion_signals:
+        if not task.completion_signals:
+            continue
+        if _has_llm_judge_signal(task):
+            verify_futures[task.id] = orch._executor.submit(
+                _verify_via_janitor, task, orch._workdir, server_url
+            )
+        else:
             verify_futures[task.id] = orch._executor.submit(verify_task, task, orch._workdir)
 
     # Fan-in: collect results then run sequential post-verification steps.
@@ -2557,9 +2615,9 @@ def _resolve_janitor_result(
     try:
         passed, failed_signals = verify_futures[task.id].result()
     except Exception:
-        logger.warning("verify_task raised for %s — treating as failed", task.id)
+        logger.warning("janitor verification raised for %s — treating as failed", task.id)
         passed = False
-        failed_signals = ["verify_task exception"]
+        failed_signals = ["janitor verification exception"]
 
     if passed:
         result.verified.append(task.id)
