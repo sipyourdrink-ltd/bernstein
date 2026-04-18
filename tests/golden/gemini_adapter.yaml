@@ -1,0 +1,20 @@
+name: gemini_adapter_spawn
+adapter_class: bernstein.adapters.gemini.GeminiAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    model: "gemini-2.5-pro"
+    expected_pid: 2345
+    inner_argv:
+      - "gemini"
+      - "-p"
+      - "fix the bug in main.py"
+      - "-m"
+      - "gemini-2.5-pro"
+      - "--output-format"
+      - "json"
+      - "--yolo"
+    env_extra_keys:
+      - "GOOGLE_API_KEY"
+      - "GEMINI_API_KEY"
+      - "GOOGLE_CLOUD_PROJECT"
+      - "GOOGLE_APPLICATION_CREDENTIALS"
