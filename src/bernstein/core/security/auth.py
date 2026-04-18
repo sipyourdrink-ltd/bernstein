@@ -106,6 +106,10 @@ _ROLE_PERMISSIONS: dict[AuthRole, frozenset[str]] = {
             "webhooks:manage",
             _PERM_BULLETIN_READ,
             "bulletin:write",
+            # Operator-level gate for shutdown, broadcast, drain, and the
+            # config writer — held only by ADMIN.  OPERATOR and VIEWER must
+            # NOT have this permission or they could SIGTERM the server.
+            "admin:manage",
         }
     ),
     AuthRole.OPERATOR: frozenset(
