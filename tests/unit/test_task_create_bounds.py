@@ -32,16 +32,33 @@ from bernstein.core.server.server_models import TaskCreate
 # ---------------------------------------------------------------------------
 
 
-def test_task_create_title_capped_at_200() -> None:
-    """title longer than 200 chars is rejected with ValidationError."""
+def test_task_create_title_capped_at_500() -> None:
+    """title longer than 500 chars is rejected with ValidationError.
+
+    Raised from 200 to 500 so real-world backlog/audit titles (up to
+    ~210 chars) no longer 422 the batch ingest endpoint every tick.
+    """
     with pytest.raises(ValidationError):
-        TaskCreate(title="x" * 201, description="ok")
+        TaskCreate(title="x" * 501, description="ok")
 
 
 def test_task_create_title_at_limit_accepted() -> None:
-    """title exactly 200 chars is accepted."""
-    t = TaskCreate(title="x" * 200, description="ok")
-    assert len(t.title) == 200
+    """title exactly 500 chars is accepted."""
+    t = TaskCreate(title="x" * 500, description="ok")
+    assert len(t.title) == 500
+
+
+def test_task_create_accepts_long_descriptive_title() -> None:
+    """Real audit-169-style title (~210 chars) must round-trip cleanly."""
+    long_title = (
+        "audit-169-knowledge-test-only-modules — 10 test-only knowledge "
+        "modules: doc_generator, file_relevance, graduated_memory_guard, "
+        "memory_extractor/sanitizer, repo_index, semantic_diff, synthesis, "
+        "web_graph"
+    )
+    assert len(long_title) > 200
+    t = TaskCreate(title=long_title, description="ok")
+    assert t.title == long_title
 
 
 def test_task_create_description_capped_at_100k() -> None:
