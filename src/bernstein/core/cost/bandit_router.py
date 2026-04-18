@@ -93,6 +93,11 @@ _CLAUDE_COMPATIBLE_ADAPTERS: frozenset[str] = frozenset({"claude", "claude code"
 
 # High-stakes roles never start at haiku (mirrors cascade_router logic)
 _HIGH_STAKES_ROLES: frozenset[str] = frozenset({"manager", "architect", "security"})
+
+# Model capability tiers — used to clamp bandit picks to a per-task floor so
+# the bandit can still learn on high-stakes tasks without ever dropping below
+# a minimum capability. Higher number = more capable.
+_MODEL_TIER: dict[str, int] = {"haiku": 0, "sonnet": 1, "opus": 2}
 _LANGUAGE_BY_SUFFIX: dict[str, str] = {
     ".py": "python",
     ".pyi": "python",
@@ -431,6 +436,7 @@ def _load_shadow_counters(value: object) -> dict[str, float]:
         "agree_reward_count": 0.0,
         "disagree_reward_sum": 0.0,
         "disagree_reward_count": 0.0,
+        "floor_clamp_count": 0.0,
     }
     if not isinstance(value, dict):
         return defaults
@@ -1069,6 +1075,7 @@ class BanditRouter:
             "agree_reward_count": 0.0,
             "disagree_reward_sum": 0.0,
             "disagree_reward_count": 0.0,
+            "floor_clamp_count": 0.0,
         }
         self._loaded: bool = False
 
@@ -1122,8 +1129,12 @@ class BanditRouter:
     def select(self, task: Task) -> BanditRoutingDecision:
         """Select ``(model, effort)`` for a task.
 
-        Falls back to static cascade routing during cold-start; uses the
-        LinUCB bandit policy after warm-up.
+        Cold-start delegates to static cascade routing. Once warmed up, the
+        LinUCB bandit chooses the arm and the result is clamped to a
+        per-task :func:`_capability_floor` so high-stakes work still cannot
+        drop below a safe minimum (see audit-112). Whenever the clamp kicks
+        in, the bandit's raw pick is recorded as a shadow decision so the
+        override can be evaluated against observed rewards.
 
         Args:
             task: Task to route.
@@ -1134,15 +1145,14 @@ class BanditRouter:
         self._ensure_loaded()
         ctx = TaskContext.from_task(task)
 
-        if not self.is_warmed_up or _is_high_stakes(task):
+        if not self.is_warmed_up:
             model, static_reason = _static_select(task)
             effort = self._select_effort(model, task)
-            mode = "guardrail" if self.is_warmed_up else "cold-start"
             decision = BanditRoutingDecision(
                 model=model,
                 effort=effort,
                 from_bandit=False,
-                reason=(f"{mode} ({self._total_completions}/{self._warmup_min} completions): {static_reason}"),
+                reason=(f"cold-start ({self._total_completions}/{self._warmup_min} completions): {static_reason}"),
             )
         else:
             assert self._policy is not None
@@ -1150,19 +1160,38 @@ class BanditRouter:
             self._record_exploration_scores(scores)
             best_score = scores[0]
             runner_up = scores[1] if len(scores) > 1 else None
-            model = best_score.arm
+            bandit_pick = best_score.arm
+            floor = _capability_floor(task)
+            clamped_model, did_clamp = _clamp_to_floor(bandit_pick, floor)
+            model = clamped_model
             effort = self._select_effort(model, task)
             runner_reason = f"; runner_up={runner_up.arm} total={runner_up.total:.3f}" if runner_up is not None else ""
+            base_reason = (
+                f"bandit: LinUCB selected {bandit_pick!r} "
+                f"(exploit={best_score.exploit:.3f}, explore={best_score.explore:.3f}, "
+                f"total={best_score.total:.3f}{runner_reason}, "
+                f"completions={self._total_completions})"
+            )
+            if did_clamp:
+                reason = (
+                    f"{base_reason}; capability floor clamped {bandit_pick!r} → {model!r} "
+                    f"(role={task.role!r}, complexity={task.complexity.value}, "
+                    f"scope={task.scope.value}, priority={task.priority})"
+                )
+                self._log_shadow_clamp(
+                    task=task,
+                    bandit_pick=bandit_pick,
+                    executed_model=model,
+                    floor=floor,
+                    score=best_score,
+                )
+            else:
+                reason = base_reason
             decision = BanditRoutingDecision(
                 model=model,
                 effort=effort,
                 from_bandit=True,
-                reason=(
-                    f"bandit: LinUCB selected {model!r} "
-                    f"(exploit={best_score.exploit:.3f}, explore={best_score.explore:.3f}, "
-                    f"total={best_score.total:.3f}{runner_reason}, "
-                    f"completions={self._total_completions})"
-                ),
+                reason=reason,
             )
 
         self._selection_counts[model] = self._selection_counts.get(model, 0) + 1
@@ -1336,6 +1365,66 @@ class BanditRouter:
         except OSError as exc:
             logger.warning("BanditRouter: could not save state to %s: %s", state_path, exc)
 
+    def _log_shadow_clamp(
+        self,
+        *,
+        task: Task,
+        bandit_pick: str,
+        executed_model: str,
+        floor: str,
+        score: ArmScore,
+    ) -> None:
+        """Record a capability-floor override as a shadow decision.
+
+        Invoked from :meth:`select` whenever :func:`_clamp_to_floor` lifts a
+        bandit pick to satisfy the per-task capability floor. We persist the
+        clamp to the standard shadow-decisions stream so audit-112 can
+        evaluate over time whether the override cost us reward.
+        """
+        self._shadow_counters["floor_clamp_count"] += 1.0
+        if self._policy_dir is None:
+            logger.info(
+                "BanditRouter: capability floor clamped task=%s pick=%s → %s (floor=%s)",
+                task.id,
+                bandit_pick,
+                executed_model,
+                floor,
+            )
+            return
+        payload = {
+            "timestamp": time.time(),
+            "task_id": task.id,
+            "role": task.role,
+            "task_type": task.task_type.value,
+            "selected_model": bandit_pick,
+            "selected_effort": self._select_effort(bandit_pick, task),
+            "executed_model": executed_model,
+            "executed_effort": self._select_effort(executed_model, task),
+            "from_bandit": True,
+            "reason": f"capability_floor_clamp floor={floor} pick={bandit_pick}",
+            "agreement": False,
+            "selected_score": _arm_score_payload(score),
+            "executed_score": None,
+            "clamp": True,
+            "capability_floor": floor,
+        }
+        self._shadow_pending[task.id] = dict(payload)
+        self._shadow_counters["total_decisions"] += 1.0
+        shadow_path = self._policy_dir / self.SHADOW_DECISIONS_FILE
+        try:
+            self._policy_dir.mkdir(parents=True, exist_ok=True)
+            with shadow_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload) + "\n")
+        except OSError as exc:
+            logger.warning("BanditRouter: could not record shadow clamp to %s: %s", shadow_path, exc)
+        logger.info(
+            "BanditRouter: capability floor clamped task=%s pick=%s → %s (floor=%s)",
+            task.id,
+            bandit_pick,
+            executed_model,
+            floor,
+        )
+
     def record_shadow_decision(
         self,
         task: Task,
@@ -1487,12 +1576,14 @@ class BanditRouter:
         disagreement_count = int(self._shadow_counters["disagreement_count"])
         agree_reward_count = int(self._shadow_counters["agree_reward_count"])
         disagree_reward_count = int(self._shadow_counters["disagree_reward_count"])
+        floor_clamp_count = int(self._shadow_counters.get("floor_clamp_count", 0.0))
         return {
             "total_decisions": total_decisions,
             "matched_outcomes": matched_outcomes,
             "pending_outcomes": len(self._shadow_pending),
             "agreement_rate": round(agreement_count / matched_outcomes, 6) if matched_outcomes else 0.0,
             "disagreement_count": disagreement_count,
+            "floor_clamp_count": floor_clamp_count,
             "avg_executed_reward_when_agree": round(
                 self._shadow_counters["agree_reward_sum"] / agree_reward_count,
                 6,
@@ -1583,13 +1674,70 @@ def compute_reward(quality_score: float, cost_usd: float, budget_ceiling: float)
 
 
 def _is_high_stakes(task: Task) -> bool:
-    """Return whether static guardrails should override learned routing."""
+    """Return whether a task should never be routed to the cheapest arm.
+
+    Used by :func:`_static_select` during cold-start to keep high-stakes
+    work off ``haiku`` before the bandit has any signal. Post-warmup the
+    softer :func:`_capability_floor` / :func:`_clamp_to_floor` pair takes
+    over (audit-112) so the bandit can still learn on high-stakes tasks.
+    """
     return (
         task.role in _HIGH_STAKES_ROLES
         or task.complexity == Complexity.HIGH
         or task.scope == Scope.LARGE
         or task.priority == 1
     )
+
+
+def _capability_floor(task: Task) -> str:
+    """Return the minimum model arm a task is allowed to be routed to.
+
+    This is intentionally softer than :func:`_is_high_stakes`. The pre-audit
+    gate forced every high-stakes task through the static heuristic forever,
+    so the bandit never learned whether ``opus`` was actually better than
+    ``sonnet`` on e.g. architect reviews. With a floor, the bandit still
+    chooses freely between the arms at or above the floor — it just cannot
+    drop below a safe minimum.
+
+    Floors (from lowest to highest):
+
+    * ``"opus"`` — ``manager`` / ``architect`` / ``security`` roles that
+      combine HIGH complexity with LARGE scope; these jobs have never fit
+      in ``sonnet`` context in practice.
+    * ``"sonnet"`` — high-stakes roles, HIGH complexity, LARGE scope, or
+      priority-1 work. Mirrors the old ``_is_high_stakes`` bar.
+    * ``"haiku"`` — everything else (no clamp).
+    """
+    if task.role in _HIGH_STAKES_ROLES and task.complexity == Complexity.HIGH and task.scope == Scope.LARGE:
+        return "opus"
+    if _is_high_stakes(task):
+        return "sonnet"
+    return "haiku"
+
+
+def _clamp_to_floor(bandit_pick: str, floor: str) -> tuple[str, bool]:
+    """Raise ``bandit_pick`` to ``floor`` if it would fall below capability.
+
+    Uses the tier ordering in :data:`_MODEL_TIER` (``haiku < sonnet < opus``).
+    Unknown arms are passed through unchanged — we only clamp when we can
+    compare tiers — so custom model names in a future adapter never get
+    silently promoted.
+
+    Args:
+        bandit_pick: Model arm chosen by the LinUCB policy.
+        floor: Minimum capability required for the task.
+
+    Returns:
+        Tuple of ``(model, did_clamp)``. ``did_clamp`` is ``True`` when the
+        returned model differs from ``bandit_pick`` because of the floor.
+    """
+    pick_tier = _MODEL_TIER.get(bandit_pick)
+    floor_tier = _MODEL_TIER.get(floor)
+    if pick_tier is None or floor_tier is None:
+        return bandit_pick, False
+    if pick_tier >= floor_tier:
+        return bandit_pick, False
+    return floor, True
 
 
 def _static_select(task: Task) -> tuple[str, str]:
