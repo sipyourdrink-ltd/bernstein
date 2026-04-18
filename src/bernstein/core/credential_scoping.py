@@ -1,37 +1,86 @@
 """Agent credential scope minimization for least-privilege API keys.
 
-Provides scoped API credentials that restrict each agent to only the
-operations, models, and token budgets it needs.  Instead of sharing a
-single API key with full access, each agent receives a credential
-whose scope is enforced locally — either via a proxy layer or via
-pre-flight validation before dispatching requests to upstream
-providers.
+Provides two layers of scoping:
 
-Usage::
+1. **Logical scopes** (:class:`CredentialScope`, :class:`ScopedCredential`,
+   :class:`CredentialScopeManager`) — restrict each logical credential to
+   an operation/model/token budget.  These are enforced at request time by
+   :func:`validate_request_against_scope`.
+
+2. **Environment credential policy** (:class:`AgentCredentialPolicy`) —
+   restrict which OS-level API-key env vars an agent subprocess is allowed
+   to inherit.  This closes the audit-051 gap where every agent received
+   the full provider key set from ``build_filtered_env``'s ``extra_keys``.
+
+The policy is fail-closed: agents not explicitly listed receive **no**
+credentials, and a request for an env var not declared in ``known_keys``
+raises :class:`UnknownCredentialKeyError`.
+
+Configuration surface (``.sdd/config/credential_scopes.yaml``)::
+
+    enabled: true
+    known_keys:
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENAI_ORG_ID
+    agents:
+      backend-001:
+        - ANTHROPIC_API_KEY
+      researcher-*:       # glob-style prefix match
+        - OPENAI_API_KEY
+    roles:
+      backend:
+        - ANTHROPIC_API_KEY
+      researcher:
+        - OPENAI_API_KEY
+
+Load the policy once at orchestrator startup and register it::
 
     from bernstein.core.credential_scoping import (
-        CredentialScope,
-        ScopedCredential,
-        CredentialScopeManager,
-        create_scoped_credential,
-        validate_request_against_scope,
-        get_scope_for_role,
+        load_policy_from_file, set_default_policy,
     )
+    set_default_policy(load_policy_from_file(path))
 
-    scope = get_scope_for_role("backend")
-    cred = create_scoped_credential("agent-42", scope)
-    is_valid = validate_request_against_scope(
-        {"operation": "code_gen", "model": "gpt-4", "tokens": 500},
-        cred.scope,
-    )
+Then adapters call :func:`scoped_credential_keys` (or the ``agent_id`` param
+of :func:`bernstein.adapters.env_isolation.build_filtered_env`) to obtain
+the **filtered** subset of env-var keys for that agent.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class CredentialScopingError(Exception):
+    """Base class for all credential-scoping policy violations."""
+
+
+class UnknownCredentialKeyError(CredentialScopingError):
+    """Raised when an adapter requests an env-var name not declared in the policy.
+
+    The policy must enumerate every credential key that any agent might be
+    granted.  Requesting an undeclared key is a configuration bug, not a
+    permission denial — so we raise rather than silently drop.
+    """
+
+
+class AgentNotScopedError(CredentialScopingError):
+    """Raised when a policy is enforced but the agent has no scope entry.
+
+    The policy is fail-closed: if scoping is enabled and the agent
+    identifier does not match any rule, spawning is aborted rather than
+    silently granting or silently denying all keys.
+    """
+
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -383,3 +432,245 @@ class CredentialScopeManager:
 
 # Module-level default manager for convenience functions
 _default_manager = CredentialScopeManager()
+
+
+# ---------------------------------------------------------------------------
+# Environment-level per-agent credential policy (audit-051)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AgentCredentialPolicy:
+    """Per-agent allowlist of OS-level credential env vars.
+
+    The policy is **fail-closed**: once ``enabled`` is true, agents not
+    covered by any rule get zero credentials.  Rules can be keyed by
+    exact agent id, a glob-style pattern (``"backend-*"``), or by role
+    name in the parallel ``roles`` map.
+
+    Every env-var key referenced by any rule must appear in
+    ``known_keys``; this prevents typos ("ANTHORPIC_API_KEY") from
+    silently widening scope.
+
+    Attributes:
+        enabled: When ``False``, the policy is a no-op: callers get
+            whatever keys they request.  Used so existing unscoped
+            deployments keep working until opt-in.
+        known_keys: The full set of env-var names the orchestrator
+            knows how to scope.  Acts as a spell-check on the config.
+        agent_rules: Mapping of agent-id (or glob pattern such as
+            ``"backend-*"``) to the allowed subset of ``known_keys``.
+        role_rules: Mapping of role name to allowed subset.  Consulted
+            as a fallback when no ``agent_rules`` entry matches.
+    """
+
+    enabled: bool = False
+    known_keys: frozenset[str] = field(default_factory=frozenset)
+    agent_rules: dict[str, frozenset[str]] = field(default_factory=dict)
+    role_rules: dict[str, frozenset[str]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Validate every rule references only declared keys.
+        for scope_name, rules in (("agent", self.agent_rules), ("role", self.role_rules)):
+            for ident, keys in rules.items():
+                bad = set(keys) - set(self.known_keys)
+                if bad:
+                    msg = (
+                        f"credential policy {scope_name}_rules[{ident!r}] references "
+                        f"undeclared keys {sorted(bad)!r}; add them to known_keys"
+                    )
+                    raise UnknownCredentialKeyError(msg)
+
+    # -- Lookup ---------------------------------------------------------------
+
+    def allowed_for(self, agent_id: str, *, role: str | None = None) -> frozenset[str]:
+        """Return the set of env-var names this agent is permitted to inherit.
+
+        Matching order:
+        1. Exact ``agent_rules`` entry.
+        2. Glob-style ``agent_rules`` entry (first match wins, in sorted order
+           for determinism).
+        3. ``role_rules[role]`` if ``role`` is supplied.
+
+        Args:
+            agent_id: Agent identifier (e.g. ``"backend-001"``).
+            role: Optional role hint for fallback matching.
+
+        Returns:
+            Frozen set of allowed env-var names.
+
+        Raises:
+            AgentNotScopedError: If the policy is enabled and no rule
+                matches (fail-closed).
+        """
+        if not self.enabled:
+            # Disabled policy = transparent: caller's requested keys pass.
+            return self.known_keys
+
+        # 1. Exact match
+        exact = self.agent_rules.get(agent_id)
+        if exact is not None:
+            return exact
+
+        # 2. Glob match (sorted for determinism so the first wildcard
+        #    win is reproducible across runs).
+        for pattern in sorted(self.agent_rules):
+            if any(ch in pattern for ch in "*?[") and fnmatch.fnmatchcase(agent_id, pattern):
+                return self.agent_rules[pattern]
+
+        # 3. Role fallback
+        if role is not None:
+            role_match = self.role_rules.get(role)
+            if role_match is not None:
+                return role_match
+
+        msg = (
+            f"agent {agent_id!r} (role={role!r}) is not covered by the credential policy; "
+            "add an agent_rules or role_rules entry, or set enabled: false"
+        )
+        raise AgentNotScopedError(msg)
+
+    def filter_keys(
+        self,
+        agent_id: str,
+        requested_keys: Any,
+        *,
+        role: str | None = None,
+    ) -> tuple[str, ...]:
+        """Return the intersection of ``requested_keys`` and the agent's allowlist.
+
+        This is the hot-path hook for :func:`build_filtered_env`.  It
+        rejects unknown keys up front (config bug) and returns only the
+        keys the agent is allowed to inherit.
+
+        Args:
+            agent_id: Agent identifier.
+            requested_keys: Iterable of env-var names the adapter wants.
+            role: Optional role for fallback matching.
+
+        Returns:
+            Tuple of permitted env-var names in stable (sorted) order.
+
+        Raises:
+            UnknownCredentialKeyError: Any requested key is not in
+                ``known_keys``.  Raised regardless of ``enabled`` so
+                typos are caught even in no-op mode.
+            AgentNotScopedError: Policy is enabled and no rule matches
+                the agent.
+        """
+        requested = frozenset(requested_keys)
+        unknown = requested - self.known_keys
+        if unknown and self.known_keys:
+            # Only validate against known_keys when it is populated — an
+            # empty known_keys means the policy is effectively inert and
+            # should not block adapters that pre-date it.
+            msg = (
+                f"adapter requested unknown credential key(s) {sorted(unknown)!r}; "
+                "declare them in credential policy known_keys"
+            )
+            raise UnknownCredentialKeyError(msg)
+
+        if not self.enabled:
+            # Pass-through: policy is informational only.
+            return tuple(sorted(requested))
+
+        allowed = self.allowed_for(agent_id, role=role)
+        return tuple(sorted(requested & allowed))
+
+
+# Module-level default policy — overridden at orchestrator startup.
+_default_policy: AgentCredentialPolicy = AgentCredentialPolicy()
+
+
+def get_default_policy() -> AgentCredentialPolicy:
+    """Return the process-wide default :class:`AgentCredentialPolicy`.
+
+    When no policy has been installed, the returned policy is disabled
+    and acts as a no-op.
+    """
+    return _default_policy
+
+
+def set_default_policy(policy: AgentCredentialPolicy) -> None:
+    """Install a process-wide credential policy.
+
+    Adapters that call :func:`scoped_credential_keys` without an explicit
+    ``policy`` argument will consult the policy set here.  Call once at
+    orchestrator startup.
+    """
+    global _default_policy
+    _default_policy = policy
+
+
+def scoped_credential_keys(
+    agent_id: str,
+    requested_keys: Any,
+    *,
+    role: str | None = None,
+    policy: AgentCredentialPolicy | None = None,
+) -> tuple[str, ...]:
+    """Convenience wrapper around :meth:`AgentCredentialPolicy.filter_keys`.
+
+    Uses the default policy from :func:`get_default_policy` when
+    ``policy`` is not supplied.
+    """
+    effective = policy if policy is not None else _default_policy
+    return effective.filter_keys(agent_id, requested_keys, role=role)
+
+
+def load_policy_from_file(path: str | Path) -> AgentCredentialPolicy:
+    """Load an :class:`AgentCredentialPolicy` from a YAML or JSON file.
+
+    Expected schema::
+
+        enabled: bool
+        known_keys: [str, ...]
+        agents:
+          <agent-id-or-glob>: [str, ...]
+        roles:
+          <role>: [str, ...]
+
+    Missing sections default to empty.  The file format is auto-detected
+    from its extension (``.yaml``/``.yml`` → YAML, otherwise JSON).
+
+    Args:
+        path: Path to the policy file.
+
+    Returns:
+        A fully-constructed policy.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        UnknownCredentialKeyError: If any rule references an undeclared key.
+    """
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+
+    data: dict[str, Any]
+    if p.suffix.lower() in {".yaml", ".yml"}:
+        import yaml  # local import — yaml is a heavy dep
+
+        loaded = yaml.safe_load(text) or {}
+    else:
+        import json
+
+        loaded = json.loads(text) if text.strip() else {}
+
+    if not isinstance(loaded, dict):
+        msg = f"credential policy file {path} must contain a mapping at the top level"
+        raise CredentialScopingError(msg)
+    data = loaded
+
+    known = frozenset(data.get("known_keys", ()) or ())
+    agents_raw = data.get("agents", {}) or {}
+    roles_raw = data.get("roles", {}) or {}
+
+    agent_rules = {k: frozenset(v or ()) for k, v in agents_raw.items()}
+    role_rules = {k: frozenset(v or ()) for k, v in roles_raw.items()}
+
+    return AgentCredentialPolicy(
+        enabled=bool(data.get("enabled", False)),
+        known_keys=known,
+        agent_rules=agent_rules,
+        role_rules=role_rules,
+    )

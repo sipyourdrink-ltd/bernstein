@@ -1,21 +1,31 @@
 """Tests for bernstein.core.credential_scoping.
 
 Covers credential creation, scope validation, revocation, role defaults,
-and the CredentialScopeManager lifecycle.
+the CredentialScopeManager lifecycle, and the audit-051 per-agent
+environment credential policy.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from bernstein.core.credential_scoping import (
+    AgentCredentialPolicy,
+    AgentNotScopedError,
     CredentialScope,
     CredentialScopeManager,
     ScopedCredential,
+    UnknownCredentialKeyError,
     create_scoped_credential,
+    get_default_policy,
     get_scope_for_role,
+    load_policy_from_file,
+    scoped_credential_keys,
+    set_default_policy,
     validate_request_against_scope,
 )
 
@@ -263,3 +273,269 @@ class TestCredentialScopeManager:
         removed = manager.cleanup_expired()
         assert removed == 1
         assert manager.get(cred.key_id) is None
+
+
+# ---------------------------------------------------------------------------
+# AgentCredentialPolicy (audit-051)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_policy() -> AgentCredentialPolicy:
+    """A representative enabled policy covering a few agents/roles."""
+    return AgentCredentialPolicy(
+        enabled=True,
+        known_keys=frozenset({"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_ORG_ID"}),
+        agent_rules={
+            "backend-001": frozenset({"ANTHROPIC_API_KEY"}),
+            "researcher-*": frozenset({"OPENAI_API_KEY"}),
+        },
+        role_rules={
+            "analyst": frozenset({"OPENAI_API_KEY", "OPENAI_ORG_ID"}),
+        },
+    )
+
+
+class TestAgentCredentialPolicyConstruction:
+    """Tests for policy construction and validation invariants."""
+
+    def test_disabled_by_default(self) -> None:
+        policy = AgentCredentialPolicy()
+        assert policy.enabled is False
+        assert policy.known_keys == frozenset()
+
+    def test_rules_referencing_undeclared_key_rejected(self) -> None:
+        with pytest.raises(UnknownCredentialKeyError) as excinfo:
+            AgentCredentialPolicy(
+                enabled=True,
+                known_keys=frozenset({"ANTHROPIC_API_KEY"}),
+                agent_rules={"a-1": frozenset({"GOOGLE_API_KEY"})},
+            )
+        assert "GOOGLE_API_KEY" in str(excinfo.value)
+
+    def test_role_rules_also_validated(self) -> None:
+        with pytest.raises(UnknownCredentialKeyError):
+            AgentCredentialPolicy(
+                enabled=True,
+                known_keys=frozenset({"A"}),
+                role_rules={"backend": frozenset({"B"})},
+            )
+
+
+class TestAllowedFor:
+    """Tests for AgentCredentialPolicy.allowed_for."""
+
+    def test_exact_match(self, sample_policy: AgentCredentialPolicy) -> None:
+        assert sample_policy.allowed_for("backend-001") == frozenset({"ANTHROPIC_API_KEY"})
+
+    def test_glob_match(self, sample_policy: AgentCredentialPolicy) -> None:
+        assert sample_policy.allowed_for("researcher-42") == frozenset({"OPENAI_API_KEY"})
+
+    def test_role_fallback(self, sample_policy: AgentCredentialPolicy) -> None:
+        assert sample_policy.allowed_for("unknown-agent", role="analyst") == frozenset(
+            {"OPENAI_API_KEY", "OPENAI_ORG_ID"}
+        )
+
+    def test_unlisted_agent_fails_closed(self, sample_policy: AgentCredentialPolicy) -> None:
+        with pytest.raises(AgentNotScopedError):
+            sample_policy.allowed_for("stranger-1")
+
+    def test_unlisted_agent_with_unknown_role_fails_closed(self, sample_policy: AgentCredentialPolicy) -> None:
+        with pytest.raises(AgentNotScopedError):
+            sample_policy.allowed_for("stranger-1", role="ghostbuster")
+
+    def test_disabled_policy_returns_all_known(self) -> None:
+        policy = AgentCredentialPolicy(
+            enabled=False,
+            known_keys=frozenset({"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}),
+        )
+        # Disabled policy must not fail-close — it is a no-op.
+        assert policy.allowed_for("any-agent") == policy.known_keys
+
+
+class TestFilterKeys:
+    """Tests for AgentCredentialPolicy.filter_keys — the hot-path."""
+
+    def test_scoped_agent_sees_only_its_subset(self, sample_policy: AgentCredentialPolicy) -> None:
+        got = sample_policy.filter_keys(
+            "backend-001",
+            {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
+        )
+        assert got == ("ANTHROPIC_API_KEY",)
+
+    def test_unscoped_agent_fails_closed(self, sample_policy: AgentCredentialPolicy) -> None:
+        with pytest.raises(AgentNotScopedError):
+            sample_policy.filter_keys("ghost-1", {"ANTHROPIC_API_KEY"})
+
+    def test_unknown_requested_key_raises(self, sample_policy: AgentCredentialPolicy) -> None:
+        with pytest.raises(UnknownCredentialKeyError) as excinfo:
+            sample_policy.filter_keys("backend-001", {"COHERE_API_KEY"})
+        assert "COHERE_API_KEY" in str(excinfo.value)
+
+    def test_unknown_key_raised_even_when_disabled(self) -> None:
+        policy = AgentCredentialPolicy(
+            enabled=False,
+            known_keys=frozenset({"ANTHROPIC_API_KEY"}),
+        )
+        with pytest.raises(UnknownCredentialKeyError):
+            policy.filter_keys("any", {"MYSTERY_KEY"})
+
+    def test_empty_known_keys_means_no_typo_check(self) -> None:
+        # Legacy callers that predate the policy: policy with no
+        # known_keys is fully inert, passes requested keys through.
+        policy = AgentCredentialPolicy()
+        assert policy.filter_keys("whatever", {"ANTHROPIC_API_KEY"}) == ("ANTHROPIC_API_KEY",)
+
+    def test_role_fallback_filters_intersection(self, sample_policy: AgentCredentialPolicy) -> None:
+        got = sample_policy.filter_keys(
+            "nameless",
+            {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"},
+            role="analyst",
+        )
+        # analyst is allowed OPENAI_API_KEY + OPENAI_ORG_ID; requested
+        # set intersects to just OPENAI_API_KEY.
+        assert got == ("OPENAI_API_KEY",)
+
+    def test_returns_sorted_for_determinism(self, sample_policy: AgentCredentialPolicy) -> None:
+        got = sample_policy.filter_keys(
+            "nameless",
+            {"OPENAI_ORG_ID", "OPENAI_API_KEY"},
+            role="analyst",
+        )
+        assert got == ("OPENAI_API_KEY", "OPENAI_ORG_ID")
+
+
+class TestScopedCredentialKeysHelper:
+    """Tests for the module-level convenience wrapper."""
+
+    def test_uses_default_policy(self, sample_policy: AgentCredentialPolicy) -> None:
+        prior = get_default_policy()
+        set_default_policy(sample_policy)
+        try:
+            got = scoped_credential_keys("backend-001", {"ANTHROPIC_API_KEY"})
+            assert got == ("ANTHROPIC_API_KEY",)
+        finally:
+            set_default_policy(prior)
+
+    def test_explicit_policy_overrides_default(self, sample_policy: AgentCredentialPolicy) -> None:
+        # Default stays disabled; pass an explicit enforcing policy.
+        with pytest.raises(AgentNotScopedError):
+            scoped_credential_keys("ghost", {"ANTHROPIC_API_KEY"}, policy=sample_policy)
+
+
+class TestLoadPolicyFromFile:
+    """Tests for config-file loading."""
+
+    def test_load_yaml(self, tmp_path: Path) -> None:
+        path = tmp_path / "policy.yaml"
+        path.write_text(
+            """
+enabled: true
+known_keys:
+  - ANTHROPIC_API_KEY
+  - OPENAI_API_KEY
+agents:
+  backend-001:
+    - ANTHROPIC_API_KEY
+roles:
+  researcher:
+    - OPENAI_API_KEY
+""".strip(),
+            encoding="utf-8",
+        )
+        policy = load_policy_from_file(path)
+        assert policy.enabled is True
+        assert policy.known_keys == frozenset({"ANTHROPIC_API_KEY", "OPENAI_API_KEY"})
+        assert policy.agent_rules["backend-001"] == frozenset({"ANTHROPIC_API_KEY"})
+        assert policy.role_rules["researcher"] == frozenset({"OPENAI_API_KEY"})
+
+    def test_load_json(self, tmp_path: Path) -> None:
+        path = tmp_path / "policy.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "known_keys": ["ANTHROPIC_API_KEY"],
+                    "agents": {"a-1": ["ANTHROPIC_API_KEY"]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        policy = load_policy_from_file(path)
+        assert policy.enabled is True
+        assert policy.agent_rules["a-1"] == frozenset({"ANTHROPIC_API_KEY"})
+
+    def test_empty_file_ok(self, tmp_path: Path) -> None:
+        path = tmp_path / "empty.yaml"
+        path.write_text("", encoding="utf-8")
+        policy = load_policy_from_file(path)
+        assert policy.enabled is False
+
+    def test_load_rejects_undeclared_key(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.yaml"
+        path.write_text(
+            "enabled: true\nknown_keys: [A]\nagents: {a-1: [B]}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(UnknownCredentialKeyError):
+            load_policy_from_file(path)
+
+
+class TestBuildFilteredEnvIntegration:
+    """End-to-end test: build_filtered_env honours the policy."""
+
+    def test_scoped_agent_sees_only_allowed_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_policy: AgentCredentialPolicy,
+    ) -> None:
+        from bernstein.adapters.env_isolation import build_filtered_env
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anth")
+        monkeypatch.setenv("OPENAI_API_KEY", "oai")
+
+        env = build_filtered_env(
+            ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+            agent_id="backend-001",
+            credential_policy=sample_policy,
+        )
+        assert env.get("ANTHROPIC_API_KEY") == "anth"
+        assert "OPENAI_API_KEY" not in env
+
+    def test_unscoped_agent_build_env_fails_closed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_policy: AgentCredentialPolicy,
+    ) -> None:
+        from bernstein.adapters.env_isolation import build_filtered_env
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anth")
+        with pytest.raises(AgentNotScopedError):
+            build_filtered_env(
+                ["ANTHROPIC_API_KEY"],
+                agent_id="stranger-1",
+                credential_policy=sample_policy,
+            )
+
+    def test_unknown_key_raises_during_build(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_policy: AgentCredentialPolicy,
+    ) -> None:
+        from bernstein.adapters.env_isolation import build_filtered_env
+
+        monkeypatch.setenv("MYSTERY_KEY", "x")
+        with pytest.raises(UnknownCredentialKeyError):
+            build_filtered_env(
+                ["MYSTERY_KEY"],
+                agent_id="backend-001",
+                credential_policy=sample_policy,
+            )
+
+    def test_no_agent_id_is_backward_compatible(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Legacy call sites without agent_id keep working unchanged."""
+        from bernstein.adapters.env_isolation import build_filtered_env
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anth")
+        env = build_filtered_env(["ANTHROPIC_API_KEY"])
+        assert env.get("ANTHROPIC_API_KEY") == "anth"
