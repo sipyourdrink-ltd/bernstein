@@ -1264,29 +1264,44 @@ class TaskStore:
             return task
 
     async def _complete_parent_if_ready(self, parent_task_id: str | None) -> None:
-        """Complete a waiting parent task when all of its subtasks are done."""
-        if parent_task_id is None:
-            return
-        parent = self._tasks.get(parent_task_id)
-        if parent is None or parent.status != TaskStatus.WAITING_FOR_SUBTASKS:
-            return
-        subtasks = [task for task in self._tasks.values() if task.parent_task_id == parent_task_id]
-        if not subtasks or any(task.status != TaskStatus.DONE for task in subtasks):
-            return
-        self._index_remove(parent)
-        transition_task(
-            parent,
-            TaskStatus.DONE,
-            actor="task_store",
-            reason="all subtasks completed",
-        )
-        parent.result_summary = f"Completed via {len(subtasks)} subtasks"
-        parent.completed_at = time.time()
-        parent.version += 1
-        self._index_add(parent)
-        completed_at = parent.completed_at
-        await self._append_jsonl(self._task_to_record(parent))
-        await self._append_archive(parent, completed_at)
+        """Complete a waiting ancestor chain when all descendant subtasks are done.
+
+        Walks up the ``parent_task_id`` chain iteratively (not recursively) and
+        promotes each ancestor to ``DONE`` as long as it is ``WAITING_FOR_SUBTASKS``
+        and every direct child is already ``DONE``. The iterative form avoids
+        re-entering ``self._lock`` (``asyncio.Lock`` is not re-entrant) and the
+        ``visited`` set guards against parent_task_id cycles from bad data.
+
+        Fix for audit-029: previously only the immediate parent was promoted, so
+        a grandparent G never bubbled up and stayed ``WAITING_FOR_SUBTASKS``
+        until timeout escalation forced it to ``BLOCKED``.
+        """
+        current_id = parent_task_id
+        visited: set[str] = set()
+        while current_id is not None and current_id not in visited:
+            visited.add(current_id)
+            parent = self._tasks.get(current_id)
+            if parent is None or parent.status != TaskStatus.WAITING_FOR_SUBTASKS:
+                return
+            subtasks = [task for task in self._tasks.values() if task.parent_task_id == current_id]
+            if not subtasks or any(task.status != TaskStatus.DONE for task in subtasks):
+                return
+            self._index_remove(parent)
+            transition_task(
+                parent,
+                TaskStatus.DONE,
+                actor="task_store",
+                reason="all subtasks completed",
+            )
+            parent.result_summary = f"Completed via {len(subtasks)} subtasks"
+            parent.completed_at = time.time()
+            parent.version += 1
+            self._index_add(parent)
+            completed_at = parent.completed_at
+            await self._append_jsonl(self._task_to_record(parent))
+            await self._append_archive(parent, completed_at)
+            # Bubble up: attempt to complete this task's own parent.
+            current_id = parent.parent_task_id
 
     async def add_progress(self, task_id: str, message: str, percent: int) -> Task:
         """Append an intermediate progress update to a task.
