@@ -22,6 +22,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
 
+from bernstein.core.defaults import JANITOR
+from bernstein.core.persistence.runtime_state import rotate_log_file
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -496,7 +499,10 @@ class FileHealthTracker:
             flagged=flagged,
         )
 
-        # Append to health log
+        # Append to health log — rotate before appending to cap disk growth
+        # (audit-081). get_all()/get() dedupe by path on read so older entries
+        # in the rotated backup are naturally replaced by fresher ones.
+        rotate_log_file(self._health_path, max_bytes=JANITOR.file_health_rotate_bytes)
         try:
             with self._health_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(score.to_dict()) + "\n")
@@ -513,6 +519,7 @@ class FileHealthTracker:
             new_total=total,
             flagged=flagged,
         )
+        rotate_log_file(self._touch_path, max_bytes=JANITOR.file_health_touches_rotate_bytes)
         try:
             with self._touch_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(asdict(touch)) + "\n")

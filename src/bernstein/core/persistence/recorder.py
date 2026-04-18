@@ -22,6 +22,9 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.defaults import JANITOR
+from bernstein.core.persistence.runtime_state import rotate_log_file
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -69,6 +72,9 @@ class RunRecorder:
             "event": event,
         }
         entry.update(data)
+        # audit-081: cap unbounded replay.jsonl. `bernstein replay` may stitch
+        # live + rotated backups if needed — see load_replay_events.
+        rotate_log_file(self._path, max_bytes=JANITOR.replay_rotate_bytes)
         try:
             with self._path.open("a") as f:
                 f.write(json.dumps(entry, default=str) + "\n")

@@ -73,3 +73,29 @@ def test_orchestrator_config_explicit_poll_interval_wins() -> None:
         assert cfg.poll_interval_s == 1
     finally:
         reset()
+
+
+def test_janitor_defaults_documented() -> None:
+    """audit-081: retention/rotation knobs must live in JanitorDefaults."""
+    reset()
+    assert defaults.JANITOR.run_retention_count == 20
+    assert defaults.JANITOR.wal_retention_count == 50
+    assert defaults.JANITOR.bridge_lineage_rotate_bytes > 0
+    assert defaults.JANITOR.task_notifications_rotate_bytes > 0
+    assert defaults.JANITOR.idempotency_rotate_bytes > 0
+    assert defaults.JANITOR.file_health_rotate_bytes > 0
+    assert defaults.JANITOR.file_health_touches_rotate_bytes > 0
+    assert defaults.JANITOR.replay_rotate_bytes > 0
+
+
+def test_janitor_override_round_trip() -> None:
+    """``override("janitor", …)`` must tune retention without breaking reset()."""
+    reset()
+    try:
+        override("janitor", {"run_retention_count": 5, "wal_retention_count": 7})
+        assert defaults.JANITOR.run_retention_count == 5
+        assert defaults.JANITOR.wal_retention_count == 7
+    finally:
+        reset()
+    assert defaults.JANITOR.run_retention_count == 20
+    assert defaults.JANITOR.wal_retention_count == 50

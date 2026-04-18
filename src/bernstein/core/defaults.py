@@ -322,6 +322,33 @@ class TriggerDefaults:
 
 
 # ---------------------------------------------------------------------------
+# Janitor / retention defaults (audit-081)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class JanitorDefaults:
+    """Disk retention policy for long-running orchestrator artifacts.
+
+    Controls both JSONL append-log rotation thresholds and directory-level
+    pruning of per-run artifacts. See audit-081.
+    """
+
+    # Per-run directory retention
+    run_retention_count: int = 20
+    # Per-run WAL file retention under .sdd/runtime/wal/
+    wal_retention_count: int = 50
+
+    # Rotation thresholds for append-only JSONL files (bytes).
+    bridge_lineage_rotate_bytes: int = 10 * 1024 * 1024  # 10 MiB
+    task_notifications_rotate_bytes: int = 10 * 1024 * 1024  # 10 MiB
+    idempotency_rotate_bytes: int = 10 * 1024 * 1024  # 10 MiB
+    file_health_rotate_bytes: int = 10 * 1024 * 1024  # 10 MiB
+    file_health_touches_rotate_bytes: int = 10 * 1024 * 1024  # 10 MiB
+    replay_rotate_bytes: int = 50 * 1024 * 1024  # 50 MiB per run
+
+
+# ---------------------------------------------------------------------------
 # Singletons (mutable via override())
 # ---------------------------------------------------------------------------
 
@@ -337,6 +364,7 @@ APPROVAL = ApprovalDefaults()
 PROTOCOL = ProtocolDefaults()
 PLAN = PlanDefaults()
 TRIGGER = TriggerDefaults()
+JANITOR = JanitorDefaults()
 
 _SECTION_MAP: dict[str, Any] = {
     "orchestrator": ORCHESTRATOR,
@@ -351,6 +379,7 @@ _SECTION_MAP: dict[str, Any] = {
     "protocol": PROTOCOL,
     "plan": PLAN,
     "trigger": TRIGGER,
+    "janitor": JANITOR,
 }
 
 
@@ -384,7 +413,7 @@ def override(section: str, overrides: dict[str, Any]) -> None:
 def reset() -> None:
     """Reset all sections to their default values (for testing)."""
     global ORCHESTRATOR, SPAWN, AGENT, TASK, TOKEN, COST, GATE
-    global PARALLELISM, APPROVAL, PROTOCOL, PLAN, TRIGGER
+    global PARALLELISM, APPROVAL, PROTOCOL, PLAN, TRIGGER, JANITOR
     ORCHESTRATOR = OrchestratorDefaults()
     SPAWN = SpawnDefaults()
     AGENT = AgentDefaults()
@@ -397,6 +426,7 @@ def reset() -> None:
     PROTOCOL = ProtocolDefaults()
     PLAN = PlanDefaults()
     TRIGGER = TriggerDefaults()
+    JANITOR = JanitorDefaults()
     _SECTION_MAP.update(
         {
             "orchestrator": ORCHESTRATOR,
@@ -411,5 +441,6 @@ def reset() -> None:
             "protocol": PROTOCOL,
             "plan": PLAN,
             "trigger": TRIGGER,
+            "janitor": JANITOR,
         }
     )
