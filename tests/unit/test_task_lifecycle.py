@@ -109,7 +109,6 @@ def _process_orch(tmp_path: Path, session: AgentSession) -> Any:
         _approval_gate=None,
         _post_bulletin=MagicMock(),
         _notify=MagicMock(),
-        _sync_backlog_file=MagicMock(),
         _cost_tracker=MagicMock(),
         _evolution=None,
         _response_cache=MagicMock(),
@@ -474,7 +473,6 @@ def test_process_completed_tasks_moves_ticket_and_caches_verified_result(tmp_pat
 
     assert (tmp_path / ".sdd" / "backlog" / "closed" / "bug-101.md").exists()
     assert not source_ticket.exists()
-    orch._sync_backlog_file.assert_called_once_with(task)
     orch._response_cache.store.assert_called_once_with(
         orch._response_cache.task_key.return_value,
         "Parser regression closed.",
