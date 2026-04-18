@@ -73,7 +73,8 @@ Trigger config path: `.sdd/config/triggers.yaml`
 - `src/bernstein/core/context_compression.py` — PromptCompressor fallback
 - `src/bernstein/core/spawn_prompt.py` — prompt assembly + collapse integration
 - `src/bernstein/core/tick_pipeline.py` — tick-level collapse entry point
-- `src/bernstein/core/auto_compact.py` — circuit breaker for runtime compaction
+- `src/bernstein/core/tokens/compaction_pipeline.py` — structured compaction pipeline (pre-hooks, strip media, LLM summary, post-hooks)
+- `src/bernstein/core/tokens/token_monitor.py` — `AutoCompactCircuitBreaker` + threshold-based trigger
 
 ### Retry, scheduling, and lifecycle workflows
 
