@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -27,11 +28,30 @@ _SPARK_CHARS = "▁▂▃▄▅▆▇█"
 # -- Data fetching (sync -- called via run_worker in a thread) -----
 
 
+def _auth_headers() -> dict[str, str]:
+    """Return Authorization header when ``BERNSTEIN_AUTH_TOKEN`` is set.
+
+    The TUI runs inside the main Bernstein process, so it inherits the
+    token that ``_resolve_auth_token`` stashes into ``os.environ`` during
+    bootstrap (see ``core.server.server_launch``). Without this header the
+    SSO middleware rejects every request with 401, leaving the Tasks
+    panel empty.
+    """
+    token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}
+
+
 def _get(path: str) -> Any:
     import httpx
 
     try:
-        return httpx.get(f"{SERVER_URL}{path}", timeout=10.0).json()
+        return httpx.get(
+            f"{SERVER_URL}{path}",
+            timeout=10.0,
+            headers=_auth_headers(),
+        ).json()
     except Exception as exc:
         logger.warning("Dashboard GET %s failed: %s", path, exc)
         return None
@@ -41,7 +61,12 @@ def _post(path: str, body: dict[str, Any] | None = None) -> Any:
     import httpx
 
     try:
-        return httpx.post(f"{SERVER_URL}{path}", json=body or {}, timeout=2.0).json()
+        return httpx.post(
+            f"{SERVER_URL}{path}",
+            json=body or {},
+            timeout=2.0,
+            headers=_auth_headers(),
+        ).json()
     except Exception as exc:
         logger.warning("Dashboard POST %s failed: %s", path, exc)
         return None
