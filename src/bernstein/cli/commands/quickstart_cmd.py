@@ -11,6 +11,7 @@ import httpx
 
 from bernstein.cli.helpers import (
     SDD_DIRS,
+    auth_headers,
     console,
     is_alive,
     print_banner,
@@ -175,7 +176,7 @@ def _poll_until_done(server_url: str, deadline: float) -> None:
 
         while time.monotonic() < deadline:
             try:
-                resp = httpx.get(f"{server_url}/status", timeout=3.0)
+                resp = httpx.get(f"{server_url}/status", timeout=3.0, headers=auth_headers())
                 if resp.status_code == 200:
                     payload = resp.json()
                     tasks_list: list[dict[str, Any]] = payload.get("tasks", [])
@@ -241,7 +242,7 @@ def _print_quickstart_summary(
     tasks_data: list[dict[str, Any]] = []
     total_cost: float = 0.0
     try:
-        resp = httpx.get(f"{server_url}/status", timeout=3.0)
+        resp = httpx.get(f"{server_url}/status", timeout=3.0, headers=auth_headers())
         if resp.status_code == 200:
             payload = resp.json()
             tasks_data = payload.get("tasks", [])

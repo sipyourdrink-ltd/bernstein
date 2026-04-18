@@ -1176,7 +1176,16 @@ class BernsteinApp(App[None]):
 
         # 1. Ask the server to shut down gracefully
         with contextlib.suppress(Exception):
-            httpx.post(f"{SERVER_URL}/shutdown", json={"reason": "hot restart"}, timeout=2.0)
+            _shutdown_headers: dict[str, str] = {}
+            _shutdown_token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
+            if _shutdown_token:
+                _shutdown_headers["Authorization"] = f"Bearer {_shutdown_token}"
+            httpx.post(
+                f"{SERVER_URL}/shutdown",
+                json={"reason": "hot restart"},
+                timeout=2.0,
+                headers=_shutdown_headers,
+            )
 
         # 2. Kill spawner and watchdog
         for pid_path in (SDD_PID_SPAWNER, SDD_PID_WATCHDOG):
