@@ -362,7 +362,6 @@ exclude = [
     "src/bernstein/cli/plan_diff.py",
     "src/bernstein/cli/plan_explain.py",
     "src/bernstein/cli/voice_control.py",
-    "src/bernstein/core/plan_autocorrect.py",
     "src/bernstein/core/plan_schema.py",
     "src/bernstein/core/stack_detector.py",
     "src/bernstein/core/vertical_packs.py",

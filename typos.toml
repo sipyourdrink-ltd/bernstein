@@ -17,7 +17,6 @@ rto = "rto"          # Recovery Time Objective (compliance/DR)
 RTO = "RTO"          # Recovery Time Objective (compliance/DR, acronym)
 mis = "mis"          # false positive on partial words
 fo = "fo"            # fo = fan_out (test_complexity_correlation.py)
-smal = "smal"        # intentional typo in test_plan_autocorrect.py test fixture
 Aktive = "Aktive"    # correct German word for "Active" (i18n.py)
 
 # Technical terms used consistently in the codebase

@@ -346,7 +346,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "priority_aging": "bernstein.core.tasks.priority_aging",
     "process_utils": "bernstein.core.orchestration.process_utils",
     "profiler": "bernstein.core.observability.profiler",
-    "progress_estimation": "bernstein.core.planning.progress_estimation",
     "prometheus": "bernstein.core.observability.prometheus",
     "prompt_caching": "bernstein.core.tokens.prompt_caching",
     "prompt_injection": "bernstein.core.tokens.prompt_injection",
