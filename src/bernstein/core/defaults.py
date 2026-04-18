@@ -51,12 +51,6 @@ class OrchestratorDefaults:
     manager_review_completion_threshold: int = 7
     manager_review_stall_s: float = 900.0  # 15 min
 
-    replenish_cooldown_s: float = 60.0
-    replenish_max_tasks: int = 5
-    max_ingest_per_tick: int = 50
-
-    evolve_backoff_max: int = 8  # max 8x backoff for empty evolve cycles
-
 
 # ---------------------------------------------------------------------------
 # Spawn / Agent defaults
@@ -69,8 +63,6 @@ class SpawnDefaults:
 
     disk_free_threshold_gb: float = 1.0
     spawn_failure_cooldown_s: float = 300.0  # 5 min
-    in_process_wait_timeout_s: float = 5.0
-    in_process_poll_timeout_s: float = 0.1
     lesson_cache_ttl_s: float = 300.0  # 5 min
 
 
@@ -116,11 +108,6 @@ class TaskDefaults:
     priority_decay_threshold_hours: float = 24.0
     min_priority: int = 3
 
-    retry_base_delay_s: float = 30.0
-    retry_max_backoff_s: float = 300.0  # 5 min
-    transient_max_retries: int = 3
-    fatal_max_retries: int = 0
-
     subtask_wait_timeout_s: float = 30 * 60  # 30 min
     max_combined_estimated_minutes: int = 60
     max_tasks_per_compacted_batch: int = 5
@@ -156,13 +143,6 @@ class TokenDefaults:
 
     oversized_interval_tokens: int = 20_000
     min_loop_samples: int = 3
-
-    api_timeout_s: float = 5.0
-    api_max_chars: int = 500_000
-
-    high_io_ratio_threshold: float = 10.0
-    efficiency_ratio_threshold: float = 3.0
-    minimal_output_threshold: int = 100
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +194,6 @@ class CostDefaults:
 class GateDefaults:
     """Quality gate thresholds and timeouts."""
 
-    subprocess_timeout_s: float = 120.0
     intent_max_diff_chars: int = 8_000
     intent_max_tokens: int = 256
     fork_context_max_chars: int = 4_000
@@ -264,20 +243,12 @@ class ProtocolDefaults:
     mcp_max_restarts: int = 5
     mcp_max_backoff_s: float = 30.0
     mcp_backoff_multiplier: float = 2.0
-    mcp_refresh_cooldown_s: float = 60.0
-    mcp_readiness_timeout_s: float = 10.0
-    mcp_readiness_poll_s: float = 0.5
 
     cluster_autoscale_cooldown_s: float = 120.0
     cluster_min_nodes: int = 1
     cluster_max_nodes: int = 20
     cluster_steal_threshold: int = 3
     cluster_steal_cooldown_s: float = 10.0
-
-    ws_ping_interval_s: float = 15.0
-    ws_max_buffer: int = 256
-
-    sse_read_timeout_s: float = 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -317,8 +288,6 @@ class TriggerDefaults:
 
     max_tasks_per_minute: int = 20
     max_tasks_per_trigger_per_hour: int = 50
-    file_watch_max_queue: int = 10_000
-    dependency_scan_interval_s: float = 7 * 24 * 60 * 60  # weekly
 
 
 # ---------------------------------------------------------------------------

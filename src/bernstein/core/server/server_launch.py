@@ -242,7 +242,19 @@ def _start_server(
 
     Raises:
         RuntimeError: If a server is already running on the PID file.
+        SystemExit: If ``BERNSTEIN_WORKERS`` / ``WEB_CONCURRENCY`` request
+            more than one uvicorn worker. Bernstein's ``TaskStore`` is
+            single-process (audit-025) and multi-worker mode corrupts
+            JSONL and allows double-claims.
     """
+    # audit-025: refuse to launch multi-worker in the parent process so the
+    # operator sees the error on the bernstein CLI instead of in server.log
+    # after a silent subprocess crash.
+    from bernstein.core.server.server_app import preflight_multi_worker_guard
+
+    preflight_multi_worker_guard()
+    logger.info("Starting task server on %s:%d (single-worker mode, audit-025)", bind_host, port)
+
     pid_path = workdir / ".sdd" / "runtime" / "server.pid"
     existing = _read_pid(pid_path)
     if existing is not None and _is_alive(existing):
@@ -257,6 +269,11 @@ def _start_server(
     env["BERNSTEIN_BIND_HOST"] = bind_host
     if auth_token:
         env["BERNSTEIN_AUTH_TOKEN"] = auth_token
+    # audit-025: pin the child to single-worker even if the parent env had
+    # WEB_CONCURRENCY set (the preflight above already rejected that case,
+    # but we belt-and-braces here in case a future code path bypasses it).
+    env["BERNSTEIN_WORKERS"] = "1"
+    env.pop("WEB_CONCURRENCY", None)
 
     # Propagate storage backend config if set in the current process env.
     # The server reads these at import time via the store_factory module.

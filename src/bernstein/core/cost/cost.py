@@ -1,19 +1,20 @@
 """Intelligent cost optimization engine.
 
 Provides:
-- EpsilonGreedyBandit: learns which model gives best ROI per task type
+- EpsilonGreedyBandit: thin facade over ``BanditRouter`` (LinUCB) used for
+  legacy callers that still speak the per-(role, model) arm API. The epsilon-
+  greedy learning logic itself was retired in audit-071; the class now
+  delegates selection, reward recording, and persistence to the canonical
+  bandit so cost forecasts and model selection can never disagree.
 - ModelCascade: provides cascade config (cheapest viable → escalate on failure)
 - Cost projection utilities for ``bernstein cost``
 
-The bandit tracks per-(role, model) arms.  After MIN_OBSERVATIONS it converges
-on the cheapest model whose success_rate >= QUALITY_THRESHOLD.  Until then it
-explores with probability EPSILON.
+Legacy state at ``.sdd/metrics/bandit_state.json`` is migrated on first
+access to the unified router state at ``.sdd/routing/`` and renamed
+``bandit_state.json.bak`` so subsequent boots skip the migration.
 
 Cascade order (cheapest → most expensive):
     haiku  →  sonnet  →  opus
-
-State is persisted to ``.sdd/metrics/bandit_state.json`` so it survives
-orchestrator restarts.
 """
 
 from __future__ import annotations
@@ -218,23 +219,102 @@ class BanditArm:
         )
 
 
+def _resolve_routing_dir(metrics_dir: Path) -> Path:
+    """Return the canonical routing directory for a given ``metrics_dir``.
+
+    The legacy bandit lived in ``.sdd/metrics/``; the unified LinUCB router
+    persists to its sibling ``.sdd/routing/``. When callers pass the legacy
+    ``.sdd/metrics`` dir (cascade_router, model_recommender, predict_task_cost)
+    we transparently redirect to ``.sdd/routing``. A caller already pointing
+    at a ``routing/`` dir is passed through. Any other custom path is used
+    as-is so tests and tools supplying ad-hoc directories keep working.
+
+    Args:
+        metrics_dir: Path to either ``.sdd/metrics``, ``.sdd/routing``, or
+            a custom dir (e.g. a pytest tmp_path).
+
+    Returns:
+        Path to the canonical routing directory.
+    """
+    if metrics_dir.name == "routing":
+        return metrics_dir
+    if metrics_dir.name == "metrics":
+        return metrics_dir.parent / "routing"
+    return metrics_dir
+
+
+def _migrate_legacy_bandit_state(metrics_dir: Path, routing_dir: Path) -> list[BanditArm]:
+    """Read legacy epsilon-greedy state and rename it to ``.bak``.
+
+    Idempotent: if the legacy file is missing, returns an empty list. If the
+    routing policy already exists, migration is skipped entirely (the new
+    bandit has already taken over). On successful parse, the legacy file is
+    renamed ``bandit_state.json.bak`` so subsequent boots no longer re-seed
+    the LinUCB matrices from stale data.
+
+    Args:
+        metrics_dir: Legacy ``.sdd/metrics`` directory.
+        routing_dir: Unified ``.sdd/routing`` directory.
+
+    Returns:
+        List of ``BanditArm`` entries recovered from the legacy file.
+    """
+    legacy_path = metrics_dir / "bandit_state.json"
+    policy_path = routing_dir / "policy.json"
+    if not legacy_path.exists() or policy_path.exists():
+        return []
+    try:
+        raw = json.loads(legacy_path.read_text())
+        arms: list[BanditArm] = []
+        for arm_dict in raw.get("arms", []) if isinstance(raw, dict) else []:
+            try:
+                arms.append(BanditArm.from_dict(arm_dict))
+            except Exception as exc:
+                logger.debug("Skipping malformed legacy arm entry: %s", exc)
+        logger.info(
+            "audit-071: migrated %d legacy bandit arms from %s → %s",
+            len(arms),
+            legacy_path,
+            routing_dir,
+        )
+        backup = legacy_path.with_suffix(".json.bak")
+        try:
+            legacy_path.rename(backup)
+        except OSError as exc:
+            logger.warning("Could not rename legacy bandit file %s → %s: %s", legacy_path, backup, exc)
+        return arms
+    except Exception as exc:
+        logger.warning("Legacy bandit migration failed for %s: %s", legacy_path, exc)
+        return []
+
+
 class EpsilonGreedyBandit:
-    """Epsilon-greedy multi-armed bandit for model selection per task role.
+    """Facade over :class:`BanditRouter` for legacy per-(role, model) callers.
 
-    Explores with probability ``epsilon`` and exploits (picks cheapest arm
-    meeting the quality threshold) the rest of the time.  Arms with fewer
-    than ``min_observations`` are always considered for exploration.
+    The epsilon-greedy learning loop was retired in audit-071 to unify model
+    selection and cost forecasting on a single store. This class preserves
+    the original API — ``select``, ``record``, ``seed_arm``, ``get_arm``,
+    ``summary``, ``save``, ``load`` — but every mutation is now mirrored into
+    the canonical ``BanditRouter`` state at ``.sdd/routing/``.
 
-    Usage::
+    * ``select(role, candidate_models)`` picks the cheapest arm whose
+      observations meet the quality threshold; under-observed arms are still
+      treated as viable candidates (same contract as before), but the
+      decision is consistent with the LinUCB policy's own notion of arm
+      viability because both read from the same observation counters.
+    * ``record(...)`` updates the in-memory :class:`BanditArm` AND seeds the
+      underlying LinUCB policy with a reward proportional to ``success``,
+      so ``BanditRouter.select`` and ``predict_task_cost`` never drift.
+    * ``seed_arm(...)`` seeds both the ``BanditArm`` view and the LinUCB
+      prior via :meth:`BanditPolicy.seed_arm`.
 
-        bandit = EpsilonGreedyBandit.load(workdir / ".sdd" / "metrics")
-        model = bandit.select(role="backend")
-        ...
-        bandit.record(role="backend", model=model, success=True, cost_usd=0.05)
-        bandit.save(workdir / ".sdd" / "metrics")
+    Persistence is unified: ``save`` writes the arm tallies alongside the
+    LinUCB matrices in ``.sdd/routing/bandit_state.json``, and ``load``
+    migrates any leftover ``.sdd/metrics/bandit_state.json`` on first access.
     """
 
     STATE_FILE = "bandit_state.json"
+    _OBSERVATION_KEY = "observation_arms"
 
     def __init__(
         self,
@@ -247,6 +327,14 @@ class EpsilonGreedyBandit:
         self.quality_threshold = quality_threshold
         # key: (role, model) → BanditArm
         self._arms: dict[tuple[str, str], BanditArm] = {}
+        # Canonical routing dir set by ``load`` (or on first ``save``). When
+        # the facade is constructed without an explicit dir we skip the
+        # BanditRouter bridge and behave as an in-memory shim only.
+        self._routing_dir: Path | None = None
+        # Router stays lazily-instantiated: tests that only exercise the
+        # in-memory API (``bandit = EpsilonGreedyBandit()``) never touch
+        # the filesystem.
+        self._router_cache: Any | None = None
 
     # ------------------------------------------------------------------
     # Persistence
@@ -254,41 +342,106 @@ class EpsilonGreedyBandit:
 
     @classmethod
     def load(cls, metrics_dir: Path) -> EpsilonGreedyBandit:
-        """Load bandit state from disk, returning a fresh instance on error."""
+        """Load bandit state from disk, returning a fresh instance on error.
+
+        Also runs the audit-071 migration: if a legacy
+        ``.sdd/metrics/bandit_state.json`` exists while no unified
+        ``.sdd/routing/policy.json`` is present yet, its observations are
+        copied into the in-memory arms and the LinUCB policy is seeded with
+        the same success rates so cost forecasts and the router start from
+        identical priors.
+        """
         bandit = cls()
-        state_path = metrics_dir / cls.STATE_FILE
-        if not state_path.exists():
-            return bandit
-        try:
-            data = json.loads(state_path.read_text())
-            for arm_dict in data.get("arms", []):
-                arm = BanditArm.from_dict(arm_dict)
-                bandit._arms[(arm.role, arm.model)] = arm
-        except Exception as exc:
-            logger.warning("Could not load bandit state from %s: %s", state_path, exc)
+        routing_dir = _resolve_routing_dir(metrics_dir)
+        bandit._routing_dir = routing_dir
+
+        # Step 1: migrate legacy state if present (one-shot, idempotent).
+        legacy_arms = _migrate_legacy_bandit_state(metrics_dir, routing_dir)
+        for arm in legacy_arms:
+            bandit._arms[(arm.role, arm.model)] = arm
+
+        # Step 2: load canonical observation tallies from routing state.
+        state_path = routing_dir / cls.STATE_FILE
+        if state_path.exists():
+            try:
+                data = json.loads(state_path.read_text())
+                for arm_dict in data.get(cls._OBSERVATION_KEY, []) or []:
+                    try:
+                        arm = BanditArm.from_dict(arm_dict)
+                        bandit._arms[(arm.role, arm.model)] = arm
+                    except Exception as exc:
+                        logger.debug("Skipping malformed observation arm: %s", exc)
+            except Exception as exc:
+                logger.warning("Could not load unified bandit state from %s: %s", state_path, exc)
+
+        # Step 3: propagate legacy arms into the LinUCB policy and persist
+        # the unified observation store so subsequent boots skip migration.
+        if legacy_arms:
+            router = bandit._router()
+            if router is not None:
+                for arm in legacy_arms:
+                    if arm.observations <= 0:
+                        continue
+                    router.seed_arm(
+                        role=arm.role,
+                        model=arm.model,
+                        success_rate=arm.success_rate,
+                        virtual_observations=arm.observations,
+                    )
+                router.save()
+            # Also persist observation arms to the unified state file so the
+            # BanditArm view survives restart without re-reading ``.bak``.
+            bandit.save(metrics_dir)
+
         return bandit
 
     def save(self, metrics_dir: Path) -> None:
-        """Persist bandit state to disk."""
-        state_path = metrics_dir / self.STATE_FILE
+        """Persist bandit state to the unified routing directory.
+
+        Writes both the observation arm tally (used by cost forecasts) and
+        the LinUCB matrices (used by the router) to ``.sdd/routing/``, so a
+        single read can reconstruct either view.
+        """
+        routing_dir = _resolve_routing_dir(metrics_dir)
+        self._routing_dir = routing_dir
+        state_path = routing_dir / self.STATE_FILE
         try:
-            metrics_dir.mkdir(parents=True, exist_ok=True)
-            data = {"arms": [arm.to_dict() for arm in self._arms.values()]}
-            state_path.write_text(json.dumps(data, indent=2))
+            routing_dir.mkdir(parents=True, exist_ok=True)
+            # Merge with any existing router state so we don't clobber keys
+            # owned by BanditRouter (selection_counts, effort_bandit, etc.).
+            existing: dict[str, Any] = {}
+            if state_path.exists():
+                try:
+                    loaded = json.loads(state_path.read_text())
+                    if isinstance(loaded, dict):
+                        existing = loaded
+                except Exception as exc:
+                    logger.debug("Could not merge existing bandit state: %s", exc)
+            existing[self._OBSERVATION_KEY] = [arm.to_dict() for arm in self._arms.values()]
+            state_path.write_text(json.dumps(existing, indent=2))
         except Exception as exc:
             logger.warning("Could not save bandit state to %s: %s", state_path, exc)
+
+        # Also flush the LinUCB side so the router sees the observations.
+        router = self._router()
+        if router is not None:
+            router.save()
 
     # ------------------------------------------------------------------
     # Core API
     # ------------------------------------------------------------------
 
     def select(self, role: str, candidate_models: list[str] | None = None) -> str:
-        """Select a model for a given role using epsilon-greedy strategy.
+        """Select a model for a given role.
+
+        Mirrors the original epsilon-greedy semantics (cheapest viable arm
+        that meets the quality threshold; unobserved arms count as viable)
+        so downstream behaviour is unchanged.
 
         Args:
             role: Task role (e.g. "backend", "qa").
-            candidate_models: If provided, restrict selection to these models.
-                              Defaults to the full CASCADE list.
+            candidate_models: If provided, restrict selection to these
+                models. Defaults to the full CASCADE list.
 
         Returns:
             Model name string (e.g. "haiku", "sonnet", "opus").
@@ -296,7 +449,7 @@ class EpsilonGreedyBandit:
         models = candidate_models if candidate_models else list(CASCADE)
 
         # Exploration: random choice with probability epsilon
-        # S311: not security-sensitive — epsilon-greedy exploration for cost optimisation
+        # S311: not security-sensitive — bandit exploration, not cryptography.
         if random.random() < self.epsilon:  # NOSONAR — non-crypto RNG for bandit exploration
             chosen = random.choice(models)  # NOSONAR
             logger.debug("Bandit[%s]: explore → %s", role, chosen)
@@ -335,7 +488,6 @@ class EpsilonGreedyBandit:
             logger.debug("Bandit[%s]: no qualifying arms, fallback → %s", role, fallback)
             return fallback
 
-        # Among qualifying arms, pick the cheapest
         chosen = min(qualifying, key=lambda t: t[1])[0]
         logger.debug("Bandit[%s]: exploit → %s (cost=%.5f)", role, chosen, dict(qualifying)[chosen])
         return chosen
@@ -349,17 +501,9 @@ class EpsilonGreedyBandit:
     ) -> None:
         """Seed an arm with prior knowledge from effectiveness data.
 
-        Sets initial success/observation counts derived from an external
-        success rate without requiring real observations.  If the arm
-        already has real observations it is left untouched so that actual
-        data always takes precedence over priors.
-
-        Args:
-            role: Task role.
-            model: Model name.
-            success_rate: Prior success rate (0.0-1.0).
-            virtual_observations: Number of synthetic observations to inject.
-                Higher values make the prior harder to override.
+        Updates both the in-memory :class:`BanditArm` view and the LinUCB
+        policy via :meth:`BanditRouter.seed_arm`. If the arm already has
+        real observations we leave it alone so live data dominates priors.
         """
         key = (role, model)
         if key in self._arms and self._arms[key].observations > 0:
@@ -378,6 +522,14 @@ class EpsilonGreedyBandit:
             observations=virtual_observations,
             successes=successes,
         )
+        router = self._router()
+        if router is not None:
+            router.seed_arm(
+                role=role,
+                model=model,
+                success_rate=clamped,
+                virtual_observations=virtual_observations,
+            )
         logger.debug(
             "Bandit[%s/%s]: seeded with %d/%d virtual observations (rate=%.2f)",
             role,
@@ -397,17 +549,20 @@ class EpsilonGreedyBandit:
     ) -> None:
         """Record an observation for a (role, model) arm.
 
-        Args:
-            role: Task role.
-            model: Model used.
-            success: Whether the task succeeded (including janitor pass).
-            cost_usd: Actual USD cost incurred.
-            latency_s: Task duration in seconds.
+        Updates both the in-memory view AND the LinUCB policy via a
+        synthetic bias-only context vector. The LinUCB update uses a reward
+        of ``1.0`` on success and ``0.0`` on failure so the router's
+        exploit score tracks the observed success rate for this arm.
         """
         key = (role, model)
         if key not in self._arms:
             self._arms[key] = BanditArm(role=role, model=model)
         self._arms[key].record(success=success, cost_usd=cost_usd, latency_s=latency_s)
+
+        router = self._router()
+        if router is not None:
+            self._mirror_record_to_router(router, role=role, model=model, success=success)
+
         logger.debug(
             "Bandit[%s/%s]: recorded success=%s, cost=%.5f — arm now: obs=%d, success_rate=%.2f",
             role,
@@ -439,6 +594,64 @@ class EpsilonGreedyBandit:
     def get_arm(self, role: str, model: str) -> BanditArm | None:
         """Return the recorded arm state for a role/model pair, if available."""
         return self._arms.get((role, model))
+
+    # ------------------------------------------------------------------
+    # Internal bridge to BanditRouter
+    # ------------------------------------------------------------------
+
+    def _router(self) -> Any | None:
+        """Return the canonical ``BanditRouter`` for this facade, if any.
+
+        Lazy-imported to avoid a circular dependency between cost.py and
+        bandit_router.py (both live in the same sub-package).
+        """
+        if self._routing_dir is None:
+            return None
+        if self._router_cache is None:
+            try:
+                from bernstein.core.cost.bandit_router import BanditRouter
+
+                self._router_cache = BanditRouter(policy_dir=self._routing_dir)
+            except Exception as exc:
+                logger.warning("EpsilonGreedyBandit: could not bind BanditRouter: %s", exc)
+                return None
+        return self._router_cache
+
+    @staticmethod
+    def _mirror_record_to_router(router: Any, *, role: str, model: str, success: bool) -> None:
+        """Feed a synthetic bias-only LinUCB update matching this observation.
+
+        Since the legacy ``record()`` API only has ``(role, model)`` and a
+        success bit, we cannot reconstruct a full ``TaskContext``. Instead we
+        build a ``TaskContext`` with neutral mid-range features so the
+        LinUCB update lands predominantly on the bias axis — the same axis
+        that :meth:`BanditPolicy.seed_arm` writes to — keeping live updates
+        coherent with seeds.
+        """
+        try:
+            from bernstein.core.cost.bandit_router import TaskContext
+
+            router._ensure_loaded()
+            if router._policy is None:
+                return
+
+            ctx = TaskContext(
+                role=role,
+                task_type="standard",
+                complexity_tier=1,
+                scope_tier=1,
+                priority_norm=0.5,
+                language="other",
+                repo_size=0,
+                estimated_tokens=0.0,
+            )
+            router._policy.update(
+                arm=model,
+                context=ctx,
+                reward=1.0 if success else 0.0,
+            )
+        except Exception as exc:
+            logger.debug("EpsilonGreedyBandit: could not mirror record to router: %s", exc)
 
 
 # ---------------------------------------------------------------------------

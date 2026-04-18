@@ -597,6 +597,13 @@ class TestLoadCascadeSavingsSummary:
 
 class TestSaveBandit:
     def test_save_bandit_persists_observations(self, tmp_path: Path) -> None:
+        """audit-071: bandit state now lives in the sibling ``routing/`` dir.
+
+        Legacy epsilon-greedy persistence at ``.sdd/metrics/bandit_state.json``
+        was retired in favour of the unified ``.sdd/routing/bandit_state.json``
+        store shared with ``BanditRouter``. Observation arms are written under
+        the ``observation_arms`` key alongside the LinUCB matrices.
+        """
         metrics_dir = tmp_path / "metrics"
         metrics_dir.mkdir()
 
@@ -606,8 +613,8 @@ class TestSaveBandit:
         router.record_and_escalate(chain_id=decision.chain_id, task=_task(), attempt=attempt, janitor_passed=True)
         router.save_bandit()
 
-        bandit_file = metrics_dir / "bandit_state.json"
+        bandit_file = tmp_path / "routing" / "bandit_state.json"
         assert bandit_file.exists()
         data = json.loads(bandit_file.read_text())
-        arms = data.get("arms", [])
+        arms = data.get("observation_arms", [])
         assert any(a["model"] == "sonnet" for a in arms)

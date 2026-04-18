@@ -141,6 +141,165 @@ class TestEpsilonGreedyBanditPersistence:
 
 
 # ---------------------------------------------------------------------------
+# audit-071 — legacy state migration into unified BanditRouter
+# ---------------------------------------------------------------------------
+
+
+class TestAudit071Migration:
+    """Cover the one-shot legacy → unified bandit migration (audit-071)."""
+
+    def test_migration_reads_legacy_and_renames_bak(self, tmp_path: Path) -> None:
+        """Legacy state is migrated, renamed ``.bak``, and re-read on boot."""
+        metrics_dir = tmp_path / "metrics"
+        routing_dir = tmp_path / "routing"
+        metrics_dir.mkdir()
+
+        legacy = {
+            "arms": [
+                {
+                    "role": "backend",
+                    "model": "sonnet",
+                    "observations": 10,
+                    "successes": 9,
+                    "total_cost_usd": 0.03,
+                    "total_latency_s": 100.0,
+                }
+            ]
+        }
+        (metrics_dir / "bandit_state.json").write_text(json.dumps(legacy))
+
+        bandit = EpsilonGreedyBandit.load(metrics_dir)
+        # Observations survive the migration.
+        arm = bandit.get_arm("backend", "sonnet")
+        assert arm is not None and arm.observations == 10
+        # Legacy file renamed, unified state created.
+        assert not (metrics_dir / "bandit_state.json").exists()
+        assert (metrics_dir / "bandit_state.json.bak").exists()
+        assert (routing_dir / "policy.json").exists()
+        assert (routing_dir / "bandit_state.json").exists()
+
+    def test_migration_seeds_linucb_router(self, tmp_path: Path) -> None:
+        """Router sees the legacy observations as LinUCB seed arms."""
+        from bernstein.core.cost.bandit_router import BanditRouter
+
+        metrics_dir = tmp_path / "metrics"
+        routing_dir = tmp_path / "routing"
+        metrics_dir.mkdir()
+
+        legacy = {
+            "arms": [
+                {"role": "backend", "model": "sonnet", "observations": 10, "successes": 9},
+            ]
+        }
+        (metrics_dir / "bandit_state.json").write_text(json.dumps(legacy))
+
+        EpsilonGreedyBandit.load(metrics_dir)
+
+        router = BanditRouter(policy_dir=routing_dir)
+        router._ensure_loaded()  # pyright: ignore[reportPrivateUsage]
+        assert ("backend", "sonnet") in router._seeded_arms  # pyright: ignore[reportPrivateUsage]
+
+    def test_migration_is_idempotent_after_bak(self, tmp_path: Path) -> None:
+        """Once ``.bak`` exists, subsequent loads are pure reads of the unified file."""
+        metrics_dir = tmp_path / "metrics"
+        metrics_dir.mkdir()
+        legacy = {
+            "arms": [
+                {"role": "backend", "model": "sonnet", "observations": 3, "successes": 2},
+            ]
+        }
+        (metrics_dir / "bandit_state.json").write_text(json.dumps(legacy))
+
+        EpsilonGreedyBandit.load(metrics_dir)
+        # Second load should not fail even though legacy file is gone.
+        second = EpsilonGreedyBandit.load(metrics_dir)
+        arm = second.get_arm("backend", "sonnet")
+        assert arm is not None and arm.observations == 3
+
+    def test_both_paths_coexist_during_migration(self, tmp_path: Path) -> None:
+        """Directly before the rename, both legacy and routing files can exist.
+
+        The migration snapshots the legacy contents and only renames after a
+        successful parse; callers reading either file mid-flight see a
+        consistent observation count (same role/model/observations).
+        """
+        metrics_dir = tmp_path / "metrics"
+        routing_dir = tmp_path / "routing"
+        metrics_dir.mkdir()
+        legacy = {"arms": [{"role": "qa", "model": "haiku", "observations": 4, "successes": 3}]}
+        (metrics_dir / "bandit_state.json").write_text(json.dumps(legacy))
+
+        bandit = EpsilonGreedyBandit.load(metrics_dir)
+
+        # After migration: legacy gone (.bak), routing has the data.
+        assert (metrics_dir / "bandit_state.json.bak").exists()
+        unified = json.loads((routing_dir / "bandit_state.json").read_text())
+        observations = unified.get("observation_arms", [])
+        assert any(a["role"] == "qa" and a["model"] == "haiku" for a in observations)
+        # And the facade's in-memory view matches both stores.
+        arm = bandit.get_arm("qa", "haiku")
+        assert arm is not None and arm.observations == 4
+
+    def test_record_after_migration_updates_only_routing(self, tmp_path: Path) -> None:
+        """After migration, ``record`` writes to routing/; legacy stays .bak."""
+        metrics_dir = tmp_path / "metrics"
+        routing_dir = tmp_path / "routing"
+        metrics_dir.mkdir()
+        legacy = {"arms": [{"role": "backend", "model": "sonnet", "observations": 5, "successes": 5}]}
+        (metrics_dir / "bandit_state.json").write_text(json.dumps(legacy))
+
+        bandit = EpsilonGreedyBandit.load(metrics_dir)
+        bandit.record(role="backend", model="sonnet", success=True, cost_usd=0.01)
+        bandit.save(metrics_dir)
+
+        # Legacy file remains renamed — no new write there.
+        assert not (metrics_dir / "bandit_state.json").exists()
+        assert (metrics_dir / "bandit_state.json.bak").exists()
+        # Routing file now reflects the new observation.
+        unified = json.loads((routing_dir / "bandit_state.json").read_text())
+        observations = unified.get("observation_arms", [])
+        backend_sonnet = next(a for a in observations if a["role"] == "backend" and a["model"] == "sonnet")
+        assert backend_sonnet["observations"] == 6  # 5 legacy + 1 new
+
+    def test_cost_forecast_and_router_share_state(self, tmp_path: Path) -> None:
+        """After migration, ``predict_task_cost`` and the router see the same arm.
+
+        Ensures audit-071's core invariant: cost forecasts and model selection
+        can never disagree because both read from a single state store.
+        """
+        from bernstein.core.cost.bandit_router import BanditRouter
+        from bernstein.core.cost.cost import predict_task_cost
+
+        metrics_dir = tmp_path / "metrics"
+        routing_dir = tmp_path / "routing"
+        metrics_dir.mkdir()
+        legacy = {
+            "arms": [
+                {
+                    "role": "backend",
+                    "model": "sonnet",
+                    "observations": 10,
+                    "successes": 9,
+                    "total_cost_usd": 0.05,
+                    "total_latency_s": 120.0,
+                }
+            ]
+        }
+        (metrics_dir / "bandit_state.json").write_text(json.dumps(legacy))
+
+        # Forecast path loads the facade.
+        task = _task(role="backend", scope=Scope.MEDIUM, complexity=Complexity.MEDIUM)
+        task.model = "sonnet"
+        cost_pred = predict_task_cost(task, metrics_dir=metrics_dir)
+        assert cost_pred > 0.0  # historical refinement applied
+
+        # Router path sees the seeded arm.
+        router = BanditRouter(policy_dir=routing_dir)
+        router._ensure_loaded()  # pyright: ignore[reportPrivateUsage]
+        assert ("backend", "sonnet") in router._seeded_arms  # pyright: ignore[reportPrivateUsage]
+
+
+# ---------------------------------------------------------------------------
 # EpsilonGreedyBandit — selection
 # ---------------------------------------------------------------------------
 

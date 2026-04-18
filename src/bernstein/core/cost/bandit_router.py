@@ -93,6 +93,11 @@ _CLAUDE_COMPATIBLE_ADAPTERS: frozenset[str] = frozenset({"claude", "claude code"
 
 # High-stakes roles never start at haiku (mirrors cascade_router logic)
 _HIGH_STAKES_ROLES: frozenset[str] = frozenset({"manager", "architect", "security"})
+
+# Model capability tiers — used to clamp bandit picks to a per-task floor so
+# the bandit can still learn on high-stakes tasks without ever dropping below
+# a minimum capability. Higher number = more capable.
+_MODEL_TIER: dict[str, int] = {"haiku": 0, "sonnet": 1, "opus": 2}
 _LANGUAGE_BY_SUFFIX: dict[str, str] = {
     ".py": "python",
     ".pyi": "python",
@@ -398,6 +403,28 @@ def _load_shadow_pending(value: object) -> dict[str, dict[str, Any]]:
     return pending
 
 
+def _load_seeded_arms(value: object) -> dict[tuple[str, str], dict[str, float | int]]:
+    """Load ``{role|model: {virtual_observations, success_rate}}`` seed metadata."""
+    if not isinstance(value, dict):
+        return {}
+    raw_mapping = cast(_CAST_DICT_STR_OBJ, value)
+    seeded: dict[tuple[str, str], dict[str, float | int]] = {}
+    for raw_key, raw_payload in raw_mapping.items():
+        if not isinstance(raw_payload, dict):
+            continue
+        payload = cast(_CAST_DICT_STR_OBJ, raw_payload)
+        parts = str(raw_key).split("|", 1)
+        if len(parts) != 2:
+            continue
+        role, model = parts
+        vo_raw = payload.get("virtual_observations", 0)
+        sr_raw = payload.get("success_rate", 0.0)
+        vo = 0 if isinstance(vo_raw, bool) or not isinstance(vo_raw, (int, float, str)) else int(float(vo_raw))
+        sr = 0.0 if isinstance(sr_raw, bool) or not isinstance(sr_raw, (int, float, str)) else float(sr_raw)
+        seeded[(role, model)] = {"virtual_observations": vo, "success_rate": sr}
+    return seeded
+
+
 def _load_shadow_counters(value: object) -> dict[str, float]:
     """Load shadow analytics counters from persisted state."""
     defaults = {
@@ -409,6 +436,7 @@ def _load_shadow_counters(value: object) -> dict[str, float]:
         "agree_reward_count": 0.0,
         "disagree_reward_sum": 0.0,
         "disagree_reward_count": 0.0,
+        "floor_clamp_count": 0.0,
     }
     if not isinstance(value, dict):
         return defaults
@@ -621,6 +649,59 @@ class BanditPolicy:
             b[i] += reward * x[i]
 
         self.total_updates += 1
+
+    def seed_arm(
+        self,
+        arm: str,
+        *,
+        mean_reward: float,
+        virtual_observations: int = 5,
+    ) -> None:
+        """Warm-start an arm with a low-rank prior on the bias feature.
+
+        LinUCB has no dedicated seed primitive, but a rank-1 prior along the
+        bias axis (index 5 of :meth:`TaskContext.to_vector`) is equivalent
+        to pretending the arm has been updated ``virtual_observations``
+        times with ``x = e_bias`` and reward ``mean_reward``. This shifts
+        the arm's expected exploit score without committing to any specific
+        task shape — the LinUCB analogue of the legacy
+        ``EpsilonGreedyBandit.seed_arm`` primitive.
+
+        The prior is only installed when the arm has no live signal yet
+        (``b`` is all zeros), so real observations always dominate priors.
+
+        Args:
+            arm: Model name (created if not present).
+            mean_reward: Prior expected reward in ``[0, 1]``.
+            virtual_observations: Strength of the prior (number of synthetic
+                identical pulls). Higher values make the prior stickier.
+        """
+        d = FEATURE_DIM
+        if arm not in self._A_inv:
+            self.arms.append(arm)
+            self._A_inv[arm] = _identity(d)
+            self._b[arm] = [0.0] * d
+
+        if any(abs(v) > 1e-9 for v in self._b[arm]):
+            logger.debug("BanditPolicy: refusing to seed arm %s — live signal present", arm)
+            return
+
+        clamped = max(0.0, min(1.0, mean_reward))
+        n = max(1, int(virtual_observations))
+
+        # Bias feature at index 5. For the identity init, a rank-1 update with
+        # x = e_bias repeated n times collapses to:
+        #   A_inv[bias, bias] = 1 / (1 + n)
+        #   b[bias] = n * clamped
+        bias_idx = 5
+        self._A_inv[arm][bias_idx][bias_idx] = 1.0 / (1.0 + n)
+        self._b[arm][bias_idx] = n * clamped
+        logger.debug(
+            "BanditPolicy: seeded arm %s with prior mean=%.3f (virtual_obs=%d)",
+            arm,
+            clamped,
+            n,
+        )
 
     # ------------------------------------------------------------------
     # Persistence
@@ -979,6 +1060,10 @@ class BanditRouter:
         self._effort_bandit: EffortBandit = EffortBandit()
         self._total_completions: int = 0
         self._selection_counts: dict[str, int] = {}
+        # Arms seeded via ``seed_arm()`` keyed by ``(role, model)``. Persists
+        # metadata so cost forecasts can refine estimates without keeping a
+        # second state store (audit-071).
+        self._seeded_arms: dict[tuple[str, str], dict[str, float | int]] = {}
         self._exploration_history: dict[str, list[float]] = {}
         self._shadow_pending: dict[str, dict[str, Any]] = {}
         self._shadow_counters: dict[str, float] = {
@@ -990,6 +1075,7 @@ class BanditRouter:
             "agree_reward_count": 0.0,
             "disagree_reward_sum": 0.0,
             "disagree_reward_count": 0.0,
+            "floor_clamp_count": 0.0,
         }
         self._loaded: bool = False
 
@@ -1043,8 +1129,12 @@ class BanditRouter:
     def select(self, task: Task) -> BanditRoutingDecision:
         """Select ``(model, effort)`` for a task.
 
-        Falls back to static cascade routing during cold-start; uses the
-        LinUCB bandit policy after warm-up.
+        Cold-start delegates to static cascade routing. Once warmed up, the
+        LinUCB bandit chooses the arm and the result is clamped to a
+        per-task :func:`_capability_floor` so high-stakes work still cannot
+        drop below a safe minimum (see audit-112). Whenever the clamp kicks
+        in, the bandit's raw pick is recorded as a shadow decision so the
+        override can be evaluated against observed rewards.
 
         Args:
             task: Task to route.
@@ -1055,15 +1145,14 @@ class BanditRouter:
         self._ensure_loaded()
         ctx = TaskContext.from_task(task)
 
-        if not self.is_warmed_up or _is_high_stakes(task):
+        if not self.is_warmed_up:
             model, static_reason = _static_select(task)
             effort = self._select_effort(model, task)
-            mode = "guardrail" if self.is_warmed_up else "cold-start"
             decision = BanditRoutingDecision(
                 model=model,
                 effort=effort,
                 from_bandit=False,
-                reason=(f"{mode} ({self._total_completions}/{self._warmup_min} completions): {static_reason}"),
+                reason=(f"cold-start ({self._total_completions}/{self._warmup_min} completions): {static_reason}"),
             )
         else:
             assert self._policy is not None
@@ -1071,19 +1160,38 @@ class BanditRouter:
             self._record_exploration_scores(scores)
             best_score = scores[0]
             runner_up = scores[1] if len(scores) > 1 else None
-            model = best_score.arm
+            bandit_pick = best_score.arm
+            floor = _capability_floor(task)
+            clamped_model, did_clamp = _clamp_to_floor(bandit_pick, floor)
+            model = clamped_model
             effort = self._select_effort(model, task)
             runner_reason = f"; runner_up={runner_up.arm} total={runner_up.total:.3f}" if runner_up is not None else ""
+            base_reason = (
+                f"bandit: LinUCB selected {bandit_pick!r} "
+                f"(exploit={best_score.exploit:.3f}, explore={best_score.explore:.3f}, "
+                f"total={best_score.total:.3f}{runner_reason}, "
+                f"completions={self._total_completions})"
+            )
+            if did_clamp:
+                reason = (
+                    f"{base_reason}; capability floor clamped {bandit_pick!r} → {model!r} "
+                    f"(role={task.role!r}, complexity={task.complexity.value}, "
+                    f"scope={task.scope.value}, priority={task.priority})"
+                )
+                self._log_shadow_clamp(
+                    task=task,
+                    bandit_pick=bandit_pick,
+                    executed_model=model,
+                    floor=floor,
+                    score=best_score,
+                )
+            else:
+                reason = base_reason
             decision = BanditRoutingDecision(
                 model=model,
                 effort=effort,
                 from_bandit=True,
-                reason=(
-                    f"bandit: LinUCB selected {model!r} "
-                    f"(exploit={best_score.exploit:.3f}, explore={best_score.explore:.3f}, "
-                    f"total={best_score.total:.3f}{runner_reason}, "
-                    f"completions={self._total_completions})"
-                ),
+                reason=reason,
             )
 
         self._selection_counts[model] = self._selection_counts.get(model, 0) + 1
@@ -1174,6 +1282,44 @@ class BanditRouter:
         self._ensure_loaded()
         return dict(self._selection_counts)
 
+    def seed_arm(
+        self,
+        role: str,
+        model: str,
+        success_rate: float,
+        virtual_observations: int = 5,
+    ) -> None:
+        """Seed a ``(role, model)`` arm with prior knowledge.
+
+        Ported from ``EpsilonGreedyBandit.seed_arm`` in audit-071 so
+        effectiveness data (role/model success rates from
+        :class:`EffectivenessScorer`) feeds a single, unified bandit state
+        rather than the retired parallel epsilon-greedy store.
+
+        The seed is installed on the underlying :class:`BanditPolicy` as a
+        context-free prior on the bias axis (see
+        :meth:`BanditPolicy.seed_arm`) and the router records the seed
+        metadata so cost forecasts can see the same warm-start signal.
+
+        Args:
+            role: Task role (recorded for observability; LinUCB keys on
+                arm/model only, role is carried in the context vector).
+            model: Model name (arm).
+            success_rate: Prior success rate in ``[0, 1]``.
+            virtual_observations: Strength of the prior.
+        """
+        self._ensure_loaded()
+        assert self._policy is not None
+        self._policy.seed_arm(
+            arm=model,
+            mean_reward=success_rate,
+            virtual_observations=virtual_observations,
+        )
+        self._seeded_arms[(role, model)] = {
+            "virtual_observations": int(max(1, virtual_observations)),
+            "success_rate": float(max(0.0, min(1.0, success_rate))),
+        }
+
     def save(self) -> None:
         """Persist policy matrices and state to disk.
 
@@ -1187,27 +1333,95 @@ class BanditRouter:
         state_path = self._policy_dir / self.STATE_FILE
         try:
             self._policy_dir.mkdir(parents=True, exist_ok=True)
-            state_path.write_text(
-                json.dumps(
-                    {
-                        "total_completions": self._total_completions,
-                        "selection_counts": self._selection_counts,
-                        "mode": "bandit" if self.is_warmed_up else "cold-start",
-                        "warmup_min": self._warmup_min,
-                        "exploration_rate": round(self.exploration_rate, 6),
-                        "exploration_history": self._exploration_history,
-                        "exploration_stats": self._exploration_stats(),
-                        "shadow_pending": self._shadow_pending,
-                        "shadow_counters": self._shadow_counters,
-                        "shadow_stats": self._shadow_stats(),
-                        "effort_bandit": self._effort_bandit.to_dict(),
-                        "saved_at": time.time(),
-                    }
-                ),
-                encoding="utf-8",
-            )
+            # Preserve any pre-existing keys written by the legacy-facade
+            # (e.g. ``observation_arms`` from ``EpsilonGreedyBandit.save``).
+            existing: dict[str, Any] = {}
+            if state_path.exists():
+                try:
+                    loaded = json.loads(state_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        existing = loaded
+                except Exception as exc:
+                    logger.debug("BanditRouter: could not merge existing state: %s", exc)
+            payload: dict[str, Any] = {
+                **existing,
+                "total_completions": self._total_completions,
+                "selection_counts": self._selection_counts,
+                "mode": "bandit" if self.is_warmed_up else "cold-start",
+                "warmup_min": self._warmup_min,
+                "exploration_rate": round(self.exploration_rate, 6),
+                "exploration_history": self._exploration_history,
+                "exploration_stats": self._exploration_stats(),
+                "shadow_pending": self._shadow_pending,
+                "shadow_counters": self._shadow_counters,
+                "shadow_stats": self._shadow_stats(),
+                "effort_bandit": self._effort_bandit.to_dict(),
+                "seeded_arms": {f"{role}|{model}": value for (role, model), value in self._seeded_arms.items()},
+                "saved_at": time.time(),
+            }
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
         except OSError as exc:
             logger.warning("BanditRouter: could not save state to %s: %s", state_path, exc)
+
+    def _log_shadow_clamp(
+        self,
+        *,
+        task: Task,
+        bandit_pick: str,
+        executed_model: str,
+        floor: str,
+        score: ArmScore,
+    ) -> None:
+        """Record a capability-floor override as a shadow decision.
+
+        Invoked from :meth:`select` whenever :func:`_clamp_to_floor` lifts a
+        bandit pick to satisfy the per-task capability floor. We persist the
+        clamp to the standard shadow-decisions stream so audit-112 can
+        evaluate over time whether the override cost us reward.
+        """
+        self._shadow_counters["floor_clamp_count"] += 1.0
+        if self._policy_dir is None:
+            logger.info(
+                "BanditRouter: capability floor clamped task=%s pick=%s → %s (floor=%s)",
+                task.id,
+                bandit_pick,
+                executed_model,
+                floor,
+            )
+            return
+        payload = {
+            "timestamp": time.time(),
+            "task_id": task.id,
+            "role": task.role,
+            "task_type": task.task_type.value,
+            "selected_model": bandit_pick,
+            "selected_effort": self._select_effort(bandit_pick, task),
+            "executed_model": executed_model,
+            "executed_effort": self._select_effort(executed_model, task),
+            "from_bandit": True,
+            "reason": f"capability_floor_clamp floor={floor} pick={bandit_pick}",
+            "agreement": False,
+            "selected_score": _arm_score_payload(score),
+            "executed_score": None,
+            "clamp": True,
+            "capability_floor": floor,
+        }
+        self._shadow_pending[task.id] = dict(payload)
+        self._shadow_counters["total_decisions"] += 1.0
+        shadow_path = self._policy_dir / self.SHADOW_DECISIONS_FILE
+        try:
+            self._policy_dir.mkdir(parents=True, exist_ok=True)
+            with shadow_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload) + "\n")
+        except OSError as exc:
+            logger.warning("BanditRouter: could not record shadow clamp to %s: %s", shadow_path, exc)
+        logger.info(
+            "BanditRouter: capability floor clamped task=%s pick=%s → %s (floor=%s)",
+            task.id,
+            bandit_pick,
+            executed_model,
+            floor,
+        )
 
     def record_shadow_decision(
         self,
@@ -1304,6 +1518,7 @@ class BanditRouter:
                     self._shadow_pending = _load_shadow_pending(state.get("shadow_pending", {}))
                     self._shadow_counters = _load_shadow_counters(state.get("shadow_counters", {}))
                     self._effort_bandit = EffortBandit.from_dict(state.get("effort_bandit", {}))
+                    self._seeded_arms = _load_seeded_arms(state.get("seeded_arms", {}))
                 except Exception as exc:
                     logger.warning("BanditRouter: could not load state from %s: %s", state_path, exc)
             else:
@@ -1359,12 +1574,14 @@ class BanditRouter:
         disagreement_count = int(self._shadow_counters["disagreement_count"])
         agree_reward_count = int(self._shadow_counters["agree_reward_count"])
         disagree_reward_count = int(self._shadow_counters["disagree_reward_count"])
+        floor_clamp_count = int(self._shadow_counters.get("floor_clamp_count", 0.0))
         return {
             "total_decisions": total_decisions,
             "matched_outcomes": matched_outcomes,
             "pending_outcomes": len(self._shadow_pending),
             "agreement_rate": round(agreement_count / matched_outcomes, 6) if matched_outcomes else 0.0,
             "disagreement_count": disagreement_count,
+            "floor_clamp_count": floor_clamp_count,
             "avg_executed_reward_when_agree": round(
                 self._shadow_counters["agree_reward_sum"] / agree_reward_count,
                 6,
@@ -1455,13 +1672,70 @@ def compute_reward(quality_score: float, cost_usd: float, budget_ceiling: float)
 
 
 def _is_high_stakes(task: Task) -> bool:
-    """Return whether static guardrails should override learned routing."""
+    """Return whether a task should never be routed to the cheapest arm.
+
+    Used by :func:`_static_select` during cold-start to keep high-stakes
+    work off ``haiku`` before the bandit has any signal. Post-warmup the
+    softer :func:`_capability_floor` / :func:`_clamp_to_floor` pair takes
+    over (audit-112) so the bandit can still learn on high-stakes tasks.
+    """
     return (
         task.role in _HIGH_STAKES_ROLES
         or task.complexity == Complexity.HIGH
         or task.scope == Scope.LARGE
         or task.priority == 1
     )
+
+
+def _capability_floor(task: Task) -> str:
+    """Return the minimum model arm a task is allowed to be routed to.
+
+    This is intentionally softer than :func:`_is_high_stakes`. The pre-audit
+    gate forced every high-stakes task through the static heuristic forever,
+    so the bandit never learned whether ``opus`` was actually better than
+    ``sonnet`` on e.g. architect reviews. With a floor, the bandit still
+    chooses freely between the arms at or above the floor — it just cannot
+    drop below a safe minimum.
+
+    Floors (from lowest to highest):
+
+    * ``"opus"`` — ``manager`` / ``architect`` / ``security`` roles that
+      combine HIGH complexity with LARGE scope; these jobs have never fit
+      in ``sonnet`` context in practice.
+    * ``"sonnet"`` — high-stakes roles, HIGH complexity, LARGE scope, or
+      priority-1 work. Mirrors the old ``_is_high_stakes`` bar.
+    * ``"haiku"`` — everything else (no clamp).
+    """
+    if task.role in _HIGH_STAKES_ROLES and task.complexity == Complexity.HIGH and task.scope == Scope.LARGE:
+        return "opus"
+    if _is_high_stakes(task):
+        return "sonnet"
+    return "haiku"
+
+
+def _clamp_to_floor(bandit_pick: str, floor: str) -> tuple[str, bool]:
+    """Raise ``bandit_pick`` to ``floor`` if it would fall below capability.
+
+    Uses the tier ordering in :data:`_MODEL_TIER` (``haiku < sonnet < opus``).
+    Unknown arms are passed through unchanged — we only clamp when we can
+    compare tiers — so custom model names in a future adapter never get
+    silently promoted.
+
+    Args:
+        bandit_pick: Model arm chosen by the LinUCB policy.
+        floor: Minimum capability required for the task.
+
+    Returns:
+        Tuple of ``(model, did_clamp)``. ``did_clamp`` is ``True`` when the
+        returned model differs from ``bandit_pick`` because of the floor.
+    """
+    pick_tier = _MODEL_TIER.get(bandit_pick)
+    floor_tier = _MODEL_TIER.get(floor)
+    if pick_tier is None or floor_tier is None:
+        return bandit_pick, False
+    if pick_tier >= floor_tier:
+        return bandit_pick, False
+    return floor, True
 
 
 def _static_select(task: Task) -> tuple[str, str]:

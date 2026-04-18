@@ -71,16 +71,27 @@ async def test_webhook_task_persists_header_tenant(
 ) -> None:
     """Generic webhook task creation should tag tasks with the inbound tenant header."""
 
-    # audit-042: /webhook now requires a configured shared secret.  The
-    # tenant-id header still controls routing, but the endpoint itself
-    # must authenticate first.
-    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", "tenant-tagging-secret")
+    # audit-042 + audit-121: /webhook now requires a configured shared
+    # secret plus a fresh HMAC-signed timestamp.  The tenant-id header
+    # still controls routing, but the endpoint itself must authenticate
+    # and replay-protect the request first.
+    import time
+
+    from bernstein.core.webhook_signatures import sign_hmac_sha256
+
+    secret = "tenant-tagging-secret"
+    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", secret)
+    body = json.dumps({"title": "Webhook task", "description": "Created from webhook."}).encode()
+    timestamp = int(time.time())
+    signed = f"{timestamp}.".encode() + body
     response = await client.post(
         "/webhook",
-        json={"title": "Webhook task", "description": "Created from webhook."},
+        content=body,
         headers={
+            "content-type": "application/json",
             "x-tenant-id": "tenant-beta",
-            "x-bernstein-webhook-secret": "tenant-tagging-secret",
+            "x-bernstein-timestamp": str(timestamp),
+            "x-bernstein-webhook-signature-256": sign_hmac_sha256(secret, signed, prefix="sha256="),
         },
     )
     await app.state.store.flush_buffer()

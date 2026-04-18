@@ -47,6 +47,10 @@ def test_cleanup_all_stale_skips_live_pid_worktree(tmp_path: Path) -> None:
     ):
         cleaned = manager.cleanup_all_stale()
 
-    run.assert_called_once()
+    # subprocess.run is invoked at least once for ``git worktree prune`` and
+    # may additionally be called for the graveyard pre-check (``rev-list``)
+    # introduced by audit-097.  We only care that the stale session was
+    # cleaned and the live one preserved.
+    assert run.call_count >= 1
     cleanup.assert_called_once_with("stale-session")
     assert cleaned == 1

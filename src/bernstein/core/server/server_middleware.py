@@ -131,11 +131,34 @@ class ReadOnlyMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _is_sse_request(request: Request) -> bool:
+    """Return True when the request is a Server-Sent Events stream.
+
+    Detection checks both the ``Accept`` header and the request path so
+    that SSE endpoints remain detectable even when a client omits the
+    content-negotiation header.
+    """
+    accept = request.headers.get("accept", "")
+    if "text/event-stream" in accept.lower():
+        return True
+    path = request.url.path
+    return path == "/events" or path.startswith("/events/")
+
+
 class CrashGuardMiddleware(BaseHTTPMiddleware):
     """Catch unhandled exceptions so they return 500 instead of crashing uvicorn.
 
     Without this, a single bad request (e.g. OOM in a route handler,
     unexpected None, missing key) can kill the entire server process.
+
+    Server-Sent Events (SSE) streams are intentionally excluded: wrapping
+    a streaming response in JSON 500 produces unparseable output for SSE
+    clients that expect ``event:``/``data:`` lines.  For SSE the exception
+    is re-raised so Uvicorn closes the connection cleanly.
+
+    In production the traceback is redacted to a one-line summary plus a
+    SHA256 digest of the full traceback.  Setting ``BERNSTEIN_DEBUG=1``
+    emits the full traceback via ``logger.exception`` for triage.
     """
 
     async def dispatch(
@@ -143,12 +166,46 @@ class CrashGuardMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Any],
     ) -> StarletteResponse:
+        # Do not wrap streaming responses — re-raising lets Uvicorn close
+        # the SSE connection without corrupting the wire format.
+        if _is_sse_request(request):
+            return await call_next(request)
         try:
             return await call_next(request)
-        except Exception:
+        except Exception as exc:
+            import hashlib
             import logging as _logging
+            import os
+            import traceback
 
-            _logging.getLogger(__name__).exception("Unhandled exception in %s %s", request.method, request.url.path)
+            logger = _logging.getLogger(__name__)
+            user_agent = request.headers.get("user-agent", "-")
+            client_ip = request.client.host if request.client else "-"
+            debug_enabled = bool(os.environ.get("BERNSTEIN_DEBUG"))
+            if debug_enabled:
+                logger.exception(
+                    "Unhandled exception in %s %s (client=%s ua=%s)",
+                    request.method,
+                    request.url.path,
+                    client_ip,
+                    user_agent,
+                )
+            else:
+                tb_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                tb_hash = hashlib.sha256(tb_text.encode("utf-8", errors="replace")).hexdigest()[:16]
+                logger.error(
+                    "Unhandled exception in %s %s: %s: %s (client=%s ua=%s tb_sha256=%s)",
+                    request.method,
+                    request.url.path,
+                    type(exc).__name__,
+                    str(exc).splitlines()[0] if str(exc) else "",
+                    client_ip,
+                    user_agent,
+                    tb_hash,
+                )
+                # Stash full traceback in a debug-only sink so operators
+                # with shell access can still correlate by hash.
+                logger.debug("Full traceback for %s: %s", tb_hash, tb_text)
             return JSONResponse(
                 status_code=500,
                 content={"detail": "Internal server error (crash guard caught)"},

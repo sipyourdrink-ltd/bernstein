@@ -7,6 +7,8 @@ compatibility.
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -17,6 +19,36 @@ from bernstein.core.models import (
     SmtpConfig,
     TestAgentConfig,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def check_internal_llm_preflight(provider: str) -> str | None:
+    """Return a migration hint if ``provider`` needs env vars that are missing.
+
+    audit-150: a fresh clone with ``internal_llm_provider: openrouter_free``
+    but no ``OPENROUTER_API_KEY_FREE`` / ``OPENROUTER_API_KEY_PAID`` crashes
+    on the first LLM call. Callers (seed parser, orchestrator bootstrap) can
+    invoke this to emit the hint early and suggest switching to ``'none'``.
+
+    Args:
+        provider: The configured ``internal_llm_provider`` value.
+
+    Returns:
+        Human-readable hint string, or ``None`` if no action is needed.
+    """
+    if provider == "openrouter_free" and not (
+        os.environ.get("OPENROUTER_API_KEY_FREE") or os.environ.get("OPENROUTER_API_KEY_PAID")
+    ):
+        return (
+            "internal_llm_provider='openrouter_free' requires "
+            "OPENROUTER_API_KEY_FREE or OPENROUTER_API_KEY_PAID in the "
+            "environment. Either export one of those variables or set "
+            "'internal_llm_provider: none' in bernstein.yaml to disable "
+            "evolution and auto_decompose gracefully."
+        )
+    return None
+
 
 if TYPE_CHECKING:
     from bernstein.agents.catalog import CatalogRegistry
@@ -285,7 +317,11 @@ class SeedConfig:
     network: NetworkConfig | None = None
     rate_limit: RateLimitConfig | None = None
     tenants: tuple[TenantConfig, ...] = ()
-    internal_llm_provider: str = "openrouter_free"
+    # audit-150: default 'none' disables evolution/auto_decompose gracefully
+    # on fresh clones without OPENROUTER_API_KEY_* env vars. Callers that want
+    # the previous behavior must set 'internal_llm_provider: openrouter_free'
+    # explicitly and export the matching API key.
+    internal_llm_provider: str = "none"
     internal_llm_model: str = "nvidia/nemotron-3-super-120b-a12b"
     model_fallback: ModelFallbackSeedConfig | None = None
     cost_tags: dict[str, str] = field(default_factory=dict)
@@ -293,3 +329,9 @@ class SeedConfig:
     deployment_strategy: str = "rolling"
     org_policies: list[str] = field(default_factory=list)
     metrics: dict[str, MetricSchema] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Emit preflight warnings for provider/env mismatches (audit-150)."""
+        hint = check_internal_llm_preflight(self.internal_llm_provider)
+        if hint is not None:
+            logger.warning("audit-150 preflight: %s", hint)

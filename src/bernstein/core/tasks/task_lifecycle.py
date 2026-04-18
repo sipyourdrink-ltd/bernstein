@@ -1403,6 +1403,28 @@ def claim_and_spawn_batches(
             )
             continue
 
+        # WAL: record pre-execution intent BEFORE the HTTP POST /claim so a
+        # SIGKILL between the server-side claim transition and the local WAL
+        # write can never produce a server-side "claimed" task with no WAL
+        # trace (audit-013).  The legacy ``task_claimed`` decision_type is
+        # reused so existing recovery wiring (``find_orphaned_claims``)
+        # continues to force-claim abandoned tasks back to the open queue.
+        # Worktree path is not yet known -- it is recorded in the follow-up
+        # ``claim_confirmed`` entry after the spawner materialises it.
+        _wal: WALWriter | None = getattr(orch, "_wal_writer", None)
+        if _wal is not None:
+            for task in batch:
+                try:
+                    _wal.write_entry(
+                        decision_type="task_claimed",
+                        inputs={"task_id": task.id, "role": task.role, "title": task.title},
+                        output={"batch_size": len(batch), "phase": "claim_intent"},
+                        actor="task_lifecycle",
+                        committed=False,
+                    )
+                except OSError:
+                    logger.debug("WAL write failed for task_claimed %s", task.id)
+
         # Claim tasks BEFORE spawning to prevent duplicate agents.
         # Pass expected_version for CAS (compare-and-swap) to prevent two
         # distributed nodes from claiming the same task simultaneously.
@@ -1447,24 +1469,6 @@ def claim_and_spawn_batches(
                 break
         if claim_failed:
             continue
-
-        # WAL: record pre-execution intent (committed=False).
-        # The matching committed=True entry is written after successful spawn.
-        # On crash recovery, uncommitted entries indicate tasks that were
-        # claimed on the server but whose agent was never spawned.
-        _wal: WALWriter | None = getattr(orch, "_wal_writer", None)
-        if _wal is not None:
-            for task in batch:
-                try:
-                    _wal.write_entry(
-                        decision_type="task_claimed",
-                        inputs={"task_id": task.id, "role": task.role, "title": task.title},
-                        output={"batch_size": len(batch)},
-                        actor="task_lifecycle",
-                        committed=False,
-                    )
-                except OSError:
-                    logger.debug("WAL write failed for task_claimed %s", task.id)
 
         # Response cache: if a functionally identical task was already completed,
         # return the cached result without spawning an agent (20-40% savings target).
@@ -1702,6 +1706,34 @@ def claim_and_spawn_batches(
                 len(batch),
                 [t.id for t in batch],
             )
+            # WAL: record the worktree materialisation (audit-013).
+            # This intermediate ``claim_confirmed`` entry ties every claimed
+            # task_id to its concrete worktree_path BEFORE the final commit.
+            # A SIGKILL between here and ``task_spawn_confirmed`` leaves an
+            # uncommitted ``claim_confirmed`` the recovery path can use to
+            # preserve the worktree directory and /fail the task back to the
+            # open queue, instead of silently reaping the work.
+            _worktree_path: Any = None
+            try:
+                _worktree_path = orch._spawner.get_worktree_path(session.id)
+            except Exception:
+                logger.debug("Could not resolve worktree_path for session %s", session.id)
+            if _wal is not None:
+                for _t in batch:
+                    try:
+                        _wal.write_entry(
+                            decision_type="claim_confirmed",
+                            inputs={
+                                "task_id": _t.id,
+                                "agent_id": session.id,
+                                "worktree_path": str(_worktree_path) if _worktree_path else "",
+                            },
+                            output={"role": session.role, "phase": "worktree_created"},
+                            actor="task_lifecycle",
+                            committed=False,
+                        )
+                    except OSError:
+                        logger.debug("WAL write failed for claim_confirmed %s", _t.id)
             # WAL: commit the claim — agent was successfully spawned.
             # This pairs with the committed=False entry written before spawn.
             if _wal is not None:

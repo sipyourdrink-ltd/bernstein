@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import time
 from typing import TYPE_CHECKING
 
 import pytest
+from bernstein.core.webhook_signatures import sign_hmac_sha256
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.server import create_app
@@ -50,16 +53,27 @@ async def auth_client(app_with_auth) -> AsyncClient:
         yield c
 
 
-_SECRET_HEADERS = {"x-bernstein-webhook-secret": _WEBHOOK_SECRET}
+def _signed_headers(
+    body: bytes,
+    secret: str = _WEBHOOK_SECRET,
+    *,
+    ts: int | None = None,
+) -> dict[str, str]:
+    """Build HMAC + timestamp headers for a generic-webhook request (audit-121)."""
+
+    timestamp = int(time.time()) if ts is None else ts
+    signed = f"{timestamp}.".encode() + body
+    return {
+        "content-type": "application/json",
+        "x-bernstein-timestamp": str(timestamp),
+        "x-bernstein-webhook-signature-256": sign_hmac_sha256(secret, signed, prefix="sha256="),
+    }
 
 
 @pytest.mark.anyio
 async def test_generic_webhook_creates_task_with_defaults(client: AsyncClient) -> None:
-    response = await client.post(
-        "/webhook",
-        json={"title": "Fix flaky login", "description": "Investigate the login test flake."},
-        headers=_SECRET_HEADERS,
-    )
+    body = json.dumps({"title": "Fix flaky login", "description": "Investigate the login test flake."}).encode()
+    response = await client.post("/webhook", content=body, headers=_signed_headers(body))
 
     assert response.status_code == 201
     task = response.json()["task"]
@@ -71,38 +85,41 @@ async def test_generic_webhook_creates_task_with_defaults(client: AsyncClient) -
 
 
 @pytest.mark.anyio
-async def test_generic_webhook_is_public_when_server_auth_is_enabled(auth_client: AsyncClient) -> None:
-    response = await auth_client.post(
-        "/webhook",
-        json={"title": "Create task", "description": "This should bypass bearer auth."},
-        headers=_SECRET_HEADERS,
-    )
+async def test_generic_webhook_is_public_when_server_auth_is_enabled(
+    auth_client: AsyncClient,
+) -> None:
+    body = json.dumps({"title": "Create task", "description": "This should bypass bearer auth."}).encode()
+    response = await auth_client.post("/webhook", content=body, headers=_signed_headers(body))
 
     assert response.status_code == 201
     assert response.json()["task"]["title"] == "Create task"
 
 
 @pytest.mark.anyio
-async def test_generic_webhook_enforces_shared_secret(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", _WEBHOOK_SECRET)
+async def test_generic_webhook_enforces_hmac_only(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """audit-121: plaintext fallback is gone — HMAC + timestamp required."""
 
-    missing = await client.post(
-        "/webhook",
-        json={"title": "Denied", "description": "Missing the shared secret header."},
-    )
+    monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", _WEBHOOK_SECRET)
+    body = json.dumps({"title": "Allowed", "description": "Correct HMAC signature."}).encode()
+
+    missing = await client.post("/webhook", content=body, headers={"content-type": "application/json"})
     assert missing.status_code == 401
 
-    wrong = await client.post(
+    plaintext = await client.post(
         "/webhook",
-        json={"title": "Denied", "description": "Wrong shared secret header."},
-        headers={"x-bernstein-webhook-secret": "wrong"},
+        content=body,
+        headers={
+            "content-type": "application/json",
+            "x-bernstein-webhook-secret": _WEBHOOK_SECRET,
+        },
     )
-    assert wrong.status_code == 401
+    assert plaintext.status_code == 401
 
-    allowed = await client.post(
-        "/webhook",
-        json={"title": "Allowed", "description": "Correct shared secret header."},
-        headers=_SECRET_HEADERS,
-    )
+    wrong_sig = dict(_signed_headers(body))
+    wrong_sig["x-bernstein-webhook-signature-256"] = "sha256=deadbeef"
+    rejected = await client.post("/webhook", content=body, headers=wrong_sig)
+    assert rejected.status_code == 401
+
+    allowed = await client.post("/webhook", content=body, headers=_signed_headers(body))
     assert allowed.status_code == 201
     assert allowed.json()["task"]["title"] == "Allowed"

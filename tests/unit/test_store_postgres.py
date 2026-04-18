@@ -23,6 +23,31 @@ class _AcquireContext:
         return None
 
 
+class _FakeTransaction:
+    def __init__(self, conn: _TxAware | None = None) -> None:
+        self._conn = conn
+
+    async def __aenter__(self) -> _FakeTransaction:
+        if self._conn is not None:
+            self._conn.transaction_entered = True
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+        if self._conn is not None:
+            self._conn.transaction_exited = True
+        return None
+
+
+class _TxAware:
+    """Protocol-style marker for test connections that track transactions."""
+
+    transaction_entered: bool = False
+    transaction_exited: bool = False
+
+    def transaction(self) -> _FakeTransaction:
+        return _FakeTransaction(self)
+
+
 class _FakePool:
     def __init__(self, conn: object) -> None:
         self._conn = conn
@@ -120,29 +145,35 @@ def test_claim_by_id_releases_distributed_lock_on_version_conflict(monkeypatch: 
     assert redis.released == [("task-1", "lock-token")]
 
 
-def test_claim_next_reopens_task_when_dependencies_are_unmet(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_claim_next_filters_unmet_dependencies_in_single_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dependency filtering is embedded in ``_CLAIM_NEXT_SQL`` — when the
+    subquery returns no eligible row, ``claim_next`` returns ``None`` without
+    executing any follow-up re-open statement.  The whole call must run
+    inside a single acquired connection + transaction.
+    """
     monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
 
-    class _Conn:
+    # Verify the SQL embeds the dependency subquery so re-open is unreachable.
+    assert "NOT EXISTS" in store_postgres._CLAIM_NEXT_SQL
+    assert "unnest(c.depends_on)" in store_postgres._CLAIM_NEXT_SQL
+
+    class _Conn(_TxAware):
         def __init__(self) -> None:
-            self.reopened = False
+            self.fetchrow_calls: list[str] = []
+            self.execute_calls: list[str] = []
 
         async def fetchrow(self, query: str, *args: object) -> object | None:
             await asyncio.sleep(0)  # Async interface requirement
-            if "UPDATE tasks" in query and "FOR    UPDATE SKIP LOCKED" in query:
-                return _task_row(status="claimed", depends_on=["dep-1"])
-            raise AssertionError(f"unexpected fetchrow query: {query}")
+            self.fetchrow_calls.append(query)
+            # Dependency not met → subquery returns no id → UPDATE matches no
+            # row → RETURNING yields nothing.
+            return None
 
-        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:
+        async def execute(self, query: str, *args: object) -> None:  # pragma: no cover
             await asyncio.sleep(0)  # Async interface requirement
-            if "status = 'done'" in query:
-                return []
-            raise AssertionError(f"unexpected fetch query: {query}")
-
-        async def execute(self, query: str, *args: object) -> None:
-            await asyncio.sleep(0)  # Async interface requirement
-            assert "SET status='open'" in query
-            self.reopened = True
+            self.execute_calls.append(query)
 
     conn = _Conn()
     store = store_postgres.PostgresTaskStore("postgresql://example")
@@ -151,7 +182,54 @@ def test_claim_next_reopens_task_when_dependencies_are_unmet(monkeypatch: pytest
     claimed = asyncio.run(store.claim_next("backend"))
 
     assert claimed is None
-    assert conn.reopened is True
+    assert len(conn.fetchrow_calls) == 1
+    assert "FOR    UPDATE SKIP LOCKED" in conn.fetchrow_calls[0]
+    # No re-open — the race-prone second connection is gone.
+    assert conn.execute_calls == []
+    # Transaction was entered (and exited) exactly once.
+    assert conn.transaction_entered is True
+    assert conn.transaction_exited is True
+
+
+def test_claim_next_returns_task_when_subquery_filters_return_eligible_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the SQL selects and claims a row, ``claim_next`` returns the
+    mapped Task without any extra dependency round-trip.
+    """
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+
+    class _Conn(_TxAware):
+        def __init__(self) -> None:
+            self.fetch_calls = 0
+            self.execute_calls = 0
+
+        async def fetchrow(self, query: str, *args: object) -> object | None:
+            await asyncio.sleep(0)  # Async interface requirement
+            self.fetch_calls += 1
+            assert "FOR    UPDATE SKIP LOCKED" in query
+            return _task_row(status="claimed", depends_on=["dep-1"])
+
+        async def fetch(self, query: str, *args: object) -> list[dict[str, object]]:  # pragma: no cover
+            await asyncio.sleep(0)  # Async interface requirement
+            raise AssertionError("claim_next should not run a second dependency fetch")
+
+        async def execute(self, query: str, *args: object) -> None:  # pragma: no cover
+            await asyncio.sleep(0)  # Async interface requirement
+            self.execute_calls += 1
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+
+    task = asyncio.run(store.claim_next("backend"))
+
+    assert task is not None
+    assert task.status is TaskStatus.CLAIMED
+    assert conn.fetch_calls == 1
+    assert conn.execute_calls == 0
+    assert conn.transaction_entered is True
+    assert conn.transaction_exited is True
 
 
 def test_claim_by_id_raises_key_error_when_task_does_not_exist(monkeypatch: pytest.MonkeyPatch) -> None:

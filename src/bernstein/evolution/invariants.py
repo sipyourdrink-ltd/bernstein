@@ -21,10 +21,13 @@ logger = logging.getLogger(__name__)
 
 # Files that MUST NOT be modified by the evolution system.
 # These are the "immutable kernel" per the Stable Kernel Thesis.
+# Paths follow the post-decomposition layout (orchestration/, quality/, server/
+# sub-packages); legacy top-level shims are loaded via sys.meta_path and do
+# not exist on disk.
 LOCKED_FILES: tuple[str, ...] = (
-    "src/bernstein/core/janitor.py",
-    "src/bernstein/core/server.py",
-    "src/bernstein/core/orchestrator.py",
+    "src/bernstein/core/quality/janitor.py",
+    "src/bernstein/core/server/server_app.py",
+    "src/bernstein/core/orchestration/orchestrator.py",
     "src/bernstein/evolution/invariants.py",
     "src/bernstein/evolution/circuit.py",
     "src/bernstein/evolution/gate.py",

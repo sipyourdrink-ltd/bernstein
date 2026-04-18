@@ -367,8 +367,6 @@ exclude = [
     "src/bernstein/core/vertical_packs.py",
     "src/bernstein/core/web_graph.py",
     "src/bernstein/core/security_correlation.py",
-    "src/bernstein/core/task_diff_preview.py",
-    "src/bernstein/core/task_templates.py",
     "src/bernstein/testing/parallel_runner.py",
     "src/bernstein/tui/snapshot_testing.py",
     "src/bernstein/core/log_search.py",

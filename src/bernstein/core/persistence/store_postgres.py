@@ -130,16 +130,36 @@ CREATE INDEX IF NOT EXISTS idx_archive_completed ON task_archive (completed_at D
 # Atomic claim: find the best open task for a role and claim it in one
 # UPDATE statement.  FOR UPDATE SKIP LOCKED prevents two concurrent callers
 # from claiming the same row.
+#
+# Dependency filtering is embedded in the subquery: a task is only eligible
+# when every id in its ``depends_on`` array corresponds to an existing
+# ``tasks`` row with ``status = 'done'``.  Candidates missing dependencies
+# or blocked by unfinished prerequisites are skipped without ever being
+# claimed, eliminating the race window where a separate re-open statement
+# could roll back a legitimate claim made concurrently by another node.
 _CLAIM_NEXT_SQL = """
-UPDATE tasks
+UPDATE tasks AS t
 SET    status  = 'claimed',
        version = version + 1
-WHERE  id = (
-    SELECT id
-    FROM   tasks
-    WHERE  role   = $1
-    AND    status = 'open'
-    ORDER  BY priority, created_at
+WHERE  t.id = (
+    SELECT c.id
+    FROM   tasks AS c
+    WHERE  c.role   = $1
+    AND    c.status = 'open'
+    AND    (
+        c.depends_on = '{}'::text[]
+        OR NOT EXISTS (
+            SELECT 1
+            FROM   unnest(c.depends_on) AS dep_id
+            WHERE  NOT EXISTS (
+                SELECT 1
+                FROM   tasks AS d
+                WHERE  d.id = dep_id
+                AND    d.status = 'done'
+            )
+        )
+    )
+    ORDER  BY c.priority, c.created_at
     LIMIT  1
     FOR    UPDATE SKIP LOCKED
 )
@@ -390,37 +410,23 @@ class PostgresTaskStore(BaseTaskStore):
     async def claim_next(self, role: str) -> Task | None:
         """Claim the highest-priority open task for *role*, atomically.
 
+        The claim runs inside a single connection + transaction so the row
+        selection, dependency check, and status update are guaranteed to
+        observe a consistent snapshot.  Dependency filtering is pushed down
+        into ``_CLAIM_NEXT_SQL`` via a ``NOT EXISTS`` sub-clause, so a task
+        whose prerequisites are unmet is never claimed in the first place —
+        removing the former re-open path that could roll back a legitimate
+        concurrent claim from another node.
+
         Uses ``UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED)`` so
         concurrent callers on different nodes cannot double-claim.
         """
         assert self._pool is not None
-        async with self._pool.acquire() as conn:
+        async with self._pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(_CLAIM_NEXT_SQL, role)
         if row is None:
             return None
-        task = _row_to_task(row)
-        # Filter: skip tasks with unmet dependencies.
-        # (done at query time via a subquery in production-scale deployments;
-        #  here we do a post-filter to keep the SQL readable)
-        if task.depends_on:
-            assert self._pool is not None
-            async with self._pool.acquire() as conn:
-                done_rows = await conn.fetch(
-                    """SELECT id FROM tasks
-                       WHERE id = ANY($1::text[]) AND status = 'done'""",
-                    task.depends_on,
-                )
-            done_ids = {r["id"] for r in done_rows}
-            if not all(dep in done_ids for dep in task.depends_on):
-                # Put back — re-open it (no other slot; caller gets None)
-                assert self._pool is not None
-                async with self._pool.acquire() as conn:
-                    await conn.execute(
-                        "UPDATE tasks SET status='open', version=version-1 WHERE id=$1",
-                        task.id,
-                    )
-                return None
-        return task
+        return _row_to_task(row)
 
     async def claim_by_id(
         self,

@@ -15,6 +15,7 @@ import re
 import signal
 import threading
 import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -336,26 +337,126 @@ class SSEBus:
     - Queue buffer size limit prevents unbounded memory growth.
     - Heartbeat pings enable disconnect detection.
     - Stale subscriber cleanup prevents leaked queue references.
+    - audit-122: reconnect-frequency limiter blocks IPs that churn
+      subscribe/unsubscribe faster than ``RECONNECT_MAX_PER_WINDOW``
+      inside ``RECONNECT_WINDOW_S``.
+    - audit-122: per-IP buffer budget caps total events across all
+      queues belonging to the same IP (defends slow-client DoS).
+    - audit-122: dropped-event counter with warn logging to flag
+      slow clients without killing the orchestrator.
     """
 
     # Maximum events buffered per subscriber before dropping
     MAX_BUFFER_SIZE: int = 256
+    # Maximum total events buffered per IP across all its queues (audit-122)
+    MAX_BUFFER_PER_IP: int = 1024
     # Seconds after which a subscriber with no reads is considered stale
-    STALE_TIMEOUT_S: float = 120.0
+    # (audit-122: lowered from 120s to 30s for /events slow-client DoS)
+    STALE_TIMEOUT_S: float = 30.0
     # Heartbeat interval for SSE keep-alive pings
     HEARTBEAT_INTERVAL_S: float = 15.0
+    # audit-122: reconnect-frequency limiter parameters. Three clean
+    # reconnects inside RECONNECT_WINDOW_S tolerates a flaky wifi drop
+    # (heartbeat timeout ~= 60s so one cycle per minute is realistic).
+    RECONNECT_MAX_PER_WINDOW: int = 3
+    RECONNECT_WINDOW_S: float = 60.0
+    RECONNECT_COOLDOWN_S: float = 300.0
 
-    def __init__(self, *, max_buffer: int = 256, stale_timeout_s: float = 120.0) -> None:
+    def __init__(
+        self,
+        *,
+        max_buffer: int = 256,
+        stale_timeout_s: float = 30.0,
+        max_buffer_per_ip: int = 1024,
+        reconnect_max_per_window: int = 3,
+        reconnect_window_s: float = 60.0,
+        reconnect_cooldown_s: float = 300.0,
+    ) -> None:
         self._subscribers: list[asyncio.Queue[str]] = []
         self._subscriber_last_read: dict[int, float] = {}
+        # audit-122: map queue id -> owning IP so per-IP accounting works
+        self._subscriber_ip: dict[int, str] = {}
         self._max_buffer = max_buffer
         self._stale_timeout_s = stale_timeout_s
+        self._max_buffer_per_ip = max_buffer_per_ip
+        # audit-122: sliding-window record of recent subscribe() timestamps
+        # per IP. Bounded by RECONNECT_MAX_PER_WINDOW + 1 to avoid unbounded
+        # growth for abusive clients.
+        _max_hist = reconnect_max_per_window + 1
+        self._recent_connects: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=_max_hist))
+        # audit-122: cooldown expiry per IP (monotonic timestamp)
+        self._reconnect_cooldown_until: dict[str, float] = {}
+        self._reconnect_max_per_window = reconnect_max_per_window
+        self._reconnect_window_s = reconnect_window_s
+        self._reconnect_cooldown_s = reconnect_cooldown_s
+        # audit-122: dropped-event counters (total + last warn ts)
+        self._dropped_events_total: int = 0
+        self._last_drop_warning_ts: float = 0.0
 
-    def subscribe(self) -> asyncio.Queue[str]:
-        """Create a new subscriber queue."""
+    # ---- reconnect tracking (audit-122) -----------------------------------
+
+    def is_blocked(self, ip: str, *, now: float | None = None) -> bool:
+        """Return ``True`` when *ip* is inside its reconnect-cooldown window."""
+        ts = now if now is not None else time.monotonic()
+        expiry = self._reconnect_cooldown_until.get(ip)
+        if expiry is None:
+            return False
+        if ts >= expiry:
+            self._reconnect_cooldown_until.pop(ip, None)
+            return False
+        return True
+
+    def _record_connect_attempt(self, ip: str, *, now: float | None = None) -> bool:
+        """Record a subscribe attempt for *ip*.
+
+        Returns ``True`` when the attempt is permitted, ``False`` when the
+        caller has exceeded ``reconnect_max_per_window`` reconnects inside
+        ``reconnect_window_s``; in that case the IP is parked in a
+        ``reconnect_cooldown_s``-long penalty box.
+        """
+        ts = now if now is not None else time.monotonic()
+        if self.is_blocked(ip, now=ts):
+            return False
+        window = self._recent_connects[ip]
+        cutoff = ts - self._reconnect_window_s
+        while window and window[0] <= cutoff:
+            window.popleft()
+        if len(window) >= self._reconnect_max_per_window:
+            # Exceeded the window — trip the cooldown and reject.
+            self._reconnect_cooldown_until[ip] = ts + self._reconnect_cooldown_s
+            logger.warning(
+                "SSE bus: blocking IP %s for %.0fs (>%d reconnects in %.0fs)",
+                ip,
+                self._reconnect_cooldown_s,
+                self._reconnect_max_per_window,
+                self._reconnect_window_s,
+            )
+            return False
+        window.append(ts)
+        return True
+
+    # ---- subscribe / unsubscribe ------------------------------------------
+
+    def subscribe(self, *, client_ip: str | None = None) -> asyncio.Queue[str]:
+        """Create a new subscriber queue.
+
+        Args:
+            client_ip: Optional remote IP string. When provided, the
+                connection is subject to the audit-122 reconnect-frequency
+                limiter and the per-IP buffer budget. ``None`` opts out
+                (used by synthetic callers — heartbeat loop, unit tests).
+
+        Raises:
+            PermissionError: If *client_ip* has exceeded the reconnect
+                limit and is currently in cooldown.
+        """
+        if client_ip is not None and not self._record_connect_attempt(client_ip):
+            raise PermissionError(f"SSE reconnect rate limit exceeded for {client_ip}")
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._max_buffer)
         self._subscribers.append(queue)
         self._subscriber_last_read[id(queue)] = time.time()
+        if client_ip is not None:
+            self._subscriber_ip[id(queue)] = client_ip
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue[str]) -> None:
@@ -363,6 +464,7 @@ class SSEBus:
         with contextlib.suppress(ValueError):
             self._subscribers.remove(queue)
         self._subscriber_last_read.pop(id(queue), None)
+        self._subscriber_ip.pop(id(queue), None)
 
     def mark_read(self, queue: asyncio.Queue[str]) -> None:
         """Update the last-read timestamp for a subscriber."""
@@ -373,16 +475,63 @@ class SSEBus:
         """Number of active subscribers."""
         return len(self._subscribers)
 
+    @property
+    def dropped_events_total(self) -> int:
+        """Return the cumulative count of events dropped due to buffer pressure."""
+        return self._dropped_events_total
+
+    def buffered_for_ip(self, ip: str) -> int:
+        """Return the total number of buffered events across all *ip* queues."""
+        total = 0
+        for queue in self._subscribers:
+            if self._subscriber_ip.get(id(queue)) == ip:
+                total += queue.qsize()
+        return total
+
+    # ---- publish ----------------------------------------------------------
+
     def publish(self, event_type: str, data: str = "{}") -> None:
         """Push an event to all subscribers (non-blocking).
 
-        If a subscriber's queue is full, the event is dropped for that
-        subscriber to prevent unbounded memory growth.
+        If a subscriber's queue is full, or pushing would exceed the
+        per-IP buffer budget (audit-122), the event is dropped for that
+        subscriber. A warning is logged when drops are observed.
         """
         message = f"event: {event_type}\ndata: {data}\n\n"
+        dropped = 0
+        # Compute the per-IP buffered totals once per publish so we do not
+        # pay O(n) lookups per queue inside the loop.
+        per_ip_used: dict[str, int] = defaultdict(int)
         for queue in self._subscribers:
-            with contextlib.suppress(asyncio.QueueFull):
+            owner = self._subscriber_ip.get(id(queue))
+            if owner is not None:
+                per_ip_used[owner] += queue.qsize()
+        # Snapshot the subscriber list so mutations during publish (tests
+        # exercise this) do not raise.
+        for queue in list(self._subscribers):
+            owner = self._subscriber_ip.get(id(queue))
+            if owner is not None and per_ip_used[owner] >= self._max_buffer_per_ip:
+                dropped += 1
+                continue
+            try:
                 queue.put_nowait(message)
+            except asyncio.QueueFull:
+                dropped += 1
+                continue
+            if owner is not None:
+                per_ip_used[owner] += 1
+        if dropped:
+            self._dropped_events_total += dropped
+            now = time.monotonic()
+            # Rate-limit the warn log to once per second to avoid spam.
+            if now - self._last_drop_warning_ts >= 1.0:
+                self._last_drop_warning_ts = now
+                logger.warning(
+                    "SSE bus: dropped %d events (total=%d) on %s publish",
+                    dropped,
+                    self._dropped_events_total,
+                    event_type,
+                )
 
     def cleanup_stale(self) -> int:
         """Remove subscribers that haven't read in ``stale_timeout_s``.
@@ -399,6 +548,67 @@ class SSEBus:
         for queue in stale:
             self.unsubscribe(queue)
         return len(stale)
+
+
+# ---------------------------------------------------------------------------
+# audit-122: SSE reconnect limiter middleware
+# ---------------------------------------------------------------------------
+
+
+class SSEReconnectLimiterMiddleware:
+    """Front-door limiter for /events and /events/cost SSE endpoints.
+
+    Rejects requests from IPs that have reconnected more than
+    ``RECONNECT_MAX_PER_WINDOW`` times inside ``RECONNECT_WINDOW_S`` for
+    ``RECONNECT_COOLDOWN_S`` seconds. Reconnect counters live on the shared
+    ``SSEBus`` instance so per-IP state is consistent with subscribe().
+
+    Tuned to tolerate realistic wifi blips: 3 reconnects / 60 s is >2x the
+    expected churn rate given a 60 s read-timeout on the /events stream.
+    """
+
+    _SSE_PATHS = frozenset({"/events", "/events/cost"})
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("method", "").upper() != "GET":
+            await self.app(scope, receive, send)
+            return
+        if scope.get("path") not in self._SSE_PATHS:
+            await self.app(scope, receive, send)
+            return
+        fastapi_app = scope.get("app")
+        bus = getattr(getattr(fastapi_app, "state", None), "sse_bus", None)
+        if not isinstance(bus, SSEBus):
+            await self.app(scope, receive, send)
+            return
+        raw_client: Any = scope.get("client") or ("unknown", 0)
+        if isinstance(raw_client, tuple) and raw_client:
+            client_ip: str = str(raw_client[0])  # type: ignore[reportUnknownArgumentType]
+        else:
+            client_ip = "unknown"
+        if not bus._record_connect_attempt(client_ip):  # pyright: ignore[reportPrivateUsage]
+            body = json.dumps(
+                {
+                    "detail": "Too many SSE reconnects. Try again later.",
+                    "bucket": "sse_reconnect",
+                }
+            ).encode("utf-8")
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 429,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"retry-after", b"300"),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self.app(scope, receive, send)
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +799,56 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
     return payload
 
 
+def _resolve_configured_workers() -> int:
+    """Resolve the requested uvicorn worker count from env vars.
+
+    Reads ``BERNSTEIN_WORKERS`` first, falling back to ``WEB_CONCURRENCY``
+    (the conventional uvicorn/gunicorn env var). Invalid or missing values
+    resolve to ``1``.
+
+    Returns:
+        Worker count (minimum 1).
+    """
+    for var in ("BERNSTEIN_WORKERS", "WEB_CONCURRENCY"):
+        raw = os.environ.get(var)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        return max(1, value)
+    return 1
+
+
+def preflight_multi_worker_guard() -> None:
+    """Refuse to boot when multi-worker mode is requested.
+
+    Bernstein's ``TaskStore`` coordinates mutations with an in-process
+    ``asyncio.Lock`` and appends to JSONL without ``fcntl.flock`` — running
+    under ``uvicorn --workers N`` (or ``WEB_CONCURRENCY>1``) causes torn
+    JSONL lines and duplicate task claims (audit-025).
+
+    The guard fires at app-factory time so each uvicorn worker subprocess
+    re-runs it on import and bails out with a clear message instead of
+    silently corrupting state.
+
+    Raises:
+        SystemExit: If the resolved worker count is greater than 1. The
+            error message points operators to the single-supported
+            configuration.
+    """
+    workers = _resolve_configured_workers()
+    if workers > 1:
+        raise SystemExit(
+            "Bernstein TaskStore is single-process; refusing to boot with "
+            f"workers={workers}. Set server.workers=1 in bernstein.yaml or "
+            "use BERNSTEIN_WORKERS=1 (also clear WEB_CONCURRENCY). "
+            "Multi-worker support is tracked as a separate ticket "
+            "(fcntl.flock / SQLite WAL)."
+        )
+
+
 def create_app(
     jsonl_path: Path = DEFAULT_JSONL_PATH,
     metrics_jsonl_path: Path | None = None,
@@ -617,7 +877,14 @@ def create_app(
 
     Returns:
         Configured FastAPI app with all routes registered.
+
+    Raises:
+        SystemExit: Via ``preflight_multi_worker_guard`` when the operator
+            requests more than one uvicorn worker — the ``TaskStore`` is
+            single-process and multi-worker mode corrupts state
+            (audit-025).
     """
+    preflight_multi_worker_guard()
     setup_json_logging()
     from bernstein.core.auth import AuthService, AuthStore, SSOConfig
     from bernstein.core.auth_middleware import SSOAuthMiddleware
@@ -821,6 +1088,10 @@ def create_app(
 
     # Per-endpoint request rate limiting — reads buckets from app.state.seed_config.
     application.add_middleware(RequestRateLimitMiddleware)
+
+    # audit-122: SSE reconnect-frequency limiter. Rejects /events clients that
+    # reconnect faster than 3 times per 60 s for a 5-minute cooldown.
+    application.add_middleware(SSEReconnectLimiterMiddleware)
 
     # IP allowlist — reads allowed_ips from app.state.seed_config.network dynamically.
     application.add_middleware(IPAllowlistMiddleware)

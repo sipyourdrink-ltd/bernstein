@@ -290,6 +290,21 @@ class TaskStore:
     """Thread-safe in-memory task store with JSONL persistence.
 
     All mutations go through this class so the JSONL log stays consistent.
+
+    Concurrency model (audit-025):
+        Mutations are coordinated by an in-process ``asyncio.Lock`` and the
+        JSONL append path does NOT take an OS-level file lock (no
+        ``fcntl.flock``). The store is therefore **single-process only** —
+        running the server under ``uvicorn --workers N`` (or with
+        ``WEB_CONCURRENCY>1``) interleaves appends, produces torn lines
+        that ``replay_jsonl`` silently drops, and lets multiple workers
+        claim the same top-priority task.
+
+        The server enforces this via
+        :func:`bernstein.core.server.server_app.preflight_multi_worker_guard`,
+        which refuses to boot with ``workers>1``. Long-term multi-worker
+        coordination (``fcntl.flock`` / SQLite WAL / Redis) is tracked as a
+        separate ticket.
     """
 
     def __init__(

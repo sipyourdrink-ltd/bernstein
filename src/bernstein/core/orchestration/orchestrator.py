@@ -140,7 +140,7 @@ from bernstein.core.task_lifecycle import (
     should_auto_decompose,
 )
 from bernstein.core.token_monitor import check_token_growth
-from bernstein.core.wal import WALEntry, WALRecovery, WALWriter
+from bernstein.core.wal import WALEntry, WALReader, WALRecovery, WALWriter
 from bernstein.core.wal_replay import WALReplayEngine
 from bernstein.core.watchdog import WatchdogManager, collect_watchdog_findings
 from bernstein.core.workflow import WorkflowExecutor, load_workflow
@@ -1850,15 +1850,30 @@ class Orchestrator:
         )
         orphaned_keys = {(run_id, entry.seq) for run_id, entry in orphaned}
 
+        # Identify orphaned claim_confirmed entries: the spawn created a
+        # worktree but the process was SIGKILL'd before task_spawn_confirmed
+        # was written.  These represent potentially valuable WIP on disk
+        # that must not be silently reaped (audit-013).
+        crashed_spawns = self._find_orphaned_claim_confirmed(sdd_dir)
+        crashed_spawn_keys = {(run_id, entry.seq) for run_id, entry in crashed_spawns}
+        # task_ids that already have a claim_confirmed crash entry -- skip
+        # the task_claimed-level force-claim for them, since the crashed-spawn
+        # handler both preserves the worktree and /fail's the task which
+        # re-opens it on the server.  Doing both would produce a confusing
+        # double-handling trail (task ends up both failed and force-claimed).
+        crashed_spawn_task_ids = {str(e.inputs.get("task_id", "")) for _, e in crashed_spawns}
+
         for run_id, entry in uncommitted:
             is_orphan = (run_id, entry.seq) in orphaned_keys
+            is_crashed_spawn = (run_id, entry.seq) in crashed_spawn_keys
             logger.info(
-                "WAL uncommitted [run=%s seq=%d]: %s %s%s",
+                "WAL uncommitted [run=%s seq=%d]: %s %s%s%s",
                 run_id,
                 entry.seq,
                 entry.decision_type,
                 entry.inputs,
                 " (orphan: no spawn_confirmed)" if is_orphan else "",
+                " (crashed_spawn: worktree materialised)" if is_crashed_spawn else "",
             )
             # Record acknowledgement in current run's WAL for auditability
             try:
@@ -1870,7 +1885,11 @@ class Orchestrator:
                         "original_decision_type": entry.decision_type,
                         "original_inputs": entry.inputs,
                     },
-                    output={"action": "acknowledged", "orphan": is_orphan},
+                    output={
+                        "action": "acknowledged",
+                        "orphan": is_orphan,
+                        "crashed_spawn": is_crashed_spawn,
+                    },
                     actor="orchestrator",
                     committed=True,
                 )
@@ -1879,10 +1898,24 @@ class Orchestrator:
 
         # Actively retry orphaned claims so each task returns to the open
         # queue instead of being silently abandoned (audit-001 fix part a).
+        # Skip tasks that also have a claim_confirmed crash entry -- those
+        # are handled by the crashed-spawn path below so the worktree is
+        # preserved to the graveyard before the task is /fail'd.
         retried = 0
         for run_id, entry in orphaned:
+            if str(entry.inputs.get("task_id", "")) in crashed_spawn_task_ids:
+                continue
             if self._retry_orphaned_claim(run_id, entry):
                 retried += 1
+
+        # For claim_confirmed orphans: preserve the materialised worktree to
+        # ``.sdd/graveyard/<task_id>/<ts>/`` (if dirty or has commits) then
+        # POST /tasks/{id}/fail so the task returns to the open queue with a
+        # clear reason operators can review (audit-013).
+        crashed_recovered = 0
+        for run_id, entry in crashed_spawns:
+            if self._recover_crashed_spawn(run_id, entry):
+                crashed_recovered += 1
 
         # Preserve any prior worktrees that still have uncommitted changes
         # so a fresh agent can resume them (audit-001 fix part b).
@@ -1893,7 +1926,7 @@ class Orchestrator:
         # We close the union of run_ids that held uncommitted entries and
         # run_ids that held orphaned claims -- in practice these are the
         # only WALs whose entries were returned by the scan helpers.
-        closed_run_ids = sorted({r for r, _ in uncommitted} | {r for r, _ in orphaned})
+        closed_run_ids = sorted({r for r, _ in uncommitted} | {r for r, _ in orphaned} | {r for r, _ in crashed_spawns})
         for closed_run_id in closed_run_ids:
             run_uncommitted = sum(1 for r, _ in uncommitted if r == closed_run_id)
             run_orphaned = sum(1 for r, _ in orphaned if r == closed_run_id)
@@ -1919,6 +1952,8 @@ class Orchestrator:
             uncommitted_count=len(uncommitted),
             orphaned_count=len(orphaned),
             retried_count=retried,
+            crashed_spawn_count=len(crashed_spawns),
+            crashed_recovered=crashed_recovered,
             preserved_worktrees=[str(p) for p in preserved_paths],
             run_ids=sorted({r for r, _ in uncommitted}),
             closed_run_ids=closed_run_ids,
@@ -1927,6 +1962,11 @@ class Orchestrator:
             logger.warning(
                 "WAL recovery: retried %d orphaned claim(s) via /tasks/{id}/force-claim",
                 retried,
+            )
+        if crashed_recovered:
+            logger.warning(
+                "WAL recovery: recovered %d crashed spawn(s); worktrees moved to .sdd/graveyard/",
+                crashed_recovered,
             )
         return uncommitted
 
@@ -2095,6 +2135,184 @@ class Orchestrator:
 
         logger.info(
             "WAL recovery: force-claimed orphaned task %s (run=%s, original_seq=%d)",
+            task_id,
+            run_id,
+            entry.seq,
+        )
+        return True
+
+    def _find_orphaned_claim_confirmed(self, sdd_dir: Path) -> list[tuple[str, Any]]:
+        """Return uncommitted ``claim_confirmed`` entries without a spawn confirm.
+
+        A ``claim_confirmed`` entry is written AFTER the worktree is
+        materialised but BEFORE ``task_spawn_confirmed``.  On a SIGKILL in
+        that window the worktree exists on disk but no committed entry
+        exists.  The returned tuples drive graveyard preservation + /fail
+        so no work is silently reaped (audit-013).
+
+        WALs with a ``.closed`` sidecar marker are skipped (audit-072) so
+        crashed spawns handled by a prior recovery are not retried forever.
+
+        Args:
+            sdd_dir: The ``.sdd`` directory root.
+
+        Returns:
+            List of ``(run_id, WALEntry)`` tuples with
+            ``decision_type == "claim_confirmed"`` and ``committed=False``
+            whose matching ``task_spawn_confirmed`` is missing from the
+            same run's WAL.
+        """
+        wal_dir = sdd_dir / "runtime" / "wal"
+        if not wal_dir.is_dir():
+            return []
+
+        crashed: list[tuple[str, Any]] = []
+        for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
+            run_id = wal_file.name.removesuffix(".wal.jsonl")
+            if run_id == self._run_id:
+                continue
+            if WALRecovery.is_wal_closed(run_id, sdd_dir):
+                continue
+            reader = WALReader(run_id=run_id, sdd_dir=sdd_dir)
+            try:
+                entries = list(reader.iter_entries())
+            except FileNotFoundError:
+                continue
+            confirmed_task_ids: set[str] = {
+                str(e.inputs.get("task_id", ""))
+                for e in entries
+                if e.decision_type == "task_spawn_confirmed" and e.committed
+            }
+            for entry in entries:
+                if entry.decision_type != "claim_confirmed" or entry.committed:
+                    continue
+                task_id = str(entry.inputs.get("task_id", ""))
+                if not task_id or task_id in confirmed_task_ids:
+                    continue
+                crashed.append((run_id, entry))
+        return crashed
+
+    def _recover_crashed_spawn(self, run_id: str, entry: Any) -> bool:
+        """Preserve a crashed-spawn worktree and /fail the task (audit-013).
+
+        Moves the materialised worktree (recorded in ``entry.inputs``) to
+        ``.sdd/graveyard/<task_id>/<ts>/`` when it contains unsaved work
+        (dirty status OR commits ahead of ``HEAD``) and POSTs
+        ``/tasks/{task_id}/fail`` with reason
+        ``spawned worktree missing after crash`` so the server transitions
+        the task back to the *open* queue.  All failures are logged and
+        swallowed -- the surrounding recovery loop must continue.
+
+        A ``task_retry`` entry (``reason=crashed_spawn_recovery``) is
+        appended to the current run's WAL for auditability.
+
+        Args:
+            run_id: Run ID of the WAL file the crashed spawn was found in.
+            entry: The ``claim_confirmed`` WAL entry (committed=False) with
+                no matching ``task_spawn_confirmed`` in the same run.
+
+        Returns:
+            True when the /fail POST succeeded.
+        """
+        import shutil
+        import subprocess
+        from pathlib import Path as _Path
+
+        task_id = str(entry.inputs.get("task_id", ""))
+        worktree_path_str = str(entry.inputs.get("worktree_path", ""))
+        if not task_id:
+            return False
+
+        # Preserve worktree to graveyard if it still exists and has WIP.
+        graveyard_dest: _Path | None = None
+        if worktree_path_str:
+            src = _Path(worktree_path_str)
+            if src.is_dir():
+                has_wip = False
+                try:
+                    status = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=src,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        check=False,
+                    )
+                    has_wip = status.returncode == 0 and bool(status.stdout.strip())
+                    if not has_wip:
+                        # Also preserve if the branch has commits not in
+                        # the parent (covers ``git commit`` without push).
+                        rev = subprocess.run(
+                            ["git", "log", "-1", "--format=%H"],
+                            cwd=src,
+                            capture_output=True,
+                            text=True,
+                            timeout=5,
+                            check=False,
+                        )
+                        has_wip = rev.returncode == 0 and bool(rev.stdout.strip())
+                except (OSError, subprocess.SubprocessError) as exc:
+                    logger.debug("git status failed for crashed worktree %s: %s", src, exc)
+                    # Be conservative: still preserve if git call fails.
+                    has_wip = True
+
+                if has_wip:
+                    graveyard_root = self._workdir / ".sdd" / "graveyard" / task_id
+                    graveyard_dest = graveyard_root / f"{int(time.time())}"
+                    try:
+                        graveyard_dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(src), str(graveyard_dest))
+                        logger.warning(
+                            "WAL recovery: preserved crashed worktree %s -> %s (task=%s)",
+                            src,
+                            graveyard_dest,
+                            task_id,
+                        )
+                    except OSError as exc:
+                        logger.warning(
+                            "WAL recovery: could not move crashed worktree %s to graveyard: %s",
+                            src,
+                            exc,
+                        )
+                        graveyard_dest = None
+
+        # WAL: record the retry intent (auditable, committed).
+        try:
+            self._wal_writer.write_entry(
+                decision_type="task_retry",
+                inputs={
+                    "task_id": task_id,
+                    "reason": "crashed_spawn_recovery",
+                    "original_run_id": run_id,
+                    "original_seq": entry.seq,
+                    "graveyard_path": str(graveyard_dest) if graveyard_dest else "",
+                },
+                output={"action": "fail_requested"},
+                actor="orchestrator",
+                committed=True,
+            )
+        except OSError:
+            logger.debug("WAL write failed for crashed-spawn task_retry (run=%s task=%s)", run_id, task_id)
+
+        # POST /tasks/{id}/fail so the task returns to the open queue with a
+        # clear reason operators can review.
+        try:
+            resp = self._client.post(
+                f"{self._config.server_url}/tasks/{task_id}/fail",
+                json={"reason": "spawned worktree missing after crash"},
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "WAL recovery: /fail failed for crashed-spawn task %s (run=%s): %s",
+                task_id,
+                run_id,
+                exc,
+            )
+            return False
+
+        logger.info(
+            "WAL recovery: failed crashed-spawn task %s (run=%s, original_seq=%d)",
             task_id,
             run_id,
             entry.seq,

@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 _WORKTREE_BASE = ".sdd/worktrees"
 _SETUP_COMMAND_TIMEOUT_S = 300  # 5 minutes max for setup commands
 
+# Graveyard for unmerged commits rescued from crashed agents (audit-097).
+_GRAVEYARD_DIR_REL = ".sdd/graveyard"
+_GRAVEYARD_REF_PREFIX = "refs/graveyard/"
+_GRAVEYARD_GIT_TIMEOUT_S = 30
+_GRAVEYARD_DEFAULT_PURGE_DAYS = 14
+
 
 @dataclass(frozen=True)
 class WorktreeSetupConfig:
@@ -330,6 +336,285 @@ def setup_worktree_env(
             logger.warning("Failed to run worktree setup command: %s", exc)
 
 
+def _count_unmerged_commits(repo_root: Path, branch: str, base: str = "main") -> int:
+    """Return how many commits on *branch* are not reachable from *base* (audit-097).
+
+    Uses ``git rev-list <branch> ^<base> --count``.  If the branch is missing
+    or the command fails, returns ``0`` — callers treat that as "nothing to
+    preserve" which is safe because graveyard capture is best-effort.
+
+    Args:
+        repo_root: Repository root directory.
+        branch: Branch name to compare against *base* (e.g. ``agent/<sid>``).
+        base: Reference to compare against.  Defaults to ``main``.
+
+    Returns:
+        Number of commits on *branch* not in *base*.  ``0`` on any failure.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", branch, f"^{base}", "--count"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("rev-list for %s failed: %s", branch, exc)
+        return 0
+    if result.returncode != 0:
+        logger.debug("rev-list for %s exited %d: %s", branch, result.returncode, result.stderr.strip())
+        return 0
+    raw = result.stdout.strip()
+    if not raw:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        logger.debug("rev-list for %s produced non-integer output: %r", branch, raw)
+        return 0
+
+
+def _resolve_ref(repo_root: Path, ref: str) -> str | None:
+    """Resolve *ref* to a SHA via ``git rev-parse``; return ``None`` on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", ref],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("rev-parse for %s failed: %s", ref, exc)
+        return None
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
+def _graveyard_timestamp(now: float | None = None) -> str:
+    """Return a filesystem- and ref-safe timestamp like ``20260418T103045Z``."""
+    import datetime as _dt
+
+    ts = _dt.datetime.fromtimestamp(now if now is not None else time.time(), tz=_dt.UTC)
+    return ts.strftime("%Y%m%dT%H%M%SZ")
+
+
+def preserve_branch_to_graveyard(
+    repo_root: Path,
+    session_id: str,
+    *,
+    branch: str | None = None,
+    now: float | None = None,
+) -> Path | None:
+    """Move *branch* to ``refs/graveyard/<sid>-<ts>`` and export a bundle (audit-097).
+
+    Called before a destructive worktree cleanup when the session branch has
+    unmerged commits.  The rescue path is:
+
+    1. Resolve the current tip of ``agent/<sid>``.
+    2. Create ``refs/graveyard/<sid>-<ts>`` pointing at that tip via
+       ``git update-ref``.
+    3. Emit a portable ``git bundle`` at
+       ``.sdd/graveyard/<sid>-<ts>.bundle`` so the commits survive even if
+       the repo's object database is later pruned.
+
+    The original ``agent/<sid>`` branch is *not* deleted here — the caller
+    (:meth:`WorktreeManager.cleanup`) already does that via ``git branch
+    -D`` once the worktree has been removed.  Attempting to delete it
+    earlier would fail because the branch is still checked out in the
+    (stale) worktree; the graveyard ref already preserves the commits
+    so deletion is safe at the later step.
+
+    On any failure the function logs a warning and returns ``None`` — the
+    caller must not treat graveyard preservation as a hard prerequisite.
+
+    Args:
+        repo_root: Repository root directory.
+        session_id: Agent session identifier.
+        branch: Override branch name (defaults to ``agent/<session_id>``).
+        now: Optional clock override (seconds since epoch) for deterministic
+            tests.
+
+    Returns:
+        Path to the bundle file when the bundle was written, otherwise
+        ``None`` (ref may still have been created — see logs).
+    """
+    source_branch = branch if branch is not None else f"agent/{session_id}"
+    sha = _resolve_ref(repo_root, source_branch)
+    if sha is None:
+        logger.debug("Graveyard skip: branch %s does not resolve", source_branch)
+        return None
+
+    ts = _graveyard_timestamp(now)
+    ref_name = f"{_GRAVEYARD_REF_PREFIX}{session_id}-{ts}"
+
+    # 1. Create the graveyard ref.
+    try:
+        update = subprocess.run(
+            ["git", "update-ref", ref_name, sha],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.warning("Graveyard update-ref failed for %s: %s", session_id, exc)
+        return None
+    if update.returncode != 0:
+        logger.warning(
+            "Graveyard update-ref for %s exited %d: %s",
+            session_id,
+            update.returncode,
+            update.stderr.strip(),
+        )
+        return None
+
+    # 2. Export a bundle so commits survive ``git gc``.
+    bundle_dir = repo_root / _GRAVEYARD_DIR_REL
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    bundle_path: Path | None = bundle_dir / f"{session_id}-{ts}.bundle"
+    try:
+        bundle = subprocess.run(
+            ["git", "bundle", "create", str(bundle_path), ref_name],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.warning("Graveyard bundle create failed for %s: %s", session_id, exc)
+        bundle_path = None
+    else:
+        if bundle.returncode != 0:
+            logger.warning(
+                "Graveyard bundle for %s exited %d: %s",
+                session_id,
+                bundle.returncode,
+                bundle.stderr.strip(),
+            )
+            bundle_path = None
+
+    logger.warning(
+        "Preserved branch %s (sha=%s) to %s (bundle=%s)",
+        source_branch,
+        sha[:12],
+        ref_name,
+        bundle_path,
+    )
+    return bundle_path
+
+
+def purge_graveyard(repo_root: Path, older_than_days: int = _GRAVEYARD_DEFAULT_PURGE_DAYS) -> int:
+    """Remove graveyard refs and bundles older than *older_than_days* (audit-097).
+
+    Intended for operator-driven cleanup — never called automatically.  Both
+    the ``refs/graveyard/*`` ref and the on-disk ``.sdd/graveyard/*.bundle``
+    are purged independently so a partially-corrupted graveyard still shrinks.
+
+    Args:
+        repo_root: Repository root directory.
+        older_than_days: Entries whose mtime (bundle) or committer date (ref)
+            is older than this many days are purged.  Must be non-negative.
+
+    Returns:
+        Number of artifacts (refs + bundles) deleted.
+    """
+    if older_than_days < 0:
+        raise ValueError(f"older_than_days must be >= 0, got {older_than_days}")
+
+    cutoff = time.time() - (older_than_days * 86400)
+    purged = 0
+
+    # 1. Refs — list via for-each-ref with committer date.
+    try:
+        listing = subprocess.run(
+            [
+                "git",
+                "for-each-ref",
+                "--format=%(refname) %(committerdate:unix)",
+                "refs/graveyard/",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.warning("purge_graveyard: for-each-ref failed: %s", exc)
+        listing = None
+
+    if listing is not None and listing.returncode == 0:
+        for line in listing.stdout.splitlines():
+            parts = line.strip().split(" ", 1)
+            if len(parts) != 2:
+                continue
+            ref_name, ts_str = parts
+            try:
+                committed_at = float(ts_str)
+            except ValueError:
+                continue
+            if committed_at > cutoff:
+                continue
+            try:
+                delete = subprocess.run(
+                    ["git", "update-ref", "-d", ref_name],
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+                logger.warning("purge_graveyard: update-ref -d %s failed: %s", ref_name, exc)
+                continue
+            if delete.returncode == 0:
+                purged += 1
+                logger.info("Purged graveyard ref %s", ref_name)
+            else:
+                logger.warning(
+                    "purge_graveyard: update-ref -d %s exited %d: %s",
+                    ref_name,
+                    delete.returncode,
+                    delete.stderr.strip(),
+                )
+
+    # 2. Bundles — plain filesystem walk; independent of git state.
+    bundle_dir = repo_root / _GRAVEYARD_DIR_REL
+    if bundle_dir.is_dir():
+        for bundle in bundle_dir.iterdir():
+            if not bundle.is_file() or bundle.suffix != ".bundle":
+                continue
+            try:
+                mtime = bundle.stat().st_mtime
+            except OSError:
+                continue
+            if mtime > cutoff:
+                continue
+            try:
+                bundle.unlink()
+            except OSError as exc:
+                logger.warning("purge_graveyard: could not delete %s: %s", bundle, exc)
+                continue
+            purged += 1
+            logger.info("Purged graveyard bundle %s", bundle)
+
+    return purged
+
+
 class WorktreeError(Exception):
     """Raised when a worktree operation fails irrecoverably."""
 
@@ -525,6 +810,14 @@ class WorktreeManager:
         Uses both PID-file and lock-file stale detection. Active worktrees
         (live process or valid lock) are never removed.
 
+        Any stale session whose ``agent/<sid>`` branch has commits not yet
+        reachable from ``main`` is preserved to
+        ``refs/graveyard/<sid>-<ts>`` with an accompanying bundle at
+        ``.sdd/graveyard/<sid>-<ts>.bundle`` *before* the destructive
+        cleanup runs (audit-097).  This prevents ``kill -9`` / OOM of a
+        prior orchestrator from silently wiping unmerged agent work on
+        the next startup.
+
         Returns:
             Number of worktrees cleaned up.
         """
@@ -550,6 +843,33 @@ class WorktreeManager:
                 if self._is_session_live(session_id):
                     logger.debug("Keeping live worktree %s during stale cleanup", session_id)
                     continue
+
+                # Preserve unmerged commits to the graveyard before we nuke
+                # the branch (audit-097).  A crashed agent may have committed
+                # work locally that never reached main; ``git worktree
+                # remove --force`` followed by ``git branch -D`` would make
+                # those commits unreachable and gc-eligible.
+                branch_name = f"agent/{session_id}"
+                try:
+                    unmerged = _count_unmerged_commits(self.repo_root, branch_name, base="main")
+                except Exception as exc:  # defensive — never block cleanup
+                    logger.debug("Graveyard pre-check failed for %s: %s", session_id, exc)
+                    unmerged = 0
+                if unmerged > 0:
+                    logger.warning(
+                        "Stale worktree %s has %d unmerged commit(s); preserving to graveyard",
+                        session_id,
+                        unmerged,
+                    )
+                    try:
+                        preserve_branch_to_graveyard(self.repo_root, session_id, branch=branch_name)
+                    except Exception as exc:  # defensive — log and proceed
+                        logger.warning(
+                            "Graveyard preservation crashed for %s (continuing cleanup): %s",
+                            session_id,
+                            exc,
+                        )
+
                 logger.info("Cleaning stale worktree: %s", session_id)
                 self.cleanup(session_id)
                 cleaned += 1
