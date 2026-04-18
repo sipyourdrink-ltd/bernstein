@@ -398,6 +398,28 @@ def _load_shadow_pending(value: object) -> dict[str, dict[str, Any]]:
     return pending
 
 
+def _load_seeded_arms(value: object) -> dict[tuple[str, str], dict[str, float | int]]:
+    """Load ``{role|model: {virtual_observations, success_rate}}`` seed metadata."""
+    if not isinstance(value, dict):
+        return {}
+    raw_mapping = cast(_CAST_DICT_STR_OBJ, value)
+    seeded: dict[tuple[str, str], dict[str, float | int]] = {}
+    for raw_key, raw_payload in raw_mapping.items():
+        if not isinstance(raw_payload, dict):
+            continue
+        payload = cast(_CAST_DICT_STR_OBJ, raw_payload)
+        parts = str(raw_key).split("|", 1)
+        if len(parts) != 2:
+            continue
+        role, model = parts
+        vo_raw = payload.get("virtual_observations", 0)
+        sr_raw = payload.get("success_rate", 0.0)
+        vo = 0 if isinstance(vo_raw, bool) or not isinstance(vo_raw, (int, float, str)) else int(float(vo_raw))
+        sr = 0.0 if isinstance(sr_raw, bool) or not isinstance(sr_raw, (int, float, str)) else float(sr_raw)
+        seeded[(role, model)] = {"virtual_observations": vo, "success_rate": sr}
+    return seeded
+
+
 def _load_shadow_counters(value: object) -> dict[str, float]:
     """Load shadow analytics counters from persisted state."""
     defaults = {
@@ -621,6 +643,59 @@ class BanditPolicy:
             b[i] += reward * x[i]
 
         self.total_updates += 1
+
+    def seed_arm(
+        self,
+        arm: str,
+        *,
+        mean_reward: float,
+        virtual_observations: int = 5,
+    ) -> None:
+        """Warm-start an arm with a low-rank prior on the bias feature.
+
+        LinUCB has no dedicated seed primitive, but a rank-1 prior along the
+        bias axis (index 5 of :meth:`TaskContext.to_vector`) is equivalent
+        to pretending the arm has been updated ``virtual_observations``
+        times with ``x = e_bias`` and reward ``mean_reward``. This shifts
+        the arm's expected exploit score without committing to any specific
+        task shape — the LinUCB analogue of the legacy
+        ``EpsilonGreedyBandit.seed_arm`` primitive.
+
+        The prior is only installed when the arm has no live signal yet
+        (``b`` is all zeros), so real observations always dominate priors.
+
+        Args:
+            arm: Model name (created if not present).
+            mean_reward: Prior expected reward in ``[0, 1]``.
+            virtual_observations: Strength of the prior (number of synthetic
+                identical pulls). Higher values make the prior stickier.
+        """
+        d = FEATURE_DIM
+        if arm not in self._A_inv:
+            self.arms.append(arm)
+            self._A_inv[arm] = _identity(d)
+            self._b[arm] = [0.0] * d
+
+        if any(abs(v) > 1e-9 for v in self._b[arm]):
+            logger.debug("BanditPolicy: refusing to seed arm %s — live signal present", arm)
+            return
+
+        clamped = max(0.0, min(1.0, mean_reward))
+        n = max(1, int(virtual_observations))
+
+        # Bias feature at index 5. For the identity init, a rank-1 update with
+        # x = e_bias repeated n times collapses to:
+        #   A_inv[bias, bias] = 1 / (1 + n)
+        #   b[bias] = n * clamped
+        bias_idx = 5
+        self._A_inv[arm][bias_idx][bias_idx] = 1.0 / (1.0 + n)
+        self._b[arm][bias_idx] = n * clamped
+        logger.debug(
+            "BanditPolicy: seeded arm %s with prior mean=%.3f (virtual_obs=%d)",
+            arm,
+            clamped,
+            n,
+        )
 
     # ------------------------------------------------------------------
     # Persistence
@@ -979,6 +1054,10 @@ class BanditRouter:
         self._effort_bandit: EffortBandit = EffortBandit()
         self._total_completions: int = 0
         self._selection_counts: dict[str, int] = {}
+        # Arms seeded via ``seed_arm()`` keyed by ``(role, model)``. Persists
+        # metadata so cost forecasts can refine estimates without keeping a
+        # second state store (audit-071).
+        self._seeded_arms: dict[tuple[str, str], dict[str, float | int]] = {}
         self._exploration_history: dict[str, list[float]] = {}
         self._shadow_pending: dict[str, dict[str, Any]] = {}
         self._shadow_counters: dict[str, float] = {
@@ -1174,6 +1253,44 @@ class BanditRouter:
         self._ensure_loaded()
         return dict(self._selection_counts)
 
+    def seed_arm(
+        self,
+        role: str,
+        model: str,
+        success_rate: float,
+        virtual_observations: int = 5,
+    ) -> None:
+        """Seed a ``(role, model)`` arm with prior knowledge.
+
+        Ported from ``EpsilonGreedyBandit.seed_arm`` in audit-071 so
+        effectiveness data (role/model success rates from
+        :class:`EffectivenessScorer`) feeds a single, unified bandit state
+        rather than the retired parallel epsilon-greedy store.
+
+        The seed is installed on the underlying :class:`BanditPolicy` as a
+        context-free prior on the bias axis (see
+        :meth:`BanditPolicy.seed_arm`) and the router records the seed
+        metadata so cost forecasts can see the same warm-start signal.
+
+        Args:
+            role: Task role (recorded for observability; LinUCB keys on
+                arm/model only, role is carried in the context vector).
+            model: Model name (arm).
+            success_rate: Prior success rate in ``[0, 1]``.
+            virtual_observations: Strength of the prior.
+        """
+        self._ensure_loaded()
+        assert self._policy is not None
+        self._policy.seed_arm(
+            arm=model,
+            mean_reward=success_rate,
+            virtual_observations=virtual_observations,
+        )
+        self._seeded_arms[(role, model)] = {
+            "virtual_observations": int(max(1, virtual_observations)),
+            "success_rate": float(max(0.0, min(1.0, success_rate))),
+        }
+
     def save(self) -> None:
         """Persist policy matrices and state to disk.
 
@@ -1187,25 +1304,35 @@ class BanditRouter:
         state_path = self._policy_dir / self.STATE_FILE
         try:
             self._policy_dir.mkdir(parents=True, exist_ok=True)
-            state_path.write_text(
-                json.dumps(
-                    {
-                        "total_completions": self._total_completions,
-                        "selection_counts": self._selection_counts,
-                        "mode": "bandit" if self.is_warmed_up else "cold-start",
-                        "warmup_min": self._warmup_min,
-                        "exploration_rate": round(self.exploration_rate, 6),
-                        "exploration_history": self._exploration_history,
-                        "exploration_stats": self._exploration_stats(),
-                        "shadow_pending": self._shadow_pending,
-                        "shadow_counters": self._shadow_counters,
-                        "shadow_stats": self._shadow_stats(),
-                        "effort_bandit": self._effort_bandit.to_dict(),
-                        "saved_at": time.time(),
-                    }
-                ),
-                encoding="utf-8",
-            )
+            # Preserve any pre-existing keys written by the legacy-facade
+            # (e.g. ``observation_arms`` from ``EpsilonGreedyBandit.save``).
+            existing: dict[str, Any] = {}
+            if state_path.exists():
+                try:
+                    loaded = json.loads(state_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        existing = loaded
+                except Exception as exc:
+                    logger.debug("BanditRouter: could not merge existing state: %s", exc)
+            payload: dict[str, Any] = {
+                **existing,
+                "total_completions": self._total_completions,
+                "selection_counts": self._selection_counts,
+                "mode": "bandit" if self.is_warmed_up else "cold-start",
+                "warmup_min": self._warmup_min,
+                "exploration_rate": round(self.exploration_rate, 6),
+                "exploration_history": self._exploration_history,
+                "exploration_stats": self._exploration_stats(),
+                "shadow_pending": self._shadow_pending,
+                "shadow_counters": self._shadow_counters,
+                "shadow_stats": self._shadow_stats(),
+                "effort_bandit": self._effort_bandit.to_dict(),
+                "seeded_arms": {
+                    f"{role}|{model}": value for (role, model), value in self._seeded_arms.items()
+                },
+                "saved_at": time.time(),
+            }
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
         except OSError as exc:
             logger.warning("BanditRouter: could not save state to %s: %s", state_path, exc)
 
@@ -1304,6 +1431,7 @@ class BanditRouter:
                     self._shadow_pending = _load_shadow_pending(state.get("shadow_pending", {}))
                     self._shadow_counters = _load_shadow_counters(state.get("shadow_counters", {}))
                     self._effort_bandit = EffortBandit.from_dict(state.get("effort_bandit", {}))
+                    self._seeded_arms = _load_seeded_arms(state.get("seeded_arms", {}))
                 except Exception as exc:
                     logger.warning("BanditRouter: could not load state from %s: %s", state_path, exc)
             else:
