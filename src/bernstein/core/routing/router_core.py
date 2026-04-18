@@ -30,6 +30,88 @@ logger = logging.getLogger(__name__)
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
 _CAST_DICT_STR_ANY = "dict[str, Any]"
 
+# ---------------------------------------------------------------------------
+# audit-102: budget-aware routing
+# ---------------------------------------------------------------------------
+#
+# When the run is close to its budget cap, ``_check_opus_override`` refuses to
+# escalate a task to opus/max (which can cost ~$1.50 per 200k-token task) and
+# lets the downstream heuristics pick sonnet instead.  The flag is on by
+# default — a single opus task near the cap can overshoot by 150% or more.
+# Callers can disable the behaviour per-run via ``set_budget_context`` or by
+# passing ``budget_aware_routing_enabled=False`` directly into ``route_task``.
+#
+# ``_budget_context_state`` is a module-level dict so legacy callers of
+# ``_check_opus_override`` and ``route_task`` (e.g. ``spawner_warm_pool``,
+# ``batch_api``) pick up the current budget without signature changes.
+
+# Rough midpoint estimate of a single opus task's cost (USD).  Derived from
+# 100k tokens * $0.015/1k tokens = $1.50, matching ``_estimate_cost``'s
+# ``max_tokens * 0.5`` convention.  Kept as a module constant so tests can
+# patch it without touching the cost table.
+DEFAULT_OPUS_TASK_COST_USD: float = 1.50
+
+# Multiplier applied to the estimated opus cost before comparing against the
+# remaining budget.  ``remaining < threshold * est_opus_cost`` → downgrade.
+BUDGET_AWARE_OPUS_MARGIN: float = 2.0
+
+
+_budget_context_state: dict[str, Any] = {
+    "budget_remaining_usd": None,  # float | None — ``None`` = unknown / disabled
+    "enabled": True,
+    "estimated_opus_cost_usd": DEFAULT_OPUS_TASK_COST_USD,
+}
+
+
+def set_budget_context(
+    budget_remaining_usd: float | None,
+    *,
+    enabled: bool = True,
+    estimated_opus_cost_usd: float | None = None,
+) -> None:
+    """Populate module-level budget state used by budget-aware routing.
+
+    Called by the orchestrator (e.g. from the cascade fallback path in
+    ``agent_lifecycle``) so that downstream calls to ``_check_opus_override``
+    know the current remaining budget.  When ``enabled`` is False the guard is
+    skipped regardless of budget.
+
+    Args:
+        budget_remaining_usd: Remaining run budget in USD.  ``None`` disables
+            the guard (budget is unknown or unlimited).  ``float('inf')`` is
+            treated as unlimited.
+        enabled: Feature flag for budget-aware routing (default True).
+        estimated_opus_cost_usd: Override for the midpoint opus task cost
+            (default ``DEFAULT_OPUS_TASK_COST_USD``).
+    """
+    _budget_context_state["budget_remaining_usd"] = budget_remaining_usd
+    _budget_context_state["enabled"] = bool(enabled)
+    if estimated_opus_cost_usd is not None:
+        _budget_context_state["estimated_opus_cost_usd"] = float(estimated_opus_cost_usd)
+
+
+def clear_budget_context() -> None:
+    """Reset budget-aware routing state to defaults (primarily for tests)."""
+    _budget_context_state["budget_remaining_usd"] = None
+    _budget_context_state["enabled"] = True
+    _budget_context_state["estimated_opus_cost_usd"] = DEFAULT_OPUS_TASK_COST_USD
+
+
+def _should_downgrade_from_opus(
+    budget_remaining_usd: float | None,
+    *,
+    enabled: bool,
+    estimated_opus_cost_usd: float,
+) -> bool:
+    """Return True when the budget cannot safely absorb another opus task."""
+    if not enabled:
+        return False
+    if budget_remaining_usd is None:
+        return False
+    if budget_remaining_usd == float("inf"):
+        return False
+    return budget_remaining_usd < BUDGET_AWARE_OPUS_MARGIN * estimated_opus_cost_usd
+
 
 def normalize_region(region: str | None) -> str:
     """Normalize a provider or policy region into a comparable token."""
@@ -799,6 +881,9 @@ def route_task(
     task: Task,
     bandit_metrics_dir: Path | None = None,
     workdir: Path | None = None,
+    *,
+    budget_remaining_usd: float | None = None,
+    budget_aware_routing_enabled: bool | None = None,
 ) -> ModelConfig:
     """Select model and effort based on task metadata.
 
@@ -816,15 +901,28 @@ def route_task(
     approximately 50% cost reduction.  Critical tasks (priority=1) and
     manager-specified overrides are never routed to batch.
 
+    audit-102: when ``budget_aware_routing_enabled`` is True and the
+    remaining budget cannot absorb another opus task, high-stakes tasks are
+    routed to sonnet instead of opus.  Defaults come from the module-level
+    ``set_budget_context`` state when not passed explicitly.
+
     Args:
         task: Task to route.
         bandit_metrics_dir: Optional path to ``.sdd/metrics`` for bandit state.
         workdir: Optional project root for effectiveness scorer data.
+        budget_remaining_usd: Remaining run budget in USD (audit-102).
+        budget_aware_routing_enabled: Feature flag for audit-102 downgrade.
 
     Returns:
         ModelConfig with selected model and effort (and is_batch flag).
     """
-    cfg = _select_model_config(task, bandit_metrics_dir, workdir)
+    cfg = _select_model_config(
+        task,
+        bandit_metrics_dir,
+        workdir,
+        budget_remaining_usd=budget_remaining_usd,
+        budget_aware_routing_enabled=budget_aware_routing_enabled,
+    )
     if task.batch_eligible and task.priority != 1:
         logger.debug("Batch routing task %s (%s/%s)", task.id, cfg.model, cfg.effort)
         return ModelConfig(model=cfg.model, effort=cfg.effort, max_tokens=cfg.max_tokens, is_batch=True)
@@ -834,15 +932,78 @@ def route_task(
 _HIGH_STAKES_ROLES = frozenset({"manager", "architect", "security"})
 
 
-def _check_opus_override(task: Task) -> str | None:
-    """Return a reason string if the task requires opus/max, otherwise None."""
+def _check_opus_override(
+    task: Task,
+    *,
+    budget_remaining_usd: float | None = None,
+    budget_aware_routing_enabled: bool | None = None,
+    estimated_opus_cost_usd: float | None = None,
+) -> str | None:
+    """Return a reason string if the task requires opus/max, otherwise None.
+
+    audit-102: when ``budget_aware_routing_enabled`` (default: module-level
+    flag) is True and ``budget_remaining_usd`` < 2x estimated opus task cost,
+    the override returns None so the caller routes to sonnet instead — a
+    single opus task near the cap can overshoot by 150%+.  Explicit keyword
+    arguments take precedence over ``set_budget_context`` module state.
+
+    Args:
+        task: Task being routed.
+        budget_remaining_usd: Remaining run budget in USD.  ``None`` →
+            consult module-level ``set_budget_context`` state.
+            ``float('inf')`` is treated as unlimited.
+        budget_aware_routing_enabled: Feature flag.  ``None`` → use module
+            state.
+        estimated_opus_cost_usd: Override for the midpoint opus task cost.
+
+    Returns:
+        Reason string for forcing opus/max, or None when the task should not
+        escalate (including the budget-downgrade case).
+    """
+    # Resolve final budget-aware parameters, falling back to module state.
+    remaining = (
+        budget_remaining_usd if budget_remaining_usd is not None else _budget_context_state.get("budget_remaining_usd")
+    )
+    enabled = (
+        budget_aware_routing_enabled
+        if budget_aware_routing_enabled is not None
+        else bool(_budget_context_state.get("enabled", True))
+    )
+    opus_cost = float(
+        estimated_opus_cost_usd
+        if estimated_opus_cost_usd is not None
+        else _budget_context_state.get("estimated_opus_cost_usd", DEFAULT_OPUS_TASK_COST_USD)
+    )
+
+    # Classify whether the task would normally be forced to opus.
+    base_reason: str | None = None
     if task.role in _HIGH_STAKES_ROLES:
-        return f"high-stakes role: {task.role}, priority={task.priority}"
-    if task.scope == Scope.LARGE:
-        return f"large scope: {task.scope.value}, priority={task.priority}, complexity={task.complexity.value}"
-    if task.priority == 1:
-        return f"critical priority: role={task.role}, complexity={task.complexity.value}"
-    return None
+        base_reason = f"high-stakes role: {task.role}, priority={task.priority}"
+    elif task.scope == Scope.LARGE:
+        base_reason = f"large scope: {task.scope.value}, priority={task.priority}, complexity={task.complexity.value}"
+    elif task.priority == 1:
+        base_reason = f"critical priority: role={task.role}, complexity={task.complexity.value}"
+
+    if base_reason is None:
+        return None
+
+    # Budget-aware downgrade: refuse opus when the cap is near.
+    if _should_downgrade_from_opus(
+        remaining,
+        enabled=enabled,
+        estimated_opus_cost_usd=opus_cost,
+    ):
+        logger.info(
+            "Task %s: budget-aware downgrade from opus/max (remaining=$%.2f < %.1fx $%.2f) — reason: %s",
+            task.id,
+            float(remaining) if remaining is not None else float("nan"),
+            BUDGET_AWARE_OPUS_MARGIN,
+            opus_cost,
+            base_reason,
+        )
+        return None
+
+    return base_reason
 
 
 def _try_l1_fast_path(task: Task) -> ModelConfig | None:
@@ -927,8 +1088,16 @@ def _select_model_config(
     task: Task,
     bandit_metrics_dir: Path | None = None,
     workdir: Path | None = None,
+    *,
+    budget_remaining_usd: float | None = None,
+    budget_aware_routing_enabled: bool | None = None,
 ) -> ModelConfig:
-    """Internal: select model/effort without applying batch flag."""
+    """Internal: select model/effort without applying batch flag.
+
+    When ``budget_aware_routing_enabled`` is True and remaining budget cannot
+    absorb another opus task (audit-102), the opus override is skipped and
+    the task lands on sonnet via the heuristic path.
+    """
     # Manager-specified overrides take precedence
     if task.model or task.effort:
         model = task.model or "sonnet"
@@ -945,7 +1114,12 @@ def _select_model_config(
         return ModelConfig(model=model, effort=effort)
 
     # High-stakes roles/scope/priority skip bandit — always use premium models
-    opus_reason = _check_opus_override(task)
+    # (unless budget-aware routing downgrades the call: audit-102).
+    opus_reason = _check_opus_override(
+        task,
+        budget_remaining_usd=budget_remaining_usd,
+        budget_aware_routing_enabled=budget_aware_routing_enabled,
+    )
     if opus_reason is not None:
         logger.info("Task %s: Selected opus/max (%s)", task.id, opus_reason)
         return ModelConfig(model="opus", effort="max")

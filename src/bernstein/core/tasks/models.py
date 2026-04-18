@@ -10,8 +10,19 @@ from enum import Enum, StrEnum
 from typing import Any, Literal
 
 from bernstein.core import defaults as _defaults
+from bernstein.core.defaults import AGENT
 
 logger = logging.getLogger(__name__)
+
+
+def _default_poll_interval_s() -> int:
+    """Return the current canonical tick interval (cast to int).
+
+    Reads from :mod:`bernstein.core.defaults` each call so that runtime
+    overrides and :func:`bernstein.core.defaults.reset` (which rebinds
+    ``ORCHESTRATOR`` at module scope) are honoured.
+    """
+    return int(_defaults.ORCHESTRATOR.tick_interval_s)
 
 
 class TaskStoreUnavailable(Exception):
@@ -1002,6 +1013,35 @@ class ConvergenceGuardConfig:
     spawn_rate_window_seconds: int = 60  # 1 minute
 
 
+@dataclass(frozen=True)
+class CIAutofixConfig:
+    """Configuration for orchestrator-driven CI autofix polling (audit-035).
+
+    When ``enabled`` is True, the orchestrator tick periodically polls the
+    GitHub Actions API for failing workflow runs and creates Bernstein fix
+    tasks via :class:`CIAutofixPipeline`.  GitHub token plumbing is a
+    separate ticket; when ``token`` is empty the tick falls back to the
+    ``GITHUB_TOKEN`` environment variable.
+
+    Attributes:
+        enabled: Whether the CI autofix poller runs inside the tick loop.
+            Defaults to ``False`` so the behaviour is opt-in.
+        poll_interval_s: Minimum seconds between poll attempts. The first
+            poll fires on the first tick when enabled.
+        repo: Repository in ``owner/repo`` format. When empty the poller
+            is a no-op (nothing to watch).
+        token: Optional GitHub token. When empty, ``GITHUB_TOKEN`` is read
+            from the environment at poll time.
+        per_page: Number of most recent runs to request per poll.
+    """
+
+    enabled: bool = False
+    poll_interval_s: int = 60
+    repo: str = ""
+    token: str = ""
+    per_page: int = 10
+
+
 @dataclass
 class OrchestratorConfig:
     """Configuration for the orchestrator main loop.
@@ -1009,7 +1049,8 @@ class OrchestratorConfig:
     Args:
         max_agents: Maximum concurrent agent processes.
         poll_interval_s: Seconds between orchestrator ticks.
-        heartbeat_timeout_s: Seconds before an agent is considered stale.
+        heartbeat_timeout_s: Seconds before an agent is considered stale. Defaults
+            to ``AGENT.heartbeat_stale_s`` from ``core.defaults`` (canonical source).
         heartbeat_enabled: Whether the file-based heartbeat protocol is enabled.
         max_tasks_per_agent: Maximum tasks batched into one agent spawn.
         server_url: Base URL of the Bernstein task server.
@@ -1026,9 +1067,13 @@ class OrchestratorConfig:
     """
 
     max_agents: int = 6
-    poll_interval_s: int = 3
+    # Derived from ORCHESTRATOR.tick_interval_s (float, canonical) so overrides
+    # via ``tuning.orchestrator.tick_interval_s`` actually change the tick rate.
+    poll_interval_s: int = field(default_factory=_default_poll_interval_s)
     smtp: SmtpConfig | None = None
-    heartbeat_timeout_s: int = 900  # 15 min — generous until agents implement heartbeat writes
+    # Unified with AGENT.heartbeat_stale_s (audit-147). Previously 900s; now defaults to 120s.
+    # Deployments that explicitly relied on the 900s value must set this field explicitly.
+    heartbeat_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_stale_s))
     heartbeat_enabled: bool = True
     max_agent_runtime_s: int = 1800  # 30 min wall-clock kill (agents need time for complex tasks)
     max_tasks_per_agent: int = 2  # batch 2 same-role tasks per agent to reduce context overhead
@@ -1040,6 +1085,7 @@ class OrchestratorConfig:
     kill_on_memory_leak: bool = False
     evolve_mode: bool = False
     budget_usd: float = 0.0  # Stop spawning when cumulative cost reaches this (0 = unlimited)
+    budget_aware_routing_enabled: bool = True  # audit-102: downgrade opus→sonnet near budget cap
     dry_run: bool = False  # Preview planned spawns without actually spawning agents
     auth_token: str | None = None  # Bearer token for authenticated API calls
     merge_strategy: str = "pr"  # "pr" | "direct" — how agent work reaches the main branch
@@ -1069,6 +1115,7 @@ class OrchestratorConfig:
     max_cost_per_agent: float = 0.0  # Hard per-agent spend cap (0 = unlimited)
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
     convergence: ConvergenceGuardConfig = field(default_factory=ConvergenceGuardConfig)
+    ci_autofix: CIAutofixConfig = field(default_factory=CIAutofixConfig)
     permission_mode: str | None = None  # "bypass" | "plan" | "auto" | "default" — see permission_mode.py
     agent_resource_limits: Any | None = None  # ResourceLimits | None — OS-level limits for non-sandboxed spawns
     shutdown_stagger_delay_s: float = 5.0  # Seconds between SHUTDOWN signals during drain
@@ -1082,6 +1129,16 @@ class OrchestratorConfig:
     drain_timeout_s: float = field(
         default_factory=lambda: _defaults.ORCHESTRATOR.drain_timeout_s,
     )  # Seconds to wait for agents during drain before cleanup
+    # Priority-aging janitor (audit-020): boost long-waiting low-priority tasks
+    # so they do not starve behind a steady stream of P1 work.  Default off
+    # until run data confirms behaviour; interval is measured in orchestrator ticks.
+    priority_aging_enabled: bool = False
+    priority_aging_interval_ticks: int = 60
+    # Weighted fair scheduling across tenants (audit-020): re-order batches by
+    # deficit round-robin so high-weight tenants get proportionally more slots
+    # while per-tenant caps prevent any tenant from monopolising the worker pool.
+    # Default off; enable once multi-tenant workloads exist.
+    fair_scheduling_enabled: bool = False
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

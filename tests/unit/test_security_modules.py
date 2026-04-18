@@ -136,6 +136,116 @@ class TestJWTManager:
         payload = manager2.verify_token(token)
         assert payload is None
 
+    def test_alg_none_is_rejected(self) -> None:
+        """audit-053: alg=none MUST be rejected even if signature is empty/absent."""
+        import base64
+        import json as _json
+
+        manager = JWTManager(secret="test-secret")
+
+        header = {"alg": "none", "typ": "JWT"}
+        payload = {
+            "session_id": "s",
+            "user_id": None,
+            "iat": time.time(),
+            "exp": time.time() + 3600,
+            "scopes": [],
+        }
+
+        def _b64(data: bytes) -> str:
+            return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
+
+        header_b64 = _b64(_json.dumps(header).encode())
+        payload_b64 = _b64(_json.dumps(payload).encode())
+        # Intentionally empty signature — classic "alg: none" bypass.
+        forged = f"{header_b64}.{payload_b64}."
+
+        assert manager.verify_token(forged) is None
+
+    def test_alg_none_uppercase_is_rejected(self) -> None:
+        """audit-053: 'None', 'NONE' etc. must also be rejected (case-insensitive)."""
+        import base64
+        import json as _json
+
+        manager = JWTManager(secret="test-secret")
+
+        def _b64(data: bytes) -> str:
+            return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
+
+        for alg in ("None", "NONE", "nOnE"):
+            header_b64 = _b64(_json.dumps({"alg": alg, "typ": "JWT"}).encode())
+            payload_b64 = _b64(
+                _json.dumps(
+                    {
+                        "session_id": "s",
+                        "user_id": None,
+                        "iat": time.time(),
+                        "exp": time.time() + 3600,
+                        "scopes": [],
+                    }
+                ).encode()
+            )
+            forged = f"{header_b64}.{payload_b64}."
+            assert manager.verify_token(forged) is None, f"alg={alg!r} was accepted"
+
+    def test_mismatched_alg_is_rejected(self) -> None:
+        """audit-053: a token advertising HS512 must fail under an HS256 verifier."""
+        import base64
+        import hashlib as _hashlib
+        import hmac as _hmac
+        import json as _json
+
+        secret = "test-secret"
+        manager = JWTManager(secret=secret, algorithm="HS256")
+
+        def _b64(data: bytes) -> str:
+            return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
+
+        # Build a self-consistent HS512 token (valid HMAC under SHA-512)…
+        header_b64 = _b64(_json.dumps({"alg": "HS512", "typ": "JWT"}).encode())
+        payload_b64 = _b64(
+            _json.dumps(
+                {
+                    "session_id": "s",
+                    "user_id": None,
+                    "iat": time.time(),
+                    "exp": time.time() + 3600,
+                    "scopes": [],
+                }
+            ).encode()
+        )
+        signing_input = f"{header_b64}.{payload_b64}"
+        sig = _hmac.new(secret.encode(), signing_input.encode(), _hashlib.sha512).digest()
+        token = f"{signing_input}.{_b64(sig)}"
+
+        # …the verifier is configured for HS256, so this MUST be rejected
+        # on the header check, before any HMAC compare.
+        assert manager.verify_token(token) is None
+
+    def test_missing_alg_is_rejected(self) -> None:
+        """audit-053: a header without an alg claim must be rejected."""
+        import base64
+        import json as _json
+
+        manager = JWTManager(secret="test-secret")
+
+        def _b64(data: bytes) -> str:
+            return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
+
+        header_b64 = _b64(_json.dumps({"typ": "JWT"}).encode())  # no 'alg'
+        payload_b64 = _b64(
+            _json.dumps(
+                {
+                    "session_id": "s",
+                    "user_id": None,
+                    "iat": time.time(),
+                    "exp": time.time() + 3600,
+                    "scopes": [],
+                }
+            ).encode()
+        )
+        assert manager.verify_token(f"{header_b64}.{payload_b64}.") is None
+
 
 class TestSensitivityLabels:
     """Test sensitivity labels on tasks."""

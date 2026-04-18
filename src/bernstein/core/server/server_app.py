@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import signal
 import threading
 import time
@@ -56,6 +57,157 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# audit-117: body-size cap middleware
+# ---------------------------------------------------------------------------
+
+# Default cap for request bodies.  Starlette accepts unlimited bodies by
+# default — without a cap, a single POST with a 200MB JSON body will load the
+# full payload into memory before pydantic validation even runs, wedging the
+# server and bloating tasks.jsonl by 200MB per request.
+_DEFAULT_MAX_BODY_BYTES = 1_048_576  # 1 MB
+
+
+class ContentLengthMiddleware:
+    """Reject requests with bodies larger than ``max_body_bytes`` (413).
+
+    Protects /tasks, /webhook, /broadcast, /hooks/* and every other write
+    endpoint from trivial memory exhaustion.
+
+    Implemented as a raw ASGI middleware (rather than ``BaseHTTPMiddleware``)
+    so the streaming body-size check can terminate the request *before*
+    invoking the inner app, returning a clean 413 response.  ``BaseHTTPMiddleware``
+    swallows exceptions raised inside its wrapped ``receive`` channel, which
+    would let truncated bodies reach the route handler as malformed 400s.
+
+    Behaviour:
+    - If the ``Content-Length`` header is present and exceeds the cap, reject
+      immediately with 413 — no body bytes are consumed.
+    - Streaming / chunked requests without a ``Content-Length`` header are
+      tallied on the ASGI receive channel and rejected with 413 the moment
+      the cap is crossed.
+    - GET/HEAD/OPTIONS requests pass through unchanged.
+    """
+
+    def __init__(self, app: Any, max_body_bytes: int = _DEFAULT_MAX_BODY_BYTES) -> None:
+        self.app = app
+        self._max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        # Only HTTP requests carry bodies we care about.  WebSocket and lifespan
+        # scopes pass through unchanged.
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "").upper()
+        if method in ("GET", "HEAD", "OPTIONS"):
+            await self.app(scope, receive, send)
+            return
+
+        # Fast-path: reject when Content-Length header reports an oversized body.
+        headers_list = scope.get("headers", [])
+        content_length: int | None = None
+        for name, value in headers_list:
+            if name == b"content-length":
+                try:
+                    content_length = int(value.decode("latin-1"))
+                except ValueError:
+                    await self._send_json(send, 400, {"detail": "Invalid Content-Length header"})
+                    return
+                break
+
+        if content_length is not None and content_length > self._max_body_bytes:
+            await self._send_json(
+                send,
+                413,
+                {
+                    "detail": (f"Request body {content_length} bytes exceeds {self._max_body_bytes}-byte limit"),
+                },
+            )
+            return
+
+        # Streaming enforcement: when the client omits Content-Length (e.g.
+        # chunked transfer encoding), wrap the receive channel so we tally
+        # bytes and reject once the cap is crossed.  This guarantees the cap
+        # cannot be bypassed by omitting the header.
+        max_bytes = self._max_body_bytes
+        seen_bytes = 0
+        cap_exceeded = False
+
+        async def limited_receive() -> Any:
+            nonlocal seen_bytes, cap_exceeded
+            message = await receive()
+            if message.get("type") == "http.request":
+                chunk = message.get("body", b"")
+                if chunk:
+                    seen_bytes += len(chunk)
+                    if seen_bytes > max_bytes:
+                        cap_exceeded = True
+            return message
+
+        # Track whether the wrapped app has started its response so we don't
+        # double-send if the body overflow is detected after headers were sent.
+        response_started = False
+        response_finished = False
+
+        async def wrapped_send(message: Any) -> None:
+            nonlocal response_started, response_finished
+            if response_finished:
+                # Inner app is still trying to send after we've already
+                # emitted our 413 — drop its messages on the floor.
+                return
+            msg_type = message.get("type")
+            if msg_type == "http.response.start":
+                if cap_exceeded:
+                    # Body already crossed the cap — discard the inner app's
+                    # response and emit our 413 instead.
+                    await self._send_json(
+                        send,
+                        413,
+                        {
+                            "detail": (f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"),
+                        },
+                    )
+                    response_started = True
+                    response_finished = True
+                    return
+                response_started = True
+            elif msg_type == "http.response.body" and cap_exceeded:
+                # Shouldn't happen (we already finished), but guard anyway.
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, wrapped_send)
+        finally:
+            if cap_exceeded and not response_started:
+                # Inner app finished without emitting a response — send 413.
+                await self._send_json(
+                    send,
+                    413,
+                    {
+                        "detail": (f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"),
+                    },
+                )
+
+    @staticmethod
+    async def _send_json(send: Any, status: int, body: dict[str, Any]) -> None:
+        """Emit a JSON response through the raw ASGI ``send`` channel."""
+        payload = json.dumps(body).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(payload)).encode("latin-1")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": payload})
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +692,64 @@ def read_log_tail(path: Path, offset: int = 0) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _split_cors_origins(
+    allowed_origins: tuple[str, ...] | list[str],
+) -> tuple[list[str], str | None]:
+    """Separate literal CORS origins from glob patterns and build a regex.
+
+    ``starlette.middleware.cors.CORSMiddleware`` compares ``allow_origins``
+    literally — ``"http://localhost:*"`` never matches a real browser
+    origin such as ``"http://localhost:3000"``.  audit-118 requires us to
+    translate glob-style origins into an ``allow_origin_regex`` that
+    CORSMiddleware actually honors.
+
+    Args:
+        allowed_origins: Origins as configured in bernstein.yaml, possibly
+            mixing literal URLs (``https://app.example.com``) with glob
+            patterns (``http://localhost:*``).
+
+    Returns:
+        A ``(literal_origins, origin_regex)`` tuple.  ``literal_origins`` is
+        the subset containing no ``*`` — safe to pass to ``allow_origins``.
+        ``origin_regex`` is ``None`` when no globs were present; otherwise
+        it is a single combined regex matching any of the glob origins.
+    """
+    literal_origins: list[str] = []
+    glob_origins: list[str] = []
+    for origin in allowed_origins:
+        if "*" in origin:
+            glob_origins.append(origin)
+        else:
+            literal_origins.append(origin)
+
+    if not glob_origins:
+        return literal_origins, None
+
+    # Translate each glob origin to a regex fragment.  Escape everything
+    # except ``*`` — and translate ``*`` to either ``\d+`` (when it is the
+    # port component, i.e. follows ``:``) or the generic ``[^/]*`` match.
+    fragments: list[str] = []
+    for origin in glob_origins:
+        parts: list[str] = []
+        i = 0
+        while i < len(origin):
+            ch = origin[i]
+            if ch == "*":
+                # A ``:*`` suffix means "any port" — restrict to digits so we
+                # don't accept pathological inputs like ``http://localhost:evil``.
+                if parts and parts[-1].endswith(":"):
+                    parts.append(r"\d+")
+                else:
+                    parts.append(r"[^/]*")
+            else:
+                parts.append(re.escape(ch))
+            i += 1
+        fragments.append("".join(parts))
+
+    combined = "^(?:" + "|".join(fragments) + ")$"
+    return literal_origins, combined
+
+
 def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) -> dict[str, Any]:
     """Reload and persist bernstein.yaml metadata without restarting."""
     from bernstein.core.config_diff import (
@@ -781,6 +991,13 @@ def create_app(
         ):
             signal.signal(signal.SIGHUP, previous_sighup)
         await store.flush_buffer()
+        # Close the persistent access-log file handle (audit-080).
+        middleware_stack = getattr(app, "middleware_stack", None)
+        while middleware_stack is not None:
+            if isinstance(middleware_stack, StructuredAccessLogMiddleware):
+                await middleware_stack.aclose()
+                break
+            middleware_stack = getattr(middleware_stack, "app", None)
 
     application = FastAPI(
         title="Bernstein Task Server",
@@ -821,6 +1038,13 @@ def create_app(
 
     # Crash guard — outermost middleware, catches unhandled exceptions
     application.add_middleware(CrashGuardMiddleware)
+
+    # audit-117: body-size cap.  Added BEFORE auth/rate-limit so oversized bodies
+    # are rejected with 413 without ever being buffered into memory.  Starlette
+    # orders ``add_middleware`` calls from innermost (first to handle the
+    # response) to outermost (first to see the request), so registering this
+    # here places it outside the auth middleware layer.
+    application.add_middleware(ContentLengthMiddleware)
 
     from bernstein.core.server.frame_headers import FrameHeadersMiddleware, load_frame_embedding_policy
 
@@ -889,14 +1113,24 @@ def create_app(
 
     from starlette.middleware.cors import CORSMiddleware
 
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=list(cors_config.allowed_origins),
-        allow_methods=list(cors_config.allow_methods),
-        allow_headers=list(cors_config.allow_headers),
-        allow_credentials=cors_config.allow_credentials,
-        max_age=cors_config.max_age,
-    )
+    # audit-118: starlette.middleware.cors.CORSMiddleware compares
+    # ``allow_origins`` LITERALLY — so ``http://localhost:*`` never matches
+    # a real ``http://localhost:3000``.  Detect glob patterns, strip them
+    # from the literal list, and translate them to a regex passed via
+    # ``allow_origin_regex`` so wildcard ports actually work.
+    literal_origins, origin_regex = _split_cors_origins(cors_config.allowed_origins)
+
+    cors_kwargs: dict[str, Any] = {
+        "allow_origins": literal_origins,
+        "allow_methods": list(cors_config.allow_methods),
+        "allow_headers": list(cors_config.allow_headers),
+        "allow_credentials": cors_config.allow_credentials,
+        "max_age": cors_config.max_age,
+    }
+    if origin_regex is not None:
+        cors_kwargs["allow_origin_regex"] = origin_regex
+
+    application.add_middleware(CORSMiddleware, **cors_kwargs)
 
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()

@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from bernstein.core.security.auth import AuthService
 
 _PERM_TASKS_WRITE = "tasks:write"
+_PERM_ADMIN_MANAGE = "admin:manage"
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,13 @@ _TASK_ID_PATH_RE = re.compile(r"^/tasks/([^/]+)/(?:complete|fail|progress|cancel
 
 # Paths that are always accessible without any authentication.
 # Keep this list tiny — only trivially public endpoints (health probes,
-# discovery metadata, docs, login flow) belong here.
+# discovery metadata, login flow) belong here.  API docs and the OpenAPI
+# schema are gated via ``AUTH_DEV_ONLY_PUBLIC_PATHS`` below so that they
+# require viewer auth whenever the server is running with a configured
+# auth backend (see ``_compute_auth_configured`` and ``dispatch``).
 AUTH_PUBLIC_PATHS = frozenset(
     {
-        # Health / readiness probes
+        # Health / readiness probes (k8s / load-balancer probes)
         "/health",
         "/health/ready",
         "/health/live",
@@ -73,11 +77,6 @@ AUTH_PUBLIC_PATHS = frozenset(
         "/.well-known/agent.json",
         "/.well-known/acp.json",
         "/acp/v0/agents",
-        # API docs
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        "/openapi.yaml",
         # Auth flow endpoints (must be public for login to work)
         "/auth/login",
         "/auth/oidc/callback",
@@ -86,6 +85,20 @@ AUTH_PUBLIC_PATHS = frozenset(
         "/auth/cli/device",
         "/auth/cli/token",
         "/auth/providers",
+    }
+)
+
+# Paths that are anonymous ONLY in true dev mode (no auth backend
+# configured).  When any auth backend is present (SSO service, legacy
+# bearer token, or agent identity store) these require a valid token with
+# at least viewer permissions.  This avoids leaking the API attack surface
+# in production while keeping ``uvicorn …`` hello-world runs friendly.
+AUTH_DEV_ONLY_PUBLIC_PATHS = frozenset(
+    {
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/openapi.yaml",
     }
 )
 
@@ -118,15 +131,26 @@ _AUTH_DISABLED_TRUTHY = frozenset({"1", "true", "yes", "on"})
 # Read-only methods that viewers can access
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-# Route → required permission mapping for write operations
+# Route → required permission mapping for write operations.
+#
+# Every write endpoint that Bernstein exposes MUST have an explicit entry
+# here.  Any request that falls through without a match is treated as
+# operator-only (``admin:manage``) — fail closed, not open.
+#
+# Operator-sensitive endpoints (``/shutdown``, ``/broadcast``, ``/drain``,
+# ``/config``) require ``admin:manage``, which is only granted to the
+# ``admin`` role — operator and agent tokens cannot reach them.
 _ROUTE_PERMISSIONS: dict[str, str] = {
     "/tasks": _PERM_TASKS_WRITE,
     "/agents": "agents:write",
     "/cluster": "cluster:write",
     "/bulletin": "bulletin:write",
     "/auth": "auth:manage",
-    "/config": "config:write",
+    "/config": _PERM_ADMIN_MANAGE,
     "/webhooks": "webhooks:manage",
+    "/shutdown": _PERM_ADMIN_MANAGE,
+    "/broadcast": _PERM_ADMIN_MANAGE,
+    "/drain": _PERM_ADMIN_MANAGE,
 }
 
 
@@ -158,6 +182,13 @@ def _get_required_permission(path: str, method: str) -> str | None:
                 return perm.replace(":write", ":read").replace(":manage", ":read")
         return "status:read"  # Default read permission
 
+    # Admin-only prefixes always win over substring heuristics so that, e.g.,
+    # ``/drain/cancel`` does not fall through to ``tasks:write`` just because
+    # it contains ``/cancel``.
+    for prefix, perm in _ROUTE_PERMISSIONS.items():
+        if perm == _PERM_ADMIN_MANAGE and path.startswith(prefix):
+            return perm
+
     # Write operations — check specific action paths before prefix
     if "/complete" in path or "/fail" in path or "/cancel" in path or "/block" in path:
         return _PERM_TASKS_WRITE
@@ -166,7 +197,10 @@ def _get_required_permission(path: str, method: str) -> str | None:
         if path.startswith(prefix):
             return perm
 
-    return _PERM_TASKS_WRITE  # Default write permission
+    # Fail CLOSED: unknown write routes require operator-level
+    # ``admin:manage`` rather than the old ``tasks:write`` open fallback.
+    # Any new endpoint MUST be added to ``_ROUTE_PERMISSIONS`` explicitly.
+    return _PERM_ADMIN_MANAGE
 
 
 class SSOAuthMiddleware(BaseHTTPMiddleware):
@@ -214,6 +248,7 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         # should be passed in via ``auth_disabled=True`` from the factory.
         resolved_disabled = bool(auth_disabled) or auth_disabled_via_opt_out()
         self._auth_disabled = resolved_disabled
+        self._auth_configured = self._compute_auth_configured()
         if resolved_disabled and not SSOAuthMiddleware._warned_disabled:
             logger.warning(
                 "SECURITY: Bernstein auth is DISABLED — every request is "
@@ -222,6 +257,28 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
                 "Do NOT run this configuration on any network-exposed host.",
             )
             SSOAuthMiddleware._warned_disabled = True
+
+    def _compute_auth_configured(self) -> bool:
+        """Return True when any auth backend is available.
+
+        ``/docs``, ``/openapi.json`` and friends stay anonymous only when no
+        authenticator is wired up — i.e. true dev mode (developer runs the
+        server by hand with no ``BERNSTEIN_AUTH_TOKEN``, no SSO, no agent
+        identity store).  As soon as any backend is configured the server is
+        assumed to face a real network and these paths require a bearer
+        token with viewer permissions.
+        """
+        if self._auth_service is not None:
+            return True
+        if self._legacy_token:
+            return True
+        if self._agent_identity_store is not None:
+            return True
+        # Fallback: if an env-level legacy token is set somewhere outside the
+        # middleware's own init path (e.g. the server factory reads it from
+        # the environment but hasn't threaded it here), treat auth as
+        # configured to fail closed.
+        return bool(os.environ.get("BERNSTEIN_AUTH_TOKEN", "").strip())
 
     async def dispatch(
         self,
@@ -237,6 +294,14 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
 
         # Truly-public paths are always accessible.
         if path in AUTH_PUBLIC_PATHS:
+            response = await call_next(request)
+            return response
+
+        # Dev-only public paths (API docs, OpenAPI schema) — anonymous
+        # access only when no auth backend is configured.  When auth IS
+        # configured we fall through to the normal bearer-token path so the
+        # request is gated behind a viewer-level permission.
+        if path in AUTH_DEV_ONLY_PUBLIC_PATHS and not self._auth_configured:
             response = await call_next(request)
             return response
 
@@ -336,6 +401,25 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
             "task_ids": agent_identity.task_ids,
         }
         request.state.agent_identity = agent_identity  # type: ignore[attr-defined]
+
+        # Agent identity JWTs — even manager-role / unrestricted ones — must
+        # never reach operator-only endpoints (shutdown, broadcast, drain,
+        # config writer).  These mutate process-wide state and require an
+        # admin SSO user or the legacy operator bearer.
+        if request.method not in _READ_METHODS and _get_required_permission(path, request.method) == _PERM_ADMIN_MANAGE:
+            logger.warning(
+                "Agent %s denied operator-only path %s (admin:manage required)",
+                agent_identity.id,
+                path,
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "Agent tokens cannot access operator-only endpoints",
+                    "required_permission": _PERM_ADMIN_MANAGE,
+                    "agent_id": agent_identity.id,
+                },
+            )
 
         # Zero-trust: enforce task scope for mutating task operations.
         # Agents with a non-empty task_ids list may only act on their assigned

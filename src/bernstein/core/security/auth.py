@@ -106,6 +106,10 @@ _ROLE_PERMISSIONS: dict[AuthRole, frozenset[str]] = {
             "webhooks:manage",
             _PERM_BULLETIN_READ,
             "bulletin:write",
+            # Operator-level gate for shutdown, broadcast, drain, and the
+            # config writer — held only by ADMIN.  OPERATOR and VIEWER must
+            # NOT have this permission or they could SIGTERM the server.
+            "admin:manage",
         }
     ),
     AuthRole.OPERATOR: frozenset(
@@ -1092,13 +1096,30 @@ class AuthService:
         return f"{saml.idp_sso_url}?{urlencode(params)}"
 
     def parse_saml_assertion(self, assertion_xml: str) -> ParsedSAMLAssertion | None:
-        """Parse a SAML assertion XML payload into normalized Bernstein claims."""
-        import xml.etree.ElementTree as ET
+        """Parse a SAML assertion XML payload into normalized Bernstein claims.
+
+        Uses ``defusedxml.ElementTree`` instead of stdlib ``xml.etree`` so that
+        DTDs, external entities, and *internal* entity expansion are refused
+        outright. stdlib ``xml.etree`` happily expands nested internal entities,
+        which is sufficient for a billion-laughs / quadratic-blowup DoS even
+        though ``xml.etree`` blocks external entities by default (audit-054).
+        """
+        # defusedxml.ElementTree is a drop-in for xml.etree.ElementTree and
+        # re-exports stdlib ``ParseError``; it additionally raises
+        # ``DefusedXmlException`` (ValueError subclass) when it detects a
+        # disallowed construct such as an internal ENTITY declaration.
+        from defusedxml import ElementTree as ET
+        from defusedxml.common import DefusedXmlException
 
         try:
             root = ET.fromstring(assertion_xml)
         except ET.ParseError as exc:
             logger.error("Failed to parse SAML assertion XML: %s", exc)
+            return None
+        except DefusedXmlException as exc:
+            # Internal entity expansion, DTD, or external entity reference.
+            # Never trust the payload — reject and let the caller return 401.
+            logger.error("Rejecting unsafe SAML assertion XML: %s", type(exc).__name__)
             return None
 
         if not _saml_status_ok(root):

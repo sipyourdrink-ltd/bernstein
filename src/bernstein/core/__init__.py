@@ -199,7 +199,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "error_classifier": "bernstein.core.observability.error_classifier",
     "eu_ai_act": "bernstein.core.security.eu_ai_act",
     "evolution": "bernstein.core.orchestration.evolution",
-    "evolve_mode": "bernstein.core.orchestration.evolve_mode",
     "external_policy_hook": "bernstein.core.security.external_policy_hook",
     "fast_mode": "bernstein.core.routing.fast_mode",
     "fast_path": "bernstein.core.quality.fast_path",

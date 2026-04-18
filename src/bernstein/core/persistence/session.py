@@ -14,7 +14,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from bernstein.core.defaults import JANITOR
 from bernstein.core.persistence.atomic_write import write_atomic_json
+from bernstein.core.persistence.runtime_state import rotate_log_file
 
 DEFAULT_STALE_MINUTES: int = 30
 _SESSION_FILE = Path(".sdd") / "runtime" / "session.json"
@@ -438,12 +440,16 @@ class BridgeTransportEvent:
 def record_bridge_event(workdir: Path, event: BridgeTransportEvent) -> None:
     """Append a bridge transport event to the lineage JSONL file (T549, T550, T551).
 
+    The file is rotated once it crosses
+    :attr:`JanitorDefaults.bridge_lineage_rotate_bytes` (audit-081).
+
     Args:
         workdir: Project root directory.
         event: Event to record.
     """
     lineage_path = workdir / _BRIDGE_LINEAGE_FILE
     lineage_path.parent.mkdir(parents=True, exist_ok=True)
+    rotate_log_file(lineage_path, max_bytes=JANITOR.bridge_lineage_rotate_bytes)
     with lineage_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event.to_dict()) + "\n")
 
@@ -534,12 +540,16 @@ class TaskStatusNotification:
 def emit_task_notification(workdir: Path, notification: TaskStatusNotification) -> None:
     """Append a task status notification to the JSONL log (T574).
 
+    The file is rotated once it crosses
+    :attr:`JanitorDefaults.task_notifications_rotate_bytes` (audit-081).
+
     Args:
         workdir: Project root directory.
         notification: Notification to emit.
     """
     notif_path = workdir / _TASK_NOTIFICATIONS_FILE
     notif_path.parent.mkdir(parents=True, exist_ok=True)
+    rotate_log_file(notif_path, max_bytes=JANITOR.task_notifications_rotate_bytes)
     with notif_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(notification.to_dict()) + "\n")
 

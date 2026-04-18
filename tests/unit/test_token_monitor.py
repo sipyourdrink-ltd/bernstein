@@ -355,3 +355,237 @@ class TestCheckTokenGrowth:
 
         # write_wakeup should only be called once
         assert orch._signal_mgr.write_wakeup.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# audit-070: per-tenant kill threshold + warn reset
+# ---------------------------------------------------------------------------
+
+
+class TestPerTenantKillThreshold:
+    """Two tenants with different kill thresholds resolve independently."""
+
+    def test_kill_threshold_for_uses_instance_map(self) -> None:
+        monitor = TokenGrowthMonitor(
+            kill_threshold=50_000,
+            tenant_kill_thresholds={"enterprise": 200_000, "free": 20_000},
+        )
+        assert monitor.kill_threshold_for("enterprise") == 200_000
+        assert monitor.kill_threshold_for("free") == 20_000
+
+    def test_kill_threshold_for_unknown_tenant_falls_back(self) -> None:
+        monitor = TokenGrowthMonitor(
+            kill_threshold=50_000,
+            tenant_kill_thresholds={"enterprise": 200_000},
+        )
+        # Unknown tenant with no explicit "default" key → module-wide default.
+        assert monitor.kill_threshold_for("unknown") == 50_000
+
+    def test_kill_threshold_for_uses_default_key(self) -> None:
+        monitor = TokenGrowthMonitor(
+            kill_threshold=50_000,
+            tenant_kill_thresholds={"default": 10_000, "enterprise": 200_000},
+        )
+        assert monitor.kill_threshold_for("whoever") == 10_000
+        assert monitor.kill_threshold_for(None) == 10_000
+        assert monitor.kill_threshold_for("enterprise") == 200_000
+
+    def test_token_cfg_module_override_takes_priority(self) -> None:
+        import bernstein.core.token_monitor as tm
+
+        original = dict(tm.TOKEN_CFG)
+        try:
+            tm.TOKEN_CFG.clear()
+            tm.TOKEN_CFG.update({"enterprise": 300_000, "free": 15_000})
+            monitor = TokenGrowthMonitor(
+                kill_threshold=50_000,
+                tenant_kill_thresholds={"enterprise": 200_000},  # overridden by TOKEN_CFG
+            )
+            assert monitor.kill_threshold_for("enterprise") == 300_000
+            assert monitor.kill_threshold_for("free") == 15_000
+        finally:
+            tm.TOKEN_CFG.clear()
+            tm.TOKEN_CFG.update(original)
+
+    def test_should_kill_respects_tenant_threshold(self) -> None:
+        monitor = TokenGrowthMonitor(
+            kill_threshold=50_000,
+            tenant_kill_thresholds={"enterprise": 200_000, "free": 20_000},
+        )
+        # 60k tokens: over "free" (20k) but under "enterprise" (200k).
+        monitor._history["sess-free"] = _make_history("sess-free", [60_000])
+        monitor._history["sess-ent"] = _make_history("sess-ent", [60_000])
+
+        assert monitor.should_kill("sess-free", files_changed=0, tenant_id="free")
+        assert not monitor.should_kill("sess-ent", files_changed=0, tenant_id="enterprise")
+
+    def test_should_kill_without_tenant_uses_constructor_default(self) -> None:
+        monitor = TokenGrowthMonitor(
+            kill_threshold=50_000,
+            tenant_kill_thresholds={"enterprise": 200_000},
+        )
+        monitor._history["s1"] = _make_history("s1", [51_000])
+        # No tenant_id → falls back through TOKEN_CFG default → monitor default.
+        assert monitor.should_kill("s1", files_changed=0)
+
+
+class TestWarnQuadraticReset:
+    """``warned_quadratic`` clears after enough consecutive clean samples."""
+
+    def test_note_clean_sample_resets_after_threshold(self) -> None:
+        monitor = TokenGrowthMonitor(warn_reset_clean_samples=10)
+        monitor.mark_warned("s1")
+        assert monitor.was_warned("s1")
+
+        for _ in range(9):
+            monitor.note_clean_sample("s1")
+            assert monitor.was_warned("s1"), "should still be warned before reset threshold"
+
+        # 10th clean sample clears the flag.
+        monitor.note_clean_sample("s1")
+        assert not monitor.was_warned("s1")
+
+    def test_clean_sample_counter_resets_on_new_warning(self) -> None:
+        monitor = TokenGrowthMonitor(warn_reset_clean_samples=10)
+        monitor.mark_warned("s1")
+        for _ in range(5):
+            monitor.note_clean_sample("s1")
+        # New warning fires → counter resets.
+        monitor.mark_warned("s1")
+        # Only 9 clean samples; still warned.
+        for _ in range(9):
+            monitor.note_clean_sample("s1")
+        assert monitor.was_warned("s1")
+        # 10th clean sample finally clears it.
+        monitor.note_clean_sample("s1")
+        assert not monitor.was_warned("s1")
+
+    def test_warning_refires_after_reset(self, tmp_path: Path) -> None:
+        """End-to-end: quadratic warning fires, clears, then fires again."""
+        reset_monitor()
+        monitor = get_monitor()
+        from bernstein.core.token_monitor import AgentTokenHistory
+
+        # Pre-load quadratic history so the first tick fires the warning.
+        h = AgentTokenHistory(session_id="sess-refire")
+        h.samples = [
+            TokenSample(timestamp=0.0, total_tokens=100),
+            TokenSample(timestamp=30.0, total_tokens=200),
+            TokenSample(timestamp=60.0, total_tokens=500),
+        ]
+        monitor._history["sess-refire"] = h
+
+        orch = MagicMock()
+        orch._workdir = tmp_path
+        orch._config.server_url = "http://localhost:8052"
+        orch._router.get_provider_max_context_tokens.return_value = 200_000
+
+        sess = MagicMock()
+        sess.id = "sess-refire"
+        sess.status = "working"
+        sess.task_ids = ["t1"]
+        sess.spawn_ts = time.time()
+        sess.provider = "anthropic"
+        sess.tokens_used = 0
+        sess.token_budget = 0
+        sess.context_window_tokens = 0
+        sess.context_utilization_pct = 0.0
+        sess.context_utilization_alert = False
+        sess.tenant_id = "default"
+        orch._agents = {"sess-refire": sess}
+
+        snap_resp = MagicMock()
+        snap_resp.raise_for_status = MagicMock()
+        snap_resp.json.return_value = [{"timestamp": time.time(), "files_changed": 2}]
+        orch._client.get.return_value = snap_resp
+
+        # Empty sidecar so no new samples are appended during ticks.
+        tokens_path = tmp_path / ".sdd" / "runtime" / "sess-refire.tokens"
+        tokens_path.parent.mkdir(parents=True, exist_ok=True)
+        tokens_path.write_text("")
+
+        # Tick 1: quadratic growth still visible → warning fires.
+        check_token_growth(orch)
+        assert monitor.was_warned("sess-refire")
+        assert orch._signal_mgr.write_wakeup.call_count == 1
+
+        # Flatten history so is_quadratic_growth returns False.
+        h.samples = [
+            TokenSample(timestamp=90.0, total_tokens=510),
+            TokenSample(timestamp=120.0, total_tokens=520),
+            TokenSample(timestamp=150.0, total_tokens=530),
+        ]
+
+        # Drive 10 clean ticks → warning clears.
+        for _ in range(10):
+            check_token_growth(orch)
+        assert not monitor.was_warned("sess-refire")
+
+        # Re-introduce quadratic growth → warning fires again.
+        h.samples = [
+            TokenSample(timestamp=200.0, total_tokens=1_000),
+            TokenSample(timestamp=230.0, total_tokens=1_100),
+            TokenSample(timestamp=260.0, total_tokens=1_500),
+        ]
+        check_token_growth(orch)
+        assert monitor.was_warned("sess-refire")
+        assert orch._signal_mgr.write_wakeup.call_count == 2
+
+
+class TestCheckTokenGrowthTenantResolution:
+    """``check_token_growth`` uses the session's tenant_id for threshold resolution."""
+
+    def _make_orch(self, tmp_path: Path, sessions: dict) -> MagicMock:
+        orch = MagicMock()
+        orch._workdir = tmp_path
+        orch._config.server_url = "http://localhost:8052"
+        orch._agents = sessions
+        orch._router.get_provider_max_context_tokens.return_value = 200_000
+        return orch
+
+    def _make_session(self, session_id: str, tenant_id: str) -> MagicMock:
+        s = MagicMock()
+        s.id = session_id
+        s.status = "working"
+        s.task_ids = ["t1"]
+        s.spawn_ts = time.time()
+        s.provider = "anthropic"
+        s.tokens_used = 0
+        s.token_budget = 0
+        s.context_window_tokens = 0
+        s.context_utilization_pct = 0.0
+        s.context_utilization_alert = False
+        s.tenant_id = tenant_id
+        return s
+
+    def test_two_tenants_resolve_independent_thresholds(self, tmp_path: Path) -> None:
+        reset_monitor()
+        monitor = get_monitor()
+        monitor.tenant_kill_thresholds = {"enterprise": 200_000, "free": 20_000}
+
+        free_sess = self._make_session("sess-free", "free")
+        ent_sess = self._make_session("sess-ent", "enterprise")
+
+        # Both agents consume ~60k tokens with zero files changed.
+        for sid in ("sess-free", "sess-ent"):
+            tokens_path = tmp_path / ".sdd" / "runtime" / f"{sid}.tokens"
+            _write_tokens(tokens_path, [(time.time(), 55_000, 5_000)])
+
+        snap_resp = MagicMock()
+        snap_resp.raise_for_status = MagicMock()
+        snap_resp.json.return_value = [{"timestamp": time.time(), "files_changed": 0}]
+
+        orch = self._make_orch(
+            tmp_path,
+            {"sess-free": free_sess, "sess-ent": ent_sess},
+        )
+        orch._client.get.return_value = snap_resp
+
+        check_token_growth(orch)
+
+        # Free tier (20k threshold) is killed; enterprise (200k) survives.
+        kill_calls = [c.args[0] for c in orch._spawner.kill.call_args_list]
+        assert free_sess in kill_calls
+        assert ent_sess not in kill_calls
+        assert free_sess.status == "dead"
+        assert ent_sess.status == "working"

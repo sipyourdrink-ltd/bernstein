@@ -367,6 +367,37 @@ async def test_complete_unknown_task(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+@pytest.mark.anyio
+async def test_complete_empty_summary_auto_fails_task(client: AsyncClient) -> None:
+    """audit-028: POST /tasks/{id}/complete with empty summary auto-fails the task.
+
+    Instead of leaving the task stuck in CLAIMED (old behaviour) the route
+    must transition the task to FAILED so the slot is released, then
+    surface a 422 describing what happened.
+    """
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+    await client.post(f"/tasks/{task_id}/claim")
+
+    resp = await client.post(
+        f"/tasks/{task_id}/complete",
+        json={"result_summary": ""},
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["error"] == "empty_result_summary"
+    assert detail["task_id"] == task_id
+    assert detail["reason"] == "completion missing summary"
+    assert detail["status"] == "failed"
+
+    # Confirm the task is actually failed on the server side so a fresh
+    # agent cannot re-claim the already-committed work.
+    follow = await client.get(f"/tasks/{task_id}")
+    assert follow.status_code == 200
+    assert follow.json()["status"] == "failed"
+    assert follow.json()["result_summary"] == "completion missing summary"
+
+
 # -- POST /tasks/{task_id}/fail ---------------------------------------------
 
 

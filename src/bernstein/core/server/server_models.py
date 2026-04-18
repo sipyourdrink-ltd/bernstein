@@ -27,45 +27,95 @@ class CompletionSignalSchema(BaseModel):
     value: str
 
 
+# audit-117: input-size caps for TaskCreate (prevents OOM via 200MB descriptions).
+# Titles are short human-readable summaries; descriptions can carry a plan but must
+# stay below the per-request body cap (1MB) enforced by ContentLengthMiddleware.
+_MAX_TITLE_LEN = 200
+_MAX_DESCRIPTION_LEN = 100_000
+_MAX_SHORT_STR_LEN = 1_000  # role, scope, complexity, etc. — enum-like fields
+_MAX_PATH_LEN = 4_096  # owned_files / parent_task_id / depends_on entries
+_MAX_LIST_LEN = 100
+_MAX_DICT_SERIALIZED_LEN = 50_000  # cap serialized size of dict[str, Any] fields
+_MAX_META_MESSAGE_LEN = 10_000  # retry meta_messages — operational hints
+
+
+def _enforce_dict_size(value: dict[str, Any] | None, *, field_name: str) -> dict[str, Any] | None:
+    """Validate that a dict-of-any does not serialize beyond ``_MAX_DICT_SERIALIZED_LEN``.
+
+    Raises ``ValueError`` (surfaced by pydantic as 422) when the JSON form would
+    exceed the cap.  Protects slack_context / metadata / upgrade_details from
+    unbounded memory usage without forcing callers onto a rigid TypedDict.
+    """
+    if value is None:
+        return value
+    import json as _json
+
+    try:
+        serialized = _json.dumps(value, default=str)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be JSON-serialisable") from exc
+    if len(serialized) > _MAX_DICT_SERIALIZED_LEN:
+        raise ValueError(
+            f"{field_name} exceeds {_MAX_DICT_SERIALIZED_LEN} serialized chars",
+        )
+    return value
+
+
 class TaskCreate(BaseModel):
     """Body for POST /tasks."""
 
-    title: str
-    description: str
-    role: str = "auto"
-    tenant_id: str = "default"
+    # audit-117: bounded string lengths prevent trivial memory exhaustion.
+    title: str = Field(max_length=_MAX_TITLE_LEN)
+    description: str = Field(max_length=_MAX_DESCRIPTION_LEN)
+    role: str = Field(default="auto", max_length=_MAX_SHORT_STR_LEN)
+    tenant_id: str = Field(default="default", max_length=_MAX_SHORT_STR_LEN)
     priority: int = 2
-    scope: str = "medium"
-    complexity: str = "medium"
-    eu_ai_act_risk: str = "minimal"
+    scope: str = Field(default="medium", max_length=_MAX_SHORT_STR_LEN)
+    complexity: str = Field(default="medium", max_length=_MAX_SHORT_STR_LEN)
+    eu_ai_act_risk: str = Field(default="minimal", max_length=_MAX_SHORT_STR_LEN)
     approval_required: bool = False
-    risk_level: str = "low"
+    risk_level: str = Field(default="low", max_length=_MAX_SHORT_STR_LEN)
     estimated_minutes: int | None = None
-    depends_on: list[str] = Field(default_factory=list)
-    parent_task_id: str | None = None
-    depends_on_repo: str | None = None
-    owned_files: list[str] = Field(default_factory=list)
-    cell_id: str | None = None
-    repo: str | None = None
-    task_type: str = "standard"
+    depends_on: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LEN)
+    parent_task_id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    depends_on_repo: str | None = Field(default=None, max_length=_MAX_PATH_LEN)
+    owned_files: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LEN)
+    cell_id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    repo: str | None = Field(default=None, max_length=_MAX_PATH_LEN)
+    task_type: str = Field(default="standard", max_length=_MAX_SHORT_STR_LEN)
     upgrade_details: dict[str, Any] | None = None
-    model: str | None = None  # Manager hint: "opus", "sonnet", "haiku"
-    effort: str | None = None  # Manager hint: "max", "high", "medium", "low"
+    model: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # "opus", "sonnet", "haiku"
+    effort: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # "max", "high", "medium", "low"
     batch_eligible: bool = False  # Non-urgent: eligible for provider batch APIs at ~50% cost
-    completion_signals: list[CompletionSignalSchema] = Field(default_factory=list)
+    completion_signals: list[CompletionSignalSchema] = Field(default_factory=list, max_length=_MAX_LIST_LEN)
     slack_context: dict[str, Any] | None = None  # Slack slash command metadata
     metadata: dict[str, Any] = Field(default_factory=dict)  # Trigger-source metadata (e.g. issue_number)
     deadline: float | None = None  # Epoch timestamp when task must be complete
-    parent_session_id: str | None = None  # Coordinator session that owns this task (namespace scope)
-    parent_context: str | None = None  # Parent agent's context summary for subtask agents (AGENT-012)
+    parent_session_id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    parent_context: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_LEN)
     # Retry bookkeeping (audit-017): retry_count is the single source of truth.
     # When a retry task is created, the orchestrator sets retry_count=previous+1.
     retry_count: int | None = None  # Current retry attempt number (0 = first attempt)
     max_retries: int | None = None  # Per-task override of default retry limit
     retry_delay_s: float | None = None  # Delay between retries (exponential backoff base)
-    terminal_reason: str | None = None  # Why the previous attempt ended (carried across retries)
+    terminal_reason: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_LEN)
     max_output_tokens: int | None = None  # Per-task output-token cap (escalated on retry)
-    meta_messages: list[str] | None = None  # Operational nudges/hints carried across retries
+    meta_messages: list[str] | None = Field(default=None, max_length=_MAX_LIST_LEN)
+
+    # audit-117: cap serialized size of dict-of-any fields to block deeply-nested
+    # or very wide payloads from wedging the server at pydantic-validation time.
+    def model_post_init(self, _context: Any) -> None:
+        """Enforce serialized-size caps on dict fields and meta_messages entries."""
+        _enforce_dict_size(self.slack_context, field_name="slack_context")
+        _enforce_dict_size(self.metadata, field_name="metadata")
+        _enforce_dict_size(self.upgrade_details, field_name="upgrade_details")
+        # Cap individual meta_messages strings so a 100-item list can't each be 1MB.
+        if self.meta_messages is not None:
+            for msg in self.meta_messages:
+                if len(msg) > _MAX_META_MESSAGE_LEN:
+                    raise ValueError(
+                        f"meta_messages entry exceeds {_MAX_META_MESSAGE_LEN} chars",
+                    )
 
 
 class TaskSelfCreate(BaseModel):

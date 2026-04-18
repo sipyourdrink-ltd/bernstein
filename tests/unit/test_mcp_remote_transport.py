@@ -501,3 +501,88 @@ class TestASGIApp:
         cfg = RemoteMCPConfig(host="127.0.0.1", port=9999, auth_type="none")
         app = create_asgi_app(config=cfg)
         assert callable(app)
+
+
+# ---------------------------------------------------------------------------
+# Proxy auth propagation (audit-120)
+# ---------------------------------------------------------------------------
+
+
+class TestProxyAuthHeader:
+    @pytest.mark.anyio
+    async def test_proxy_get_forwards_bearer_token(
+        self,
+        transport: StreamableHTTPTransport,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_proxy_get forwards BERNSTEIN_AUTH_TOKEN as an Authorization header."""
+        from unittest.mock import MagicMock
+
+        monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "remote-tok")
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.text = "{}"
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("bernstein.mcp.remote_transport.httpx.AsyncClient", return_value=mock_client):
+            await transport._proxy_get("/status")
+
+        headers = mock_client.get.call_args.kwargs.get("headers") or {}
+        assert headers.get("Authorization") == "Bearer remote-tok"
+
+    @pytest.mark.anyio
+    async def test_proxy_get_omits_header_when_token_unset(
+        self,
+        transport: StreamableHTTPTransport,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_proxy_get sends no Authorization header when the env var is unset."""
+        from unittest.mock import MagicMock
+
+        monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.text = "{}"
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("bernstein.mcp.remote_transport.httpx.AsyncClient", return_value=mock_client):
+            await transport._proxy_get("/status")
+
+        headers = mock_client.get.call_args.kwargs.get("headers") or {}
+        assert "Authorization" not in headers
+
+    @pytest.mark.anyio
+    async def test_proxy_post_forwards_bearer_token(
+        self,
+        transport: StreamableHTTPTransport,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_proxy_post forwards BERNSTEIN_AUTH_TOKEN as an Authorization header."""
+        from unittest.mock import MagicMock
+
+        monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "post-tok")
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.text = "{}"
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch("bernstein.mcp.remote_transport.httpx.AsyncClient", return_value=mock_client):
+            await transport._proxy_post("/tasks", {"title": "x"})
+
+        headers = mock_client.post.call_args.kwargs.get("headers") or {}
+        assert headers.get("Authorization") == "Bearer post-tok"

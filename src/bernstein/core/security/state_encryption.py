@@ -323,21 +323,160 @@ def is_encrypted(path: Path) -> bool:
     return header == HEADER_MAGIC
 
 
-class KeyManager:
-    """Manages encryption keys stored on disk.
+_KEY_FILE_MAGIC = b"BSK1"  # Bernstein State Key, version 1 (wrapped format)
+_KEY_SALT_LEN = 16
+_KEY_IV_LEN = 12
+_KEY_TAG_LEN = 16
 
-    Keys are stored in ``<sdd>/config/state-key`` with restricted permissions.
+
+class KeyManager:
+    """Manages encryption keys stored on disk, outside the state directory.
+
+    By default the key lives at
+    ``~/.config/bernstein/keys/<workspace-hash>`` — one key per workspace,
+    keyed by the SHA-256 of the ``.sdd/`` absolute path. This prevents a
+    stolen ``.sdd/`` tarball from containing both ciphertext and key.
+
+    Environment variables
+    ---------------------
+    ``BERNSTEIN_STATE_KEY_PATH``
+        Overrides the computed default key path entirely (useful for
+        tests, shared keys, or mounted KMS volumes).
+
+    ``BERNSTEIN_STATE_KEY_PASSPHRASE``
+        When set, the on-disk key is wrapped (AES-256-GCM) by a KEK
+        derived from this passphrase via PBKDF2-HMAC-SHA256 (600k
+        iterations). A random salt is stored alongside the wrapped key,
+        so rotating the passphrase requires rotating the salt/wrap.
+
+    Migration
+    ---------
+    On first instantiation, any legacy key at
+    ``<sdd>/config/state-key`` is copied to the new out-of-tree
+    location (only if the new path does not already exist) and then
+    deleted so future tarballs of ``.sdd/`` do not contain it.
 
     Args:
-        sdd_dir: Path to the .sdd/ directory.
+        sdd_dir: Path to the .sdd/ directory. Used to derive the
+            workspace-hash and to locate any legacy in-tree key for
+            migration.
     """
 
     def __init__(self, sdd_dir: Path) -> None:
-        self._key_dir = sdd_dir / "config"
+        self._sdd_dir = sdd_dir
+        self._legacy_key_dir = sdd_dir / "config"
+        self._legacy_key_path = self._legacy_key_dir / "state-key"
+        self._key_path_override = os.environ.get("BERNSTEIN_STATE_KEY_PATH")
+        # Perform migration lazily on first key access — avoid touching
+        # disk in __init__ so tests that construct the manager without
+        # calling ensure_key()/load_key() stay hermetic.
+        self._migrated = False
+
+    # -- Path computation ---------------------------------------------------
+
+    @staticmethod
+    def _workspace_hash(sdd_dir: Path) -> str:
+        """Return a short deterministic hash of the .sdd/ absolute path."""
+        import hashlib
+
+        abs_path = str(sdd_dir.resolve())
+        digest = hashlib.sha256(abs_path.encode("utf-8")).hexdigest()
+        return digest[:16]
 
     @property
     def _key_path(self) -> Path:
-        return self._key_dir / "state-key"
+        if self._key_path_override:
+            return Path(self._key_path_override).expanduser()
+        base = Path.home() / ".config" / "bernstein" / "keys"
+        return base / self._workspace_hash(self._sdd_dir)
+
+    @property
+    def _key_dir(self) -> Path:
+        return self._key_path.parent
+
+    # -- Wrapping helpers ---------------------------------------------------
+
+    @staticmethod
+    def _passphrase() -> str | None:
+        return os.environ.get("BERNSTEIN_STATE_KEY_PASSPHRASE")
+
+    @classmethod
+    def _wrap_key(cls, raw_key: bytes, passphrase: str) -> bytes:
+        """Wrap *raw_key* with a KEK derived from *passphrase*.
+
+        Returns bytes suitable for writing to disk: ``BSK1 || salt(16) ||
+        iv(12) || ciphertext || tag(16)``.
+        """
+        import secrets
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        salt = secrets.token_bytes(_KEY_SALT_LEN)
+        kek, _ = derive_key(passphrase, salt=salt)
+        iv = secrets.token_bytes(_KEY_IV_LEN)
+        aesgcm = AESGCM(kek)
+        wrapped = aesgcm.encrypt(iv, raw_key, _KEY_FILE_MAGIC)
+        return _KEY_FILE_MAGIC + salt + iv + wrapped
+
+    @classmethod
+    def _unwrap_key(cls, blob: bytes, passphrase: str) -> bytes:
+        """Unwrap a passphrase-wrapped key blob. Raises ValueError on failure."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        magic_len = len(_KEY_FILE_MAGIC)
+        header_len = magic_len + _KEY_SALT_LEN + _KEY_IV_LEN
+        if len(blob) <= header_len + _KEY_TAG_LEN or blob[:magic_len] != _KEY_FILE_MAGIC:
+            raise ValueError("Invalid wrapped-key blob")
+        salt = blob[magic_len : magic_len + _KEY_SALT_LEN]
+        iv = blob[magic_len + _KEY_SALT_LEN : header_len]
+        ciphertext = blob[header_len:]
+        kek, _ = derive_key(passphrase, salt=salt)
+        aesgcm = AESGCM(kek)
+        try:
+            return aesgcm.decrypt(iv, ciphertext, _KEY_FILE_MAGIC)
+        except Exception as exc:  # pragma: no cover - exercised via tests
+            raise ValueError("Failed to unwrap state key — wrong passphrase?") from exc
+
+    @staticmethod
+    def _is_wrapped(blob: bytes) -> bool:
+        return blob[: len(_KEY_FILE_MAGIC)] == _KEY_FILE_MAGIC
+
+    # -- Migration ----------------------------------------------------------
+
+    def _migrate_legacy_key_if_needed(self) -> None:
+        """Move legacy ``<sdd>/config/state-key`` out of .sdd/ (once).
+
+        Runs for both the default path and any ``BERNSTEIN_STATE_KEY_PATH``
+        override — the override only changes the destination, not whether
+        migration happens.
+        """
+        if self._migrated:
+            return
+        self._migrated = True
+        if not self._legacy_key_path.exists():
+            return
+        if self._key_path.exists():
+            # Never clobber an existing out-of-tree key; just drop the
+            # legacy copy so .sdd/ stops carrying secrets.
+            with contextlib.suppress(OSError):
+                self._legacy_key_path.unlink()
+            return
+        legacy_bytes = self._legacy_key_path.read_bytes()
+        self._key_dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(self._key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, legacy_bytes)
+        finally:
+            os.close(fd)
+        with contextlib.suppress(OSError):
+            self._legacy_key_path.unlink()
+        logger.info(
+            "Migrated state encryption key from %s to %s",
+            self._legacy_key_path,
+            self._key_path,
+        )
+
+    # -- Public API ---------------------------------------------------------
 
     def ensure_key(self) -> bytes:
         """Return the existing key, or generate and store a new one.
@@ -345,14 +484,18 @@ class KeyManager:
         Returns:
             32-byte AES-256 key.
         """
-        if self._key_path.exists():
-            return self._key_path.read_bytes()
+        self._migrate_legacy_key_if_needed()
+        existing = self.load_key()
+        if existing is not None:
+            return existing
 
         self._key_dir.mkdir(parents=True, exist_ok=True)
         key = generate_key()
+        passphrase = self._passphrase()
+        blob = self._wrap_key(key, passphrase) if passphrase else key
         fd = os.open(str(self._key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            os.write(fd, key)
+            os.write(fd, blob)
         finally:
             os.close(fd)
         logger.info("Generated new state encryption key at %s", self._key_path)
@@ -361,13 +504,24 @@ class KeyManager:
     def load_key(self) -> bytes | None:
         """Load the key from disk, if it exists.
 
+        Transparently unwraps passphrase-wrapped blobs when
+        ``BERNSTEIN_STATE_KEY_PASSPHRASE`` is set.
+
         Returns:
             32-byte AES-256 key, or None if not found.
         """
+        self._migrate_legacy_key_if_needed()
         if not self._key_path.exists():
             return None
-        return self._key_path.read_bytes()
+        blob = self._key_path.read_bytes()
+        if self._is_wrapped(blob):
+            passphrase = self._passphrase()
+            if not passphrase:
+                raise ValueError("State key is wrapped but BERNSTEIN_STATE_KEY_PASSPHRASE is not set")
+            return self._unwrap_key(blob, passphrase)
+        return blob
 
     def delete_key(self) -> None:
         """Delete the key file. Data encrypted with this key will be unrecoverable."""
+        self._migrate_legacy_key_if_needed()
         self._key_path.unlink(missing_ok=True)

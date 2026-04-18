@@ -140,7 +140,8 @@ from bernstein.core.task_lifecycle import (
     should_auto_decompose,
 )
 from bernstein.core.token_monitor import check_token_growth
-from bernstein.core.wal import WALReader, WALRecovery, WALWriter
+from bernstein.core.wal import WALEntry, WALReader, WALRecovery, WALWriter
+from bernstein.core.wal_replay import WALReplayEngine
 from bernstein.core.watchdog import WatchdogManager, collect_watchdog_findings
 from bernstein.core.workflow import WorkflowExecutor, load_workflow
 from bernstein.evolution.governance import AdaptiveGovernor
@@ -461,6 +462,12 @@ class Orchestrator:
         self._budget_policy: BudgetPolicy = BudgetPolicy.default()
         # Track last-seen policy action so we only notify on transitions.
         self._last_budget_action: BudgetAction = BudgetAction.CONTINUE
+        # audit-056: kill-switch state.  When ``should_stop`` transitions
+        # True we record the timestamp here and SHUTDOWN all live agents;
+        # subsequent ticks that run ``kill_grace_period_s`` seconds later
+        # SIGKILL any session still alive so budget overrun stays bounded.
+        self._budget_stop_fired_at: float | None = None
+        self._budget_stop_killed_agents: set[str] = set()
 
         # Cost anomaly detector: layered on top of cost_tracker, fires
         # AnomalySignals the orchestrator acts on (log/stop/kill).
@@ -711,6 +718,14 @@ class Orchestrator:
                 auth_token=cluster_config.auth_token or config.auth_token,
                 capacity_fn=self._current_capacity,
             )
+
+        # CI autofix poller (audit-035): lazily constructed on first use so
+        # the orchestrator doesn't import httpx-async machinery unless the
+        # flag is enabled.  _last_ci_poll_ts enforces the poll_interval_s
+        # cadence regardless of tick frequency.
+        self._ci_monitor: Any | None = None
+        self._ci_autofix_pipeline: Any | None = None
+        self._last_ci_poll_ts: float = 0.0
 
     # -- Hot-reload source detection -----------------------------------------
 
@@ -1118,6 +1133,29 @@ class Orchestrator:
             except Exception as exc:
                 logger.warning("Stale claim release failed: %s", exc)
 
+        # 1b-i.6. Priority aging (audit-020): boost long-waiting open/blocked tasks
+        # so that lower-priority work does not starve behind a steady stream of
+        # P1 tickets. Gated behind the ``priority_aging_enabled`` config flag
+        # (default OFF) and run every ``priority_aging_interval_ticks`` ticks.
+        if (
+            self._config.priority_aging_enabled
+            and self._config.priority_aging_interval_ticks > 0
+            and self._tick_count % self._config.priority_aging_interval_ticks == 0
+        ):
+            try:
+                from bernstein.core.tasks.priority_aging import AgingConfig, apply_aging
+
+                aging_targets = ready_tasks + list(tasks_by_status.get("blocked", []))
+                results = apply_aging(aging_targets, AgingConfig())
+                if results:
+                    logger.info(
+                        "priority_aging: boosted %d task(s) on tick #%d",
+                        len(results),
+                        self._tick_count,
+                    )
+            except Exception as exc:
+                logger.warning("priority_aging pass failed: %s", exc)
+
         # 1b-ii. Governed workflow: filter tasks to current phase only
         if self._workflow_executor is not None and not self._workflow_executor.is_completed:
             before_wf = len(ready_tasks)
@@ -1322,6 +1360,11 @@ class Orchestrator:
                 spent_usd=round(_bs.spent_usd, 4),
                 percent_used=round(_bs.percentage_used * 100, 1),
             )
+            # audit-056: ABORT used to only skip spawn, so in-flight agents
+            # kept draining budget until they completed on their own.  Now
+            # we SHUTDOWN every live session and (after ``kill_grace_period_s``)
+            # SIGKILL any still alive so overruns stay bounded.
+            self._enforce_budget_killswitch()
         elif budget_decision is not None and budget_decision.action == BudgetAction.PAUSE:
             _bs = self._cost_tracker.status()
             logger.warning(
@@ -1482,6 +1525,21 @@ class Orchestrator:
 
         # 4d-iv. Real-time cost recording: update budget status from live tokens
         self._record_live_costs()
+
+        # 4d-v. CI autofix poll (audit-035): opt-in via config.ci_autofix.enabled.
+        # _maybe_poll_ci_autofix internally rate-limits to poll_interval_s
+        # (default 60s) and short-circuits when the flag is off, so calling
+        # every tick is cheap.
+        try:
+            created = self._maybe_poll_ci_autofix()
+            if created:
+                logger.info(
+                    "CI autofix poll created %d fix task(s): %s",
+                    len(created),
+                    ", ".join(created),
+                )
+        except Exception as exc:
+            logger.warning("CI autofix poll raised: %s", exc)
 
         # 4e. Recycle idle agents (task already resolved but process still alive,
         #     or no heartbeat for idle threshold). SHUTDOWN → 30s grace → SIGKILL.
@@ -1746,10 +1804,27 @@ class Orchestrator:
         ``.sdd/worktrees/preserved/`` and surfaced on the bulletin board so
         fresh agents can resume that work.
 
+        Before the legacy acknowledgement path runs, the
+        :class:`WALReplayEngine` (audit-073) performs an idempotent replay:
+        uncommitted ``task_claimed`` entries whose task the server still
+        reports as *claimed* are transitioned to FAILED with reason
+        ``claimed but never spawned`` so the standard retry machinery picks
+        them up.  Idempotency markers persisted by the engine prevent
+        double-execution across subsequent boots.
+
         Returns:
             List of (run_id, WALEntry) tuples for all uncommitted entries found.
         """
         sdd_dir = self._workdir / ".sdd"
+        # audit-073: run the WALReplayEngine first so uncommitted task_claimed
+        # entries that are still claimed on the server are transitioned to
+        # FAILED (reason "claimed but never spawned") with idempotency
+        # protection.  Any failure is logged and swallowed so startup is never
+        # blocked by a corrupted WAL -- ops can replay manually.
+        try:
+            self._replay_wal_with_engine(sdd_dir)
+        except Exception:
+            logger.exception("WAL replay engine failed (non-fatal) — continuing with legacy recovery")
         uncommitted = WALRecovery.scan_all_uncommitted(
             sdd_dir,
             exclude_run_id=self._run_id,
@@ -1894,6 +1969,116 @@ class Orchestrator:
                 crashed_recovered,
             )
         return uncommitted
+
+    def _replay_wal_with_engine(self, sdd_dir: Path) -> None:
+        """Run :class:`WALReplayEngine` to transition orphaned claims to FAILED.
+
+        audit-073: wires :meth:`WALReplayEngine.scan_and_replay` into startup
+        so uncommitted ``task_claimed`` entries from a crashed prior run are
+        not only logged.  For each orphan whose task is still reported as
+        *claimed* on the server, the engine's replay handler:
+
+        1. POSTs ``/tasks/{task_id}/fail`` with reason
+           ``claimed but never spawned`` (the standard fail path runs the
+           existing retry machinery via ``retry_or_fail_task``).
+        2. Appends a ``task_retry`` entry to the current WAL for auditability.
+
+        The engine's :class:`IdempotencyStore` records the entry hash so
+        subsequent orchestrator boots skip already-handled entries -- this
+        prevents double-fails if a recovery cycle completes but the
+        ``.closed`` marker write fails.
+
+        Args:
+            sdd_dir: The ``.sdd`` directory root.
+        """
+        # Fetch the set of task IDs currently marked as claimed on the
+        # server.  If the server is unreachable we treat the set as empty
+        # which means the replay handler will decline to fail anything and
+        # fall back to the legacy force-claim path (audit-001) below.
+        claimed_on_server: set[str] = set()
+        try:
+            resp = self._client.get(f"{self._config.server_url}/tasks?status=claimed")
+            resp.raise_for_status()
+            payload = resp.json()
+            tasks_iter = payload if isinstance(payload, list) else payload.get("tasks", [])
+            for task in tasks_iter:
+                tid = str(task.get("id", ""))
+                if tid:
+                    claimed_on_server.add(tid)
+        except Exception as exc:
+            logger.debug(
+                "WAL replay: unable to fetch claimed tasks from server (%s); falling back to legacy force-claim path",
+                exc,
+            )
+
+        engine = WALReplayEngine(
+            sdd_dir=sdd_dir,
+            current_run_id=self._run_id,
+            wal_writer=self._wal_writer,
+        )
+
+        def _handler(entry: WALEntry) -> bool:
+            """Replay a single WAL entry.  Return True to mark executed."""
+            # Only task_claimed entries are actionable during recovery.
+            # Other replay-worthy decision types (task_created,
+            # task_completed, agent_spawned, ...) are marked executed so the
+            # idempotency store short-circuits them on subsequent boots.
+            if entry.decision_type != "task_claimed":
+                return True
+            task_id = str(entry.inputs.get("task_id", ""))
+            if not task_id:
+                # Malformed entry; mark as handled so we never revisit it.
+                return True
+            # Only fail tasks the server still considers claimed.  Anything
+            # else is either already resolved or will be handled by the
+            # legacy recovery path below (which force-claims back to open).
+            if task_id not in claimed_on_server:
+                return True
+            try:
+                resp = self._client.post(
+                    f"{self._config.server_url}/tasks/{task_id}/fail",
+                    json={"reason": "claimed but never spawned"},
+                )
+                resp.raise_for_status()
+            except Exception as exc:
+                logger.warning(
+                    "WAL replay: /tasks/%s/fail failed (%s) — orphan will be handled by legacy force-claim recovery",
+                    task_id,
+                    exc,
+                )
+                return False
+            # Record the retry intent in the current WAL so the fail->retry
+            # transition is auditable end-to-end.
+            try:
+                self._wal_writer.write_entry(
+                    decision_type="task_retry",
+                    inputs={
+                        "task_id": task_id,
+                        "reason": "claimed_but_never_spawned",
+                        "source": "wal_replay_engine",
+                    },
+                    output={"action": "failed_for_retry"},
+                    actor="orchestrator",
+                    committed=True,
+                )
+            except OSError:
+                logger.debug("WAL replay: task_retry write failed (task=%s)", task_id)
+            logger.info(
+                "WAL replay: failed orphan task %s (claimed but never spawned)",
+                task_id,
+            )
+            return True
+
+        summary = engine.scan_and_replay(replay_handler=_handler)
+        if summary.total_uncommitted:
+            logger.info(
+                "WAL replay engine: total=%d replayed=%d idempotent=%d stale=%d failed=%d",
+                summary.total_uncommitted,
+                summary.replayed,
+                summary.skipped_idempotent,
+                summary.skipped_stale,
+                summary.failed,
+            )
 
     def _retry_orphaned_claim(self, run_id: str, entry: Any) -> bool:
         """Re-queue a single orphaned claim from a crashed prior run.
@@ -2443,6 +2628,100 @@ class Orchestrator:
                     workdir=self._workdir,
                 )
 
+    def _enforce_budget_killswitch(self) -> None:
+        """Terminate in-flight agents once the budget kill-switch has fired.
+
+        audit-056: prior to this hook the ABORT branch only blocked new
+        spawns, so any agents still running when ``should_stop`` flipped
+        kept consuming budget (overruns of 150%+ observed).  The new
+        contract is:
+
+        * On the first tick where ``should_stop`` is True we SHUTDOWN
+          every live session so they can commit WIP, stamp
+          ``_budget_stop_fired_at``, and emit a single ``budget.exhaust``
+          bulletin + notification carrying the final spend.
+        * On any later tick where at least ``kill_grace_period_s`` have
+          elapsed we SIGKILL remaining live sessions via the spawner.
+          Each agent is only killed once (``_budget_stop_killed_agents``).
+        * When spend drops back under the threshold (e.g. after a hot
+          reload of ``budget_usd``) the state is reset so the switch can
+          re-arm.
+        """
+        status = self._cost_tracker.status()
+        if not status.should_stop:
+            # Budget was increased or the tracker reset — re-arm so a
+            # future exhaustion triggers a fresh SHUTDOWN wave.
+            if self._budget_stop_fired_at is not None:
+                logger.info("Budget kill-switch re-armed (spend back under threshold)")
+                self._budget_stop_fired_at = None
+                self._budget_stop_killed_agents.clear()
+            return
+
+        live_sessions = [s for s in self._agents.values() if s.status != "dead"]
+
+        # First transition: SHUTDOWN everyone and emit the exhaust event.
+        if self._budget_stop_fired_at is None:
+            self._budget_stop_fired_at = time.time()
+            reason = (
+                f"budget exhausted: ${status.spent_usd:.4f} of ${status.budget_usd:.2f} "
+                f"({status.percentage_used * 100:.1f}%)"
+            )
+            logger.warning(
+                "Budget kill-switch fired — sending SHUTDOWN to %d live agent(s); SIGKILL after %ds grace period",
+                len(live_sessions),
+                self._cost_tracker.kill_grace_period_s,
+            )
+            if live_sessions:
+                with contextlib.suppress(Exception):
+                    self._send_shutdown_signals(reason)
+            self._post_bulletin(
+                "alert",
+                f"budget.exhaust: ${status.spent_usd:.4f}/${status.budget_usd:.2f} "
+                f"({status.percentage_used * 100:.1f}%); "
+                f"SHUTDOWN sent to {len(live_sessions)} agent(s)",
+            )
+            self._notify(
+                "budget.exhaust",
+                "Budget exhausted — terminating agents",
+                (
+                    f"Spent ${status.spent_usd:.4f} of ${status.budget_usd:.2f} "
+                    f"({status.percentage_used * 100:.1f}%). SHUTDOWN sent to "
+                    f"{len(live_sessions)} in-flight agent(s); SIGKILL after "
+                    f"{self._cost_tracker.kill_grace_period_s}s grace."
+                ),
+                budget_usd=round(status.budget_usd, 4),
+                spent_usd=round(status.spent_usd, 6),
+                percent_used=round(status.percentage_used * 100, 2),
+                live_agents=len(live_sessions),
+                grace_period_s=int(self._cost_tracker.kill_grace_period_s),
+            )
+            return
+
+        # Subsequent ticks: once the grace window has elapsed, SIGKILL
+        # anything still alive so unbounded overrun is prevented.
+        elapsed = time.time() - self._budget_stop_fired_at
+        if elapsed < self._cost_tracker.kill_grace_period_s:
+            return
+
+        pending_kill = [s for s in live_sessions if s.id not in self._budget_stop_killed_agents]
+        if not pending_kill:
+            return
+
+        logger.warning(
+            "Budget kill-switch grace period expired (%.1fs elapsed); SIGKILLing %d agent(s) still alive",
+            elapsed,
+            len(pending_kill),
+        )
+        for session in pending_kill:
+            self._budget_stop_killed_agents.add(session.id)
+            with contextlib.suppress(Exception):
+                self._spawner.kill(session)
+        self._post_bulletin(
+            "alert",
+            f"budget.exhaust: SIGKILLed {len(pending_kill)} agent(s) after "
+            f"{int(self._cost_tracker.kill_grace_period_s)}s grace",
+        )
+
     def _reap_dead_agents(self, result: TickResult, tasks_snapshot: dict[str, list[Task]]) -> None:
         """Delegate to agent_lifecycle.reap_dead_agents."""
         reap_dead_agents(self, result, tasks_snapshot)
@@ -2509,6 +2788,55 @@ class Orchestrator:
         """Remove reverse-index entries for the given task IDs."""
         for tid in task_ids:
             self._task_to_session.pop(tid, None)
+
+    def _maybe_poll_ci_autofix(self) -> list[str]:
+        """Poll GitHub Actions for failing runs if the feature flag is enabled (audit-035).
+
+        Calls :meth:`CIMonitor.poll` at most once per ``poll_interval_s`` seconds,
+        tracked via ``_last_ci_poll_ts``.  Lazily constructs the monitor and
+        pipeline on first use so the hot path is free when the flag is off.
+
+        Returns:
+            List of fix-task IDs created during this poll (may be empty).
+            Always empty when the flag is disabled, when the repo is not
+            configured, or when a GitHub token cannot be resolved.
+        """
+        ci_cfg = getattr(self._config, "ci_autofix", None)
+        if ci_cfg is None or not ci_cfg.enabled:
+            return []
+        if not ci_cfg.repo:
+            return []
+
+        now = time.time()
+        if now - self._last_ci_poll_ts < ci_cfg.poll_interval_s:
+            return []
+        self._last_ci_poll_ts = now
+
+        token = ci_cfg.token or os.environ.get("GITHUB_TOKEN", "")
+        if not token:
+            logger.debug("CI autofix poll: GITHUB_TOKEN not set - skipping")
+            return []
+
+        if self._ci_monitor is None or self._ci_autofix_pipeline is None:
+            from bernstein.core.quality.ci_fix import CIAutofixPipeline
+            from bernstein.core.quality.ci_monitor import CIMonitor
+
+            self._ci_monitor = CIMonitor()
+            self._ci_autofix_pipeline = CIAutofixPipeline(
+                server_url=self._config.server_url,
+                repo_root=self._workdir,
+            )
+
+        try:
+            return self._ci_monitor.poll(
+                ci_cfg.repo,
+                token,
+                self._ci_autofix_pipeline,
+                per_page=ci_cfg.per_page,
+            )
+        except Exception as exc:
+            logger.warning("CI autofix poll failed: %s", exc)
+            return []
 
     def _check_server_health(self) -> bool:
         """Ping the task server health endpoint with a short timeout.
@@ -2930,44 +3258,6 @@ class Orchestrator:
 
     # -- Backlog -------------------------------------------------------------
 
-    def _sync_backlog_file(self, task: Task) -> None:
-        """Move the matching .md file from backlog/open/ to backlog/closed/."""
-        open_dir = self._workdir / ".sdd" / "backlog" / "open"
-        if not open_dir.exists():
-            return
-
-        closed_dir = self._workdir / ".sdd" / "backlog" / "closed"
-        closed_dir.mkdir(parents=True, exist_ok=True)
-
-        title_words = self._backlog_words_from_title(task.title)
-
-        best_match: str | None = None
-        best_score = 0
-        for md_file in open_dir.glob("*.md"):
-            slug = re.sub(r"^\d+-", "", md_file.name[:-3])
-            file_words = set(slug.split("-"))
-            significant_file_words = {w for w in file_words if len(w) >= 4}
-            overlap = title_words & significant_file_words
-            if overlap and len(overlap) > best_score:
-                best_score = len(overlap)
-                best_match = md_file.name
-
-        if best_match is None:
-            return
-
-        src = open_dir / best_match
-        dst = closed_dir / best_match
-        if not src.exists():
-            return
-
-        content = src.read_text(encoding="utf-8")
-        ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        summary = task.result_summary or ""
-        content += f"\n\n---\n**completed**: {ts}\n**task_id**: {task.id}\n**result**: {summary}\n"
-        dst.write_text(content, encoding="utf-8")
-        src.unlink()
-        logger.info("Synced backlog: %s -> closed/", best_match)
-
     def _collect_backlog_files(self) -> list[Path]:
         """Collect and filter backlog files from open/ and issues/ directories."""
         open_dir = self._workdir / ".sdd" / "backlog" / "open"
@@ -3132,13 +3422,6 @@ class Orchestrator:
             logger.info("Ingested backlog file (one-by-one): %s", backlog_file.name)
         return count
 
-    @staticmethod
-    def _backlog_words_from_title(title: str) -> set[str]:
-        """Extract significant lowercase words (>=4 chars) from a task title."""
-        expanded = re.sub(r"([a-z])([A-Z])", r"\1 \2", title)
-        tokens = re.split(r"[^a-zA-Z0-9]+", expanded.lower())
-        return {w for w in tokens if len(w) >= 4}
-
     # -- Run summary --------------------------------------------------------
 
     def _generate_run_summary(
@@ -3231,7 +3514,6 @@ class Orchestrator:
 
     def _get_pr_diff_stats(self, branch: str) -> dict[str, int]:
         """Get diff statistics for PR body."""
-        import re
         import subprocess
 
         stats = {"files": 0, "insertions": 0, "deletions": 0}

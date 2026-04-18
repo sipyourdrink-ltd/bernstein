@@ -107,8 +107,26 @@ async def update_config(request: Request) -> JSONResponse:
     Accepts JSON body with ``{"max_agents": N}``.  Writes the change to
     ``bernstein.yaml`` so the orchestrator's hot-reload picks it up on
     the next tick (~30s).  Returns the new effective value.
+
+    Agent identity JWTs (per-agent, task-scoped) are rejected with 403 —
+    mutating process-wide config is an operator action.  SSO admin users
+    and legacy operator tokens may proceed.  Bearer-level permission
+    enforcement is handled by :class:`SSOAuthMiddleware` via the
+    ``admin:manage`` mapping; this check adds defense-in-depth against any
+    agent JWT that slips through the middleware's prefix match.
     """
     logger = logging.getLogger("bernstein.server")
+
+    claims: Any = getattr(request.state, "auth_claims", None)
+    if isinstance(claims, dict) and claims.get("agent") is True:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "agent tokens cannot modify server config",
+                "required_permission": "admin:manage",
+            },
+        )
+
     try:
         body = await request.json()
     except Exception:

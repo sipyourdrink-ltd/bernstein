@@ -160,6 +160,16 @@ def cleanup(orch: Any) -> None:
     # Save session state before releasing resources
     save_session_state(orch)
 
+    # audit-081: prune old runs/ and runtime/wal/ entries so long-running
+    # bernstein instances do not accumulate unbounded per-run state.
+    try:
+        from bernstein.core.persistence.disk_retention import run_retention
+
+        active_run_id = getattr(orch, "_run_id", None)
+        run_retention(orch._workdir / ".sdd", active_run_id=active_run_id)
+    except Exception:
+        logger.debug("disk retention sweep failed (non-critical)", exc_info=True)
+
     # SOC 2: generate Merkle seal on shutdown when audit mode is active
     if orch._audit_mode and orch._audit_log is not None:
         try:

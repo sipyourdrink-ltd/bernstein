@@ -66,7 +66,6 @@ SYMBOL_CATALOG: dict[str, list[str]] = {
         "_move_backlog_ticket",
         "prepare_speculative_warm_pool",
         "create_conflict_resolution_task",
-        "deprioritize_old_unclaimed_tasks",
     ],
     # --- cli/dashboard.py ---
     "bernstein.cli.dashboard": [

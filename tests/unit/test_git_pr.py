@@ -100,3 +100,128 @@ def test_create_github_pr_handles_subprocess_exception(monkeypatch: pytest.Monke
 
     assert result.success is False
     assert "timed out" in result.error.lower()
+
+
+def _stub_bisect_env(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    captured_argv: list[list[str]],
+    bisect_stdout: str = "",
+) -> None:
+    """Wire ``run_git`` + ``subprocess.run`` stubs shared across bisect tests."""
+
+    def _fake_run_git(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
+        return GitResult(returncode=0, stdout="", stderr="")
+
+    def _fake_run(cmd: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured_argv.append(list(cmd))
+        # Pretend `git check-ref-format --branch X` passes for non-malicious input.
+        if len(cmd) >= 2 and cmd[:2] == ["git", "check-ref-format"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=bisect_stdout, stderr="")
+
+    monkeypatch.setattr(git_pr, "run_git", _fake_run_git)
+    monkeypatch.setattr(git_pr.subprocess, "run", _fake_run)
+
+
+def test_bisect_regression_parses_quoted_test_cmd_with_shlex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[list[str]] = []
+    _stub_bisect_env(
+        monkeypatch,
+        captured_argv=captured,
+        bisect_stdout="abcdef1234567 is the first bad commit\n",
+    )
+
+    sha = git_pr.bisect_regression(
+        tmp_path,
+        test_cmd='pytest -k "name with spaces" tests/unit',
+        good_ref="main",
+        bad_ref="HEAD",
+    )
+
+    bisect_calls = [c for c in captured if c[:3] == ["git", "bisect", "run"]]
+    assert bisect_calls, "expected a git bisect run invocation"
+    # shlex preserves the quoted expression as a single argv element.
+    assert bisect_calls[0] == [
+        "git",
+        "bisect",
+        "run",
+        "pytest",
+        "-k",
+        "name with spaces",
+        "tests/unit",
+    ]
+    assert sha == "abcdef1234567"
+
+
+def test_bisect_regression_rejects_leading_flag_injection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[list[str]] = []
+    _stub_bisect_env(monkeypatch, captured_argv=captured)
+
+    with pytest.raises(ValueError, match="must not start with a flag"):
+        git_pr.bisect_regression(
+            tmp_path,
+            test_cmd="--log-file=/tmp/x pytest",
+        )
+    assert not any(c[:3] == ["git", "bisect", "run"] for c in captured)
+
+
+def test_bisect_regression_rejects_malformed_shlex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[list[str]] = []
+    _stub_bisect_env(monkeypatch, captured_argv=captured)
+
+    with pytest.raises(ValueError, match="failed to parse test_cmd"):
+        git_pr.bisect_regression(tmp_path, test_cmd='pytest "unterminated')
+
+
+def test_bisect_regression_rejects_bad_ref_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def _fake_run_git(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
+        return GitResult(returncode=0, stdout="", stderr="")
+
+    def _fake_run(cmd: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["git", "check-ref-format"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="bad ref")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(git_pr, "run_git", _fake_run_git)
+    monkeypatch.setattr(git_pr.subprocess, "run", _fake_run)
+
+    with pytest.raises(ValueError, match="invalid git ref"):
+        git_pr.bisect_regression(tmp_path, test_cmd="pytest", good_ref="not a ref")
+
+    # Leading-dash refs must be rejected before any git process is invoked.
+    with pytest.raises(ValueError, match="must not start with '-'"):
+        git_pr.bisect_regression(tmp_path, test_cmd="pytest", good_ref="--upload-pack=x")
+
+
+def test_bisect_regression_accepts_test_argv_over_string(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[list[str]] = []
+    _stub_bisect_env(
+        monkeypatch,
+        captured_argv=captured,
+        bisect_stdout="1234567 is the first bad commit\n",
+    )
+
+    sha = git_pr.bisect_regression(
+        tmp_path,
+        test_argv=["pytest", "-x", "tests/unit/test_git_pr.py"],
+    )
+
+    bisect_calls = [c for c in captured if c[:3] == ["git", "bisect", "run"]]
+    assert bisect_calls[0][3:] == ["pytest", "-x", "tests/unit/test_git_pr.py"]
+    assert sha == "1234567"

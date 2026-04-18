@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -22,6 +23,13 @@ if TYPE_CHECKING:
     from starlette.responses import Response as StarletteResponse
 
 logger = logging.getLogger(__name__)
+
+# Rotation debouncing: check at most once per interval OR when the in-memory
+# byte counter suggests we might be near the 10 MiB cap. A conservative
+# threshold ensures ``os.stat`` is only called when a rotation is actually
+# plausible, not per-request.
+_ROTATE_CHECK_INTERVAL_SECONDS: float = 60.0
+_ROTATE_BYTES_THRESHOLD: int = 10 * 1024 * 1024  # mirrors _LOG_ROTATE_BYTES
 
 
 @dataclass(frozen=True)
@@ -93,12 +101,84 @@ def extract_remote_ip(request: Request) -> str:
 
 
 class StructuredAccessLogMiddleware(BaseHTTPMiddleware):
-    """Emit one structured JSONL access record for every API response."""
+    """Emit one structured JSONL access record for every API response.
 
-    def __init__(self, app: Any, *, log_path: Path) -> None:
+    Performance notes (audit-080):
+        Rotation is debounced — we call :func:`rotate_log_file` (which stats
+        the file) at most once per :data:`_ROTATE_CHECK_INTERVAL_SECONDS`
+        OR after cumulative in-memory byte writes cross
+        :data:`_ROTATE_BYTES_THRESHOLD`. The append-mode file handle is kept
+        open across requests; POSIX small-line appends are atomic so
+        concurrent requests do not interleave within a single JSON line.
+        Callers should invoke :meth:`aclose` on shutdown to flush and close
+        the handle.
+    """
+
+    def __init__(
+        self,
+        app: Any,
+        *,
+        log_path: Path,
+        rotate_interval_seconds: float = _ROTATE_CHECK_INTERVAL_SECONDS,
+        rotate_bytes_threshold: int = _ROTATE_BYTES_THRESHOLD,
+    ) -> None:
         super().__init__(app)
         self._log_path = log_path
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._rotate_interval_seconds = rotate_interval_seconds
+        self._rotate_bytes_threshold = rotate_bytes_threshold
+        self._bytes_written: int = 0
+        self._last_rotate_check: float = 0.0
+        self._log_fh: IO[str] | None = None
+        self._fh_lock = threading.Lock()
+
+    def _ensure_handle(self) -> IO[str] | None:
+        """Return a reusable append-mode handle, opening it on first use."""
+        if self._log_fh is not None:
+            return self._log_fh
+        try:
+            self._log_fh = self._log_path.open("a", encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Failed to open access log %s: %s", self._log_path, exc)
+            self._log_fh = None
+        return self._log_fh
+
+    def _maybe_rotate(self, now: float) -> None:
+        """Call :func:`rotate_log_file` when the debounce policy allows it.
+
+        The check fires when either enough wall-clock time has elapsed since
+        the last probe, or the cumulative unflushed byte count has crossed
+        the rotation threshold. On rotation, the persistent handle is closed
+        and reopened so subsequent writes go to the fresh file.
+        """
+        first_call = self._last_rotate_check == 0.0
+        time_elapsed = now - self._last_rotate_check >= self._rotate_interval_seconds
+        size_exceeded = self._bytes_written >= self._rotate_bytes_threshold
+        if not (first_call or time_elapsed or size_exceeded):
+            return
+
+        self._last_rotate_check = now
+        try:
+            rotated = rotate_log_file(self._log_path)
+        except OSError as exc:  # defensive; rotate_log_file itself handles OSError
+            logger.warning("Rotation probe failed for %s: %s", self._log_path, exc)
+            return
+
+        if rotated:
+            # File was moved: close the stale handle so we reopen the fresh path.
+            with self._fh_lock:
+                if self._log_fh is not None:
+                    try:
+                        self._log_fh.close()
+                    except OSError as exc:
+                        logger.debug("Error closing rotated access log handle: %s", exc)
+                    finally:
+                        self._log_fh = None
+            self._bytes_written = 0
+        elif size_exceeded:
+            # Threshold reached but no rotation (e.g. file shorter than thought):
+            # reset counter so we don't probe every single subsequent request.
+            self._bytes_written = 0
 
     async def dispatch(
         self,
@@ -123,11 +203,29 @@ class StructuredAccessLogMiddleware(BaseHTTPMiddleware):
             remote_ip=extract_remote_ip(request),
             user_agent=request.headers.get("user-agent", ""),
         )
+        payload = json.dumps(entry.to_dict(), sort_keys=True) + "\n"
         try:
-            rotate_log_file(self._log_path)
-            with self._log_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry.to_dict(), sort_keys=True) + "\n")
+            self._maybe_rotate(time.monotonic())
+            with self._fh_lock:
+                handle = self._ensure_handle()
+                if handle is not None:
+                    handle.write(payload)
+                    handle.flush()
+                    # POSIX small-line appends are atomic; tracking by encoded
+                    # length gives a close-enough byte count for debounce.
+                    self._bytes_written += len(payload.encode("utf-8"))
         except OSError as exc:
             logger.warning("Failed to write access log %s: %s", self._log_path, exc)
         response.headers.setdefault("x-request-id", request_id)
         return response
+
+    async def aclose(self) -> None:
+        """Close the persistent file handle on application shutdown."""
+        with self._fh_lock:
+            if self._log_fh is not None:
+                try:
+                    self._log_fh.close()
+                except OSError as exc:
+                    logger.debug("Error closing access log handle: %s", exc)
+                finally:
+                    self._log_fh = None

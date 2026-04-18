@@ -16,6 +16,7 @@ message is emitted so an operator / fresh agent can resume the work.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -431,6 +432,198 @@ class TestAudit001Regression:
         retries = [e for e in reader.iter_entries() if e.decision_type == "task_retry"]
         assert sorted(e.inputs["task_id"] for e in retries) == ["T-a", "T-b", "T-c"]
         assert all(e.inputs["reason"] == "crash_recovery" for e in retries)
+
+
+# ---------------------------------------------------------------------------
+# audit-073: WALReplayEngine wiring — claim-but-never-spawned → FAILED + retry
+# ---------------------------------------------------------------------------
+
+
+class TestAudit073WALReplayEngineWiring:
+    """Verify WALReplayEngine.scan_and_replay runs during _recover_from_wal.
+
+    The replay engine must transition orphaned ``task_claimed`` entries to
+    FAILED (reason ``claimed but never spawned``) **only when the server
+    still reports the task as claimed**, and the subsequent retry intent
+    must be recorded in the current run's WAL.  Idempotency markers ensure
+    subsequent boots do not double-fail.
+    """
+
+    def _build_with_handler(self, tmp_path: Path, handler: object) -> tuple[Orchestrator, list[httpx.Request]]:
+        """Build an orchestrator wired to a custom httpx MockTransport handler."""
+        cfg = OrchestratorConfig(
+            max_agents=2,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            max_tasks_per_agent=3,
+            server_url="http://testserver",
+        )
+        adapter = _mock_adapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+        requests: list[httpx.Request] = []
+
+        def _wrapper(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return handler(request)  # type: ignore[operator]
+
+        transport = httpx.MockTransport(_wrapper)
+        client = httpx.Client(transport=transport, base_url="http://testserver")
+        orch = Orchestrator(cfg, spawner, tmp_path, client=client)
+        return orch, requests
+
+    def test_orphan_still_claimed_is_transitioned_to_failed(self, tmp_path: Path) -> None:
+        """An orphan that the server still lists as claimed is POST /fail'd.
+
+        Reproduces the SIGKILL-between-claim-and-spawn scenario: the prior
+        run wrote ``task_claimed`` with ``committed=False``, crashed, and the
+        server still has the task sitting in the *claimed* bucket.  The
+        WALReplayEngine handler must POST /tasks/{id}/fail with the exact
+        reason mandated by the ticket, then record a task_retry trail.
+        """
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w = WALWriter(run_id="killed-run", sdd_dir=sdd)
+        w.append("task_claimed", {"task_id": "T-kill"}, {}, "lifecycle", committed=False)
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and "status=claimed" in (
+                request.url.query.decode() if isinstance(request.url.query, bytes) else str(request.url.query)
+            ):
+                return httpx.Response(200, json=[{"id": "T-kill", "title": "kill"}])
+            return httpx.Response(200, json={})
+
+        orch, requests = self._build_with_handler(tmp_path, _handler)
+        orch._recover_from_wal()
+
+        # POST /tasks/T-kill/fail with reason "claimed but never spawned"
+        fail_posts = [r for r in requests if r.method == "POST" and r.url.path == "/tasks/T-kill/fail"]
+        assert len(fail_posts) >= 1, f"Expected POST /tasks/T-kill/fail; saw paths {[str(r.url) for r in requests]}"
+        body = json.loads(fail_posts[0].content)
+        assert body["reason"] == "claimed but never spawned"
+
+        # A task_retry WAL entry tagged as coming from wal_replay_engine
+        reader = WALReader(run_id=orch._run_id, sdd_dir=sdd)
+        replay_retries = [
+            e
+            for e in reader.iter_entries()
+            if e.decision_type == "task_retry" and e.inputs.get("source") == "wal_replay_engine"
+        ]
+        assert len(replay_retries) == 1
+        assert replay_retries[0].inputs["task_id"] == "T-kill"
+        assert replay_retries[0].inputs["reason"] == "claimed_but_never_spawned"
+        assert replay_retries[0].committed is True
+
+    def test_orphan_not_claimed_on_server_is_not_failed(self, tmp_path: Path) -> None:
+        """If the task is not in the server's claimed list, the replay engine skips /fail.
+
+        This is the case where the server has already reconciled the task
+        (e.g. another node force-claimed it back to open).  The legacy
+        force-claim recovery path still runs for auditability but /fail is
+        never called.
+        """
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w = WALWriter(run_id="prior", sdd_dir=sdd)
+        w.append("task_claimed", {"task_id": "T-gone"}, {}, "lifecycle", committed=False)
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            # Server no longer considers T-gone claimed
+            if request.method == "GET":
+                return httpx.Response(200, json=[])
+            return httpx.Response(200, json={})
+
+        orch, requests = self._build_with_handler(tmp_path, _handler)
+        orch._recover_from_wal()
+
+        fail_posts = [r for r in requests if r.method == "POST" and r.url.path.endswith("/fail")]
+        assert fail_posts == []
+
+    def test_replay_non_fatal_on_server_error(self, tmp_path: Path) -> None:
+        """A 500 on /tasks?status=claimed must not break orchestrator startup."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w = WALWriter(run_id="prior", sdd_dir=sdd)
+        w.append("task_claimed", {"task_id": "T-x"}, {}, "lifecycle", committed=False)
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(500, json={"error": "boom"})
+            return httpx.Response(200, json={})
+
+        orch, _ = self._build_with_handler(tmp_path, _handler)
+        # Must not raise
+        orch._recover_from_wal()
+
+    def test_replay_idempotent_across_boots(self, tmp_path: Path) -> None:
+        """Second recovery cycle does not re-fail the same orphan.
+
+        First boot: WALReplayEngine fails the orphan.  The idempotency
+        store persists the entry hash.  A second recovery on the same
+        ``.sdd`` directory must see the entry as already-executed and skip
+        the /fail POST -- preventing double-fails if the ``.closed``
+        marker write fails between boots.
+        """
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w = WALWriter(run_id="prior", sdd_dir=sdd)
+        w.append("task_claimed", {"task_id": "T-idem"}, {}, "lifecycle", committed=False)
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(200, json=[{"id": "T-idem"}])
+            return httpx.Response(200, json={})
+
+        # First boot
+        orch1, requests1 = self._build_with_handler(tmp_path, _handler)
+        orch1._recover_from_wal()
+        fails_first = [r for r in requests1 if r.method == "POST" and r.url.path == "/tasks/T-idem/fail"]
+        assert len(fails_first) == 1
+
+        # Remove the .closed marker written by the legacy path so the
+        # second boot's scan_and_replay still sees the uncommitted entry
+        # (simulates the race where .closed write fails).
+        closed_marker = sdd / "runtime" / "wal" / "prior.wal.closed"
+        if closed_marker.exists():
+            closed_marker.unlink()
+
+        # Second boot — idempotency store must short-circuit the /fail POST.
+        orch2, requests2 = self._build_with_handler(tmp_path, _handler)
+        orch2._recover_from_wal()
+        fails_second = [r for r in requests2 if r.method == "POST" and r.url.path == "/tasks/T-idem/fail"]
+        assert fails_second == []
+
+    def test_sigkill_between_claim_and_spawn_ticket_scenario(self, tmp_path: Path) -> None:
+        """End-to-end audit-073 ticket scenario: SIGKILL between claim and spawn.
+
+        Prior run: ``task_claimed`` committed=False, no ``task_spawn_confirmed``
+        (process was SIGKILL'd).  Server still sees the task in *claimed*.
+        On startup, the task must transition to FAILED and be re-queued so
+        a fresh agent can pick it up.
+        """
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        w = WALWriter(run_id="killed-by-kernel", sdd_dir=sdd)
+        w.append("task_claimed", {"task_id": "T-sigkill"}, {}, "lifecycle", committed=False)
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(200, json=[{"id": "T-sigkill"}])
+            return httpx.Response(200, json={})
+
+        orch, requests = self._build_with_handler(tmp_path, _handler)
+        orch._recover_from_wal()
+
+        # Task transitioned to FAILED
+        assert any(r.method == "POST" and r.url.path == "/tasks/T-sigkill/fail" for r in requests), (
+            "expected /tasks/T-sigkill/fail POST"
+        )
+
+        # Task re-queued via legacy force-claim path (existing retry mechanism)
+        assert any(r.method == "POST" and r.url.path == "/tasks/T-sigkill/force-claim" for r in requests), (
+            "expected /tasks/T-sigkill/force-claim POST"
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

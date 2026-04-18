@@ -60,6 +60,17 @@ _COMPACT_THRESHOLD: float = TOKEN.compact_threshold_pct
 _COMPACT_MAX_FAILURES: int = TOKEN.compact_max_failures
 _COMPACT_COOLDOWN_S: float = TOKEN.compact_cooldown_s
 
+#: Number of consecutive non-growth samples required to clear ``warned_quadratic``
+#: so the warning can fire again if growth resumes later in the session.
+_WARN_RESET_CLEAN_SAMPLES: int = 10
+
+#: Per-tenant kill threshold overrides.  Keys are tenant IDs (e.g. ``"enterprise"``,
+#: ``"free"``); values are kill thresholds in tokens.  Consulted by
+#: :func:`check_token_growth` via :meth:`TokenGrowthMonitor.kill_threshold_for`.
+#: Empty by default — populate via ``TokenGrowthMonitor(tenant_kill_thresholds=...)``
+#: or assign ``get_monitor().tenant_kill_thresholds = {...}`` at startup.
+TOKEN_CFG: dict[str, int] = {}
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -91,6 +102,9 @@ class AgentTokenHistory:
         warned_context_window: Whether a high context-window warning was emitted.
         warned_budget: Whether a token-budget continuation nudge was sent.
         killed: Whether the auto-kill has already fired for this session.
+        clean_samples: Consecutive samples without detected quadratic growth; once it
+            reaches ``_WARN_RESET_CLEAN_SAMPLES`` the ``warned_quadratic`` flag is
+            cleared so the warning can fire again if growth resumes.
     """
 
     session_id: str
@@ -100,6 +114,7 @@ class AgentTokenHistory:
     warned_context_window: bool = False
     warned_budget: bool = False
     killed: bool = False
+    clean_samples: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -237,10 +252,19 @@ class TokenGrowthMonitor:
     """Monitors per-agent token growth and triggers interventions.
 
     Args:
-        kill_threshold: Token count above which an agent with no file changes
-            is force-killed.  Defaults to ``_KILL_THRESHOLD``.
+        kill_threshold: Default token count above which an agent with no file
+            changes is force-killed.  Used when no per-tenant override exists.
+            Defaults to ``_KILL_THRESHOLD``.
         quadratic_ratio: Ratio of consecutive growth windows that triggers a
             quadratic-growth warning.  Defaults to ``_QUADRATIC_RATIO``.
+        tenant_kill_thresholds: Optional mapping of ``tenant_id`` → kill
+            threshold.  Consulted before falling back to ``kill_threshold``.
+            Use ``"default"`` as the key for the implicit tenant.  Enables
+            multi-tenant deployments (enterprise vs free) to diverge limits
+            without changing the module-level default.
+        warn_reset_clean_samples: Number of consecutive non-growth samples
+            after which ``warned_quadratic`` is cleared so the warning can
+            fire again if growth resumes later in the session.
     """
 
     #: Default fraction of token budget used before firing the nudge (80 %).
@@ -265,6 +289,8 @@ class TokenGrowthMonitor:
         compact_cooldown_s: float = _COMPACT_COOLDOWN_S,
         nudge_threshold_pct: float | None = None,
         nudge_text: str | None = None,
+        tenant_kill_thresholds: dict[str, int] | None = None,
+        warn_reset_clean_samples: int = _WARN_RESET_CLEAN_SAMPLES,
     ) -> None:
         self._kill_threshold = kill_threshold
         self._quadratic_ratio = quadratic_ratio
@@ -277,6 +303,10 @@ class TokenGrowthMonitor:
         self._nudge_text: str = nudge_text if nudge_text is not None else self._DEFAULT_NUDGE_TEXT
         self._history: dict[str, AgentTokenHistory] = {}
         self._compaction_breakers: dict[str, AutoCompactCircuitBreaker] = {}
+        #: Per-tenant kill-threshold overrides (audit-070).  Mutable so callers
+        #: can update the map at runtime without rebuilding the monitor.
+        self.tenant_kill_thresholds: dict[str, int] = dict(tenant_kill_thresholds or {})
+        self._warn_reset_clean_samples: int = warn_reset_clean_samples
 
     # -----------------------------------------------------------------------
     # Public API
@@ -378,16 +408,57 @@ class TokenGrowthMonitor:
             return False
         return d_last >= self._quadratic_ratio * d_prev
 
-    def should_kill(self, session_id: str, files_changed: int) -> bool:
+    def kill_threshold_for(self, tenant_id: str | None) -> int:
+        """Return the effective kill threshold for a given tenant.
+
+        Resolution order:
+
+        1. ``TOKEN_CFG[tenant_id]`` (module-level override),
+        2. ``self.tenant_kill_thresholds[tenant_id]``,
+        3. ``TOKEN_CFG["default"]``,
+        4. ``self.tenant_kill_thresholds["default"]``,
+        5. ``self._kill_threshold`` (constructor default, normally ``TOKEN.kill_threshold``).
+
+        This makes multi-tenant deployments able to diverge limits (e.g.
+        ``TOKEN_CFG = {"enterprise": 200_000, "free": 20_000}``) without
+        patching the module-level constant.
+
+        Args:
+            tenant_id: Tenant identifier for the session.  ``None`` is treated
+                as ``"default"``.
+
+        Returns:
+            The kill threshold in tokens.
+        """
+        key = tenant_id or "default"
+        if key in TOKEN_CFG:
+            return TOKEN_CFG[key]
+        if key in self.tenant_kill_thresholds:
+            return self.tenant_kill_thresholds[key]
+        if "default" in TOKEN_CFG:
+            return TOKEN_CFG["default"]
+        if "default" in self.tenant_kill_thresholds:
+            return self.tenant_kill_thresholds["default"]
+        return self._kill_threshold
+
+    def should_kill(
+        self,
+        session_id: str,
+        files_changed: int,
+        tenant_id: str | None = None,
+    ) -> bool:
         """Return True if the agent should be auto-killed.
 
-        Criteria: token total exceeds the kill threshold AND the agent has made
-        zero file changes (no useful output despite high token consumption).
+        Criteria: token total exceeds the tenant-resolved kill threshold AND
+        the agent has made zero file changes (no useful output despite high
+        token consumption).
 
         Args:
             session_id: Agent session identifier.
             files_changed: Total files changed by this agent's tasks (from
                 progress snapshots).
+            tenant_id: Tenant ID for per-tenant threshold resolution.  ``None``
+                falls back to ``"default"`` then the module-wide threshold.
 
         Returns:
             True when the agent should be force-killed.
@@ -396,7 +467,8 @@ class TokenGrowthMonitor:
         if history.killed:
             return False  # Already killed; don't trigger again
         current = self._current_total(session_id)
-        return current >= self._kill_threshold and files_changed == 0
+        threshold = self.kill_threshold_for(tenant_id)
+        return current >= threshold and files_changed == 0
 
     def mark_killed(self, session_id: str) -> None:
         """Record that the auto-kill has fired for this session.
@@ -409,10 +481,15 @@ class TokenGrowthMonitor:
     def mark_warned(self, session_id: str) -> None:
         """Record that a quadratic-growth warning was emitted.
 
+        Resets the clean-sample counter so the reset threshold is only reached
+        after a fresh run of non-growth samples.
+
         Args:
             session_id: Agent session identifier.
         """
-        self._get_or_create(session_id).warned_quadratic = True
+        history = self._get_or_create(session_id)
+        history.warned_quadratic = True
+        history.clean_samples = 0
 
     def was_warned(self, session_id: str) -> bool:
         """Return True if a quadratic-growth warning has already been emitted.
@@ -421,6 +498,34 @@ class TokenGrowthMonitor:
             session_id: Agent session identifier.
         """
         return self._get_or_create(session_id).warned_quadratic
+
+    def note_clean_sample(self, session_id: str) -> None:
+        """Record a non-growth sample; reset ``warned_quadratic`` after enough.
+
+        Called from the orchestrator tick when quadratic growth is *not*
+        detected for a session.  After ``warn_reset_clean_samples`` consecutive
+        clean observations, the warned flag is cleared so the next burst of
+        quadratic growth can fire the warning again (audit-070).
+
+        Args:
+            session_id: Agent session identifier.
+        """
+        history = self._get_or_create(session_id)
+        if not history.warned_quadratic:
+            # Keep counter bounded so it doesn't grow unboundedly between
+            # warnings; clamp to one above the reset threshold.
+            if history.clean_samples < self._warn_reset_clean_samples + 1:
+                history.clean_samples += 1
+            return
+        history.clean_samples += 1
+        if history.clean_samples >= self._warn_reset_clean_samples:
+            history.warned_quadratic = False
+            history.clean_samples = 0
+            logger.debug(
+                "Cleared quadratic-growth warning for session %s after %d clean samples",
+                session_id,
+                self._warn_reset_clean_samples,
+            )
 
     def mark_context_warned(self, session_id: str) -> None:
         """Record that a high context-window utilization warning was emitted.
@@ -663,16 +768,53 @@ def _send_wakeup(orch: Any, session: Any) -> None:
         )
 
 
+def _resolve_tenant_id(session: Any) -> str:
+    """Return the tenant ID for a session, defaulting to ``"default"``.
+
+    ``AgentSession`` does not yet carry a ``tenant_id`` field on every deploy,
+    so we best-effort read it via ``getattr`` to stay compatible with older
+    session shapes (and with ``MagicMock`` test fixtures).
+    """
+    raw = getattr(session, "tenant_id", None)
+    if not raw:
+        return "default"
+    return str(raw)
+
+
+def _resolve_kill_threshold(monitor: Any, session: Any) -> int:
+    """Resolve the kill threshold for *session* using per-tenant overrides.
+
+    Thin wrapper around ``monitor.kill_threshold_for`` that keeps the tick
+    pipeline decoupled from the monitor's internal resolution order.  The
+    monitor method already consults ``TOKEN_CFG`` and its own instance map.
+    """
+    tenant_id = _resolve_tenant_id(session)
+    return int(monitor.kill_threshold_for(tenant_id))
+
+
 def _handle_auto_kill(orch: Any, session: Any, monitor: Any, total: int) -> bool:
-    """Kill *session* if runaway detected. Returns True if killed."""
+    """Kill *session* if runaway detected. Returns True if killed.
+
+    Resolves the kill threshold per-tenant via ``TOKEN_CFG`` (module-level
+    override) or the monitor's own ``tenant_kill_thresholds`` map so
+    multi-tenant deployments can diverge limits between tiers (audit-070).
+    """
     files_changed = _get_files_changed(orch, session, orch._config.server_url)
-    if not monitor.should_kill(session.id, files_changed):
+    tenant_id = _resolve_tenant_id(session)
+    threshold = _resolve_kill_threshold(monitor, session)
+
+    # ``should_kill`` on the monitor honours the tenant-scoped threshold,
+    # the "already killed" flag, and the ``files_changed == 0`` gate.
+    if not monitor.should_kill(session.id, files_changed, tenant_id=tenant_id):
         return False
 
     logger.warning(
-        "Token runaway: agent %s consumed %d tokens with 0 file changes — killing",
+        "Token runaway: agent %s consumed %d tokens with 0 file changes "
+        "(tenant=%s threshold=%d) — killing",
         session.id,
         total,
+        tenant_id,
+        threshold,
     )
     with contextlib.suppress(Exception):
         orch._spawner.kill(session)
@@ -683,8 +825,18 @@ def _handle_auto_kill(orch: Any, session: Any, monitor: Any, total: int) -> bool
 
 
 def _handle_quadratic_warning(orch: Any, session: Any, monitor: Any, total: int) -> None:
-    """Warn once if quadratic token growth is detected."""
-    if monitor.was_warned(session.id) or not monitor.is_quadratic_growth(session.id):
+    """Warn on quadratic token growth; reset warn flag after clean samples.
+
+    Fires the warning the first time quadratic growth is detected and again
+    after ``_WARN_RESET_CLEAN_SAMPLES`` consecutive non-growth ticks clear the
+    flag.  This prevents the "once per session" silence that previously hid
+    late-session runaway growth.
+    """
+    growth = monitor.is_quadratic_growth(session.id)
+    if not growth:
+        monitor.note_clean_sample(session.id)
+        return
+    if monitor.was_warned(session.id):
         return
     logger.warning(
         "Quadratic token growth detected for agent %s: %d tokens and rising super-linearly",

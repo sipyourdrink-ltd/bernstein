@@ -126,6 +126,102 @@ class TestIdempotencyStore:
         store.clear()
         assert store.is_executed(entry) is False
 
+    def test_mark_executed_fsyncs_marker(
+        self,
+        sdd_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """audit-078: mark_executed must flush+fsync before returning."""
+        from bernstein.core.wal import WALEntry
+
+        from bernstein.core import wal_replay as wal_replay_mod
+
+        fsync_calls: list[int] = []
+        real_fsync = wal_replay_mod.os.fsync
+
+        def tracking_fsync(fd: int) -> None:
+            fsync_calls.append(fd)
+            real_fsync(fd)
+
+        monkeypatch.setattr(wal_replay_mod.os, "fsync", tracking_fsync)
+
+        entry = WALEntry(
+            seq=0,
+            prev_hash="",
+            entry_hash="fsync-test",
+            timestamp=0.0,
+            decision_type="task_created",
+            inputs={},
+            output={},
+            actor="test",
+        )
+        store = IdempotencyStore(sdd_dir)
+        store.mark_executed(entry)
+
+        assert len(fsync_calls) == 1, "mark_executed must call os.fsync exactly once"
+
+    def test_mark_executed_fsync_failure_does_not_mark_in_memory(
+        self,
+        sdd_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """audit-078: if fsync fails, in-memory state must not lie about durability.
+
+        Otherwise, after a crash the marker would be absent on disk yet the
+        replay engine would incorrectly treat the entry as already executed.
+        """
+        from bernstein.core.wal import WALEntry
+
+        from bernstein.core import wal_replay as wal_replay_mod
+
+        def raising_fsync(fd: int) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(wal_replay_mod.os, "fsync", raising_fsync)
+
+        entry = WALEntry(
+            seq=0,
+            prev_hash="",
+            entry_hash="fsync-fail",
+            timestamp=0.0,
+            decision_type="task_created",
+            inputs={},
+            output={},
+            actor="test",
+        )
+        store = IdempotencyStore(sdd_dir)
+        # Must not raise — OSError is caught and logged.
+        store.mark_executed(entry)
+        # In-memory state should reflect that the durable write failed.
+        assert store.is_executed(entry) is False
+
+    def test_mark_executed_survives_simulated_crash(self, sdd_dir: Path) -> None:
+        """audit-078: after mark_executed returns, a fresh store sees the marker.
+
+        Simulates a crash by constructing a fresh IdempotencyStore after the
+        write: it loads solely from disk, so if flush+fsync were skipped and
+        data sat only in an in-memory buffer at interpreter exit, the marker
+        would be missing. With the fix, the marker is always on disk.
+        """
+        from bernstein.core.wal import WALEntry
+
+        entry = WALEntry(
+            seq=0,
+            prev_hash="",
+            entry_hash="crash-survive",
+            timestamp=0.0,
+            decision_type="task_created",
+            inputs={},
+            output={},
+            actor="test",
+        )
+        store = IdempotencyStore(sdd_dir)
+        store.mark_executed(entry)
+
+        # Simulate crash+restart: new process reads from disk only.
+        reloaded = IdempotencyStore(sdd_dir)
+        assert reloaded.is_executed(entry) is True
+
 
 # ---------------------------------------------------------------------------
 # WALReplayEngine — scanning
