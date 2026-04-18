@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import Any, Literal
 
+from bernstein.core.defaults import AGENT
+
 logger = logging.getLogger(__name__)
 
 
@@ -1036,7 +1038,8 @@ class OrchestratorConfig:
     Args:
         max_agents: Maximum concurrent agent processes.
         poll_interval_s: Seconds between orchestrator ticks.
-        heartbeat_timeout_s: Seconds before an agent is considered stale.
+        heartbeat_timeout_s: Seconds before an agent is considered stale. Defaults
+            to ``AGENT.heartbeat_stale_s`` from ``core.defaults`` (canonical source).
         heartbeat_enabled: Whether the file-based heartbeat protocol is enabled.
         max_tasks_per_agent: Maximum tasks batched into one agent spawn.
         server_url: Base URL of the Bernstein task server.
@@ -1055,7 +1058,9 @@ class OrchestratorConfig:
     max_agents: int = 6
     poll_interval_s: int = 3
     smtp: SmtpConfig | None = None
-    heartbeat_timeout_s: int = 900  # 15 min — generous until agents implement heartbeat writes
+    # Unified with AGENT.heartbeat_stale_s (audit-147). Previously 900s; now defaults to 120s.
+    # Deployments that explicitly relied on the 900s value must set this field explicitly.
+    heartbeat_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_stale_s))
     heartbeat_enabled: bool = True
     max_agent_runtime_s: int = 1800  # 30 min wall-clock kill (agents need time for complex tasks)
     max_tasks_per_agent: int = 2  # batch 2 same-role tasks per agent to reduce context overhead
