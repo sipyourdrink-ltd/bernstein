@@ -67,6 +67,65 @@ _HASH_LABEL_PREFIX = "evolve-hash-"
 # Community issue scanning labels — either of these qualifies.
 _COMMUNITY_LABELS: tuple[str, ...] = (_LABEL_EVOLVE_CANDIDATE, _LABEL_FEATURE_REQUEST)
 
+# Upper cap on the number of issues fetched per `gh issue list` call.
+# ``gh`` itself paginates internally when ``--limit`` is high, so setting a
+# large value here yields the full result set for any realistically sized
+# repository while still bounding worst-case memory and API usage.
+#
+# Override via ``BERNSTEIN_GITHUB_PAGE_LIMIT`` (int). The default is
+# intentionally high so that repos with thousands of open issues are fully
+# synced rather than silently truncated at 500.
+_DEFAULT_PAGE_LIMIT = 10_000
+
+
+def _page_limit() -> int:
+    """Return the configured upper cap for ``gh issue list --limit``.
+
+    Reads ``BERNSTEIN_GITHUB_PAGE_LIMIT`` from the environment; falls back to
+    :data:`_DEFAULT_PAGE_LIMIT` if the variable is unset, empty, or not a
+    positive integer.
+
+    Returns:
+        Positive integer page cap.
+    """
+    raw = os.environ.get("BERNSTEIN_GITHUB_PAGE_LIMIT")
+    if not raw:
+        return _DEFAULT_PAGE_LIMIT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid BERNSTEIN_GITHUB_PAGE_LIMIT=%r (expected int); using default %d",
+            raw,
+            _DEFAULT_PAGE_LIMIT,
+        )
+        return _DEFAULT_PAGE_LIMIT
+    if value <= 0:
+        return _DEFAULT_PAGE_LIMIT
+    return value
+
+
+def _warn_if_truncated(count: int, limit: int, context: str) -> None:
+    """Emit a warning if a ``gh issue list`` result appears truncated.
+
+    ``gh`` paginates internally but stops at ``--limit``. When the returned
+    count equals the cap, additional issues may exist on the server that we
+    did not fetch; log a loud warning so operators can raise the cap.
+
+    Args:
+        count: Number of issues returned.
+        limit: The ``--limit`` value that was passed to ``gh``.
+        context: Human-readable description of the call site (for logs).
+    """
+    if count >= limit:
+        logger.warning(
+            "%s: fetched %d issues, hit page cap of %d — results may be "
+            "truncated. Increase BERNSTEIN_GITHUB_PAGE_LIMIT to sync more.",
+            context,
+            count,
+            limit,
+        )
+
 
 def _hash_title(title: str) -> str:
     """Compute a short dedup hash from a proposal title.
@@ -197,6 +256,7 @@ class GitHubClient:
         if not self.available:
             return []
 
+        limit = _page_limit()
         args = [
             "gh",
             "issue",
@@ -208,7 +268,7 @@ class GitHubClient:
             "--json",
             "number,title,url,labels,state",
             "--limit",
-            "100",
+            str(limit),
         ]
         if self._repo:
             args += ["--repo", self._repo]
@@ -219,10 +279,13 @@ class GitHubClient:
 
         try:
             raw: list[dict[str, Any]] = json.loads(result)
-            return [GitHubIssue.from_gh_json(item) for item in raw]
+            issues = [GitHubIssue.from_gh_json(item) for item in raw]
         except (json.JSONDecodeError, KeyError):
             logger.warning("Failed to parse GitHub issue list response")
             return []
+
+        _warn_if_truncated(len(issues), limit, "fetch_open_evolve_issues")
+        return issues
 
     def find_unclaimed(self) -> list[GitHubIssue]:
         """Return open evolve issues that have not been claimed yet.
@@ -380,6 +443,7 @@ class GitHubClient:
             return []
 
         seen: dict[int, GitHubIssue] = {}
+        limit = _page_limit()
         for label in _COMMUNITY_LABELS:
             args = [
                 "gh",
@@ -392,7 +456,7 @@ class GitHubClient:
                 "--json",
                 "number,title,url,labels,state,body,author,reactions",
                 "--limit",
-                "50",
+                str(limit),
             ]
             if self._repo:
                 args += ["--repo", self._repo]
@@ -401,12 +465,19 @@ class GitHubClient:
                 continue
             try:
                 raw: list[dict[str, Any]] = json.loads(result)
-                for item in raw:
-                    issue = GitHubIssue.from_gh_json(item)
-                    if not issue.is_in_progress and issue.number not in seen:
-                        seen[issue.number] = issue
             except (json.JSONDecodeError, KeyError):
                 logger.warning("Failed to parse community issue list for label '%s'", label)
+                continue
+
+            _warn_if_truncated(len(raw), limit, f"fetch_community_issues[{label}]")
+            for item in raw:
+                try:
+                    issue = GitHubIssue.from_gh_json(item)
+                except (KeyError, TypeError):
+                    logger.warning("Malformed community issue entry for label '%s'", label)
+                    continue
+                if not issue.is_in_progress and issue.number not in seen:
+                    seen[issue.number] = issue
 
         issues = list(seen.values())
         issues.sort(key=lambda i: i.thumbs_up, reverse=True)
@@ -614,6 +685,8 @@ class GitHubClient:
             Decoded stdout string on success, or ``None`` if the command
             fails or times out.
         """
+        # 120s accommodates ``gh issue list`` with a high ``--limit`` where
+        # ``gh`` paginates internally; small queries still return promptly.
         try:
             result = subprocess.run(
                 args,
@@ -621,7 +694,7 @@ class GitHubClient:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=30,
+                timeout=120,
             )
             if result.returncode != 0:
                 logger.debug(
@@ -773,12 +846,19 @@ def _role_from_labels(labels: list[str]) -> str:
 def _fetch_gh_issues(workdir: Path) -> list[dict[str, Any]] | None:
     """Fetch open GitHub issues via the ``gh`` CLI.
 
+    Uses a configurable high ``--limit`` so that large repos are not
+    silently truncated. ``gh`` paginates internally. Emits a warning when
+    the returned count equals the cap, signalling possible truncation.
+
+    Override the cap via ``BERNSTEIN_GITHUB_PAGE_LIMIT`` (int).
+
     Args:
         workdir: Repository root (used as ``cwd`` for ``gh``).
 
     Returns:
         Parsed list of issue dicts, or None on failure.
     """
+    limit = _page_limit()
     try:
         result = subprocess.run(
             [
@@ -790,13 +870,13 @@ def _fetch_gh_issues(workdir: Path) -> list[dict[str, Any]] | None:
                 "--json",
                 "number,title,body,labels,assignees",
                 "--limit",
-                "500",
+                str(limit),
             ],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=30,
+            timeout=120,
             cwd=str(workdir),
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
@@ -808,10 +888,14 @@ def _fetch_gh_issues(workdir: Path) -> list[dict[str, Any]] | None:
         return None
 
     try:
-        return json.loads(result.stdout)
+        parsed = json.loads(result.stdout)
     except ValueError:
         logger.warning("Failed to parse gh issue list JSON output")
         return None
+
+    if isinstance(parsed, list):
+        _warn_if_truncated(len(parsed), limit, "sync_github_issues_to_backlog")
+    return parsed
 
 
 def _collect_existing_issue_numbers(workdir: Path, backlog_open: Path) -> set[int]:
