@@ -26,7 +26,7 @@ import httpx
 from rich.console import Console
 from rich.status import Status
 
-from bernstein.cli.display.icons import get_icons
+from bernstein.core.observability.icons import get_icons
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable as _Awaitable

@@ -169,6 +169,8 @@ jobs:
           enable-cache: true
       - run: uv run ruff check src/
       - run: uv run ruff format --check src/
+      - name: Architecture contracts (import-linter)
+        run: uv run lint-imports
 
   spelling:
     name: Spelling (typos)

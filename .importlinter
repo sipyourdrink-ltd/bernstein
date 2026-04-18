@@ -1,0 +1,46 @@
+[importlinter]
+root_package = bernstein
+
+# ---------------------------------------------------------------------------
+# Contract 1 — adapters are thin wrappers, never scheduler-aware
+# ---------------------------------------------------------------------------
+[importlinter:contract:adapters-no-scheduler]
+name = Adapters must not import scheduler internals
+type = forbidden
+source_modules =
+    bernstein.adapters
+forbidden_modules =
+    bernstein.core.tasks
+    bernstein.core.orchestration
+    bernstein.core.routing
+    bernstein.core.quality
+ignore_imports =
+
+# ---------------------------------------------------------------------------
+# Contract 2 — core should not depend on cli
+# ---------------------------------------------------------------------------
+[importlinter:contract:core-no-cli]
+name = Core must not import CLI
+type = forbidden
+source_modules =
+    bernstein.core
+forbidden_modules =
+    bernstein.cli
+    bernstein.tui
+ignore_imports =
+    bernstein.core.orchestration.activity_summary_poller -> bernstein.tui.activity_tracker
+
+
+# ---------------------------------------------------------------------------
+# Contract 3 — adapters must not import each other (independence)
+# ---------------------------------------------------------------------------
+[importlinter:contract:adapters-independent]
+name = Adapters are independent of one another
+type = independence
+modules =
+    bernstein.adapters.claude
+    bernstein.adapters.codex
+    bernstein.adapters.gemini
+    bernstein.adapters.cursor
+    bernstein.adapters.aider
+ignore_imports =
