@@ -46,26 +46,26 @@ from typing import Any
 class OrchestratorDefaults:
     """Run loop, tick scheduling, drain, and convergence."""
 
-    tick_interval_s: float = 3.0
+    tick_interval_s: float = 3.0  # arbitrary; tune in tuning:orchestrator
     normal_tick_phase: int = 6  # run normal ops every N ticks
     slow_tick_phase: int = 30  # run slow ops every N ticks
 
     max_consecutive_failures: int = 10  # tick failures before abort
     max_spawn_failures: int = 3  # consecutive spawn failures → mark failed
-    spawn_backoff_base_s: float = 30.0
-    spawn_backoff_max_s: float = 300.0
+    spawn_backoff_base_s: float = 30.0  # arbitrary; tune in tuning:orchestrator
+    spawn_backoff_max_s: float = 300.0  # cap exponential backoff at 5 min
 
-    drain_timeout_s: float = 60.0
+    drain_timeout_s: float = 60.0  # arbitrary; tune in tuning:orchestrator
     server_failure_threshold: int = 12  # ticks of server unreachability → stop
-    server_failure_warn: int = 3
+    server_failure_warn: int = 3  # warn after N consecutive server failures
 
     stale_claim_timeout_s: float = 900.0  # 15 min
     deadline_warning_window_s: float = 300.0  # 5 min warning before deadline
 
-    max_dead_agents_kept: int = 20
-    max_processed_done: int = 500
+    max_dead_agents_kept: int = 20  # bounded dead-agent history for debugging
+    max_processed_done: int = 500  # bounded done-task cache to limit memory
 
-    manager_review_completion_threshold: int = 7
+    manager_review_completion_threshold: int = 7  # trigger review every 7 done
     manager_review_stall_s: float = 900.0  # 15 min
 
 
@@ -78,7 +78,7 @@ class OrchestratorDefaults:
 class SpawnDefaults:
     """Agent spawning, process management, worktree lifecycle."""
 
-    disk_free_threshold_gb: float = 1.0
+    disk_free_threshold_gb: float = 1.0  # refuse spawns below 1 GiB free
     spawn_failure_cooldown_s: float = 300.0  # 5 min
     lesson_cache_ttl_s: float = 300.0  # 5 min
 
@@ -91,15 +91,15 @@ class AgentDefaults:
     idle_log_age_threshold_s: float = 180.0  # 3 min
 
     # Escalation tiers (seconds of heartbeat silence)
-    escalation_warn_s: float = 60.0
-    escalation_sigusr1_s: float = 90.0
-    escalation_sigterm_s: float = 120.0
-    escalation_sigkill_s: float = 150.0
+    escalation_warn_s: float = 60.0  # 1 min silence → warn
+    escalation_sigusr1_s: float = 90.0  # 1.5 min → soft nudge via SIGUSR1
+    escalation_sigterm_s: float = 120.0  # 2 min → graceful SIGTERM
+    escalation_sigkill_s: float = 150.0  # 2.5 min → hard SIGKILL
 
     # Escalation count thresholds
-    escalation_kill_count: int = 7
-    escalation_high_count: int = 5
-    escalation_med_count: int = 3
+    escalation_kill_count: int = 7  # arbitrary; tune in tuning:agent
+    escalation_high_count: int = 5  # arbitrary; tune in tuning:agent
+    escalation_med_count: int = 3  # arbitrary; tune in tuning:agent
 
     zombie_pid_max_age_s: float = 7 * 24 * 3600  # 7 days
 
@@ -143,15 +143,15 @@ class TaskDefaults:
     )
     xl_timeout_s: float = 120 * 60  # 7200s (2 hours)
 
-    priority_decay_threshold_hours: float = 24.0
-    min_priority: int = 3
+    priority_decay_threshold_hours: float = 24.0  # age boost after 24h stale
+    min_priority: int = 3  # floor priority (1=highest) after decay
 
     subtask_wait_timeout_s: float = 30 * 60  # 30 min
-    max_combined_estimated_minutes: int = 60
-    max_tasks_per_compacted_batch: int = 5
-    min_batch_size: int = 3
+    max_combined_estimated_minutes: int = 60  # cap batched-task total minutes
+    max_tasks_per_compacted_batch: int = 5  # cap tasks per batch for focus
+    min_batch_size: int = 3  # don't batch below this — single-task faster
 
-    max_io_retries: int = 3
+    max_io_retries: int = 3  # retry transient filesystem ops up to 3x
 
 
 # ---------------------------------------------------------------------------
@@ -163,24 +163,24 @@ class TaskDefaults:
 class TokenDefaults:
     """Token monitoring, compaction, context management."""
 
-    kill_threshold: int = 50_000
-    min_samples_for_growth_check: int = 3
-    quadratic_ratio: float = 2.0
-    sample_interval_s: float = 30.0
+    kill_threshold: int = 50_000  # kill agent if per-turn tokens exceed this
+    min_samples_for_growth_check: int = 3  # need 3 samples for trend analysis
+    quadratic_ratio: float = 2.0  # 2x growth flags quadratic context blowup
+    sample_interval_s: float = 30.0  # sample token count every 30s
 
-    compact_threshold_pct: float = 90.0
-    compact_max_failures: int = 3
-    compact_cooldown_s: float = 120.0
-    nudge_threshold_pct: float = 80.0
+    compact_threshold_pct: float = 90.0  # trigger /compact at 90% context
+    compact_max_failures: int = 3  # after 3 compact failures, give up
+    compact_cooldown_s: float = 120.0  # wait 2 min between compact attempts
+    nudge_threshold_pct: float = 80.0  # pre-compact warning at 80% context
 
-    truncation_threshold_pct: float = 80.0
-    rejection_threshold_pct: float = 95.0
+    truncation_threshold_pct: float = 80.0  # truncate tool output above 80%
+    rejection_threshold_pct: float = 95.0  # reject new work above 95%
 
-    code_block_max_lines: int = 100
-    file_listing_max_entries: int = 50
+    code_block_max_lines: int = 100  # truncate code blocks >100 lines
+    file_listing_max_entries: int = 50  # truncate ls/find listings >50 items
 
-    oversized_interval_tokens: int = 20_000
-    min_loop_samples: int = 3
+    oversized_interval_tokens: int = 20_000  # flag single-turn intervals >20k
+    min_loop_samples: int = 3  # need 3 samples to detect token loop
 
 
 # ---------------------------------------------------------------------------
@@ -195,38 +195,38 @@ class CostDefaults:
     scope_budget_usd: Mapping[str, float] = field(
         default_factory=lambda: _freeze_dict_str_float(
             {
-                "small": 2.0,
-                "medium": 5.0,
-                "large": 15.0,
+                "small": 2.0,  # arbitrary; tune in tuning:cost
+                "medium": 5.0,  # arbitrary; tune in tuning:cost
+                "large": 15.0,  # arbitrary; tune in tuning:cost
             }
         )
     )
     scope_multipliers: Mapping[str, float] = field(
         default_factory=lambda: _freeze_dict_str_float(
             {
-                "small": 1.0,
-                "medium": 1.5,
-                "large": 2.0,
+                "small": 1.0,  # baseline
+                "medium": 1.5,  # 50% more turns for medium scope
+                "large": 2.0,  # 2x turns for large scope
             }
         )
     )
     effort_base_turns: Mapping[str, int] = field(
         default_factory=lambda: _freeze_dict_str_int(
             {
-                "max": 100,
-                "high": 50,
-                "medium": 30,
-                "normal": 25,
-                "low": 15,
+                "max": 100,  # arbitrary; tune in tuning:cost
+                "high": 50,  # arbitrary; tune in tuning:cost
+                "medium": 30,  # arbitrary; tune in tuning:cost
+                "normal": 25,  # arbitrary; tune in tuning:cost
+                "low": 15,  # arbitrary; tune in tuning:cost
             }
         )
     )
-    opus_budget_multiplier: float = 2.0
-    batch_max_turns: int = 200
+    opus_budget_multiplier: float = 2.0  # opus costs ~2x sonnet
+    batch_max_turns: int = 200  # cap turns per batched run
     rate_limit_cooldown_s: float = 300.0  # 5 min
     rate_limit_cache_ttl_s: float = 180.0  # 3 min
-    rate_limit_probe_timeout_s: float = 15.0
-    fallback_cost_per_1k_tokens: float = 0.005
+    rate_limit_probe_timeout_s: float = 15.0  # bail probe after 15s
+    fallback_cost_per_1k_tokens: float = 0.005  # rough avg when pricing unknown
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +238,11 @@ class CostDefaults:
 class GateDefaults:
     """Quality gate thresholds and timeouts."""
 
-    intent_max_diff_chars: int = 8_000
-    intent_max_tokens: int = 256
-    fork_context_max_chars: int = 4_000
-    review_max_diff_chars: int = 10_000
-    review_max_tokens: int = 1_024
+    intent_max_diff_chars: int = 8_000  # truncate diff for intent-check LLM
+    intent_max_tokens: int = 256  # small LLM reply cap for intent check
+    fork_context_max_chars: int = 4_000  # cap context handed to fork gate
+    review_max_diff_chars: int = 10_000  # truncate diff for review LLM
+    review_max_tokens: int = 1_024  # reply cap for review LLM
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ class ParallelismDefaults:
 class ApprovalDefaults:
     """Human-in-the-loop approval gate."""
 
-    poll_interval_s: float = 5.0
+    poll_interval_s: float = 5.0  # poll approval file every 5s
     max_wait_s: float = 3600.0  # 1 hour
 
 
@@ -283,16 +283,16 @@ class ApprovalDefaults:
 class ProtocolDefaults:
     """MCP, cluster, WebSocket protocol tuning."""
 
-    mcp_probe_interval_s: float = 30.0
-    mcp_max_restarts: int = 5
-    mcp_max_backoff_s: float = 30.0
-    mcp_backoff_multiplier: float = 2.0
+    mcp_probe_interval_s: float = 30.0  # health-check MCP server every 30s
+    mcp_max_restarts: int = 5  # give up after 5 consecutive restart attempts
+    mcp_max_backoff_s: float = 30.0  # cap MCP restart backoff at 30s
+    mcp_backoff_multiplier: float = 2.0  # exponential backoff base
 
-    cluster_autoscale_cooldown_s: float = 120.0
-    cluster_min_nodes: int = 1
-    cluster_max_nodes: int = 20
-    cluster_steal_threshold: int = 3
-    cluster_steal_cooldown_s: float = 10.0
+    cluster_autoscale_cooldown_s: float = 120.0  # 2 min between scale decisions
+    cluster_min_nodes: int = 1  # always keep at least one node alive
+    cluster_max_nodes: int = 20  # arbitrary; tune in tuning:protocol
+    cluster_steal_threshold: int = 3  # steal work if queue >3 deeper than peer
+    cluster_steal_cooldown_s: float = 10.0  # 10s between work-steal attempts
 
 
 # ---------------------------------------------------------------------------
@@ -307,22 +307,22 @@ class PlanDefaults:
     tokens_by_scope: Mapping[str, int] = field(
         default_factory=lambda: _freeze_dict_str_int(
             {
-                "small": 30_000,
-                "medium": 80_000,
-                "large": 200_000,
+                "small": 30_000,  # arbitrary; tune in tuning:plan
+                "medium": 80_000,  # arbitrary; tune in tuning:plan
+                "large": 200_000,  # arbitrary; tune in tuning:plan
             }
         )
     )
     model_by_complexity: Mapping[str, str] = field(
         default_factory=lambda: _freeze_dict_str_str(
             {
-                "low": "haiku",
-                "medium": "sonnet",
-                "high": "opus",
+                "low": "haiku",  # cheapest model for trivial tasks
+                "medium": "sonnet",  # balanced cost/quality default
+                "high": "opus",  # highest quality for hard tasks
             }
         )
     )
-    free_adapters: tuple[str, ...] = ("qwen", "gemini", "ollama")
+    free_adapters: tuple[str, ...] = ("qwen", "gemini", "ollama")  # $0 runtime
 
 
 # ---------------------------------------------------------------------------
@@ -334,8 +334,8 @@ class PlanDefaults:
 class TriggerDefaults:
     """Trigger rate limits and file watching."""
 
-    max_tasks_per_minute: int = 20
-    max_tasks_per_trigger_per_hour: int = 50
+    max_tasks_per_minute: int = 20  # global trigger rate cap
+    max_tasks_per_trigger_per_hour: int = 50  # per-source cap to avoid spam
 
 
 # ---------------------------------------------------------------------------
@@ -352,9 +352,9 @@ class JanitorDefaults:
     """
 
     # Per-run directory retention
-    run_retention_count: int = 20
+    run_retention_count: int = 20  # keep last 20 runs; older are pruned
     # Per-run WAL file retention under .sdd/runtime/wal/
-    wal_retention_count: int = 50
+    wal_retention_count: int = 50  # keep last 50 WAL files per run
 
     # Rotation thresholds for append-only JSONL files (bytes).
     bridge_lineage_rotate_bytes: int = 10 * 1024 * 1024  # 10 MiB
