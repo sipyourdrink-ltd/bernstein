@@ -54,6 +54,8 @@ _REDIRECT_MAP: dict[str, str] = {
     "api_compat": "bernstein.core.server.api_compat",
     "api_compat_checker": "bernstein.core.server.api_compat_checker",
     "api_usage": "bernstein.core.cost.api_usage",
+    # Icons moved from cli/display/icons.py to core/observability/icons.py (import-linter contract)
+    "cli.display.icons": "bernstein.core.observability.icons",
     "apm_integration": "bernstein.core.observability.apm_integration",
     "approval": "bernstein.core.security.approval",
     "arch_conformance": "bernstein.core.quality.arch_conformance",

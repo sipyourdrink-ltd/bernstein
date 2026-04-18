@@ -16,7 +16,6 @@ from typing import Any, cast
 
 import click
 
-from bernstein.cli.display.icons import get_icons
 from bernstein.cli.helpers import (
     SDD_PID_SERVER,
     SDD_PID_SPAWNER,
@@ -30,6 +29,7 @@ from bernstein.cli.helpers import (
     read_pid,
     sigkill_pid,
 )
+from bernstein.core.observability.icons import get_icons
 from bernstein.core.process_utils import process_cwd
 from bernstein.core.runtime_state import read_supervisor_state
 
