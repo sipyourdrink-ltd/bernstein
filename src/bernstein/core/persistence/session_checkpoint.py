@@ -8,6 +8,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -65,7 +67,7 @@ class SessionCheckpointManager:
         timestamp = int(checkpoint.timestamp)
         checkpoint_file = self._checkpoint_dir / f"{checkpoint.session_id}_{timestamp}.json"
 
-        checkpoint_file.write_text(json.dumps(checkpoint.to_dict(), indent=2))
+        write_atomic_json(checkpoint_file, checkpoint.to_dict())
         logger.info(
             "Saved checkpoint for session %s at %s",
             checkpoint.session_id,

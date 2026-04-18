@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 DEFAULT_STALE_MINUTES: int = 30
 _SESSION_FILE = Path(".sdd") / "runtime" / "session.json"
 _STARTUP_GATES_FILE = Path(".sdd") / "runtime" / "startup_gates.json"
@@ -86,8 +88,7 @@ def save_session(workdir: Path, state: SessionState) -> None:
         state: Session state to persist.
     """
     session_path = workdir / _SESSION_FILE
-    session_path.parent.mkdir(parents=True, exist_ok=True)
-    session_path.write_text(json.dumps(state.to_dict(), indent=2))
+    write_atomic_json(session_path, state.to_dict())
 
 
 def load_session(
@@ -255,7 +256,7 @@ def save_checkpoint(workdir: Path, state: CheckpointState) -> Path:
     ts = int(state.timestamp)
     filename = f"{ts}-checkpoint.json"
     path = sessions_dir / filename
-    path.write_text(json.dumps(state.to_dict(), indent=2))
+    write_atomic_json(path, state.to_dict())
     return path
 
 
@@ -292,7 +293,7 @@ def save_wrapup(workdir: Path, brief: WrapUpBrief) -> Path:
     ts = int(brief.timestamp)
     filename = f"{ts}-wrapup.json"
     path = sessions_dir / filename
-    path.write_text(json.dumps(brief.to_dict(), indent=2))
+    write_atomic_json(path, brief.to_dict())
     return path
 
 
@@ -357,9 +358,8 @@ def latch_session_flags(workdir: Path, flags: dict[str, object]) -> None:
         flags: Mapping of flag name → value to latch.
     """
     latch_path = workdir / _LATCH_FILE
-    latch_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"latched_at": time.time(), "flags": flags}
-    latch_path.write_text(json.dumps(payload, default=str), encoding="utf-8")
+    write_atomic_json(latch_path, payload, indent=None, default=str)
 
 
 def load_latched_flags(workdir: Path) -> dict[str, object]:
@@ -697,11 +697,7 @@ def save_startup_gate_checkpoints(
         checkpoints: Gate checkpoints captured at startup.
     """
     path = workdir / _STARTUP_GATES_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps([c.to_dict() for c in checkpoints], indent=2),
-        encoding="utf-8",
-    )
+    write_atomic_json(path, [c.to_dict() for c in checkpoints])
 
 
 def load_startup_gate_checkpoints(workdir: Path) -> list[StartupGateCheckpoint]:

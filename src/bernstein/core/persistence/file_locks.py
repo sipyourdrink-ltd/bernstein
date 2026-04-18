@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
 import threading
 import time
@@ -39,6 +38,8 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import IO, TYPE_CHECKING
+
+from bernstein.core.persistence.atomic_write import write_atomic_json
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -329,19 +330,16 @@ class FileLockManager:
             self._locks = {}
 
     def _save(self) -> None:
-        """Persist current lock state to disk atomically.
+        """Persist current lock state to disk atomically (audit-076, audit-077).
 
         Callers must hold the cross-process OS lock (via :meth:`_guard`).
-        The write goes to a sibling temp file and is promoted via
-        :func:`os.replace` so readers either see the old payload or the new
-        one — never a truncated mid-write document.
+        Routes through :func:`write_atomic_json` which does temp-file +
+        fsync + ``os.replace`` so readers either see the old payload or the
+        new one — never a truncated mid-write document.
         """
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
             data = [asdict(lock) for lock in self._locks.values()]
-            tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
-            tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            os.replace(tmp_path, self._path)
+            write_atomic_json(self._path, data)
         except OSError as exc:
             logger.warning("Could not persist file locks to %s: %s", self._path, exc)
 
