@@ -567,7 +567,15 @@ _REDIRECT_MAP: dict[str, str] = {
 
 
 class _CoreRedirectFinder(MetaPathFinder):
-    """Redirect ``bernstein.core.<old_name>`` to ``bernstein.core.<subpkg>.<old_name>``."""
+    """Redirect ``bernstein.core.<old_name>`` to ``bernstein.core.<subpkg>.<old_name>``.
+
+    Most keys in ``_REDIRECT_MAP`` are direct children of ``bernstein.core``
+    (e.g. ``mcp_manager`` → ``protocols.mcp.mcp_manager``). audit-191 added
+    dotted keys (``protocols.mcp_manager``) so callers that still import via
+    the old ``bernstein.core.protocols.<mcp_*|a2a_*|cluster_*|grpc_*>`` paths
+    after the subpackage split keep working. Dotted keys match submodule
+    imports (``bernstein.core.<subpkg>.<oldname>``).
+    """
 
     _PREFIX = "bernstein.core."
 
@@ -581,8 +589,6 @@ class _CoreRedirectFinder(MetaPathFinder):
         if not fullname.startswith(self._PREFIX):
             return None
         short = fullname[len(self._PREFIX) :]
-        if "." in short:
-            return None  # only handle direct children of bernstein.core
         if short not in _REDIRECT_MAP:
             return None
         return ModuleSpec(fullname, _CoreRedirectLoader())
