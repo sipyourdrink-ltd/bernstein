@@ -11,6 +11,7 @@ index are never touched during the check.
 from __future__ import annotations
 
 import collections
+import contextlib
 import logging
 import re
 import threading
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.git.git_basic import run_git
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -218,28 +220,37 @@ class MergeQueue:
     """
 
     def __init__(self) -> None:
+        # Condition guards the queue deque so enqueue/dequeue and head-of-line
+        # waits stay consistent.  ``merge_lock`` (below) is a separate coarse
+        # lock the caller holds while the git merge subprocess runs.
+        self._cond = threading.Condition()
         self._queue: collections.deque[MergeJob] = collections.deque()
-        self._queue_lock = threading.Lock()
         # Held during each git merge operation so concurrent callers block.
         self.merge_lock = threading.Lock()
 
-    def enqueue(self, session_id: str, task_id: str, task_title: str = "") -> None:
+    def enqueue(self, session_id: str, task_id: str, task_title: str = "") -> MergeJob:
         """Add a merge job to the end of the queue.
 
         Args:
             session_id: The agent session whose branch to merge.
             task_id: The task the agent was working on.
             task_title: Human-readable task title (for conflict task body).
+
+        Returns:
+            The enqueued :class:`MergeJob` (identity used by ``submit`` to
+            match the job against the queue head).
         """
         job = MergeJob(session_id=session_id, task_id=task_id, task_title=task_title)
-        with self._queue_lock:
+        with self._cond:
             self._queue.append(job)
+            self._cond.notify_all()
         logger.debug(
             "MergeQueue: enqueued session %s (task %s), depth=%d",
             session_id,
             task_id,
             len(self),
         )
+        return job
 
     def dequeue(self) -> MergeJob | None:
         """Remove and return the oldest job, or None if the queue is empty.
@@ -247,8 +258,11 @@ class MergeQueue:
         Returns:
             The oldest MergeJob or None.
         """
-        with self._queue_lock:
-            return self._queue.popleft() if self._queue else None
+        with self._cond:
+            job = self._queue.popleft() if self._queue else None
+            if job is not None:
+                self._cond.notify_all()
+            return job
 
     def peek(self) -> MergeJob | None:
         """Return the oldest job without removing it, or None if empty.
@@ -256,8 +270,67 @@ class MergeQueue:
         Returns:
             The oldest MergeJob or None.
         """
-        with self._queue_lock:
+        with self._cond:
             return self._queue[0] if self._queue else None
+
+    @contextlib.contextmanager
+    def submit(
+        self,
+        session_id: str,
+        task_id: str,
+        task_title: str = "",
+    ) -> Iterator[MergeJob]:
+        """Enqueue a merge job and block until it's the caller's turn.
+
+        Serializes concurrent merges in strict FIFO order.  The job is
+        enqueued, then the caller blocks on a condition until it reaches
+        the head of the queue; at that point :attr:`merge_lock` is acquired
+        and the context manager yields the :class:`MergeJob`.  On exit the
+        job is dequeued, the lock is released, and other waiters are woken.
+
+        This is the intended entry point for production callers — it
+        guarantees ``enqueue`` is actually called (fixing audit-091) and
+        keeps the ordering invariant even when multiple threads contend.
+
+        Usage::
+
+            with queue.submit(session_id, task_id="T-1", task_title="...") as job:
+                result = spawner._merge_worktree_branch(job.session_id)
+
+        Args:
+            session_id: The agent session whose branch to merge.
+            task_id: The task the agent was working on.
+            task_title: Human-readable task title (for conflict task body).
+
+        Yields:
+            The :class:`MergeJob` that was enqueued (now at the head of the
+            queue and still present until the ``with`` block exits).
+        """
+        job = self.enqueue(session_id, task_id=task_id, task_title=task_title)
+        # Wait until we're at the head of the queue, then grab merge_lock.
+        # The merge_lock acquisition happens *inside* the condition so a
+        # concurrent dequeue cannot race ahead of us.
+        with self._cond:
+            while self._queue and self._queue[0] is not job:
+                self._cond.wait()
+        # Acquire the coarse merge_lock outside the condition so long-running
+        # git operations don't block readers of snapshot()/peek()/len().
+        self.merge_lock.acquire()
+        try:
+            yield job
+        finally:
+            try:
+                with self._cond:
+                    # Remove our job from the head (tolerate drift if a test
+                    # or edge case already dequeued it).
+                    if self._queue and self._queue[0] is job:
+                        self._queue.popleft()
+                    else:
+                        with contextlib.suppress(ValueError):
+                            self._queue.remove(job)
+                    self._cond.notify_all()
+            finally:
+                self.merge_lock.release()
 
     def snapshot(self) -> dict[str, Any]:
         """Return current queue state as a serialisable dict.
@@ -269,7 +342,7 @@ class MergeQueue:
             Dict with keys ``jobs`` (list[dict]), ``depth`` (int), and
             ``is_merging`` (bool).
         """
-        with self._queue_lock:
+        with self._cond:
             jobs: list[dict[str, str]] = [
                 {
                     "session_id": job.session_id,
@@ -286,7 +359,7 @@ class MergeQueue:
         }
 
     def __len__(self) -> int:
-        with self._queue_lock:
+        with self._cond:
             return len(self._queue)
 
     def __bool__(self) -> bool:

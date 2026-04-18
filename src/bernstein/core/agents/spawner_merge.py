@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from bernstein.core.agents.container import ContainerManager
     from bernstein.core.agents.in_process_agent import InProcessAgent
     from bernstein.core.agents.warm_pool import PoolSlot, WarmPool
+    from bernstein.core.merge_queue import MergeQueue
     from bernstein.core.worktree import WorktreeManager
 
 logger = logging.getLogger(__name__)
@@ -47,45 +48,75 @@ def _sanitise_for_log(value: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _run_merge_and_push(
+    session: AgentSession,
+    worktree_root: Path,
+    merge_worktree_branch_fn: Any,
+) -> MergeResult | None:
+    """Run the merge subprocess, record metrics, and push on success.
+
+    Caller must already hold whatever serialisation primitive is in use
+    (:class:`MergeQueue` submit context or a per-repo lock).  Kept as a
+    private helper so the two entry points below stay thin.
+    """
+    merge_start = time.perf_counter()
+    merge_result = merge_worktree_branch_fn(session.id, repo_root=worktree_root)
+    merge_duration.observe(time.perf_counter() - merge_start)
+
+    from bernstein.core.metric_collector import get_collector
+
+    merge_ok = merge_result is not None and merge_result.success
+    for task_id in session.task_ids:
+        get_collector().record_merge_result(task_id, success=merge_ok)
+
+    if merge_result and merge_result.success:
+        from bernstein.core.git_ops import safe_push
+
+        push_result = safe_push(worktree_root, "main")
+        if push_result.ok:
+            logger.info("Pushed merged work from %s to origin/main", session.id)
+        else:
+            logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
+
+    return merge_result
+
+
 def _do_merge(
     session: AgentSession,
     worktree_root: Path,
     merge_locks: dict[Path, threading.Lock],
     merge_worktree_branch_fn: Any,
+    merge_queue: MergeQueue | None = None,
 ) -> MergeResult | None:
     """Execute the merge under a lock, record metrics, and push.
+
+    When ``merge_queue`` is provided, the job is enqueued and processed in
+    strict FIFO order under :attr:`MergeQueue.merge_lock` -- this fixes
+    audit-091 where the queue was instantiated but never fed.  The legacy
+    per-repo ``merge_locks`` path is kept as a fallback for callers (and
+    tests) that don't plumb a queue through.
 
     Args:
         session: Agent session being merged.
         worktree_root: Root of the repo/worktree.
-        merge_locks: Lock map keyed by repo root.
+        merge_locks: Lock map keyed by repo root (fallback path only).
         merge_worktree_branch_fn: Callable(session_id, repo_root) -> MergeResult.
+        merge_queue: Optional :class:`MergeQueue` for serialized FIFO merges
+            across concurrent agents.  When None, falls back to the
+            per-repo lock.
 
     Returns:
         The MergeResult.
     """
+    if merge_queue is not None:
+        task_id = session.task_ids[0] if session.task_ids else ""
+        task_title = getattr(session, "task_title", "") or ""
+        with merge_queue.submit(session.id, task_id=task_id, task_title=task_title):
+            return _run_merge_and_push(session, worktree_root, merge_worktree_branch_fn)
+
     merge_lock = merge_locks.setdefault(worktree_root, threading.Lock())
     with merge_lock:
-        merge_start = time.perf_counter()
-        merge_result = merge_worktree_branch_fn(session.id, repo_root=worktree_root)
-        merge_duration.observe(time.perf_counter() - merge_start)
-
-        from bernstein.core.metric_collector import get_collector
-
-        merge_ok = merge_result is not None and merge_result.success
-        for task_id in session.task_ids:
-            get_collector().record_merge_result(task_id, success=merge_ok)
-
-        if merge_result and merge_result.success:
-            from bernstein.core.git_ops import safe_push
-
-            push_result = safe_push(worktree_root, "main")
-            if push_result.ok:
-                logger.info("Pushed merged work from %s to origin/main", session.id)
-            else:
-                logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
-
-    return merge_result
+        return _run_merge_and_push(session, worktree_root, merge_worktree_branch_fn)
 
 
 def _do_cleanup(
@@ -115,6 +146,7 @@ def merge_and_cleanup_worktree(
     warm_pool: WarmPool | None,
     workdir: Path,
     merge_worktree_branch_fn: Any,
+    merge_queue: MergeQueue | None = None,
 ) -> MergeResult | None:
     """Merge worktree branch back and optionally clean up.
 
@@ -134,6 +166,10 @@ def merge_and_cleanup_worktree(
         warm_pool: Optional warm pool.
         workdir: Project working directory.
         merge_worktree_branch_fn: Callable(session_id, repo_root) -> MergeResult.
+        merge_queue: Optional :class:`MergeQueue` to serialize concurrent
+            merges through a FIFO queue.  Preferred over the ad-hoc
+            ``merge_locks`` dict; when None the legacy per-repo lock path
+            is used (preserves single-agent behaviour and test harnesses).
 
     Returns:
         MergeResult when worktrees are enabled and skip_merge is False
@@ -152,7 +188,13 @@ def merge_and_cleanup_worktree(
 
     merge_result: MergeResult | None = None
     if not skip_merge:
-        merge_result = _do_merge(session, worktree_root, merge_locks, merge_worktree_branch_fn)
+        merge_result = _do_merge(
+            session,
+            worktree_root,
+            merge_locks,
+            merge_worktree_branch_fn,
+            merge_queue=merge_queue,
+        )
 
     if not defer_cleanup:
         _do_cleanup(session.id, worktree_mgr, warm_pool_entries, warm_pool)
@@ -495,6 +537,7 @@ def reap_completed_agent(
     merge_worktree_branch_fn: Any,
     traces: dict[str, AgentTrace],
     trace_store: TraceStore,
+    merge_queue: MergeQueue | None = None,
 ) -> MergeResult | None:
     """Terminate and wait on the subprocess for a completed agent.
 
@@ -537,6 +580,7 @@ def reap_completed_agent(
                 warm_pool=warm_pool,
                 workdir=workdir,
                 merge_worktree_branch_fn=merge_worktree_branch_fn,
+                merge_queue=merge_queue,
             )
             outcome = "completed" if session.status != "dead" else "timed_out"
             get_plugin_manager().fire_agent_reaped(session_id=session.id, role=session.role, outcome=outcome)
@@ -555,6 +599,7 @@ def reap_completed_agent(
         warm_pool=warm_pool,
         workdir=workdir,
         merge_worktree_branch_fn=merge_worktree_branch_fn,
+        merge_queue=merge_queue,
     )
     outcome = "completed" if session.status != "dead" else "timed_out"
     get_plugin_manager().fire_agent_reaped(session_id=session.id, role=session.role, outcome=outcome)

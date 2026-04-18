@@ -529,6 +529,11 @@ class Orchestrator:
         # Conflict resolution tasks are created by process_completed_tasks when
         # a MergeResult reports conflicting_files.
         self._merge_queue = MergeQueue()
+        # Audit-091 fix: wire the queue into the spawner so every agent merge
+        # enqueues through it.  The spawner is constructed before the
+        # orchestrator, so the hook is applied here via a setter.
+        if hasattr(self._spawner, "set_merge_queue"):
+            self._spawner.set_merge_queue(self._merge_queue)
 
         # Convergence guard: blocks spawn waves when merge queue, active
         # agent count, error rate, or spawn rate exceed safe thresholds.

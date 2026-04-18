@@ -866,8 +866,17 @@ class AgentSpawner:
         self._warm_pool_entries: dict[str, PoolSlot] = {}
         # Per-repo lock to serialize pushes and prevent non-fast-forward races
         self._push_locks: dict[Path, threading.Lock] = {}
-        # Per-repo lock to serialize merges and prevent concurrent index corruption
+        # Per-repo lock to serialize merges and prevent concurrent index corruption.
+        # Used as a fallback when no :class:`MergeQueue` has been wired in via
+        # :meth:`set_merge_queue` (e.g. in unit tests that construct a bare
+        # spawner).  Production callers should route through the merge queue
+        # injected by the orchestrator.
         self._merge_locks: dict[Path, threading.Lock] = {}
+        # Set by the orchestrator via :meth:`set_merge_queue` after construction.
+        # When present, merges are serialised through the FIFO queue so the
+        # dashboard can observe pending jobs and so merge-tree conflict checks
+        # can be inserted on the queue's boundary (audit-091 fix).
+        self._merge_queue: Any = None
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")
         self._runtime_bridge = runtime_bridge
@@ -1015,6 +1024,16 @@ class AgentSpawner:
 
     # -- Merge and reap (delegated to spawner_merge) ---------------------------
 
+    def set_merge_queue(self, merge_queue: Any) -> None:
+        """Wire in the orchestrator's :class:`MergeQueue` for FIFO merges.
+
+        Called after construction because the orchestrator owns the queue
+        and constructs the spawner before itself.  When set, all agent
+        merges enqueue through this queue instead of using the ad-hoc
+        per-repo lock dict -- fixing audit-091.
+        """
+        self._merge_queue = merge_queue
+
     def _merge_and_cleanup_worktree(
         self,
         session: AgentSession,
@@ -1034,6 +1053,7 @@ class AgentSpawner:
             warm_pool=self._warm_pool,
             workdir=self._workdir,
             merge_worktree_branch_fn=self._merge_worktree_branch,
+            merge_queue=self._merge_queue,
         )
 
     def _pending_pushes_path(self) -> Path:
@@ -1092,6 +1112,7 @@ class AgentSpawner:
             merge_worktree_branch_fn=self._merge_worktree_branch,
             traces=self._traces,
             trace_store=self._trace_store,
+            merge_queue=self._merge_queue,
         )
 
     def update_trace_outcome(self, session_id: str, outcome: str) -> None:

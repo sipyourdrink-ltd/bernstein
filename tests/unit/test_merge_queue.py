@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
@@ -470,3 +471,137 @@ class TestCreateConflictResolutionTask:
 
         body = mock_client.post.call_args[1]["json"]
         assert body["priority"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# MergeQueue.submit (audit-091: FIFO serialization of concurrent merges)
+# ---------------------------------------------------------------------------
+
+
+class TestMergeQueueSubmit:
+    """submit() is the production entry point that ties enqueue/dequeue
+    together under merge_lock so concurrent agent merges serialise in
+    strict FIFO order.
+    """
+
+    def test_submit_enqueues_job(self) -> None:
+        """submit() must enqueue the job before yielding."""
+        q = MergeQueue()
+        with q.submit("session-a", task_id="T-1", task_title="hello") as job:
+            # While inside the block, the job is at the head.
+            assert job.session_id == "session-a"
+            assert q.peek() is not None
+            assert q.peek().session_id == "session-a"  # type: ignore[union-attr]
+            assert q.merge_lock.locked()
+        # After the block, queue drained and lock released.
+        assert q.peek() is None
+        assert not q.merge_lock.locked()
+
+    def test_submit_dequeues_of_empty_queue_returns_none(self) -> None:
+        """After submit() completes the queue is empty and dequeue is None."""
+        q = MergeQueue()
+        with q.submit("s1", task_id="T-1"):
+            pass
+        assert q.dequeue() is None
+
+    def test_submit_concurrent_two_merges_serialize_fifo(self) -> None:
+        """Two concurrent submit()s observe strict FIFO order under merge_lock.
+
+        Reproduces audit-091 scenario: without the fix the merge lock was
+        acquired ad-hoc so ordering was non-deterministic and the queue
+        stayed empty.  With submit() the first thread to enqueue is the
+        first to execute, and the second thread blocks until the first
+        exits the context manager.
+        """
+        q = MergeQueue()
+        order: list[str] = []
+        inside_events: dict[str, threading.Event] = {
+            "a_inside": threading.Event(),
+            "a_can_exit": threading.Event(),
+            "b_started": threading.Event(),
+        }
+
+        def worker_a() -> None:
+            with q.submit("session-a", task_id="T-1"):
+                inside_events["a_inside"].set()
+                order.append("a-start")
+                # Wait until thread B has definitely enqueued and is
+                # blocked behind A before A releases the lock.
+                assert inside_events["b_started"].wait(timeout=2.0)
+                # Give B a moment to try (and fail) to overtake.
+                inside_events["a_can_exit"].wait(timeout=0.1)
+                order.append("a-end")
+
+        def worker_b() -> None:
+            inside_events["b_started"].set()
+            with q.submit("session-b", task_id="T-2"):
+                order.append("b-start")
+                order.append("b-end")
+
+        ta = threading.Thread(target=worker_a)
+        tb = threading.Thread(target=worker_b)
+        ta.start()
+        # Ensure A has reached the head of the queue and acquired merge_lock
+        # before B enqueues — this is what pins down "FIFO by enqueue order".
+        assert inside_events["a_inside"].wait(timeout=2.0)
+        tb.start()
+        inside_events["a_can_exit"].set()
+        ta.join(timeout=5.0)
+        tb.join(timeout=5.0)
+        assert not ta.is_alive()
+        assert not tb.is_alive()
+        # A started and finished before B started — serialized.
+        assert order == ["a-start", "a-end", "b-start", "b-end"]
+
+    def test_submit_fifo_preserved_with_many_waiters(self) -> None:
+        """When N threads enqueue in order s0..sN-1, they execute in that order."""
+        q = MergeQueue()
+        start_barrier = threading.Event()
+        executed: list[str] = []
+        executed_lock = threading.Lock()
+        n = 5
+
+        # Gate thread-submit ordering: only enqueue after the previous
+        # thread has enqueued, so FIFO enqueue order is deterministic.
+        enqueue_gates = [threading.Event() for _ in range(n)]
+        enqueue_gates[0].set()  # first thread can enqueue immediately
+
+        def worker(i: int) -> None:
+            enqueue_gates[i].wait(timeout=2.0)
+            # Enqueue in strict order; allow next thread to enqueue after us.
+            start_barrier.wait(timeout=2.0)
+            with q.submit(f"s{i}", task_id=f"T-{i}"):
+                with executed_lock:
+                    executed.append(f"s{i}")
+                # Let next thread enqueue as soon as we've reached the head
+                # (enqueue happens at submit() entry, before the lock grab).
+                if i + 1 < n:
+                    enqueue_gates[i + 1].set()
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        # Release the barrier so the first waiter enqueues.
+        start_barrier.set()
+        for t in threads:
+            t.join(timeout=5.0)
+            assert not t.is_alive()
+
+        assert executed == [f"s{i}" for i in range(n)]
+        # Queue drained.
+        assert len(q) == 0
+        assert not q.merge_lock.locked()
+
+    def test_submit_releases_lock_on_exception(self) -> None:
+        """If the caller raises inside submit(), the lock is released and the
+        job is removed from the queue.
+        """
+        q = MergeQueue()
+        with contextlib.suppress(RuntimeError):
+            with q.submit("s1", task_id="T-1"):
+                raise RuntimeError("boom")
+        assert len(q) == 0
+        assert not q.merge_lock.locked()
+        # Second submit() still works.
+        with q.submit("s2", task_id="T-2") as job:
+            assert job.session_id == "s2"
