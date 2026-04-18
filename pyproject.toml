@@ -98,6 +98,7 @@ dev = [
     "respx>=0.22",
     "ruff>=0.9",
     "pyright>=1.1",
+    "import-linter>=2.0",  # Architecture contracts (`uv run lint-imports`)
 ]
 grpc = ["grpcio>=1.68", "grpcio-tools>=1.68", "grpcio-reflection>=1.68", "protobuf>=5.29"]
 k8s = ["kubernetes>=31.0"]
@@ -472,4 +473,5 @@ dev = [
     "pyright>=1.1",
     "scikit-learn>=1.5",
     "mutmut>=2.4",
+    "import-linter>=2.0",  # Architecture contracts (`uv run lint-imports`)
 ]
