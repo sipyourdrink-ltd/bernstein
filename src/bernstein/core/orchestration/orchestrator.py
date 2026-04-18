@@ -50,6 +50,10 @@ from bernstein.core.batch_api import ProviderBatchManager
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.cluster import NodeHeartbeatClient
 from bernstein.core.context import refresh_knowledge_base
+from bernstein.core.context_degradation_detector import (
+    ContextDegradationConfig,
+    ContextDegradationDetector,
+)
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.cost.budget_actions import BudgetAction, BudgetPolicy, apply_policy
 from bernstein.core.cost_tracker import CostTracker
@@ -128,6 +132,7 @@ from bernstein.core.task_lifecycle import (
     auto_decompose_task,
     claim_and_spawn_batches,
     collect_completion_data,
+    evict_degraded_sessions,
     maybe_retry_task,
     prepare_speculative_warm_pool,
     process_completed_tasks,
@@ -462,6 +467,19 @@ class Orchestrator:
         from bernstein.core.cost_anomaly import CostAnomalyDetector
 
         self._anomaly_detector = CostAnomalyDetector(config.cost_anomaly, workdir)
+
+        # Context degradation detector: flags agents whose cross-model review
+        # verdicts decline (N consecutive rejects).  Degraded sessions are
+        # checkpointed + SHUTDOWN during each tick so a fresh replacement
+        # starts with a recovery-context preamble.  Disabled by default.
+        _ctx_raw = getattr(config, "context_degradation", None)
+        _ctx_cfg: ContextDegradationConfig = (
+            _ctx_raw if isinstance(_ctx_raw, ContextDegradationConfig) else ContextDegradationConfig(enabled=False)
+        )
+        self._context_degradation = ContextDegradationDetector(_ctx_cfg, workdir)
+        # Recovery context keyed by task_id — consumed by the replacement
+        # agent's prompt.  Populated when a degraded session is evicted.
+        self._context_recovery: dict[str, str] = {}
 
         # Deterministic replay recorder: appends events to
         # .sdd/runs/{run_id}/replay.jsonl for post-hoc debugging.
@@ -1182,6 +1200,16 @@ class Orchestrator:
 
         # 2e. Recycle idle agents
         recycle_idle_agents(self, tasks_by_status)
+
+        # 2e-i. Evict agents flagged by the context-degradation detector.
+        #       Checkpoints progress, stashes a recovery-context preamble
+        #       keyed by task_id, and writes SHUTDOWN so the next tick's
+        #       refresh_agent_states reaps the dead process and a fresh
+        #       spawn replaces it.
+        try:
+            evict_degraded_sessions(self)
+        except Exception as exc:
+            logger.warning("context_degradation: evict pass failed: %s", exc)
 
         # Sync failure timestamps to spawner for cooldown enforcement
         self._spawner._agent_failure_timestamps = self._agent_failure_timestamps

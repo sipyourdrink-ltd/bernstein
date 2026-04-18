@@ -1831,6 +1831,15 @@ def _run_cross_model_check(
     cmv_path = worktree if worktree is not None else orch._workdir
     verdict = run_cross_model_verification_sync(task, cmv_path, session.model_config.model, cmv_config)
 
+    # Feed the verdict into the context-degradation detector so consecutive
+    # rejects can trigger a SHUTDOWN-and-restart in the next tick.
+    detector = getattr(orch, "_context_degradation", None)
+    if detector is not None:
+        try:
+            detector.record_verdict(session.id, task.id, verdict)
+        except Exception as exc:
+            logger.debug("context_degradation: record_verdict failed: %s", exc)
+
     if verdict.verdict != "request_changes" or not cmv_config.block_on_issues:
         logger.info("Cross-model review approved task %s (reviewer=%s)", task.id, verdict.reviewer_model)
         return True
@@ -1873,6 +1882,77 @@ def _create_cmv_fix_task(orch: Any, task: Task, verdict: Any) -> None:
         orch._client.post(f"{orch._config.server_url}/tasks", json=body).raise_for_status()
     except httpx.HTTPError as exc:
         logger.warning("cross_model_verifier: failed to create fix task for %s: %s", task.id, exc)
+
+
+def evict_degraded_sessions(orch: Any) -> list[str]:
+    """Checkpoint degraded agents, store recovery context, and send SHUTDOWN.
+
+    Called from the orchestrator tick.  For every session the context-
+    degradation detector has flagged:
+
+    1. :meth:`ContextDegradationDetector.checkpoint` snapshots progress to
+       disk and produces a markdown recovery-context block.
+    2. The block is stashed on :attr:`orch._context_recovery` keyed by every
+       task id owned by the terminating session so the replacement agent's
+       prompt can pick it up.
+    3. A SHUTDOWN signal is written via :attr:`orch._signal_mgr` so the
+       agent exits cleanly at its next heartbeat.
+    4. Detector state for the session is cleared.
+
+    Args:
+        orch: Orchestrator instance (duck-typed).
+
+    Returns:
+        List of session ids that were evicted this tick.  Empty when the
+        detector is disabled or no session is flagged.
+    """
+    detector = getattr(orch, "_context_degradation", None)
+    if detector is None:
+        return []
+
+    evicted: list[str] = []
+    for session_id in detector.degraded_sessions():
+        session = orch._agents.get(session_id)
+        if session is None or getattr(session, "status", None) == "dead":
+            # Agent already gone — just flush tracking state so memory doesn't leak.
+            detector.clear(session_id)
+            continue
+
+        try:
+            checkpoint = detector.checkpoint(session)
+        except Exception as exc:
+            logger.warning("context_degradation: checkpoint failed for %s: %s", session_id, exc)
+            detector.clear(session_id)
+            continue
+
+        recovery_store: dict[str, str] | None = getattr(orch, "_context_recovery", None)
+        if recovery_store is not None:
+            for tid in checkpoint.task_ids:
+                recovery_store[tid] = checkpoint.recovery_context
+
+        signal_mgr = getattr(orch, "_signal_mgr", None)
+        if signal_mgr is not None:
+            task_title = ", ".join(checkpoint.task_ids) if checkpoint.task_ids else "unknown"
+            try:
+                signal_mgr.write_shutdown(
+                    session_id,
+                    reason="context_degradation",
+                    task_title=task_title,
+                )
+            except OSError as exc:
+                logger.warning("context_degradation: SHUTDOWN write failed for %s: %s", session_id, exc)
+
+        logger.warning(
+            "context_degradation: evicted session %s (rejects=%d, verdicts=%d, tasks=%s)",
+            session_id,
+            checkpoint.consecutive_rejects,
+            checkpoint.verdict_count,
+            checkpoint.task_ids,
+        )
+        evicted.append(session_id)
+        detector.clear(session_id)
+
+    return evicted
 
 
 def _evaluate_approval_gate(
