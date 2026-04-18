@@ -9,6 +9,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from threading import Lock
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,11 @@ class JWTManager:
     def _decode(self, token: str) -> JWTPayload:
         """Decode JWT token to payload.
 
+        Verifies the header ``alg`` claim against ``self._algorithm`` *before*
+        computing any HMAC. This blocks the classic ``{"alg": "none"}``
+        bypass and future alg-confusion attacks (e.g. an RS256 token forged
+        under an HS256 verifier). See security audit-053.
+
         Args:
             token: JWT token string.
 
@@ -141,7 +147,27 @@ class JWTManager:
 
         header_b64, payload_b64, signature_b64 = parts
 
-        # Verify signature
+        # Verify header alg BEFORE any signature work. This prevents
+        # alg-confusion and rejects tokens that advertise 'none'.
+        try:
+            header_obj: Any = json.loads(self._base64url_decode(header_b64))
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("Invalid token header") from exc
+        if not isinstance(header_obj, dict):
+            raise ValueError("Invalid token header")
+        header_dict = cast("dict[str, Any]", header_obj)
+        alg_obj: object = header_dict.get("alg")
+        # Reject unsigned tokens explicitly — even if the configured
+        # algorithm somehow matched, "none" means no signature was applied.
+        if not isinstance(alg_obj, str) or alg_obj.lower() == "none":
+            raise ValueError("Unsigned or missing alg in token header")
+        # Constant-time compare to avoid string-timing side channels,
+        # though alg is not secret data.
+        if not hmac.compare_digest(alg_obj.encode("utf-8"), self._algorithm.encode("utf-8")):
+            raise ValueError(f"Unexpected alg {alg_obj!r}; expected {self._algorithm!r}")
+
+        # Verify signature (HMAC-SHA256 is the only algorithm this manager
+        # supports today; _algorithm is validated above).
         message = f"{header_b64}.{payload_b64}"
         expected_signature = hmac.new(self._secret, message.encode(), hashlib.sha256).digest()
         actual_signature = self._base64url_decode(signature_b64)
