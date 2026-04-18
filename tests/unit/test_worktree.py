@@ -62,6 +62,25 @@ def test_worktree_manager_create_branch_exists(manager: WorktreeManager, repo_ro
             manager.create(session_id)
 
 
+def test_worktree_manager_create_branch_exists_interpolates_stderr(manager: WorktreeManager, repo_root: Path) -> None:
+    """Regression test for audit-100: the 'Branch already exists' error must
+    interpolate the actual git stderr, not leak the literal ``{stderr}``
+    placeholder.
+    """
+    session_id = "test-session"
+    git_stderr = "fatal: 'agent/test-session' already exists — distinctive marker"
+
+    with patch("bernstein.core.git.worktree.worktree_add") as mock_add:
+        mock_add.return_value = GitResult(1, "", git_stderr)
+
+        with pytest.raises(WorktreeError) as exc_info:
+            manager.create(session_id)
+
+    message = str(exc_info.value)
+    assert "distinctive marker" in message
+    assert "{stderr}" not in message
+
+
 def test_worktree_manager_cleanup(manager: WorktreeManager, repo_root: Path) -> None:
     session_id = "test-session"
     worktree_path = repo_root / ".sdd/worktrees" / session_id
