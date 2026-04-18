@@ -2807,44 +2807,6 @@ class Orchestrator:
 
     # -- Backlog -------------------------------------------------------------
 
-    def _sync_backlog_file(self, task: Task) -> None:
-        """Move the matching .md file from backlog/open/ to backlog/closed/."""
-        open_dir = self._workdir / ".sdd" / "backlog" / "open"
-        if not open_dir.exists():
-            return
-
-        closed_dir = self._workdir / ".sdd" / "backlog" / "closed"
-        closed_dir.mkdir(parents=True, exist_ok=True)
-
-        title_words = self._backlog_words_from_title(task.title)
-
-        best_match: str | None = None
-        best_score = 0
-        for md_file in open_dir.glob("*.md"):
-            slug = re.sub(r"^\d+-", "", md_file.name[:-3])
-            file_words = set(slug.split("-"))
-            significant_file_words = {w for w in file_words if len(w) >= 4}
-            overlap = title_words & significant_file_words
-            if overlap and len(overlap) > best_score:
-                best_score = len(overlap)
-                best_match = md_file.name
-
-        if best_match is None:
-            return
-
-        src = open_dir / best_match
-        dst = closed_dir / best_match
-        if not src.exists():
-            return
-
-        content = src.read_text(encoding="utf-8")
-        ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        summary = task.result_summary or ""
-        content += f"\n\n---\n**completed**: {ts}\n**task_id**: {task.id}\n**result**: {summary}\n"
-        dst.write_text(content, encoding="utf-8")
-        src.unlink()
-        logger.info("Synced backlog: %s -> closed/", best_match)
-
     def _collect_backlog_files(self) -> list[Path]:
         """Collect and filter backlog files from open/ and issues/ directories."""
         open_dir = self._workdir / ".sdd" / "backlog" / "open"
@@ -3008,13 +2970,6 @@ class Orchestrator:
             count += 1
             logger.info("Ingested backlog file (one-by-one): %s", backlog_file.name)
         return count
-
-    @staticmethod
-    def _backlog_words_from_title(title: str) -> set[str]:
-        """Extract significant lowercase words (>=4 chars) from a task title."""
-        expanded = re.sub(r"([a-z])([A-Z])", r"\1 \2", title)
-        tokens = re.split(r"[^a-zA-Z0-9]+", expanded.lower())
-        return {w for w in tokens if len(w) >= 4}
 
     # -- Run summary --------------------------------------------------------
 

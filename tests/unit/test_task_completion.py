@@ -70,7 +70,6 @@ def _orch(tmp_path: Path, session: AgentSession) -> Any:
         _approval_gate=None,
         _post_bulletin=MagicMock(),
         _notify=MagicMock(),
-        _sync_backlog_file=MagicMock(),
         _cost_tracker=MagicMock(),
         _anomaly_detector=MagicMock(),
         _handle_anomaly_signal=MagicMock(),

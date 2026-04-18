@@ -2689,7 +2689,6 @@ def _process_single_completed_task(
     )
 
     _post_completion_bulletin(orch, task, janitor_passed, cache_verified, cache_diff_lines)
-    orch._sync_backlog_file(task)
 
     if task.result_summary:
         try:
