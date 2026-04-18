@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 if TYPE_CHECKING:
     from bernstein.core.models import Task
 
@@ -366,13 +368,12 @@ def grant_workspace_trust(workdir: Path, *, granted_by: str = "operator") -> Non
     import time
 
     trust_path = workdir / _TRUST_FILE
-    trust_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "trusted": True,
         "granted_at": time.time(),
         "granted_by": granted_by,
     }
-    trust_path.write_text(_json.dumps(payload), encoding="utf-8")
+    write_atomic_json(trust_path, payload, indent=None)
     logger.info("Workspace trust granted by '%s' at %s", granted_by, workdir)
 
 

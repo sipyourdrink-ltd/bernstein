@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.atomic_write import write_atomic_text
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -187,12 +189,8 @@ class SessionContinuityStore:
         Returns:
             Path to the written file.
         """
-        self._state_dir.mkdir(parents=True, exist_ok=True)
         path = self._snapshot_path(snapshot.session_id)
-        path.write_text(
-            json.dumps(snapshot.to_dict(), indent=2) + "\n",
-            encoding="utf-8",
-        )
+        write_atomic_text(path, json.dumps(snapshot.to_dict(), indent=2) + "\n")
         logger.info("Saved session snapshot for %s at %s", snapshot.session_id, path)
         return path
 

@@ -14,6 +14,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 _CHECKPOINT_FILENAME = "checkpoint.json"
 
 
@@ -55,9 +57,8 @@ def save_checkpoint(checkpoint: AgentCheckpoint, runtime_dir: Path) -> Path:
         Path to the written checkpoint file.
     """
     agent_dir = runtime_dir / "agents" / checkpoint.agent_id
-    agent_dir.mkdir(parents=True, exist_ok=True)
     path = agent_dir / _CHECKPOINT_FILENAME
-    path.write_text(json.dumps(asdict(checkpoint), sort_keys=True))
+    write_atomic_json(path, asdict(checkpoint), indent=None, sort_keys=True)
     return path
 
 

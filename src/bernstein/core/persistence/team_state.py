@@ -16,6 +16,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -125,15 +127,13 @@ class TeamStateStore:
             return {}
 
     def _write_all(self, members: dict[str, TeamMember]) -> None:
-        """Atomically persist the full team roster."""
+        """Atomically persist the full team roster (audit-076)."""
         payload = {
             "updated_at": time.time(),
             "members": [m.to_dict() for m in members.values()],
         }
-        tmp_path = self._team_path.with_suffix(".tmp")
         try:
-            tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            tmp_path.replace(self._team_path)
+            write_atomic_json(self._team_path, payload)
         except OSError as exc:
             logger.warning("Failed to write team state to %s: %s", self._team_path, exc)
 

@@ -16,6 +16,8 @@ import sys
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -89,9 +91,8 @@ def rotate_log_file(log_path: Path, *, max_bytes: int = _LOG_ROTATE_BYTES) -> bo
 def write_supervisor_state(workdir: Path, snapshot: SupervisorStateSnapshot) -> Path:
     """Persist the current supervisor snapshot under ``.sdd/runtime``."""
     runtime_dir = workdir / ".sdd" / "runtime"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
     path = runtime_dir / _SUPERVISOR_STATE_FILE
-    path.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
+    write_atomic_json(path, snapshot.to_dict())
     return path
 
 
@@ -118,9 +119,8 @@ def read_supervisor_state(sdd_dir: Path) -> SupervisorStateSnapshot | None:
 def write_session_replay_metadata(sdd_dir: Path, metadata: SessionReplayMetadata) -> Path:
     """Persist replay metadata next to the run's ``replay.jsonl`` file."""
     run_dir = sdd_dir / "runs" / metadata.run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / _SESSION_METADATA_FILE
-    path.write_text(json.dumps(metadata.to_dict(), indent=2), encoding="utf-8")
+    write_atomic_json(path, metadata.to_dict())
     return path
 
 
@@ -156,7 +156,6 @@ def write_config_state(
 ) -> Path:
     """Persist the latest loaded ``bernstein.yaml`` metadata."""
     runtime_dir = sdd_dir / "runtime"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
     path = runtime_dir / _CONFIG_STATE_FILE
     payload = {
         "config_hash": config_hash,
@@ -164,7 +163,7 @@ def write_config_state(
         "reloaded_at": reloaded_at,
         "last_diff": last_diff,
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_atomic_json(path, payload)
     return path
 
 
