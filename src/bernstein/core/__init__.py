@@ -69,9 +69,9 @@ _REDIRECT_MAP: dict[str, str] = {
     "backlog_parser": "bernstein.core.tasks.backlog_parser",
     "bandit_router": "bernstein.core.cost.bandit_router",
     "batch_api": "bernstein.core.tasks.batch_api",
-    "batch_mode": "bernstein.core.tasks.batch_mode",
+    # batch_mode: removed in audit-026 — dead code, no production importers.
     "batch_router": "bernstein.core.tasks.batch_router",
-    "batch_transitions": "bernstein.core.tasks.batch_transitions",
+    # batch_transitions: removed in audit-026 — dead code, no production importers.
     "behavior_anomaly": "bernstein.core.observability.behavior_anomaly",
     "benchmark_gate": "bernstein.core.quality.benchmark_gate",
     "blocking_hooks": "bernstein.core.security.blocking_hooks",
@@ -480,18 +480,18 @@ _REDIRECT_MAP: dict[str, str] = {
     # task_completion: removed in audit-018 — collect_completion_data lives in
     # bernstein.core.tasks.task_lifecycle; no shim is provided to keep the
     # duplicate implementation from re-appearing.
-    "task_diff_preview": "bernstein.core.tasks.task_diff_preview",
-    "task_event_store": "bernstein.core.tasks.task_event_store",
+    # task_diff_preview: removed in audit-026 — dead code, no production importers.
+    # task_event_store: removed in audit-026 — dead code, no production importers.
     "task_grouping": "bernstein.core.tasks.task_grouping",
     "task_lifecycle": "bernstein.core.tasks.task_lifecycle",
     "task_retry": "bernstein.core.tasks.task_retry",
     "task_spawn_bridge": "bernstein.core.tasks.task_spawn_bridge",
     "task_splitter": "bernstein.core.tasks.task_splitter",
-    "task_status_history": "bernstein.core.tasks.task_status_history",
+    # task_status_history: removed in audit-026 — dead code, no production importers.
     "task_store": "bernstein.core.tasks.task_store",
     "task_store_core": "bernstein.core.tasks.task_store_core",
-    "task_tagging": "bernstein.core.tasks.task_tagging",
-    "task_templates": "bernstein.core.tasks.task_templates",
+    # task_tagging: removed in audit-026 — dead code, no production importers.
+    # task_templates: removed in audit-026 — dead code, no production importers.
     "task_tools": "bernstein.core.tasks.task_tools",
     "team_state": "bernstein.core.persistence.team_state",
     "telemetry": "bernstein.core.observability.telemetry",
