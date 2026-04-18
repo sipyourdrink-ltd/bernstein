@@ -83,17 +83,23 @@ def test_slack_verify_signature_remains_valid_with_shared_hmac_helper() -> None:
 async def test_generic_webhook_accepts_hmac_sha256_signature(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Generic webhook should accept a valid HMAC-SHA256 signature header."""
+    """Generic webhook should accept a valid HMAC-SHA256 signature header (audit-121)."""
 
     monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", "top-secret")
     payload = {"title": "HMAC allowed", "description": "Signed payload."}
     body = json.dumps(payload).encode("utf-8")
-    signature = sign_hmac_sha256("top-secret", body, prefix="sha256=")
+    timestamp = int(time.time())
+    signed_payload = f"{timestamp}.".encode() + body
+    signature = sign_hmac_sha256("top-secret", signed_payload, prefix="sha256=")
 
     response = await client.post(
         "/webhook",
         content=body,
-        headers={"content-type": "application/json", "x-bernstein-webhook-signature-256": signature},
+        headers={
+            "content-type": "application/json",
+            "x-bernstein-timestamp": str(timestamp),
+            "x-bernstein-webhook-signature-256": signature,
+        },
     )
 
     assert response.status_code == 201
@@ -108,11 +114,16 @@ async def test_generic_webhook_rejects_bad_hmac_sha256_signature(
 
     monkeypatch.setenv("BERNSTEIN_WEBHOOK_SECRET", "top-secret")
     payload = {"title": "Denied", "description": "Bad signature."}
+    timestamp = int(time.time())
 
     response = await client.post(
         "/webhook",
         content=json.dumps(payload).encode("utf-8"),
-        headers={"content-type": "application/json", "x-bernstein-webhook-signature-256": "sha256=deadbeef"},
+        headers={
+            "content-type": "application/json",
+            "x-bernstein-timestamp": str(timestamp),
+            "x-bernstein-webhook-signature-256": "sha256=deadbeef",
+        },
     )
 
     assert response.status_code == 401
