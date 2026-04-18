@@ -9,7 +9,19 @@ from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import Any, Literal
 
+from bernstein.core import defaults as _defaults
+
 logger = logging.getLogger(__name__)
+
+
+def _default_poll_interval_s() -> int:
+    """Return the current canonical tick interval (cast to int).
+
+    Reads from :mod:`bernstein.core.defaults` each call so that runtime
+    overrides and :func:`bernstein.core.defaults.reset` (which rebinds
+    ``ORCHESTRATOR`` at module scope) are honoured.
+    """
+    return int(_defaults.ORCHESTRATOR.tick_interval_s)
 
 
 class TaskStoreUnavailable(Exception):
@@ -1024,7 +1036,9 @@ class OrchestratorConfig:
     """
 
     max_agents: int = 6
-    poll_interval_s: int = 3
+    # Derived from ORCHESTRATOR.tick_interval_s (float, canonical) so overrides
+    # via ``tuning.orchestrator.tick_interval_s`` actually change the tick rate.
+    poll_interval_s: int = field(default_factory=_default_poll_interval_s)
     smtp: SmtpConfig | None = None
     heartbeat_timeout_s: int = 900  # 15 min — generous until agents implement heartbeat writes
     heartbeat_enabled: bool = True
