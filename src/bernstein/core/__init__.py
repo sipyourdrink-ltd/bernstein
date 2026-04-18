@@ -156,7 +156,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "cross_agent_consistency": "bernstein.core.agents.cross_agent_consistency",
     "cross_model_verifier": "bernstein.core.quality.cross_model_verifier",
     "custom_metrics": "bernstein.core.observability.custom_metrics",
-    "cycle_detector": "bernstein.core.quality.cycle_detector",
+    # cycle_detector: removed in audit-192 — dead code, no production importers.
     "dashboard_auth": "bernstein.core.server.dashboard_auth",
     "data_residency": "bernstein.core.security.data_residency",
     "datadog_export": "bernstein.core.observability.datadog_export",
@@ -178,7 +178,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "drain": "bernstein.core.orchestration.drain",
     "drain_merge": "bernstein.core.orchestration.drain_merge",
     "dual_approval": "bernstein.core.security.dual_approval",
-    "duplicate_detector": "bernstein.core.quality.duplicate_detector",
+    # duplicate_detector: removed in audit-192 — dead code, no production importers.
     "duration_predictor": "bernstein.core.planning.duration_predictor",
     "education_tier": "bernstein.core.cost.education_tier",
     "effectiveness": "bernstein.core.quality.effectiveness",
@@ -196,7 +196,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "formal_verification": "bernstein.core.quality.formal_verification",
     "frame_headers": "bernstein.core.server.frame_headers",
     "free_tier": "bernstein.core.cost.free_tier",
-    "gate_cache": "bernstein.core.quality.gate_cache",
+    # gate_cache: removed in audit-192 — dead mixin, no production importers.
     "gate_commands": "bernstein.core.quality.gate_commands",
     "gate_pipeline": "bernstein.core.quality.gate_pipeline",
     "gate_plugins": "bernstein.core.quality.gate_plugins",
@@ -312,7 +312,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "orphan_tool_result": "bernstein.core.agents.orphan_tool_result",
     "outcome_pricing": "bernstein.core.cost.outcome_pricing",
     "output_fingerprint": "bernstein.core.quality.output_fingerprint",
-    "output_normalizer": "bernstein.core.quality.output_normalizer",
+    # output_normalizer: removed in audit-192 — dead code, no production importers.
     "permission_delegation": "bernstein.core.security.permission_delegation",
     "permission_graph": "bernstein.core.security.permission_graph",
     "permission_matrix": "bernstein.core.security.permission_matrix",
@@ -373,7 +373,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "retrospective": "bernstein.core.quality.retrospective",
     "retry_budget": "bernstein.core.cost.retry_budget",
     "review_rubric": "bernstein.core.quality.review_rubric",
-    "reviewer": "bernstein.core.quality.reviewer",
+    # reviewer: removed in audit-192 — dead code, no production importers.
     "roadmap_runtime": "bernstein.core.planning.roadmap_runtime",
     "role_classifier": "bernstein.core.routing.role_classifier",
     "rolling_restart": "bernstein.core.orchestration.rolling_restart",
@@ -473,8 +473,8 @@ _REDIRECT_MAP: dict[str, str] = {
     "tenant_isolation": "bernstein.core.security.tenant_isolation",
     "tenant_rate_limiter": "bernstein.core.security.tenant_rate_limiter",
     "tenanting": "bernstein.core.security.tenanting",
-    "test_data_gen": "bernstein.core.quality.test_data_gen",
-    "test_expansion": "bernstein.core.quality.test_expansion",
+    # test_data_gen: removed in audit-192 — dead code, no production importers.
+    # test_expansion: removed in audit-192 — dead code, no production importers.
     "test_impact": "bernstein.core.quality.test_impact",
     "tick_anomaly": "bernstein.core.orchestration.tick_anomaly",
     "tick_budget": "bernstein.core.orchestration.tick_budget",
