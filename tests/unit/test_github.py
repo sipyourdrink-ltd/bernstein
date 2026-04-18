@@ -483,3 +483,195 @@ def test_repo_forwarded_to_gh_commands() -> None:
     cmd = captured[0]
     assert "--repo" in cmd
     assert "myorg/myrepo" in cmd
+
+
+# ---------------------------------------------------------------------------
+# Pagination — audit-098
+# ---------------------------------------------------------------------------
+
+
+def test_github_pagination_page_limit_default(monkeypatch) -> None:
+    """Default cap is the module constant when env is unset."""
+    from bernstein.core.git.github import _DEFAULT_PAGE_LIMIT, _page_limit
+
+    monkeypatch.delenv("BERNSTEIN_GITHUB_PAGE_LIMIT", raising=False)
+    assert _page_limit() == _DEFAULT_PAGE_LIMIT
+
+
+def test_github_pagination_page_limit_env_override(monkeypatch) -> None:
+    """Env var overrides the page cap."""
+    from bernstein.core.git.github import _page_limit
+
+    monkeypatch.setenv("BERNSTEIN_GITHUB_PAGE_LIMIT", "250")
+    assert _page_limit() == 250
+
+
+def test_github_pagination_page_limit_invalid_env_uses_default(monkeypatch) -> None:
+    """Non-integer or non-positive env values fall back to the default."""
+    from bernstein.core.git.github import _DEFAULT_PAGE_LIMIT, _page_limit
+
+    monkeypatch.setenv("BERNSTEIN_GITHUB_PAGE_LIMIT", "not-a-number")
+    assert _page_limit() == _DEFAULT_PAGE_LIMIT
+
+    monkeypatch.setenv("BERNSTEIN_GITHUB_PAGE_LIMIT", "0")
+    assert _page_limit() == _DEFAULT_PAGE_LIMIT
+
+    monkeypatch.setenv("BERNSTEIN_GITHUB_PAGE_LIMIT", "-5")
+    assert _page_limit() == _DEFAULT_PAGE_LIMIT
+
+
+def test_github_pagination_fetch_open_evolve_passes_high_limit(monkeypatch) -> None:
+    """``fetch_open_evolve_issues`` passes the configured cap (not 100)."""
+    from bernstein.core.git.github import _DEFAULT_PAGE_LIMIT
+
+    monkeypatch.delenv("BERNSTEIN_GITHUB_PAGE_LIMIT", raising=False)
+    client = GitHubClient()
+    client._available = True
+
+    captured: list[list[str]] = []
+
+    def side_effect(args, **kwargs):
+        captured.append(args)
+        return MagicMock(returncode=0, stdout="[]", stderr="")
+
+    with patch("bernstein.core.git.github.subprocess.run", side_effect=side_effect):
+        client.fetch_open_evolve_issues()
+
+    assert captured, "expected gh to be invoked"
+    cmd = captured[0]
+    assert "--limit" in cmd
+    assert cmd[cmd.index("--limit") + 1] == str(_DEFAULT_PAGE_LIMIT)
+    # Regression: old hardcoded value must not appear as the limit.
+    assert cmd[cmd.index("--limit") + 1] != "100"
+
+
+def test_github_pagination_fetch_community_passes_high_limit(monkeypatch) -> None:
+    """``fetch_community_issues`` passes the configured cap (not 50)."""
+    from bernstein.core.git.github import _DEFAULT_PAGE_LIMIT
+
+    monkeypatch.delenv("BERNSTEIN_GITHUB_PAGE_LIMIT", raising=False)
+    client = GitHubClient()
+    client._available = True
+
+    captured: list[list[str]] = []
+
+    def side_effect(args, **kwargs):
+        captured.append(args)
+        return MagicMock(returncode=0, stdout="[]", stderr="")
+
+    with patch("bernstein.core.git.github.subprocess.run", side_effect=side_effect):
+        client.fetch_community_issues()
+
+    # One call per community label.
+    assert len(captured) >= 1
+    for cmd in captured:
+        assert "--limit" in cmd
+        assert cmd[cmd.index("--limit") + 1] == str(_DEFAULT_PAGE_LIMIT)
+        assert cmd[cmd.index("--limit") + 1] != "50"
+
+
+def test_github_pagination_backlog_sync_passes_high_limit(monkeypatch, tmp_path) -> None:
+    """``_fetch_gh_issues`` used by backlog sync passes the cap (not 500)."""
+    from bernstein.core.git.github import _DEFAULT_PAGE_LIMIT, _fetch_gh_issues
+
+    monkeypatch.delenv("BERNSTEIN_GITHUB_PAGE_LIMIT", raising=False)
+
+    captured: list[list[str]] = []
+
+    def side_effect(args, **kwargs):
+        captured.append(args)
+        return MagicMock(returncode=0, stdout="[]", stderr="")
+
+    with patch("bernstein.core.git.github.subprocess.run", side_effect=side_effect):
+        _fetch_gh_issues(tmp_path)
+
+    assert captured
+    cmd = captured[0]
+    assert "--limit" in cmd
+    assert cmd[cmd.index("--limit") + 1] == str(_DEFAULT_PAGE_LIMIT)
+    # Regression: original hardcoded cap of 500 must be gone.
+    assert cmd[cmd.index("--limit") + 1] != "500"
+
+
+def test_github_pagination_returns_full_multi_page_result(monkeypatch) -> None:
+    """Concatenated multi-page result from ``gh`` is returned intact.
+
+    ``gh issue list`` paginates internally and hands us a single JSON array
+    containing every page concatenated. This test simulates that behaviour
+    with 650 issues (exceeding the old 500-cap) and asserts the caller
+    receives all of them.
+    """
+    monkeypatch.delenv("BERNSTEIN_GITHUB_PAGE_LIMIT", raising=False)
+    client = GitHubClient()
+    client._available = True
+
+    full_payload = [
+        {
+            "number": n,
+            "title": f"Proposal {n}",
+            "url": f"https://github.com/o/r/issues/{n}",
+            "labels": [{"name": _LABEL_EVOLVE}],
+            "state": "open",
+        }
+        for n in range(1, 651)
+    ]
+
+    with patch(
+        "bernstein.core.git.github.subprocess.run",
+        return_value=_mock_run_ok(full_payload),
+    ):
+        issues = client.fetch_open_evolve_issues()
+
+    assert len(issues) == 650
+    assert issues[0].number == 1
+    assert issues[-1].number == 650
+
+
+def test_github_pagination_truncation_warning_emitted(monkeypatch, caplog) -> None:
+    """When the returned count equals the cap, a WARNING is logged."""
+    import logging
+
+    monkeypatch.setenv("BERNSTEIN_GITHUB_PAGE_LIMIT", "3")
+    client = GitHubClient()
+    client._available = True
+
+    payload = [
+        {"number": n, "title": f"t{n}", "url": "", "state": "open", "labels": [{"name": _LABEL_EVOLVE}]}
+        for n in (1, 2, 3)
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.git.github"):
+        with patch(
+            "bernstein.core.git.github.subprocess.run",
+            return_value=_mock_run_ok(payload),
+        ):
+            issues = client.fetch_open_evolve_issues()
+
+    assert len(issues) == 3
+    assert any(
+        "truncated" in rec.getMessage().lower() or "page cap" in rec.getMessage().lower() for rec in caplog.records
+    )
+
+
+def test_github_pagination_no_truncation_warning_below_cap(monkeypatch, caplog) -> None:
+    """When count is below the cap, no truncation warning is emitted."""
+    import logging
+
+    monkeypatch.setenv("BERNSTEIN_GITHUB_PAGE_LIMIT", "100")
+    client = GitHubClient()
+    client._available = True
+
+    payload = [
+        {"number": n, "title": f"t{n}", "url": "", "state": "open", "labels": [{"name": _LABEL_EVOLVE}]}
+        for n in range(1, 11)  # 10 issues, well below cap of 100
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.git.github"):
+        with patch(
+            "bernstein.core.git.github.subprocess.run",
+            return_value=_mock_run_ok(payload),
+        ):
+            issues = client.fetch_open_evolve_issues()
+
+    assert len(issues) == 10
+    assert not any("truncated" in rec.getMessage().lower() for rec in caplog.records)
