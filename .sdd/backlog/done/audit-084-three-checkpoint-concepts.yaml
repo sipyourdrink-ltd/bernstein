@@ -1,0 +1,44 @@
+---
+id: audit-084-three-checkpoint-concepts
+title: "audit-084-three-checkpoint-concepts — Three parallel 'checkpoint' concepts diverge — session.CheckpointState vs session_checkpoint.SessionCheckpoint vs checkpoint.Checkpoint"
+status: done
+type: refactor
+priority: 2
+scope: medium
+complexity: medium
+role: architect
+model: auto
+effort: medium
+estimated_minutes: 180
+depends_on: []
+blocks: []
+tags: [audit-2026-04, refactor, architecture]
+context_files:
+  - src/bernstein/core/persistence/checkpoint.py
+  - src/bernstein/core/persistence/session.py
+  - src/bernstein/core/persistence/session_checkpoint.py
+  - src/bernstein/cli/commands/checkpoint_cmd.py
+affected_paths:
+  - src/bernstein/core/persistence/
+require_review: true
+---
+
+## Summary
+
+Three dataclasses with overlapping fields, inconsistent atomicity, inconsistent wiring. Impossible for operators to know what bernstein actually saves.
+
+## Evidence
+
+checkpoint.py::Checkpoint (atomic, tests-only); session.CheckpointState (non-atomic, CLI subcommand); session_checkpoint.SessionCheckpoint (non-atomic, 0 uses).
+
+## Reproduction
+
+Read all three.
+
+## Proposed fix
+
+Pick ONE (checkpoint.Checkpoint is most complete). Deprecate session_checkpoint.py. Fold session.CheckpointState into checkpoint.Checkpoint as optional partial-state view. Document in .sdd/README.md.
+
+## Risks / out of scope
+
+CLI `bernstein checkpoint` behavior change.
