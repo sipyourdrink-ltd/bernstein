@@ -643,6 +643,9 @@ class CostTracker:
                     tracker._spent_by_agent.get(usage.agent_id, 0.0) + usage.cost_usd
                 )
                 tracker._spent_by_model[usage.model] = tracker._spent_by_model.get(usage.model, 0.0) + usage.cost_usd
+                # audit-057: rebuild running accumulators so breakdowns survive
+                # across reload (otherwise model_breakdowns() returns empty).
+                tracker._update_accumulators(usage)
 
             # Restore cumulative token tracking for delta-safe recording
             raw_cumul = data.get("cumulative_tokens", {})

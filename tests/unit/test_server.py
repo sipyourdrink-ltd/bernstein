@@ -2155,21 +2155,25 @@ async def test_list_nodes_invalid_status(cluster_client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def _module_auth_app(tmp_path_factory: pytest.TempPathFactory):
-    """Single auth-mode app shared across auth tests."""
-    jsonl_path = tmp_path_factory.mktemp("auth") / "tasks.jsonl"
-    return create_app(
+@pytest.fixture()
+def auth_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """Per-test auth-mode app.
+
+    audit-113: auth is enabled by default; the autouse
+    ``_disable_auth_for_tests`` fixture sets ``BERNSTEIN_AUTH_DISABLED=1``
+    for the rest of the suite.  Tests marked ``auth_enabled`` want the
+    production-like behaviour, so we clear the opt-out and build a fresh
+    app (middleware reads the env at ``__init__`` time, so we can't
+    reuse a module-scoped instance here).
+    """
+    monkeypatch.delenv("BERNSTEIN_AUTH_DISABLED", raising=False)
+    jsonl_path = tmp_path / "tasks.jsonl"
+    app = create_app(
         jsonl_path=jsonl_path,
         auth_token="secret-token-123",
     )
-
-
-@pytest.fixture()
-def auth_app(_module_auth_app, tmp_path: Path):  # type: ignore[no-untyped-def]
-    """Per-test: fresh store for auth app."""
-    _reset_app_state(_module_auth_app, tmp_path)
-    return _module_auth_app
+    _reset_app_state(app, tmp_path)
+    return app
 
 
 @pytest.fixture()
@@ -2179,6 +2183,7 @@ async def auth_client(auth_app) -> AsyncClient:  # type: ignore[no-untyped-def]
         yield c
 
 
+@pytest.mark.auth_enabled
 @pytest.mark.anyio
 async def test_auth_missing_header_returns_401(auth_client: AsyncClient) -> None:
     """Requests without Authorization header are rejected with 401."""
@@ -2186,13 +2191,20 @@ async def test_auth_missing_header_returns_401(auth_client: AsyncClient) -> None
     assert resp.status_code == 401
 
 
+@pytest.mark.auth_enabled
 @pytest.mark.anyio
-async def test_auth_wrong_token_returns_403(auth_client: AsyncClient) -> None:
-    """Requests with wrong token get 403."""
+async def test_auth_wrong_token_returns_401(auth_client: AsyncClient) -> None:
+    """Requests with a bearer that no strategy accepts are rejected 401.
+
+    Per audit-113 the middleware returns 401 when every strategy (SSO JWT,
+    agent JWT, legacy static token) rejects the header — there is no
+    "authenticated-but-forbidden" state, so 403 is never produced here.
+    """
     resp = await auth_client.get("/status", headers={"Authorization": "Bearer wrong"})
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
+@pytest.mark.auth_enabled
 @pytest.mark.anyio
 async def test_auth_correct_token_succeeds(auth_client: AsyncClient) -> None:
     """Requests with the correct token are allowed through."""
@@ -2200,6 +2212,7 @@ async def test_auth_correct_token_succeeds(auth_client: AsyncClient) -> None:
     assert resp.status_code == 200
 
 
+@pytest.mark.auth_enabled
 @pytest.mark.anyio
 async def test_auth_public_paths_bypass_auth(auth_client: AsyncClient) -> None:
     """/health is accessible without auth."""
@@ -2213,6 +2226,7 @@ async def test_auth_public_paths_bypass_auth(auth_client: AsyncClient) -> None:
     assert alive.status_code == 200
 
 
+@pytest.mark.auth_enabled
 @pytest.mark.anyio
 async def test_auth_agent_json_bypass(auth_client: AsyncClient) -> None:
     """/.well-known/agent.json bypasses auth."""
