@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import Any, Literal
 
+from bernstein.core import defaults as _defaults
+
 logger = logging.getLogger(__name__)
 
 
@@ -1070,8 +1072,16 @@ class OrchestratorConfig:
     permission_mode: str | None = None  # "bypass" | "plan" | "auto" | "default" — see permission_mode.py
     agent_resource_limits: Any | None = None  # ResourceLimits | None — OS-level limits for non-sandboxed spawns
     shutdown_stagger_delay_s: float = 5.0  # Seconds between SHUTDOWN signals during drain
-    stale_claim_timeout_s: float = 900.0  # Seconds before a claimed task with no live agent is released
-    drain_timeout_s: float = 60.0  # Seconds to wait for agents during drain before cleanup
+    # Single source of truth lives in ``defaults.ORCHESTRATOR``; using ``default_factory`` with a
+    # module-attribute lookup (not a captured reference) ensures ``override()`` and ``reset()``
+    # in ``bernstein.core.defaults`` flow through to newly-constructed ``OrchestratorConfig``
+    # instances.
+    stale_claim_timeout_s: float = field(
+        default_factory=lambda: _defaults.ORCHESTRATOR.stale_claim_timeout_s,
+    )  # Seconds before a claimed task with no live agent is released
+    drain_timeout_s: float = field(
+        default_factory=lambda: _defaults.ORCHESTRATOR.drain_timeout_s,
+    )  # Seconds to wait for agents during drain before cleanup
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""
