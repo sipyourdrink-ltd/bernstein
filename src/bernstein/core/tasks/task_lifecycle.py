@@ -7,6 +7,7 @@ as explicit arguments so the Orchestrator methods can delegate to them.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import math
@@ -34,7 +35,7 @@ from bernstein.core.fast_path import (
     try_fast_path_batch,
 )
 from bernstein.core.hook_events import HookEvent
-from bernstein.core.janitor import verify_task
+from bernstein.core.janitor import run_janitor, verify_task
 from bernstein.core.metrics import get_collector
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
@@ -1053,6 +1054,82 @@ def _pre_spawn_checks_pass(orch: Any, alive_count: int) -> bool:
     return True
 
 
+def _apply_fair_scheduling(orch: Any, batches: list[list[Task]]) -> list[list[Task]]:
+    """Re-order batches using the weighted fair scheduler (audit-020).
+
+    Feeds one representative task per batch into a :class:`FairScheduler`
+    keyed by ``task.tenant_id``.  The scheduler emits a deficit-round-robin
+    sequence of tenants which is used to reorder the input batches so that
+    tenants with higher weights receive proportionally more spawn slots.
+
+    Batches missing ``tenant_id`` default to ``"default"``.  When every batch
+    belongs to a single tenant, the input ordering is returned unchanged.
+
+    The scheduler instance is cached on the orchestrator (``_fair_scheduler``)
+    so deficit state persists across ticks.  Tenants are auto-registered
+    with unit weight the first time they appear.
+
+    Args:
+        orch: Orchestrator instance; used as a handle for the cached scheduler.
+        batches: Batches produced by :func:`group_by_role`.
+
+    Returns:
+        Batches re-ordered by tenant fair-share.  Never mutates the input.
+    """
+    if not batches:
+        return batches
+
+    # Early-out for the common single-tenant case — reordering is a no-op.
+    tenant_ids = {(b[0].tenant_id if b and getattr(b[0], "tenant_id", None) else "default") for b in batches}
+    if len(tenant_ids) <= 1:
+        return batches
+
+    from bernstein.core.tasks.fair_scheduler import FairScheduler
+
+    scheduler = getattr(orch, "_fair_scheduler", None)
+    if scheduler is None:
+        scheduler = FairScheduler()
+        orch._fair_scheduler = scheduler
+
+    # Register tenants with default weight if unseen.
+    for tid in tenant_ids:
+        scheduler.register_tenant(tid)
+
+    # Enqueue one synthetic task per batch. We use the batch index as the
+    # scheduler-side task id so the emitted sequence maps back to batches.
+    batch_by_key: dict[str, list[Task]] = {}
+    for idx, batch in enumerate(batches):
+        if not batch:
+            continue
+        key = f"_fs_batch_{idx}"
+        tenant = batch[0].tenant_id or "default"
+        scheduler.enqueue(key, tenant, priority=batch[0].priority)
+        batch_by_key[key] = batch
+
+    ordered: list[list[Task]] = []
+    seen: set[str] = set()
+    while True:
+        decision = scheduler.dequeue()
+        if decision is None:
+            break
+        seen.add(decision.task_id)
+        batch = batch_by_key.get(decision.task_id)
+        if batch is not None:
+            ordered.append(batch)
+
+    # Append any unscheduled batches (empty or not tracked) in original order.
+    for key, batch in batch_by_key.items():
+        if key not in seen:
+            ordered.append(batch)
+
+    logger.debug(
+        "fair_scheduling: reordered %d batches across %d tenants",
+        len(ordered),
+        len(tenant_ids),
+    )
+    return ordered
+
+
 def claim_and_spawn_batches(
     orch: Any,  # Orchestrator instance (avoids circular import)
     batches: list[list[Task]],
@@ -1078,6 +1155,13 @@ def claim_and_spawn_batches(
     _ = done_ids  # Part of interface; used for overlap detection by callers
     if not _pre_spawn_checks_pass(orch, alive_count):
         return
+
+    # Fair scheduling (audit-020): when enabled, re-order batches using
+    # weighted deficit round-robin across tenants so multi-tenant workloads
+    # get proportional service instead of FIFO starvation.  Runs before
+    # the HTTP /claim calls below. Default-off via ``fair_scheduling_enabled``.
+    if getattr(orch._config, "fair_scheduling_enabled", False):
+        batches = _apply_fair_scheduling(orch, batches)
 
     base = orch._config.server_url
     spawn_analyzer = SpawnAnalyzer()
@@ -2422,6 +2506,48 @@ def _record_evolution_completion(
         _set_downstream_affinity(orch, task)
 
 
+def _has_llm_judge_signal(task: Task) -> bool:
+    """Return True when any completion signal requires async llm_judge evaluation.
+
+    The sync ``verify_task`` path cannot evaluate ``llm_judge`` signals and
+    always reports them as failed. Such tasks must be routed through the
+    async ``run_janitor`` pipeline instead.
+
+    Args:
+        task: Task to inspect.
+
+    Returns:
+        True if any completion signal has type ``"llm_judge"``.
+    """
+    return any(signal.type == "llm_judge" for signal in task.completion_signals)
+
+
+def _verify_via_janitor(task: Task, workdir: Path, server_url: str | None) -> tuple[bool, list[str]]:
+    """Run the async ``run_janitor`` pipeline for a single task synchronously.
+
+    Translates a ``JanitorResult`` back into the ``(passed, failed_signals)``
+    shape expected by the rest of ``process_completed_tasks``. Executed inside
+    the orchestrator's thread-pool executor, so a dedicated event loop is used
+    per invocation to avoid touching any ambient loop from the caller.
+
+    Args:
+        task: Task to evaluate.
+        workdir: Project root for signal evaluation and git diff lookups.
+        server_url: Optional task-server URL forwarded to ``run_janitor`` for
+            fix-task creation.
+
+    Returns:
+        Tuple of (all_passed, list_of_failed_signal_descriptions).
+    """
+    results = asyncio.run(run_janitor([task], workdir, server_url=server_url))
+    if not results:
+        # Task had no completion signals (shouldn't reach here in practice).
+        return True, []
+    janitor_result = results[0]
+    failed_descs = [desc for desc, passed, _ in janitor_result.signal_results if not passed]
+    return janitor_result.passed, failed_descs
+
+
 def process_completed_tasks(
     orch: Any,  # Orchestrator instance
     done_tasks: list[Task],
@@ -2430,9 +2556,15 @@ def process_completed_tasks(
     """Run janitor verification and record evolution metrics for done tasks.
 
     Skips tasks already processed in a prior tick. For each new done task,
-    submits verify_task() calls in parallel via orch._executor, then
+    submits verification calls in parallel via ``orch._executor``, then
     processes post-verification steps (sync backlog, append decision,
     record evolution) after all verifications complete.
+
+    Tasks whose completion signals include any ``llm_judge`` entry dispatch
+    to the async ``run_janitor`` pipeline (wrapped via ``asyncio.run`` in a
+    worker thread), since ``verify_task`` is sync-only and rejects
+    ``llm_judge`` signals outright. All other tasks keep the sync
+    ``verify_task`` fast path.
 
     Args:
         orch: Orchestrator instance.
@@ -2450,10 +2582,17 @@ def process_completed_tasks(
     if not new_tasks:
         return
 
-    # Fan-out: submit all verify_task() calls in parallel.
+    server_url: str | None = getattr(orch._config, "server_url", None)
+
+    # Fan-out: submit verification calls in parallel. llm_judge signals need
+    # the async run_janitor pipeline; everything else uses verify_task.
     verify_futures: dict[str, concurrent.futures.Future[tuple[bool, list[str]]]] = {}
     for task in new_tasks:
-        if task.completion_signals:
+        if not task.completion_signals:
+            continue
+        if _has_llm_judge_signal(task):
+            verify_futures[task.id] = orch._executor.submit(_verify_via_janitor, task, orch._workdir, server_url)
+        else:
             verify_futures[task.id] = orch._executor.submit(verify_task, task, orch._workdir)
 
     # Fan-in: collect results then run sequential post-verification steps.
@@ -2474,9 +2613,9 @@ def _resolve_janitor_result(
     try:
         passed, failed_signals = verify_futures[task.id].result()
     except Exception:
-        logger.warning("verify_task raised for %s — treating as failed", task.id)
+        logger.warning("janitor verification raised for %s — treating as failed", task.id)
         passed = False
-        failed_signals = ["verify_task exception"]
+        failed_signals = ["janitor verification exception"]
 
     if passed:
         result.verified.append(task.id)
@@ -2548,7 +2687,6 @@ def _process_single_completed_task(
     )
 
     _post_completion_bulletin(orch, task, janitor_passed, cache_verified, cache_diff_lines)
-    orch._sync_backlog_file(task)
 
     if task.result_summary:
         try:
@@ -2788,74 +2926,6 @@ def _move_backlog_ticket(workdir: Any, task: Any) -> None:
                         pass
                     return
                 break  # only check first heading
-
-
-# ---------------------------------------------------------------------------
-# Priority decay for old unclaimed tasks
-# ---------------------------------------------------------------------------
-
-
-def deprioritize_old_unclaimed_tasks(
-    orch: Any,
-    threshold_hours: int | None = None,
-    min_priority: int | None = None,
-) -> int:
-    """Deprioritize tasks that have been open for too long without being claimed.
-
-    Called during janitor tick. Tasks open for > threshold_hours without being
-    claimed have their priority decreased by 1 (min priority floor).
-
-    Args:
-        orch: Orchestrator instance.
-        threshold_hours: Hours before deprioritization.
-        min_priority: Minimum priority value.
-
-    Returns:
-        Count of tasks deprioritized.
-    """
-    from bernstein.core.tasks.models import TaskStatus
-
-    if threshold_hours is None:
-        threshold_hours = int(TASK.priority_decay_threshold_hours)
-    if min_priority is None:
-        min_priority = TASK.min_priority
-
-    now = time.time()
-    threshold_seconds = threshold_hours * 3600
-    deprioritized_count = 0
-
-    for task in orch._store.list_tasks():
-        if task.status != TaskStatus.OPEN:
-            continue
-
-        # Check if task has been open too long
-        age_seconds = now - task.created_at
-        if age_seconds < threshold_seconds:
-            continue
-
-        # Check if task was ever claimed (has agent history)
-        # If it was claimed and returned to open, don't deprioritize
-        # For simplicity, we deprioritize all old open tasks
-
-        old_priority = task.priority
-        new_priority = min(min_priority, old_priority + 1)
-
-        if new_priority > old_priority:
-            # Update task priority (optimistic locking)
-            try:
-                orch._store.update_task_priority(task.id, new_priority, task.version)
-                deprioritized_count += 1
-                logger.info(
-                    "Task %s deprioritized after %.0f h unclaimed (%d → %d)",
-                    task.id,
-                    age_seconds / 3600,
-                    old_priority,
-                    new_priority,
-                )
-            except Exception as exc:
-                logger.debug("Failed to deprioritize task %s: %s", task.id, exc)
-
-    return deprioritized_count
 
 
 # ---------------------------------------------------------------------------

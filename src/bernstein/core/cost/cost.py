@@ -102,6 +102,44 @@ _MODEL_COST_USD_PER_1K: dict[str, float] = {
 # unlimited and produces much better results)
 CASCADE: list[str] = ["sonnet", "opus"]
 
+# Additional cheap, provably-adequate arms the bandit may explore once it
+# has been given priors (audit-069). Kept outside :data:`CASCADE` to preserve
+# the cheapest-first ordering used by :func:`get_cascade_model`. Callers that
+# want to let the bandit explore beyond the cascade should request
+# :func:`get_all_bandit_arms` when building the candidate list.
+_EXTRA_BANDIT_ARMS: tuple[str, ...] = (
+    "gemini-3-flash",
+    "qwen3-coder",
+)
+
+
+def get_all_bandit_arms() -> list[str]:
+    """Return :data:`CASCADE` unioned with cheap exploratory arms.
+
+    Cheap models declared in :data:`MODEL_COSTS_PER_1M_TOKENS` (e.g.
+    ``gemini-3-flash``, ``qwen3-coder``) are auto-included so the bandit
+    can explore them. They cannot win greedily on cold-start because
+    :attr:`BanditArm.success_rate` returns a pessimistic ``0.5`` (below
+    :data:`QUALITY_THRESHOLD`) when there are no observations; they earn
+    their way in either through explicit exploration or through priors
+    seeded via :meth:`EpsilonGreedyBandit.seed_arm`.
+
+    Returns:
+        Ordered arm list, cascade members first.
+    """
+    seen: set[str] = set()
+    arms: list[str] = []
+    for model in list(CASCADE) + list(_EXTRA_BANDIT_ARMS):
+        if model in seen:
+            continue
+        if model not in _MODEL_COST_USD_PER_1K:
+            # Skip arms without pricing data — we'd have no rational way to
+            # compare them against the cascade during exploitation.
+            continue
+        seen.add(model)
+        arms.append(model)
+    return arms
+
 
 def _model_cost(model: str) -> float:
     """Rough cost per 1k tokens for a model name."""
@@ -131,7 +169,12 @@ class BanditArm:
     @property
     def success_rate(self) -> float:
         if self.observations == 0:
-            return 1.0  # optimistic initialisation
+            # Pessimistic cold-start (audit-069): a never-observed arm should
+            # not greedily win selection just because its nominal price is
+            # low. Returning 0.5 keeps it below ``QUALITY_THRESHOLD`` (0.8)
+            # so new arms must earn their way in through explicit
+            # exploration or priors seeded via :meth:`EpsilonGreedyBandit.seed_arm`.
+            return 0.5
         return self.successes / self.observations
 
     @property
@@ -259,22 +302,37 @@ class EpsilonGreedyBandit:
             logger.debug("Bandit[%s]: explore → %s", role, chosen)
             return chosen
 
-        # Exploitation: pick cheapest arm that meets quality threshold
-        # If arm hasn't been sufficiently observed, treat it as a candidate too
+        # Exploitation: pick cheapest arm that meets the quality threshold.
+        #
+        # Cold-start policy (audit-069): a truly unseen arm (observations==0)
+        # has a pessimistic ``success_rate`` of 0.5, which sits below
+        # ``QUALITY_THRESHOLD``. That prevents new cheap arms (e.g. freshly
+        # added ``gemini-3-flash`` / ``qwen3-coder``) from greedily winning
+        # selection with zero evidence. Arms seeded via :meth:`seed_arm`
+        # carry ``virtual_observations`` and a non-optimistic prior, so they
+        # compete on their seeded success rate instead of the optimistic
+        # 1.0 fallback that previously masked bad defaults.
         qualifying: list[tuple[str, float]] = []  # (model, avg_cost)
         for model in models:
             arm = self._arms.get((role, model))
-            if arm is None or arm.observations < self.min_observations:
-                # Unknown/under-observed → include as candidate with nominal cost
-                qualifying.append((model, _model_cost(model)))
-            elif arm.success_rate >= self.quality_threshold:
-                qualifying.append((model, arm.avg_cost_usd))
+            if arm is None:
+                # Never seen — treat as a pessimistic 0-observation arm so
+                # it only wins via explicit exploration, not greedy price.
+                continue
+            if arm.success_rate >= self.quality_threshold:
+                # Under-observed arms that meet the threshold (e.g. seeded
+                # priors) compete at nominal per-token cost so we don't over-
+                # trust a tiny sample's observed ``avg_cost_usd``.
+                cost = arm.avg_cost_usd if arm.observations >= self.min_observations else _model_cost(arm.model)
+                qualifying.append((model, cost))
 
         if not qualifying:
-            # All arms are under-performing — fall back to cheapest model to
-            # keep trying (cascade will escalate on actual failures)
+            # All arms are under-performing or unseen — fall back to the
+            # cheapest model to keep trying (cascade will escalate on
+            # actual failures, and epsilon-exploration will keep probing
+            # new arms).
             fallback = min(models, key=_model_cost)
-            logger.debug("Bandit[%s]: all arms under-threshold, fallback → %s", role, fallback)
+            logger.debug("Bandit[%s]: no qualifying arms, fallback → %s", role, fallback)
             return fallback
 
         # Among qualifying arms, pick the cheapest

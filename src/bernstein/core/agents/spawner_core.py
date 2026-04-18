@@ -73,6 +73,7 @@ from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
+from bernstein.core.worktree_claude_md import write_claude_md
 from bernstein.plugins.manager import get_plugin_manager
 from bernstein.templates.renderer import TemplateError, render_role_prompt
 
@@ -1626,6 +1627,30 @@ class AgentSpawner:
         log_dir = spawn_cwd / ".sdd" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         preferred_log_path = log_dir / f"{session_id}.log"
+
+        # Write a task-specific CLAUDE.md at the worktree root so the agent
+        # inherits its assigned tasks, role constraints, owned file paths,
+        # and context files instead of only the generic project CLAUDE.md
+        # (audit-095).  The helper also marks the file as skip-worktree so
+        # the override never lands in merge commits.
+        _task_context_files: list[str] = []
+        for _t in tasks:
+            _cfs = _t.metadata.get("context_files") if isinstance(_t.metadata, dict) else None
+            if isinstance(_cfs, list):
+                for _cf in _cfs:
+                    if isinstance(_cf, str) and _cf not in _task_context_files:
+                        _task_context_files.append(_cf)
+        try:
+            write_claude_md(
+                spawn_cwd,
+                tasks,
+                session_id=session_id,
+                role=role,
+                workdir=self._workdir,
+                context_files=_task_context_files or None,
+            )
+        except Exception as exc:  # pragma: no cover — best-effort, never blocks spawn
+            logger.warning("Failed to write task-specific CLAUDE.md for %s: %s", session_id, exc)
 
         # Inject role-specific skills into the worktree before spawn so the
         # agent picks up orchestration protocol and role-specific instructions.

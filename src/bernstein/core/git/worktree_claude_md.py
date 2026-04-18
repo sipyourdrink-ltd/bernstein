@@ -15,6 +15,7 @@ shared repository's CLAUDE.md.
 from __future__ import annotations
 
 import logging
+import subprocess
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+_GIT_COMMAND_TIMEOUT_S = 10
 
 
 def generate_claude_md(
@@ -161,8 +164,53 @@ def write_claude_md(
         logger.info("Wrote task-specific CLAUDE.md to %s (%d bytes)", claude_md_path, len(content))
     except OSError as exc:
         logger.warning("Failed to write CLAUDE.md to %s: %s", claude_md_path, exc)
+        return claude_md_path
+
+    # Ensure the agent-specific CLAUDE.md never lands in merge commits.
+    # The project-level CLAUDE.md is tracked, so .gitignore alone does not
+    # suppress the modification.  Mark it as skip-worktree in the worktree's
+    # index — git will then ignore local edits and salvage's ``git add -A``
+    # will not stage the override (audit-095).
+    _mark_claude_md_skip_worktree(worktree_path)
 
     return claude_md_path
+
+
+def _mark_claude_md_skip_worktree(worktree_path: Path) -> None:
+    """Mark CLAUDE.md as skip-worktree in the agent's worktree index.
+
+    The project-level ``CLAUDE.md`` is a tracked file, so a task-specific
+    override would otherwise show up in ``git diff`` and be staged by
+    ``git add -A``.  Setting the skip-worktree bit tells git to treat the
+    file as if it were untracked locally without untracking it in the
+    shared ref — so the override stays out of the ``agent/<id>`` branch
+    and never reaches the merge queue.
+
+    The call is best-effort: a failure is logged but does not propagate.
+    Called immediately after :func:`write_claude_md` writes the file.
+
+    Args:
+        worktree_path: Root of the agent's git worktree.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "update-index", "--skip-worktree", "CLAUDE.md"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_COMMAND_TIMEOUT_S,
+            check=False,
+        )
+        if result.returncode != 0:
+            logger.debug(
+                "git update-index --skip-worktree CLAUDE.md returned %d: %s",
+                result.returncode,
+                result.stderr.strip(),
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("Failed to mark CLAUDE.md skip-worktree in %s: %s", worktree_path, exc)
 
 
 def _get_role_rules(role: str) -> list[str]:

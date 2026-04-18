@@ -70,6 +70,11 @@ dependencies = [
     # Required to validate IdP assertions in src/bernstein/core/security/auth.py;
     # enabling SAML without this library installed is a hard error.
     "signxml>=4.0",
+    # Hardened XML parser. Used in src/bernstein/core/security/auth.py to
+    # parse SAML assertions without expanding internal entities. Mitigates
+    # billion-laughs / quadratic-blowup DoS on unauthenticated IdP responses
+    # (audit-054). defusedxml.ElementTree is a drop-in for xml.etree.ElementTree.
+    "defusedxml>=0.7.1",
 ]
 
 [project.urls]
@@ -228,7 +233,6 @@ include = ["src"]
 exclude = [
     "src/bernstein/core/trigger_manager.py",
     "src/bernstein/core/trigger_sources/",
-    "src/bernstein/core/evolve_mode.py",
     "src/bernstein/core/circuit_breaker.py",
     "src/bernstein/core/task_store.py",
     "src/bernstein/core/task_store_core.py",

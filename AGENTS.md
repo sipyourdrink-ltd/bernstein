@@ -243,7 +243,6 @@ All three must pass before committing. No exceptions, no "fix later."
 | `cascade_router.py` | Cost-aware model cascading router |
 | `circuit_breaker.py` | Real-time circuit breaker for purpose enforcement |
 | `context_degradation_detector.py` | Monitor agent quality over time; restart when degraded |
-| `evolve_mode.py` | Evolve-mode mixin for the Orchestrator |
 | `graduation.py` | Pilot-to-production graduation framework |
 | `plan_approval.py` | Plan mode: pre-execution cost estimation and human approval |
 | `planner.py` | Task planning: LLM-powered goal decomposition and replan |

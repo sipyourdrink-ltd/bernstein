@@ -9,12 +9,16 @@ the ``CIAutofixPipeline`` in ``ci_fix.py``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from bernstein.core.quality.ci_fix import CIAutofixPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +172,75 @@ class CIMonitor:
         """
         raw_log = await self._download_run_log(repo, run_id, token)
         return parse_log_to_context(raw_log)
+
+    def poll(
+        self,
+        repo: str,
+        token: str,
+        pipeline: CIAutofixPipeline,
+        *,
+        per_page: int = 10,
+    ) -> list[str]:
+        """Synchronous poll: discover new failures, create fix tasks (audit-035).
+
+        Runs the full CLI-style cycle (list failing runs -> parse each log
+        -> invoke ``pipeline.create_fix_task``) inside a blocking call so
+        the orchestrator tick loop can use it without adopting ``asyncio``.
+
+        Returns the list of fix-task IDs created during this poll cycle
+        (may be empty).  Errors per run are logged and skipped so a
+        single bad log does not abort the whole cycle.
+
+        Args:
+            repo: Repository in ``owner/repo`` format.
+            token: GitHub personal access token (non-empty).
+            pipeline: Autofix pipeline used to post fix tasks.
+            per_page: Number of most recent runs to check per poll.
+
+        Returns:
+            List of task IDs created by ``pipeline.create_fix_task``.
+            Tasks that failed to be created (empty ID) are omitted.
+        """
+        if not repo or not token:
+            logger.debug("CIMonitor.poll: repo or token missing - skipping")
+            return []
+
+        try:
+            failures = asyncio.run(self.poll_failures(repo, token, per_page=per_page))
+        except Exception:
+            logger.exception("CIMonitor.poll: poll_failures failed for %s", repo)
+            return []
+
+        if not failures:
+            return []
+
+        created: list[str] = []
+        for failure in failures:
+            try:
+                ctx = asyncio.run(self.parse_failure_logs(repo, failure.run_id, token))
+            except Exception:
+                logger.exception(
+                    "CIMonitor.poll: parse_failure_logs failed for run %d",
+                    failure.run_id,
+                )
+                continue
+
+            task_id = pipeline.create_fix_task(ctx, run_url=failure.failure_url)
+            if task_id:
+                created.append(task_id)
+                logger.info(
+                    "CIMonitor.poll: created fix task %s for %s run %d",
+                    task_id,
+                    repo,
+                    failure.run_id,
+                )
+            else:
+                logger.warning(
+                    "CIMonitor.poll: failed to create fix task for %s run %d",
+                    repo,
+                    failure.run_id,
+                )
+        return created
 
     async def _download_run_log(
         self,

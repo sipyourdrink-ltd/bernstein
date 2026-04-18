@@ -775,6 +775,36 @@ class TestWorktreeIntegration:
             call_kwargs = adapter.spawn.call_args.kwargs
             assert call_kwargs["workdir"] == worktree_path
 
+    def test_spawn_writes_task_specific_claude_md_into_worktree(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """audit-095: task-specific CLAUDE.md must land at the worktree root."""
+        adapter = mock_adapter_factory(pid=250)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        worktree_path = tmp_path / ".sdd" / "worktrees" / "session-claude-md"
+        worktree_path.mkdir(parents=True)
+
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        with patch.object(spawner._worktree_mgr, "create", return_value=worktree_path):
+            task = make_task(
+                id="T-AUDIT-095",
+                title="Fix worktree CLAUDE.md injection",
+                description="Ensure spawned agents get task-specific instructions.",
+                role="backend",
+                owned_files=["src/bernstein/core/agents/spawner_core.py"],
+            )
+            spawner.spawn_for_tasks([task])
+
+        claude_md = worktree_path / "CLAUDE.md"
+        assert claude_md.exists(), "write_claude_md should emit a CLAUDE.md at the worktree root"
+        content = claude_md.read_text(encoding="utf-8")
+        assert "Bernstein Agent: backend" in content
+        assert "T-AUDIT-095" in content
+        assert "Fix worktree CLAUDE.md injection" in content
+        assert "spawner_core.py" in content
+
     def test_spawn_falls_back_on_worktree_error(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=300)
         templates_dir = tmp_path / "templates" / "roles"

@@ -79,9 +79,12 @@ def _bandit_with_data(
 
 
 class TestBanditArm:
-    def test_success_rate_optimistic_when_no_observations(self) -> None:
+    def test_success_rate_pessimistic_when_no_observations(self) -> None:
+        """audit-069: cold-start success_rate must sit below QUALITY_THRESHOLD."""
         arm = BanditArm(role="backend", model="haiku")
-        assert arm.success_rate == pytest.approx(1.0)
+        # Pessimistic 0.5 keeps a never-observed arm from greedily winning the
+        # bandit's cheapest-wins exploitation path against the 0.8 threshold.
+        assert arm.success_rate == pytest.approx(0.5)
 
     def test_success_rate_after_observations(self) -> None:
         arm = BanditArm(role="backend", model="haiku")
@@ -200,6 +203,68 @@ class TestEpsilonGreedyBanditSelect:
         bandit.record(role="backend", model="sonnet", success=True, cost_usd=0.003)
         rows = bandit.summary()
         assert any(r["role"] == "backend" and r["model"] == "sonnet" for r in rows)
+
+    def test_zero_obs_arm_does_not_beat_observed_passing_arm(self) -> None:
+        """audit-069: cold-start arms must not steal from a 5-obs 80% arm.
+
+        Before the fix, a freshly added cheap arm (e.g. ``qwen3-coder``) won
+        the exploitation branch because :attr:`BanditArm.success_rate`
+        returned an optimistic 1.0 and the select loop admitted any
+        under-observed arm at nominal cost. Now the zero-observation arm
+        sits below :data:`QUALITY_THRESHOLD` and is skipped during
+        exploitation, so the observed qualifying arm wins.
+        """
+        bandit = EpsilonGreedyBandit(epsilon=0.0, min_observations=5, quality_threshold=0.8)
+        # Proven arm: sonnet at 4/5 = 80% success (ties the threshold).
+        for success in (True, True, True, True, False):
+            bandit.record(role="backend", model="sonnet", success=success, cost_usd=0.003)
+
+        # Candidate list forces the cheap unseen arm into the comparison.
+        # Under the old optimistic rule this would have returned
+        # ``"qwen3-coder"`` (nominal cost $0.00056 ≪ $0.003 for sonnet).
+        chosen = bandit.select(
+            role="backend",
+            candidate_models=["qwen3-coder", "sonnet"],
+        )
+        assert chosen == "sonnet", f"expected observed arm to win, got {chosen!r}"
+
+        # Zero-observation arm must advertise the pessimistic 0.5 rate so
+        # the select loop sees a sub-threshold candidate.
+        unseen = BanditArm(role="backend", model="qwen3-coder")
+        assert unseen.success_rate < bandit.quality_threshold
+
+
+# ---------------------------------------------------------------------------
+# Bandit arm pool (audit-069)
+# ---------------------------------------------------------------------------
+
+
+class TestBanditArmPool:
+    def test_get_all_bandit_arms_includes_cascade(self) -> None:
+        from bernstein.core.cost.cost import get_all_bandit_arms
+
+        arms = get_all_bandit_arms()
+        for model in CASCADE:
+            assert model in arms
+
+    def test_get_all_bandit_arms_auto_includes_cheap_models(self) -> None:
+        """Cheap adequate models declared in MODEL_COSTS_PER_1M_TOKENS join the pool."""
+        from bernstein.core.cost.cost import get_all_bandit_arms
+
+        arms = get_all_bandit_arms()
+        # These were "new arms" flagged by audit-069 — the pool makes them
+        # visible to the bandit for explicit exploration once seeded, but
+        # they cannot greedily win selection (success_rate is pessimistic).
+        assert "gemini-3-flash" in arms
+        assert "qwen3-coder" in arms
+
+    def test_get_all_bandit_arms_cascade_first(self) -> None:
+        """Order matters: cascade stays at the front for cheapest-first callers."""
+        from bernstein.core.cost.cost import get_all_bandit_arms
+
+        arms = get_all_bandit_arms()
+        # First len(CASCADE) entries preserve the cascade order.
+        assert arms[: len(CASCADE)] == CASCADE
 
 
 # ---------------------------------------------------------------------------

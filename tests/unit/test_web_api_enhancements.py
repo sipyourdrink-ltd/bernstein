@@ -134,6 +134,107 @@ class TestCORSConfiguration:
         with pytest.raises(SeedError, match="max_age"):
             _parse_cors_config({"max_age": -1})
 
+    # ------------------------------------------------------------------
+    # audit-118: glob origins are translated to allow_origin_regex because
+    # starlette.middleware.cors.CORSMiddleware compares allow_origins
+    # literally, so ``http://localhost:*`` would never match a real
+    # ``http://localhost:3000`` browser origin.
+    # ------------------------------------------------------------------
+
+    def test_split_cors_origins_translates_port_glob_to_regex(self) -> None:
+        """Port-glob origins should become a regex and drop from the literal list."""
+        import re as _re
+
+        from bernstein.core.server.server_app import _split_cors_origins
+
+        literal, regex = _split_cors_origins(
+            ("http://localhost:*", "http://127.0.0.1:*"),
+        )
+        assert literal == []
+        assert regex is not None
+        pattern = _re.compile(regex)
+        # Wildcard port matches any numeric port.
+        assert pattern.match("http://localhost:3000")
+        assert pattern.match("http://localhost:8080")
+        assert pattern.match("http://127.0.0.1:5173")
+        # Non-matching origins must be rejected.
+        assert pattern.match("http://evil.com") is None
+        assert pattern.match("https://localhost:3000") is None
+        assert pattern.match("http://localhost:3000/path") is None
+
+    def test_split_cors_origins_preserves_literals(self) -> None:
+        """Literal origins should stay in the list and produce no regex."""
+        from bernstein.core.server.server_app import _split_cors_origins
+
+        literal, regex = _split_cors_origins(
+            ("https://app.example.com", "https://admin.example.com"),
+        )
+        assert literal == ["https://app.example.com", "https://admin.example.com"]
+        assert regex is None
+
+    def test_split_cors_origins_mixed(self) -> None:
+        """Mixed inputs split into the literal list and a regex for globs."""
+        import re as _re
+
+        from bernstein.core.server.server_app import _split_cors_origins
+
+        literal, regex = _split_cors_origins(
+            ("https://app.example.com", "http://localhost:*"),
+        )
+        assert literal == ["https://app.example.com"]
+        assert regex is not None
+        pattern = _re.compile(regex)
+        assert pattern.match("http://localhost:3000")
+        assert pattern.match("http://localhost:") is None
+
+    def test_parse_cors_config_rejects_unsupported_glob(self) -> None:
+        """Globs outside the ``scheme://host:*`` shape must raise SeedError."""
+        from bernstein.core.seed import SeedError, _parse_cors_config
+
+        with pytest.raises(SeedError, match="unsupported wildcard"):
+            _parse_cors_config({"allowed_origins": ["http://*.evil.com"]})
+
+    def test_parse_cors_config_accepts_port_glob(self) -> None:
+        """The port-glob form is accepted because the server translates it."""
+        from bernstein.core.seed import _parse_cors_config
+
+        result = _parse_cors_config({"allowed_origins": ["http://localhost:*", "https://app.example.com"]})
+        assert result is not None
+        assert "http://localhost:*" in result.allowed_origins
+        assert "https://app.example.com" in result.allowed_origins
+
+    @pytest.mark.anyio
+    async def test_cors_preflight_matches_localhost_wildcard(self, jsonl_path: Path) -> None:
+        """Default glob origins must allow http://localhost:3000 via regex."""
+        test_app = create_app(jsonl_path=jsonl_path)
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.options(
+                "/status",
+                headers={
+                    "Origin": "http://localhost:3000",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            # Origin is allowed → preflight succeeds with matching header.
+            assert resp.status_code == 200
+            assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+    @pytest.mark.anyio
+    async def test_cors_preflight_rejects_foreign_origin(self, jsonl_path: Path) -> None:
+        """Origins outside the regex must not receive Access-Control-Allow-Origin."""
+        test_app = create_app(jsonl_path=jsonl_path)
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.options(
+                "/status",
+                headers={
+                    "Origin": "http://evil.com",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            assert resp.headers.get("access-control-allow-origin") is None
+
 
 # ============================================================================
 # WEB-002: Per-endpoint rate limiting
