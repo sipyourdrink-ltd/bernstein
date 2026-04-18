@@ -600,15 +600,27 @@ class StreamableHTTPTransport:
         params: dict[str, str] | None = None,
     ) -> str:
         """GET request to Bernstein task server."""
+        from bernstein.mcp.server import _auth_headers
+
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            resp = await client.get(f"{self._server_url}{path}", params=params)
+            resp = await client.get(
+                f"{self._server_url}{path}",
+                params=params,
+                headers=_auth_headers(),
+            )
             resp.raise_for_status()
             return resp.text
 
     async def _proxy_post(self, path: str, payload: dict[str, Any]) -> str:
         """POST request to Bernstein task server."""
+        from bernstein.mcp.server import _auth_headers
+
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            resp = await client.post(f"{self._server_url}{path}", json=payload)
+            resp = await client.post(
+                f"{self._server_url}{path}",
+                json=payload,
+                headers=_auth_headers(),
+            )
             resp.raise_for_status()
             return resp.text
 
