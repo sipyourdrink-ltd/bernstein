@@ -92,7 +92,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "cascading_failure_circuit_breaker": "bernstein.core.observability.cascading_failure_circuit_breaker",
     "cascading_token_counter": "bernstein.core.tokens.cascading_token_counter",
     "changelog": "bernstein.core.git.changelog",
-    "cheaper_retry": "bernstein.core.cost.cheaper_retry",
+    "cheaper_retry": "bernstein.core.cost.planned.cheaper_retry",
     "checkpoint": "bernstein.core.persistence.checkpoint",
     "ci_fix": "bernstein.core.quality.ci_fix",
     "ci_log_parser": "bernstein.core.quality.ci_log_parser",
@@ -411,7 +411,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "researcher": "bernstein.core.knowledge.researcher",
     "resource_limits": "bernstein.core.security.resource_limits",
     "retrospective": "bernstein.core.quality.retrospective",
-    "retry_budget": "bernstein.core.cost.retry_budget",
+    "retry_budget": "bernstein.core.cost.planned.retry_budget",
     "review_rubric": "bernstein.core.quality.review_rubric",
     # reviewer: removed in audit-192 — dead code, no production importers.
     "roadmap_runtime": "bernstein.core.planning.roadmap_runtime",
