@@ -248,10 +248,8 @@ _REDIRECT_MAP: dict[str, str] = {
     "lifecycle": "bernstein.core.tasks.lifecycle",
     "llm": "bernstein.core.routing.llm",
     "load_scaler": "bernstein.core.orchestration.load_scaler",
-    "log_context": "bernstein.core.observability.log_context",
     "log_redact": "bernstein.core.observability.log_redact",
     "log_search": "bernstein.core.observability.log_search",
-    "log_search_engine": "bernstein.core.observability.log_search_engine",
     "loop_detector": "bernstein.core.observability.loop_detector",
     # mailbox: removed in audit-176 — dead code, superseded by bulletin.py +
     # signals.py; no production importers.
