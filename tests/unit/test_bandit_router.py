@@ -435,7 +435,12 @@ class TestBanditRouter:
             assert decision.model != "haiku", f"role={role} got haiku"
 
     def test_high_stakes_guardrail_applies_after_warmup(self) -> None:
-        """Bandit mode must still keep high-stakes tasks off haiku."""
+        """Bandit mode must still keep high-stakes tasks off haiku (audit-112).
+
+        Post audit-112 the bandit *does* take over for high-stakes tasks but
+        its pick is clamped to the capability floor, so haiku is never
+        reachable for a priority-1 task.
+        """
         from bernstein.core.bandit_router import BanditRouter
 
         router = BanditRouter(warmup_min=1)
@@ -443,7 +448,7 @@ class TestBanditRouter:
         router.record_outcome(task=normal_task, model="haiku", effort="low", cost_usd=0.0, quality_score=1.0)
         decision = router.select(_task(priority=1))
         assert decision.model != "haiku"
-        assert decision.from_bandit is False
+        assert decision.from_bandit is True
 
     def test_bandit_reason_includes_score_breakdown(self) -> None:
         from bernstein.core.bandit_router import BanditRouter
@@ -521,6 +526,169 @@ class TestBanditRouter:
         r_tight = compute_reward(quality_score=1.0, cost_usd=0.5, budget_ceiling=1.0)
         r_loose = compute_reward(quality_score=1.0, cost_usd=0.5, budget_ceiling=10.0)
         assert r_loose > r_tight
+
+
+# ---------------------------------------------------------------------------
+# Soft capability-floor guardrail (audit-112)
+# ---------------------------------------------------------------------------
+
+
+class TestCapabilityFloor:
+    """Floor definition — architect never below sonnet, etc."""
+
+    def test_haiku_floor_for_ordinary_task(self) -> None:
+        from bernstein.core.bandit_router import _capability_floor
+
+        assert _capability_floor(_task()) == "haiku"
+
+    def test_sonnet_floor_for_architect_role(self) -> None:
+        from bernstein.core.bandit_router import _capability_floor
+
+        assert _capability_floor(_task(role="architect")) == "sonnet"
+
+    def test_sonnet_floor_for_security_role(self) -> None:
+        from bernstein.core.bandit_router import _capability_floor
+
+        assert _capability_floor(_task(role="security")) == "sonnet"
+
+    def test_sonnet_floor_for_large_scope(self) -> None:
+        from bernstein.core.bandit_router import _capability_floor
+
+        assert _capability_floor(_task(scope=Scope.LARGE)) == "sonnet"
+
+    def test_sonnet_floor_for_priority_one(self) -> None:
+        from bernstein.core.bandit_router import _capability_floor
+
+        assert _capability_floor(_task(priority=1)) == "sonnet"
+
+    def test_opus_floor_for_architect_high_complexity_large_scope(self) -> None:
+        from bernstein.core.bandit_router import _capability_floor
+
+        assert (
+            _capability_floor(
+                _task(role="architect", complexity=Complexity.HIGH, scope=Scope.LARGE),
+            )
+            == "opus"
+        )
+
+
+class TestClampToFloor:
+    """Clamp logic: tier ordering haiku < sonnet < opus."""
+
+    def test_pick_above_floor_passes_through(self) -> None:
+        from bernstein.core.bandit_router import _clamp_to_floor
+
+        model, clamped = _clamp_to_floor("opus", "sonnet")
+        assert model == "opus"
+        assert clamped is False
+
+    def test_pick_equal_floor_passes_through(self) -> None:
+        from bernstein.core.bandit_router import _clamp_to_floor
+
+        model, clamped = _clamp_to_floor("sonnet", "sonnet")
+        assert model == "sonnet"
+        assert clamped is False
+
+    def test_pick_below_floor_gets_clamped(self) -> None:
+        from bernstein.core.bandit_router import _clamp_to_floor
+
+        model, clamped = _clamp_to_floor("haiku", "sonnet")
+        assert model == "sonnet"
+        assert clamped is True
+
+    def test_unknown_arm_passes_through_unchanged(self) -> None:
+        from bernstein.core.bandit_router import _clamp_to_floor
+
+        # Custom model names never get silently promoted.
+        model, clamped = _clamp_to_floor("custom-model", "sonnet")
+        assert model == "custom-model"
+        assert clamped is False
+
+
+class TestSoftGuardrailLearns:
+    """Regression for audit-112: bandit must learn from high-stakes tasks."""
+
+    def test_linucb_updates_for_every_high_stakes_completion(self) -> None:
+        """warmup_min=10, complete 50 high-stakes tasks → 50 LinUCB updates."""
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=10)
+        hs_task = _task(role="architect", priority=1, scope=Scope.LARGE)
+        for _ in range(50):
+            router.record_outcome(task=hs_task, model="sonnet", effort="high", cost_usd=0.05, quality_score=1.0)
+
+        assert router.total_completions == 50
+        # Policy matrices must have moved away from identity.
+        assert router._policy is not None
+        assert router._policy.total_updates == 50
+
+    def test_clamp_applied_when_bandit_pick_below_floor(self) -> None:
+        """After warmup, if bandit picks haiku on architect work, clamp to sonnet."""
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=1)
+        # Drive the LinUCB policy to strongly prefer haiku for everything.
+        for _ in range(60):
+            router.record_outcome(task=_task(), model="haiku", effort="low", cost_usd=0.0, quality_score=1.0)
+
+        hs_task = _task(role="architect", priority=1)
+        decision = router.select(hs_task)
+
+        assert decision.from_bandit is True
+        assert decision.model == "sonnet"
+        assert "capability floor clamped" in decision.reason
+
+    def test_clamp_does_not_apply_when_bandit_pick_above_floor(self) -> None:
+        """If the bandit picks sonnet or opus on high-stakes work, no clamp."""
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=1)
+        for _ in range(60):
+            router.record_outcome(task=_task(), model="opus", effort="max", cost_usd=0.0, quality_score=1.0)
+
+        hs_task = _task(role="architect", priority=1)
+        decision = router.select(hs_task)
+
+        assert decision.from_bandit is True
+        assert decision.model in {"sonnet", "opus"}
+        assert "capability floor clamped" not in decision.reason
+
+    def test_shadow_clamp_counter_increments(self, tmp_path: Path) -> None:
+        """Each floor-clamp must bump the ``floor_clamp_count`` counter."""
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=1, policy_dir=tmp_path)
+        for _ in range(30):
+            router.record_outcome(task=_task(), model="haiku", effort="low", cost_usd=0.0, quality_score=1.0)
+
+        # Three high-stakes selections — each gets clamped haiku → sonnet.
+        for _ in range(3):
+            router.select(_task(role="architect"))
+
+        router.save()
+        stats = router.summary()["shadow_stats"]
+        assert stats["floor_clamp_count"] == 3
+
+    def test_shadow_decisions_file_records_clamp(self, tmp_path: Path) -> None:
+        """Clamp events must be appended to shadow_decisions.jsonl for evaluation."""
+        import json
+
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=1, policy_dir=tmp_path)
+        for _ in range(30):
+            router.record_outcome(task=_task(), model="haiku", effort="low", cost_usd=0.0, quality_score=1.0)
+
+        decision = router.select(_task(role="architect"))
+        assert decision.model == "sonnet"
+
+        shadow_path = tmp_path / "shadow_decisions.jsonl"
+        assert shadow_path.exists()
+        payload = json.loads(shadow_path.read_text(encoding="utf-8").splitlines()[-1])
+        assert payload["clamp"] is True
+        assert payload["capability_floor"] == "sonnet"
+        assert payload["selected_model"] == "haiku"
+        assert payload["executed_model"] == "sonnet"
 
 
 # ---------------------------------------------------------------------------
