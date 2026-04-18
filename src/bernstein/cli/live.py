@@ -6,6 +6,7 @@ from task-server data, plus a simple sparkline renderer for cost over time.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 from typing import Any
@@ -115,8 +116,12 @@ class LiveView:
         Returns:
             Parsed JSON response, or None on error.
         """
+        headers: dict[str, str] = {}
+        token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         try:
-            resp = httpx.get(f"{self._server_url}{path}", timeout=2.0)
+            resp = httpx.get(f"{self._server_url}{path}", timeout=2.0, headers=headers)
             result: dict[str, Any] | list[Any] = resp.json()
             return result
         except Exception:

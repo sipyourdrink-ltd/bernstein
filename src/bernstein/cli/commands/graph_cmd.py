@@ -8,7 +8,7 @@ from typing import Any, cast
 import click
 import httpx
 
-from bernstein.cli.helpers import SERVER_URL, console
+from bernstein.cli.helpers import SERVER_URL, auth_headers, console
 from bernstein.core.knowledge_graph import query_impact
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
@@ -42,7 +42,7 @@ def graph_impact(file_query: str) -> None:
 def _fetch_task_graph() -> dict[str, Any]:
     """Fetch the structured task dependency graph from the task server."""
     try:
-        resp = httpx.get(f"{SERVER_URL}/tasks/graph", timeout=5.0)
+        resp = httpx.get(f"{SERVER_URL}/tasks/graph", timeout=5.0, headers=auth_headers())
         resp.raise_for_status()
     except httpx.ConnectError:
         console.print("[red]Cannot connect to task server.[/red]")

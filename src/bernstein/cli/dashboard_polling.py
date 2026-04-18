@@ -29,12 +29,13 @@ _SPARK_CHARS = "▁▂▃▄▅▆▇█"
 
 
 def _auth_headers() -> dict[str, str]:
-    """Return Authorization header dict when BERNSTEIN_AUTH_TOKEN is set.
+    """Return Authorization header when ``BERNSTEIN_AUTH_TOKEN`` is set.
 
-    The TUI runs inside the main Bernstein process and inherits the
-    token that ``_resolve_auth_token`` stashes into ``os.environ``
-    during bootstrap.  Without this header the SSO middleware rejects
-    every request with 401, leaving the Tasks panel empty.
+    The TUI runs inside the main Bernstein process, so it inherits the
+    token that ``_resolve_auth_token`` stashes into ``os.environ`` during
+    bootstrap (see ``core.server.server_launch``). Without this header the
+    SSO middleware rejects every request with 401, leaving the Tasks
+    panel empty.
     """
     token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
     if token:
