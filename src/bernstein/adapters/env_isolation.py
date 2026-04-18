@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from bernstein.core.credential_scoping import AgentCredentialPolicy
     from bernstein.core.secrets import SecretsConfig
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,9 @@ def build_filtered_env(
     extra_keys: Iterable[str] = (),
     *,
     secrets_config: SecretsConfig | None = None,
+    agent_id: str | None = None,
+    role: str | None = None,
+    credential_policy: AgentCredentialPolicy | None = None,
 ) -> dict[str, str]:
     """Build a filtered copy of the environment safe for agent subprocesses.
 
@@ -125,6 +129,12 @@ def build_filtered_env(
     configured provider and injected into the returned environment.
     If the provider is unavailable, falls back to env vars silently.
 
+    When ``agent_id`` is provided, ``extra_keys`` is further filtered
+    through the :class:`~bernstein.core.credential_scoping.AgentCredentialPolicy`
+    so each agent only inherits the credential env vars it is
+    authorised to see (audit-051).  If no ``credential_policy`` is
+    supplied the module-level default is consulted.
+
     Args:
         extra_keys: Additional variable names to include beyond the base
             allowlist.  Pass the adapter-specific API key name(s) here,
@@ -132,10 +142,26 @@ def build_filtered_env(
         secrets_config: Optional secrets manager configuration. When set,
             API keys are loaded from the external provider instead of
             (or in addition to) environment variables.
+        agent_id: Optional agent identifier for per-agent credential
+            scoping.  When supplied, the credential policy is consulted
+            to narrow ``extra_keys`` to the subset this agent may see.
+        role: Optional role name used as a fallback when the agent has
+            no explicit rule in the policy.
+        credential_policy: Explicit policy override.  Primarily used in
+            tests; production code should rely on the module-level
+            default installed at orchestrator startup.
 
     Returns:
         A fresh dict containing only the allowed variables that are currently
         set in ``os.environ``, plus any secrets from the provider.
+
+    Raises:
+        bernstein.core.credential_scoping.UnknownCredentialKeyError: If
+            any requested ``extra_keys`` entry is not declared in the
+            active policy's ``known_keys``.
+        bernstein.core.credential_scoping.AgentNotScopedError: If the
+            active policy is enabled and ``agent_id`` has no matching
+            rule.
 
     Example::
 
@@ -143,7 +169,27 @@ def build_filtered_env(
         # env contains PATH, HOME, LANG, ANTHROPIC_API_KEY (if set), etc.
         # env does NOT contain DATABASE_URL, AWS_SECRET_ACCESS_KEY, etc.
     """
-    allowed = _BASE_ALLOWLIST | frozenset(extra_keys)
+    requested_extra = frozenset(extra_keys)
+
+    # Narrow credential env vars through the per-agent policy when an
+    # agent identity is supplied.  Policy is consulted eagerly so typos
+    # surface during spawn rather than silently granting nothing.
+    if agent_id is not None:
+        from bernstein.core.credential_scoping import (
+            get_default_policy,
+            scoped_credential_keys,
+        )
+
+        effective_policy = credential_policy if credential_policy is not None else get_default_policy()
+        scoped = scoped_credential_keys(
+            agent_id,
+            requested_extra,
+            role=role,
+            policy=effective_policy,
+        )
+        requested_extra = frozenset(scoped)
+
+    allowed = _BASE_ALLOWLIST | requested_extra
     env = {k: v for k, v in os.environ.items() if k in allowed}
 
     # Ensure PYTHONPATH includes directories needed by bernstein-worker.
