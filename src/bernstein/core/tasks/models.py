@@ -1015,6 +1015,10 @@ class OrchestratorConfig:
         evolution_tick_interval: Run evolution analysis every N ticks (~1.5 min at 3s poll).
         max_task_retries: Max times a task is re-queued after agent crash (0 = no retry).
         cross_model_verify: Cross-model verification config (None = disabled).
+        context_degradation: Context-degradation detector config (None = disabled).
+            When enabled, agents with consecutive cross-model rejections are
+            checkpointed and sent SHUTDOWN so a fresh replacement spawns with
+            a recovery-context preamble.
         telemetry: OpenTelemetry configuration.
         smtp: SMTP configuration for email notifications.
     """
@@ -1044,6 +1048,7 @@ class OrchestratorConfig:
     recovery: str = "resume"  # "resume" | "restart" | "escalate" — crash recovery strategy
     max_crash_retries: int = 2  # Max times to resume in same worktree before escalating
     cross_model_verify: Any | None = None  # CrossModelVerifierConfig | None
+    context_degradation: Any | None = None  # ContextDegradationConfig | None — restart agents on quality drop
     force_parallel: bool = False  # Skip complexity advisor — always decompose/parallelize
     plan_mode: bool = False  # When True, tasks start as PLANNED and require approval before execution
     workflow: str | None = None  # "governed" activates governed workflow mode; None = adaptive (default)
