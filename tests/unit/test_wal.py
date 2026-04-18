@@ -790,3 +790,85 @@ class TestWALRecoveryClosedMarker:
         result = WALRecovery.scan_all_uncommitted(sdd)
         run_ids = [r for r, _ in result]
         assert run_ids == ["run-b"]
+
+
+# ---------------------------------------------------------------------------
+# TestWALStreaming (audit-082)
+# ---------------------------------------------------------------------------
+
+
+class TestWALStreaming:
+    """Streaming reads: _load_tail, verify_chain, iter_entries are O(1) memory."""
+
+    def test_load_tail_fast_on_large_wal(self, tmp_path: Path) -> None:
+        """_load_tail on a sizeable WAL resumes without reading the whole file.
+
+        We build a WAL with 5k entries (keeps unit-test wall-time low),
+        close and re-open a writer, and assert that appending a new
+        entry picks up the correct seq/prev_hash chain.
+        """
+        import time as _time
+
+        writer = _make_writer(tmp_path)
+        for i in range(5000):
+            writer.append(f"d{i}", {"i": i}, {"r": i}, "a")
+
+        last = writer.append("last", {}, {}, "a")
+
+        # Re-open; _load_tail must return the final entry's seq & hash
+        # without re-reading every line.
+        start = _time.monotonic()
+        writer2 = _make_writer(tmp_path)
+        elapsed = _time.monotonic() - start
+
+        next_entry = writer2.append("after_reopen", {}, {}, "a")
+        assert next_entry.seq == last.seq + 1
+        assert next_entry.prev_hash == last.entry_hash
+        # Generous bound — streaming backward read should be < 100ms even
+        # on slow CI.  Old implementation materialized ~5k lines into a
+        # list on every construction.
+        assert elapsed < 0.5, f"_load_tail too slow: {elapsed:.3f}s"
+
+    def test_iter_entries_skips_malformed_trailing_line(self, tmp_path: Path) -> None:
+        """iter_entries logs+skips a malformed trailing line instead of raising."""
+        writer = _make_writer(tmp_path)
+        writer.append("d0", {"i": 0}, {}, "a")
+        writer.append("d1", {"i": 1}, {}, "a")
+
+        path = _wal_path(tmp_path)
+        with path.open("a") as f:
+            f.write("THIS IS NOT JSON\n")
+
+        reader = _make_reader(tmp_path)
+        entries = list(reader.iter_entries())
+        # Only the two valid entries come back; malformed line is skipped.
+        assert [e.decision_type for e in entries] == ["d0", "d1"]
+
+    def test_verify_chain_streaming_on_large_wal(self, tmp_path: Path) -> None:
+        """verify_chain streams through a large WAL without OOM."""
+        writer = _make_writer(tmp_path)
+        for i in range(2000):
+            writer.append(f"d{i}", {"i": i}, {}, "a")
+
+        reader = _make_reader(tmp_path)
+        ok, errors = reader.verify_chain()
+        assert ok is True
+        assert errors == []
+
+    def test_load_tail_no_trailing_newline(self, tmp_path: Path) -> None:
+        """_load_tail handles a WAL whose last line lacks a trailing newline."""
+        writer = _make_writer(tmp_path)
+        writer.append("d0", {}, {}, "a")
+
+        # Simulate a torn write: strip the trailing newline on the last
+        # (only) line to prove backward-seek still recovers it.
+        path = _wal_path(tmp_path)
+        data = path.read_bytes()
+        assert data.endswith(b"\n")
+        path.write_bytes(data.rstrip(b"\n"))
+
+        writer2 = _make_writer(tmp_path)
+        entry = writer2.append("d1", {}, {}, "a")
+        # Successfully resumed from the torn-but-valid final line.
+        assert entry.seq == 1
+        assert entry.prev_hash != GENESIS_HASH
