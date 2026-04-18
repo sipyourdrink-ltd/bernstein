@@ -379,6 +379,56 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
     return payload
 
 
+def _resolve_configured_workers() -> int:
+    """Resolve the requested uvicorn worker count from env vars.
+
+    Reads ``BERNSTEIN_WORKERS`` first, falling back to ``WEB_CONCURRENCY``
+    (the conventional uvicorn/gunicorn env var). Invalid or missing values
+    resolve to ``1``.
+
+    Returns:
+        Worker count (minimum 1).
+    """
+    for var in ("BERNSTEIN_WORKERS", "WEB_CONCURRENCY"):
+        raw = os.environ.get(var)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        return max(1, value)
+    return 1
+
+
+def preflight_multi_worker_guard() -> None:
+    """Refuse to boot when multi-worker mode is requested.
+
+    Bernstein's ``TaskStore`` coordinates mutations with an in-process
+    ``asyncio.Lock`` and appends to JSONL without ``fcntl.flock`` — running
+    under ``uvicorn --workers N`` (or ``WEB_CONCURRENCY>1``) causes torn
+    JSONL lines and duplicate task claims (audit-025).
+
+    The guard fires at app-factory time so each uvicorn worker subprocess
+    re-runs it on import and bails out with a clear message instead of
+    silently corrupting state.
+
+    Raises:
+        SystemExit: If the resolved worker count is greater than 1. The
+            error message points operators to the single-supported
+            configuration.
+    """
+    workers = _resolve_configured_workers()
+    if workers > 1:
+        raise SystemExit(
+            "Bernstein TaskStore is single-process; refusing to boot with "
+            f"workers={workers}. Set server.workers=1 in bernstein.yaml or "
+            "use BERNSTEIN_WORKERS=1 (also clear WEB_CONCURRENCY). "
+            "Multi-worker support is tracked as a separate ticket "
+            "(fcntl.flock / SQLite WAL)."
+        )
+
+
 def create_app(
     jsonl_path: Path = DEFAULT_JSONL_PATH,
     metrics_jsonl_path: Path | None = None,
@@ -407,7 +457,14 @@ def create_app(
 
     Returns:
         Configured FastAPI app with all routes registered.
+
+    Raises:
+        SystemExit: Via ``preflight_multi_worker_guard`` when the operator
+            requests more than one uvicorn worker — the ``TaskStore`` is
+            single-process and multi-worker mode corrupts state
+            (audit-025).
     """
+    preflight_multi_worker_guard()
     setup_json_logging()
     from bernstein.core.auth import AuthService, AuthStore, SSOConfig
     from bernstein.core.auth_middleware import SSOAuthMiddleware

@@ -36,6 +36,17 @@ docker compose ps
 docker compose up --scale bernstein-worker=4 -d
 ```
 
+> **Single-worker task server (audit-025).** Only `bernstein-worker`
+> replicas scale horizontally. The `bernstein-server` container must run
+> with **exactly one uvicorn worker** — the in-process `TaskStore` holds
+> state in memory and guards mutations with `asyncio.Lock`. Running
+> `uvicorn --workers N` (or setting `WEB_CONCURRENCY>1` /
+> `BERNSTEIN_WORKERS>1`) interleaves JSONL appends and lets two workers
+> claim the same task. The server refuses to boot when multi-worker mode
+> is requested; use a horizontal pool of `bernstein-worker` replicas (or
+> migrate to the SQLite/Redis backends — separate ticket) for
+> parallelism.
+
 ### Services
 
 | Service | Description | Port |
