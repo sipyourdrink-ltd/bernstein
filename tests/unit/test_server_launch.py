@@ -92,3 +92,24 @@ def test_start_server_rejects_existing_live_pid(tmp_path: Path) -> None:
         pytest.raises(RuntimeError),
     ):
         _start_server(tmp_path, 8052)
+
+
+def test_start_server_refuses_multi_worker_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """audit-025: _start_server exits before Popen when BERNSTEIN_WORKERS>1.
+
+    The guard must fire in the parent process so operators see the error
+    on the bernstein CLI instead of watching the child subprocess crash
+    silently.
+    """
+    monkeypatch.setenv("BERNSTEIN_WORKERS", "3")
+    monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+
+    with (
+        patch("subprocess.Popen") as mock_popen,
+        pytest.raises(SystemExit) as exc,
+    ):
+        _start_server(tmp_path, 8052)
+
+    # Popen must not have been invoked — we bailed out before spawning.
+    mock_popen.assert_not_called()
+    assert "workers=3" in str(exc.value)
