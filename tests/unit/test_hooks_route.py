@@ -2,15 +2,47 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json as _json
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.server import create_app
+from bernstein.core.server.webhook_signatures import sign_hmac_sha256
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+# audit-042/audit-113: hooks endpoint requires HMAC-SHA256 signature over raw
+# body, keyed with BERNSTEIN_HOOK_SECRET.  Tests share a fixed secret and sign
+# each payload via ``_signed_post``.
+_HOOK_SECRET = "test-hook-secret"
+
+
+def _signed_headers(payload: bytes) -> dict[str, str]:
+    """Return request headers with a valid hook signature."""
+    return {
+        "content-type": "application/json",
+        "X-Bernstein-Hook-Signature-256": sign_hmac_sha256(_HOOK_SECRET, payload),
+    }
+
+
+async def _signed_post(
+    client: AsyncClient,
+    url: str,
+    body: dict[str, Any] | bytes,
+) -> Any:
+    """POST ``body`` to ``url`` with a valid HMAC signature header."""
+    raw = body if isinstance(body, bytes) else _json.dumps(body).encode("utf-8")
+    return await client.post(url, content=raw, headers=_signed_headers(raw))
+
+
+@pytest.fixture(autouse=True)
+def _set_hook_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All tests in this module run with a known hook secret."""
+    monkeypatch.setenv("BERNSTEIN_HOOK_SECRET", _HOOK_SECRET)
 
 
 @pytest.fixture()
@@ -55,9 +87,10 @@ async def auth_client(app_with_auth) -> AsyncClient:  # type: ignore[no-untyped-
 @pytest.mark.anyio
 async def test_post_tool_use_returns_200(client: AsyncClient) -> None:
     """PostToolUse hook event returns 200 with tool_use_logged action."""
-    response = await client.post(
+    response = await _signed_post(
+        client,
         "/hooks/sess-001",
-        json={"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": "ls"},
+        {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": "ls"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -68,9 +101,10 @@ async def test_post_tool_use_returns_200(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_stop_event_returns_200(client: AsyncClient) -> None:
     """Stop hook event returns 200 with stop_marker_written action."""
-    response = await client.post(
+    response = await _signed_post(
+        client,
         "/hooks/sess-002",
-        json={"hook_event_name": "Stop"},
+        {"hook_event_name": "Stop"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -79,9 +113,10 @@ async def test_stop_event_returns_200(client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_pre_compact_event_returns_200(client: AsyncClient) -> None:
-    response = await client.post(
+    response = await _signed_post(
+        client,
         "/hooks/sess-003",
-        json={"hook_event_name": "PreCompact"},
+        {"hook_event_name": "PreCompact"},
     )
     assert response.status_code == 200
     assert response.json()["action"] == "compaction_logged"
@@ -89,9 +124,10 @@ async def test_pre_compact_event_returns_200(client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_subagent_start_returns_200(client: AsyncClient) -> None:
-    response = await client.post(
+    response = await _signed_post(
+        client,
         "/hooks/sess-004",
-        json={"hook_event_name": "SubagentStart"},
+        {"hook_event_name": "SubagentStart"},
     )
     assert response.status_code == 200
     assert response.json()["action"] == "subagent_start_logged"
@@ -99,9 +135,10 @@ async def test_subagent_start_returns_200(client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_subagent_stop_returns_200(client: AsyncClient) -> None:
-    response = await client.post(
+    response = await _signed_post(
+        client,
         "/hooks/sess-005",
-        json={"hook_event_name": "SubagentStop"},
+        {"hook_event_name": "SubagentStop"},
     )
     assert response.status_code == 200
     assert response.json()["action"] == "subagent_stop_logged"
@@ -110,9 +147,10 @@ async def test_subagent_stop_returns_200(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_unknown_event_accepted(client: AsyncClient) -> None:
     """Unknown hook events are accepted and logged gracefully."""
-    response = await client.post(
+    response = await _signed_post(
+        client,
         "/hooks/sess-006",
-        json={"hook_event_name": "SomeFutureEvent"},
+        {"hook_event_name": "SomeFutureEvent"},
     )
     assert response.status_code == 200
     assert response.json()["action"] == "event_logged"
@@ -121,11 +159,7 @@ async def test_unknown_event_accepted(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_invalid_json_returns_400(client: AsyncClient) -> None:
     """Non-JSON body returns 400."""
-    response = await client.post(
-        "/hooks/sess-007",
-        content=b"not json",
-        headers={"content-type": "application/json"},
-    )
+    response = await _signed_post(client, "/hooks/sess-007", b"not json")
     assert response.status_code == 400
     assert response.json()["status"] == "error"
 
@@ -138,7 +172,7 @@ async def test_invalid_json_returns_400(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_stop_event_writes_completion_marker(client: AsyncClient, tmp_path: Path) -> None:
     """Stop hook writes a completion marker file."""
-    await client.post("/hooks/sess-marker", json={"hook_event_name": "Stop"})
+    await _signed_post(client, "/hooks/sess-marker", {"hook_event_name": "Stop"})
     marker = tmp_path / ".sdd" / "runtime" / "completed" / "sess-marker"
     assert marker.exists()
     assert marker.read_text(encoding="utf-8") == "hook:Stop"
@@ -147,9 +181,10 @@ async def test_stop_event_writes_completion_marker(client: AsyncClient, tmp_path
 @pytest.mark.anyio
 async def test_hook_event_writes_sidecar_jsonl(client: AsyncClient, tmp_path: Path) -> None:
     """Each hook event is appended to the session's JSONL sidecar."""
-    await client.post(
+    await _signed_post(
+        client,
         "/hooks/sess-sidecar",
-        json={"hook_event_name": "PostToolUse", "tool_name": "Read"},
+        {"hook_event_name": "PostToolUse", "tool_name": "Read"},
     )
     sidecar = tmp_path / ".sdd" / "runtime" / "hooks" / "sess-sidecar.jsonl"
     assert sidecar.exists()
@@ -163,7 +198,11 @@ async def test_hook_event_writes_sidecar_jsonl(client: AsyncClient, tmp_path: Pa
 @pytest.mark.anyio
 async def test_hook_event_touches_heartbeat(client: AsyncClient, tmp_path: Path) -> None:
     """Each hook event updates the heartbeat file."""
-    await client.post("/hooks/sess-hbeat", json={"hook_event_name": "PostToolUse", "tool_name": "Bash"})
+    await _signed_post(
+        client,
+        "/hooks/sess-hbeat",
+        {"hook_event_name": "PostToolUse", "tool_name": "Bash"},
+    )
     hb = tmp_path / ".sdd" / "runtime" / "heartbeats" / "sess-hbeat.json"
     assert hb.exists()
     ts = int(hb.read_text(encoding="utf-8"))
@@ -171,16 +210,17 @@ async def test_hook_event_touches_heartbeat(client: AsyncClient, tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
-# Auth bypass: hooks endpoint is public
+# Auth bypass: hooks endpoint uses HMAC signature instead of bearer auth
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
 async def test_hooks_endpoint_bypasses_auth(auth_client: AsyncClient) -> None:
-    """Hooks endpoint works without Authorization header even when auth is enabled."""
-    response = await auth_client.post(
+    """Hooks endpoint accepts HMAC-signed requests without bearer auth (audit-042/113)."""
+    response = await _signed_post(
+        auth_client,
         "/hooks/sess-noauth",
-        json={"hook_event_name": "Stop"},
+        {"hook_event_name": "Stop"},
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ok"

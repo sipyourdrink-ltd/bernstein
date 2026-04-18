@@ -39,7 +39,11 @@ class TestServerHotReload:
         cmd = mock_popen.call_args[0][0]
         assert "--reload" not in cmd
 
-    def test_reload_flag_in_evolve_mode(self, tmp_path: Path) -> None:
+    def test_reload_flag_not_in_evolve_mode(self, tmp_path: Path) -> None:
+        """audit-115: ``--reload`` was removed because uvicorn auto-reload on
+        a self-modifying repo drops in-flight requests and causes WAL replay
+        duplicate claims.  ``evolve_mode=True`` must no longer inject it.
+        """
         from bernstein.core.bootstrap import _start_server
 
         self._setup_runtime(tmp_path)
@@ -50,11 +54,8 @@ class TestServerHotReload:
             _start_server(tmp_path, port=8052, evolve_mode=True)
 
         cmd = mock_popen.call_args[0][0]
-        assert "--reload" in cmd
-        assert "--reload-dir" in cmd
-        reload_dir_idx = cmd.index("--reload-dir")
-        reload_dir_val = cmd[reload_dir_idx + 1]
-        assert reload_dir_val == str(tmp_path / "src" / "bernstein")
+        assert "--reload" not in cmd
+        assert "--reload-dir" not in cmd
 
     def test_reload_flag_not_present_when_evolve_false(self, tmp_path: Path) -> None:
         from bernstein.core.bootstrap import _start_server

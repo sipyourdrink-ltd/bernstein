@@ -120,12 +120,17 @@ class TestInjectHooksConfig:
         assert (tmp_path / ".claude" / "settings.local.json").exists()
 
     def test_hook_command_uses_curl(self, tmp_path: Path) -> None:
-        """Hook command uses curl to POST stdin to the server."""
+        """Hook command HMAC-signs body then POSTs via curl (audit-042)."""
         ClaudeCodeAdapter._inject_hooks_config(tmp_path, "sess-curl")
         settings = tmp_path / ".claude" / "settings.local.json"
         data = json.loads(settings.read_text(encoding="utf-8"))
 
         hook_cmd = data["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
         assert "curl" in hook_cmd
-        assert "-d @-" in hook_cmd  # reads from stdin
+        # Body is captured from stdin into a shell variable, then signed.
+        assert "BODY=$(cat)" in hook_cmd
+        assert '-d "$BODY"' in hook_cmd
+        # HMAC-SHA256 signature via openssl + signature header.
+        assert "openssl dgst -sha256 -hmac" in hook_cmd
+        assert "X-Bernstein-Hook-Signature-256: sha256=$SIG" in hook_cmd
         assert "Content-Type: application/json" in hook_cmd
