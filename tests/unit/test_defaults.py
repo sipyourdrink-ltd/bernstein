@@ -129,9 +129,7 @@ def test_defaults_dataclasses_are_frozen() -> None:
     )
     for singleton in singletons:
         params = singleton.__dataclass_params__
-        assert params.frozen is True, (
-            f"{type(singleton).__name__} must be frozen (audit-155)"
-        )
+        assert params.frozen is True, f"{type(singleton).__name__} must be frozen (audit-155)"
 
 
 def test_direct_attribute_mutation_raises_frozen_instance_error() -> None:

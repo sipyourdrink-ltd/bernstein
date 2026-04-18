@@ -166,11 +166,7 @@ class ClaudeStreamParser:
             List of StreamEvent objects extracted from any complete
             records seen so far.  Empty if only partial data is buffered.
         """
-        if isinstance(line, bytes):
-            chunk = line.decode("utf-8", errors="replace")
-        else:
-            chunk = line
-
+        chunk = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
         self._line_buffer += chunk
         events: list[StreamEvent] = []
 

@@ -32,9 +32,10 @@ the new value immediately; consumers that captured a reference via
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Orchestrator defaults
@@ -467,10 +468,7 @@ def override(section: str, overrides: dict[str, Any]) -> None:
     changes: dict[str, Any] = {}
     for key, value in overrides.items():
         if key not in fields:
-            raise AttributeError(
-                f"{type(current).__name__} has no field {key!r}. "
-                f"Valid fields: {list(fields)}"
-            )
+            raise AttributeError(f"{type(current).__name__} has no field {key!r}. Valid fields: {list(fields)}")
         existing: Any = getattr(current, key)
         # Merge mapping fields rather than replacing, matching legacy
         # behaviour (callers pass partial dicts from bernstein.yaml).

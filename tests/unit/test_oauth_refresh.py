@@ -63,5 +63,3 @@ def test_auth_error_is_non_retryable(tmp_path: Path) -> None:
 
     # Auth error is fail-fast — only 1 attempt, no retry
     assert adapter.spawn.call_count == 1
-
-

@@ -299,12 +299,7 @@ class TestClaudeStreamParserBuffering:
 
     def test_feed_line_multiple_records_in_one_chunk(self) -> None:
         parser = ClaudeStreamParser()
-        combined = (
-            _make_assistant_text("one")
-            + "\n"
-            + _make_assistant_text("two")
-            + "\n"
-        )
+        combined = _make_assistant_text("one") + "\n" + _make_assistant_text("two") + "\n"
         events = parser.feed_line(combined)
         assert len(events) == 2
         assert events[0].data["text"] == "one"

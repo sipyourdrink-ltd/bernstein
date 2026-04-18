@@ -9,8 +9,8 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Mapping  # noqa: TC003 — runtime use in ClassVar annotations
 from pathlib import Path
-from collections.abc import Mapping
 from typing import Any, ClassVar, cast
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
