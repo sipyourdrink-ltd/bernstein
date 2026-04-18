@@ -11,11 +11,13 @@ Usage:
     python scripts/run_tests.py -k adapter   # filter by keyword
     python scripts/run_tests.py --parallel 4 # run 4 files at once
     python scripts/run_tests.py --parallel 1 # force sequential execution
+    python scripts/run_tests.py --coverage   # collect coverage and emit coverage.json
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -37,21 +39,44 @@ def discover_test_files(test_dir: Path, keyword: str | None = None) -> list[Path
     return files
 
 
-def run_file(path: Path, extra_args: list[str]) -> tuple[Path, int, float, str]:
-    """Run a single test file in a subprocess. Returns (path, exitcode, duration, output)."""
-    cmd = [
-        sys.executable,
-        "-m",
-        "pytest",
-        str(path),
-        "-x",
-        "-q",
-        "--tb=short",
-        "-p",
-        "no:cacheprovider",
-        "-s",
-        *extra_args,
-    ]
+def run_file(path: Path, extra_args: list[str], coverage: bool = False) -> tuple[Path, int, float, str]:
+    """Run a single test file in a subprocess. Returns (path, exitcode, duration, output).
+
+    When ``coverage`` is True, the process is wrapped in ``coverage run`` with a
+    parallel-safe data file so that many subprocesses can be combined later.
+    """
+    if coverage:
+        cmd = [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            "--parallel-mode",
+            "-m",
+            "pytest",
+            str(path),
+            "-x",
+            "-q",
+            "--tb=short",
+            "-p",
+            "no:cacheprovider",
+            "-s",
+            *extra_args,
+        ]
+    else:
+        cmd = [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(path),
+            "-x",
+            "-q",
+            "--tb=short",
+            "-p",
+            "no:cacheprovider",
+            "-s",
+            *extra_args,
+        ]
     start = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     duration = time.monotonic() - start
@@ -106,7 +131,7 @@ def _report_file_result(label: str, code: int, duration: float, output: str) -> 
     return False
 
 
-def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool) -> int:
+def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, coverage: bool = False) -> int:
     """Run test files one by one."""
     passed = 0
     failed = 0
@@ -115,7 +140,7 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool) ->
     for i, path in enumerate(files, 1):
         label = f"[{i}/{len(files)}] {path.name}"
         try:
-            _fpath, code, duration, output = run_file(path, extra_args)
+            _fpath, code, duration, output = run_file(path, extra_args, coverage=coverage)
         except subprocess.TimeoutExpired:
             print(f"  TIMEOUT {label} (>120s)")
             failed += 1
@@ -137,7 +162,9 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool) ->
     return 1 if failed else 0
 
 
-def run_parallel(files: list[Path], extra_args: list[str], workers: int, fail_fast: bool) -> int:
+def run_parallel(
+    files: list[Path], extra_args: list[str], workers: int, fail_fast: bool, coverage: bool = False
+) -> int:
     """Run test files in parallel using concurrent.futures."""
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -151,7 +178,7 @@ def run_parallel(files: list[Path], extra_args: list[str], workers: int, fail_fa
     print(f"  Workers: {workers}")
 
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(run_file, f, extra_args): f for f in files}
+        futures = {pool.submit(run_file, f, extra_args, coverage): f for f in files}
         for future in as_completed(futures):
             if abort:
                 future.cancel()
@@ -222,6 +249,11 @@ def main() -> None:
         metavar="BASE",
         help="Run only tests affected by changes since BASE (default: HEAD = staged+unstaged)",
     )
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Collect coverage per subprocess and emit coverage.json at the repo root",
+    )
     parser.add_argument("extra", nargs="*", help="Extra args passed to pytest")
     args = parser.parse_args()
 
@@ -237,9 +269,11 @@ def main() -> None:
         print(f"Running {len(files)} affected test files (each in its own process)")
         print(f"{'=' * 60}")
         if workers > 1:
-            code = run_parallel(files, args.extra, workers, args.fail_fast)
+            code = run_parallel(files, args.extra, workers, args.fail_fast, args.coverage)
         else:
-            code = run_sequential(files, args.extra, args.fail_fast)
+            code = run_sequential(files, args.extra, args.fail_fast, args.coverage)
+        if args.coverage:
+            _finalize_coverage()
         sys.exit(code)
 
     test_dir = Path(args.test_dir)
@@ -257,11 +291,40 @@ def main() -> None:
     print(f"{'=' * 60}")
 
     if workers > 1:
-        code = run_parallel(files, args.extra, workers, args.fail_fast)
+        code = run_parallel(files, args.extra, workers, args.fail_fast, args.coverage)
     else:
-        code = run_sequential(files, args.extra, args.fail_fast)
+        code = run_sequential(files, args.extra, args.fail_fast, args.coverage)
+
+    if args.coverage:
+        _finalize_coverage()
 
     sys.exit(code)
+
+
+def _finalize_coverage() -> None:
+    """Combine per-subprocess coverage data and emit coverage.json."""
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "coverage", "combine"],
+            check=False,
+            capture_output=True,
+        )
+        subprocess.run(
+            [sys.executable, "-m", "coverage", "json", "-o", "coverage.json"],
+            check=False,
+            capture_output=True,
+        )
+        if Path("coverage.json").exists():
+            try:
+                data = json.loads(Path("coverage.json").read_text(encoding="utf-8"))
+                totals = data.get("totals", {}) if isinstance(data, dict) else {}
+                pct = totals.get("percent_covered") if isinstance(totals, dict) else None
+                if pct is not None:
+                    print(f"\nCoverage: {float(pct):.2f}%")
+            except (json.JSONDecodeError, OSError, ValueError):
+                pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"  WARNING: coverage finalization failed: {exc}")
 
 
 if __name__ == "__main__":
