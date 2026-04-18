@@ -216,6 +216,8 @@ PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and code style.
 
 If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry)
 
+Contact: [forte@bernstein.run](mailto:forte@bernstein.run)
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=chernistry/bernstein&type=Date)](https://star-history.com/#chernistry/bernstein&Date)

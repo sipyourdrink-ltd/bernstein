@@ -16,7 +16,7 @@ HackerOne handles triage, communication, and rewards. Reports are triaged within
 
 For issues outside the HackerOne scope or if you prefer direct contact:
 
-**security@bernstein.dev** (PGP key: `/.well-known/security-pgp.asc`)
+**forte@bernstein.run** (PGP key: `/.well-known/security-pgp.asc`)
 
 ---
 
