@@ -132,8 +132,9 @@ class TestIdempotencyStore:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """audit-078: mark_executed must flush+fsync before returning."""
-        from bernstein.core import wal_replay as wal_replay_mod
         from bernstein.core.wal import WALEntry
+
+        from bernstein.core import wal_replay as wal_replay_mod
 
         fsync_calls: list[int] = []
         real_fsync = wal_replay_mod.os.fsync
@@ -169,8 +170,9 @@ class TestIdempotencyStore:
         Otherwise, after a crash the marker would be absent on disk yet the
         replay engine would incorrectly treat the entry as already executed.
         """
-        from bernstein.core import wal_replay as wal_replay_mod
         from bernstein.core.wal import WALEntry
+
+        from bernstein.core import wal_replay as wal_replay_mod
 
         def raising_fsync(fd: int) -> None:
             raise OSError("disk full")

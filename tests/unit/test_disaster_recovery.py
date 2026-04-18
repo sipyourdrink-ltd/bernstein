@@ -334,6 +334,5 @@ class TestRestoreSdd:
         # Tight bound: the restore itself must close its own fd.  Allow a
         # small slack for unrelated transient fds opened by pytest/logging.
         assert after - baseline < 10, (
-            f"FD leak: baseline={baseline} after 100 restores={after} "
-            f"(delta={after - baseline})"
+            f"FD leak: baseline={baseline} after 100 restores={after} (delta={after - baseline})"
         )

@@ -24,6 +24,7 @@ from unittest.mock import MagicMock
 
 from bernstein.core.cost_tracker import CostTracker
 from bernstein.core.models import AgentSession
+
 from bernstein.core.orchestration.orchestrator import Orchestrator
 
 if TYPE_CHECKING:
@@ -123,9 +124,7 @@ class TestBudgetKillSwitchTransition:
         stub._enforce_budget_killswitch()
 
         # Notification metadata reports only the live count.
-        notify_call = next(
-            c for c in stub._notify.call_args_list if c.args[0] == "budget.exhaust"
-        )
+        notify_call = next(c for c in stub._notify.call_args_list if c.args[0] == "budget.exhaust")
         assert notify_call.kwargs["live_agents"] == 1
 
     def test_notify_not_fired_when_within_budget(self, tmp_path: Path) -> None:

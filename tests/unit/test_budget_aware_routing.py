@@ -52,29 +52,38 @@ class TestCheckOpusOverrideBudgetAware:
         task = _make_task(role="architect", priority=1)
         remaining = 1.0 - 0.95  # $0.05 left
 
-        assert _check_opus_override(
-            task,
-            budget_remaining_usd=remaining,
-            budget_aware_routing_enabled=True,
-        ) is None
+        assert (
+            _check_opus_override(
+                task,
+                budget_remaining_usd=remaining,
+                budget_aware_routing_enabled=True,
+            )
+            is None
+        )
 
     def test_near_cap_high_stakes_role_downgrades(self) -> None:
         task = _make_task(role="manager", priority=2)
 
-        assert _check_opus_override(
-            task,
-            budget_remaining_usd=0.10,
-            budget_aware_routing_enabled=True,
-        ) is None
+        assert (
+            _check_opus_override(
+                task,
+                budget_remaining_usd=0.10,
+                budget_aware_routing_enabled=True,
+            )
+            is None
+        )
 
     def test_near_cap_large_scope_downgrades(self) -> None:
         task = _make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
 
-        assert _check_opus_override(
-            task,
-            budget_remaining_usd=0.50,
-            budget_aware_routing_enabled=True,
-        ) is None
+        assert (
+            _check_opus_override(
+                task,
+                budget_remaining_usd=0.50,
+                budget_aware_routing_enabled=True,
+            )
+            is None
+        )
 
     def test_ample_budget_still_escalates_to_opus(self) -> None:
         """When remaining >= 2x est opus cost, override returns the reason."""
@@ -131,16 +140,22 @@ class TestCheckOpusOverrideBudgetAware:
         """A regular backend task never had opus override → still returns None."""
         task = _make_task(role="backend", priority=2)
 
-        assert _check_opus_override(
-            task,
-            budget_remaining_usd=0.01,
-            budget_aware_routing_enabled=True,
-        ) is None
-        assert _check_opus_override(
-            task,
-            budget_remaining_usd=100.0,
-            budget_aware_routing_enabled=True,
-        ) is None
+        assert (
+            _check_opus_override(
+                task,
+                budget_remaining_usd=0.01,
+                budget_aware_routing_enabled=True,
+            )
+            is None
+        )
+        assert (
+            _check_opus_override(
+                task,
+                budget_remaining_usd=100.0,
+                budget_aware_routing_enabled=True,
+            )
+            is None
+        )
 
     def test_threshold_boundary_exactly_at_margin(self) -> None:
         """remaining == 2x est opus cost does NOT downgrade (strict `<`)."""
@@ -160,11 +175,14 @@ class TestCheckOpusOverrideBudgetAware:
         task = _make_task(role="architect", priority=1)
         just_below = BUDGET_AWARE_OPUS_MARGIN * DEFAULT_OPUS_TASK_COST_USD - 0.01
 
-        assert _check_opus_override(
-            task,
-            budget_remaining_usd=just_below,
-            budget_aware_routing_enabled=True,
-        ) is None
+        assert (
+            _check_opus_override(
+                task,
+                budget_remaining_usd=just_below,
+                budget_aware_routing_enabled=True,
+            )
+            is None
+        )
 
 
 class TestCheckOpusOverrideModuleState:

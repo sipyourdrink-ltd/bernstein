@@ -962,9 +962,7 @@ def _check_opus_override(
     """
     # Resolve final budget-aware parameters, falling back to module state.
     remaining = (
-        budget_remaining_usd
-        if budget_remaining_usd is not None
-        else _budget_context_state.get("budget_remaining_usd")
+        budget_remaining_usd if budget_remaining_usd is not None else _budget_context_state.get("budget_remaining_usd")
     )
     enabled = (
         budget_aware_routing_enabled
@@ -982,10 +980,7 @@ def _check_opus_override(
     if task.role in _HIGH_STAKES_ROLES:
         base_reason = f"high-stakes role: {task.role}, priority={task.priority}"
     elif task.scope == Scope.LARGE:
-        base_reason = (
-            f"large scope: {task.scope.value}, priority={task.priority}, "
-            f"complexity={task.complexity.value}"
-        )
+        base_reason = f"large scope: {task.scope.value}, priority={task.priority}, complexity={task.complexity.value}"
     elif task.priority == 1:
         base_reason = f"critical priority: role={task.role}, complexity={task.complexity.value}"
 

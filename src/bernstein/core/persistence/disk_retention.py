@@ -22,7 +22,7 @@ import contextlib
 import logging
 import shutil
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path  # noqa: TC003 (runtime use in Path.iterdir / Path.rglob call sites)
 
 from bernstein.core.defaults import JANITOR
 

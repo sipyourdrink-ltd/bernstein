@@ -122,10 +122,7 @@ class ContentLengthMiddleware:
                 send,
                 413,
                 {
-                    "detail": (
-                        f"Request body {content_length} bytes exceeds "
-                        f"{self._max_body_bytes}-byte limit"
-                    ),
+                    "detail": (f"Request body {content_length} bytes exceeds {self._max_body_bytes}-byte limit"),
                 },
             )
             return
@@ -169,10 +166,7 @@ class ContentLengthMiddleware:
                         send,
                         413,
                         {
-                            "detail": (
-                                f"Request body {seen_bytes} bytes exceeds "
-                                f"{self._max_body_bytes}-byte limit"
-                            ),
+                            "detail": (f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"),
                         },
                     )
                     response_started = True
@@ -193,10 +187,7 @@ class ContentLengthMiddleware:
                     send,
                     413,
                     {
-                        "detail": (
-                            f"Request body {seen_bytes} bytes exceeds "
-                            f"{self._max_body_bytes}-byte limit"
-                        ),
+                        "detail": (f"Request body {seen_bytes} bytes exceeds {self._max_body_bytes}-byte limit"),
                     },
                 )
 

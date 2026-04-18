@@ -363,10 +363,7 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         # never reach operator-only endpoints (shutdown, broadcast, drain,
         # config writer).  These mutate process-wide state and require an
         # admin SSO user or the legacy operator bearer.
-        if (
-            request.method not in _READ_METHODS
-            and _get_required_permission(path, request.method) == _PERM_ADMIN_MANAGE
-        ):
+        if request.method not in _READ_METHODS and _get_required_permission(path, request.method) == _PERM_ADMIN_MANAGE:
             logger.warning(
                 "Agent %s denied operator-only path %s (admin:manage required)",
                 agent_identity.id,

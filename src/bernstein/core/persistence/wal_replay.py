@@ -24,7 +24,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path  # noqa: TC003 (runtime use in Path.glob / dir traversal)
 from typing import Any
 
 from bernstein.core.defaults import JANITOR

@@ -1778,9 +1778,7 @@ class Orchestrator:
         try:
             self._replay_wal_with_engine(sdd_dir)
         except Exception:
-            logger.exception(
-                "WAL replay engine failed (non-fatal) — continuing with legacy recovery"
-            )
+            logger.exception("WAL replay engine failed (non-fatal) — continuing with legacy recovery")
         uncommitted = WALRecovery.scan_all_uncommitted(
             sdd_dir,
             exclude_run_id=self._run_id,
@@ -1923,8 +1921,7 @@ class Orchestrator:
                     claimed_on_server.add(tid)
         except Exception as exc:
             logger.debug(
-                "WAL replay: unable to fetch claimed tasks from server (%s); "
-                "falling back to legacy force-claim path",
+                "WAL replay: unable to fetch claimed tasks from server (%s); falling back to legacy force-claim path",
                 exc,
             )
 
@@ -1959,8 +1956,7 @@ class Orchestrator:
                 resp.raise_for_status()
             except Exception as exc:
                 logger.warning(
-                    "WAL replay: /tasks/%s/fail failed (%s) — orphan will be "
-                    "handled by legacy force-claim recovery",
+                    "WAL replay: /tasks/%s/fail failed (%s) — orphan will be handled by legacy force-claim recovery",
                     task_id,
                     exc,
                 )
@@ -1980,9 +1976,7 @@ class Orchestrator:
                     committed=True,
                 )
             except OSError:
-                logger.debug(
-                    "WAL replay: task_retry write failed (task=%s)", task_id
-                )
+                logger.debug("WAL replay: task_retry write failed (task=%s)", task_id)
             logger.info(
                 "WAL replay: failed orphan task %s (claimed but never spawned)",
                 task_id,
@@ -2409,8 +2403,7 @@ class Orchestrator:
                 f"({status.percentage_used * 100:.1f}%)"
             )
             logger.warning(
-                "Budget kill-switch fired — sending SHUTDOWN to %d live agent(s); "
-                "SIGKILL after %ds grace period",
+                "Budget kill-switch fired — sending SHUTDOWN to %d live agent(s); SIGKILL after %ds grace period",
                 len(live_sessions),
                 self._cost_tracker.kill_grace_period_s,
             )
@@ -2451,8 +2444,7 @@ class Orchestrator:
             return
 
         logger.warning(
-            "Budget kill-switch grace period expired (%.1fs elapsed); "
-            "SIGKILLing %d agent(s) still alive",
+            "Budget kill-switch grace period expired (%.1fs elapsed); SIGKILLing %d agent(s) still alive",
             elapsed,
             len(pending_kill),
         )

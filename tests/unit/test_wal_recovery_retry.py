@@ -449,9 +449,7 @@ class TestAudit073WALReplayEngineWiring:
     subsequent boots do not double-fail.
     """
 
-    def _build_with_handler(
-        self, tmp_path: Path, handler: object
-    ) -> tuple[Orchestrator, list[httpx.Request]]:
+    def _build_with_handler(self, tmp_path: Path, handler: object) -> tuple[Orchestrator, list[httpx.Request]]:
         """Build an orchestrator wired to a custom httpx MockTransport handler."""
         cfg = OrchestratorConfig(
             max_agents=2,
@@ -490,7 +488,9 @@ class TestAudit073WALReplayEngineWiring:
         w.append("task_claimed", {"task_id": "T-kill"}, {}, "lifecycle", committed=False)
 
         def _handler(request: httpx.Request) -> httpx.Response:
-            if request.method == "GET" and "status=claimed" in (request.url.query.decode() if isinstance(request.url.query, bytes) else str(request.url.query)):
+            if request.method == "GET" and "status=claimed" in (
+                request.url.query.decode() if isinstance(request.url.query, bytes) else str(request.url.query)
+            ):
                 return httpx.Response(200, json=[{"id": "T-kill", "title": "kill"}])
             return httpx.Response(200, json={})
 
@@ -498,14 +498,8 @@ class TestAudit073WALReplayEngineWiring:
         orch._recover_from_wal()
 
         # POST /tasks/T-kill/fail with reason "claimed but never spawned"
-        fail_posts = [
-            r
-            for r in requests
-            if r.method == "POST" and r.url.path == "/tasks/T-kill/fail"
-        ]
-        assert len(fail_posts) >= 1, (
-            f"Expected POST /tasks/T-kill/fail; saw paths {[str(r.url) for r in requests]}"
-        )
+        fail_posts = [r for r in requests if r.method == "POST" and r.url.path == "/tasks/T-kill/fail"]
+        assert len(fail_posts) >= 1, f"Expected POST /tasks/T-kill/fail; saw paths {[str(r.url) for r in requests]}"
         body = json.loads(fail_posts[0].content)
         assert body["reason"] == "claimed but never spawned"
 
@@ -543,9 +537,7 @@ class TestAudit073WALReplayEngineWiring:
         orch, requests = self._build_with_handler(tmp_path, _handler)
         orch._recover_from_wal()
 
-        fail_posts = [
-            r for r in requests if r.method == "POST" and r.url.path.endswith("/fail")
-        ]
+        fail_posts = [r for r in requests if r.method == "POST" and r.url.path.endswith("/fail")]
         assert fail_posts == []
 
     def test_replay_non_fatal_on_server_error(self, tmp_path: Path) -> None:
@@ -586,9 +578,7 @@ class TestAudit073WALReplayEngineWiring:
         # First boot
         orch1, requests1 = self._build_with_handler(tmp_path, _handler)
         orch1._recover_from_wal()
-        fails_first = [
-            r for r in requests1 if r.method == "POST" and r.url.path == "/tasks/T-idem/fail"
-        ]
+        fails_first = [r for r in requests1 if r.method == "POST" and r.url.path == "/tasks/T-idem/fail"]
         assert len(fails_first) == 1
 
         # Remove the .closed marker written by the legacy path so the
@@ -601,9 +591,7 @@ class TestAudit073WALReplayEngineWiring:
         # Second boot — idempotency store must short-circuit the /fail POST.
         orch2, requests2 = self._build_with_handler(tmp_path, _handler)
         orch2._recover_from_wal()
-        fails_second = [
-            r for r in requests2 if r.method == "POST" and r.url.path == "/tasks/T-idem/fail"
-        ]
+        fails_second = [r for r in requests2 if r.method == "POST" and r.url.path == "/tasks/T-idem/fail"]
         assert fails_second == []
 
     def test_sigkill_between_claim_and_spawn_ticket_scenario(self, tmp_path: Path) -> None:
@@ -628,16 +616,14 @@ class TestAudit073WALReplayEngineWiring:
         orch._recover_from_wal()
 
         # Task transitioned to FAILED
-        assert any(
-            r.method == "POST" and r.url.path == "/tasks/T-sigkill/fail"
-            for r in requests
-        ), "expected /tasks/T-sigkill/fail POST"
+        assert any(r.method == "POST" and r.url.path == "/tasks/T-sigkill/fail" for r in requests), (
+            "expected /tasks/T-sigkill/fail POST"
+        )
 
         # Task re-queued via legacy force-claim path (existing retry mechanism)
-        assert any(
-            r.method == "POST" and r.url.path == "/tasks/T-sigkill/force-claim"
-            for r in requests
-        ), "expected /tasks/T-sigkill/force-claim POST"
+        assert any(r.method == "POST" and r.url.path == "/tasks/T-sigkill/force-claim" for r in requests), (
+            "expected /tasks/T-sigkill/force-claim POST"
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover
