@@ -690,162 +690,94 @@ def create_app(
 
     # WEB-011: Paginated task search — must precede tasks_router so /tasks/search
     # is matched before /tasks/{task_id}.
-    from bernstein.core.routes.paginated_tasks import router as paginated_tasks_router
-
-    application.include_router(paginated_tasks_router)
-
-    # Mount routers
-    application.include_router(agents_router)
-    application.include_router(auth_router)
-    application.include_router(tasks_router)
-    application.include_router(status_router)
-    application.include_router(workspace_router)
-    application.include_router(webhooks_router)
-    application.include_router(discord_router)
-    application.include_router(slack_router)
-    application.include_router(costs_router)
-    application.include_router(dashboard_router)
-    application.include_router(team_dashboard_router)
-    application.include_router(graph_router)
-    application.include_router(observability_router)
-    application.include_router(quality_router)
-
-    # Per-file code health score routes
-    from bernstein.core.routes.file_health import router as file_health_router
-
-    application.include_router(file_health_router)
-
-    # Graceful drain routes — freeze/unfreeze claim acceptance
-    from bernstein.core.routes.drain import router as drain_router
-
-    application.include_router(drain_router)
-
-    # Agent identity lifecycle routes
-    from bernstein.core.routes.identities import router as identities_router
-
-    application.include_router(identities_router)
-
-    # ACP (Agent Communication Protocol) routes — editor ecosystem visibility
     from bernstein.core.routes.acp import router as acp_router
-
-    application.include_router(acp_router)
-
-    # Approval routes for interactive TUI/HTTP approval gate management
+    from bernstein.core.routes.agent_comparison import router as agent_comparison_router
+    from bernstein.core.routes.api_v1 import router as api_v1_router
     from bernstein.core.routes.approvals import router as approvals_router
-
-    application.include_router(approvals_router)
-
-    # Plan approval routes (always mounted; returns 503 if plan_mode is off)
-    from bernstein.core.routes.plans import router as plans_router
-
-    application.include_router(plans_router)
-
-    # Gateway metrics — active only when a gateway session is running
-    from bernstein.core.routes.gateway import router as gateway_router
-
-    application.include_router(gateway_router)
-    application.state.mcp_gateway = None  # type: ignore[attr-defined]
-
-    # SLO and error budget endpoints
-    from bernstein.core.routes.slo import router as slo_router
-
-    application.include_router(slo_router)
-
-    # Custom metrics (OBS-148): user-defined formula-based KPIs
+    from bernstein.core.routes.audit_log import router as audit_log_router
+    from bernstein.core.routes.batch_ops import router as batch_ops_router
     from bernstein.core.routes.custom_metrics import router as custom_metrics_router
-
-    application.include_router(custom_metrics_router)
-
-    # SBOM generation and artifact listing (supply-chain security)
-    from bernstein.core.routes.sbom import router as sbom_router
-
-    application.include_router(sbom_router)
-
-    # Claude Code hook receiver — real-time tool-use and lifecycle events
+    from bernstein.core.routes.drain import router as drain_router
+    from bernstein.core.routes.export import router as export_router
+    from bernstein.core.routes.file_health import router as file_health_router
+    from bernstein.core.routes.gateway import router as gateway_router
+    from bernstein.core.routes.graduation import router as graduation_router
+    from bernstein.core.routes.grafana import router as grafana_router
+    from bernstein.core.routes.graphql_api import router as graphql_router
+    from bernstein.core.routes.health import router as health_deps_router
     from bernstein.core.routes.hooks import router as hooks_router
-
-    application.include_router(hooks_router)
-
-    # WEB-006: WebSocket live dashboard
+    from bernstein.core.routes.identities import router as identities_router
+    from bernstein.core.routes.paginated_tasks import router as paginated_tasks_router
+    from bernstein.core.routes.plans import router as plans_router
+    from bernstein.core.routes.predictive import router as predictive_router
+    from bernstein.core.routes.provider_latency import router as provider_latency_router
+    from bernstein.core.routes.sbom import router as sbom_router
+    from bernstein.core.routes.slo import router as slo_router
+    from bernstein.core.routes.task_detail import router as task_detail_router
+    from bernstein.core.routes.team import router as team_router
     from bernstein.core.routes.websocket import router as ws_router
 
-    application.include_router(ws_router)
+    # Full roster of application routers.
+    #
+    # AUDIT-126 — the /api/v1 mount used to receive only a hand-picked subset
+    # (tasks, status, costs, export, grafana, health, batch_ops, etc.), so
+    # newer routes silently lacked a versioned counterpart. Collecting every
+    # router here and iterating once guarantees that adding a new router
+    # mounts it under both the legacy root path and /api/v1 in lockstep.
+    #
+    # Order matters: paginated_tasks_router must precede tasks_router so that
+    # /tasks/search is matched before the /tasks/{task_id} catch-all.
+    all_routers = [
+        paginated_tasks_router,
+        agents_router,
+        auth_router,
+        tasks_router,
+        status_router,
+        workspace_router,
+        webhooks_router,
+        discord_router,
+        slack_router,
+        costs_router,
+        dashboard_router,
+        team_dashboard_router,
+        graph_router,
+        observability_router,
+        quality_router,
+        file_health_router,
+        drain_router,
+        identities_router,
+        acp_router,
+        approvals_router,
+        plans_router,
+        gateway_router,
+        slo_router,
+        custom_metrics_router,
+        sbom_router,
+        hooks_router,
+        ws_router,
+        export_router,
+        grafana_router,
+        task_detail_router,
+        health_deps_router,
+        batch_ops_router,
+        agent_comparison_router,
+        audit_log_router,
+        graphql_router,
+        graduation_router,
+        team_router,
+        provider_latency_router,
+        predictive_router,
+    ]
 
-    # WEB-008: Data export endpoints
-    from bernstein.core.routes.export import router as export_router
+    for r in all_routers:
+        application.include_router(r)
+        # WEB-007 / AUDIT-126: expose the same router under /api/v1/* so the
+        # versioned surface stays in parity with the legacy root paths.
+        api_v1_router.include_router(r)
 
-    application.include_router(export_router)
+    # Gateway metrics — active only when a gateway session is running.
+    application.state.mcp_gateway = None  # type: ignore[attr-defined]
 
-    # WEB-009: Grafana dashboard endpoint
-    from bernstein.core.routes.grafana import router as grafana_router
-
-    application.include_router(grafana_router)
-
-    # WEB-012: Dashboard task detail with live log streaming
-    from bernstein.core.routes.task_detail import router as task_detail_router
-
-    application.include_router(task_detail_router)
-
-    # WEB-013: Health endpoint with dependency status
-    from bernstein.core.routes.health import router as health_deps_router
-
-    application.include_router(health_deps_router)
-
-    # WEB-017: Batch operations endpoint
-    from bernstein.core.routes.batch_ops import router as batch_ops_router
-
-    application.include_router(batch_ops_router)
-
-    # WEB-018: Agent comparison view
-    from bernstein.core.routes.agent_comparison import router as agent_comparison_router
-
-    application.include_router(agent_comparison_router)
-
-    # WEB-019: Audit log endpoint with search and filtering
-    from bernstein.core.routes.audit_log import router as audit_log_router
-
-    application.include_router(audit_log_router)
-
-    # WEB-021: GraphQL API alongside REST
-    from bernstein.core.routes.graphql_api import router as graphql_router
-
-    application.include_router(graphql_router)
-
-    # Graduation framework — stage inspection and promotion
-    from bernstein.core.routes.graduation import router as graduation_router
-
-    application.include_router(graduation_router)
-
-    # Team state — current roster visibility for CLI/TUI
-    from bernstein.core.routes.team import router as team_router
-
-    application.include_router(team_router)
-
-    # ROAD-155: Provider latency percentile tracker
-    from bernstein.core.routes.provider_latency import router as provider_latency_router
-
-    application.include_router(provider_latency_router)
-
-    # ROAD-157: Predictive alerting — forecast issues before they impact the run
-    from bernstein.core.routes.predictive import router as predictive_router
-
-    application.include_router(predictive_router)
-
-    # WEB-007: API v1 versioned routes — mount all existing routers under /api/v1/
-    from bernstein.core.routes.api_v1 import router as api_v1_router
-
-    api_v1_router.include_router(paginated_tasks_router)
-    api_v1_router.include_router(tasks_router)
-    api_v1_router.include_router(status_router)
-    api_v1_router.include_router(agents_router)
-    api_v1_router.include_router(costs_router)
-    api_v1_router.include_router(export_router)
-    api_v1_router.include_router(grafana_router)
-    api_v1_router.include_router(health_deps_router)
-    api_v1_router.include_router(batch_ops_router)
-    api_v1_router.include_router(agent_comparison_router)
-    api_v1_router.include_router(audit_log_router)
-    api_v1_router.include_router(graphql_router)
     application.include_router(api_v1_router)
 
     return application
