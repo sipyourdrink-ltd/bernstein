@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,29 @@ _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
 # Timeout for all httpx calls to the task server (seconds).
 _HTTP_TIMEOUT = 5.0
 
+# Env var holding the bearer token the task server expects when auth is
+# enabled. When unset, MCP tools fall back to sending no Authorization
+# header so the default unauth task-server mode keeps working.
+_AUTH_TOKEN_ENV = "BERNSTEIN_AUTH_TOKEN"
+
 logger = logging.getLogger(__name__)
+
+
+def _auth_headers() -> dict[str, str]:
+    """Return the Authorization header for task-server requests, if configured.
+
+    Reads ``BERNSTEIN_AUTH_TOKEN`` from the environment at call time so
+    operators can rotate the token without restarting the MCP server.
+    When the var is missing or empty, returns an empty dict so callers
+    continue to work against an unauthenticated task server (the default
+    local-dev mode).
+
+    Returns:
+        ``{"Authorization": "Bearer <token>"}`` when the token is set,
+        otherwise an empty dict.
+    """
+    tok = os.environ.get(_AUTH_TOKEN_ENV, "")
+    return {"Authorization": f"Bearer {tok}"} if tok else {}
 
 
 def _error_response(exc: Exception, *, hint: str = "Task server may be restarting") -> str:
@@ -99,7 +122,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
                 "estimated_minutes": estimated_minutes,
             }
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.post(f"{server_url}/tasks", json=payload)
+                resp = await client.post(f"{server_url}/tasks", json=payload, headers=_auth_headers())
                 resp.raise_for_status()
                 data: dict[str, Any] = resp.json()
             return json.dumps(
@@ -120,7 +143,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
         """
         try:
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.get(f"{server_url}/status")
+                resp = await client.get(f"{server_url}/status", headers=_auth_headers())
                 resp.raise_for_status()
                 data: dict[str, Any] = resp.json()
             return json.dumps(data, indent=2)
@@ -145,7 +168,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             if status:
                 params["status"] = status
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.get(f"{server_url}/tasks", params=params)
+                resp = await client.get(f"{server_url}/tasks", params=params, headers=_auth_headers())
                 resp.raise_for_status()
                 data: list[dict[str, Any]] = resp.json()
             return json.dumps(data, indent=2)
@@ -162,7 +185,7 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
         """
         try:
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.get(f"{server_url}/status")
+                resp = await client.get(f"{server_url}/status", headers=_auth_headers())
                 resp.raise_for_status()
                 data: dict[str, Any] = resp.json()
             per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
@@ -222,7 +245,11 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         try:
             payload: dict[str, Any] = {"result_summary": note}
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.post(f"{server_url}/tasks/{task_id}/complete", json=payload)
+                resp = await client.post(
+                    f"{server_url}/tasks/{task_id}/complete",
+                    json=payload,
+                    headers=_auth_headers(),
+                )
                 resp.raise_for_status()
                 data: dict[str, Any] = resp.json()
             return json.dumps(
@@ -273,7 +300,11 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             if estimated_minutes is not None:
                 payload["estimated_minutes"] = estimated_minutes
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.post(f"{server_url}/tasks/self-create", json=payload)
+                resp = await client.post(
+                    f"{server_url}/tasks/self-create",
+                    json=payload,
+                    headers=_auth_headers(),
+                )
                 resp.raise_for_status()
                 data: dict[str, Any] = resp.json()
             return json.dumps(

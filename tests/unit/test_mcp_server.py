@@ -490,3 +490,112 @@ def test_http_timeout_constant() -> None:
     from bernstein.mcp.server import _HTTP_TIMEOUT
 
     assert pytest.approx(5.0) == _HTTP_TIMEOUT
+
+
+# ---------------------------------------------------------------------------
+# Authorization header propagation (audit-120)
+# ---------------------------------------------------------------------------
+
+
+def test_auth_headers_empty_when_token_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_auth_headers returns empty dict when BERNSTEIN_AUTH_TOKEN is unset."""
+    from bernstein.mcp.server import _auth_headers
+
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    assert _auth_headers() == {}
+
+
+def test_auth_headers_empty_when_token_blank(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_auth_headers returns empty dict when BERNSTEIN_AUTH_TOKEN is an empty string."""
+    from bernstein.mcp.server import _auth_headers
+
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "")
+    assert _auth_headers() == {}
+
+
+def test_auth_headers_bearer_when_token_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_auth_headers returns a Bearer header when BERNSTEIN_AUTH_TOKEN is set."""
+    from bernstein.mcp.server import _auth_headers
+
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "secret-123")
+    assert _auth_headers() == {"Authorization": "Bearer secret-123"}
+
+
+@pytest.mark.asyncio
+async def test_bernstein_status_sends_auth_header_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """bernstein_status forwards the bearer token when BERNSTEIN_AUTH_TOKEN is set."""
+    from bernstein.mcp.server import create_mcp_server
+
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "tok-xyz")
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=_make_status_payload())
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        await mcp.call_tool("bernstein_status", {})
+
+    headers = mock_client.get.call_args.kwargs.get("headers") or {}
+    assert headers.get("Authorization") == "Bearer tok-xyz"
+
+
+@pytest.mark.asyncio
+async def test_bernstein_status_omits_auth_header_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """bernstein_status sends no Authorization header when BERNSTEIN_AUTH_TOKEN is unset."""
+    from bernstein.mcp.server import create_mcp_server
+
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=_make_status_payload())
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        await mcp.call_tool("bernstein_status", {})
+
+    headers = mock_client.get.call_args.kwargs.get("headers") or {}
+    assert "Authorization" not in headers
+
+
+@pytest.mark.asyncio
+async def test_bernstein_run_sends_auth_header_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """bernstein_run forwards the bearer token on POST when BERNSTEIN_AUTH_TOKEN is set."""
+    from bernstein.mcp.server import create_mcp_server
+
+    monkeypatch.setenv("BERNSTEIN_AUTH_TOKEN", "run-tok")
+
+    created = _make_task_payload(task_id="task-auth-01", status="open")
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=created)
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        await mcp.call_tool("bernstein_run", {"goal": "authed task"})
+
+    headers = mock_client.post.call_args.kwargs.get("headers") or {}
+    assert headers.get("Authorization") == "Bearer run-tok"
