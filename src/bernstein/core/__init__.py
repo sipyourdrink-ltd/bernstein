@@ -481,7 +481,9 @@ _REDIRECT_MAP: dict[str, str] = {
     "sync": "bernstein.core.persistence.sync",
     "synthesis": "bernstein.core.knowledge.synthesis",
     "task_claim": "bernstein.core.tasks.task_claim",
-    "task_completion": "bernstein.core.tasks.task_completion",
+    # task_completion: removed in audit-018 — collect_completion_data lives in
+    # bernstein.core.tasks.task_lifecycle; no shim is provided to keep the
+    # duplicate implementation from re-appearing.
     "task_diff_preview": "bernstein.core.tasks.task_diff_preview",
     "task_event_store": "bernstein.core.tasks.task_event_store",
     "task_grouping": "bernstein.core.tasks.task_grouping",

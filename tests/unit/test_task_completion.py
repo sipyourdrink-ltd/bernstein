@@ -1,19 +1,27 @@
-"""Focused tests for task_completion.py."""
+"""Focused tests for task-completion helpers.
+
+The previous ``bernstein.core.tasks.task_completion`` module was an orphan
+duplicate of ``collect_completion_data`` that lived in
+``bernstein.core.tasks.task_lifecycle``.  It was deleted in audit-018 — these
+tests now import directly from ``task_lifecycle`` and guard against the shim
+re-appearing.
+"""
 
 from __future__ import annotations
 
 import collections
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from bernstein.core.cross_model_verifier import CrossModelVerifierConfig
 from bernstein.core.formal_verification import FormalProperty, FormalVerificationConfig
 from bernstein.core.models import AgentSession, ModelConfig, TaskStatus
 from bernstein.core.orchestrator import TickResult
-from bernstein.core.task_completion import collect_completion_data
-from bernstein.core.task_lifecycle import process_completed_tasks
+from bernstein.core.task_lifecycle import collect_completion_data, process_completed_tasks
 
 
 def _session_for(task_id: str) -> AgentSession:
@@ -223,3 +231,47 @@ def test_process_completed_tasks_routes_merge_conflicts_to_resolver(tmp_path: Pa
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)
+
+
+# ---------------------------------------------------------------------------
+# audit-018 regression guards — prove the orphan/duplicate module is gone
+# ---------------------------------------------------------------------------
+
+
+def test_audit_018_task_completion_module_is_deleted() -> None:
+    """The ``bernstein.core.tasks.task_completion`` module must not exist.
+
+    Audit-018 deleted the orphan duplicate of ``collect_completion_data``.
+    If the file is re-added in a future refactor, this test fails so the
+    duplicate implementation cannot silently drift again.
+    """
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("bernstein.core.tasks.task_completion")
+
+
+def test_audit_018_task_completion_shim_is_removed() -> None:
+    """The ``bernstein.core.task_completion`` back-compat shim must be absent.
+
+    The redirect entry in ``bernstein.core.__init__._REDIRECT_MAP`` was the
+    only importer of the orphan module; it is removed so the lazy import
+    path cannot resurrect the duplicate.
+    """
+    from bernstein.core import _REDIRECT_MAP
+
+    assert "task_completion" not in _REDIRECT_MAP
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("bernstein.core.task_completion")
+
+
+def test_audit_018_collect_completion_data_single_source_of_truth() -> None:
+    """``collect_completion_data`` must be defined only in ``task_lifecycle``.
+
+    The duplicate definition in ``task_completion.py`` diverged subtly from
+    the lifecycle version; asserting a single source of truth prevents that
+    regression from re-occurring.
+    """
+    from bernstein.core.tasks import task_lifecycle
+
+    func = task_lifecycle.collect_completion_data
+    assert func.__module__ == "bernstein.core.tasks.task_lifecycle"
