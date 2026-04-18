@@ -171,3 +171,50 @@ async def test_status_summary_reports_counts_by_status(tmp_path: Path) -> None:
     assert summary["claimed"] == 1
     assert summary["failed"] == 1
     assert store.get_task(open_task.id) is not None
+
+
+@pytest.mark.anyio
+async def test_replay_progress_restores_entries_and_snapshots_after_restart(tmp_path: Path) -> None:
+    """audit-023: progress entries + snapshots survive a simulated server restart.
+
+    Writes 10 progress entries and 3 snapshots through one TaskStore, then
+    instantiates a fresh store pointing at the same paths and verifies the
+    full history is replayed back into memory.
+    """
+    jsonl_path = tmp_path / "runtime" / "tasks.jsonl"
+    store = TaskStore(jsonl_path)
+    task = await store.create(_task_request(title="progress-persistence"))
+
+    for i in range(10):
+        await store.add_progress(task.id, f"step {i}", percent=i * 10)
+    for i in range(3):
+        store.add_snapshot(
+            task.id,
+            files_changed=i,
+            tests_passing=i * 2,
+            errors=0,
+            last_file=f"file_{i}.py",
+        )
+    await store.flush_buffer()
+
+    # Simulate a server restart: brand-new TaskStore, replay from disk only.
+    restored = TaskStore(jsonl_path)
+    restored.replay_jsonl()
+    restored_task = restored.get_task(task.id)
+
+    assert restored_task is not None
+    entries = list(restored_task.progress_log)
+    assert len(entries) == 10
+    assert [entry["message"] for entry in entries] == [f"step {i}" for i in range(10)]
+    assert [entry["percent"] for entry in entries] == [i * 10 for i in range(10)]
+
+    snapshots = restored.get_snapshots(task.id)
+    assert len(snapshots) == 3
+    assert [snap.files_changed for snap in snapshots] == [0, 1, 2]
+    assert [snap.last_file for snap in snapshots] == ["file_0.py", "file_1.py", "file_2.py"]
+
+    # The progress file itself must exist under .sdd/runtime/progress/.
+    progress_file = jsonl_path.parent / "progress" / f"{task.id}.jsonl"
+    assert progress_file.exists()
+    lines = progress_file.read_text().splitlines()
+    assert len(lines) == 13  # 10 entries + 3 snapshots
