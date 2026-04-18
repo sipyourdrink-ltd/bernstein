@@ -85,13 +85,7 @@ jobs:
           # Use junitxml export if available (mutmut >= 2.0 supports it)
           uv run mutmut junitxml > mutmut_junit.xml 2>/dev/null || true
 
-          # Compute score from mutmut summary
-          SUMMARY=$(uv run mutmut run --no-progress 2>&1 | tail -5 || true)
-
-          # Parse "X/Y mutants killed" from the summary output
-          TOTAL_LINE=$(uv run mutmut results 2>/dev/null | grep -E "^[0-9]" | head -1 || true)
-
-          # Alternative: use mutmut show for detailed summary
+          # Use mutmut show for detailed summary
           MUTMUT_OUTPUT=$(uv run mutmut results 2>&1 || true)
           KILLED_COUNT=$(printf '%s\n' "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Killed" || true)
           SURVIVED_COUNT=$(printf '%s\n' "$MUTMUT_OUTPUT" | grep -c "^[0-9].*Survived\|^[0-9].*Suspicious" || true)
@@ -106,21 +100,25 @@ jobs:
 
           if [ "$TOTAL" -eq 0 ]; then
             echo "::warning::No mutations were generated or mutmut output could not be parsed"
-            echo "score=0" >> "$GITHUB_OUTPUT"
-            echo "killed=0" >> "$GITHUB_OUTPUT"
-            echo "total=0" >> "$GITHUB_OUTPUT"
+            {
+              echo "score=0"
+              echo "killed=0"
+              echo "total=0"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           # Score = killed / (killed + survived + timeout) * 100
           SCORE=$(( KILLED_COUNT * 100 / TOTAL ))
 
-          echo "score=$SCORE" >> "$GITHUB_OUTPUT"
-          echo "killed=$KILLED_COUNT" >> "$GITHUB_OUTPUT"
-          echo "survived=$SURVIVED_COUNT" >> "$GITHUB_OUTPUT"
-          echo "timeout=$TIMEOUT_COUNT" >> "$GITHUB_OUTPUT"
-          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
-          echo "threshold=$THRESHOLD" >> "$GITHUB_OUTPUT"
+          {
+            echo "score=$SCORE"
+            echo "killed=$KILLED_COUNT"
+            echo "survived=$SURVIVED_COUNT"
+            echo "timeout=$TIMEOUT_COUNT"
+            echo "total=$TOTAL"
+            echo "threshold=$THRESHOLD"
+          } >> "$GITHUB_OUTPUT"
 
           echo "Mutation score: $SCORE% ($KILLED_COUNT/$TOTAL killed)"
           echo "Threshold: $THRESHOLD%"
