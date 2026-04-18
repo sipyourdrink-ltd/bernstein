@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
 from bernstein.core.budget_actions import (
     BudgetAction,
     BudgetActionResult,
@@ -107,7 +108,7 @@ def test_result_to_dict() -> None:
     )
     d = result.to_dict()
     assert d["action"] == "pause"
-    assert d["threshold_pct"] == 0.8
+    assert d["threshold_pct"] == pytest.approx(0.8)
     assert "message" in d
 
 
@@ -217,6 +218,6 @@ def test_apply_policy_returns_result_with_metadata() -> None:
     policy = BudgetPolicy.default()
     result = apply_policy(policy, 0.82, tasks=None)
     assert isinstance(result, BudgetActionResult)
-    assert result.threshold_pct == 0.80
+    assert result.threshold_pct == pytest.approx(0.80)
     assert abs(result.percentage_used - 0.82) < 1e-9
     assert result.message != ""
