@@ -1,18 +1,28 @@
 """Orchestrator checkpoint/restore for long-running plans.
 
-Provides durable checkpointing so that 50+ task plans spanning hours
-can be resumed after reboots or crashes. Checkpoints capture the full
-orchestrator state — task graph, agent sessions, cost accumulator, and
-WAL position — as a single atomic JSON file in ``.sdd/``.
+Two complementary checkpoint shapes live here (audit-084):
 
-Storage: .sdd/runtime/checkpoints/checkpoint-{id}.json
+1. :class:`Checkpoint` — the canonical, atomic full-snapshot written by the
+   orchestrator for crash recovery.  Captures task graph, agent sessions,
+   cost accumulator, and WAL position as a single JSON file in
+   ``.sdd/runtime/checkpoints/checkpoint-{id}.json``.
+2. :class:`PartialState` — the operator-visible progress slice written by
+   the ``bernstein checkpoint`` CLI.  Captures goal, completed/in-flight/
+   pending task ids, cumulative cost, and git SHA.  Stored in
+   ``.sdd/sessions/{ts}-checkpoint.json``.
+
+:class:`bernstein.core.persistence.session.CheckpointState` is a
+back-compat alias for :class:`PartialState` so the CLI and existing tests
+keep working.  The older ``session_checkpoint.SessionCheckpoint`` was
+removed in audit-084 (no production callers).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+import time
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +30,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_STALE_MINUTES: int = 30
 
 
 @dataclass(frozen=True)
@@ -257,3 +269,79 @@ def _checkpoint_from_dict(data: dict[str, Any]) -> Checkpoint:
         cost_accumulator=data["cost_accumulator"],
         wal_position=data["wal_position"],
     )
+
+
+# ---------------------------------------------------------------------------
+# PartialState — operator-visible progress slice (audit-084)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PartialState:
+    """Operator-visible progress slice written by ``bernstein checkpoint``.
+
+    Unlike :class:`Checkpoint` (which is a full crash-recovery snapshot),
+    :class:`PartialState` captures a human-readable view of session
+    progress: what's done, what's in flight, what's next, how much has been
+    spent, and which git SHA was current at snapshot time.  It is written
+    non-atomically to ``.sdd/sessions/{ts}-checkpoint.json`` and is safe to
+    lose (the canonical :class:`Checkpoint` remains the recovery source of
+    truth).
+
+    Attributes:
+        timestamp: Unix timestamp when this state was captured.
+        goal: The active goal for this session, if any.
+        completed_task_ids: Task IDs that finished successfully by snapshot time.
+        in_flight_task_ids: Task IDs currently claimed or in-progress.
+        next_steps: Ordered list of planned next actions (typically task titles).
+        cost_spent: Cumulative USD cost accumulated to this point.
+        git_sha: Git commit SHA at snapshot time.
+    """
+
+    timestamp: float
+    goal: str = ""
+    completed_task_ids: list[str] = field(default_factory=list[str])
+    in_flight_task_ids: list[str] = field(default_factory=list[str])
+    next_steps: list[str] = field(default_factory=list[str])
+    cost_spent: float = 0.0
+    git_sha: str = ""
+
+    def is_stale(self, stale_minutes: int = _DEFAULT_STALE_MINUTES) -> bool:
+        """Return True if this partial state is too old to be useful.
+
+        Args:
+            stale_minutes: Age threshold in minutes.
+
+        Returns:
+            True when the state's age exceeds *stale_minutes*.
+        """
+        age_s = time.time() - self.timestamp
+        return age_s > stale_minutes * 60
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialise to a JSON-compatible dict."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> PartialState:
+        """Deserialise from a JSON-parsed dict.
+
+        Args:
+            data: Dict with at least a ``timestamp`` key.
+
+        Returns:
+            Populated :class:`PartialState`.
+
+        Raises:
+            KeyError: If ``timestamp`` is absent.
+            ValueError: If ``timestamp`` cannot be cast to float.
+        """
+        return cls(
+            timestamp=float(data["timestamp"]),  # type: ignore[arg-type]
+            goal=str(data.get("goal", "")),
+            completed_task_ids=list(data.get("completed_task_ids", [])),  # type: ignore[arg-type]
+            in_flight_task_ids=list(data.get("in_flight_task_ids", [])),  # type: ignore[arg-type]
+            next_steps=list(data.get("next_steps", [])),  # type: ignore[arg-type]
+            cost_spent=float(data.get("cost_spent", 0.0)),  # type: ignore[arg-type]
+            git_sha=str(data.get("git_sha", "")),
+        )

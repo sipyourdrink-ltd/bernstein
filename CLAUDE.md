@@ -35,11 +35,9 @@ You are working on Bernstein, a multi-agent orchestration system for CLI coding 
   - `memory/` — persistent memory stores (SQLite + vector cache)
   - `trigger_sources/` — external trigger integrations
   - `grpc_gen/` — generated gRPC stubs
-  - Back-compat: `from bernstein.core.<old> import X` works via a `sys.meta_path` finder in `core/__init__.py` (`_CoreRedirectFinder`, `_REDIRECT_MAP`). The finder covers legacy names like `orchestrator.py`, `spawner.py`, `task_lifecycle.py`, etc. Top-level `.py` files outside sub-packages: `defaults.py`, `credential_scoping.py`, `example_gallery.py`, `prompt_optimizer.py`, `streaming_merge.py`. WARNING: new aliases MUST be added to `_REDIRECT_MAP` in `src/bernstein/core/__init__.py`; creating physical shim files will shadow the finder.
+  - Back-compat: `from bernstein.core.<old> import X` works via a `sys.meta_path` finder in `core/__init__.py` (`_CoreRedirectFinder`, `_REDIRECT_MAP`). The finder covers legacy names like `orchestrator.py`, `spawner.py`, `task_lifecycle.py`, etc. Top-level `.py` files outside sub-packages: `defaults.py`, `credential_scoping.py`, `streaming_merge.py`. WARNING: new aliases MUST be added to `_REDIRECT_MAP` in `src/bernstein/core/__init__.py`; creating physical shim files will shadow the finder.
   - `defaults.py` — 150+ configurable constants
   - `credential_scoping.py` — per-agent credential scoping
-  - `example_gallery.py` — example task/plan gallery
-  - `prompt_optimizer.py` — prompt optimization helpers
   - `streaming_merge.py` — streaming merge utility
 - `src/bernstein/adapters/` — 17 CLI agent adapters (aider, amp, claude, cloudflare, cody, codex, continue_dev, cursor, gemini, goose, iac, kilo, kiro, ollama, opencode, qwen, generic)
 - `src/bernstein/cli/` — CLI entry points, decomposed into `commands/` sub-package (run_cmd, stop_cmd, status_cmd, agents_cmd, evolve_cmd, advanced_cmd, debug_cmd, etc.)

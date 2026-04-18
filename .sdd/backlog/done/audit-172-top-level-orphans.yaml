@@ -1,0 +1,43 @@
+---
+id: audit-172-top-level-orphans
+title: "audit-172-top-level-orphans — Top-level orphan modules in core/: prompt_optimizer (725L), example_gallery (503L)"
+status: done
+type: chore
+priority: 2
+scope: small
+complexity: low
+role: backend
+model: auto
+effort: low
+estimated_minutes: 30
+depends_on: []
+blocks: []
+tags: [audit-2026-04, cross-cutting, dead-code]
+context_files:
+  - src/bernstein/core/prompt_optimizer.py
+  - src/bernstein/core/example_gallery.py
+  - src/bernstein/core/agents/spawn_prompt.py
+affected_paths:
+  - src/bernstein/core/
+require_review: true
+---
+
+## Summary
+
+prompt_optimizer (725L) is a spawn_prompt parameter that's never assigned (default None). example_gallery (503L) is test-only. ARCHITECTURE.md lists both as 'standalone top-level files' misleadingly.
+
+## Evidence
+
+grep -rE 'PromptOptimizer\(|ExampleGallery' src/bernstein — empty.
+
+## Reproduction
+
+grep.
+
+## Proposed fix
+
+Delete both files + tests. Remove prompt_optimizer param from spawn_prompt (no caller passes non-None value). Update ARCHITECTURE.md.
+
+## Risks / out of scope
+
+Deleting prompt_optimizer changes spawn_prompt signature — make it inner _noop.

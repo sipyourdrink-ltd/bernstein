@@ -83,7 +83,7 @@ Since v1.6, `core/` is organized into 22 sub-packages rather than flat files. To
 | `core/tokens/` | Token monitor, context compression, prompt caching |
 | `core/trigger_sources/` | GitHub, GitLab, Slack, Discord, file watch, webhook triggers |
 
-A few standalone files remain at `core/` top level: `defaults.py` (all configurable constants), `credential_scoping.py`, `prompt_optimizer.py`, `example_gallery.py`, and `streaming_merge.py`.
+A few standalone files remain at `core/` top level: `defaults.py` (all configurable constants), `credential_scoping.py`, and `streaming_merge.py`.
 
 ---
 

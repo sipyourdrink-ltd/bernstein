@@ -1848,31 +1848,6 @@ class AgentSpawner:
                             self._adapter_health.record_failure(adapter_name)
                             break
 
-                        # Check for auth error (T499)
-                        is_auth_error = False
-                        log_path = spawn_cwd / ".sdd" / "logs" / f"{session_id}.log"
-                        if (
-                            log_path.exists()
-                            and self._rate_limit_tracker is not None
-                            and self._rate_limit_tracker.scan_log_for_auth_error(log_path)
-                        ):
-                            logger.warning(
-                                "Auth error detected for provider=%s adapter=%s",
-                                provider_name or adapter_name,
-                                adapter_name,
-                            )
-                            is_auth_error = True
-
-                        if is_auth_error and target_adapter.supports_auth_refresh():
-                            refresh_key = (provider_name, "auth_refresh")
-                            if refresh_key not in attempted:
-                                attempted.add(refresh_key)
-                                logger.info("Attempting auth refresh for %s", adapter_name)
-                                if target_adapter.refresh_auth(spawn_cwd):
-                                    # Re-try same provider once after refresh
-                                    attempted.remove(attempt_key)
-                                    continue
-
                         self._adapter_health.record_failure(adapter_name)
                         logger.warning(
                             "Agent spawn failed (session=%s provider=%s adapter=%s strategy=%s): %s",

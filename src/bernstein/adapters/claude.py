@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Mapping  # noqa: TC003 — runtime use in ClassVar annotations
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -225,11 +226,13 @@ class ClaudeCodeAdapter(CLIAdapter):
 
     # Scope → base budget mapping.  Opus tasks get a 2x multiplier because
     # opus input/output tokens cost roughly twice as much as sonnet.
-    _SCOPE_BUDGET_USD: ClassVar[dict[str, float]] = COST.scope_budget_usd
+    # Widened to ``Mapping`` because ``defaults.COST`` returns a
+    # ``MappingProxyType`` view (audit-155).
+    _SCOPE_BUDGET_USD: ClassVar[Mapping[str, float]] = COST.scope_budget_usd
 
     # Scope multipliers: large tasks get proportionally more turns so they
     # don't die prematurely.
-    _SCOPE_MULTIPLIERS: ClassVar[dict[str, float]] = COST.scope_multipliers
+    _SCOPE_MULTIPLIERS: ClassVar[Mapping[str, float]] = COST.scope_multipliers
 
     def _build_command(
         self,

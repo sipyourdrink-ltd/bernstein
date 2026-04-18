@@ -112,16 +112,6 @@ class TestMockAdapterSpawn:
                 proc.wait()  # type: ignore[union-attr]
 
 
-class TestAdapterSupportsAuth:
-    """supports_auth_refresh and refresh_auth must work without raising."""
-
-    @pytest.mark.parametrize("adapter_name", _ADAPTER_NAMES)
-    def test_auth_methods_callable(self, adapter_name: str) -> None:
-        adapter = get_adapter(adapter_name)
-        assert isinstance(adapter.supports_auth_refresh(), bool)
-        assert isinstance(adapter.refresh_auth(Path(".")), bool)
-
-
 class TestAdapterRateLimited:
     """is_rate_limited() must return bool."""
 

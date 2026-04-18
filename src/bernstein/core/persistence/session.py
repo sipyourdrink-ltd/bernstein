@@ -16,7 +16,15 @@ from typing import Any, Literal, cast
 
 from bernstein.core.defaults import JANITOR
 from bernstein.core.persistence.atomic_write import write_atomic_json
+from bernstein.core.persistence.checkpoint import PartialState
 from bernstein.core.persistence.runtime_state import rotate_log_file
+
+# Back-compat alias (audit-084): ``CheckpointState`` is the legacy name for
+# the operator-visible progress slice.  Canonical home is
+# :class:`bernstein.core.persistence.checkpoint.PartialState`.  The alias is
+# preserved so the ``bernstein checkpoint`` CLI and existing tests keep
+# working.
+CheckpointState = PartialState
 
 DEFAULT_STALE_MINUTES: int = 30
 _SESSION_FILE = Path(".sdd") / "runtime" / "session.json"
@@ -130,69 +138,6 @@ def discard_session(workdir: Path) -> None:
 
 
 _SESSIONS_DIR = Path(".sdd") / "sessions"
-
-
-@dataclass
-class CheckpointState:
-    """Mid-session checkpoint written periodically for recovery and introspection.
-
-    Args:
-        timestamp: Unix timestamp when this checkpoint was written.
-        goal: The active goal for this session.
-        completed_task_ids: Task IDs that finished successfully by checkpoint time.
-        in_flight_task_ids: Task IDs currently claimed or in-progress.
-        next_steps: Ordered list of planned next actions.
-        cost_spent: Cumulative USD cost accumulated to this point.
-        git_sha: Git commit SHA at checkpoint time.
-    """
-
-    timestamp: float
-    goal: str = ""
-    completed_task_ids: list[str] = field(default_factory=list[str])
-    in_flight_task_ids: list[str] = field(default_factory=list[str])
-    next_steps: list[str] = field(default_factory=list[str])
-    cost_spent: float = 0.0
-    git_sha: str = ""
-
-    def is_stale(self, stale_minutes: int = DEFAULT_STALE_MINUTES) -> bool:
-        """Return True if this checkpoint is too old to be useful.
-
-        Args:
-            stale_minutes: Age threshold in minutes.
-
-        Returns:
-            True when the checkpoint age exceeds *stale_minutes*.
-        """
-        age_s = time.time() - self.timestamp
-        return age_s > stale_minutes * 60
-
-    def to_dict(self) -> dict[str, object]:
-        """Serialise to a JSON-compatible dict."""
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, object]) -> CheckpointState:
-        """Deserialise from a JSON-parsed dict.
-
-        Args:
-            data: Dict with at least a ``timestamp`` key.
-
-        Returns:
-            Populated :class:`CheckpointState`.
-
-        Raises:
-            KeyError: If ``timestamp`` is absent.
-            ValueError: If ``timestamp`` cannot be cast to float.
-        """
-        return cls(
-            timestamp=float(data["timestamp"]),  # type: ignore[arg-type]
-            goal=str(data.get("goal", "")),
-            completed_task_ids=list(data.get("completed_task_ids", [])),  # type: ignore[arg-type]
-            in_flight_task_ids=list(data.get("in_flight_task_ids", [])),  # type: ignore[arg-type]
-            next_steps=list(data.get("next_steps", [])),  # type: ignore[arg-type]
-            cost_spent=float(data.get("cost_spent", 0.0)),  # type: ignore[arg-type]
-            git_sha=str(data.get("git_sha", "")),
-        )
 
 
 @dataclass

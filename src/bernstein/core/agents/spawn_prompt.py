@@ -532,37 +532,17 @@ def _resolve_role_prompt(
     templates_dir: Path,
     catalog_system_prompt: str | None,
     agency_catalog: dict[str, AgencyAgent] | None,
-    prompt_optimizer: Any | None,
-) -> tuple[str, Any]:
-    """Resolve the role prompt from catalog, optimizer, template, or fallback."""
+) -> str:
+    """Resolve the role prompt from catalog, template, or fallback."""
+    del tasks  # reserved for future task-specific overrides
     if catalog_system_prompt:
-        return catalog_system_prompt, None
-
-    optimizer_override: str | None = None
-    _optimizer_assignment: Any = None
-    if prompt_optimizer is not None:
-        try:
-            task_id = tasks[0].id if tasks else ""
-            _optimizer_assignment = prompt_optimizer.assign_variant(role=role, task_id=task_id)
-            optimizer_override = _optimizer_assignment.content_override
-            if optimizer_override:
-                logger.debug(
-                    "PromptOptimizer: using variant v%s for role %r task %r",
-                    _optimizer_assignment.variant_version,
-                    role,
-                    task_id,
-                )
-        except Exception as _opt_exc:
-            logger.debug("PromptOptimizer variant selection failed: %s", _opt_exc)
-
-    if optimizer_override:
-        return optimizer_override, _optimizer_assignment
+        return catalog_system_prompt
 
     try:
-        return render_role_prompt(role, context, templates_dir=templates_dir), _optimizer_assignment
+        return render_role_prompt(role, context, templates_dir=templates_dir)
     except (FileNotFoundError, TemplateError) as exc:
         logger.debug("Template render failed for role %s, using fallback: %s", role, exc)
-        return _render_fallback(role, templates_dir, agency_catalog), _optimizer_assignment
+        return _render_fallback(role, templates_dir, agency_catalog)
 
 
 def _get_lesson_context(role: str, tasks: list[Task], workdir: Path) -> str:
@@ -610,7 +590,6 @@ def _render_prompt(
     task_graph: TaskGraph | None = None,
     meta_messages: list[str] | None = None,
     file_ownership: dict[str, str] | None = None,
-    prompt_optimizer: Any | None = None,
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -621,10 +600,6 @@ def _render_prompt(
 
     If *catalog_system_prompt* is provided it replaces the built-in role
     template entirely, so the spawner can inject catalog-defined personas.
-
-    If *prompt_optimizer* is provided and has an active A/B test for the
-    role, the variant selected by the optimizer overrides the template-based
-    role prompt, enabling continuous prompt improvement.
 
     Args:
         tasks: Batch of 1-3 tasks (all same role).
@@ -640,8 +615,6 @@ def _render_prompt(
         meta_messages: Optional list of operational nudges/hints (T423).
         file_ownership: Optional mapping of filepath -> agent_id for files
             currently being edited by other agents.
-        prompt_optimizer: Optional PromptOptimizer instance.  When provided,
-            assigns tasks to prompt variants and records outcomes for A/B tests.
 
     Returns:
         Complete prompt string ready for the CLI adapter.
@@ -717,14 +690,13 @@ def _render_prompt(
         "SPECIALISTS": specialist_block,
     }
 
-    role_prompt, _optimizer_assignment = _resolve_role_prompt(
+    role_prompt = _resolve_role_prompt(
         role,
         tasks,
         context,
         templates_dir,
         catalog_system_prompt,
         agency_catalog,
-        prompt_optimizer,
     )
 
     lesson_context = _get_lesson_context(role, tasks, workdir)
@@ -985,7 +957,6 @@ def render_prompt(
     task_graph: TaskGraph | None = None,
     meta_messages: list[str] | None = None,
     file_ownership: dict[str, str] | None = None,
-    prompt_optimizer: Any | None = None,
 ) -> str:
     """Public wrapper for compatibility-safe prompt rendering."""
     return _render_prompt(
@@ -1000,7 +971,6 @@ def render_prompt(
         task_graph=task_graph,
         meta_messages=meta_messages,
         file_ownership=file_ownership,
-        prompt_optimizer=prompt_optimizer,
     )
 
 

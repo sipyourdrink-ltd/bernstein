@@ -1,0 +1,41 @@
+---
+id: audit-170-observability-test-only-modules
+title: "audit-170-observability-test-only-modules — 31 test-only observability modules — ~55% of surface, ~6000 LOC"
+status: done
+type: chore
+priority: 2
+scope: large
+complexity: low
+role: backend
+model: auto
+effort: high
+estimated_minutes: 180
+depends_on: []
+blocks: []
+tags: [audit-2026-04, cross-cutting, dead-code, observability]
+context_files:
+  - src/bernstein/core/observability/
+affected_paths:
+  - src/bernstein/core/observability/
+require_review: true
+---
+
+## Summary
+
+31 of 57 observability files have 0 production importers: alert_rules, apm_export (audit-159), apm_integration (audit-159), cascading_failure_circuit_breaker (audit-163), circuit_breaker (audit-163), compound_error, custom_metric_dsl (audit-165), datadog_export (audit-159), debug_bundle, degraded_mode, error_classifier, latency_tracker, log_context, log_search_engine (audit-175), nl_analytics, otel_collector, otel_conventions, postmortem_report, provider_circuit_breaker (audit-163), rate_limited_logger, self_healing (audit-164), sla_monitor, slo_dashboard, stack_detector, startup_selftest, team_dashboard, tool_timing, trace_correlation, trace_propagation, tui_capture, usage_telemetry, health_score, agent_metrics.
+
+## Evidence
+
+Bash sweep: 31 modules return 0 prod importers.
+
+## Reproduction
+
+Bash.
+
+## Proposed fix
+
+Triage pass: KEEP (wire) predictive_alerts, health_score, slo_dashboard, team_dashboard, alert_rules. MERGE otel_conventions into telemetry.py; move otel_collector (YAML generator) to tools/scripts. DELETE self_healing, custom_metric_dsl, apm_export+apm_integration+datadog_export, startup_selftest, tool_timing, tui_capture, compound_error, debug_bundle, degraded_mode, nl_analytics. Each requires own PR; budget 15 min per module.
+
+## Risks / out of scope
+
+Some advertise OWASP/compliance features in docs — double-check before deleting.

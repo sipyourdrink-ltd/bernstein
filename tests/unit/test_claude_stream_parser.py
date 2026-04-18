@@ -263,3 +263,80 @@ class TestStreamParserState:
         assert state.duration_ms == 0
         assert state.subtype == ""
         assert state.errors == []
+
+
+class TestClaudeStreamParserBuffering:
+    """audit-143 — feed_line must buffer byte-split input and bound dedup."""
+
+    def test_feed_line_buffers_partial_then_completes_on_newline(self) -> None:
+        parser = ClaudeStreamParser()
+        line = _make_assistant_text("split text") + "\n"
+        mid = len(line) // 2
+        # First half is partial JSON — no events yet.
+        events = parser.feed_line(line[:mid])
+        assert events == []
+        # Second half completes the record (includes trailing \n).
+        events = parser.feed_line(line[mid:])
+        assert len(events) == 1
+        assert events[0].event_type == StreamEventType.TEXT
+        assert events[0].data["text"] == "split text"
+
+    def test_feed_line_accepts_bytes(self) -> None:
+        parser = ClaudeStreamParser()
+        raw = (_make_assistant_text("hello bytes") + "\n").encode("utf-8")
+        events = parser.feed_line(raw)
+        assert len(events) == 1
+        assert events[0].data["text"] == "hello bytes"
+
+    def test_feed_line_bytes_split_at_boundary(self) -> None:
+        parser = ClaudeStreamParser()
+        raw = (_make_assistant_text("hello bytes") + "\n").encode("utf-8")
+        # Split right in the middle of the JSON payload.
+        assert parser.feed_line(raw[:10]) == []
+        events = parser.feed_line(raw[10:])
+        assert len(events) == 1
+        assert events[0].data["text"] == "hello bytes"
+
+    def test_feed_line_multiple_records_in_one_chunk(self) -> None:
+        parser = ClaudeStreamParser()
+        combined = _make_assistant_text("one") + "\n" + _make_assistant_text("two") + "\n"
+        events = parser.feed_line(combined)
+        assert len(events) == 2
+        assert events[0].data["text"] == "one"
+        assert events[1].data["text"] == "two"
+
+    def test_feed_line_preserves_trailing_partial_across_calls(self) -> None:
+        parser = ClaudeStreamParser()
+        first = _make_assistant_text("first") + "\n" + _make_assistant_text("second")[:20]
+        events = parser.feed_line(first)
+        assert len(events) == 1
+        assert events[0].data["text"] == "first"
+        # Remainder of the second record arrives on the next call.
+        rest = _make_assistant_text("second")[20:] + "\n"
+        events = parser.feed_line(rest)
+        assert len(events) == 1
+        assert events[0].data["text"] == "second"
+
+    def test_seen_text_bounded_at_10000(self) -> None:
+        parser = ClaudeStreamParser()
+        for i in range(20_000):
+            parser.feed_line(_make_assistant_text(f"unique-{i}"))
+        # LRU cap must hold at exactly 10 000 entries.
+        assert len(parser._seen_text) == 10_000
+        # All surviving keys must be the 10 000 most recent inserts.
+        assert "unique-19999" in parser._seen_text
+        assert "unique-10000" in parser._seen_text
+        assert "unique-9999" not in parser._seen_text
+        assert "unique-0" not in parser._seen_text
+
+    def test_seen_text_eviction_preserves_dedup_semantics(self) -> None:
+        parser = ClaudeStreamParser()
+        # Fill to capacity with distinct texts.
+        for i in range(10_000):
+            parser.feed_line(_make_assistant_text(f"t-{i}"))
+        assert len(parser.state.text_blocks) == 10_000
+        # A brand-new text still dedupes against itself within-window.
+        e1 = parser.feed_line(_make_assistant_text("fresh"))
+        e2 = parser.feed_line(_make_assistant_text("fresh"))
+        assert len(e1) == 1
+        assert e2 == []

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
@@ -39,6 +40,10 @@ _EVENT_SYSTEM = "system"
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
 _CAST_DICT_STR_ANY = "dict[str, Any]"
+
+# Maximum number of text blocks retained for deduplication.  Bounded LRU
+# prevents unbounded growth in long-running sessions (audit-143).
+_SEEN_TEXT_MAX: int = 10_000
 
 
 class StreamEventType(StrEnum):
@@ -115,18 +120,81 @@ class ClaudeStreamParser:
 
     def __init__(self) -> None:
         self.state = StreamParserState()
-        self._seen_text: set[str] = set()
+        # Bounded LRU of recently-seen text blocks (audit-143).  OrderedDict
+        # gives O(1) membership test, O(1) move-to-end on hit, and O(1)
+        # FIFO eviction via popitem(last=False).
+        self._seen_text: OrderedDict[str, None] = OrderedDict()
+        # Partial-line buffer.  feed_line accumulates bytes/str here and
+        # only emits events once a complete NDJSON record (either a
+        # newline-terminated chunk or a string that parses as JSON) is
+        # available.  Handles byte-split chunks from streamed IO.
+        self._line_buffer: str = ""
 
-    def feed_line(self, line: str) -> list[StreamEvent]:
-        """Parse a single NDJSON line and return extracted events.
+    def _remember_text(self, text: str) -> bool:
+        """Record a text block in the bounded LRU.
+
+        Returns True if the text was new (and therefore recorded);
+        False if it was already present (a duplicate).  Evicts the oldest
+        entry when capacity is exceeded.
+        """
+        if text in self._seen_text:
+            # Refresh recency so this block survives future evictions.
+            self._seen_text.move_to_end(text)
+            return False
+        self._seen_text[text] = None
+        if len(self._seen_text) > _SEEN_TEXT_MAX:
+            # Drop the oldest entry.  popitem(last=False) is O(1).
+            self._seen_text.popitem(last=False)
+        return True
+
+    def feed_line(self, line: str | bytes) -> list[StreamEvent]:
+        """Parse NDJSON input and return extracted events.
+
+        Accepts either a single complete NDJSON line or a partial chunk.
+        Input is appended to an internal buffer; events are only emitted
+        for complete records.  A record is considered complete when
+        terminated by ``\\n`` in the accumulated buffer, or when the
+        buffer alone parses as valid JSON (covers callers that pass one
+        full JSON line without a trailing newline).
 
         Args:
-            line: A single line from Claude Code's stream-json output.
+            line: A chunk (bytes or str) from Claude Code's stream-json
+                output.  May be partial — partial data is buffered until
+                a newline is seen or the buffer becomes parseable.
 
         Returns:
-            List of StreamEvent objects extracted from this line.
-            May be empty if the line is not parseable or contains no events.
+            List of StreamEvent objects extracted from any complete
+            records seen so far.  Empty if only partial data is buffered.
         """
+        chunk = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+        self._line_buffer += chunk
+        events: list[StreamEvent] = []
+
+        if "\n" in self._line_buffer:
+            # Split on newlines; keep the trailing remainder (post-last-\n)
+            # in the buffer for the next call.
+            parts = self._line_buffer.split("\n")
+            self._line_buffer = parts[-1]
+            for part in parts[:-1]:
+                events.extend(self._process_line(part))
+            return events
+
+        # No newline yet.  If the whole buffer parses as JSON, emit
+        # events and clear the buffer — this preserves back-compat with
+        # callers that feed one full record per call without a newline.
+        stripped = self._line_buffer.strip()
+        if stripped:
+            try:
+                json.loads(stripped)
+            except json.JSONDecodeError:
+                # Partial JSON — keep buffering.
+                return []
+            self._line_buffer = ""
+            events.extend(self._process_line(stripped))
+        return events
+
+    def _process_line(self, line: str) -> list[StreamEvent]:
+        """Parse a single already-complete NDJSON line into events."""
         line = line.strip()
         if not line:
             return []
@@ -163,15 +231,16 @@ class ClaudeStreamParser:
         """
         all_events: list[StreamEvent] = []
         for line in lines.splitlines():
-            all_events.extend(self.feed_line(line))
+            all_events.extend(self._process_line(line))
         return all_events
 
     def _handle_text_block(self, block: dict[str, Any], msg: dict[str, Any]) -> StreamEvent | None:
         """Handle a ``text`` content block, deduplicating by value."""
         text = str(block.get("text", ""))
-        if not text or text in self._seen_text:
+        if not text:
             return None
-        self._seen_text.add(text)
+        if not self._remember_text(text):
+            return None
         self.state.text_blocks.append(text)
         return StreamEvent(event_type=StreamEventType.TEXT, data={"text": text}, raw=msg)
 

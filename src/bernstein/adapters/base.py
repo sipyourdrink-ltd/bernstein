@@ -334,18 +334,6 @@ class CLIAdapter(ABC):
         """
         return None
 
-    def supports_auth_refresh(self) -> bool:
-        """Return True if this adapter supports automated auth refresh (OAuth)."""
-        return False
-
-    def refresh_auth(self, _workdir: Path) -> bool:
-        """Attempt to refresh authentication credentials.
-
-        Returns:
-            True if refresh was successful, False otherwise.
-        """
-        return False
-
     def is_rate_limited(self) -> bool:
         """Check if the provider is currently rate-limited.
 

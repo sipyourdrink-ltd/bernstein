@@ -198,7 +198,6 @@ class TestUnattendedSpawnerRetry:
                 SpawnError("429 Too Many Requests"),
                 success_result,
             ]
-            adapter.supports_auth_refresh.return_value = False
 
             templates_dir = tmp_path / "templates"
             backend_dir = templates_dir / "backend"
@@ -227,7 +226,6 @@ class TestUnattendedSpawnerRetry:
             adapter = MagicMock()
             adapter.name.return_value = "test-adapter"
             adapter.spawn.side_effect = SpawnError("429 rate limited")
-            adapter.supports_auth_refresh.return_value = False
 
             templates_dir = tmp_path / "templates"
             backend_dir = templates_dir / "backend"
@@ -253,7 +251,6 @@ class TestUnattendedSpawnerRetry:
             adapter = MagicMock()
             adapter.name.return_value = "test-adapter"
             adapter.spawn.side_effect = SpawnError("429 rate limited")
-            adapter.supports_auth_refresh.return_value = False
 
             templates_dir = tmp_path / "templates"
             backend_dir = templates_dir / "backend"

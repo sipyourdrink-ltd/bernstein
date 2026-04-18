@@ -12,12 +12,29 @@ To override at runtime (e.g., from parsed bernstein.yaml)::
 
     from bernstein.core.defaults import override
     override("orchestrator", {"drain_timeout_s": 120.0})
+
+Safety model (audit-155)
+------------------------
+All ``*Defaults`` dataclasses are ``frozen=True`` — direct attribute mutation
+(``COST.foo = 1``) raises :class:`dataclasses.FrozenInstanceError`.  Dict
+default-factory fields are wrapped in :class:`types.MappingProxyType`, so
+inner-item mutation (``COST.effort_base_turns['max'] = 0``) raises
+:class:`TypeError`.
+
+:func:`override` and :func:`reset` never mutate in place.  They build a new
+instance via :func:`dataclasses.replace` and rebind the module-level singleton
+(``setattr(module, SECTION_UPPER, new)``) atomically.  Consumers that read
+defaults through the module (``_defaults.ORCHESTRATOR.tick_interval_s``) see
+the new value immediately; consumers that captured a reference via
+``from bernstein.core.defaults import X`` keep the snapshot they imported.
 """
 
 from __future__ import annotations
 
-import copy
-from dataclasses import dataclass, field
+import sys
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -25,7 +42,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class OrchestratorDefaults:
     """Run loop, tick scheduling, drain, and convergence."""
 
@@ -57,7 +74,7 @@ class OrchestratorDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class SpawnDefaults:
     """Agent spawning, process management, worktree lifecycle."""
 
@@ -66,7 +83,7 @@ class SpawnDefaults:
     lesson_cache_ttl_s: float = 300.0  # 5 min
 
 
-@dataclass
+@dataclass(frozen=True)
 class AgentDefaults:
     """Heartbeat, idle detection, escalation tiers."""
 
@@ -92,16 +109,37 @@ class AgentDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+def _freeze_dict_str_float(mapping: dict[str, float]) -> Mapping[str, float]:
+    """Return a read-only view over a fresh copy of *mapping*.
+
+    Using :class:`types.MappingProxyType` blocks in-place item mutation so that
+    ``TASK.scope_timeout_s['small'] = 1`` raises :class:`TypeError`.
+    """
+    return MappingProxyType(dict(mapping))
+
+
+def _freeze_dict_str_int(mapping: dict[str, int]) -> Mapping[str, int]:
+    """Read-only view for ``Mapping[str, int]`` default factories."""
+    return MappingProxyType(dict(mapping))
+
+
+def _freeze_dict_str_str(mapping: dict[str, str]) -> Mapping[str, str]:
+    """Read-only view for ``Mapping[str, str]`` default factories."""
+    return MappingProxyType(dict(mapping))
+
+
+@dataclass(frozen=True)
 class TaskDefaults:
     """Timeouts, retry, priority, batch sizing."""
 
-    scope_timeout_s: dict[str, float] = field(
-        default_factory=lambda: {
-            "small": 15 * 60,  # 900s  (15 min)
-            "medium": 30 * 60,  # 1800s (30 min)
-            "large": 60 * 60,  # 3600s (60 min)
-        }
+    scope_timeout_s: Mapping[str, float] = field(
+        default_factory=lambda: _freeze_dict_str_float(
+            {
+                "small": 15 * 60,  # 900s  (15 min)
+                "medium": 30 * 60,  # 1800s (30 min)
+                "large": 60 * 60,  # 3600s (60 min)
+            }
+        )
     )
     xl_timeout_s: float = 120 * 60  # 7200s (2 hours)
 
@@ -121,7 +159,7 @@ class TaskDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class TokenDefaults:
     """Token monitoring, compaction, context management."""
 
@@ -150,32 +188,38 @@ class TokenDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class CostDefaults:
     """Budget caps, scope budgets, effort→turns mapping."""
 
-    scope_budget_usd: dict[str, float] = field(
-        default_factory=lambda: {
-            "small": 2.0,
-            "medium": 5.0,
-            "large": 15.0,
-        }
+    scope_budget_usd: Mapping[str, float] = field(
+        default_factory=lambda: _freeze_dict_str_float(
+            {
+                "small": 2.0,
+                "medium": 5.0,
+                "large": 15.0,
+            }
+        )
     )
-    scope_multipliers: dict[str, float] = field(
-        default_factory=lambda: {
-            "small": 1.0,
-            "medium": 1.5,
-            "large": 2.0,
-        }
+    scope_multipliers: Mapping[str, float] = field(
+        default_factory=lambda: _freeze_dict_str_float(
+            {
+                "small": 1.0,
+                "medium": 1.5,
+                "large": 2.0,
+            }
+        )
     )
-    effort_base_turns: dict[str, int] = field(
-        default_factory=lambda: {
-            "max": 100,
-            "high": 50,
-            "medium": 30,
-            "normal": 25,
-            "low": 15,
-        }
+    effort_base_turns: Mapping[str, int] = field(
+        default_factory=lambda: _freeze_dict_str_int(
+            {
+                "max": 100,
+                "high": 50,
+                "medium": 30,
+                "normal": 25,
+                "low": 15,
+            }
+        )
     )
     opus_budget_multiplier: float = 2.0
     batch_max_turns: int = 200
@@ -190,7 +234,7 @@ class CostDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class GateDefaults:
     """Quality gate thresholds and timeouts."""
 
@@ -206,7 +250,7 @@ class GateDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class ParallelismDefaults:
     """CPU-aware spawn throttling and error-rate windows."""
 
@@ -222,7 +266,7 @@ class ParallelismDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class ApprovalDefaults:
     """Human-in-the-loop approval gate."""
 
@@ -235,7 +279,7 @@ class ApprovalDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class ProtocolDefaults:
     """MCP, cluster, WebSocket protocol tuning."""
 
@@ -256,23 +300,27 @@ class ProtocolDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class PlanDefaults:
     """Planning, risk assessment, cost estimation."""
 
-    tokens_by_scope: dict[str, int] = field(
-        default_factory=lambda: {
-            "small": 30_000,
-            "medium": 80_000,
-            "large": 200_000,
-        }
+    tokens_by_scope: Mapping[str, int] = field(
+        default_factory=lambda: _freeze_dict_str_int(
+            {
+                "small": 30_000,
+                "medium": 80_000,
+                "large": 200_000,
+            }
+        )
     )
-    model_by_complexity: dict[str, str] = field(
-        default_factory=lambda: {
-            "low": "haiku",
-            "medium": "sonnet",
-            "high": "opus",
-        }
+    model_by_complexity: Mapping[str, str] = field(
+        default_factory=lambda: _freeze_dict_str_str(
+            {
+                "low": "haiku",
+                "medium": "sonnet",
+                "high": "opus",
+            }
+        )
     )
     free_adapters: tuple[str, ...] = ("qwen", "gemini", "ollama")
 
@@ -282,7 +330,7 @@ class PlanDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class TriggerDefaults:
     """Trigger rate limits and file watching."""
 
@@ -295,7 +343,7 @@ class TriggerDefaults:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class JanitorDefaults:
     """Disk retention policy for long-running orchestrator artifacts.
 
@@ -318,7 +366,7 @@ class JanitorDefaults:
 
 
 # ---------------------------------------------------------------------------
-# Singletons (mutable via override())
+# Singletons (rebindable via override()/reset())
 # ---------------------------------------------------------------------------
 
 ORCHESTRATOR = OrchestratorDefaults()
@@ -335,25 +383,70 @@ PLAN = PlanDefaults()
 TRIGGER = TriggerDefaults()
 JANITOR = JanitorDefaults()
 
-_SECTION_MAP: dict[str, Any] = {
-    "orchestrator": ORCHESTRATOR,
-    "spawn": SPAWN,
-    "agent": AGENT,
-    "task": TASK,
-    "token": TOKEN,
-    "cost": COST,
-    "gate": GATE,
-    "parallelism": PARALLELISM,
-    "approval": APPROVAL,
-    "protocol": PROTOCOL,
-    "plan": PLAN,
-    "trigger": TRIGGER,
-    "janitor": JANITOR,
-}
+
+# Mapping of section name (as used in bernstein.yaml ``tuning:`` blocks) to the
+# module-level attribute that stores the singleton.  We rebind the attribute
+# rather than mutate in place so the frozen dataclass invariant holds.
+_SECTION_TO_ATTR: Mapping[str, str] = MappingProxyType(
+    {
+        "orchestrator": "ORCHESTRATOR",
+        "spawn": "SPAWN",
+        "agent": "AGENT",
+        "task": "TASK",
+        "token": "TOKEN",
+        "cost": "COST",
+        "gate": "GATE",
+        "parallelism": "PARALLELISM",
+        "approval": "APPROVAL",
+        "protocol": "PROTOCOL",
+        "plan": "PLAN",
+        "trigger": "TRIGGER",
+        "janitor": "JANITOR",
+    }
+)
+
+
+# Mapping of module attribute name → dataclass factory used by :func:`reset`.
+_ATTR_TO_FACTORY: Mapping[str, type[Any]] = MappingProxyType(
+    {
+        "ORCHESTRATOR": OrchestratorDefaults,
+        "SPAWN": SpawnDefaults,
+        "AGENT": AgentDefaults,
+        "TASK": TaskDefaults,
+        "TOKEN": TokenDefaults,
+        "COST": CostDefaults,
+        "GATE": GateDefaults,
+        "PARALLELISM": ParallelismDefaults,
+        "APPROVAL": ApprovalDefaults,
+        "PROTOCOL": ProtocolDefaults,
+        "PLAN": PlanDefaults,
+        "TRIGGER": TriggerDefaults,
+        "JANITOR": JanitorDefaults,
+    }
+)
+
+
+def _freeze_mapping(value: Any) -> Any:
+    """Wrap plain ``dict`` values in :class:`MappingProxyType`.
+
+    Used by :func:`override` so that a caller passing a fresh dict for a
+    mapping field cannot retain a live mutable handle to the defaults.
+    """
+    if isinstance(value, dict):
+        clone: dict[Any, Any] = dict(value)  # type: ignore[arg-type]
+        return MappingProxyType(clone)
+    return value
 
 
 def override(section: str, overrides: dict[str, Any]) -> None:
     """Apply runtime overrides from bernstein.yaml ``tuning:`` section.
+
+    The targeted singleton is rebuilt via :func:`dataclasses.replace` and the
+    module-level attribute is rebound atomically — no mutation of the existing
+    frozen instance occurs.  For mapping fields, the override payload is merged
+    with the current view (new keys win, omitted keys are preserved) and the
+    merged result is re-wrapped in :class:`MappingProxyType` to keep the
+    read-only invariant.
 
     Args:
         section: One of the section names (e.g., ``"orchestrator"``).
@@ -363,53 +456,41 @@ def override(section: str, overrides: dict[str, Any]) -> None:
         KeyError: If *section* is not recognized.
         AttributeError: If a field name does not exist on the target dataclass.
     """
-    target = _SECTION_MAP[section]
+    try:
+        attr_name = _SECTION_TO_ATTR[section]
+    except KeyError:
+        raise KeyError(section) from None
+
+    module = sys.modules[__name__]
+    current: Any = getattr(module, attr_name)
+    fields = current.__dataclass_fields__
+
+    changes: dict[str, Any] = {}
     for key, value in overrides.items():
-        if not hasattr(target, key):
-            raise AttributeError(
-                f"{type(target).__name__} has no field {key!r}. Valid fields: {list(target.__dataclass_fields__)}"
-            )
-        current = getattr(target, key)
-        # Merge dicts instead of replacing
-        if isinstance(current, dict) and isinstance(value, dict):
-            merged = copy.copy(current)
-            merged.update(value)
-            object.__setattr__(target, key, merged)
+        if key not in fields:
+            raise AttributeError(f"{type(current).__name__} has no field {key!r}. Valid fields: {list(fields)}")
+        existing: Any = getattr(current, key)
+        # Merge mapping fields rather than replacing, matching legacy
+        # behaviour (callers pass partial dicts from bernstein.yaml).
+        if isinstance(existing, Mapping) and isinstance(value, dict):
+            merged: dict[Any, Any] = dict(existing)  # type: ignore[arg-type]
+            merged.update(value)  # type: ignore[arg-type]
+            changes[key] = MappingProxyType(merged)
         else:
-            object.__setattr__(target, key, value)
+            changes[key] = _freeze_mapping(value)
+
+    new_instance = replace(current, **changes)
+    setattr(module, attr_name, new_instance)
 
 
 def reset() -> None:
-    """Reset all sections to their default values (for testing)."""
-    global ORCHESTRATOR, SPAWN, AGENT, TASK, TOKEN, COST, GATE
-    global PARALLELISM, APPROVAL, PROTOCOL, PLAN, TRIGGER, JANITOR
-    ORCHESTRATOR = OrchestratorDefaults()
-    SPAWN = SpawnDefaults()
-    AGENT = AgentDefaults()
-    TASK = TaskDefaults()
-    TOKEN = TokenDefaults()
-    COST = CostDefaults()
-    GATE = GateDefaults()
-    PARALLELISM = ParallelismDefaults()
-    APPROVAL = ApprovalDefaults()
-    PROTOCOL = ProtocolDefaults()
-    PLAN = PlanDefaults()
-    TRIGGER = TriggerDefaults()
-    JANITOR = JanitorDefaults()
-    _SECTION_MAP.update(
-        {
-            "orchestrator": ORCHESTRATOR,
-            "spawn": SPAWN,
-            "agent": AGENT,
-            "task": TASK,
-            "token": TOKEN,
-            "cost": COST,
-            "gate": GATE,
-            "parallelism": PARALLELISM,
-            "approval": APPROVAL,
-            "protocol": PROTOCOL,
-            "plan": PLAN,
-            "trigger": TRIGGER,
-            "janitor": JANITOR,
-        }
-    )
+    """Reset all sections to their default values (for testing).
+
+    Rebuilds each singleton from its dataclass factory and rebinds the
+    module-level attribute.  After :func:`reset`, any caller looking up
+    ``bernstein.core.defaults.<SECTION>`` via attribute access sees the
+    fresh instance.
+    """
+    module = sys.modules[__name__]
+    for attr_name, factory in _ATTR_TO_FACTORY.items():
+        setattr(module, attr_name, factory())

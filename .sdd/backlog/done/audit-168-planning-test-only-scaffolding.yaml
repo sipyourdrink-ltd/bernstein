@@ -1,0 +1,47 @@
+---
+id: audit-168-planning-test-only-scaffolding
+title: "audit-168-planning-test-only-scaffolding — 6 test-only planning modules: plan_autocorrect, plan_generator, plan_chat, collaborative_plan, progress_estimation, semantic_dedup"
+status: done
+type: chore
+priority: 2
+scope: medium
+complexity: low
+role: backend
+model: auto
+effort: low
+estimated_minutes: 45
+depends_on: []
+blocks: []
+tags: [audit-2026-04, cross-cutting, dead-code]
+context_files:
+  - src/bernstein/core/planning/plan_chat.py
+  - src/bernstein/core/planning/plan_autocorrect.py
+  - src/bernstein/core/planning/collaborative_plan.py
+  - src/bernstein/core/planning/plan_generator.py
+  - src/bernstein/core/planning/progress_estimation.py
+  - src/bernstein/core/planning/semantic_dedup.py
+  - src/bernstein/core/planning/duration_predictor.py
+affected_paths:
+  - src/bernstein/core/planning/
+require_review: true
+---
+
+## Summary
+
+Six planning modules with 0 production importers (~2500 LOC). No UI calls plan_chat or collaborative_plan. progress_estimation overlaps with duration_predictor.py which IS live.
+
+## Evidence
+
+Per-module bash: 0 prod / 1 test each.
+
+## Reproduction
+
+Bash sweep.
+
+## Proposed fix
+
+Delete the six files + tests. Or gate behind ENABLE_EXPERIMENTAL_PLANNING flag and move to experimental/. Pick one between progress_estimation and duration_predictor.
+
+## Risks / out of scope
+
+No CLI invokes these.

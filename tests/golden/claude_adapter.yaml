@@ -1,0 +1,49 @@
+name: claude_adapter_spawn
+adapter_class: bernstein.adapters.claude.ClaudeCodeAdapter
+# Replay target: verify the inner CLI argv (after the bernstein-worker `--`
+# separator) and the set of adapter-declared extra env keys.  Stable across
+# environments because workdir-dependent paths are stripped before compare.
+#
+# session_role selects a role whose allowedTools branch is exercised
+# (claude scopes --allowedTools for qa/reviewer/docs/security only).
+session_role: qa
+steps:
+  - prompt: "fix the bug in main.py"
+    model: "sonnet"
+    expected_pid: 1234
+    # Argv of the actual `claude` CLI (after bernstein-worker `--`).
+    # Fields that bake in workdir/session/model are held constant by
+    # the replay harness via the fixed session_id + model passed in.
+    inner_argv:
+      - "claude"
+      - "--model"
+      - "claude-sonnet-4-6"
+      - "--effort"
+      - "low"
+      - "--permission-mode"
+      - "bypassPermissions"
+      - "--max-turns"
+      - "22"
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--include-hook-events"
+      - "--no-session-persistence"
+      - "--fallback-model"
+      - "claude-haiku-4-5-20251001"
+      - "--allowedTools"
+      - "Bash Read Grep Glob Agent"
+      - "--max-budget-usd"
+      - "5.00"
+      - "-p"
+      - "fix the bug in main.py"
+    # Flags that must appear with a JSON payload argument (JSON content
+    # may churn across versions — only the flag is checked here).
+    required_json_flags:
+      - "--agents"
+      - "--json-schema"
+      - "--mcp-config"
+    # Adapter-declared credential/auth env keys (beyond the base
+    # allowlist of PATH/HOME/locale vars).
+    env_extra_keys:
+      - "ANTHROPIC_API_KEY"
