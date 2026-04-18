@@ -1053,7 +1053,8 @@
 
             this.lastUpdate = new Date().toLocaleTimeString();
             if (!this.connected) this.connected = true;
-          } catch (_fetchErr) {
+          } catch (err) {
+              console.debug('bernstein:fetch-err handled', err);
             // Fetch failed — mark disconnected and fall back to polling
             this.connected = false;
             if (!this.pollTimer) {
@@ -1068,7 +1069,8 @@
             if (!resp.ok) return;
             const data = await resp.json();
             this.workers = Array.isArray(data) ? data : (data.nodes || []);
-          } catch (_clusterErr) {
+          } catch (err) {
+            console.debug('bernstein:cluster-err handled', err);
             // Cluster endpoints may not be available in single-node mode
           }
         },
@@ -1126,7 +1128,8 @@
                 } else if (msg.event === 'heartbeat') {
                   this.connected = true;
                 }
-              } catch (_wsParseErr) {
+              } catch (err) {
+                console.debug('bernstein:ws-parse-err handled', err);
               }
             };
 
@@ -1148,7 +1151,8 @@
                 if (!this.wsSocket) this.connectWS();
               }, 10000);
             };
-          } catch (_wsConnErr) {
+          } catch (err) {
+            console.debug('bernstein:ws-conn-err handled', err);
             // WebSocket not supported — fall back to SSE
             this.wsActive = false;
             this.connectSSE();
@@ -1202,11 +1206,13 @@
                 } else {
                   this.fetchData();
                 }
-              } catch (_sseParseErr) {
+              } catch (err) {
+                console.debug('bernstein:sse-parse-err handled', err);
                 this.fetchData();
               }
             };
-          } catch (_sseConnErr) {
+          } catch (err) {
+            console.debug('bernstein:sse-conn-err handled', err);
             // SSE not available — fall back to polling
             this.connected = false;
             this.startPolling();
@@ -1252,7 +1258,8 @@
                     });
                   }
                 }
-              } catch (_logParseErr) {
+              } catch (err) {
+                console.debug('bernstein:log-parse-err handled', err);
               }
             };
 
@@ -1264,7 +1271,8 @@
                 this.fetchAgentLogs();
               }
             };
-          } catch (_agentStreamErr) {
+          } catch (err) {
+            console.debug('bernstein:agent-stream-err handled', err);
             // Agent stream unavailable — fall back to polling
             this._logPollTimer = setInterval(() => this.fetchAgentLogs(), 2000);
             this.fetchAgentLogs();
@@ -1298,7 +1306,8 @@
                 });
               }
             }
-          } catch (_logFetchErr) {
+          } catch (err) {
+            console.debug('bernstein:log-fetch-err handled', err);
           }
         },
 
@@ -1312,7 +1321,8 @@
             });
             this.addActivity('failed', 'Killed agent ' + agentId.slice(0, 12));
             await this.fetchData();
-          } catch (_killErr) {
+          } catch (err) {
+            console.debug('bernstein:kill-err handled', err);
           }
         },
 
@@ -1324,7 +1334,8 @@
               body: '{}'
             });
             await this.fetchData();
-          } catch (_spawnErr) {
+          } catch (err) {
+            console.debug('bernstein:spawn-err handled', err);
           }
         },
 
@@ -1339,7 +1350,8 @@
             if (resp.ok) {
               this.stats.max_agents = newVal;
             }
-          } catch (_configErr) {
+          } catch (err) {
+            console.debug('bernstein:config-err handled', err);
           }
         },
 
@@ -1351,7 +1363,8 @@
               body: JSON.stringify({ reason: 'cancelled via dashboard' })
             });
             await this.fetchData();
-          } catch (_cancelErr) {
+          } catch (err) {
+            console.debug('bernstein:cancel-err handled', err);
           }
         },
 

@@ -30,7 +30,10 @@ class CompletionSignalSchema(BaseModel):
 # audit-117: input-size caps for TaskCreate (prevents OOM via 200MB descriptions).
 # Titles are short human-readable summaries; descriptions can carry a plan but must
 # stay below the per-request body cap (1MB) enforced by ContentLengthMiddleware.
-_MAX_TITLE_LEN = 200
+_MAX_TITLE_LEN = 500  # Raised from 200 — real backlog/audit tickets use
+# long descriptive titles (audit-169-… runs to 206 chars). 500 still caps
+# abusive multi-MB titles but stops ingest_backlog batch POSTs 422-ing every
+# 20 s whenever the backlog carries any title > 200.
 _MAX_DESCRIPTION_LEN = 100_000
 _MAX_SHORT_STR_LEN = 1_000  # role, scope, complexity, etc. — enum-like fields
 _MAX_PATH_LEN = 4_096  # owned_files / parent_task_id / depends_on entries

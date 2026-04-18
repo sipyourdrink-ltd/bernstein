@@ -163,7 +163,11 @@ def ingest_backlog(orch: Any) -> int:
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
+        if exc.response.status_code in (404, 422):
+            # 404: older server build without the batch endpoint.
+            # 422: one task in the batch fails pydantic validation — fall
+            # back so valid tasks still land instead of poisoning the whole
+            # batch every tick.
             return _ingest_backlog_one_by_one(orch, batch_files, open_dir, claimed_dir)
         logger.warning("ingest_backlog: batch POST failed: %s", exc)
         return 0

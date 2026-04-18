@@ -3380,8 +3380,12 @@ class Orchestrator:
             )
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:
-                # Server doesn't support batch yet — fall back to one-by-one
+            if exc.response.status_code in (404, 422):
+                # 404: server doesn't support batch yet (older build).
+                # 422: one task in the batch fails pydantic validation — a
+                # single oversized title would otherwise poison every batch
+                # for the whole run.  Fall back to one-by-one so valid tasks
+                # still land and only the bad task keeps retrying.
                 return self._ingest_backlog_one_by_one(batch_files, open_dir, claimed_dir)
             logger.warning("ingest_backlog: batch POST failed: %s", exc)
             return 0  # Move NONE on failure
