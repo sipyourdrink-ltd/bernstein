@@ -1,8 +1,8 @@
-"""Tests for bernstein.core.config_diff_cmd (CFG-009)."""
+"""Tests for bernstein.core.config_drift_cmd (CFG-009)."""
 
 from __future__ import annotations
 
-from bernstein.core.config_diff_cmd import (
+from bernstein.core.config_drift_cmd import (
     ConfigDeviation,
     ConfigDiffReport,
     diff_against_defaults,

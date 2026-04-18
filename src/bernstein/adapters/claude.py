@@ -1,4 +1,17 @@
-"""Claude Code CLI adapter."""
+"""Claude Code CLI adapter.
+
+The heavy-lifting helpers for MCP config merging, cache-control block
+construction, and the inline wrapper-script source live in three sibling
+modules extracted by audit-142:
+
+* :mod:`bernstein.adapters.claude_mcp_loader` — ``load_mcp_config`` / ``_resolve_env_vars``
+* :mod:`bernstein.adapters.claude_cache_control` — ``build_cacheable_system_blocks``
+* :mod:`bernstein.adapters.claude_wrapper_script` — ``build_wrapper_script``
+
+They are re-exported from this module so existing callers (and tests
+that patch symbols via ``bernstein.adapters.claude.<name>``) continue to
+work without changes.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +23,27 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping  # noqa: TC003 — runtime use in ClassVar annotations
-from pathlib import Path
+from pathlib import Path  # noqa: TC003 — kept at runtime so tests can patch ``claude.Path.home``
 from typing import Any, ClassVar, cast
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.claude_agents import build_agents_json
+
+# Re-export helpers that were inlined here before audit-142 split them
+# into sibling modules.  Callers and tests import these names directly
+# from ``bernstein.adapters.claude`` so the re-exports MUST stay.  The
+# explicit ``as`` aliases tell Pyright these are intentional re-exports
+# and not unused imports.
+from bernstein.adapters.claude_cache_control import (
+    build_cacheable_system_blocks as build_cacheable_system_blocks,
+)
+from bernstein.adapters.claude_mcp_loader import (
+    _resolve_env_vars as _resolve_env_vars,  # pyright: ignore[reportPrivateUsage]
+)
+from bernstein.adapters.claude_mcp_loader import (
+    load_mcp_config as load_mcp_config,
+)
+from bernstein.adapters.claude_wrapper_script import build_wrapper_script
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.defaults import COST
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
@@ -49,99 +78,7 @@ _RESULT_SCHEMA = json.dumps(
 _CAST_DICT_STR_ANY = "dict[str, Any]"
 
 
-def load_mcp_config(
-    project_servers: dict[str, Any] | None = None,
-) -> dict[str, Any] | None:
-    """Build merged MCP config from user global config and project-level overrides.
-
-    Reads ~/.claude/mcp.json (user's global MCP servers), then merges in any
-    project-level mcp_servers from bernstein.yaml. Project config wins on conflicts.
-
-    Args:
-        project_servers: MCP server definitions from bernstein.yaml mcp_servers field.
-
-    Returns:
-        Merged MCP config dict ready for --mcp-config, or None if no servers found.
-    """
-    merged: dict[str, Any] = {}
-
-    # 1. Read user global config (~/.claude/mcp.json)
-    global_path = Path.home() / ".claude" / "mcp.json"
-    if global_path.exists():
-        try:
-            global_cfg = json.loads(global_path.read_text(encoding="utf-8"))
-            if isinstance(global_cfg, dict):
-                # mcp.json has {"mcpServers": {...}} structure
-                cfg = cast(_CAST_DICT_STR_ANY, global_cfg)
-                servers = cfg.get("mcpServers", cfg)
-                if isinstance(servers, dict):
-                    merged.update(cast(_CAST_DICT_STR_ANY, servers))
-        except (OSError, json.JSONDecodeError):
-            pass  # Global MCP config unreadable; skip
-
-    # 2. Merge project-level config (overrides global)
-    if project_servers:
-        # Expand env vars in server config values
-        for name, server_def in project_servers.items():
-            resolved = _resolve_env_vars(server_def)
-            merged[name] = resolved
-
-    if not merged:
-        return None
-
-    return {"mcpServers": merged}
-
-
-def _resolve_env_vars(obj: Any) -> Any:
-    """Recursively resolve ${VAR} references in config values."""
-    if isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
-        var_name = obj[2:-1]
-        return os.environ.get(var_name, obj)
-    if isinstance(obj, dict):
-        d = cast(_CAST_DICT_STR_ANY, obj)
-        return {k: _resolve_env_vars(v) for k, v in d.items()}
-    if isinstance(obj, list):
-        lst = cast("list[Any]", obj)
-        return [_resolve_env_vars(item) for item in lst]
-    return obj
-
-
 _logger = logging.getLogger(__name__)
-
-
-def build_cacheable_system_blocks(
-    system_addendum: str,
-) -> list[dict[str, Any]]:
-    """Build Anthropic API system message blocks with cache control hints.
-
-    Wraps the static system addendum (role template + coding standards) in
-    a content block with ``cache_control: {"type": "ephemeral"}``.  When
-    used with the Anthropic Messages API, this instructs the provider to
-    cache the block for up to 5 minutes, reducing input token costs for
-    repeated spawns with the same role.
-
-    The Claude Code CLI handles caching transparently when content is
-    passed via ``--append-system-prompt``.  This function is provided for
-    adapters that call the API directly or for future Claude Code CLI
-    versions that support explicit cache control.
-
-    Args:
-        system_addendum: Static system prompt content to mark as cacheable.
-
-    Returns:
-        List of Anthropic API content blocks.  If *system_addendum* is
-        non-empty, the block includes ``cache_control``.  Returns an
-        empty list if the addendum is empty.
-    """
-    if not system_addendum:
-        return []
-    return [
-        {
-            "type": "text",
-            "text": system_addendum,
-            "cache_control": {"type": "ephemeral"},
-        }
-    ]
 
 
 # How long a cached rate-limit probe result stays valid (seconds).
@@ -362,101 +299,23 @@ class ClaudeCodeAdapter(CLIAdapter):
     ) -> str:
         """Return the stream-json → human-readable log converter script.
 
-        Parses Claude Code's NDJSON stream, extracts human-readable text for
-        the log file, writes token usage to a sidecar, touches a heartbeat
-        file on every event so the orchestrator knows the agent is alive, and
-        writes a completion marker when a ``result`` event is received so the
-        orchestrator can reap the agent immediately instead of waiting for the
-        heartbeat to go stale.
+        Thin delegator to :func:`build_wrapper_script` in
+        :mod:`bernstein.adapters.claude_wrapper_script`.  Kept as a
+        ``@staticmethod`` on the adapter so tests and external callers
+        that reference ``ClaudeCodeAdapter._wrapper_script`` continue
+        to work unchanged after the audit-142 extraction.
 
         Args:
-            session_id: Agent session ID, injected for token sidecar writes.
+            session_id: Agent session ID, accepted for API parity.
             tokens_path: Absolute path to the ``.tokens`` sidecar file.
             heartbeat_path: Absolute path to the heartbeat file (touched on each event).
-            completion_path: Absolute path to the completion marker file.  Written
-                when a ``result`` event is parsed, signalling the orchestrator that
-                the agent finished its work and can be reaped immediately.
+            completion_path: Absolute path to the completion marker file.
         """
-        token_writer = ""
-        if tokens_path:
-            token_writer = (
-                "        usage = msg.get('usage') or {}\n"
-                "        if not usage:\n"
-                "            usage = msg.get('message', {}).get('usage') or {}\n"
-                "        inp_tok = int(usage.get('input_tokens', 0))\n"
-                "        out_tok = int(usage.get('output_tokens', 0))\n"
-                "        if inp_tok or out_tok:\n"
-                "            import time as _t\n"
-                f"            _rec = json.dumps({{'ts': _t.time(), 'in': inp_tok, 'out': out_tok}})\n"
-                f"            try:\n"
-                f"                with open({tokens_path!r}, 'a') as _tf:\n"
-                f"                    _tf.write(_rec + '\\n')\n"
-                f"            except OSError:\n"
-                f"                pass\n"
-            )
-        # Heartbeat: touch the heartbeat file on every parsed JSON event.
-        # This gives the orchestrator a reliable, real-time liveness signal
-        # instead of relying on log file mtime which may buffer.
-        heartbeat_touch = ""
-        if heartbeat_path:
-            heartbeat_touch = (
-                "    # Touch heartbeat file on every event\n"
-                "    try:\n"
-                "        _hb = {'timestamp': __import__('time').time(), 'phase': 'implementing',"
-                " 'progress_pct': 0, 'current_file': '', 'message': 'working', 'status': 'working'}\n"
-                f"        with open({heartbeat_path!r}, 'w') as _hf:\n"
-                f"            _hf.write(__import__('json').dumps(_hb))\n"
-                "    except OSError:\n"
-                "        pass\n"
-            )
-        # Completion marker: write a file when the agent emits a `result` event
-        # so the orchestrator can reap the slot immediately instead of waiting
-        # for the heartbeat to go stale (saves up to 300s per agent).
-        completion_write = ""
-        if completion_path:
-            completion_write = (
-                "        try:\n"
-                "            import json as _json\n"
-                "            _marker = _json.dumps({'result': txt or '', 'subtype': _subtype,"
-                " 'cost_usd': _cost, 'turns': _turns, 'duration_ms': _dur})\n"
-                f"            with open({completion_path!r}, 'w') as _cf:\n"
-                f"                _cf.write(_marker)\n"
-                "        except OSError:\n"
-                "            pass\n"
-            )
-        return (
-            "import sys, json\n"
-            "seen_text = set()\n"
-            "for raw in sys.stdin:\n"
-            "    raw = raw.strip()\n"
-            "    if not raw:\n"
-            "        continue\n"
-            "    try:\n"
-            "        msg = json.loads(raw)\n"
-            "    except json.JSONDecodeError:\n"
-            "        continue\n" + heartbeat_touch + "    t = msg.get('type', '')\n"
-            "    if t == 'assistant':\n"
-            "        for block in msg.get('message', {}).get('content', []):\n"
-            "            if block.get('type') == 'text':\n"
-            "                txt = block['text']\n"
-            "                if txt not in seen_text:\n"
-            "                    seen_text.add(txt)\n"
-            "                    print(txt, flush=True)\n"
-            "            elif block.get('type') == 'tool_use':\n"
-            "                name = block.get('name', '?')\n"
-            "                inp = str(block.get('input', ''))[:150]\n"
-            "                print(f'[{name}] {inp}', flush=True)\n"
-            "    elif t == 'result':\n"
-            "        txt = msg.get('result', '')\n"
-            "        if txt:\n"
-            "            print(txt, flush=True)\n"
-            "        # Extract structured result data for orchestrator\n"
-            "        _subtype = msg.get('subtype', 'success')\n"
-            "        _cost = msg.get('total_cost_usd', 0.0)\n"
-            "        _turns = msg.get('num_turns', 0)\n"
-            "        _dur = msg.get('duration_ms', 0)\n"
-            "        print(f'[RESULT] subtype={_subtype} cost=${_cost:.4f}'"
-            "              f' turns={_turns} duration={_dur}ms', flush=True)\n" + completion_write + token_writer
+        return build_wrapper_script(
+            session_id=session_id,
+            tokens_path=tokens_path,
+            heartbeat_path=heartbeat_path,
+            completion_path=completion_path,
         )
 
     def _launch_process(

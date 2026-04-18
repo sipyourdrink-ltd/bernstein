@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bernstein.core.graph import TaskGraph
+from bernstein.core.knowledge.task_graph import TaskGraph
 from bernstein.core.models import Task, TaskStatus
 
 

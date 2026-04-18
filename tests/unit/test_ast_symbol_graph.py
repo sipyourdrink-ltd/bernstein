@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import bernstein.core.semantic_graph as semantic_graph
 import pytest
-from bernstein.core.semantic_graph import (
+
+import bernstein.core.knowledge.ast_symbol_graph as semantic_graph
+from bernstein.core.knowledge.ast_symbol_graph import (
     SemanticGraph,
     SymbolEdge,
     SymbolNode,

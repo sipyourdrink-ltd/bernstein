@@ -69,9 +69,9 @@ from bernstein.core.fast_path import (
     load_fast_path_config,
 )
 from bernstein.core.file_locks import FileLockManager
-from bernstein.core.graph import TaskGraph
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.incident import IncidentManager
+from bernstein.core.knowledge.task_graph import TaskGraph
 from bernstein.core.manifest import build_manifest, save_manifest
 from bernstein.core.memory_guard import MemoryGuard
 from bernstein.core.merge_queue import MergeQueue

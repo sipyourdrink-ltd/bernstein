@@ -77,7 +77,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from bernstein.core.graph import EdgeType
+from bernstein.core.knowledge.task_graph import EdgeType
 from bernstein.core.models import Scope, Task, TaskStatus
 from bernstein.core.planning.workflow import WorkflowDefinition, WorkflowPhase
 

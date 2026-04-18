@@ -1,19 +1,12 @@
-"""Tests for coordinator mode and synthesis."""
+"""Tests for coordinator mode."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from bernstein.core.coordinator import (
     CoordinatorMode,
     CoordinatorPhase,
     is_coordinator_task,
     is_worker_task,
-)
-from bernstein.core.synthesis import (
-    SynthesisEngine,
-    SynthesisResult,
-    should_synthesize,
 )
 
 
@@ -130,133 +123,3 @@ class TestCoordinatorMode:
         assert is_worker_task("frontend") is True
         assert is_worker_task("qa") is True
         assert is_worker_task("coordinator") is False
-
-
-class TestSynthesisEngine:
-    """Test SynthesisEngine functionality."""
-
-    def test_synthesize_deterministic(self, tmp_path: Path) -> None:
-        """Test deterministic synthesis."""
-        engine = SynthesisEngine(tmp_path, use_llm=False)
-
-        worker_results = [
-            {
-                "worker_id": "worker-1",
-                "subtask_id": "subtask-1",
-                "status": "completed",
-                "result_summary": "Backend API implemented successfully.",
-                "artifacts": ["api.py"],
-            },
-            {
-                "worker_id": "worker-2",
-                "subtask_id": "subtask-2",
-                "status": "completed",
-                "result_summary": "Frontend components pass all tests.",
-                "artifacts": ["components.tsx"],
-            },
-        ]
-
-        result = engine.synthesize(worker_results, "task-1")
-
-        assert isinstance(result, SynthesisResult)
-        assert result.worker_count == 2
-        assert result.successful_workers == 2
-        assert result.failed_workers == 0
-        assert "Backend API" in result.synthesized_summary
-        assert "Frontend components" in result.synthesized_summary
-
-    def test_synthesize_with_failures(self, tmp_path: Path) -> None:
-        """Test synthesis with failed workers."""
-        engine = SynthesisEngine(tmp_path, use_llm=False)
-
-        worker_results = [
-            {
-                "worker_id": "worker-1",
-                "status": "completed",
-                "result_summary": "Success",
-            },
-            {
-                "worker_id": "worker-2",
-                "status": "failed",
-                "result_summary": "Failed due to timeout",
-            },
-        ]
-
-        result = engine.synthesize(worker_results, "task-1")
-
-        assert result.successful_workers == 1
-        assert result.failed_workers == 1
-
-    def test_detect_conflicts(self, tmp_path: Path) -> None:
-        """Test conflict detection."""
-        engine = SynthesisEngine(tmp_path, use_llm=False)
-
-        worker_results = [
-            {
-                "worker_id": "worker-1",
-                "status": "completed",
-                "result_summary": "All tests pass successfully.",
-            },
-            {
-                "worker_id": "worker-2",
-                "status": "completed",
-                "result_summary": "Tests fail with errors.",
-            },
-        ]
-
-        result = engine.synthesize(worker_results, "task-1")
-
-        assert len(result.conflicts_detected) > 0
-
-    def test_save_synthesis_result(self, tmp_path: Path) -> None:
-        """Test saving synthesis result."""
-        engine = SynthesisEngine(tmp_path, use_llm=False)
-
-        result = SynthesisResult(
-            synthesized_summary="Test summary",
-            worker_count=2,
-            successful_workers=2,
-            failed_workers=0,
-            artifacts_merged=["file1.py", "file2.py"],
-            conflicts_detected=[],
-        )
-
-        output_path = engine.save_synthesis_result(result, "task-1")
-
-        assert output_path.exists()
-        content = output_path.read_text()
-        assert "Test summary" in content
-        assert "file1.py" in content
-
-    def test_should_synthesize_coordinator_mode(self) -> None:
-        """Test synthesis decision for coordinator mode."""
-        assert (
-            should_synthesize(
-                worker_count=3,
-                coordinator_mode=True,
-                explicit_flag=False,
-            )
-            is True
-        )
-
-    def test_should_synthesize_explicit_flag(self) -> None:
-        """Test synthesis decision with explicit flag."""
-        assert (
-            should_synthesize(
-                worker_count=1,
-                coordinator_mode=False,
-                explicit_flag=True,
-            )
-            is True
-        )
-
-    def test_should_not_synthesize(self) -> None:
-        """Test when synthesis should not occur."""
-        assert (
-            should_synthesize(
-                worker_count=1,
-                coordinator_mode=False,
-                explicit_flag=False,
-            )
-            is False
-        )

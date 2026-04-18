@@ -150,6 +150,13 @@ def discover_config_paths(workdir: Path) -> list[tuple[str, Path]]:
     candidate paths regardless of whether the file currently exists -- this
     allows the watcher to detect *creation* of new config files mid-run.
 
+    The returned list has six entries, one per cascade layer actually consumed
+    by :func:`bernstein.core.config.config_schema.load_and_validate`: user,
+    project, project_alt, local, cli_overrides, managed.  The legacy
+    ``sdd_project`` slot (``.sdd/config.yaml``) was dropped in audit-157 because
+    no loader reads it -- the earlier ``settings_cascade`` reference was
+    removed by audit-151.
+
     Args:
         workdir: Project root directory.
 
@@ -161,7 +168,6 @@ def discover_config_paths(workdir: Path) -> list[tuple[str, Path]]:
         ("project", workdir / "bernstein.yaml"),
         ("project_alt", workdir / "bernstein.yml"),
         ("local", workdir / ".bernstein" / _CONFIG_YAML_FILENAME),
-        ("sdd_project", workdir / ".sdd" / _CONFIG_YAML_FILENAME),
         ("cli_overrides", workdir / ".sdd" / "config" / "cli_overrides.json"),
         ("managed", workdir / ".sdd" / "config" / "managed_settings.json"),
     ]

@@ -7,10 +7,11 @@ These are pure logic tests — no server, no agents, no IO.
 
 from __future__ import annotations
 
-from bernstein.core.graph import TaskGraph
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.router import route_task
 from bernstein.core.tick_pipeline import group_by_role
+
+from bernstein.core.knowledge.task_graph import TaskGraph
 
 # ---------------------------------------------------------------------------
 # Helpers

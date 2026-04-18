@@ -180,7 +180,7 @@ class TestAudit071Migration:
 
     def test_migration_seeds_linucb_router(self, tmp_path: Path) -> None:
         """Router sees the legacy observations as LinUCB seed arms."""
-        from bernstein.core.cost.bandit_router import BanditRouter
+        from bernstein.core.routing.bandit_router import BanditRouter
 
         metrics_dir = tmp_path / "metrics"
         routing_dir = tmp_path / "routing"
@@ -267,8 +267,8 @@ class TestAudit071Migration:
         Ensures audit-071's core invariant: cost forecasts and model selection
         can never disagree because both read from a single state store.
         """
-        from bernstein.core.cost.bandit_router import BanditRouter
         from bernstein.core.cost.cost import predict_task_cost
+        from bernstein.core.routing.bandit_router import BanditRouter
 
         metrics_dir = tmp_path / "metrics"
         routing_dir = tmp_path / "routing"

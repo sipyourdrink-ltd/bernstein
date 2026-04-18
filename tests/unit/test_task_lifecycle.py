@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 from bernstein.core.convergence_guard import ConvergenceGuard
-from bernstein.core.graph import TaskGraph
 from bernstein.core.models import (
     AgentSession,
     CompletionSignal,
@@ -34,6 +33,8 @@ from bernstein.core.task_lifecycle import (
     should_auto_decompose,
 )
 from bernstein.core.warm_pool import WarmPool, WarmPoolConfig
+
+from bernstein.core.knowledge.task_graph import TaskGraph
 
 
 def _never_quarantined(title: str) -> bool:

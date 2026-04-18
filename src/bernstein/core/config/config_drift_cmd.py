@@ -1,4 +1,4 @@
-"""CFG-009: Config diff command comparing current vs default values."""
+"""CFG-009: Config drift detection comparing current vs default values."""
 
 from __future__ import annotations
 

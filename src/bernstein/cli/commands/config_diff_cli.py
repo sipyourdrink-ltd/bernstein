@@ -1,6 +1,6 @@
 """Config diff command: show settings that differ from defaults.
 
-CFG-010: CLI wrapper around core.config_diff_cmd.
+CFG-010: CLI wrapper around core.config_drift_cmd.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def config_diff_cmd() -> None:
     from rich.table import Table
 
     from bernstein.cli.helpers import console
-    from bernstein.core.config_diff_cmd import diff_against_defaults
+    from bernstein.core.config_drift_cmd import diff_against_defaults
 
     current_yaml = _load_current_config()
 

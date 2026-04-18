@@ -602,14 +602,15 @@ class EpsilonGreedyBandit:
     def _router(self) -> Any | None:
         """Return the canonical ``BanditRouter`` for this facade, if any.
 
-        Lazy-imported to avoid a circular dependency between cost.py and
-        bandit_router.py (both live in the same sub-package).
+        Lazy-imported because ``BanditRouter`` now lives in
+        ``bernstein.core.routing`` (audit-193); delaying the import avoids
+        triggering routing package initialization just to load cost tables.
         """
         if self._routing_dir is None:
             return None
         if self._router_cache is None:
             try:
-                from bernstein.core.cost.bandit_router import BanditRouter
+                from bernstein.core.routing.bandit_router import BanditRouter
 
                 self._router_cache = BanditRouter(policy_dir=self._routing_dir)
             except Exception as exc:
@@ -629,7 +630,7 @@ class EpsilonGreedyBandit:
         coherent with seeds.
         """
         try:
-            from bernstein.core.cost.bandit_router import TaskContext
+            from bernstein.core.routing.bandit_router import TaskContext
 
             router._ensure_loaded()
             if router._policy is None:

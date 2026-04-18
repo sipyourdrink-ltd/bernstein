@@ -78,9 +78,10 @@ def test_discover_config_paths_returns_expected_labels(tmp_path: Path) -> None:
     assert "project" in labels
     assert "project_alt" in labels
     assert "local" in labels
-    assert "sdd_project" in labels
     assert "cli_overrides" in labels
     assert "managed" in labels
+    # audit-157: sdd_project (.sdd/config.yaml) was removed because no loader reads it.
+    assert "sdd_project" not in labels
 
 
 def test_discover_config_paths_uses_workdir(tmp_path: Path) -> None:
