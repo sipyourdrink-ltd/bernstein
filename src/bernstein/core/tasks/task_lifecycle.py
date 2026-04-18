@@ -1053,6 +1053,82 @@ def _pre_spawn_checks_pass(orch: Any, alive_count: int) -> bool:
     return True
 
 
+def _apply_fair_scheduling(orch: Any, batches: list[list[Task]]) -> list[list[Task]]:
+    """Re-order batches using the weighted fair scheduler (audit-020).
+
+    Feeds one representative task per batch into a :class:`FairScheduler`
+    keyed by ``task.tenant_id``.  The scheduler emits a deficit-round-robin
+    sequence of tenants which is used to reorder the input batches so that
+    tenants with higher weights receive proportionally more spawn slots.
+
+    Batches missing ``tenant_id`` default to ``"default"``.  When every batch
+    belongs to a single tenant, the input ordering is returned unchanged.
+
+    The scheduler instance is cached on the orchestrator (``_fair_scheduler``)
+    so deficit state persists across ticks.  Tenants are auto-registered
+    with unit weight the first time they appear.
+
+    Args:
+        orch: Orchestrator instance; used as a handle for the cached scheduler.
+        batches: Batches produced by :func:`group_by_role`.
+
+    Returns:
+        Batches re-ordered by tenant fair-share.  Never mutates the input.
+    """
+    if not batches:
+        return batches
+
+    # Early-out for the common single-tenant case — reordering is a no-op.
+    tenant_ids = {(b[0].tenant_id if b and getattr(b[0], "tenant_id", None) else "default") for b in batches}
+    if len(tenant_ids) <= 1:
+        return batches
+
+    from bernstein.core.tasks.fair_scheduler import FairScheduler
+
+    scheduler = getattr(orch, "_fair_scheduler", None)
+    if scheduler is None:
+        scheduler = FairScheduler()
+        orch._fair_scheduler = scheduler
+
+    # Register tenants with default weight if unseen.
+    for tid in tenant_ids:
+        scheduler.register_tenant(tid)
+
+    # Enqueue one synthetic task per batch. We use the batch index as the
+    # scheduler-side task id so the emitted sequence maps back to batches.
+    batch_by_key: dict[str, list[Task]] = {}
+    for idx, batch in enumerate(batches):
+        if not batch:
+            continue
+        key = f"_fs_batch_{idx}"
+        tenant = batch[0].tenant_id or "default"
+        scheduler.enqueue(key, tenant, priority=batch[0].priority)
+        batch_by_key[key] = batch
+
+    ordered: list[list[Task]] = []
+    seen: set[str] = set()
+    while True:
+        decision = scheduler.dequeue()
+        if decision is None:
+            break
+        seen.add(decision.task_id)
+        batch = batch_by_key.get(decision.task_id)
+        if batch is not None:
+            ordered.append(batch)
+
+    # Append any unscheduled batches (empty or not tracked) in original order.
+    for key, batch in batch_by_key.items():
+        if key not in seen:
+            ordered.append(batch)
+
+    logger.debug(
+        "fair_scheduling: reordered %d batches across %d tenants",
+        len(ordered),
+        len(tenant_ids),
+    )
+    return ordered
+
+
 def claim_and_spawn_batches(
     orch: Any,  # Orchestrator instance (avoids circular import)
     batches: list[list[Task]],
@@ -1078,6 +1154,13 @@ def claim_and_spawn_batches(
     _ = done_ids  # Part of interface; used for overlap detection by callers
     if not _pre_spawn_checks_pass(orch, alive_count):
         return
+
+    # Fair scheduling (audit-020): when enabled, re-order batches using
+    # weighted deficit round-robin across tenants so multi-tenant workloads
+    # get proportional service instead of FIFO starvation.  Runs before
+    # the HTTP /claim calls below. Default-off via ``fair_scheduling_enabled``.
+    if getattr(orch._config, "fair_scheduling_enabled", False):
+        batches = _apply_fair_scheduling(orch, batches)
 
     base = orch._config.server_url
     spawn_analyzer = SpawnAnalyzer()
@@ -2788,74 +2871,6 @@ def _move_backlog_ticket(workdir: Any, task: Any) -> None:
                         pass
                     return
                 break  # only check first heading
-
-
-# ---------------------------------------------------------------------------
-# Priority decay for old unclaimed tasks
-# ---------------------------------------------------------------------------
-
-
-def deprioritize_old_unclaimed_tasks(
-    orch: Any,
-    threshold_hours: int | None = None,
-    min_priority: int | None = None,
-) -> int:
-    """Deprioritize tasks that have been open for too long without being claimed.
-
-    Called during janitor tick. Tasks open for > threshold_hours without being
-    claimed have their priority decreased by 1 (min priority floor).
-
-    Args:
-        orch: Orchestrator instance.
-        threshold_hours: Hours before deprioritization.
-        min_priority: Minimum priority value.
-
-    Returns:
-        Count of tasks deprioritized.
-    """
-    from bernstein.core.tasks.models import TaskStatus
-
-    if threshold_hours is None:
-        threshold_hours = int(TASK.priority_decay_threshold_hours)
-    if min_priority is None:
-        min_priority = TASK.min_priority
-
-    now = time.time()
-    threshold_seconds = threshold_hours * 3600
-    deprioritized_count = 0
-
-    for task in orch._store.list_tasks():
-        if task.status != TaskStatus.OPEN:
-            continue
-
-        # Check if task has been open too long
-        age_seconds = now - task.created_at
-        if age_seconds < threshold_seconds:
-            continue
-
-        # Check if task was ever claimed (has agent history)
-        # If it was claimed and returned to open, don't deprioritize
-        # For simplicity, we deprioritize all old open tasks
-
-        old_priority = task.priority
-        new_priority = min(min_priority, old_priority + 1)
-
-        if new_priority > old_priority:
-            # Update task priority (optimistic locking)
-            try:
-                orch._store.update_task_priority(task.id, new_priority, task.version)
-                deprioritized_count += 1
-                logger.info(
-                    "Task %s deprioritized after %.0f h unclaimed (%d → %d)",
-                    task.id,
-                    age_seconds / 3600,
-                    old_priority,
-                    new_priority,
-                )
-            except Exception as exc:
-                logger.debug("Failed to deprioritize task %s: %s", task.id, exc)
-
-    return deprioritized_count
 
 
 # ---------------------------------------------------------------------------

@@ -1072,6 +1072,16 @@ class OrchestratorConfig:
     shutdown_stagger_delay_s: float = 5.0  # Seconds between SHUTDOWN signals during drain
     stale_claim_timeout_s: float = 900.0  # Seconds before a claimed task with no live agent is released
     drain_timeout_s: float = 60.0  # Seconds to wait for agents during drain before cleanup
+    # Priority-aging janitor (audit-020): boost long-waiting low-priority tasks
+    # so they do not starve behind a steady stream of P1 work.  Default off
+    # until run data confirms behaviour; interval is measured in orchestrator ticks.
+    priority_aging_enabled: bool = False
+    priority_aging_interval_ticks: int = 60
+    # Weighted fair scheduling across tenants (audit-020): re-order batches by
+    # deficit round-robin so high-weight tenants get proportionally more slots
+    # while per-tenant caps prevent any tenant from monopolising the worker pool.
+    # Default off; enable once multi-tenant workloads exist.
+    fair_scheduling_enabled: bool = False
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

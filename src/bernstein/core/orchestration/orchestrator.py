@@ -1118,6 +1118,29 @@ class Orchestrator:
             except Exception as exc:
                 logger.warning("Stale claim release failed: %s", exc)
 
+        # 1b-i.6. Priority aging (audit-020): boost long-waiting open/blocked tasks
+        # so that lower-priority work does not starve behind a steady stream of
+        # P1 tickets. Gated behind the ``priority_aging_enabled`` config flag
+        # (default OFF) and run every ``priority_aging_interval_ticks`` ticks.
+        if (
+            self._config.priority_aging_enabled
+            and self._config.priority_aging_interval_ticks > 0
+            and self._tick_count % self._config.priority_aging_interval_ticks == 0
+        ):
+            try:
+                from bernstein.core.tasks.priority_aging import AgingConfig, apply_aging
+
+                aging_targets = ready_tasks + list(tasks_by_status.get("blocked", []))
+                results = apply_aging(aging_targets, AgingConfig())
+                if results:
+                    logger.info(
+                        "priority_aging: boosted %d task(s) on tick #%d",
+                        len(results),
+                        self._tick_count,
+                    )
+            except Exception as exc:
+                logger.warning("priority_aging pass failed: %s", exc)
+
         # 1b-ii. Governed workflow: filter tasks to current phase only
         if self._workflow_executor is not None and not self._workflow_executor.is_completed:
             before_wf = len(ready_tasks)
