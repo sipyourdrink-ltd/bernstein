@@ -79,7 +79,6 @@ _REDIRECT_MAP: dict[str, str] = {
     "bootstrap": "bernstein.core.orchestration.bootstrap",
     "budget_actions": "bernstein.core.cost.budget_actions",
     "bulletin": "bernstein.core.communication.bulletin",
-    "bulletin_board": "bernstein.core.communication.bulletin_board",
     "cache_token_tracker": "bernstein.core.tokens.cache_token_tracker",
     "canary_mode": "bernstein.core.orchestration.canary_mode",
     "capability_router": "bernstein.core.routing.capability_router",
