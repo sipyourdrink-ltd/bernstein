@@ -148,6 +148,12 @@ bernstein-worker = "bernstein.core.worker:main"
 # e2b = "bernstein.core.sandbox.backends.e2b:E2BSandboxBackend"
 # modal = "bernstein.core.sandbox.backends.modal:ModalSandboxBackend"
 
+[project.entry-points."bernstein.skill_sources"]
+# Progressive-disclosure skill packs (oai-004). Each entry resolves to a
+# zero-arg factory returning a ``bernstein.core.skills.SkillSource``.
+# Example:
+# my-data-pack = "my_pack.skills:source"
+
 [tool.hatch.build]
 exclude = [
     ".sdd/",
@@ -184,6 +190,11 @@ packages = ["src/bernstein"]
 [tool.hatch.build.targets.wheel.force-include]
 "templates/prompts" = "bernstein/_default_templates/prompts"
 "templates/bernstein.yaml" = "bernstein/_default_templates/bernstein.yaml"
+# Progressive-disclosure skill packs (oai-004) — shipped alongside the wheel
+# so installed packages get the index without requiring a checkout of
+# templates/.
+"templates/skills" = "bernstein/_default_templates/skills"
+"templates/roles" = "bernstein/_default_templates/roles"
 # ascii_logo.md now lives in-package at src/bernstein/_default_templates/ —
 # no force-include needed. The dev-repo copy at docs/assets/ascii_logo.md is
 # the display fallback read by cli/display/splash_v2.py when running from a

@@ -55,6 +55,7 @@ from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.cloud_cmd import cloud_group
+from bernstein.cli.commands.skills_cmd import skills_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.config_path_cmd import config_path_cmd
 from bernstein.cli.cost import cost_cmd, estimate_cmd
@@ -720,6 +721,7 @@ cli.add_command(history_cmd, "history")
 
 # Already registered elsewhere
 cli.add_command(agents_group)
+cli.add_command(skills_group)
 cli.add_command(test_cmd, "test")
 cli.add_command(auth_group, "auth")
 cli.add_command(auth_login, "login")

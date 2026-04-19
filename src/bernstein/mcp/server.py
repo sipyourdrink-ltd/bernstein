@@ -16,6 +16,7 @@ Tools:
     bernstein_stop    — graceful shutdown (writes SHUTDOWN signal)
     bernstein_approve — approve a pending/blocked task
     bernstein_health  — liveness check (always succeeds)
+    load_skill        — load a skill pack body / reference / script (oai-004)
 """
 
 from __future__ import annotations
@@ -320,6 +321,65 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             return _error_response(exc)
 
 
+def _register_skill_tools(mcp: FastMCP[None]) -> None:
+    """Register the ``load_skill`` progressive-disclosure tool (oai-004).
+
+    Args:
+        mcp: FastMCP instance to register the tool on.
+    """
+
+    @mcp.tool()
+    async def load_skill(  # pyright: ignore[reportUnusedFunction]
+        name: str,
+        reference: str | None = None,
+        script: str | None = None,
+    ) -> str:
+        """Load a skill pack body (and optionally a reference or script).
+
+        Agents receive only a compact skill index in their system prompt.
+        Call this tool to fetch the full ``SKILL.md`` body for a skill
+        when you decide it's relevant to the current task. Pass
+        ``reference`` to get a deeper-context file or ``script`` to read
+        the content of an executable helper.
+
+        Args:
+            name: Skill name (matches the index entry, e.g. ``"backend"``).
+            reference: Optional filename under ``references/`` — for
+                example ``"python-conventions.md"``.
+            script: Optional filename under ``scripts/`` — for example
+                ``"lint.sh"``. The script content is returned as text; the
+                MCP harness does not execute it.
+
+        Returns:
+            JSON with ``name``, ``body``, ``available_references``,
+            ``available_scripts``, and the optional fetched content.
+        """
+        try:
+            # Local import so the MCP module stays cheap to import even when
+            # the skills tree is missing (e.g. dev CLI without templates).
+            from pathlib import Path as _Path
+
+            from bernstein import get_templates_dir
+            from bernstein.core.skills.load_skill_tool import (
+                load_skill as _load_skill_impl,
+            )
+            from bernstein.core.skills.load_skill_tool import (
+                result_as_dict,
+            )
+
+            templates_root = get_templates_dir(_Path.cwd())
+            templates_roles_dir = templates_root / "roles"
+            result = _load_skill_impl(
+                name=name,
+                reference=reference,
+                script=script,
+                templates_roles_dir=templates_roles_dir,
+            )
+            return json.dumps(result_as_dict(result), indent=2)
+        except Exception as exc:
+            return _error_response(exc, hint="Skill not found or templates missing")
+
+
 def create_mcp_server(
     server_url: str = _DEFAULT_SERVER_URL,
     name: str = "bernstein",
@@ -337,6 +397,7 @@ def create_mcp_server(
     _register_health_tool(mcp)
     _register_query_tools(mcp, server_url)
     _register_action_tools(mcp, server_url)
+    _register_skill_tools(mcp)
     return mcp
 
 
