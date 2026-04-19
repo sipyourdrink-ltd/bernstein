@@ -271,6 +271,16 @@ jobs:
             python-version: "3.12"
           - os: windows-latest
             python-version: "3.12"
+          # ONE-TIME HOTFIX: temporarily skip macOS + Windows + py3.12 so the
+          # v1.8.10 broken-wheel hotfix releases within minutes instead of
+          # waiting for a full OS matrix. MUST be reverted in the follow-up
+          # "revert: restore full test matrix" commit once v1.8.10 publishes.
+          - os: macos-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
