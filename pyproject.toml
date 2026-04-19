@@ -170,33 +170,20 @@ bernstein-worker = "bernstein.core.worker:main"
 # my_sink = "my_pkg.storage:MyArtifactSink"
 
 [tool.hatch.build]
+# NOTE: do NOT add src/bernstein/ entries here.  Every file under src/
+# ships production code that the runtime imports -- either directly or
+# via the _CoreRedirectFinder in core/__init__.py.  Previously 18 core/
+# sub-packages plus three cli/run_*.py helpers were excluded (v1.8.7..
+# v1.8.9 wheels on PyPI are all broken because of this); `pip install
+# bernstein && bernstein --version` failed with `ModuleNotFoundError:
+# No module named 'bernstein.core.config'` and similar because the
+# redirect map / import chain points to files stripped from the wheel.
 exclude = [
     ".sdd/",
     "tests/",
     "scripts/",
     "docs/",
     ".github/",
-    "src/bernstein/core/orchestration/",
-    "src/bernstein/core/agents/",
-    "src/bernstein/core/tasks/",
-    "src/bernstein/core/quality/",
-    "src/bernstein/core/cost/",
-    "src/bernstein/core/tokens/",
-    "src/bernstein/core/security/",
-    "src/bernstein/core/config/",
-    "src/bernstein/core/observability/",
-    "src/bernstein/core/protocols/",
-    "src/bernstein/core/plugins_core/",
-    "src/bernstein/core/knowledge/",
-    "src/bernstein/core/communication/",
-    "src/bernstein/core/routing/",
-    "src/bernstein/core/planning/",
-    "src/bernstein/core/persistence/",
-    "src/bernstein/core/git/",
-    "src/bernstein/core/server/",
-    "src/bernstein/cli/run_confirm.py",
-    "src/bernstein/cli/run_preflight.py",
-    "src/bernstein/cli/run_bootstrap.py",
 ]
 
 [tool.hatch.build.targets.wheel]
