@@ -427,7 +427,10 @@ _REDIRECT_MAP: dict[str, str] = {
     "run_session": "bernstein.core.orchestration.run_session",
     "runbooks": "bernstein.core.observability.runbooks",
     "runtime_state": "bernstein.core.persistence.runtime_state",
-    "sandbox": "bernstein.core.security.sandbox",
+    # ``sandbox`` removed in oai-002: ``bernstein.core.sandbox`` is now a
+    # real sub-package that hosts the pluggable SandboxBackend protocol.
+    # Back-compat for the legacy ``DockerSandbox`` primitives is provided by
+    # re-exports inside ``src/bernstein/core/sandbox/__init__.py``.
     "sandbox_escape_detector": "bernstein.core.security.sandbox_escape_detector",
     "sandbox_eval": "bernstein.core.security.sandbox_eval",
     "sanitize": "bernstein.core.security.sanitize",

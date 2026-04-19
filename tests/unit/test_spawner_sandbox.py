@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 
 from bernstein.core.container import ContainerError, ContainerHandle
 from bernstein.core.models import AgentSession, ModelConfig
-from bernstein.core.sandbox import DockerSandbox
 from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.sandbox import DockerSandbox
 
 
 class FakeAdapter(CLIAdapter):
