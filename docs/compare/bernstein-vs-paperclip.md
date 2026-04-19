@@ -2,7 +2,7 @@
 
 > **tl;dr** — Paperclip is an AI company simulator: org charts, budgets, governance hierarchies for AI agents. Bernstein is an engineering tool: spawn agents, ship code, verify results. They solve different problems. If you need corporate structure for your AI workforce, Paperclip is impressive. If you need to parallelize coding tasks and merge working branches, Bernstein is what you want.
 
-*Last verified: 2026-04-17. Based on `github.com/paperclipai/paperclip` (55k+ stars, launched 2026-03-02) and paperclip.ing.*
+*Last verified: 2026-04-19. Based on `github.com/paperclipai/paperclip` (55k+ stars, launched 2026-03-02) and paperclip.ing.*
 
 ---
 
@@ -10,7 +10,7 @@
 
 **Paperclip** (55k+ stars, MIT, Node.js + React) is an "AI company management" platform, released March 2, 2026. It models AI agents as employees in an organization: they have roles, report to managers, operate within budgets, follow org-chart hierarchies, and receive scheduled heartbeats. The coordinator is an LLM. It advertises Claude Code, Codex, Cursor, "OpenClaw," plus bash and HTTP hooks ("if it can receive a heartbeat, it's hired"). Think of it as an HR and project-management control plane for AI agents.
 
-**Bernstein** (Apache 2.0, Python) is a multi-agent orchestrator for CLI coding agents. It breaks a goal into tasks, spawns agents in isolated git worktrees, verifies their output (tests, lint, file checks), and merges the results. The orchestrator is deterministic Python — zero LLM tokens spent on coordination. It supports 17 CLI adapters and runs anywhere Python runs.
+**Bernstein** (Apache 2.0, Python) is a multi-agent orchestrator for CLI coding agents. It breaks a goal into tasks, spawns agents in isolated git worktrees, verifies their output (tests, lint, file checks), and merges the results. The orchestrator is deterministic Python — zero LLM tokens spent on coordination. It supports 18 CLI adapters and runs anywhere Python runs.
 
 ---
 
@@ -22,7 +22,7 @@
 | **Open source** | Yes — Apache 2.0 | Yes — MIT |
 | **Language** | Python | Node.js + React |
 | **Orchestrator logic** | Deterministic code (no LLM) | LLM-based coordination |
-| **Agent adapters** | 17 CLI adapters | Claude Code, Codex, Cursor, OpenClaw + bash / HTTP hooks |
+| **Agent adapters** | 18 CLI adapters | Claude Code, Codex, Cursor, OpenClaw + bash / HTTP hooks |
 | **Org charts / hierarchies** | No | Yes — core feature |
 | **Budget enforcement** | Cost tracking + budget caps | Yes — per-agent and per-team budgets |
 | **Task ticketing** | Yes — internal task server | Yes — with goal alignment |
@@ -110,7 +110,7 @@ These are genuinely different problems. Paperclip cares about organizational str
 
 **Zero LLM overhead on coordination.** Paperclip uses LLM calls for coordination — managing hierarchies, routing tasks through org structures, heartbeat processing. Every coordination decision costs tokens. Bernstein's orchestrator is ~800 lines of deterministic Python. Coordination cost is zero.
 
-**Agent breadth.** 17 adapters vs. 4 official. If you use Gemini, Aider, Amp, Kilo, Kiro, Qwen, Goose, or OpenCode as first-class adapters rather than bash/HTTP shims, Bernstein supports them out of the box.
+**Agent breadth.** 18 adapters vs. 4 official. If you use Gemini, OpenAI Agents SDK v2, Aider, Amp, Kilo, Kiro, Qwen, Goose, or OpenCode as first-class adapters rather than bash/HTTP shims, Bernstein supports them out of the box.
 
 **Git-native isolation.** Each Bernstein agent works in its own git worktree. Conflicts are detected at merge time, not at runtime. Paperclip doesn't provide git-level isolation.
 
@@ -135,7 +135,7 @@ These are genuinely different problems. Paperclip cares about organizational str
 
 - **You want to ship code.** Your goal is "implement these 10 features in parallel and merge them all into a working branch." Bernstein does this. Paperclip doesn't try to.
 - **You want zero coordination overhead.** No LLM tokens spent on figuring out which agent should do what. Deterministic task assignment, deterministic verification.
-- **You use diverse CLI agents.** 17 adapters vs. 4 official. Mix Claude, Codex, Gemini, and Aider in the same session without dropping to bash/HTTP shims.
+- **You use diverse CLI agents.** 18 adapters vs. 4 official. Mix Claude, Codex, OpenAI Agents SDK v2, Gemini, and Aider in the same session without dropping to bash/HTTP shims.
 - **You want git-native safety.** Worktree isolation, conflict detection, janitor verification. The output is a tested, linted branch.
 - **You work in terminals.** CLI-native, works over SSH, runs in CI, no browser required.
 - **You don't need org charts.** If the concept of "reporting lines for AI agents" doesn't map to your problem, you don't need Paperclip's primary feature.

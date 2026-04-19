@@ -2,7 +2,7 @@
 
 How Bernstein compares to other tools in the multi-agent coding space.
 
-*Last verified: 2026-04-17*
+*Last verified: 2026-04-19*
 
 ---
 
@@ -11,11 +11,13 @@ How Bernstein compares to other tools in the multi-agent coding space.
 | Feature | Bernstein | CrewAI | AutoGen | LangGraph |
 |---|---|---|---|---|
 | Orchestrator | Deterministic code | LLM-driven | LLM-driven (maintenance mode) | Graph + LLM |
-| Works with | Any CLI agent (17 adapters) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (18 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
+| Pluggable sandboxes | Worktree, Docker, E2B, Modal | No | No | No |
 | Per-task verification | Janitor + quality gates | Test harness only | No | Conditional edges |
 | Cost tracking | Built-in | External (Langfuse/AgentOps) | External (AgentOps) | External (LangSmith) |
 | State model | File-based (`.sdd/`) | In-memory + SQLite checkpoint | In-memory | SQLite/Postgres checkpoint |
+| Remote artifact sinks | S3, GCS, Azure Blob, R2 | No | No | No |
 | Self-evolution | Built-in (`--evolve`) | No | No | No |
 | Declarative plans | YAML with `depends_on` | YAML (agents + tasks) | Partial (Studio JSON) | Code or JSON config |
 | Model routing per task | Bandit router | Per-agent | Per-agent | Manual per-node |
@@ -25,14 +27,15 @@ How Bernstein compares to other tools in the multi-agent coding space.
 | Cloud hosted | Yes (Cloudflare) | Yes (AMP) | Via Microsoft Agent Framework | Yes (LangSmith Deployment) |
 | Built-in RAG | Yes (codebase FTS5 + BM25) | Yes | Yes | Yes |
 
-*Last verified: 2026-04-17. AutoGen entered maintenance mode in 2025; successor is Microsoft Agent Framework 1.0 (April 3, 2026).*
+*Last verified: 2026-04-19. AutoGen entered maintenance mode in 2025; successor is Microsoft Agent Framework 1.0 (April 3, 2026).*
 
 ## Table B — CLI coding orchestrators
 
 |  | Bernstein | [Stoneforge](./bernstein-vs-stoneforge.md) | [Agent HQ](./bernstein-vs-github-agent-hq.md) | [Conductor](./bernstein-vs-conductor.md) | [Crystal](./bernstein-vs-crystal.md) | [Parallel Code](./bernstein-vs-parallel-code.md) | [Dorothy](./bernstein-vs-dorothy.md) | [Single agent](./bernstein-vs-single-agent.md) |
 |--|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **Parallel execution** | yes | yes | yes | yes | no | yes | yes | no |
-| **CLI agent support** | 17 adapters | no | Claude/Codex/Copilot | no | no | Claude/Codex/Gemini | Claude/Codex/Gemini/local | yes |
+| **CLI agent support** | 18 adapters | no | Claude/Codex/Copilot | no | no | Claude/Codex/Gemini | Claude/Codex/Gemini/local | yes |
+| **Pluggable sandbox** | worktree/docker/e2b/modal | no | no | no | no | no | no | no |
 | **Result verification** | janitor (tests+lint) | provider-native | GitHub CI | none | LLM reviewer | manual | none | none |
 | **Task planning from goal** | yes | no | yes | no | no | no | via Super Agent | no |
 | **Self-evolution** | yes | no | no | no | no | no | no | no |
@@ -41,7 +44,7 @@ How Bernstein compares to other tools in the multi-agent coding space.
 | **IDE integration** | no | VS Code, JetBrains | GitHub UI | no | varies | desktop app | desktop app | no |
 | **Open source** | Apache 2.0 | Apache 2.0 | no | Apache 2.0 | varies | MIT | MIT | varies |
 
-*Last verified: 2026-04-17. Stoneforge launched 2026-03-03. Paperclip (launched 2026-03-04) is covered on its [own page](./bernstein-vs-paperclip.md); it is an AI-company control plane, not a CLI orchestrator, and is not compared in this table.*
+*Last verified: 2026-04-19. Stoneforge launched 2026-03-03. Paperclip (launched 2026-03-04) is covered on its [own page](./bernstein-vs-paperclip.md); it is an AI-company control plane, not a CLI orchestrator, and is not compared in this table.*
 
 ---
 

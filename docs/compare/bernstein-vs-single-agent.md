@@ -2,7 +2,7 @@
 
 > **tl;dr** — Running a single coding agent is the right call for simple, well-scoped tasks. Bernstein exists for cases where a single agent bottlenecks on sequential work, lacks external verification, or needs to run overnight without supervision. Our early pilot shows a small, non-significant edge on 25 issues; the right use-cases for multi-agent are quality gates, parallelism, and unattended runs, not a claimed benchmark win.
 
-*Last verified: 2026-04-17.*
+*Last verified: 2026-04-19.*
 
 ---
 

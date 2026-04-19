@@ -2,7 +2,7 @@
 
 > **tl;dr** — Parallel Code lets you manually run multiple coding agent sessions in separate windows or tmux panes. It works fine if you want to manage the parallelism yourself. Bernstein automates the coordination: task planning, model routing, verification, and merge conflict prevention. The question is whether you want to be the orchestrator or have software be the orchestrator.
 
-*Last verified: 2026-04-17. "Parallel Code" covers both the `github.com/johannesjo/parallel-code` desktop app (Claude Code + Codex + Gemini, git worktree per agent) and the broader manual-tmux pattern of running multiple coding agents side by side.*
+*Last verified: 2026-04-19. "Parallel Code" covers both the `github.com/johannesjo/parallel-code` desktop app (Claude Code + Codex + Gemini, git worktree per agent) and the broader manual-tmux pattern of running multiple coding agents side by side.*
 
 ---
 

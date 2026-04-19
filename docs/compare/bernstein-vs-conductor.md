@@ -2,7 +2,7 @@
 
 > **tl;dr** — Conductor is a workflow orchestration engine for production business processes. Bernstein is a coding agent orchestrator. They solve different problems. If your question is "how do I coordinate AI coding agents on a software development task," Conductor is not designed for that. If your question is "how do I orchestrate microservice workflows with durable execution and human-in-the-loop steps," Bernstein is not designed for that either.
 
-*Last verified: 2026-04-17. "Conductor" below refers to Netflix OSS Conductor and its active community forks (Orkes Conductor, conductor-oss/conductor); the fork varies between vendors but the execution model is the same.*
+*Last verified: 2026-04-19. "Conductor" below refers to Netflix OSS Conductor and its active community forks (Orkes Conductor, conductor-oss/conductor); the fork varies between vendors but the execution model is the same.*
 
 ---
 

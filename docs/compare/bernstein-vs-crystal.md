@@ -2,7 +2,7 @@
 
 > **tl;dr** — Crystal uses iterative self-review loops: an agent writes code, a reviewer agent critiques it, the writer revises, repeat until quality gates pass. Bernstein uses external verification: the janitor runs tests and the linter, and trusts those results over agent self-assessment. Crystal is better when objective test suites are thin or absent. Bernstein is better when tests are the ground truth and you want fast, deterministic verification.
 
-*Last verified: 2026-04-17.*
+*Last verified: 2026-04-19.*
 
 ---
 
