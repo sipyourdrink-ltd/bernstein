@@ -57,12 +57,13 @@ Also available via `pip`, `uv tool install`, `brew`, `dnf copr`, and `npx bernst
 
 Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
 
-17 CLI coding agents plus a generic wrapper for anything with `--prompt`.
+18 CLI agent adapters: 17 third-party wrappers plus a generic wrapper for anything with `--prompt`.
 
 | Agent | Models | Install |
 |-------|--------|---------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Opus 4, Sonnet 4.6, Haiku 4.5 | `npm install -g @anthropic-ai/claude-code` |
 | [Codex CLI](https://github.com/openai/codex) | GPT-5, GPT-5 mini | `npm install -g @openai/codex` |
+| [OpenAI Agents SDK v2](https://openai.github.io/openai-agents-python/) | GPT-5, GPT-5 mini, o4 | `pip install 'bernstein[openai]'` |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 2.5 Pro, Gemini Flash | `npm install -g @google/gemini-cli` |
 | [Cursor](https://www.cursor.com) | Sonnet 4.6, Opus 4, GPT-5 | [Cursor app](https://www.cursor.com) |
 | [Aider](https://aider.chat) | Any OpenAI/Anthropic-compatible | `pip install aider-chat` |
@@ -142,34 +143,42 @@ A `bernstein cloud init` scaffold for `wrangler.toml` and bindings is planned.
 
 **Intelligence**. Contextual bandit router for model/effort selection. Knowledge graph for codebase impact analysis. Semantic caching saves tokens on repeated patterns. Cost anomaly detection (burn-rate alerts). Behavior anomaly detection with Z-score flagging.
 
+**Sandboxing**. Pluggable [`SandboxBackend`](docs/architecture/sandbox.md) protocol — run agents in local git worktrees (default), Docker containers, [E2B](https://e2b.dev) Firecracker microVMs, or [Modal](https://modal.com) serverless containers (with optional GPU). Plugin authors can register custom backends through the `bernstein.sandbox_backends` entry-point group. Inspect installed backends with `bernstein agents sandbox-backends`.
+
+**Artifact storage**. `.sdd/` state can stream to pluggable [`ArtifactSink`](docs/architecture/storage.md) backends: local filesystem (default), S3, Google Cloud Storage, Azure Blob, or Cloudflare R2. `BufferedSink` keeps the WAL crash-safety contract by writing locally with fsync first and mirroring to the remote asynchronously.
+
+**Skill packs**. Progressive-disclosure [skills](docs/architecture/skills.md) (OpenAI Agents SDK pattern): only a compact skill index ships in every spawn's system prompt, agents pull full bodies via the `load_skill` MCP tool on demand. 17 built-in role packs plus third-party `bernstein.skill_sources` entry-points.
+
 **Controls**. HMAC-chained audit logs, policy engine, PII output gating, WAL-backed crash recovery (experimental multi-worker safety), OAuth 2.0 PKCE. SSO/SAML/OIDC support is in progress.
 
 **Observability**. Prometheus `/metrics`, OTel exporter presets, Grafana dashboards. Per-model cost tracking (`bernstein cost`). Terminal TUI and web dashboard. Agent process visibility in `ps`.
 
 **Ecosystem**. MCP server mode, A2A protocol support, GitHub App integration, pluggy-based plugin system, multi-repo workspaces, cluster mode for distributed execution, self-evolution via `--evolve` (experimental).
 
-Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md)
+Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md) &middot; Recent features: [What's New](docs/whats-new.md)
 
 ## How it compares
 
 | Feature | Bernstein | CrewAI | AutoGen [^autogen] | LangGraph |
 |---------|-----------|--------|---------|-----------|
 | Orchestrator | Deterministic code | LLM-driven | LLM-driven | Graph + LLM |
-| Works with | Any CLI agent (17 adapters) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (18 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
+| Pluggable sandboxes | Worktree, Docker, E2B, Modal | No | No | No |
 | Verification | Janitor + quality gates | No | No | Conditional edges |
 | Cost tracking | Built-in | No | No | No |
 | State model | File-based (.sdd/) | In-memory + SQLite checkpoint | In-memory | Checkpointer |
+| Remote artifact sinks | S3, GCS, Azure Blob, R2 | No | No | No |
 | Self-evolution | Built-in | No | No | No |
 | Declarative plans (YAML) | Yes | Yes | No | Partial (JSON config) |
 | Model routing per task | Yes | No | No | Manual |
-| MCP support | Yes | Yes | Yes (client) | Yes (client + server) |
+| MCP support | Yes (client + server) | Yes | Yes (client) | Yes (client + server) |
 | Agent-to-agent chat | Bulletin board | Yes | Yes | No |
 | Web UI | TUI + web dashboard | Yes | Yes | Yes (Studio + LangSmith) |
 | Cloud hosted option | Yes (Cloudflare) | Yes | No | Yes |
 | Built-in RAG/retrieval | Yes (codebase FTS5 + BM25) | Yes | Yes | Yes |
 
-*Last verified: 2026-04-17. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
+*Last verified: 2026-04-19. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
 
 [^autogen]: AutoGen is in maintenance mode; successor is Microsoft Agent Framework 1.0.
 
@@ -211,6 +220,25 @@ bernstein fingerprint check src/foo.py                 # check generated code ag
 | **Homebrew** | `brew tap chernistry/bernstein && brew install bernstein` |
 | **Fedora / RHEL** | `sudo dnf copr enable alexchernysh/bernstein && sudo dnf install bernstein` |
 | **npm** (wrapper) | `npx bernstein-orchestrator` |
+
+### Optional extras
+
+Provider SDKs are optional so the base install stays lean. Pick what you need:
+
+| Extra | Enables |
+|-------|---------|
+| `bernstein[openai]` | OpenAI Agents SDK v2 adapter (`openai_agents`) |
+| `bernstein[docker]` | Docker sandbox backend |
+| `bernstein[e2b]` | [E2B](https://e2b.dev) microVM sandbox backend (needs `E2B_API_KEY`) |
+| `bernstein[modal]` | [Modal](https://modal.com) sandbox backend, optional GPU (needs `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`) |
+| `bernstein[s3]` | S3 artifact sink (via `boto3`) |
+| `bernstein[gcs]` | Google Cloud Storage artifact sink |
+| `bernstein[azure]` | Azure Blob artifact sink |
+| `bernstein[r2]` | Cloudflare R2 artifact sink (S3-compatible `boto3`) |
+| `bernstein[grpc]` | gRPC bridge |
+| `bernstein[k8s]` | Kubernetes integrations |
+
+Combine extras with brackets, e.g. `pip install 'bernstein[openai,docker,s3]'`.
 
 Editor extensions: [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=alex-chernysh.bernstein) &middot; [Open VSX](https://open-vsx.org/extension/alex-chernysh/bernstein)
 
