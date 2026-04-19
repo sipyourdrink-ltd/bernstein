@@ -3,8 +3,9 @@ site_url: https://bernstein.readthedocs.io/
 site_author: Alex Chernysh
 site_description: >-
   Bernstein is the open-source multi-agent orchestration platform for AI coding
-  agents. Run Claude Code, Codex, Gemini CLI in parallel with deterministic
-  scheduling, 18+ adapters, Cloudflare cloud execution, and zero vendor lock-in.
+  agents. Run Claude Code, Codex, Gemini CLI, and the OpenAI Agents SDK in
+  parallel with deterministic scheduling, 18 adapters, pluggable sandbox
+  backends, cloud artifact storage, and zero vendor lock-in.
 repo_url: https://github.com/chernistry/bernstein
 repo_name: chernistry/bernstein
 edit_uri: edit/main/docs/
@@ -150,9 +151,13 @@ nav:
       - Design: architecture/DESIGN.md
       - Task Lifecycle: architecture/LIFECYCLE.md
       - Why Deterministic: architecture/WHY_DETERMINISTIC.md
+      - Sandbox Backends: architecture/sandbox.md
+      - Artifact Storage: architecture/storage.md
+      - Skill Packs: architecture/skills.md
       - Glossary: reference/GLOSSARY.md
   - Guides:
       - Adapter Guide: adapters/ADAPTER_GUIDE.md
+      - OpenAI Agents SDK: adapters/openai-agents.md
       - Hook System: integrations/hook-system.md
       - Plugin SDK: integrations/plugin-sdk.md
       - Cost Optimization: operations/cost-optimization.md
@@ -176,6 +181,7 @@ nav:
       - Cloud CLI: cloudflare/cloudflare-cli.md
       - MCP Remote: cloudflare/cloudflare-mcp.md
   - Reference:
+      - What's New: whats-new.md
       - API Reference: reference/openapi-reference.md
       - Feature Matrix: reference/FEATURE_MATRIX.md
       - Model Policy: operations/MODEL_POLICY.md
@@ -196,6 +202,7 @@ nav:
       - SWE-Bench Thesis: blog/swe-bench-orchestration-thesis.md
       - COBOL Modernization: blog/cobol-modernization.md
   - Comparisons:
+      - OpenAI Agents vs Codex vs Claude: compare/openai-agents.md
       - vs Conductor: compare/bernstein-vs-conductor.md
       - vs Crystal: compare/bernstein-vs-crystal.md
       - vs Dorothy: compare/bernstein-vs-dorothy.md
@@ -204,6 +211,7 @@ nav:
       - vs Parallel Code: compare/bernstein-vs-parallel-code.md
       - vs Single Agent: compare/bernstein-vs-single-agent.md
       - vs Stoneforge: compare/bernstein-vs-stoneforge.md
+      - Deterministic vs LLM orchestration: compare/deterministic-vs-llm-orchestration.md
       - Competitive Matrix: reference/competitive-matrix.md
   - Decisions:
       - Agent Lifecycle: decisions/001-agent-lifecycle.md

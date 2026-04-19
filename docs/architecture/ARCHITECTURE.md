@@ -288,9 +288,8 @@ The cloud bridges implement the same `RuntimeBridge` interface as local executio
 
 - **[Getting Started](../getting-started/GETTING_STARTED.md)** — install, init, run, monitor
 - **[Feature Matrix](../reference/FEATURE_MATRIX.md)** — shipped vs. partial vs. roadmap
-- **[Benchmarks](../../benchmarks/BENCHMARKS.md)** — performance baseline and methodology
+- **[Benchmarks](../benchmarks/BENCHMARKS.md)** — performance baseline and methodology
 - **[Sandbox backends](sandbox.md)** — pluggable `SandboxBackend` protocol (1.9.x)
 - **[Artifact storage sinks](storage.md)** — cloud `.sdd/` persistence (1.9.x)
 - **[Skills](skills.md)** — progressive-disclosure capability packs (1.9.x)
 - **[What's New](../whats-new.md)** — 1.8.x → 1.9.x user-facing changes
-- **[AGENTS.md](../../AGENTS.md)** — engineering doctrine and contribution guide
