@@ -6,7 +6,6 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bernstein.core.token_counter import (
     count_tokens,
     count_tokens_via_api,

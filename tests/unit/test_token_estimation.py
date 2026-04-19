@@ -18,7 +18,6 @@ from bernstein.core.tokens.token_estimation import (
     estimate_tokens_for_text,
 )
 
-
 # --- bytes_per_token_for_file_type ---
 
 

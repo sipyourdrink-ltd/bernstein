@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.prompt_token_analysis import (
     _section_category,
     analyse_prompt_sections,

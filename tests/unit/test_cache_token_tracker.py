@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bernstein.core.cache_token_tracker import (
     CacheTokenTracker,
     CacheUsageRecord,

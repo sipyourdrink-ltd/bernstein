@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.agent_session_token_breakdown import (
     AgentSessionTokenBreakdown,
     load_all_session_breakdowns,

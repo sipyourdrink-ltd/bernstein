@@ -83,7 +83,15 @@ marketing/*
 .hypothesis/
 .mcpregistry_github_token
 .mcpregistry_registry_token
-*token*
+# Stray secret-token files.  Narrowed from `*token*` — that pattern also
+# matched `src/bernstein/core/tokens/**`, which made hatchling drop the
+# entire sub-package from the wheel (v1.8.10 crashed on `bernstein run`
+# with ModuleNotFoundError: bernstein.core.tokens).  Do NOT revert.
+*.token
+*_token.json
+*_token.yaml
+*_token.txt
+auth_token*
 docs/openapi.json
 
 # pytest-benchmark output

@@ -6,7 +6,6 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from bernstein.core.cascading_token_counter import (
     _API_MAX_CHARS,
     _count_tokens_bytes_estimate,

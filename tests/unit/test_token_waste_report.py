@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bernstein.core.token_waste_report import (
     TokenRecord,
     _detect_loops,

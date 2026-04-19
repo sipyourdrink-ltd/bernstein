@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.token_analyzer import (
     TokenAnalysis,
     TokenUsageAnalyzer,

@@ -37,9 +37,9 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.tokens.context_window import compute_context_window_utilization
 from bernstein.core.defaults import TOKEN
 from bernstein.core.lifecycle import transition_agent
+from bernstein.core.tokens.context_window import compute_context_window_utilization
 
 if TYPE_CHECKING:
     from pathlib import Path
