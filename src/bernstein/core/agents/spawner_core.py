@@ -70,6 +70,7 @@ from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.prometheus import agent_spawn_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
+from bernstein.core.sandbox.backend import SandboxSession
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -819,6 +820,7 @@ class AgentSpawner:
         resource_limits: ResourceLimits | None = None,
         warm_pool: WarmPool | None = None,
         spawn_rate_limiter: SpawnRateLimiter | None = None,
+        sandbox_session: SandboxSession | None = None,
     ) -> None:
         self._enable_caching = enable_caching
         self._resource_limits = resource_limits
@@ -883,6 +885,11 @@ class AgentSpawner:
         self._runtime_bridge = runtime_bridge
         self._sandbox = sandbox if sandbox is not None and sandbox.enabled else None
         self._sandbox_managers: dict[str, ContainerManager] = {}
+        # oai-002 phase 1: optional SandboxBackend-issued session. Stored
+        # for orchestration visibility only — the spawner still routes
+        # exec through the worktree path in phase 1. Phase 2 (oai-002b)
+        # routes adapter exec through this session.
+        self._sandbox_session: SandboxSession | None = sandbox_session
         # Container isolation
         self._container_mgr: ContainerManager | None = None
         if container_config is not None:
@@ -994,6 +1001,19 @@ class AgentSpawner:
     def get_worktree_path(self, session_id: str) -> Path | None:
         """Return the worktree path for *session_id*, or None if not registered."""
         return self._worktree_paths.get(session_id)
+
+    @property
+    def sandbox_session(self) -> SandboxSession | None:
+        """Return the optional :class:`SandboxSession` attached to this spawner.
+
+        Phase 1 (oai-002) keeps this purely informational — adapters
+        continue to run as local subprocesses against the worktree
+        path. The session is exposed so the orchestrator and the
+        ``bernstein agents --sandbox-backends`` CLI can report which
+        backend the spawner was wired against. Phase 2 (oai-002b)
+        routes adapter exec through ``sandbox_session.exec``.
+        """
+        return self._sandbox_session
 
     def cleanup_worktree(self, session_id: str) -> None:
         """Remove the worktree and branch for a dead agent session."""
