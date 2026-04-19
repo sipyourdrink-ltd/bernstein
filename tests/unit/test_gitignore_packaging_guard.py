@@ -67,3 +67,37 @@ def test_no_shipped_subpackage_is_gitignored() -> None:
             + "\n  ".join(offending)
         )
         raise AssertionError(msg)
+
+
+def test_every_subpackage_init_is_tracked_in_git() -> None:
+    """Every ``src/bernstein/**/__init__.py`` must be git-tracked.
+
+    An untracked ``__init__.py`` is a subtle trap: hatchling still ships
+    the directory (because the other .py files are tracked), but CI
+    tooling (ruff isort classifier, pyright namespace-package heuristics)
+    sees the sub-package as a namespace package and starts treating its
+    imports as third-party.  That flipped ``core/tokens`` imports into
+    "third-party" on CI while they stayed "first-party" locally, breaking
+    ``ruff check`` on main only.  Regression guard.
+    """
+    packages = _enumerate_shipped_subpackages()
+    untracked: list[str] = []
+    for pkg in packages:
+        init_path = pkg / "__init__.py"
+        rel = str(init_path.relative_to(REPO_ROOT))
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", rel],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            check=False,
+        )
+        if result.returncode != 0:
+            untracked.append(rel)
+
+    if untracked:
+        raise AssertionError(
+            "Untracked __init__.py files found under src/bernstein/.  "
+            "They must be `git add`-ed so CI sees the same package "
+            "boundaries as local dev:\n  " + "\n  ".join(untracked)
+        )
