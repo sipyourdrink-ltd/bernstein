@@ -87,6 +87,30 @@ stages:
     # Steps within the stage can override this with their own 'repo' field.
     # repo: ../backend
 
+    # ------------------------------------------------------------------
+    # Sandbox backend (optional, oai-002).
+    # Selects the isolation backend for this stage. Omit to keep the
+    # existing worktree behaviour (zero diff from prior releases).
+    # Built-in backends: worktree, docker. Optional extras: e2b, modal.
+    # Plugin authors register more via the ``bernstein.sandbox_backends``
+    # entry-point group. See docs/architecture/sandbox.md.
+    # ------------------------------------------------------------------
+    # sandbox:
+    #   backend: worktree     # default; no-op
+    #   # backend: docker     # first-party, requires `pip install bernstein[docker]`
+    #   # backend: e2b        # optional extra: `pip install bernstein[e2b]`
+    #   # backend: modal      # optional extra: `pip install bernstein[modal]`
+    #   options:
+    #     # docker-specific
+    #     image: python:3.13-slim
+    #     memory_mb: 2048
+    #     cpu_quota: 200000
+    #     network_disabled: false
+    #     # e2b-specific
+    #     # template: code-interpreter-v1
+    #     # modal-specific
+    #     # gpu: "A10G"
+
     steps:
       - title: "Short step title"
 

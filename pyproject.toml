@@ -108,6 +108,11 @@ graphics = []  # term-image disabled: caps pillow<11, conflicts with CVE-2026-25
 # Declared as an optional extra so users who don't spawn OpenAI Agents agents
 # don't need the SDK installed.  Enable with: pip install 'bernstein[openai]'.
 openai = ["openai-agents>=0.4.0"]
+# Sandbox backend extras (oai-002). Each pulls in the provider SDK for the
+# corresponding SandboxBackend. Kept optional so minimal installs stay lean.
+docker = ["docker>=7"]
+e2b = ["e2b-code-interpreter>=1.0"]
+modal = ["modal>=0.65"]
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"
@@ -133,6 +138,15 @@ bernstein-worker = "bernstein.core.worker:main"
 [project.entry-points."bernstein.reporters"]
 # Custom reporters (hookimpl classes that emit run summaries). Example:
 # slack = "my_package.reporters:SlackReporter"
+
+[project.entry-points."bernstein.sandbox_backends"]
+# Sandbox backends (SandboxBackend protocol implementations, oai-002).
+# First-party backends (worktree, docker) ship in core and are registered
+# by bernstein.core.sandbox.registry directly; plugin authors register
+# additional backends (e2b, modal, cloud providers ...) via this group.
+# Example:
+# e2b = "bernstein.core.sandbox.backends.e2b:E2BSandboxBackend"
+# modal = "bernstein.core.sandbox.backends.modal:ModalSandboxBackend"
 
 [tool.hatch.build]
 exclude = [
