@@ -29,8 +29,10 @@ if TYPE_CHECKING:
 
 # Signature of ``read_reference`` / ``read_script`` on sources that support
 # on-demand file reads. Sources that can't serve bucketed files simply omit
-# the attribute — see the ``getattr(..., None)`` dance below.
-_ReaderFn = Callable[[str, str], str]
+# the attribute — see the ``getattr(..., None)`` dance below. The return type
+# is ``object`` so third-party plugin implementations cannot trick the static
+# checker into skipping the runtime string-validation in :func:`_call_reader`.
+_ReaderFn = Callable[[str, str], object]
 
 
 class DuplicateSkillError(RuntimeError):

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +20,7 @@ from bernstein.core.skills.loader import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from bernstein.core.skills.loader import SkillLoader
@@ -84,12 +84,8 @@ def load_skill(
     except SkillNotFoundError:
         return _build_error_result(name, f"skill {name!r} not found")
 
-    reference_content, ref_error = _read_bucket(
-        resolved_loader.read_reference, name, reference, "reference"
-    )
-    script_content, script_error = _read_bucket(
-        resolved_loader.read_script, name, script, "script"
-    )
+    reference_content, ref_error = _read_bucket(resolved_loader.read_reference, name, reference, "reference")
+    script_content, script_error = _read_bucket(resolved_loader.read_script, name, script, "script")
     error = ref_error or script_error
 
     sink(
