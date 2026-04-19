@@ -63,6 +63,12 @@ MODEL_COSTS_PER_1M_TOKENS: dict[str, ModelUsdPer1MTokens] = {
     "opus": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write": 6.25},
     MODEL_GPT_5_4: {"input": 2.5, "output": 15.0},
     "gpt-5.4-mini": {"input": 0.75, "output": 4.5},
+    # OpenAI Agents SDK v2 baseline models (oai-001). Launch prices as of
+    # 2026-04-19 — gpt-5 is roughly sonnet-parity on input, cheaper on output;
+    # gpt-5-mini is the default for the runner; o4 is the reasoning tier.
+    "gpt-5": {"input": 2.5, "output": 15.0},
+    "gpt-5-mini": {"input": 0.5, "output": 2.5},
+    "o4": {"input": 3.0, "output": 12.0},
     "o3": {"input": 2.0, "output": 8.0},
     "o4-mini": {"input": 1.1, "output": 4.4},
     "gemini-3": {"input": 3.0, "output": 15.0, "cache_read": 0.1},
@@ -83,11 +89,20 @@ _MODEL_COST_USD_PER_1K: dict[str, float] = {
     "haiku": 0.003,  # ($1 + $5) / 2 / 1000
     "sonnet": 0.009,  # ($3 + $15) / 2 / 1000
     "opus": 0.015,  # ($5 + $25) / 2 / 1000
-    # OpenAI — per 1M tokens: GPT-5.4 $2.50/$15, o3 $2/$8, o4-mini $1.10/$4.40
-    MODEL_GPT_5_4: 0.00875,  # ($2.50 + $15) / 2 / 1000
+    # OpenAI — per 1M tokens: GPT-5.4 $2.50/$15, o3 $2/$8, o4-mini $1.10/$4.40.
+    # _model_cost() uses substring matching, so more-specific keys (mini
+    # variants, o4-mini) must come *before* the shorter stems they share
+    # a prefix with.  Without this ordering, "gpt-5-mini" would hit the
+    # "gpt-5" row and inherit its higher blended cost.
     "gpt-5.4-mini": 0.002625,  # ($0.75 + $4.50) / 2 / 1000
-    "o3": 0.005,  # ($2 + $8) / 2 / 1000
+    MODEL_GPT_5_4: 0.00875,  # ($2.50 + $15) / 2 / 1000
+    # OpenAI Agents SDK v2 launch SKUs (oai-001).  "gpt-5-mini" MUST
+    # precede "gpt-5" for the substring match to land on the cheaper row.
+    "gpt-5-mini": 0.0015,  # ($0.50 + $2.50) / 2 / 1000
+    "gpt-5": 0.00875,  # ($2.50 + $15) / 2 / 1000
     "o4-mini": 0.00275,  # ($1.10 + $4.40) / 2 / 1000
+    "o4": 0.0075,  # ($3 + $12) / 2 / 1000
+    "o3": 0.005,  # ($2 + $8) / 2 / 1000
     # Gemini (Google) — per 1M tokens: 3-pro ~$3/$15, 3.1-pro $0.50/$3, 3-flash $0.15/$1
     "gemini-3": 0.009,  # ($3 + $15) / 2 / 1000
     MODEL_GEMINI_3_1_PRO: 0.00175,  # ($0.50 + $3.00) / 2 / 1000
