@@ -533,10 +533,45 @@ def _resolve_role_prompt(
     catalog_system_prompt: str | None,
     agency_catalog: dict[str, AgencyAgent] | None,
 ) -> str:
-    """Resolve the role prompt from catalog, template, or fallback."""
+    """Resolve the role prompt from skills, catalog, template, or fallback.
+
+    Resolution order (oai-004):
+
+    1. ``catalog_system_prompt`` — explicit Agency override.
+    2. Skill pack — ``templates/skills/<role>/SKILL.md`` plus a compact
+       index for the other skills, injected via
+       :func:`bernstein.core.planning.role_resolver.resolve_role_prompt`.
+    3. Legacy role template — ``templates/roles/<role>/system_prompt.md``.
+    4. Agency catalog fallback or the generic ``"You are a <role> specialist."``
+       stub.
+    """
     del tasks  # reserved for future task-specific overrides
     if catalog_system_prompt:
         return catalog_system_prompt
+
+    # Try the new skill-pack progressive-disclosure path first. It falls
+    # back to the legacy template automatically when no skill exists.
+    try:
+        from bernstein.core.planning.role_resolver import resolve_role_prompt
+
+        resolved = resolve_role_prompt(
+            role,
+            templates_dir=templates_dir,
+            legacy_context={k: str(v) for k, v in context.items()},
+        )
+    except Exception as exc:
+        logger.debug("Skill-backed role resolution failed for %s: %s", role, exc)
+    else:
+        if resolved.source in {"skill", "legacy"}:
+            logger.debug(
+                "Resolved role %s via %s (skill=%s)",
+                role,
+                resolved.source,
+                resolved.skill_name,
+            )
+            return resolved.body
+        # ``fallback`` means neither skill nor legacy template matched — fall
+        # through to the agency / default-stub path below.
 
     try:
         return render_role_prompt(role, context, templates_dir=templates_dir)
