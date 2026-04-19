@@ -49,10 +49,6 @@ $ bernstein -g "Add JWT auth"
 
 Also available via `pip`, `uv tool install`, `brew`, `dnf copr`, and `npx bernstein-orchestrator`. See [install options](#install).
 
-#### Wall of fame
-
-> *"lol, good luck, keep vibecoding shit that you have no idea about xD"* — [PeaceFirePL](https://www.reddit.com/r/coolgithubprojects/comments/1sc7pxn/comment/oel89qf/), Reddit
-
 ## Supported agents
 
 Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
@@ -161,22 +157,22 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md) &midd
 
 | Feature | Bernstein | CrewAI | AutoGen [^autogen] | LangGraph |
 |---------|-----------|--------|---------|-----------|
-| Orchestrator | Deterministic code | LLM-driven | LLM-driven | Graph + LLM |
+| Orchestrator | Deterministic code | LLM-driven (+ code Flows) | LLM-driven | Graph + LLM |
 | Works with | Any CLI agent (18 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
 | Pluggable sandboxes | Worktree, Docker, E2B, Modal | No | No | No |
-| Verification | Janitor + quality gates | No | No | Conditional edges |
-| Cost tracking | Built-in | No | No | No |
+| Verification | Janitor + quality gates | Guardrails + Pydantic output | Termination conditions | Conditional edges |
+| Cost tracking | Built-in | `usage_metrics` | `RequestUsage` | Via LangSmith |
 | State model | File-based (.sdd/) | In-memory + SQLite checkpoint | In-memory | Checkpointer |
 | Remote artifact sinks | S3, GCS, Azure Blob, R2 | No | No | No |
-| Self-evolution | Built-in | No | No | No |
-| Declarative plans (YAML) | Yes | Yes | No | Partial (JSON config) |
-| Model routing per task | Yes | No | No | Manual |
-| MCP support | Yes (client + server) | Yes | Yes (client) | Yes (client + server) |
-| Agent-to-agent chat | Bulletin board | Yes | Yes | No |
-| Web UI | TUI + web dashboard | Yes | Yes | Yes (Studio + LangSmith) |
-| Cloud hosted option | Yes (Cloudflare) | Yes | No | Yes |
-| Built-in RAG/retrieval | Yes (codebase FTS5 + BM25) | Yes | Yes | Yes |
+| Self-evolution | Built-in (experimental) | No | No | No |
+| Declarative plans (YAML) | Yes | Yes (`agents.yaml`, `tasks.yaml`) | No | Partial (`langgraph.json`) |
+| Model routing per task | Yes | Per-agent LLM | Per-agent `model_client` | Per-node (manual) |
+| MCP support | Yes (client + server) | Yes | Yes (client + workbench) | Yes (client + server) |
+| Agent-to-agent chat | Bulletin board | Yes (Crew process) | Yes (group chat) | Yes (supervisor, swarm) |
+| Web UI | TUI + web dashboard | CrewAI AMP | AutoGen Studio | LangGraph Studio + LangSmith |
+| Cloud hosted option | Yes (Cloudflare) | Yes (CrewAI AMP) | No | Yes (LangGraph Cloud) |
+| Built-in RAG/retrieval | Yes (codebase FTS5 + BM25) | `crewai_tools` | `autogen_ext` retrievers | Via LangChain |
 
 *Last verified: 2026-04-19. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
 
