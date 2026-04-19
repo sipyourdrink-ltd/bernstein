@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -111,13 +112,32 @@ def _read_pid(pid_path: Path) -> int | None:
 
 
 def _pid_alive(pid: int) -> bool:
-    try:
-        import os
+    """Return True if ``pid`` refers to a running process.
 
+    Uses the standard POSIX ``os.kill(pid, 0)`` probe. On Windows this can
+    raise ``OSError(WinError 87) "The parameter is incorrect"`` for PIDs
+    that do not correspond to a live process (instead of the expected
+    ``ProcessLookupError``), so we treat any ``OSError`` from ``os.kill``
+    on Windows as "not alive". ``PermissionError`` always means the PID
+    exists but is not ours; that still counts as alive.
+    """
+    import os
+
+    try:
         os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        # PID exists, owned by another user — still a live process.
+        return True
+    except OSError:
+        # On Windows, os.kill raises OSError(WinError 87) for dead/invalid
+        # PIDs instead of ProcessLookupError. Treat any OSError on Windows
+        # as "not alive"; on POSIX, re-raise so genuine bugs surface.
+        if sys.platform == "win32":
+            return False
+        raise
+    return True
 
 
 def is_checkpoint_recoverable(checkpoint: AgentCheckpoint) -> tuple[bool, str]:
