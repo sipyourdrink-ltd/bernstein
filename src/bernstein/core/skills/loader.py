@@ -18,13 +18,19 @@ eagerly. Re-registering a source requires a new :class:`SkillLoader`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from bernstein.core.skills.sources.local_dir import LocalDirSkillSource
 
 if TYPE_CHECKING:
     from bernstein.core.skills.source import SkillArtifact, SkillSource
+
+# Signature of ``read_reference`` / ``read_script`` on sources that support
+# on-demand file reads. Sources that can't serve bucketed files simply omit
+# the attribute — see the ``getattr(..., None)`` dance below.
+_ReaderFn = Callable[[str, str], str]
 
 
 class DuplicateSkillError(RuntimeError):
@@ -179,17 +185,13 @@ class SkillLoader:
                 (e.g. a remote source that bundles only SKILL.md).
         """
         source = self.find_source_for(name)
-        reader = getattr(source, "read_reference", None)
-        if reader is None:
-            raise RuntimeError(f"source {source.name!r} does not support reference reads")
+        reader = _resolve_reader(source, "read_reference")
         return _call_reader(reader, name, reference)
 
     def read_script(self, name: str, script: str) -> str:
         """Read a file from a skill's ``scripts/`` directory. See :meth:`read_reference`."""
         source = self.find_source_for(name)
-        reader = getattr(source, "read_script", None)
-        if reader is None:
-            raise RuntimeError(f"source {source.name!r} does not support script reads")
+        reader = _resolve_reader(source, "read_script")
         return _call_reader(reader, name, script)
 
 
@@ -245,15 +247,42 @@ def default_loader_from_templates(
     return SkillLoader(sources=sources)
 
 
-def _call_reader(reader: object, name: str, path: str) -> str:
-    """Invoke a ``read_reference`` / ``read_script`` attribute safely.
+def _resolve_reader(source: SkillSource, attr: str) -> _ReaderFn:
+    """Duck-type a ``read_reference`` / ``read_script`` attribute off a source.
 
-    We duck-type on the source rather than adding new abstract methods so
-    that custom sources (MCP-backed, network-backed) can skip unsupported
-    buckets — they simply omit the attribute.
+    We attach these methods by duck-typing (rather than adding new abstract
+    methods on :class:`SkillSource`) so custom sources that cannot serve
+    bucketed files — a remote MCP source, for instance — can simply omit the
+    attribute. This helper centralises the lookup so the caller always sees
+    a strictly typed ``Callable``.
+
+    Args:
+        source: The owning :class:`SkillSource`.
+        attr:   ``"read_reference"`` or ``"read_script"``.
+
+    Returns:
+        The bound reader function, narrowed to :data:`_ReaderFn`.
+
+    Raises:
+        RuntimeError: When the source omits the attribute or exposes a
+            non-callable value under that name.
     """
-    if not callable(reader):
-        raise RuntimeError(f"reader attribute is not callable: {reader!r}")
+    raw = getattr(source, attr, None)
+    if raw is None:
+        bucket = "reference" if attr == "read_reference" else "script"
+        raise RuntimeError(f"source {source.name!r} does not support {bucket} reads")
+    if not callable(raw):
+        raise RuntimeError(f"{attr} attribute on {source.name!r} is not callable: {raw!r}")
+    return cast("_ReaderFn", raw)
+
+
+def _call_reader(reader: _ReaderFn, name: str, path: str) -> str:
+    """Invoke a bucket reader and validate the return type.
+
+    The call is unconditional here — :func:`_resolve_reader` has already
+    guaranteed ``reader`` is callable. We still check the return type so a
+    misbehaving plugin cannot smuggle a non-string back to the caller.
+    """
     result = reader(name, path)
     if not isinstance(result, str):
         raise RuntimeError(f"reader returned {type(result).__name__}, expected str")
