@@ -528,6 +528,44 @@ def agents_match(role: str, task_description: str) -> None:
     console.print(Panel(t, title=f"[bold]Agent match: {role}[/bold]", border_style="cyan"))
 
 
+@agents_group.command("sandbox-backends")
+def agents_sandbox_backends() -> None:
+    """List installed sandbox backends with their capabilities (oai-002).
+
+    \b
+    Example:
+      bernstein agents sandbox-backends
+
+    Backends are discovered from the ``bernstein.sandbox_backends``
+    entry-point group. First-party backends (``worktree``, ``docker``)
+    always appear; optional cloud backends (``e2b``, ``modal``) appear
+    when installed via the corresponding extra.
+    """
+    from rich.table import Table
+
+    from bernstein.core.sandbox import list_backends
+
+    backends = list_backends()
+    if not backends:
+        console.print("[dim]No sandbox backends installed.[/dim]")
+        return
+
+    table = Table(
+        title="Sandbox backends",
+        show_lines=False,
+        header_style=_STYLE_BOLD_CYAN,
+    )
+    table.add_column("NAME", style="bold", min_width=12)
+    table.add_column("CAPABILITIES", min_width=42)
+
+    for backend in sorted(backends, key=lambda b: b.name):
+        caps = ", ".join(sorted(c.value for c in backend.capabilities))
+        table.add_row(backend.name, caps or "[dim]—[/dim]")
+
+    console.print(table)
+    console.print(f"\n[dim]{len(backends)} backend(s) installed[/dim]")
+
+
 @agents_group.command("discover")
 @click.option("--net", "include_network", is_flag=True, default=False, help="Also search GitHub and npm.")
 def agents_discover(include_network: bool) -> None:
