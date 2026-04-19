@@ -23,6 +23,7 @@ from bernstein.adapters.kilo import KiloAdapter
 from bernstein.adapters.kiro import KiroAdapter
 from bernstein.adapters.mock import MockAgentAdapter
 from bernstein.adapters.ollama import OllamaAdapter
+from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
 from bernstein.adapters.qwen import QwenAdapter
 
@@ -44,6 +45,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "kiro": KiroAdapter,
     "mock": MockAgentAdapter,
     "ollama": OllamaAdapter,
+    "openai_agents": OpenAIAgentsAdapter,
     "opencode": OpenCodeAdapter,
     "qwen": QwenAdapter,
 }

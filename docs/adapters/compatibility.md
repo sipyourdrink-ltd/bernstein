@@ -10,7 +10,7 @@ Last updated: 2026-04-13
 
 - Python: project targets Python 3.12+.
 - Task server/API: FastAPI-based local or remote server operation.
-- CLI adapters: 17 CLI agent adapters (16 third-party + generic) in `src/bernstein/adapters/`.
+- CLI adapters: 18 CLI agent adapters (17 third-party + generic) in `src/bernstein/adapters/`.
 
 ### Supported CLI agent adapters
 
@@ -19,6 +19,7 @@ Last updated: 2026-04-13
 | `claude` | Anthropic | JSON schema enforced | Yes |
 | `codex` | OpenAI | JSON (`--json`) | No |
 | `gemini` | Google | JSON (`--output-format json`) | No |
+| `openai_agents` | OpenAI (Agents SDK v2) | JSONL event stream | Yes (Bernstein-bridged) |
 | `aider` | Multi | No | No |
 | `amp` | Sourcegraph | No | No |
 | `qwen` | Multi | No | No |

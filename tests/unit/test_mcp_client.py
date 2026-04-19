@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-
 from bernstein.core.protocols.mcp_client import (
     MCPAuthError,
     MCPClientError,
