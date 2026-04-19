@@ -44,7 +44,6 @@ from bernstein.cli.advanced_cmd import (
     trace_cmd,
 )
 from bernstein.cli.agents_cmd import agents_group
-from bernstein.cli.commands.skills_cmd import skills_group
 
 # New CLI commands (CLI-004 through CLI-013)
 from bernstein.cli.aliases import ALIASES, aliases_cmd
@@ -56,6 +55,7 @@ from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.cloud_cmd import cloud_group
+from bernstein.cli.commands.skills_cmd import skills_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.config_path_cmd import config_path_cmd
 from bernstein.cli.cost import cost_cmd, estimate_cmd
