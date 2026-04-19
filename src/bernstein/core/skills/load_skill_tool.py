@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -83,27 +84,14 @@ def load_skill(
     except SkillNotFoundError:
         return _build_error_result(name, f"skill {name!r} not found")
 
-    reference_content: str | None = None
-    script_content: str | None = None
-    error: str | None = None
+    reference_content, ref_error = _read_bucket(
+        resolved_loader.read_reference, name, reference, "reference"
+    )
+    script_content, script_error = _read_bucket(
+        resolved_loader.read_script, name, script, "script"
+    )
+    error = ref_error or script_error
 
-    if reference is not None:
-        try:
-            reference_content = resolved_loader.read_reference(name, reference)
-        except FileNotFoundError as exc:
-            error = str(exc)
-        except (ValueError, RuntimeError) as exc:
-            error = f"failed to read reference: {exc}"
-
-    if script is not None:
-        try:
-            script_content = resolved_loader.read_script(name, script)
-        except FileNotFoundError as exc:
-            error = str(exc) if error is None else error
-        except (ValueError, RuntimeError) as exc:
-            error = f"failed to read script: {exc}" if error is None else error
-
-    duration_s = time.monotonic() - start
     sink(
         {
             "event": "skill_loaded",
@@ -111,7 +99,7 @@ def load_skill(
             "reference": reference,
             "script": script,
             "source": skill.source_name,
-            "duration_s": duration_s,
+            "duration_s": time.monotonic() - start,
             "error": error,
         }
     )
@@ -146,6 +134,29 @@ def _resolve_loader(
     if templates_roles_dir is None:
         raise ValueError("load_skill requires either ``loader`` or ``templates_roles_dir``")
     return default_loader_from_templates(templates_roles_dir)
+
+
+def _read_bucket(
+    reader: Callable[[str, str], str],
+    skill_name: str,
+    filename: str | None,
+    label: str,
+) -> tuple[str | None, str | None]:
+    """Invoke ``reader(skill_name, filename)`` and translate exceptions.
+
+    Returns ``(content, error)`` where exactly one is populated (or both are
+    ``None`` when ``filename`` is ``None``). The error message mirrors the
+    wording used by the original inline ``try/except`` so callers see an
+    identical contract.
+    """
+    if filename is None:
+        return None, None
+    try:
+        return reader(skill_name, filename), None
+    except FileNotFoundError as exc:
+        return None, str(exc)
+    except (ValueError, RuntimeError) as exc:
+        return None, f"failed to read {label}: {exc}"
 
 
 def _build_error_result(name: str, detail: str) -> SkillLoadResult:
