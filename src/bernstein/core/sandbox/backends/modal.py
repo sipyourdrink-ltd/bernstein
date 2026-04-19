@@ -7,21 +7,32 @@ session inside a Modal Sandbox; the Modal SDK is pulled in via the
 
 Snapshots are supported by Modal sandboxes so the backend declares
 :attr:`~bernstein.core.sandbox.backend.SandboxCapability.SNAPSHOT`.
+
+Scaffolding that is structurally identical to
+:mod:`bernstein.core.sandbox.backends.e2b` lives in
+:mod:`bernstein.core.sandbox.backends._remote_helpers`; this module
+keeps only the Modal-specific SDK import and API-attribute probing.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
-import time
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.sandbox.backend import (
     ExecResult,
     SandboxCapability,
     SandboxSession,
+)
+from bernstein.core.sandbox.backends._remote_helpers import (
+    allocate_session_id,
+    encode_as_bytes,
+    guard_exec_preconditions,
+    merge_exec_env,
+    resolve_posix_path,
+    resolve_sdk_attr,
+    run_exec_with_timeout,
 )
 
 if TYPE_CHECKING:
@@ -65,31 +76,22 @@ class ModalSandboxSession(SandboxSession):
         self._default_timeout = default_timeout
         self._closed = False
 
-    def _resolve_posix(self, path: str) -> str:
-        candidate = PurePosixPath(path)
-        if candidate.is_absolute():
-            return str(candidate)
-        return str(PurePosixPath(self.workdir) / candidate)
-
     async def read(self, path: str) -> bytes:
-        resolved = self._resolve_posix(path)
+        resolved = resolve_posix_path(self.workdir, path)
 
         def _do_read() -> bytes:
-            reader = getattr(self._sandbox, "read_file", None) or getattr(self._sandbox, "open", None)
+            reader = resolve_sdk_attr(self._sandbox, "read_file", "open")
             if reader is None:
                 raise RuntimeError("Modal SDK did not expose a file-read API")
-            data = reader(resolved)
-            if isinstance(data, str):
-                return data.encode("utf-8")
-            return bytes(data)
+            return encode_as_bytes(reader(resolved))
 
         return await asyncio.to_thread(_do_read)
 
     async def write(self, path: str, data: bytes, *, mode: int = 0o644) -> None:
-        resolved = self._resolve_posix(path)
+        resolved = resolve_posix_path(self.workdir, path)
 
         def _do_write() -> None:
-            writer = getattr(self._sandbox, "write_file", None) or getattr(self._sandbox, "put", None)
+            writer = resolve_sdk_attr(self._sandbox, "write_file", "put")
             if writer is None:
                 raise RuntimeError("Modal SDK did not expose a file-write API")
             writer(resolved, data)
@@ -103,10 +105,10 @@ class ModalSandboxSession(SandboxSession):
         await asyncio.to_thread(_do_write)
 
     async def ls(self, path: str) -> list[str]:
-        resolved = self._resolve_posix(path)
+        resolved = resolve_posix_path(self.workdir, path)
 
         def _do_ls() -> list[str]:
-            lister = getattr(self._sandbox, "list_files", None) or getattr(self._sandbox, "ls", None)
+            lister = resolve_sdk_attr(self._sandbox, "list_files", "ls")
             if lister is None:
                 raise RuntimeError("Modal SDK did not expose a listing API")
             entries = lister(resolved)
@@ -124,20 +126,13 @@ class ModalSandboxSession(SandboxSession):
         timeout: int | None = None,
         stdin: bytes | None = None,
     ) -> ExecResult:
-        if self._closed:
-            raise RuntimeError(f"Session {self.session_id} is closed")
-        if not cmd:
-            raise ValueError("cmd must be a non-empty argv list")
+        guard_exec_preconditions(self._closed, self.session_id, cmd)
         effective_cwd = cwd if cwd is not None else self.workdir
         effective_timeout = timeout if timeout is not None else self._default_timeout
-        merged_env = dict(self._base_env)
-        if env:
-            merged_env.update(env)
-
-        start = time.monotonic()
+        merged_env = merge_exec_env(self._base_env, env)
 
         def _run() -> tuple[int, bytes, bytes]:
-            exec_fn = getattr(self._sandbox, "exec", None) or getattr(self._sandbox, "run", None)
+            exec_fn = resolve_sdk_attr(self._sandbox, "exec", "run")
             if exec_fn is None:
                 raise RuntimeError("Modal SDK did not expose an exec API")
             process = exec_fn(
@@ -153,24 +148,9 @@ class ModalSandboxSession(SandboxSession):
             exit_code = int(process.wait())
             stdout_val = getattr(process.stdout, "read", lambda: b"")()
             stderr_val = getattr(process.stderr, "read", lambda: b"")()
-            return (
-                exit_code,
-                stdout_val.encode("utf-8") if isinstance(stdout_val, str) else bytes(stdout_val),
-                stderr_val.encode("utf-8") if isinstance(stderr_val, str) else bytes(stderr_val),
-            )
+            return (exit_code, encode_as_bytes(stdout_val), encode_as_bytes(stderr_val))
 
-        try:
-            exit_code, stdout_b, stderr_b = await asyncio.wait_for(
-                asyncio.to_thread(_run), timeout=effective_timeout + 5
-            )
-        except TimeoutError:
-            raise TimeoutError(f"Command {cmd!r} timed out after {effective_timeout}s") from None
-        return ExecResult(
-            exit_code=exit_code,
-            stdout=stdout_b,
-            stderr=stderr_b,
-            duration_seconds=time.monotonic() - start,
-        )
+        return await run_exec_with_timeout(_run, cmd=cmd, timeout=effective_timeout)
 
     async def snapshot(self) -> str:
         def _do_snapshot() -> str:
@@ -187,7 +167,7 @@ class ModalSandboxSession(SandboxSession):
         self._closed = True
 
         def _do_shutdown() -> None:
-            terminate = getattr(self._sandbox, "terminate", None) or getattr(self._sandbox, "close", None)
+            terminate = resolve_sdk_attr(self._sandbox, "terminate", "close")
             if terminate is None:
                 logger.debug("Modal SDK did not expose a terminate API")
                 return
@@ -224,12 +204,6 @@ class ModalSandboxBackend:
         self._client_factory = client_factory
         self._sessions: dict[str, ModalSandboxSession] = {}
 
-    @staticmethod
-    def _allocate_session_id(hint: str | None = None) -> str:
-        if hint:
-            return hint
-        return f"bernstein-modal-{secrets.token_hex(6)}"
-
     async def create(
         self,
         manifest: WorkspaceManifest,
@@ -247,7 +221,7 @@ class ModalSandboxBackend:
         opts = dict(options or {})
         image_ref = opts.get("image")
         gpu = opts.get("gpu")
-        session_id = self._allocate_session_id(opts.get("session_id"))
+        session_id = allocate_session_id("bernstein-modal", opts.get("session_id"))
 
         def _build() -> Any:
             if self._client_factory is not None:

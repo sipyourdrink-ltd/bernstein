@@ -13,21 +13,32 @@ callers can persist state across orchestrator restarts.
 This implementation ships in phase 1 as a functional skeleton: the
 actual wiring against a live E2B session is exercised by integration
 tests gated on ``E2B_API_KEY``; unit tests rely on mocks.
+
+Scaffolding that is structurally identical to
+:mod:`bernstein.core.sandbox.backends.modal` lives in
+:mod:`bernstein.core.sandbox.backends._remote_helpers`; this module
+keeps only the E2B-specific SDK import and API-attribute probing.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
-import time
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.sandbox.backend import (
     ExecResult,
     SandboxCapability,
     SandboxSession,
+)
+from bernstein.core.sandbox.backends._remote_helpers import (
+    allocate_session_id,
+    encode_as_bytes,
+    guard_exec_preconditions,
+    merge_exec_env,
+    resolve_posix_path,
+    resolve_sdk_attr,
+    run_exec_with_timeout,
 )
 
 if TYPE_CHECKING:
@@ -51,6 +62,14 @@ def _import_e2b() -> Any:
     return e2b_code_interpreter
 
 
+def _e2b_filesystem(sandbox: Any) -> Any:
+    """Return the filesystem handle exposed by the installed E2B SDK version."""
+    fs = resolve_sdk_attr(sandbox, "files", "filesystem")
+    if fs is None:
+        raise RuntimeError("E2B SDK did not expose a filesystem interface")
+    return fs
+
+
 class E2BSandboxSession(SandboxSession):
     """A session backed by an E2B microVM sandbox."""
 
@@ -72,35 +91,21 @@ class E2BSandboxSession(SandboxSession):
         self._default_timeout = default_timeout
         self._closed = False
 
-    def _resolve_posix(self, path: str) -> str:
-        candidate = PurePosixPath(path)
-        if candidate.is_absolute():
-            return str(candidate)
-        return str(PurePosixPath(self.workdir) / candidate)
-
     async def read(self, path: str) -> bytes:
-        resolved = self._resolve_posix(path)
+        resolved = resolve_posix_path(self.workdir, path)
 
         def _do_read() -> bytes:
             # The E2B SDK exposes either ``files.read`` or ``filesystem.read``
             # depending on the version; both return bytes or str.
-            fs = getattr(self._sandbox, "files", None) or getattr(self._sandbox, "filesystem", None)
-            if fs is None:
-                raise RuntimeError("E2B SDK did not expose a filesystem interface")
-            data = fs.read(resolved)
-            if isinstance(data, str):
-                return data.encode("utf-8")
-            return bytes(data)
+            return encode_as_bytes(_e2b_filesystem(self._sandbox).read(resolved))
 
         return await asyncio.to_thread(_do_read)
 
     async def write(self, path: str, data: bytes, *, mode: int = 0o644) -> None:
-        resolved = self._resolve_posix(path)
+        resolved = resolve_posix_path(self.workdir, path)
 
         def _do_write() -> None:
-            fs = getattr(self._sandbox, "files", None) or getattr(self._sandbox, "filesystem", None)
-            if fs is None:
-                raise RuntimeError("E2B SDK did not expose a filesystem interface")
+            fs = _e2b_filesystem(self._sandbox)
             fs.write(resolved, data)
             # The E2B SDK does not expose chmod explicitly in every
             # version; skip best-effort rather than fail if missing.
@@ -114,13 +119,10 @@ class E2BSandboxSession(SandboxSession):
         await asyncio.to_thread(_do_write)
 
     async def ls(self, path: str) -> list[str]:
-        resolved = self._resolve_posix(path)
+        resolved = resolve_posix_path(self.workdir, path)
 
         def _do_ls() -> list[str]:
-            fs = getattr(self._sandbox, "files", None) or getattr(self._sandbox, "filesystem", None)
-            if fs is None:
-                raise RuntimeError("E2B SDK did not expose a filesystem interface")
-            entries = fs.list(resolved)
+            entries = _e2b_filesystem(self._sandbox).list(resolved)
             names = [getattr(e, "name", str(e)) for e in entries]
             return sorted(names)
 
@@ -135,20 +137,13 @@ class E2BSandboxSession(SandboxSession):
         timeout: int | None = None,
         stdin: bytes | None = None,
     ) -> ExecResult:
-        if self._closed:
-            raise RuntimeError(f"Session {self.session_id} is closed")
-        if not cmd:
-            raise ValueError("cmd must be a non-empty argv list")
+        guard_exec_preconditions(self._closed, self.session_id, cmd)
         effective_cwd = cwd if cwd is not None else self.workdir
         effective_timeout = timeout if timeout is not None else self._default_timeout
-        merged_env = dict(self._base_env)
-        if env:
-            merged_env.update(env)
-
-        start = time.monotonic()
+        merged_env = merge_exec_env(self._base_env, env)
 
         def _run() -> tuple[int, bytes, bytes]:
-            commands = getattr(self._sandbox, "commands", None) or getattr(self._sandbox, "process", None)
+            commands = resolve_sdk_attr(self._sandbox, "commands", "process")
             if commands is None:
                 raise RuntimeError("E2B SDK did not expose a commands interface")
             result = commands.run(
@@ -160,24 +155,9 @@ class E2BSandboxSession(SandboxSession):
             exit_code = int(getattr(result, "exit_code", 0) or 0)
             stdout = getattr(result, "stdout", "") or ""
             stderr = getattr(result, "stderr", "") or ""
-            return (
-                exit_code,
-                stdout.encode("utf-8") if isinstance(stdout, str) else bytes(stdout),
-                stderr.encode("utf-8") if isinstance(stderr, str) else bytes(stderr),
-            )
+            return (exit_code, encode_as_bytes(stdout), encode_as_bytes(stderr))
 
-        try:
-            exit_code, stdout_b, stderr_b = await asyncio.wait_for(
-                asyncio.to_thread(_run), timeout=effective_timeout + 5
-            )
-        except TimeoutError:
-            raise TimeoutError(f"Command {cmd!r} timed out after {effective_timeout}s") from None
-        return ExecResult(
-            exit_code=exit_code,
-            stdout=stdout_b,
-            stderr=stderr_b,
-            duration_seconds=time.monotonic() - start,
-        )
+        return await run_exec_with_timeout(_run, cmd=cmd, timeout=effective_timeout)
 
     async def snapshot(self) -> str:
         def _do_snapshot() -> str:
@@ -195,7 +175,7 @@ class E2BSandboxSession(SandboxSession):
         self._closed = True
 
         def _do_shutdown() -> None:
-            kill = getattr(self._sandbox, "kill", None) or getattr(self._sandbox, "close", None)
+            kill = resolve_sdk_attr(self._sandbox, "kill", "close")
             if kill is None:
                 logger.debug("E2B SDK did not expose a shutdown entry point")
                 return
@@ -242,12 +222,6 @@ class E2BSandboxBackend:
         self._client_factory = client_factory
         self._sessions: dict[str, E2BSandboxSession] = {}
 
-    @staticmethod
-    def _allocate_session_id(hint: str | None = None) -> str:
-        if hint:
-            return hint
-        return f"bernstein-e2b-{secrets.token_hex(6)}"
-
     async def create(
         self,
         manifest: WorkspaceManifest,
@@ -264,7 +238,7 @@ class E2BSandboxBackend:
         opts = dict(options or {})
         template = opts.get("template", "code-interpreter-v1")
         api_key = opts.get("api_key")
-        session_id = self._allocate_session_id(opts.get("session_id"))
+        session_id = allocate_session_id("bernstein-e2b", opts.get("session_id"))
 
         def _build() -> Any:
             if self._client_factory is not None:
@@ -274,7 +248,7 @@ class E2BSandboxBackend:
                     manifest=manifest,
                 )
             module = _import_e2b()
-            sandbox_cls = getattr(module, "Sandbox", None) or getattr(module, "AsyncSandbox", None)
+            sandbox_cls = resolve_sdk_attr(module, "Sandbox", "AsyncSandbox")
             if sandbox_cls is None:
                 raise E2BUnavailableError("E2B SDK missing Sandbox class")
             kwargs: dict[str, Any] = {"template": template}
