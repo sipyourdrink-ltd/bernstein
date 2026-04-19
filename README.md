@@ -27,7 +27,11 @@
 
 Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and merges the results. When agents succeed, the janitor merges verified work into main. Failed tasks retry or route to a different model.
 
-No framework to learn. No vendor lock-in. Agents are interchangeable workers. Swap any agent, any model, any provider. The task scheduler is plain Python. No LLM calls in selection, retry, or reap decisions.
+### Why deterministic coordination
+
+LLMs write code well. They schedule work across other LLMs badly. Most agent orchestrators use an LLM as the coordinator and hit the same failure modes: non-reproducible plans, silent coordination drift, token burn on meta-decisions a 200-line event loop does reliably. Bernstein inverts that. One LLM call upfront decomposes the goal; after that, scheduling, worktree isolation, quality gates, and HMAC-chained audit replay are all deterministic Python. Every run is bit-identically replayable.
+
+No framework to learn. No vendor lock-in. Agents are interchangeable workers. Swap any agent, any model, any provider.
 
 ```bash
 pipx install bernstein
@@ -188,6 +192,8 @@ bernstein aliases    # show command shortcuts
 bernstein config-path    # show config file locations
 bernstein init-wizard    # interactive project setup
 bernstein debug-bundle   # collect logs, config, and state for bug reports
+bernstein skills list    # discoverable skill packs (progressive disclosure)
+bernstein skills show <name>  # print a skill body with its references
 ```
 
 ```bash

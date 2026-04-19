@@ -67,6 +67,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "sync",
         # Agents
         "agents",
+        # Skills (oai-004)
+        "skills",
         # Auth
         "auth",
         "login",
