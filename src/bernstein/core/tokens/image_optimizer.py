@@ -33,9 +33,7 @@ logger = logging.getLogger(__name__)
 _BYTES_PER_TOKEN: int = 4
 
 #: Regex matching base64 data URIs (e.g. ``data:image/png;base64,...``).
-_BASE64_DATA_URI_RE: re.Pattern[str] = re.compile(
-    r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{100,}"
-)
+_BASE64_DATA_URI_RE: re.Pattern[str] = re.compile(r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{100,}")
 
 #: Regex matching raw base64 blobs (long runs of base64 chars).
 _RAW_BASE64_RE: re.Pattern[str] = re.compile(r"[A-Za-z0-9+/=]{500,}")
@@ -146,9 +144,7 @@ def clean_images_from_context(
                     tokens_saved += estimate_image_tokens(image_data)
                     images_removed += 1
                     # Replace with a placeholder text block.
-                    blocks_to_keep.append(
-                        {"type": "text", "text": "[image removed to save tokens]"}
-                    )
+                    blocks_to_keep.append({"type": "text", "text": "[image removed to save tokens]"})
                 else:
                     kept_recent += 1
                     blocks_to_keep.append(block)

@@ -809,8 +809,7 @@ def _handle_auto_kill(orch: Any, session: Any, monitor: Any, total: int) -> bool
         return False
 
     logger.warning(
-        "Token runaway: agent %s consumed %d tokens with 0 file changes "
-        "(tenant=%s threshold=%d) — killing",
+        "Token runaway: agent %s consumed %d tokens with 0 file changes (tenant=%s threshold=%d) — killing",
         session.id,
         total,
         tenant_id,
