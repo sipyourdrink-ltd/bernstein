@@ -1,51 +1,6 @@
 {
-  "$schema": "https://glama.ai/schemas/mcp.json",
-  "name": "bernstein",
-  "version": "1.8.11",
-  "description": "Deterministic multi-agent orchestrator for 18 CLI coding agents (Claude Code, Codex, Cursor, Aider, Gemini CLI, OpenAI Agents SDK, and more). Exposes itself as an MCP server (stdio + HTTP/SSE) so any MCP client can invoke orchestration primitives — spawn parallel agents on git worktrees, check status, fetch audit log. Git worktree isolation per agent, HMAC-chained audit trail, cost-aware model routing.",
-  "author": "Alex Chernysh",
-  "license": "Apache-2.0",
-  "language": "python",
-  "framework": "mcp-python-sdk",
-  "type": "mcp_server",
-  "status": "stable",
-  "transport": ["stdio", "http"],
-  "homepage": "https://bernstein.run",
-  "repository": {
-    "url": "https://github.com/chernistry/bernstein",
-    "source": "github"
-  },
-  "keywords": [
-    "mcp",
-    "mcp-server",
-    "multi-agent",
-    "agent-orchestration",
-    "claude-code",
-    "codex",
-    "cursor",
-    "aider",
-    "gemini-cli",
-    "openai-agents-sdk",
-    "coding-agents",
-    "python",
-    "git-worktree",
-    "audit-trail",
-    "deterministic-scheduling"
-  ],
-  "installation": {
-    "type": "pypi",
-    "package": "bernstein",
-    "command": "pipx install bernstein"
-  },
-  "entrypoints": {
-    "stdio": {
-      "command": "bernstein",
-      "args": ["mcp", "--transport", "stdio"]
-    },
-    "http": {
-      "command": "bernstein",
-      "args": ["mcp", "--transport", "http", "--port", "8053"],
-      "port": 8053
-    }
-  }
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "chernistry"
+  ]
 }
