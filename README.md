@@ -176,6 +176,25 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md) &midd
 
 *Last verified: 2026-04-19. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
 
+The table above compares Bernstein against LLM-orchestration frameworks (they orchestrate LLM calls). The table below covers the closer category — other tools that orchestrate **CLI coding agents**:
+
+| Feature | Bernstein | [ComposioHQ/agent-orchestrator](https://github.com/ComposioHQ/agent-orchestrator) | [emdash](https://github.com/generalaction/emdash) |
+|---------|-----------|-----------|-----------|
+| Shape | Python CLI + library + MCP server | TypeScript CLI + local dashboard | Electron desktop app |
+| Primary language | Python | TypeScript | TypeScript |
+| Install | `pipx install bernstein` | `npm install -g @aoagents/ao` | `.dmg` / `.msi` / `.AppImage` |
+| Agent adapters | 18 | 3 (Claude Code, Codex, Aider) | 23 |
+| Git worktree per agent | Yes | Yes | Yes |
+| MCP server mode (exposes self as MCP) | Yes (stdio + HTTP/SSE) | No | No |
+| Coordinator | Deterministic Python scheduler | LLM-driven | Not documented |
+| HMAC-chained audit replay | Yes | No | No |
+| Autonomous CI-fix / PR flow | No | Yes | No |
+| Visual dashboard | TUI + web | Web | Desktop app |
+| Backing | Solo OSS | Funded (Composio.dev) | YC W26 |
+| License | Apache 2.0 | MIT | Apache 2.0 |
+
+Bernstein's wedge in this category: **Python-native, MCP-server-first, widest adapter coverage**. If your stack is TypeScript and you want a product with a dashboard, Composio's `@aoagents/ao` is a better fit; if you want a polished desktop ADE, emdash is. If you want a primitive that imports into Python, exposes itself over MCP to any client, and covers the full agent breadth (including Qwen, Goose, Ollama, OpenAI Agents SDK, Cloudflare Agents, and more) — Bernstein.
+
 [^autogen]: AutoGen is in maintenance mode; successor is Microsoft Agent Framework 1.0.
 
 ## Monitoring
