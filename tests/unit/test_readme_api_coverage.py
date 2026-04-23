@@ -147,6 +147,12 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "init",
         "start",
         "status",
+        # Operator experience
+        "pr",
+        "from-ticket",
+        "ticket",
+        "remote",
+        "hooks",
     }
 )
 
