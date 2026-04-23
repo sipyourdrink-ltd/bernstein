@@ -53,7 +53,7 @@ Also available via `pip`, `uv tool install`, `brew`, `dnf copr`, and `npx bernst
 
 Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
 
-18 CLI agent adapters: 17 third-party wrappers plus a generic wrapper for anything with `--prompt`.
+31 CLI agent adapters: 30 third-party wrappers plus a generic wrapper for anything with `--prompt`.
 
 | Agent | Models | Install |
 |-------|--------|---------|
@@ -158,7 +158,7 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md) &midd
 | Feature | Bernstein | CrewAI | AutoGen [^autogen] | LangGraph |
 |---------|-----------|--------|---------|-----------|
 | Orchestrator | Deterministic code | LLM-driven (+ code Flows) | LLM-driven | Graph + LLM |
-| Works with | Any CLI agent (18 adapters) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (31 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
 | Pluggable sandboxes | Worktree, Docker, E2B, Modal | No | No | No |
 | Verification | Janitor + quality gates | Guardrails + Pydantic output | Termination conditions | Conditional edges |
@@ -183,7 +183,7 @@ The table above compares Bernstein against LLM-orchestration frameworks (they or
 | Shape | Python CLI + library + MCP server | TypeScript CLI + local dashboard | Electron desktop app |
 | Primary language | Python | TypeScript | TypeScript |
 | Install | `pipx install bernstein` | `npm install -g @aoagents/ao` | `.dmg` / `.msi` / `.AppImage` |
-| Agent adapters | 18 | 3 (Claude Code, Codex, Aider) | 23 |
+| Agent adapters | 31 | 3 (Claude Code, Codex, Aider) | 24 |
 | Git worktree per agent | Yes | Yes | Yes |
 | MCP server mode (exposes self as MCP) | Yes (stdio + HTTP/SSE) | No | No |
 | Coordinator | Deterministic Python scheduler | LLM-driven | Not documented |

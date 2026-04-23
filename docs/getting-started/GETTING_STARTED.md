@@ -7,7 +7,7 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 ## Prerequisites
 
 - **Python 3.12+** (macOS, Linux, Windows)
-- **At least one CLI coding agent** installed and authenticated. Bernstein supports 18 adapters out of the box:
+- **At least one CLI coding agent** installed and authenticated. Bernstein supports 31 adapters out of the box:
 
 | Agent | Install |
 |-------|---------|
@@ -29,6 +29,19 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 | [Qwen](https://github.com/QwenLM/Qwen-Agent) | `npm install -g qwen-code` |
 | Generic | Any CLI agent via `generic` adapter |
 | IaC | Infrastructure-as-code adapter |
+| [Droid](https://docs.factory.ai/) (Factory AI) | `curl -fsSL https://app.factory.ai/cli \| sh` |
+| [GitHub Copilot](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli) | `npm install -g @github/copilot` |
+| [Hermes](https://hermes-agent.nousresearch.com/docs/) (Nous Research) | `curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \| bash` |
+| [Crush](https://github.com/charmbracelet/crush) (Charm) | `npm install -g @charmland/crush` |
+| [Auggie](https://docs.augmentcode.com/cli/overview) (Augment Code) | `npm install -g @augmentcode/auggie` |
+| [Kimi](https://www.kimi.com/code/) (Moonshot) | `uv tool install kimi-cli` |
+| [Rovo Dev](https://support.atlassian.com/rovo/) (Atlassian) | `acli rovodev auth login` |
+| [Cline](https://docs.cline.bot/cline-cli/overview) | `npm install -g cline` |
+| [Codebuff](https://www.codebuff.com/docs/help/quick-start) | `npm install -g codebuff` |
+| [Pi](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) | `npm install -g @mariozechner/pi-coding-agent` |
+| [Mistral Vibe](https://github.com/mistralai/mistral-vibe) | `curl -LsSf https://mistral.ai/vibe/install.sh \| bash` |
+| [Autohand](https://autohand.ai/code/) | `npm install -g autohand-cli` |
+| [Forge](https://forgecode.dev/docs/) | `curl -fsSL https://forgecode.dev/cli \| sh` |
 
 No agent yet? Run `bernstein demo` for a zero-config walkthrough.
 

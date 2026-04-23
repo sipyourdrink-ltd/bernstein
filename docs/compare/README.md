@@ -11,7 +11,7 @@ How Bernstein compares to other tools in the multi-agent coding space.
 | Feature | Bernstein | CrewAI | AutoGen | LangGraph |
 |---|---|---|---|---|
 | Orchestrator | Deterministic code | LLM-driven | LLM-driven (maintenance mode) | Graph + LLM |
-| Works with | Any CLI agent (18 adapters) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (31 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
 | Pluggable sandboxes | Worktree, Docker, E2B, Modal | No | No | No |
 | Per-task verification | Janitor + quality gates | Test harness only | No | Conditional edges |
@@ -34,7 +34,7 @@ How Bernstein compares to other tools in the multi-agent coding space.
 |  | Bernstein | [Stoneforge](./bernstein-vs-stoneforge.md) | [Agent HQ](./bernstein-vs-github-agent-hq.md) | [Conductor](./bernstein-vs-conductor.md) | [Crystal](./bernstein-vs-crystal.md) | [Parallel Code](./bernstein-vs-parallel-code.md) | [Dorothy](./bernstein-vs-dorothy.md) | [Single agent](./bernstein-vs-single-agent.md) |
 |--|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **Parallel execution** | yes | yes | yes | yes | no | yes | yes | no |
-| **CLI agent support** | 18 adapters | no | Claude/Codex/Copilot | no | no | Claude/Codex/Gemini | Claude/Codex/Gemini/local | yes |
+| **CLI agent support** | 31 adapters | no | Claude/Codex/Copilot | no | no | Claude/Codex/Gemini | Claude/Codex/Gemini/local | yes |
 | **Pluggable sandbox** | worktree/docker/e2b/modal | no | no | no | no | no | no | no |
 | **Result verification** | janitor (tests+lint) | provider-native | GitHub CI | none | LLM reviewer | manual | none | none |
 | **Task planning from goal** | yes | no | yes | no | no | no | via Super Agent | no |

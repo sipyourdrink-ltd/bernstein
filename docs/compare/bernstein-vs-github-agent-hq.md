@@ -27,7 +27,7 @@ This is structurally close to what Bernstein does. GitHub building it validates 
 | Feature | Bernstein | GitHub Agent HQ |
 |---|---|---|
 | **Open source** | Yes — Apache 2.0 | No — proprietary |
-| **Model flexibility** | Any CLI agent (18 adapters) | Claude, Codex, Copilot (GitHub-managed) |
+| **Model flexibility** | Any CLI agent (31 adapters) | Claude, Codex, Copilot (GitHub-managed) |
 | **Provider lock-in** | None | GitHub + Microsoft/Anthropic/OpenAI |
 | **Runs outside GitHub** | Yes — any git repo, any host | No — GitHub-only |
 | **CLI-native** | Yes — works in terminal, SSH, CI | No — GitHub web UI + API |

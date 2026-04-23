@@ -1,6 +1,6 @@
 # Adapter Selection Guide
 
-Bernstein ships 18 CLI agent adapters in `src/bernstein/adapters/` (17 named
+Bernstein ships 31 CLI agent adapters in `src/bernstein/adapters/` (30 named
 third-party wrappers plus a `generic` catch-all), along with support modules
 (caching, conformance testing, environment isolation, plugin SDK, etc.).
 
@@ -457,6 +457,136 @@ Runs OpenAI Codex inside Cloudflare sandboxes for isolated, scalable execution.
 
 ---
 
+### droid (Factory AI)
+
+**Install:** `curl -fsSL https://app.factory.ai/cli | sh`
+
+**Env vars:** `FACTORY_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+
+**Best for:** Teams on Factory AI's managed runtime who want Bernstein to orchestrate parallel `droid` sessions.
+
+---
+
+### copilot (GitHub Copilot)
+
+**Install:** `npm install -g @github/copilot`
+
+**Env vars:** `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_COPILOT_TOKEN`.
+
+**Best for:** GitHub-Copilot-subscribed teams who want to reuse existing GitHub auth.
+
+---
+
+### hermes (Nous Research)
+
+**Install:** `curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash`
+
+**Env vars:** `HERMES_API_KEY`, `NOUS_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+
+**Best for:** Teams running Nous Research's Hermes open-weight models.
+
+---
+
+### charm (Crush)
+
+**Install:** `npm install -g @charmland/crush`
+
+**Env vars:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`.
+
+**Best for:** Terminal-first workflows; pairs naturally with other Charm tooling.
+
+---
+
+### auggie (Augment Code)
+
+**Install:** `npm install -g @augmentcode/auggie`
+
+**Env vars:** `AUGMENT_API_KEY`, `AUGMENT_TOKEN`.
+
+**Best for:** Monorepos using Augment's context engine for repo-scale retrieval.
+
+---
+
+### kimi (Moonshot)
+
+**Install:** `uv tool install kimi-cli`
+
+**Env vars:** `KIMI_API_KEY`, `MOONSHOT_API_KEY`.
+
+**Best for:** Long-context tasks that benefit from Kimi K2's extended window.
+
+---
+
+### rovo (Atlassian Rovo Dev)
+
+**Install:** `acli rovodev auth login` (Atlassian CLI).
+
+**Env vars:** `ATLASSIAN_API_TOKEN`, `ACLI_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+
+**Best for:** Atlassian-integrated teams who want Jira/Confluence context inside agent runs.
+
+---
+
+### cline
+
+**Install:** `npm install -g cline`
+
+**Env vars:** `CLINE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`.
+
+**Best for:** Cline users in VS Code who want the same agent behavior under Bernstein.
+
+---
+
+### codebuff
+
+**Install:** `npm install -g codebuff`
+
+**Env vars:** `CODEBUFF_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+
+**Best for:** Multi-file refactors that benefit from Codebuff's buffered-diff workflow.
+
+---
+
+### pi
+
+**Install:** `npm install -g @mariozechner/pi-coding-agent`
+
+**Env vars:** `PI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`.
+
+**Best for:** Scripted pipelines that want a small, low-ceremony CLI wrapper.
+
+---
+
+### mistral (Mistral Vibe)
+
+**Install:** `curl -LsSf https://mistral.ai/vibe/install.sh | bash`
+
+**Env vars:** `MISTRAL_API_KEY`.
+
+**Best for:** Teams standardized on Mistral (Codestral, Mistral Large) for code generation.
+
+---
+
+### autohand
+
+**Install:** `npm install -g autohand-cli`
+
+**Env vars:** `AUTOHAND_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+
+**Best for:** Workflows that need chained tool calls inside a single agent run.
+
+---
+
+### forge (forgecode.dev)
+
+**Install:** `curl -fsSL https://forgecode.dev/cli | sh`
+
+**Env vars:** `FORGE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`.
+
+**Best for:** Teams on Forge's agent runtime who want Bernstein to manage parallel sessions.
+
+---
+
 ### mock (Testing only)
 
 Simulates agent behavior for unit and integration tests. Not for production use.
@@ -465,7 +595,7 @@ Simulates agent behavior for unit and integration tests. Not for production use.
 
 ## Support Modules
 
-In addition to the 18 CLI agent adapters above, the adapter package includes
+In addition to the 31 CLI agent adapters above, the adapter package includes
 support modules that provide cross-cutting infrastructure:
 
 | Module | Purpose |

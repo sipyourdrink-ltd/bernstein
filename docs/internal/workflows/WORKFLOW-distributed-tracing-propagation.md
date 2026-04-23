@@ -465,7 +465,7 @@ This workflow must **never** cause a task to fail. Tracing is observability, not
 |---|---|---|---|
 | A1 | `trace_correlation.py` functions (`generate_trace_context`, `build_correlation_env`, `parse_traceparent`) work correctly | Verified: `tests/unit/test_trace_correlation.py` has comprehensive tests | Low — well-tested |
 | A2 | `correlation.py` functions (`create_context`, `set_current_context`, `CorrelationFilter`) work correctly | Verified: tests exist | Low — well-tested |
-| A3 | All agent adapters use `build_filtered_env()` from `env_isolation.py` | Partially verified: Claude adapter does; need to verify all 17 adapters | Medium — if an adapter bypasses env isolation, trace vars won't reach agent |
+| A3 | All agent adapters use `build_filtered_env()` from `env_isolation.py` | Partially verified: Claude adapter does; need to verify all 30 adapters | Medium — if an adapter bypasses env isolation, trace vars won't reach agent |
 | A4 | Agent subprocesses can read environment variables | Verified: agents already read `ANTHROPIC_API_KEY` from env | Low |
 | A5 | Agents will include the `traceparent` header if instructed in prompt | Not verified: depends on agent LLM compliance | Medium — agents may omit the header; graceful degradation covers this |
 | A6 | `httpx` client used by orchestrator supports custom headers | Verified: standard httpx feature | Low |

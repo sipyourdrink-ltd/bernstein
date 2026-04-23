@@ -1,6 +1,6 @@
 # Bernstein vs. Dorothy
 
-> **tl;dr** — Dorothy is a free desktop app that orchestrates Claude Code, Codex, Gemini, and local agents with a Kanban board, a "Super Agent" delegation layer, and Telegram/Slack controls. Bernstein is a headless orchestrator for CLI coding agents that runs in a terminal or CI and stores all state in files. Dorothy is better when you want a GUI to watch and delegate across a few agents. Bernstein is better when you want unattended, budget-capped, file-state runs across 18 adapters.
+> **tl;dr** — Dorothy is a free desktop app that orchestrates Claude Code, Codex, Gemini, and local agents with a Kanban board, a "Super Agent" delegation layer, and Telegram/Slack controls. Bernstein is a headless orchestrator for CLI coding agents that runs in a terminal or CI and stores all state in files. Dorothy is better when you want a GUI to watch and delegate across a few agents. Bernstein is better when you want unattended, budget-capped, file-state runs across 31 adapters.
 
 *Last verified: 2026-04-19. Based on the Dorothy public site and repo (`github.com/Charlie85270/Dorothy`).*
 
@@ -10,7 +10,7 @@
 
 **Dorothy** is a desktop application that presents AI coding agents through a visual Kanban interface. It can launch and monitor Claude Code, Codex, Gemini, and local agents, delegate between them through a "Super Agent" that talks to them via MCP, schedule recurring work with cron, and trigger on GitHub issues/PRs. It integrates Google Workspace as an MCP server and has Telegram/Slack bridges for remote control.
 
-**Bernstein** is a task dispatch orchestrator for CLI coding agents. It decomposes a goal into tasks, assigns each task to a short-lived CLI agent (across 18 adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Amp, etc.), verifies the result against external criteria (tests, linter), and merges the output. The orchestrator is deterministic Python — no LLM makes scheduling decisions. No GUI.
+**Bernstein** is a task dispatch orchestrator for CLI coding agents. It decomposes a goal into tasks, assigns each task to a short-lived CLI agent (across 31 adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Amp, GitHub Copilot, Droid, Crush, etc.), verifies the result against external criteria (tests, linter), and merges the output. The orchestrator is deterministic Python — no LLM makes scheduling decisions. No GUI.
 
 The core difference: Dorothy gives you a visual control plane. Bernstein gives you a headless, reproducible, file-state control plane.
 
@@ -21,7 +21,7 @@ The core difference: Dorothy gives you a visual control plane. Bernstein gives y
 | Feature | Bernstein | Dorothy |
 |---|---|---|
 | **Interface** | CLI + TUI + JSON status endpoint | Desktop app (Kanban, dashboard) |
-| **Agent coverage** | 18 CLI adapters | Claude Code, Codex, Gemini, local |
+| **Agent coverage** | 31 CLI adapters | Claude Code, Codex, Gemini, local |
 | **Scheduler** | Deterministic Python, no LLM | "Super Agent" (LLM) via MCP |
 | **Verification** | Janitor: tests, linter, file checks | None built-in |
 | **Parallel execution** | Yes — independent tasks run concurrently | Yes — up to ~10 agents |
@@ -86,7 +86,7 @@ Bernstein's value is unattended operation: `bernstein --headless --budget 20` wo
 - **The run must complete without anyone watching.** Overnight, weekend, CI, remote server. Bernstein's `--headless --budget` runs until done or broke. Dorothy wants its app running and an approving hand on Telegram.
 - **You want file-state you can check into git.** `.sdd/` is text. You can diff it, `grep` it, revive it after a crash. Dorothy's state is in the app.
 - **Verification is non-negotiable.** Bernstein won't merge unless the janitor's signals pass. Dorothy leaves that to the agent and the user.
-- **You need 18 adapters, not 4.** Cursor, Aider, Amp, Kilo, Kiro, Goose, OpenCode, Qwen, Cody, Continue.dev, Ollama, IAC, OpenAI Agents SDK v2, Cloudflare Agents, generic — Bernstein wraps them all. Dorothy currently advertises Claude Code, Codex, Gemini, and local.
+- **You need 31 adapters, not 4.** Cursor, Aider, Amp, Kilo, Kiro, Goose, OpenCode, Qwen, Cody, Continue.dev, Ollama, IAC, OpenAI Agents SDK v2, Cloudflare Agents, GitHub Copilot, Droid, Crush, Hermes, Auggie, Kimi, Rovo Dev, Cline, Codebuff, Pi, Mistral Vibe, Autohand, Forge, generic — Bernstein wraps them all. Dorothy currently advertises Claude Code, Codex, Gemini, and local.
 
 ---
 

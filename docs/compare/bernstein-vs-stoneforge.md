@@ -1,6 +1,6 @@
 # Bernstein vs. Stoneforge
 
-> **tl;dr** — Stoneforge is a provider-integrated multi-agent coding framework with git worktrees, a merge queue, and an IDE plugin story. Bernstein is provider-agnostic and CLI-native, trading the IDE UX for model flexibility, 18 adapters, headless runs, and `--evolve`. Neither is better in the abstract — the question is whether provider lock-in matters for your workflow.
+> **tl;dr** — Stoneforge is a provider-integrated multi-agent coding framework with git worktrees, a merge queue, and an IDE plugin story. Bernstein is provider-agnostic and CLI-native, trading the IDE UX for model flexibility, 31 adapters, headless runs, and `--evolve`. Neither is better in the abstract — the question is whether provider lock-in matters for your workflow.
 
 *Last verified: 2026-04-19. Stoneforge launched 2026-03-03 with git worktrees and merge-queue support.*
 
@@ -18,7 +18,7 @@
 
 | Feature | Bernstein | Stoneforge |
 |---|---|---|
-| **Provider flexibility** | Any CLI agent (18 adapters) | Single provider |
+| **Provider flexibility** | Any CLI agent (31 adapters) | Single provider |
 | **CLI agent support** | Yes — wraps installed CLI tools | No — uses provider SDK directly |
 | **IDE integration** | No — terminal-native | Yes — VS Code, JetBrains plugins |
 | **Task planning** | LLM planner from natural language goal | Structured prompt with agent roles |
@@ -93,7 +93,7 @@ The risk: if that provider raises prices, introduces rate limits, or you want to
 
 ## When to use Bernstein instead
 
-- **You want provider flexibility.** Mix Claude, Codex, Gemini, OpenAI Agents SDK v2, and Qwen in the same run across 18 adapters. Route tasks to the cheapest capable model. Switch providers if pricing or quality changes.
+- **You want provider flexibility.** Mix Claude, Codex, Gemini, OpenAI Agents SDK v2, and Qwen in the same run across 31 adapters. Route tasks to the cheapest capable model. Switch providers if pricing or quality changes.
 - **You want no vendor dependency for orchestration logic.** Your task definitions, role templates, janitor rules, and evolution config are plain files — no vendor SDK imports.
 - **You want headless, overnight operation.** CI pipelines, scheduled evolution runs, budget-capped overnight sessions.
 - **You want self-evolution.** Bernstein analyzes its own metrics and improves prompts, routing rules, and templates over time.
