@@ -8,46 +8,72 @@ from importlib.metadata import entry_points
 
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.adapters.amp import AmpAdapter
+from bernstein.adapters.auggie import AuggieAdapter
+from bernstein.adapters.autohand import AutohandAdapter
 from bernstein.adapters.base import CLIAdapter
+from bernstein.adapters.charm import CharmAdapter
 from bernstein.adapters.claude import ClaudeCodeAdapter
+from bernstein.adapters.cline import ClineAdapter
 from bernstein.adapters.cloudflare_agents import CloudflareAgentsAdapter
+from bernstein.adapters.codebuff import CodebuffAdapter
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.cody import CodyAdapter
 from bernstein.adapters.continue_dev import ContinueDevAdapter
+from bernstein.adapters.copilot import CopilotAdapter
 from bernstein.adapters.cursor import CursorAdapter
+from bernstein.adapters.droid import DroidAdapter
+from bernstein.adapters.forge import ForgeAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.goose import GooseAdapter
+from bernstein.adapters.hermes import HermesAdapter
 from bernstein.adapters.iac import IaCAdapter
 from bernstein.adapters.kilo import KiloAdapter
+from bernstein.adapters.kimi import KimiAdapter
 from bernstein.adapters.kiro import KiroAdapter
+from bernstein.adapters.mistral import MistralAdapter
 from bernstein.adapters.mock import MockAgentAdapter
 from bernstein.adapters.ollama import OllamaAdapter
 from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
+from bernstein.adapters.pi import PiAdapter
 from bernstein.adapters.qwen import QwenAdapter
+from bernstein.adapters.rovo import RovoAdapter
 
 logger = logging.getLogger(__name__)
 
 _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
-    "amp": AmpAdapter,
     "aider": AiderAdapter,
+    "amp": AmpAdapter,
+    "auggie": AuggieAdapter,
+    "autohand": AutohandAdapter,
+    "charm": CharmAdapter,
     "claude": ClaudeCodeAdapter,
+    "cline": ClineAdapter,
     "cloudflare": CloudflareAgentsAdapter,
-    "cody": CodyAdapter,
+    "codebuff": CodebuffAdapter,
     "codex": CodexAdapter,
+    "cody": CodyAdapter,
     "continue": ContinueDevAdapter,
+    "copilot": CopilotAdapter,
     "cursor": CursorAdapter,
+    "droid": DroidAdapter,
+    "forge": ForgeAdapter,
     "gemini": GeminiAdapter,
     "goose": GooseAdapter,
+    "hermes": HermesAdapter,
     "iac": IaCAdapter,
     "kilo": KiloAdapter,
+    "kimi": KimiAdapter,
     "kiro": KiroAdapter,
+    "mistral": MistralAdapter,
     "mock": MockAgentAdapter,
     "ollama": OllamaAdapter,
     "openai_agents": OpenAIAgentsAdapter,
     "opencode": OpenCodeAdapter,
+    "pi": PiAdapter,
     "qwen": QwenAdapter,
+    "rovo": RovoAdapter,
 }
 
 _entrypoints_loaded = False
