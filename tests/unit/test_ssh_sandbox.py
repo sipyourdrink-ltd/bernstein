@@ -38,7 +38,7 @@ def test_build_ssh_cmd_includes_identity_file(tmp_path: Path) -> None:
     backend = SSHSandboxBackend(
         host="example.com",
         user="alice",
-        path="/tmp/bern",
+        path="/srv/bern",
         identity_file=key,
     )
     argv = backend._build_ssh_cmd("echo hi")
@@ -49,20 +49,20 @@ def test_build_ssh_cmd_includes_identity_file(tmp_path: Path) -> None:
 
 
 def test_build_ssh_cmd_omits_identity_when_unset() -> None:
-    backend = SSHSandboxBackend(host="example.com", path="/tmp/bern")
+    backend = SSHSandboxBackend(host="example.com", path="/srv/bern")
     argv = backend._build_ssh_cmd("echo hi")
     assert "-i" not in argv
 
 
 def test_build_ssh_cmd_wraps_command_in_sh_c() -> None:
-    backend = SSHSandboxBackend(host="example.com", path="/tmp/bern")
+    backend = SSHSandboxBackend(host="example.com", path="/srv/bern")
     argv = backend._build_ssh_cmd("ls /")
     # Last argv element is always the remote command wrapped in sh -c.
     assert argv[-1].startswith("sh -c ")
 
 
 def test_connect_timeout_always_present() -> None:
-    backend = SSHSandboxBackend(host="example.com", path="/tmp/bern")
+    backend = SSHSandboxBackend(host="example.com", path="/srv/bern")
     argv = backend._build_ssh_cmd("uptime")
     joined = " ".join(argv)
     assert "ConnectTimeout=10" in joined
@@ -70,14 +70,14 @@ def test_connect_timeout_always_present() -> None:
 
 
 def test_strict_host_key_checking_respected() -> None:
-    strict = SSHSandboxBackend(host="example.com", path="/tmp/bern", strict_host_key_checking=True)
-    lax = SSHSandboxBackend(host="example.com", path="/tmp/bern", strict_host_key_checking=False)
+    strict = SSHSandboxBackend(host="example.com", path="/srv/bern", strict_host_key_checking=True)
+    lax = SSHSandboxBackend(host="example.com", path="/srv/bern", strict_host_key_checking=False)
     assert "StrictHostKeyChecking=yes" in " ".join(strict._build_ssh_cmd("echo"))
     assert "StrictHostKeyChecking=accept-new" in " ".join(lax._build_ssh_cmd("echo"))
 
 
 def test_port_flag_used() -> None:
-    backend = SSHSandboxBackend(host="example.com", path="/tmp/bern", port=2222)
+    backend = SSHSandboxBackend(host="example.com", path="/srv/bern", port=2222)
     argv = backend._build_ssh_cmd("echo hi")
     assert "-p" in argv
     assert "2222" in argv
@@ -110,7 +110,7 @@ def test_control_socket_sanitises_dangerous_host_chars() -> None:
 
 
 def test_connection_refused_stderr_raises_sandbox_connection_error() -> None:
-    backend = SSHSandboxBackend(host="example.com", path="/tmp/bern")
+    backend = SSHSandboxBackend(host="example.com", path="/srv/bern")
     with patch(
         "bernstein.core.sandbox.ssh_backend.subprocess.run",
         return_value=_completed(255, stderr=b"ssh: connect to host example.com port 22: Connection refused"),
@@ -125,7 +125,7 @@ def test_connection_refused_stderr_raises_sandbox_connection_error() -> None:
 
 
 def test_permission_denied_stderr_hints_ssh_add() -> None:
-    backend = SSHSandboxBackend(host="example.com", path="/tmp/bern")
+    backend = SSHSandboxBackend(host="example.com", path="/srv/bern")
     with patch(
         "bernstein.core.sandbox.ssh_backend.subprocess.run",
         return_value=_completed(255, stderr=b"Permission denied (publickey)."),
@@ -146,7 +146,7 @@ def test_permission_denied_stderr_hints_ssh_add() -> None:
 
 
 def test_spawn_agent_routes_through_ssh() -> None:
-    backend = SSHSandboxBackend(host="example.com", path="/tmp/bern")
+    backend = SSHSandboxBackend(host="example.com", path="/srv/bern")
 
     fake_popen = MagicMock()
     with (

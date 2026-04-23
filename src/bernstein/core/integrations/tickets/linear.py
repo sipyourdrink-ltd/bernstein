@@ -25,7 +25,7 @@ _LINEAR_ENDPOINT = "https://api.linear.app/graphql"
 _LINEAR_ENV = "LINEAR_API_KEY"
 _TIMEOUT_S = 10.0
 
-_KEY_RE = re.compile(r"([A-Z0-9]+-\d+)", re.IGNORECASE)
+_KEY_RE = re.compile(r"([A-Z0-9]{1,16}-\d{1,8})", re.IGNORECASE)
 
 
 _QUERY = """

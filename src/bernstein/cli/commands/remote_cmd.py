@@ -123,9 +123,9 @@ def remote_test(host: str, user: str | None, port: int, identity_file: Path | No
 )
 @click.option(
     "--remote-path",
-    default="/tmp/bernstein",
+    default="~/.bernstein/workspaces",
     show_default=True,
-    help="Remote directory where session worktrees are provisioned.",
+    help="Remote directory (expanded on the host) where session worktrees are provisioned.",
 )
 @click.option(
     "--no-strict-host-key",

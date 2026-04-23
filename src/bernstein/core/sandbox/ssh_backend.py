@@ -253,7 +253,7 @@ class SSHSandboxSession(SandboxSession):
         else:
             script += quoted_cmd
 
-        return await self._backend.run_ssh(script, timeout=effective_timeout, stdin=stdin)
+        return await self._backend.run_ssh(script, timeout_seconds=effective_timeout, stdin=stdin)
 
     # ------------------------------------------------------------------
     # Snapshots (unsupported)
@@ -474,7 +474,7 @@ class SSHSandboxBackend:
         self,
         cmd: str,
         *,
-        timeout: int | None = None,
+        timeout_seconds: int | None = None,
         stdin: bytes | None = None,
     ) -> ExecResult:
         """Run ``cmd`` on the remote host and collect the result."""
@@ -487,9 +487,9 @@ class SSHSandboxBackend:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        wait_for = timeout + _DEFAULT_TIMEOUT_SLACK if timeout else None
+        deadline = timeout_seconds + _DEFAULT_TIMEOUT_SLACK if timeout_seconds else None
         try:
-            async with asyncio.timeout(wait_for):
+            async with asyncio.timeout(deadline):
                 stdout, stderr = await process.communicate(input=stdin)
         except TimeoutError:
             process.kill()
@@ -498,7 +498,7 @@ class SSHSandboxBackend:
                     await process.wait()
             except TimeoutError:
                 logger.warning("ssh process did not exit after kill: %s", argv)
-            raise TimeoutError(f"ssh command timed out after {timeout}s") from None
+            raise TimeoutError(f"ssh command timed out after {timeout_seconds}s") from None
         duration = time.monotonic() - start
         exit_code = process.returncode if process.returncode is not None else -1
         if exit_code != 0:
