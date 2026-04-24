@@ -343,7 +343,10 @@ class ApprovalQueue:
         current = time.time() if now is None else now
         expired_ids: list[str] = []
         with self._lock:
-            for approval_id, approval in list(self._pending.items()):
+            # Snapshot via tuple() so concurrent mutations to _pending can't
+            # raise RuntimeError mid-iteration. tuple() is iterable without
+            # the extra list() allocation Sonar flagged (python:S7504).
+            for approval_id, approval in tuple(self._pending.items()):
                 if approval.is_expired(now=current):
                     expired_ids.append(approval_id)
         for approval_id in expired_ids:

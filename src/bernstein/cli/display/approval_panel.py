@@ -145,7 +145,10 @@ class ApprovalPanel(Vertical):
         current_ids = {approval.id for approval in pending}
 
         # Drop rows whose approvals are no longer pending.
-        for row in list(self.query(ApprovalRow)):
+        # Note: self.query(...) returns an already-iterable DOMQuery, so we
+        # iterate it directly. Removing rows mid-iteration is safe here
+        # because DOMQuery snapshots its match set (Sonar python:S7504).
+        for row in self.query(ApprovalRow):
             if row._approval.id not in current_ids:
                 row.remove()
                 self._seen_ids.discard(row._approval.id)
