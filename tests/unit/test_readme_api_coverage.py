@@ -157,6 +157,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "tunnel",
         "approve-tool",
         "reject-tool",
+        "daemon",
     }
 )
 
