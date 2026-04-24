@@ -16,7 +16,7 @@ def test_install_systemd_user_unit_writes_file(tmp_path: Path) -> None:
         command="bernstein dashboard --headless",
         unit_dir=tmp_path,
         env={"A": "1"},
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
     )
     assert path.exists()
@@ -29,14 +29,14 @@ def test_install_systemd_refuses_existing_without_force(tmp_path: Path) -> None:
     systemd_mod.install_systemd_user_unit(
         command="bernstein dashboard --headless",
         unit_dir=tmp_path,
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
     )
     with pytest.raises(UnitExistsError):
         systemd_mod.install_systemd_user_unit(
             command="bernstein dashboard --headless",
             unit_dir=tmp_path,
-            workdir="/tmp",
+            workdir="/srv/bernstein",
             path_env="/bin",
         )
 
@@ -45,13 +45,13 @@ def test_install_systemd_overwrites_with_force(tmp_path: Path) -> None:
     systemd_mod.install_systemd_user_unit(
         command="bernstein dashboard --headless",
         unit_dir=tmp_path,
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
     )
     path = systemd_mod.install_systemd_user_unit(
         command="bernstein dashboard --headless --debug",
         unit_dir=tmp_path,
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
         force=True,
     )
@@ -66,7 +66,7 @@ def test_uninstall_systemd_is_idempotent(tmp_path: Path) -> None:
     systemd_mod.install_systemd_user_unit(
         command="bernstein dashboard --headless",
         unit_dir=tmp_path,
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
     )
     assert systemd_mod.uninstall(unit_dir=tmp_path) is True
@@ -78,7 +78,7 @@ def test_install_launchd_plist_writes_file(tmp_path: Path) -> None:
         command="bernstein dashboard --headless",
         plist_dir=tmp_path,
         env={"TOKEN": "abc"},
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
     )
     assert path.exists()
@@ -92,7 +92,7 @@ def test_uninstall_launchd_is_idempotent(tmp_path: Path) -> None:
     launchd_mod.install_launchd_plist(
         command="bernstein dashboard --headless",
         plist_dir=tmp_path,
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
     )
     assert launchd_mod.uninstall(plist_dir=tmp_path) is True

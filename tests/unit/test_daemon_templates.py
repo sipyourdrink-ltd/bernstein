@@ -62,7 +62,7 @@ def test_env_values_are_not_shell_expanded() -> None:
     out = render_systemd_user_unit(
         command="bernstein dashboard --headless",
         env={"SECRET": literal},
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
     )
     assert f'Environment="SECRET={literal}"' in out
@@ -70,7 +70,7 @@ def test_env_values_are_not_shell_expanded() -> None:
     plist = render_launchd_plist(
         command="bernstein dashboard --headless",
         env={"SECRET": literal},
-        workdir="/tmp",
+        workdir="/srv/bernstein",
         path_env="/bin",
     )
     assert f"<string>{literal}</string>" in plist
