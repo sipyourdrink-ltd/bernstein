@@ -173,6 +173,22 @@ A `bernstein cloud init` scaffold for `wrangler.toml` and bindings is planned.
 
 Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md) &middot; Recent features: [What's New](docs/whats-new.md)
 
+## Operator commands
+
+Commands that eliminate the glue code most teams end up writing around their runs.
+
+| Command | What it does |
+|---------|--------------|
+| `bernstein pr` | Auto-creates a GitHub PR from a completed session; body carries the janitor's gate results and token/USD cost breakdown. |
+| `bernstein from-ticket <url>` | Imports a Linear / GitHub Issues / Jira ticket as a Bernstein task. Label-based role + scope inference. Supports `--dry-run` and `--run`. |
+| `bernstein ticket import <url>` | Alias / group form of `from-ticket` for scripting. |
+| `bernstein remote` | SSH sandbox backend. `remote test <host>`, `remote run <host> <path>`, `remote forget <host>`. ControlMaster socket reuse for fast repeat calls. |
+| `bernstein hooks` | Lifecycle hooks for `pre_task`, `post_task`, `pre_merge`, `post_merge`, `pre_spawn`, `post_spawn` — shell scripts or pluggy `@hookimpl`s. `hooks list`, `hooks run <event>`, `hooks check`. |
+| `bernstein chat serve --platform=telegram\|discord\|slack` | Drive runs from chat with `/run`, `/status`, `/approve`, `/reject`, `/switch`, `/stop`. |
+| `bernstein approve-tool` / `bernstein reject-tool` | Interactive mid-run tool-call approval. `--latest`, `--id`, `--always`. |
+| `bernstein tunnel start <port> [--provider auto\|cloudflared\|ngrok\|bore\|tailscale]` | One wrapper around four tunnel providers. Also `tunnel list`, `tunnel stop <name>\|--all`. ControlMaster-style process reuse. |
+| `bernstein daemon install [--user\|--system] [--command="..."] [--env KEY=VAL]...` | Installs a systemd (Linux) or launchd (macOS) unit for auto-start. Also `daemon start/stop/restart/status/uninstall`. |
+
 ## How it compares
 
 | Feature | Bernstein | CrewAI | AutoGen [^autogen] | LangGraph |

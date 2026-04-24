@@ -33,6 +33,13 @@ The core difference: Dorothy gives you a visual control plane. Bernstein gives y
 | **Model routing** | Cost-aware bandit across providers | Per-agent |
 | **Headless / overnight** | Yes — `--headless` + budget cap | Via Telegram/Slack, app must be running |
 | **Open source** | Apache 2.0 | MIT |
+| **Chat bridges (Telegram / Discord / Slack)** *(only Bernstein as a first-class CLI bridge)* | ✓ — `bernstein chat serve --platform=telegram\|discord\|slack` with `/run`, `/approve`, `/reject`, `/switch`, `/stop` | ~ — Telegram/Slack remote-control, desktop app must be running |
+| **SSH remote sandbox** *(only Bernstein)* | ✓ — `bernstein remote test/run/forget <host>`, ControlMaster reuse | ✗ |
+| **Lifecycle hooks (pre/post task, merge, spawn)** *(only Bernstein)* | ✓ — `bernstein hooks` with shell scripts or pluggy `@hookimpl` | ✗ |
+| **Auto-PR with janitor gate + cost summary** *(only Bernstein)* | ✓ — `bernstein pr` | ✗ |
+| **Tunnel wrapper (cloudflared / ngrok / bore / tailscale)** *(only Bernstein)* | ✓ — `bernstein tunnel start/list/stop` | ✗ |
+| **Interactive mid-run tool-call approval** *(only Bernstein)* | ✓ — `bernstein approve-tool` / `reject-tool` (`--latest`, `--id`, `--always`) | ~ — Super Agent asks in-app |
+| **Daemon / service install (systemd / launchd)** *(only Bernstein)* | ✓ — `bernstein daemon install/start/stop/status` | ✗ |
 | **Primary use case** | Unattended parallel coding with verification | Visual orchestration of a small agent fleet |
 
 ---

@@ -41,6 +41,13 @@ This is structurally close to what Bernstein does. GitHub building it validates 
 | **GitHub integration** | Webhook adapter (planned) | Native — issue-to-PR workflow |
 | **Audit trail** | `.sdd/` files, git history | GitHub activity log |
 | **Self-hostable** | Yes — runs anywhere Python runs | No |
+| **Chat bridges (Telegram / Discord / Slack)** *(only Bernstein)* | Yes — `bernstein chat serve --platform=telegram\|discord\|slack` with `/run`, `/approve`, `/reject`, `/switch`, `/stop` | No |
+| **SSH remote sandbox** *(only Bernstein)* | Yes — `bernstein remote test/run/forget <host>` with ControlMaster reuse | No — GitHub-hosted runners only |
+| **Lifecycle hooks (pre/post task, merge, spawn)** *(only Bernstein)* | Yes — `bernstein hooks` (shell scripts or pluggy `@hookimpl`) | Partial — GitHub Actions event hooks only |
+| **Auto-PR with janitor gate + cost summary** *(only Bernstein)* | Yes — `bernstein pr` | Native PRs, but no janitor/cost annotation |
+| **Tunnel wrapper (cloudflared / ngrok / bore / tailscale)** *(only Bernstein)* | Yes — `bernstein tunnel start/list/stop` | No |
+| **Interactive mid-run tool-call approval** *(only Bernstein)* | Yes — `bernstein approve-tool` / `reject-tool` (`--latest`, `--id`, `--always`) | No |
+| **Daemon / service install (systemd / launchd)** *(only Bernstein)* | Yes — `bernstein daemon install/start/stop/status` | No — managed by GitHub |
 | **Enterprise pricing** | None (self-hosted, pay for model tokens only) | GitHub Copilot Enterprise pricing |
 
 ---
