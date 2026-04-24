@@ -213,6 +213,7 @@ __all__ = [
 
 # Operator-experience commands (feat/operator-experience)
 from bernstein.cli.commands.approval_cmd import approve_tool_cmd, reject_tool_cmd
+from bernstein.cli.commands.daemon_cmd import daemon_group
 from bernstein.cli.commands.hooks_cmd import hooks as hooks_group
 from bernstein.cli.commands.pr_cmd import pr_cmd
 from bernstein.cli.commands.remote_cmd import remote_group
@@ -733,6 +734,7 @@ cli.add_command(ticket_group, "ticket")
 cli.add_command(remote_group, "remote")
 cli.add_command(hooks_group, "hooks")
 cli.add_command(tunnel_group, "tunnel")
+cli.add_command(daemon_group, "daemon")
 
 # Already registered elsewhere
 cli.add_command(agents_group)
