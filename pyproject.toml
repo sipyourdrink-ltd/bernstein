@@ -122,6 +122,9 @@ s3 = ["boto3>=1.40"]
 gcs = ["google-cloud-storage>=3.0"]
 azure = ["azure-storage-blob>=12.20"]
 r2 = ["boto3>=1.40"]
+# Chat-control bridge backends (op-001). Enable with:
+#   pip install 'bernstein[telegram]'
+telegram = ["python-telegram-bot>=21"]
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"

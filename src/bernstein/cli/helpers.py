@@ -32,6 +32,7 @@ SDD_DIRS = [
     ".sdd/decisions",
     ".sdd/audit",
     ".sdd/audit/merkle",
+    ".sdd/chat",
 ]
 SDD_PID_SERVER = ".sdd/runtime/server.pid"
 SDD_PID_SPAWNER = ".sdd/runtime/spawner.pid"
