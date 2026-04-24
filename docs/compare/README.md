@@ -42,6 +42,13 @@ How Bernstein compares to other tools in the multi-agent coding space.
 | **Model routing** | bandit | no | no | no | no | no | no | no |
 | **Headless / overnight** | yes | limited | GitHub Actions | yes | varies | no | app must run | no |
 | **IDE integration** | no | VS Code, JetBrains | GitHub UI | no | varies | desktop app | desktop app | no |
+| **Chat bridges (Telegram / Discord / Slack)** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ~ | ✗ |
+| **SSH remote sandbox** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Lifecycle hooks (pre/post task, merge, spawn)** *(only Bernstein)* | ✓ | ✗ | ~ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Auto-PR generation with gate + cost summary** *(only Bernstein)* | ✓ | ✗ | ~ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Tunnel wrapper (4 providers, one CLI)** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Interactive tool-call approval** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ~ | ✗ |
+| **Daemon / service install (systemd / launchd)** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **Open source** | Apache 2.0 | Apache 2.0 | no | Apache 2.0 | varies | MIT | MIT | varies |
 
 *Last verified: 2026-04-19. Stoneforge launched 2026-03-03. Paperclip (launched 2026-03-04) is covered on its [own page](./bernstein-vs-paperclip.md); it is an AI-company control plane, not a CLI orchestrator, and is not compared in this table.*

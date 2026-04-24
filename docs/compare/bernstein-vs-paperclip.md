@@ -36,6 +36,13 @@
 | **Protocol support** | MCP, A2A | Not documented |
 | **Web UI** | TUI + web dashboard | Yes — React dashboard |
 | **Cluster mode** | Yes | Not documented |
+| **Chat bridges (Telegram / Discord / Slack)** *(only Bernstein)* | ✓ — `bernstein chat serve --platform=...` drives runs from chat | ✗ |
+| **SSH remote sandbox** *(only Bernstein)* | ✓ — `bernstein remote test/run/forget <host>` with ControlMaster reuse | ✗ |
+| **Lifecycle hooks (pre/post task, merge, spawn)** *(only Bernstein)* | ✓ — `bernstein hooks` (shell scripts or pluggy `@hookimpl`) | ✗ |
+| **Auto-PR with janitor gate + cost summary** *(only Bernstein)* | ✓ — `bernstein pr` | ✗ |
+| **Tunnel wrapper (cloudflared / ngrok / bore / tailscale)** *(only Bernstein)* | ✓ — `bernstein tunnel start/list/stop` | ✗ |
+| **Interactive mid-run tool-call approval** *(only Bernstein)* | ✓ — `bernstein approve-tool` / `reject-tool` | ✗ |
+| **Daemon / service install (systemd / launchd)** *(only Bernstein)* | ✓ — `bernstein daemon install/start/stop/status` | ✗ |
 
 ---
 

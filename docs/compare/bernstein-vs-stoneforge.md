@@ -30,6 +30,13 @@
 | **Multi-repo support** | Yes — workspace mode | No |
 | **Cost optimization** | Routes cheap models to simple tasks | Fixed to provider pricing |
 | **Agent catalogs** | Yes — Agency + custom catalogs | No |
+| **Chat bridges (Telegram / Discord / Slack)** *(only Bernstein)* | Yes — `bernstein chat serve --platform=telegram\|discord\|slack` | No |
+| **SSH remote sandbox** *(only Bernstein)* | Yes — `bernstein remote test/run/forget <host>` with ControlMaster reuse | No |
+| **Lifecycle hooks (pre/post task, merge, spawn)** *(only Bernstein)* | Yes — `bernstein hooks` (shell scripts or pluggy `@hookimpl`) | No |
+| **Auto-PR with janitor gate + cost summary** *(only Bernstein)* | Yes — `bernstein pr` | No |
+| **Tunnel wrapper (cloudflared / ngrok / bore / tailscale)** *(only Bernstein)* | Yes — `bernstein tunnel start/list/stop` | No |
+| **Interactive mid-run tool-call approval** *(only Bernstein)* | Yes — `bernstein approve-tool` / `reject-tool` (`--latest`, `--id`, `--always`) | Provider-native only |
+| **Daemon / service install (systemd / launchd)** *(only Bernstein)* | Yes — `bernstein daemon install/start/stop/status` | No |
 | **Open source license** | Apache 2.0 | Apache 2.0 |
 
 ---
