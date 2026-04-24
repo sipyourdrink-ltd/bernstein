@@ -37,6 +37,33 @@ _LABEL_TASK_SERVER = "Task server"
 _AGENTS_JSON_PATH = ".sdd/runtime/agents.json"
 _YAML_GLOB = "*.yaml"
 
+
+def stop_active_tunnels() -> int:
+    """Enumerate active tunnels via the registry and SIGTERM each PID.
+
+    Called during ``bernstein stop`` so tunnels started via
+    ``bernstein tunnel start`` do not outlive the orchestrator.
+
+    Returns:
+        Number of tunnels signalled.
+    """
+    try:
+        from bernstein.core.tunnels.drivers import register_default_drivers
+        from bernstein.core.tunnels.registry import TunnelRegistry
+    except ImportError:
+        return 0
+    reg = TunnelRegistry()
+    register_default_drivers(reg)
+    count = 0
+    for handle in reg.list_active():
+        if handle.pid > 0:
+            with contextlib.suppress(OSError, ProcessLookupError):
+                os.kill(handle.pid, signal.SIGTERM)
+        reg.destroy(handle.name)
+        count += 1
+    return count
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers used by stop and the main CLI group
 # ---------------------------------------------------------------------------
@@ -651,10 +678,18 @@ def hard_stop() -> None:
             _kill_named_pid(pid, f"survivor-{pid}", killed_pids)
     _collect_repo_processes(killed_pids)
 
-    # 5. Clean up stale runtime artifacts
+    # 5. Tear down active tunnels (op-003)
+    try:
+        n = stop_active_tunnels()
+        if n:
+            console.print(f"[dim]Stopped {n} tunnel(s).[/dim]")
+    except Exception as exc:
+        console.print(f"[yellow]Could not stop tunnels: {exc}[/yellow]")
+
+    # 6. Clean up stale runtime artifacts
     _cleanup_runtime_artifacts()
 
-    # 6. Return claimed tickets to open
+    # 7. Return claimed tickets to open
     try:
         moved = return_claimed_to_open()
         if moved:
@@ -712,3 +747,9 @@ def stop(timeout: int, force: bool) -> None:
         console.print("[bold]Soft stop - giving agents time to save...[/bold]\n")
         soft_stop(timeout)
         _unregister_mcp_discovery(Path.cwd())
+        try:
+            n = stop_active_tunnels()
+            if n:
+                console.print(f"[dim]Stopped {n} tunnel(s).[/dim]")
+        except Exception as exc:
+            console.print(f"[yellow]Could not stop tunnels: {exc}[/yellow]")
