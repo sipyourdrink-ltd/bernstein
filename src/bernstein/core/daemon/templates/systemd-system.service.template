@@ -1,0 +1,16 @@
+[Unit]
+Description=Bernstein system daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$CMD
+WorkingDirectory=$WORKDIR
+Environment=PATH=$PATH
+$ENV_LINES
+Restart=on-failure
+RestartSec=5s
+User=%i
+
+[Install]
+WantedBy=multi-user.target
