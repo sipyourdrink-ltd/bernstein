@@ -1,0 +1,12 @@
+# Senior synthesis stage — one strong reviewer reads cheap-stage findings
+# and emits a single high-level verdict.
+name: senior_synthesis
+parallelism: 1
+aggregator:
+  strategy: any
+agents:
+  - role: senior_reviewer
+    model: anthropic/claude-opus-4-5-20250514
+    adapter: claude
+    prompt_template: senior_synthesis.md
+    effort: high

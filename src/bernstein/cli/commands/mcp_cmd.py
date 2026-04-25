@@ -48,6 +48,15 @@ def mcp_server(ctx: click.Context, transport: str, host: str, port: int, server_
     if ctx.invoked_subcommand is not None:
         return
 
+    # Release 1.9: non-blocking background catalog upgrade check on
+    # `bernstein mcp serve` startup. Surfaced via `mcp catalog status`.
+    try:
+        from bernstein.cli.commands.mcp_catalog_cmd import maybe_run_background_check
+
+        maybe_run_background_check(on_serve_startup=True)
+    except Exception:  # pragma: no cover - never block server startup
+        pass
+
     from bernstein.mcp.server import run_sse, run_stdio
 
     if transport == "stdio":
