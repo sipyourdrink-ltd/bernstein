@@ -60,6 +60,7 @@ _CLI_REDIRECT_MAP: dict[str, str] = {
     "explain_help_cmd": "bernstein.cli.commands.explain_help_cmd",
     "figlet_logo": "bernstein.cli.display.figlet_logo",
     "fingerprint_cmd": "bernstein.cli.commands.fingerprint_cmd",
+    "fleet_cmd": "bernstein.cli.commands.fleet_cmd",
     "frame_buffer": "bernstein.cli.display.frame_buffer",
     "gateway_cmd": "bernstein.cli.commands.gateway_cmd",
     "gradients": "bernstein.cli.display.gradients",

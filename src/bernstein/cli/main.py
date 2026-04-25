@@ -55,6 +55,7 @@ from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.cloud_cmd import cloud_group
+from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.skills_cmd import skills_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.config_path_cmd import config_path_cmd
@@ -799,6 +800,7 @@ cli.add_command(templates_group, "templates")
 cli.add_command(validate_plan, "validate")
 cli.add_command(dep_impact_cmd, "dep-impact")
 cli.add_command(fingerprint_group, "fingerprint")
+cli.add_command(fleet_group, "fleet")
 cli.add_command(triggers_group, "triggers")
 
 # New CLI commands (CLI-004 through CLI-013)
