@@ -292,6 +292,11 @@ def build_pr_body(session: SessionSummary) -> str:
     """
     bullets = "\n".join(f"- {line}" for line in _summary_bullets(session.goal))
 
+    # The ``bernstein-session-id`` trailer is consumed by the autofix
+    # daemon to claim ownership of PRs Bernstein opened — keeping it
+    # on its own line lets ``gh pr view --json body`` callers parse it
+    # with a single regex.
+    short_id = session.session_id[:12] if session.session_id else "unknown"
     parts: list[str] = [
         "## Summary",
         bullets,
@@ -306,7 +311,9 @@ def build_pr_body(session: SessionSummary) -> str:
         _format_cost(session.cost),
         "",
         "---",
-        f"_Generated from Bernstein session `{session.session_id[:12]}`._",
+        f"_Generated from Bernstein session `{short_id}`._",
+        "",
+        f"bernstein-session-id: {short_id}",
     ]
     return "\n".join(parts)
 
