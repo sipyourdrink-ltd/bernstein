@@ -1,0 +1,11 @@
+# Tests stage — checks for missing tests, broken assertions, untested edge cases.
+name: tests
+parallelism: 1
+aggregator:
+  strategy: any
+agents:
+  - role: tests
+    model: google/gemini-flash-1.5
+    adapter: gemini
+    prompt_template: tests.md
+    effort: low

@@ -55,6 +55,8 @@ class LifecycleEvent(StrEnum):
     POST_MERGE = "post_merge"
     PRE_SPAWN = "pre_spawn"
     POST_SPAWN = "post_spawn"
+    PRE_ARCHIVE = "pre_archive"
+    POST_ARCHIVE = "post_archive"
 
 
 @dataclass(frozen=True, slots=True)

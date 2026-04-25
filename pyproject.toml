@@ -75,6 +75,10 @@ dependencies = [
     # billion-laughs / quadratic-blowup DoS on unauthenticated IdP responses
     # (audit-054). defusedxml.ElementTree is a drop-in for xml.etree.ElementTree.
     "defusedxml>=0.7.1",
+    # OS-keychain transport for the credential vault (release 1.9). Pulls in
+    # macOS Keychain / Linux Secret Service / Windows Credential Manager
+    # backends. AES-GCM file fallback uses the existing ``cryptography`` dep.
+    "keyring>=25.0",
 ]
 
 [project.urls]
@@ -202,6 +206,11 @@ packages = ["src/bernstein"]
 # templates/.
 "templates/skills" = "bernstein/_default_templates/skills"
 "templates/roles" = "bernstein/_default_templates/roles"
+# Review pipeline DSL (release_1.9_review_pipeline_dsl) — built-in stage
+# templates and the default 3-phase pipeline. Loaded by
+# bernstein.core.quality.review_pipeline at runtime when users omit a
+# pipeline path.
+"templates/review" = "bernstein/_default_templates/review"
 # ascii_logo.md now lives in-package at src/bernstein/_default_templates/ —
 # no force-include needed. The dev-repo copy at docs/assets/ascii_logo.md is
 # the display fallback read by cli/display/splash_v2.py when running from a

@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bernstein.run/mcp-catalog-schema.json",
+  "title": "Bernstein MCP Catalog",
+  "description": "Schema for the community catalog of installable MCP servers consumed by `bernstein mcp catalog`. The fetch is rejected wholesale on any unknown field or any missing required field; the cached copy is preserved on validation failure.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "generated_at", "entries"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Schema version. Bernstein 1.9 understands version 1.",
+      "minimum": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp the catalog was last regenerated.",
+      "format": "date-time"
+    },
+    "entries": {
+      "type": "array",
+      "description": "Installable MCP server manifests.",
+      "items": {"$ref": "#/$defs/entry"}
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "description",
+        "homepage",
+        "repository",
+        "install_command",
+        "version_pin",
+        "transports",
+        "verified_by_bernstein"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Slug used as the install argument. Must be unique within a catalog.",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable display name.",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "description": "One-paragraph summary of what the server provides.",
+          "minLength": 1
+        },
+        "homepage": {
+          "type": "string",
+          "description": "Project homepage URL.",
+          "format": "uri"
+        },
+        "repository": {
+          "type": "string",
+          "description": "Source repository URL.",
+          "format": "uri"
+        },
+        "install_command": {
+          "type": "array",
+          "description": "Argv-style command run inside the sandbox to install the server. Must NOT be a shell string.",
+          "items": {"type": "string"},
+          "minItems": 1
+        },
+        "version_pin": {
+          "type": "string",
+          "description": "Exact version string pinned by this catalog entry. Used to detect upgrades.",
+          "minLength": 1
+        },
+        "transports": {
+          "type": "array",
+          "description": "MCP transports the server speaks (e.g. 'stdio', 'http').",
+          "items": {
+            "type": "string",
+            "enum": ["stdio", "http", "sse"]
+          },
+          "minItems": 1
+        },
+        "verified_by_bernstein": {
+          "type": "boolean",
+          "description": "Whether the Bernstein team has reviewed this entry. Unverified entries surface a warning in the install preview."
+        },
+        "auto_upgrade": {
+          "type": "boolean",
+          "description": "When true, the upgrade subcommand auto-applies new version pins. Defaults to false.",
+          "default": false
+        },
+        "signature": {
+          "type": "string",
+          "description": "Optional detached signature over the manifest entry. Verification is best-effort in v1.9 and lands fully in 2.0."
+        },
+        "command": {
+          "type": "string",
+          "description": "Executable Bernstein writes into the user's MCP config under the bernstein-managed block."
+        },
+        "args": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Argv passed to `command` when launching the server."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "Environment variables Bernstein writes into the bernstein-managed block."
+        }
+      }
+    }
+  }
+}

@@ -7,11 +7,15 @@ branch if needed, and calls ``gh pr create`` to open the PR.
 
 All pure logic lives in :mod:`bernstein.core.integrations.pr_gen`; this
 module is a thin click wrapper that also handles subprocess calls to
-``git`` and ``gh``.
+``git`` and ``gh``. When ``gh`` cannot find a token in its own keyring,
+we resolve a fallback ``GITHUB_TOKEN`` from the credential vault before
+spawning the subprocess so users who only ran ``bernstein connect github``
+don't also need ``gh auth login``.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -108,6 +112,28 @@ def _push_branch(branch: str, cwd: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def _resolve_github_token_for_subprocess() -> dict[str, str]:
+    """Inject ``GITHUB_TOKEN`` into the subprocess env from the vault if absent.
+
+    ``gh`` looks at ``GITHUB_TOKEN`` before consulting its own auth state,
+    so this lets a user who ran ``bernstein connect github`` skip ``gh
+    auth login``. Returns an env dict to pass as ``subprocess.run(env=...)``;
+    the caller merges it with the parent environment.
+    """
+    env = os.environ.copy()
+    if env.get("GITHUB_TOKEN"):
+        return env
+    try:
+        from bernstein.core.security.vault.factory import open_vault_silent
+        from bernstein.core.security.vault.resolver import resolve_secret
+    except ImportError:
+        return env
+    resolution = resolve_secret("github", vault=open_vault_silent())
+    if resolution.found:
+        env["GITHUB_TOKEN"] = resolution.secret
+    return env
+
+
 def _gh_pr_create(
     *,
     title: str,
@@ -144,6 +170,7 @@ def _gh_pr_create(
             errors="replace",
             timeout=60,
             check=False,
+            env=_resolve_github_token_for_subprocess(),
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         return False, str(exc)
