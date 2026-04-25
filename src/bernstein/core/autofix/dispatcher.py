@@ -289,8 +289,7 @@ class Dispatcher:
                 attempt_index=attempt_index,
                 outcome="needs_human",
                 reason=(
-                    f"Already attempted {MAX_ATTEMPTS_PER_PUSH} times on "
-                    f"push {pr.head_sha[:12]}; escalating to human."
+                    f"Already attempted {MAX_ATTEMPTS_PER_PUSH} times on push {pr.head_sha[:12]}; escalating to human."
                 ),
             )
             self._record_terminal(record)
@@ -370,10 +369,7 @@ class Dispatcher:
                 classification=classification,
                 cost_usd=cost_usd,
                 commit_sha=commit_sha,
-                reason=(
-                    f"Cost ${cost_usd:.2f} exceeded repo cap "
-                    f"${repo_config.cost_cap_usd:.2f}; aborted."
-                ),
+                reason=(f"Cost ${cost_usd:.2f} exceeded repo cap ${repo_config.cost_cap_usd:.2f}; aborted."),
             )
             self._record_terminal(record)
             return record
@@ -411,9 +407,7 @@ class Dispatcher:
         if record.cost_usd > 0:
             autofix_cost_usd_total.labels(repo=record.repo).inc(record.cost_usd)
 
-        signals: tuple[str, ...] = (
-            record.classification.matched_signals if record.classification else ()
-        )
+        signals: tuple[str, ...] = record.classification.matched_signals if record.classification else ()
         self._audit.log(
             event_type="autofix.attempt.finish",
             actor="autofix-daemon",

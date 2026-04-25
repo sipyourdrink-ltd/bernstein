@@ -215,10 +215,7 @@ def decide_ownership(
     if expected_label.lower() not in labels:
         return OwnershipDecision(
             eligible=False,
-            reason=(
-                f"PR is missing the opt-in label '{expected_label}'. "
-                "Add the label to authorise autofix."
-            ),
+            reason=(f"PR is missing the opt-in label '{expected_label}'. Add the label to authorise autofix."),
             signals={**signals, "skip_reason": "missing_label"},
         )
 

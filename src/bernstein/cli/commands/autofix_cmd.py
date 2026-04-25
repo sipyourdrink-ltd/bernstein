@@ -141,10 +141,7 @@ def _format_status_line(record: dict[str, object]) -> str:
     classifier = str(record.get("classifier", "?"))
     cost = float(record.get("cost_usd", 0.0) or 0.0)
     attempt_index = record.get("attempt_index", "?")
-    return (
-        f"{repo}#{pr}  attempt={attempt_index}  "
-        f"outcome={outcome}  classifier={classifier}  cost=${cost:.4f}"
-    )
+    return f"{repo}#{pr}  attempt={attempt_index}  outcome={outcome}  classifier={classifier}  cost=${cost:.4f}"
 
 
 def _filter_repos(config: AutofixConfig, repo_filter: tuple[str, ...]) -> set[str] | None:
@@ -223,8 +220,7 @@ def start_cmd(
 
     if not config.repos and not repo_filter:
         raise click.ClickException(
-            "autofix.toml declares no [[repo]] entries and no --repo override "
-            "was supplied; nothing to watch."
+            "autofix.toml declares no [[repo]] entries and no --repo override was supplied; nothing to watch."
         )
 
     repos = _filter_repos(config, repo_filter)

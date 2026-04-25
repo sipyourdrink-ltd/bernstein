@@ -360,9 +360,7 @@ def start(
     """
     existing = _read_pid(workdir)
     if existing > 0 and _process_alive(existing):
-        raise DaemonAlreadyRunningError(
-            f"Autofix daemon is already running (pid {existing})."
-        )
+        raise DaemonAlreadyRunningError(f"Autofix daemon is already running (pid {existing}).")
 
     _write_pid(workdir, os.getpid())
     ticks = 0

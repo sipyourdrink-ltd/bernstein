@@ -130,3 +130,6 @@ description  # noqa
 priority  # noqa
 scope  # noqa
 depends_on  # noqa
+
+# Protocol method parameter — bound by call site, not used in body
+capture_output  # noqa
