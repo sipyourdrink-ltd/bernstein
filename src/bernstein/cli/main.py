@@ -715,6 +715,10 @@ cli.add_command(github_group)
 cli.add_command(graph_group, "graph")
 cli.add_command(policy_group, "policy")
 cli.add_command(mcp_server, "mcp")
+# Wire the release-1.9 community catalog as a subgroup of `bernstein mcp`.
+from bernstein.cli.commands.mcp_catalog_cmd import catalog_group as _catalog_group  # noqa: E402
+
+mcp_server.add_command(_catalog_group, "catalog")
 cli.add_command(completions)
 cli.add_command(quarantine_group)
 cli.add_command(ideate)
