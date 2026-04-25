@@ -358,10 +358,7 @@ async def _run_stage(
                 BulletinMessage(
                     agent_id=f"review_pipeline:{sv.stage}:{av.role}",
                     type="finding",
-                    content=(
-                        f"[{sv.stage}/{av.role}] verdict={av.verdict} "
-                        f"feedback={av.feedback[:280]}"
-                    ),
+                    content=(f"[{sv.stage}/{av.role}] verdict={av.verdict} feedback={av.feedback[:280]}"),
                 )
             )
         bulletin.post(
@@ -422,9 +419,7 @@ async def run_pipeline(
     caller = llm_caller or _default_llm_caller
     board = bulletin if bulletin is not None else BulletinBoard()
     pipeline_started = time.monotonic()
-    pr_resource = (
-        f"pr-{diff_src.pr_number}" if diff_src.pr_number is not None else f"task:{diff_src.title[:60]}"
-    )
+    pr_resource = f"pr-{diff_src.pr_number}" if diff_src.pr_number is not None else f"task:{diff_src.title[:60]}"
 
     if audit_log is not None:
         with contextlib.suppress(OSError):

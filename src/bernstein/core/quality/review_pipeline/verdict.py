@@ -281,8 +281,7 @@ def aggregate_pipeline(
     # This matches operator intent for the "final_gate" pattern (a single
     # authoritative reviewer that must approve).
     hard_gate_failure = any(
-        s.verdict == "request_changes"
-        and pipeline.stages[idx].aggregator.strategy == "all"
+        s.verdict == "request_changes" and pipeline.stages[idx].aggregator.strategy == "all"
         for idx, s in enumerate(stage_verdicts)
     )
 

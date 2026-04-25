@@ -118,9 +118,7 @@ def _print_pipeline_summary(pipeline: ReviewPipeline) -> None:
             agg_repr += f"@{stage.aggregator.pass_threshold:.2f}"
         table.add_row(str(idx), stage.name, str(stage.parallelism), agg_repr, agents_repr)
     console.print(table)
-    console.print(
-        f"[dim]pass_threshold={pipeline.pass_threshold:.2f}  block_on_fail={pipeline.block_on_fail}[/dim]"
-    )
+    console.print(f"[dim]pass_threshold={pipeline.pass_threshold:.2f}  block_on_fail={pipeline.block_on_fail}[/dim]")
 
 
 def _print_verdict_table(
@@ -132,9 +130,7 @@ def _print_verdict_table(
     pr_label = f"PR #{diff_src.pr_number}" if diff_src.pr_number else diff_src.title
     pipeline_name = pipeline.name or "<unnamed>"
     overall = (
-        "[bold green]APPROVE[/bold green]"
-        if verdict.verdict == "approve"
-        else "[bold red]REQUEST CHANGES[/bold red]"
+        "[bold green]APPROVE[/bold green]" if verdict.verdict == "approve" else "[bold red]REQUEST CHANGES[/bold red]"
     )
     console.print(
         Panel(
@@ -153,11 +149,7 @@ def _print_verdict_table(
     table.add_column("Feedback")
     for idx, sv in enumerate(verdict.stages, start=1):
         sv_v: StageVerdict = sv
-        marker = (
-            "[green]approve[/green]"
-            if sv_v.verdict == "approve"
-            else "[red]request_changes[/red]"
-        )
+        marker = "[green]approve[/green]" if sv_v.verdict == "approve" else "[red]request_changes[/red]"
         table.add_row(
             str(idx),
             sv_v.stage,
