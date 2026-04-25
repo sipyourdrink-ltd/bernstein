@@ -16,6 +16,7 @@ imports keep working alongside the new sink protocol.
 from __future__ import annotations
 
 from bernstein.core.communication.notifications import (
+    _PD_SEVERITY,
     NotificationManager,
     NotificationPayload,
     NotificationTarget,
@@ -56,6 +57,8 @@ from bernstein.core.notifications.registry import (
 )
 
 __all__ = [
+    # Legacy private symbol re-exported for backwards compatibility.
+    "_PD_SEVERITY",
     "DeadLetter",
     "DedupCache",
     "NotificationDeliveryError",
