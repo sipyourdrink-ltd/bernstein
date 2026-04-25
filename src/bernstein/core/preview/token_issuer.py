@@ -68,16 +68,12 @@ class IssuedAuth:
         if self.mode == "token" and self.token:
             parts = urlsplit(base_url)
             new_query = parts.query + ("&" if parts.query else "") + f"token={quote(self.token, safe='')}"
-            return urlunsplit(
-                (parts.scheme, parts.netloc, parts.path or "/", new_query, parts.fragment)
-            )
+            return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", new_query, parts.fragment))
         if self.mode == "basic" and self.basic_user and self.basic_password:
             parts = urlsplit(base_url)
             cred = f"{quote(self.basic_user, safe='')}:{quote(self.basic_password, safe='')}"
             netloc = f"{cred}@{parts.netloc}" if parts.netloc else cred
-            return urlunsplit(
-                (parts.scheme, netloc, parts.path, parts.query, parts.fragment)
-            )
+            return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
         return base_url
 
 

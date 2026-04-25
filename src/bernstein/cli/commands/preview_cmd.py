@@ -175,10 +175,7 @@ def list_cmd(as_json: bool) -> None:
         console.print("[dim]No active previews.[/dim]")
         return
 
-    header = (
-        f"{'ID':<14} {'COMMAND':<28} {'PORT':>6} {'SANDBOX':<14} "
-        f"{'PROVIDER':<12} {'AUTH':<6} {'EXPIRES':>10} URL"
-    )
+    header = f"{'ID':<14} {'COMMAND':<28} {'PORT':>6} {'SANDBOX':<14} {'PROVIDER':<12} {'AUTH':<6} {'EXPIRES':>10} URL"
     console.print(header)
     console.print("-" * len(header))
     for s in states:

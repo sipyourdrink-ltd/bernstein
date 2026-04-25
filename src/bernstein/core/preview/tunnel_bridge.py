@@ -54,6 +54,7 @@ class TunnelBridge:
         registry_factory: Callable[[], TunnelRegistry] | None = None,
     ) -> None:
         if registry_factory is None:
+
             def _default_factory() -> TunnelRegistry:
                 reg = TunnelRegistry(state_path=state_path)
                 register_default_drivers(reg)
@@ -103,16 +104,14 @@ class TunnelBridge:
                     return reg.create(port=port, provider="cloudflared", name=name)
                 except ProviderNotAvailable as fallback_exc:
                     raise TunnelBridgeError(
-                        f"No tunnel provider available (auto + cloudflared fallback). "
-                        f"Hint: {fallback_exc.hint}"
+                        f"No tunnel provider available (auto + cloudflared fallback). Hint: {fallback_exc.hint}"
                     ) from fallback_exc
                 except Exception as fallback_exc:
                     raise TunnelBridgeError(
                         f"Tunnel start failed via cloudflared fallback: {fallback_exc}"
                     ) from fallback_exc
             raise TunnelBridgeError(
-                f"Tunnel provider {provider!r} unavailable: {primary_exc}. "
-                f"Hint: {primary_exc.hint}"
+                f"Tunnel provider {provider!r} unavailable: {primary_exc}. Hint: {primary_exc.hint}"
             ) from primary_exc
         except KeyError as exc:
             raise TunnelBridgeError(f"Unknown tunnel provider: {provider!r}") from exc

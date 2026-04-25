@@ -404,8 +404,7 @@ class PreviewManager:
         if not probe_port(port, timeout_seconds=port_probe_timeout, clock=active_clock.monotonic):
             self._runner.terminate(run_handle)
             raise PreviewError(
-                f"Dev server bound port {port} but TCP probe failed within "
-                f"{port_probe_timeout:.0f}s; aborting."
+                f"Dev server bound port {port} but TCP probe failed within {port_probe_timeout:.0f}s; aborting."
             )
 
         try:
@@ -440,9 +439,7 @@ class PreviewManager:
             share_url=issued.render_url(handle.public_url) if issued.mode != "none" else handle.public_url,
             auth_mode=issued.mode,
             expires_at_epoch=(
-                issued.expires_at_epoch
-                if issued.expires_at_epoch > 0
-                else active_clock.now() + expire_total
+                issued.expires_at_epoch if issued.expires_at_epoch > 0 else active_clock.now() + expire_total
             ),
             process_pid=run_handle.pid,
             created_at_epoch=active_clock.now(),
