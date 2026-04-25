@@ -1,0 +1,11 @@
+# Style stage — flags dead code, unused imports, gratuitous complexity.
+name: style
+parallelism: 1
+aggregator:
+  strategy: any
+agents:
+  - role: style
+    model: google/gemini-flash-1.5
+    adapter: gemini
+    prompt_template: style.md
+    effort: low

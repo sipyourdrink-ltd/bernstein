@@ -1,0 +1,12 @@
+# Final gate stage — configurable gatekeeper.  By default uses Claude
+# Sonnet; teams can swap the adapter in their own pipeline.
+name: final_gate
+parallelism: 1
+aggregator:
+  strategy: all
+agents:
+  - role: gatekeeper
+    model: anthropic/claude-sonnet-4-20250514
+    adapter: claude
+    prompt_template: final_gate.md
+    effort: medium
