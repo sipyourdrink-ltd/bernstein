@@ -172,7 +172,7 @@ class KeyringBackend(CredentialVault):
             self._write_index(index)
         return removed
 
-    def list(self) -> list[CredentialRecord]:  # noqa: A003 — protocol method
+    def list(self) -> list[CredentialRecord]:
         records: list[CredentialRecord] = []
         for provider_id in self._read_index():
             envelope = self._read_envelope(provider_id)

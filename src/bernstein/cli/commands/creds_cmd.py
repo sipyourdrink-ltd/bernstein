@@ -17,13 +17,18 @@ The CLI never prints secrets — every UI affordance uses
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import getpass
 import webbrowser
+from typing import TYPE_CHECKING
 
 import click
 from rich.table import Table
 
 from bernstein.cli.helpers import console
+
+if TYPE_CHECKING:
+    from bernstein.core.security.vault.protocol import CredentialVault
 from bernstein.core.security.vault.connect import (
     perform_connect,
     perform_revoke,
@@ -39,10 +44,7 @@ from bernstein.core.security.vault.oauth_device import (
     begin_device_code,
     poll_device_code,
 )
-from bernstein.core.security.vault.protocol import (
-    CredentialVault,
-    VaultError,
-)
+from bernstein.core.security.vault.protocol import VaultError
 from bernstein.core.security.vault.providers import (
     AuthMode,
     ProviderConfig,
@@ -150,10 +152,11 @@ def _prompt_paste(provider: ProviderConfig) -> dict[str, str]:
     """
     fields: dict[str, str] = {}
     for prompt in provider.paste_prompts:
-        if prompt.is_secret:
-            value = getpass.getpass(f"{prompt.label}: ")
-        else:
-            value = click.prompt(prompt.label, type=str)
+        value = (
+            getpass.getpass(f"{prompt.label}: ")
+            if prompt.is_secret
+            else click.prompt(prompt.label, type=str)
+        )
         if not value:
             raise click.UsageError(f"{prompt.label} cannot be empty.")
         fields[prompt.field] = value.strip()
@@ -179,10 +182,8 @@ def _run_oauth_device_code(provider: ProviderConfig) -> dict[str, str]:
         f"\nVisit [bold cyan]{challenge.verification_url}[/bold cyan] and enter code "
         f"[bold]{challenge.user_code}[/bold]\n",
     )
-    try:
+    with contextlib.suppress(Exception):
         webbrowser.open(challenge.verification_url)
-    except Exception:
-        pass
 
     async def _await_token() -> str:
         loop = asyncio.get_running_loop()

@@ -35,6 +35,7 @@ keyring backend.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import stat
@@ -209,10 +210,8 @@ class FileBackend(CredentialVault):
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # Best-effort harden the directory so peer users can't browse it.
-        try:
+        with contextlib.suppress(OSError):
             self._path.parent.chmod(0o700)
-        except OSError:
-            pass
         # Write to a temp file and atomic-rename so a crash leaves the old
         # vault intact rather than producing a half-written file.
         tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
@@ -222,10 +221,8 @@ class FileBackend(CredentialVault):
         finally:
             os.close(fd)
         os.replace(tmp_path, self._path)
-        try:
+        with contextlib.suppress(OSError):
             self._path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
-        except OSError:
-            pass
 
     # ------------------------------------------------------------------
     # CredentialVault protocol
@@ -258,7 +255,7 @@ class FileBackend(CredentialVault):
         self._save(store, envelope)
         return True
 
-    def list(self) -> list[CredentialRecord]:  # noqa: A003 — protocol method
+    def list(self) -> list[CredentialRecord]:
         store, _envelope = self._load()
         out: list[CredentialRecord] = []
         for provider_id, record in store.items():

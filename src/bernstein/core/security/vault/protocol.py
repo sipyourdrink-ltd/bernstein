@@ -87,7 +87,7 @@ class CredentialVault(Protocol):
         stored. Idempotent: calling twice is fine.
         """
 
-    def list(self) -> list[CredentialRecord]:  # noqa: A003 — protocol method name
+    def list(self) -> list[CredentialRecord]:
         """Return every stored credential as a metadata-only record."""
 
     def touch(self, provider_id: str, last_used_at: str) -> None:

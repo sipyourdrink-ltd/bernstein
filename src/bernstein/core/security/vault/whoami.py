@@ -9,11 +9,12 @@ error so the CLI can format a useful message.
 from __future__ import annotations
 
 import base64
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from bernstein.core.security.vault.providers import ProviderConfig, WhoamiSpec
+if TYPE_CHECKING:
+    from bernstein.core.security.vault.providers import ProviderConfig, WhoamiSpec
 
 _TIMEOUT_S = 10.0
 
@@ -91,18 +92,18 @@ def call_whoami(
     if "{basic_b64}" in spec.auth_header_template:
         email = fields.get("email", "")
         token = fields.get("token", "")
-        creds = f"{email}:{token}".encode("utf-8")
+        creds = f"{email}:{token}".encode()
         fields = {**fields, "basic_b64": base64.b64encode(creds).decode("ascii")}
 
     if spec.auth_header_template:
         headers["Authorization"] = _format_template(spec.auth_header_template, fields)
 
     method = "POST" if provider.id == "linear" else "GET"
-    payload: dict[str, Any] | None
-    if provider.id == "linear":
-        payload = {"query": "query { viewer { id email name } }"}
-    else:
-        payload = None
+    payload: dict[str, Any] | None = (
+        {"query": "query { viewer { id email name } }"}
+        if provider.id == "linear"
+        else None
+    )
 
     owns_client = client is None
     cli = client if client is not None else httpx.Client(timeout=_TIMEOUT_S)

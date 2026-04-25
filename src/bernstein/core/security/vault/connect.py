@@ -262,7 +262,7 @@ def _stored_to_fields(stored: StoredSecret) -> dict[str, str]:
             if value:
                 fields[key] = value
     if "email" in fields and "token" in fields:
-        creds = f"{fields['email']}:{fields['token']}".encode("utf-8")
+        creds = f"{fields['email']}:{fields['token']}".encode()
         fields["basic_b64"] = base64.b64encode(creds).decode("ascii")
     return fields
 

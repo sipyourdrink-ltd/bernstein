@@ -20,7 +20,7 @@ keeps `bernstein creds list` deterministic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 #: Stable provider identifier used as the keychain account name. Adding a
@@ -28,7 +28,7 @@ from typing import Literal
 ProviderId = Literal["github", "linear", "jira", "slack", "telegram"]
 
 
-class AuthMode(str, Enum):
+class AuthMode(StrEnum):
     """How the user supplies the credential during ``bernstein connect``."""
 
     TOKEN_PASTE = "token-paste"
@@ -149,7 +149,11 @@ _PROVIDERS: dict[ProviderId, ProviderConfig] = {
         legacy_env_vars=("JIRA_EMAIL", "JIRA_API_TOKEN"),
         auth_mode=AuthMode.TOKEN_PASTE,
         paste_prompts=(
-            TokenPastePrompt(field="base_url", label="Jira Cloud base URL (https://acme.atlassian.net)", is_secret=False),
+            TokenPastePrompt(
+                field="base_url",
+                label="Jira Cloud base URL (https://acme.atlassian.net)",
+                is_secret=False,
+            ),
             TokenPastePrompt(field="email", label="Atlassian account email", is_secret=False),
             TokenPastePrompt(field="token", label="Jira API token"),
         ),

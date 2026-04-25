@@ -17,8 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from bernstein.core.security.vault.backend_file import (
     DEFAULT_VAULT_PATH,
@@ -29,7 +28,11 @@ from bernstein.core.security.vault.backend_keyring import (
     KeyringBackend,
     KeyringUnavailable,
 )
-from bernstein.core.security.vault.protocol import CredentialVault
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.security.vault.protocol import CredentialVault
 
 logger = logging.getLogger(__name__)
 
