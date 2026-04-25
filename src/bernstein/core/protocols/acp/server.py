@@ -157,9 +157,7 @@ async def _stdio_streams() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         thread.start()
 
     try:
-        transport, protocol_w = await loop.connect_write_pipe(
-            asyncio.streams.FlowControlMixin, sys.stdout
-        )
+        transport, protocol_w = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout)
         writer = asyncio.StreamWriter(transport, protocol_w, reader, loop)
     except (ValueError, OSError):
         writer = _SyncStdoutWriter()  # type: ignore[assignment]
@@ -343,12 +341,7 @@ def _http_task_creator(server_url: str) -> TaskCreator:
             logger.warning("acp.create_task failed: %s", exc)
             return PromptResult(session_id="", accepted=False, message=str(exc))
 
-        sid = (
-            data.get("id")
-            or data.get("task_id")
-            or data.get("session_id")
-            or ""
-        )
+        sid = data.get("id") or data.get("task_id") or data.get("session_id") or ""
         if not sid:
             return PromptResult(session_id="", accepted=False, message="missing session id in response")
         return PromptResult(session_id=str(sid), accepted=True)

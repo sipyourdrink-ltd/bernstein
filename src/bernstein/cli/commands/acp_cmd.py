@@ -61,10 +61,7 @@ def serve(use_stdio: bool, http_addr: str | None, server_url: str) -> None:
     server = build_default_server(server_url=server_url)
     if http_addr:
         host, port = _parse_addr(http_addr)
-        console.print(
-            f"[cyan]ACP[/cyan] HTTP transport on [bold]{host}:{port}[/bold] "
-            f"(backend: {server_url})"
-        )
+        console.print(f"[cyan]ACP[/cyan] HTTP transport on [bold]{host}:{port}[/bold] (backend: {server_url})")
         asyncio.run(_run_http(server, host, port))
         return
     if not use_stdio:
@@ -138,9 +135,7 @@ async def _run_http(server: ACPServer, host: str, port: int) -> None:
             return
 
         accept = headers.get("accept", "")
-        status, response_headers, body_or_iter = await transport.handle_request(
-            body, accept, peer=f"http://{peer_ip}"
-        )
+        status, response_headers, body_or_iter = await transport.handle_request(body, accept, peer=f"http://{peer_ip}")
         if isinstance(body_or_iter, (bytes, bytearray)):
             await _write_response(writer, status, response_headers, bytes(body_or_iter))
         else:

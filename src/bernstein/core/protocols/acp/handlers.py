@@ -239,11 +239,7 @@ class ACPHandlerRegistry:
         try:
             result = await handler(ctx, params)
         except ACPSchemaError as exc:
-            outcome = (
-                "rejected"
-                if exc.code == PERMISSION_DENIED
-                else "error"
-            )
+            outcome = "rejected" if exc.code == PERMISSION_DENIED else "error"
             record_acp_message(ctx.method, outcome)
             raise
         except Exception as exc:
