@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-04-01"}}
+{"jsonrpc":"2.0","method":"initialized","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"prompt","params":{"prompt":"Add a hello function","cwd":"/tmp/work","role":"backend","mode":"manual"}}
+{"jsonrpc":"2.0","id":3,"method":"setMode","params":{"sessionId":"__SESSION__","mode":"auto"}}
+{"jsonrpc":"2.0","id":4,"method":"cancel","params":{"sessionId":"__SESSION__","reason":"user_done"}}
