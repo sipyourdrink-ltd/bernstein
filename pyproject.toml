@@ -178,6 +178,17 @@ bernstein-worker = "bernstein.core.worker:main"
 # this group. Example:
 # my_sink = "my_pkg.storage:MyArtifactSink"
 
+[project.entry-points."bernstein.notification_sinks"]
+# Outbound notification drivers (release 1.9). First-party drivers
+# (telegram, slack, discord, email_smtp, webhook, shell) ship in core
+# and are registered eagerly by bernstein.core.notifications.registry;
+# plugin authors register additional drivers (PagerDuty, Opsgenie,
+# Mattermost, ...) via this group. Each entry resolves to a callable
+# whose signature is ``factory(config: dict[str, Any]) -> NotificationSink``
+# and the entry name is the ``kind`` referenced from
+# ``bernstein.yaml::notifications.sinks[*].kind``. Example:
+# pagerduty = "my_pkg.notify:PagerDutySink"
+
 [tool.hatch.build]
 # NOTE: do NOT add src/bernstein/ entries here.  Every file under src/
 # ships production code that the runtime imports -- either directly or

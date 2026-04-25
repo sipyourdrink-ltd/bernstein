@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from bernstein.core.models import SmtpConfig
+
 from bernstein.core.notifications import (
     NotificationManager,
     NotificationPayload,

@@ -337,7 +337,13 @@ _REDIRECT_MAP: dict[str, str] = {
     "models": "bernstein.core.tasks.models",
     "multi_cell": "bernstein.core.orchestration.multi_cell",
     "network_isolation": "bernstein.core.security.network_isolation",
-    "notifications": "bernstein.core.communication.notifications",
+    # ``notifications`` was redirected to communication.notifications
+    # before release 1.9. That module is now a real sub-package
+    # (NotificationSink protocol + first-party drivers) which re-exports
+    # the legacy NotificationManager/Payload/Target names from its
+    # ``__init__.py`` for backwards compatibility. The redirect map
+    # entry below is deliberately removed — keeping it would shadow the
+    # real package.
     "nudge_manager": "bernstein.core.orchestration.nudge_manager",
     "oauth_pkce": "bernstein.core.security.oauth_pkce",
     "operator": "bernstein.core.orchestration.operator",

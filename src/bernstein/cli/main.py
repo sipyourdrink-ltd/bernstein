@@ -833,3 +833,8 @@ cli.add_command(chat_group, "chat")
 from bernstein.cli.commands.acp_cmd import acp_group  # noqa: E402
 
 cli.add_command(acp_group, "acp")
+
+# release/1.9: outbound notification drivers (Telegram, Slack, Discord, Email, Webhook, Shell).
+from bernstein.cli.commands.notify_cmd import notify_group  # noqa: E402
+
+cli.add_command(notify_group, "notify")
