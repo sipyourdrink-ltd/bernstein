@@ -79,10 +79,19 @@ def _fetch_via_gh(owner: str, repo: str, number: int) -> dict[str, Any]:
 
 
 def _fetch_via_rest(owner: str, repo: str, number: int) -> dict[str, Any]:
-    token = os.environ.get(_GH_ENV)
+    # Vault-first resolution; fall back to the legacy env var for users
+    # who have not migrated yet (with a one-time deprecation warning).
+    from bernstein.core.security.vault.factory import open_vault_silent
+    from bernstein.core.security.vault.resolver import resolve_secret
+
+    resolution = resolve_secret(
+        "github",
+        vault=open_vault_silent(),
+    )
+    token = resolution.secret if resolution.found else os.environ.get(_GH_ENV, "")
     if not token:
         raise TicketAuthError(
-            f"gh CLI not found and {_GH_ENV} is unset. Install gh or set {_GH_ENV} to a personal access token."
+            f"gh CLI not found and no GitHub credential is stored. Run `bernstein connect github` or set {_GH_ENV}."
         )
     endpoint = f"https://api.github.com/repos/{owner}/{repo}/issues/{number}"
     headers = {

@@ -8,7 +8,6 @@ import time), so this module is safe to import without credentials.
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any, cast
 
@@ -105,15 +104,28 @@ def _extract_assignee(issue: dict[str, Any]) -> str | None:
 def fetch_linear(url: str) -> TicketPayload:
     """Fetch a Linear issue and return it as a :class:`TicketPayload`.
 
+    Resolves the API key in vault-first order: the OS keychain (via
+    :mod:`bernstein.core.security.vault`), then the legacy
+    ``LINEAR_API_KEY`` env-var with a one-time deprecation warning.
+
     Raises:
-        TicketAuthError: ``LINEAR_API_KEY`` is missing or rejected.
+        TicketAuthError: vault entry missing AND ``LINEAR_API_KEY`` unset
+            (or rejected by the API).
         TicketParseError: URL could not be parsed or the response shape is unexpected.
     """
-    api_key = os.environ.get(_LINEAR_ENV)
-    if not api_key:
+    from bernstein.core.security.vault.factory import open_vault_silent
+    from bernstein.core.security.vault.resolver import resolve_secret
+
+    resolution = resolve_secret(
+        "linear",
+        vault=open_vault_silent(),
+    )
+    if not resolution.found:
         raise TicketAuthError(
-            f"Missing Linear credentials. Set the {_LINEAR_ENV} environment variable to your personal API key."
+            "Missing Linear credentials. Run `bernstein connect linear` to store your API key, "
+            f"or set the legacy {_LINEAR_ENV} env var."
         )
+    api_key = resolution.secret
     key = _extract_key(url)
     data = _post_graphql(api_key, _QUERY, {"id": key})
     if data.get("errors"):
