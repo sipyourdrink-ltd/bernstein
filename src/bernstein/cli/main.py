@@ -217,6 +217,7 @@ from bernstein.cli.commands.daemon_cmd import daemon_group
 from bernstein.cli.commands.hooks_cmd import hooks as hooks_group
 from bernstein.cli.commands.pr_cmd import pr_cmd
 from bernstein.cli.commands.remote_cmd import remote_group
+from bernstein.cli.commands.review_responder_cmd import review_responder_group
 from bernstein.cli.commands.ticket_cmd import from_ticket, ticket_group
 from bernstein.cli.commands.tunnel_cmd import tunnel_group
 from bernstein.cli.helpers import (
@@ -735,6 +736,7 @@ cli.add_command(remote_group, "remote")
 cli.add_command(hooks_group, "hooks")
 cli.add_command(tunnel_group, "tunnel")
 cli.add_command(daemon_group, "daemon")
+cli.add_command(review_responder_group, "review-responder")
 
 # Already registered elsewhere
 cli.add_command(agents_group)
