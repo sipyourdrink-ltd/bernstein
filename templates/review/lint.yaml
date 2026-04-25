@@ -1,0 +1,12 @@
+# Lint stage — cheap stylistic / formatting checks.
+# Reusable as a stage entry inside a larger pipeline.
+name: lint
+parallelism: 1
+aggregator:
+  strategy: any
+agents:
+  - role: lint
+    model: google/gemini-flash-1.5
+    adapter: gemini
+    prompt_template: lint.md
+    effort: low

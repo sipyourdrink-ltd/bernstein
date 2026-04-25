@@ -174,17 +174,70 @@ def cancel(task_id: str, reason: str) -> None:
 
 @click.command("review")
 @click.option("--workdir", default=".", help="Project root directory.", type=click.Path())
-def review_cmd(workdir: str) -> None:
-    """Trigger an immediate manager queue review.
+@click.option(
+    "--pipeline",
+    "pipeline_path",
+    default=None,
+    type=click.Path(),
+    help="Path to a review.yaml pipeline definition.",
+)
+@click.option(
+    "--pr",
+    "pr_number",
+    default=None,
+    type=int,
+    help="GitHub PR number to review (requires --pipeline).",
+)
+@click.option(
+    "--validate-only",
+    is_flag=True,
+    default=False,
+    help="Validate --pipeline YAML and exit. No agents run.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Print the resolved pipeline without spawning agents or hitting any LLM.",
+)
+def review_cmd(
+    workdir: str,
+    pipeline_path: str | None,
+    pr_number: int | None,
+    validate_only: bool,
+    dry_run: bool,
+) -> None:
+    """Trigger a manager queue review or run a YAML review pipeline.
 
-    Writes a flag file that the running orchestrator picks up on its next
-    tick, prompting the manager agent to inspect the task queue and issue
-    corrections (reassign mis-routed tasks, cancel stalled tasks, etc.).
+    Without ``--pipeline``: writes a flag file that the running orchestrator
+    picks up on its next tick, prompting the manager agent to inspect the
+    task queue and issue corrections.
+
+    With ``--pipeline``: parses the pipeline YAML and (when ``--pr`` is
+    provided) runs the multi-phase review against the PR, printing a
+    verdict table.  ``--validate-only`` exits after schema validation;
+    ``--dry-run`` prints the resolved pipeline without spawning any agent.
 
     \b
-    Example:
+    Examples:
       bernstein review
+      bernstein review --pipeline review.yaml --validate-only
+      bernstein review --pipeline review.yaml --pr 42 --dry-run
+      bernstein review --pipeline templates/review/default-3-phase.yaml --pr 42
     """
+    if pipeline_path is not None or validate_only or dry_run or pr_number is not None:
+        # Lazy import — keep the legacy fast path zero-cost.
+        from bernstein.cli.commands.review_pipeline_cmd import run_review_pipeline_cli
+
+        exit_code = run_review_pipeline_cli(
+            pipeline_path=pipeline_path,
+            pr_number=pr_number,
+            validate_only=validate_only,
+            dry_run=dry_run,
+            workdir=workdir,
+        )
+        raise SystemExit(exit_code)
+
     flag = Path(workdir) / ".sdd" / "runtime" / "review_requested"
     flag.parent.mkdir(parents=True, exist_ok=True)
     flag.write_text("1")

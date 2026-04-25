@@ -1,0 +1,66 @@
+# Default 3-phase review pipeline.
+#
+# Stage 1: five cheap specialists run in parallel (lint, types, tests,
+#          security, style).  Majority must approve.
+# Stage 2: one Opus synthesizer reads stage 1's findings.
+# Stage 3: configurable final gatekeeper — Claude Sonnet by default.
+#
+# Drop-in replacement for the legacy single-pass cross-model verifier.
+version: 1
+name: default-3-phase
+pass_threshold: 0.66
+block_on_fail: true
+
+stages:
+  - name: cheap-verifiers
+    parallelism: 5
+    aggregator:
+      strategy: majority
+    agents:
+      - role: lint
+        model: google/gemini-flash-1.5
+        adapter: gemini
+        prompt_template: lint.md
+        effort: low
+      - role: types
+        model: anthropic/claude-haiku-4-5-20251001
+        adapter: claude
+        prompt_template: types.md
+        effort: low
+      - role: tests
+        model: google/gemini-flash-1.5
+        adapter: gemini
+        prompt_template: tests.md
+        effort: low
+      - role: security
+        model: anthropic/claude-haiku-4-5-20251001
+        adapter: claude
+        prompt_template: security.md
+        effort: low
+      - role: style
+        model: google/gemini-flash-1.5
+        adapter: gemini
+        prompt_template: style.md
+        effort: low
+
+  - name: senior_synthesis
+    parallelism: 1
+    aggregator:
+      strategy: any
+    agents:
+      - role: senior_reviewer
+        model: anthropic/claude-opus-4-5-20250514
+        adapter: claude
+        prompt_template: senior_synthesis.md
+        effort: high
+
+  - name: final_gate
+    parallelism: 1
+    aggregator:
+      strategy: all
+    agents:
+      - role: gatekeeper
+        model: anthropic/claude-sonnet-4-20250514
+        adapter: claude
+        prompt_template: final_gate.md
+        effort: medium
