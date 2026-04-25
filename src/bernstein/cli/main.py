@@ -81,6 +81,7 @@ from bernstein.cli.man_page import man_pages_cmd
 from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
+from bernstein.cli.plan_archive_cmd import plan_ls, plan_show
 from bernstein.cli.plan_generate_cmd import plan_generate
 from bernstein.cli.plan_validate_cmd import validate_plan
 from bernstein.cli.policy_cmd import policy_group
@@ -695,6 +696,8 @@ cli.add_command(approve)
 cli.add_command(reject)
 cli.add_command(pending)
 plan.add_command(plan_generate)
+plan.add_command(plan_ls)
+plan.add_command(plan_show)
 cli.add_command(plan)
 cli.add_command(plan, "tasks")
 cli.add_command(logs_group, "logs")
