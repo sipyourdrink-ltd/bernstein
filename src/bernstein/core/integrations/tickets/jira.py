@@ -107,10 +107,38 @@ def fetch_jira(url: str) -> TicketPayload:
         TicketParseError: URL could not be parsed or the response is malformed.
     """
     base_url, key = _parse_url(url)
-    email = os.environ.get(_EMAIL_ENV)
-    token = os.environ.get(_TOKEN_ENV)
+    # Vault-first: a `bernstein connect jira` flow stores email + token + base_url
+    # together, so a single resolve hits the keychain. Fall back to the env-var
+    # pair for users mid-migration with a deprecation warning.
+    from bernstein.core.security.vault.factory import open_vault_silent
+    from bernstein.core.security.vault.resolver import resolve_secret
+
+    vault = open_vault_silent()
+    email: str | None = None
+    token: str | None = None
+    if vault is not None:
+        try:
+            stored = vault.get("jira")
+        except Exception:  # pragma: no cover - depends on backend
+            stored = None
+        if stored is not None and stored.secret:
+            token = stored.secret
+            if stored.metadata:
+                email = stored.metadata.get("email")
+                stored_base = stored.metadata.get("base_url")
+                if stored_base:
+                    base_url = stored_base
+    if not (email and token):
+        # Trigger the deprecation warning via the env-var path for any
+        # piece that the vault didn't supply.
+        env_resolution = resolve_secret("jira", vault=None)
+        if env_resolution.found:
+            token = token or env_resolution.secret
+            email = email or os.environ.get(_EMAIL_ENV)
     if not email or not token:
-        raise TicketAuthError(f"Missing Jira credentials. Set both {_EMAIL_ENV} and {_TOKEN_ENV} to authenticate.")
+        raise TicketAuthError(
+            f"Missing Jira credentials. Run `bernstein connect jira` or set both {_EMAIL_ENV} and {_TOKEN_ENV}."
+        )
 
     raw = _get(base_url, key, email, token)
     fields = raw.get("fields") or {}

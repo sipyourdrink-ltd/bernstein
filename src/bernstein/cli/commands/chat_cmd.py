@@ -76,10 +76,10 @@ def chat_group() -> None:
 def chat_serve(platform: str, token: str | None, allow: str | None) -> None:
     """Run the chat bridge for PLATFORM until Ctrl-C."""
     workdir = _DEFAULT_WORKDIR()
-    resolved_token = token or os.environ.get(_ENV_TOKEN_MAP[platform], "")
+    resolved_token = token or _resolve_chat_token(platform)
     if platform == "telegram" and not resolved_token:
         raise click.UsageError(
-            "Telegram requires --token or $BERNSTEIN_TELEGRAM_TOKEN.",
+            "Telegram requires `bernstein connect telegram`, --token, or $BERNSTEIN_TELEGRAM_TOKEN.",
         )
 
     overrides = _split_allow(allow)
@@ -507,6 +507,25 @@ def _split_allow(value: str | None) -> Iterable[str] | None:
 def _default_adapter() -> str:
     """Adapter to use when ``/run`` does not specify one."""
     return os.environ.get("BERNSTEIN_DEFAULT_CLI", "claude")
+
+
+def _resolve_chat_token(platform: str) -> str:
+    """Look up the chat bot token in the credential vault, then env-vars.
+
+    Slack and Telegram are first-class providers in the vault; Discord
+    keeps its env-var contract for now (no provider entry yet).
+    """
+    if platform in {"slack", "telegram"}:
+        from bernstein.core.security.vault.factory import open_vault_silent
+        from bernstein.core.security.vault.resolver import resolve_secret
+
+        resolution = resolve_secret(
+            platform,
+            vault=open_vault_silent(),
+        )
+        if resolution.found:
+            return resolution.secret
+    return os.environ.get(_ENV_TOKEN_MAP[platform], "")
 
 
 def _extract_quoted_goal(msg: ChatMessage) -> str:

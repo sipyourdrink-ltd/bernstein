@@ -1,0 +1,11 @@
+# Security stage — calls out injection, hardcoded secrets, missing auth checks.
+name: security
+parallelism: 1
+aggregator:
+  strategy: any
+agents:
+  - role: security
+    model: anthropic/claude-haiku-4-5-20251001
+    adapter: claude
+    prompt_template: security.md
+    effort: low

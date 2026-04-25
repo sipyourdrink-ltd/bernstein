@@ -1,0 +1,12 @@
+# Type-soundness stage — calls out untyped dicts, missing annotations,
+# Pyright-strict failures.
+name: types
+parallelism: 1
+aggregator:
+  strategy: any
+agents:
+  - role: types
+    model: anthropic/claude-haiku-4-5-20251001
+    adapter: claude
+    prompt_template: types.md
+    effort: low

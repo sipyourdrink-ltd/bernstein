@@ -55,6 +55,7 @@ from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.cloud_cmd import cloud_group
+from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.skills_cmd import skills_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.config_path_cmd import config_path_cmd
@@ -81,6 +82,7 @@ from bernstein.cli.man_page import man_pages_cmd
 from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
+from bernstein.cli.plan_archive_cmd import plan_ls, plan_show
 from bernstein.cli.plan_generate_cmd import plan_generate
 from bernstein.cli.plan_validate_cmd import validate_plan
 from bernstein.cli.policy_cmd import policy_group
@@ -213,10 +215,14 @@ __all__ = [
 
 # Operator-experience commands (feat/operator-experience)
 from bernstein.cli.commands.approval_cmd import approve_tool_cmd, reject_tool_cmd
+from bernstein.cli.commands.autofix_cmd import autofix_group
+from bernstein.cli.commands.creds_cmd import connect_cmd, creds_group
 from bernstein.cli.commands.daemon_cmd import daemon_group
 from bernstein.cli.commands.hooks_cmd import hooks as hooks_group
 from bernstein.cli.commands.pr_cmd import pr_cmd
+from bernstein.cli.commands.preview_cmd import preview_group
 from bernstein.cli.commands.remote_cmd import remote_group
+from bernstein.cli.commands.review_responder_cmd import review_responder_group
 from bernstein.cli.commands.ticket_cmd import from_ticket, ticket_group
 from bernstein.cli.commands.tunnel_cmd import tunnel_group
 from bernstein.cli.helpers import (
@@ -694,6 +700,8 @@ cli.add_command(approve)
 cli.add_command(reject)
 cli.add_command(pending)
 plan.add_command(plan_generate)
+plan.add_command(plan_ls)
+plan.add_command(plan_show)
 cli.add_command(plan)
 cli.add_command(plan, "tasks")
 cli.add_command(logs_group, "logs")
@@ -715,6 +723,10 @@ cli.add_command(github_group)
 cli.add_command(graph_group, "graph")
 cli.add_command(policy_group, "policy")
 cli.add_command(mcp_server, "mcp")
+# Wire the release-1.9 community catalog as a subgroup of `bernstein mcp`.
+from bernstein.cli.commands.mcp_catalog_cmd import catalog_group as _catalog_group  # noqa: E402
+
+mcp_server.add_command(_catalog_group, "catalog")
 cli.add_command(completions)
 cli.add_command(quarantine_group)
 cli.add_command(ideate)
@@ -734,7 +746,12 @@ cli.add_command(ticket_group, "ticket")
 cli.add_command(remote_group, "remote")
 cli.add_command(hooks_group, "hooks")
 cli.add_command(tunnel_group, "tunnel")
+cli.add_command(preview_group, "preview")
 cli.add_command(daemon_group, "daemon")
+cli.add_command(autofix_group, "autofix")
+cli.add_command(connect_cmd, "connect")
+cli.add_command(creds_group, "creds")
+cli.add_command(review_responder_group, "review-responder")
 
 # Already registered elsewhere
 cli.add_command(agents_group)
@@ -790,6 +807,7 @@ cli.add_command(templates_group, "templates")
 cli.add_command(validate_plan, "validate")
 cli.add_command(dep_impact_cmd, "dep-impact")
 cli.add_command(fingerprint_group, "fingerprint")
+cli.add_command(fleet_group, "fleet")
 cli.add_command(triggers_group, "triggers")
 
 # New CLI commands (CLI-004 through CLI-013)
@@ -810,6 +828,11 @@ cli.add_command(debug_cmd, "debug")  # backward-compat alias
 from bernstein.cli.commands.chat_cmd import chat_group  # noqa: E402
 
 cli.add_command(chat_group, "chat")
+
+# release/1.9: native Agent Client Protocol (ACP) bridge for IDE clients.
+from bernstein.cli.commands.acp_cmd import acp_group  # noqa: E402
+
+cli.add_command(acp_group, "acp")
 
 # release/1.9: outbound notification drivers (Telegram, Slack, Discord, Email, Webhook, Shell).
 from bernstein.cli.commands.notify_cmd import notify_group  # noqa: E402
