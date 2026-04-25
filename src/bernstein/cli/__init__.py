@@ -80,6 +80,7 @@ _CLI_REDIRECT_MAP: dict[str, str] = {
     "plan_diff": "bernstein.cli.plan.plan_diff",
     "plan_display": "bernstein.cli.plan.plan_display",
     "plan_explain": "bernstein.cli.plan.plan_explain",
+    "plan_archive_cmd": "bernstein.cli.commands.plan_archive_cmd",
     "plan_generate_cmd": "bernstein.cli.commands.plan_generate_cmd",
     "plan_validate_cmd": "bernstein.cli.commands.plan_validate_cmd",
     "playground": "bernstein.cli.commands.playground",
