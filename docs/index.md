@@ -16,7 +16,7 @@ tags:
 **Orchestrate any AI coding agent. Any model. One command.**
 
 <figure markdown>
-  ![Bernstein in action — parallel AI agents orchestrated in real time](assets/in-action.gif){ loading=lazy width="700" }
+  ![Bernstein in action — parallel AI agents orchestrated in real time](assets/in-action-small.gif){ loading=lazy width="700" }
   <figcaption>Bernstein in action — parallel AI agents orchestrated in real time</figcaption>
 </figure>
 
