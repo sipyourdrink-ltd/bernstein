@@ -196,6 +196,7 @@ nav:
       - From CrewAI: migrations/migration-from-crewai.md
       - From LangGraph: migrations/migration-from-langgraph.md
   - Blog:
+      - Ten Agents One Release: blog/ten-agents-one-release.md
       - Zero-LLM Coordination: blog/zero-llm-coordination.md
       - Multi-Agent Benchmark: blog/multi-agent-benchmark.md
       - Self-Evolution 30 Days: blog/self-evolution-30-days.md
