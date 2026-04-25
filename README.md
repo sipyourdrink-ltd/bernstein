@@ -214,22 +214,25 @@ Commands that eliminate the glue code most teams end up writing around their run
 
 The table above compares Bernstein against LLM-orchestration frameworks (they orchestrate LLM calls). The table below covers the closer category — other tools that orchestrate **CLI coding agents**:
 
-| Feature | Bernstein | [ComposioHQ/agent-orchestrator](https://github.com/ComposioHQ/agent-orchestrator) | [emdash](https://github.com/generalaction/emdash) |
-|---------|-----------|-----------|-----------|
-| Shape | Python CLI + library + MCP server | TypeScript CLI + local dashboard | Electron desktop app |
-| Primary language | Python | TypeScript | TypeScript |
-| Install | `pipx install bernstein` | `npm install -g @aoagents/ao` | `.dmg` / `.msi` / `.AppImage` |
-| Agent adapters | 31 | 3 (Claude Code, Codex, Aider) | 24 |
-| Git worktree per agent | Yes | Yes | Yes |
-| MCP server mode (exposes self as MCP) | Yes (stdio + HTTP/SSE) | No | No |
-| Coordinator | Deterministic Python scheduler | LLM-driven | Not documented |
-| HMAC-chained audit replay | Yes | No | No |
-| Autonomous CI-fix / PR flow | No | Yes | No |
-| Visual dashboard | TUI + web | Web | Desktop app |
-| Backing | Solo OSS | Funded (Composio.dev) | YC W26 |
-| License | Apache 2.0 | MIT | Apache 2.0 |
+| Feature | Bernstein | [ComposioHQ/agent-orchestrator](https://github.com/ComposioHQ/agent-orchestrator) | [emdash](https://github.com/generalaction/emdash) | [umputun/ralphex](https://github.com/umputun/ralphex) |
+|---------|-----------|-----------|-----------|-----------|
+| Shape | Python CLI + library + MCP server | TypeScript CLI + local dashboard | Electron desktop app | Go CLI |
+| Primary language | Python | TypeScript | TypeScript | Go |
+| Install | `pipx install bernstein` | `npm install -g @aoagents/ao` | `.dmg` / `.msi` / `.AppImage` | `go install` / single binary |
+| Agent adapters | 31 | 3 (Claude Code, Codex, Aider) | 24 | 1 (Claude Code only) |
+| Parallel multi-agent execution | Yes | Yes | Yes | No (single sequential session) |
+| Git worktree per agent | Yes | Yes | Yes | Optional `--worktree` flag |
+| MCP server mode (exposes self as MCP) | Yes (stdio + HTTP/SSE) | No | No | No |
+| Coordinator | Deterministic Python scheduler | LLM-driven | Not documented | Linear plan executor |
+| HMAC-chained audit replay | Yes | No | No | No |
+| Cross-model verifier / quality gates | Yes (multi-stage) | No | No | Multi-phase review (Claude only) |
+| Autonomous CI-fix / PR flow | No | Yes | No | No |
+| Visual dashboard | TUI + web | Web | Desktop app | Web (`--serve`) |
+| Notification sinks | Planned (v1.9) | No | No | Telegram / Email / Slack / Webhook |
+| Backing | Solo OSS | Funded (Composio.dev) | YC W26 | Solo OSS |
+| License | Apache 2.0 | MIT | Apache 2.0 | MIT |
 
-Bernstein's wedge in this category: **Python-native, MCP-server-first, widest adapter coverage**. If your stack is TypeScript and you want a product with a dashboard, Composio's `@aoagents/ao` is a better fit; if you want a polished desktop ADE, emdash is. If you want a primitive that imports into Python, exposes itself over MCP to any client, and covers the full agent breadth (including Qwen, Goose, Ollama, OpenAI Agents SDK, Cloudflare Agents, and more) — Bernstein.
+Bernstein's wedge in this category: **Python-native, MCP-server-first, widest adapter coverage, true multi-agent parallelism**. If your stack is TypeScript and you want a product with a dashboard, Composio's `@aoagents/ao` is a better fit; if you want a polished desktop ADE, emdash is; if you only use Claude Code and want a single Go binary that walks a plan top-to-bottom, ralphex is. If you want a primitive that imports into Python, exposes itself over MCP to any client, runs many agents in parallel, and covers the full agent breadth (including Qwen, Goose, Ollama, OpenAI Agents SDK, Cloudflare Agents, and more) — Bernstein.
 
 [^autogen]: AutoGen is in maintenance mode; successor is Microsoft Agent Framework 1.0.
 
