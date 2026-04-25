@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "1.8.14"
+version = "1.8.15"
 description = "Multi-agent orchestration for CLI coding agents (Claude Code, Codex, Gemini CLI, and 28 more) — deterministic, declarative, zero vendor lock-in."
 readme = "README.md"
 requires-python = ">=3.12"
