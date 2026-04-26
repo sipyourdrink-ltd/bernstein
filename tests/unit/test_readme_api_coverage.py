@@ -158,6 +158,15 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "approve-tool",
         "reject-tool",
         "daemon",
+        # release/1.9 features
+        "acp",
+        "autofix",
+        "connect",
+        "creds",
+        "fleet",
+        "notify",
+        "preview",
+        "review-responder",
     }
 )
 

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from bernstein.core.security.vault.audit import audit_event
 from bernstein.core.security.vault.protocol import (
     CredentialVault,
+    VaultError,
     VaultNotFoundError,
 )
 from bernstein.core.security.vault.providers import (
@@ -115,6 +116,13 @@ def resolve_secret(
         try:
             stored = vault.get(provider_id)
         except VaultNotFoundError:
+            stored = None
+        except VaultError as exc:
+            logger.debug(
+                "vault: read failed for %s (%s); falling back to env-vars",
+                provider_id,
+                exc,
+            )
             stored = None
         if stored is not None and stored.secret:
             now = _utc_now()
