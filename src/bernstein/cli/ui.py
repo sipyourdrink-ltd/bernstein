@@ -133,15 +133,23 @@ class AgentInfo:
         return min(100.0, (self.tokens_used / self.token_budget) * 100)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgentInfo:
+    def from_dict(cls, data: str | dict[str, Any]) -> AgentInfo:
         """Build an AgentInfo from a raw dict (e.g. from agents.json).
 
+        Accepts either a full agent record or a bare agent-id string.  The
+        string form is treated as ``{"id": value}`` with all other fields
+        falling back to their defaults; this is a belt-and-braces guard
+        against producers that occasionally serialize partial/cancelled
+        agents to just their identifier.
+
         Args:
-            data: Raw dict with agent fields.
+            data: Raw dict with agent fields, or a bare string agent id.
 
         Returns:
             Populated AgentInfo instance.
         """
+        if isinstance(data, str):
+            data = {"id": data}
         return cls(
             agent_id=str(data.get("id", "")),
             role=str(data.get("role", "")),
