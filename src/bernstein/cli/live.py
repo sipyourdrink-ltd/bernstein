@@ -160,9 +160,11 @@ class LiveView:
         Returns:
             A Rich Group renderable.
         """
+        from bernstein.cli.run import _normalize_agent_entries
+
         status: dict[str, Any] = data.get("status", {})
         tasks: list[dict[str, Any]] = data.get("tasks", [])
-        agents_raw: list[dict[str, Any]] = data.get("agents", [])
+        agents_raw = _normalize_agent_entries(data.get("agents", []))
         costs: dict[str, Any] = data.get("costs", {})
 
         summary = TaskSummary.from_dict(status)
