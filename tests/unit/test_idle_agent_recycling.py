@@ -19,6 +19,7 @@ from bernstein.core.agent_lifecycle import (
     _IDLE_GRACE_S,
     _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S,
     _IDLE_HEARTBEAT_THRESHOLD_S,
+    _IDLE_LIVENESS_EXTENSION_S,
     recycle_idle_agents,
 )
 from bernstein.core.models import (
@@ -253,7 +254,10 @@ def test_shutdown_sent_on_heartbeat_idle(tmp_path: Path) -> None:
     session = _make_session(["T-hb-1"])
     orch._agents["s-hb-01"] = session
 
-    stale_ts = time.time() - (_IDLE_HEARTBEAT_THRESHOLD_S + 1)
+    # Heartbeat must exceed the threshold *plus* the liveness-extension window;
+    # otherwise a coincidentally live PID (12345 is occupied on some CI runners)
+    # keeps the agent inside the safety buffer and no shutdown is sent.
+    stale_ts = time.time() - (_IDLE_LIVENESS_EXTENSION_S + 1)
     stale_hb = AgentHeartbeat(timestamp=stale_ts)
     orch._signal_mgr.read_heartbeat.return_value = stale_hb
 
