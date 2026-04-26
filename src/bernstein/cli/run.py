@@ -6,7 +6,7 @@ Components are imported from :mod:`bernstein.cli.ui`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -174,6 +174,32 @@ def render_run_summary(stats: RunStats, *, console: Console | None = None) -> No
     )
 
 
+def _normalize_agent_entries(payload: object) -> list[dict[str, Any]]:
+    """Normalize the ``agents`` field from a ``/status`` payload.
+
+    The task server's ``/status`` endpoint emits ``agents`` as a section dict
+    of the form ``{"count": N, "items": [{...}, ...]}``.  Older callers (and
+    legacy tests) sometimes pass a bare ``list[dict]``.  This helper accepts
+    either shape and returns the underlying list of agent dicts, dropping
+    any non-dict entries defensively.
+
+    Args:
+        payload: Raw value of ``data["agents"]`` from the status response.
+
+    Returns:
+        List of agent dicts suitable for :meth:`AgentInfo.from_dict`.
+    """
+    if isinstance(payload, list):
+        raw_items: list[object] = cast("list[object]", payload)
+    elif isinstance(payload, dict):
+        section = cast("dict[str, Any]", payload)
+        nested = section.get("items", [])
+        raw_items = cast("list[object]", nested) if isinstance(nested, list) else []
+    else:
+        raw_items = []
+    return [cast("dict[str, Any]", item) for item in raw_items if isinstance(item, dict)]
+
+
 def render_run_summary_from_dict(data: dict[str, Any], *, console: Console | None = None) -> None:
     """Convenience wrapper that builds RunStats from a raw API dict.
 
@@ -182,7 +208,7 @@ def render_run_summary_from_dict(data: dict[str, Any], *, console: Console | Non
         console: Optional Rich Console to use.
     """
     summary_raw: dict[str, Any] = data.get("summary", data)
-    agents_raw: list[dict[str, Any]] = data.get("agents", [])
+    agents_raw = _normalize_agent_entries(data.get("agents", []))
 
     stats = RunStats(
         summary=TaskSummary.from_dict(summary_raw),
