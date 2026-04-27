@@ -228,6 +228,10 @@ def _build_container_config(iso: ContainerIsolationConfig) -> ContainerConfig | 
 #   from bernstein.core.orchestration.orchestrator import _fail_task, _complete_task, ...
 # continues to work.
 # ---------------------------------------------------------------------------
+_EVENT_RUN_COMPLETED = "run.completed"
+_EVENT_TASK_COMPLETED = HookEvent.TASK_COMPLETED.value
+_EVENT_TASK_FAILED = HookEvent.TASK_FAILED.value
+# ---------------------------------------------------------------------------
 _task_from_dict: Callable[[dict[str, Any]], Task] = lambda raw: Task.from_dict(raw)  # noqa: E731
 _fetch_all_tasks = fetch_all_tasks
 _fail_task = fail_task
@@ -4642,11 +4646,6 @@ from bernstein.core.orchestration.nudge_manager import (  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import get_orchestrator_nudges as get_orchestrator_nudges  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import nudge_manager as nudge_manager  # noqa: E402
 from bernstein.core.orchestration.nudge_manager import nudge_orchestrator as nudge_orchestrator  # noqa: E402
-
-_EVENT_RUN_COMPLETED = "run.completed"
-
-_EVENT_TASK_COMPLETED = HookEvent.TASK_COMPLETED.value
-_EVENT_TASK_FAILED = HookEvent.TASK_FAILED.value
 
 _TESTS_DIR = "tests/"
 
