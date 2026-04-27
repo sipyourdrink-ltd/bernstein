@@ -45,6 +45,31 @@ class TestAgentInfo:
         assert info.token_budget == 0
         assert info.context_utilization_pct == pytest.approx(0.0)
 
+    def test_from_dict_accepts_bare_string_id(self) -> None:
+        """gh-953 layer 2: defensive parser tolerates bare-string entries.
+
+        Some producers serialize partial/cancelled agents as just an
+        identifier string.  ``from_dict`` must treat ``"agent-id"`` as
+        ``{"id": "agent-id"}`` rather than crashing on ``str.get``.
+        """
+        info = AgentInfo.from_dict("agent-id-only-as-string")
+        assert info.agent_id == "agent-id-only-as-string"
+        # Sane defaults for everything else.
+        assert info.role == ""
+        assert info.model == ""
+        assert info.status == "idle"
+        assert info.task_ids == []
+        assert info.runtime_s == pytest.approx(0.0)
+        assert info.tokens_used == 0
+        assert info.token_budget == 0
+        assert info.context_utilization_pct == pytest.approx(0.0)
+
+    def test_from_dict_empty_string_yields_empty_id(self) -> None:
+        """Empty bare string should not crash; it just yields empty id."""
+        info = AgentInfo.from_dict("")
+        assert info.agent_id == ""
+        assert info.status == "idle"
+
 
 # --- TestAgentStatusTableTokenDisplay ---
 

@@ -21,8 +21,6 @@
 
 [Website](https://bernstein.run) &middot; [Documentation](https://bernstein.readthedocs.io/) &middot; [Getting Started](docs/getting-started/GETTING_STARTED.md) &middot; [Glossary](docs/reference/GLOSSARY.md) &middot; [Limitations](docs/reference/KNOWN_LIMITATIONS.md)
 
-Created by [Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry)
-
 </div>
 
 ---
