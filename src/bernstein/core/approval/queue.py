@@ -32,6 +32,7 @@ from bernstein.core.approval.models import (
     PendingApproval,
     ResolvedApproval,
 )
+from bernstein.core.sanitize import sanitize_log
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +255,7 @@ class ApprovalQueue:
         try:
             self._pending_path(approval_id).unlink(missing_ok=True)
         except OSError as exc:
-            logger.debug("Could not remove pending file for %s: %s", approval_id, exc)
+            logger.debug("Could not remove pending file for %s: %s", sanitize_log(approval_id), exc)
 
         # Signal any awaiting wait_for(). Event.set() is thread-safe but
         # must be scheduled on the loop that created the Event.
@@ -265,7 +266,7 @@ class ApprovalQueue:
             event.set()
         logger.info(
             "Resolved approval %s decision=%s",
-            approval_id,
+            sanitize_log(approval_id),
             decision.value,
         )
         return resolution
