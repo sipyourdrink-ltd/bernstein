@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from typing import Any
 import click
 
 from bernstein.cli.helpers import (
+    SERVER_URL,
     console,
     find_seed_file,
 )
@@ -21,6 +23,8 @@ from bernstein.cli.ui import make_console
 from bernstein.core.cost import estimate_run_cost
 from bernstein.core.plan_loader import load_plan_from_yaml
 from bernstein.core.runtime_state import directory_size_bytes
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Post-run summary helper
@@ -40,6 +44,36 @@ def _show_run_summary() -> None:
     force_no_color = not sys.stdout.isatty()
     con = make_console(no_color=force_no_color)
     render_run_summary_from_dict(data, console=con)
+
+
+def _drain_completed_backlog_files() -> None:
+    """Move backlog files for terminal tasks from ``claimed/`` to ``closed/``.
+
+    This is the post-run safety-net for the periodic sync tick: if the
+    orchestrator stops before its next sync, completed tickets can stay
+    pinned in ``.sdd/backlog/claimed/``.  We invoke the same logic the
+    sync loop uses, but only the move step (no task creation), and we
+    swallow any exception so a cleanup failure never aborts shutdown.
+
+    Safe to call when the task server is already gone; in that case the
+    httpx connection raises, we log at debug, and return.
+    """
+    import httpx
+
+    from bernstein.core.sync import SyncResult, _move_completed_files
+
+    workdir = Path.cwd()
+    backlog_open = workdir / ".sdd" / "backlog" / "open"
+    backlog_issues = workdir / ".sdd" / "backlog" / "issues"
+    if not (workdir / ".sdd" / "backlog" / "claimed").exists():
+        return
+
+    result = SyncResult()
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            _move_completed_files(workdir, client, SERVER_URL, backlog_open, backlog_issues, result)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Post-run claimed/ drain failed: %s: %s", type(exc).__name__, exc)
 
 
 @dataclass(frozen=True)
@@ -240,39 +274,51 @@ def _finalize_run_output(*, quiet: bool) -> None:
     Uses terminal capability detection (TUI-003) to choose between the
     full Textual TUI and a Rich-based fallback for unsupported terminals.
 
+    Cleanup ordering (gh-953): the ``claimed/`` drain is wrapped in a
+    ``try/finally`` around the renderer so that a UI crash (e.g. a shape
+    mismatch in the run-summary payload) cannot leave completed tickets
+    pinned in ``.sdd/backlog/claimed/`` indefinitely.  ``try/finally`` was
+    chosen over reordering because (a) it preserves the existing render-then-
+    cleanup ordering on the happy path so the summary still reflects the
+    pre-drain state, and (b) it keeps cleanup correct even when the renderer
+    raises ``SystemExit`` or ``KeyboardInterrupt``.
+
     Args:
         quiet: When True, wait for quiescence and print only the terminal summary.
     """
     from bernstein.cli.run_bootstrap import _wait_for_run_completion, exec_restart
 
-    if quiet:
-        _wait_for_run_completion()
-        _show_run_summary()
-        return
+    try:
+        if quiet:
+            _wait_for_run_completion()
+            _show_run_summary()
+            return
 
-    from bernstein.cli.terminal_caps import detect_capabilities
+        from bernstein.cli.terminal_caps import detect_capabilities
 
-    caps = detect_capabilities()
+        caps = detect_capabilities()
 
-    if caps.supports_textual:
-        try:
-            from bernstein.cli.dashboard import BernsteinApp as DashboardApp
+        if caps.supports_textual:
+            try:
+                from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
-            app = DashboardApp()
-            with contextlib.suppress(SystemExit):
-                app.run()
-            # Hot restart: server+orchestrator already killed by the TUI,
-            # re-exec the full `bernstein run` so everything restarts cleanly.
-            if getattr(app, "_restart_on_exit", False):
-                exec_restart()
-        except Exception:
-            # Textual failed at runtime -- fall through to fallback
+                app = DashboardApp()
+                with contextlib.suppress(SystemExit):
+                    app.run()
+                # Hot restart: server+orchestrator already killed by the TUI,
+                # re-exec the full `bernstein run` so everything restarts cleanly.
+                if getattr(app, "_restart_on_exit", False):
+                    exec_restart()
+            except Exception:
+                # Textual failed at runtime -- fall through to fallback
+                _try_fallback_display()
+        elif caps.is_tty:
+            # TTY but Textual not supported -- use Rich fallback (TUI-003)
             _try_fallback_display()
-    elif caps.is_tty:
-        # TTY but Textual not supported -- use Rich fallback (TUI-003)
-        _try_fallback_display()
-    else:
-        _show_run_summary()
+        else:
+            _show_run_summary()
+    finally:
+        _drain_completed_backlog_files()
 
 
 def _try_fallback_display() -> None:

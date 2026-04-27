@@ -207,13 +207,24 @@ def print_dry_run_table(workdir: Path) -> None:
     from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
     from bernstein.core.sync import BacklogTask, parse_backlog_file
 
-    backlog_dir = workdir / ".sdd" / "backlog" / "open"
+    open_dir = workdir / ".sdd" / "backlog" / "open"
+    issues_dir = workdir / ".sdd" / "backlog" / "issues"
+    files: list[Path] = []
+    for src_dir in (open_dir, issues_dir):
+        if src_dir.exists():
+            for ext in ("*.md", "*.yaml", "*.yml"):
+                files.extend(src_dir.glob(ext))
+    files.sort()
+
     tasks: list[BacklogTask] = []
-    if backlog_dir.exists():
-        for md_file in sorted(backlog_dir.glob("*.yaml")):
-            bt = parse_backlog_file(md_file)
-            if bt is not None:
-                tasks.append(bt)
+    seen: set[str] = set()
+    for backlog_file in files:
+        if backlog_file.name in seen:
+            continue
+        seen.add(backlog_file.name)
+        bt = parse_backlog_file(backlog_file)
+        if bt is not None:
+            tasks.append(bt)
 
     console.print("\n[bold cyan][DRY RUN] Planned task spawns:[/bold cyan]")
 

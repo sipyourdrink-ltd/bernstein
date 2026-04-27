@@ -92,23 +92,11 @@ jobs:
     permissions:
       contents: write
       packages: write
-      id-token: write
-      attestations: write
-    environment:
-      name: pypi
-      url: https://pypi.org/p/bernstein
     steps:
-      - name: Generate App token
-        id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
-        with:
-          app-id: 3262738
-          private-key: ${{ secrets.BERNSTEIN_APP_PRIVATE_KEY }}
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
@@ -140,8 +128,8 @@ jobs:
           NEW="${MAJOR}.${MINOR}.$((PATCH + 1))"
           sed -i "s/^version = \"${{ steps.ver.outputs.current }}\"/version = \"${NEW}\"/" pyproject.toml
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
-          git config user.name "bernstein-orchestrator[bot]"
-          git config user.email "3262738+bernstein-orchestrator[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml
           git commit -m "chore: auto-bump to v${NEW}"
           git push
@@ -168,11 +156,11 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
-          attestations: true
+          password: ${{ secrets.PYPI_TOKEN }}
 
       - name: GitHub Release
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.final.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
@@ -236,7 +224,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/chernistry/bernstein:latest
-            ghcr.io/chernistry/bernstein:${{ steps.final.outputs.version }}
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.final.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
