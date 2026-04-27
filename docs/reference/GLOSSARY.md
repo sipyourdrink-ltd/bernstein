@@ -83,3 +83,29 @@ The orchestrator's polling cycle (approximately 3 seconds). Each tick fetches pe
 ### Worktree
 
 An isolated git worktree per agent, located at `.sdd/worktrees/{session_id}`. Each agent works in its own branch without interfering with others. Implemented in `src/bernstein/core/worktree.py`.
+
+---
+
+### ACP Bridge
+
+The ACP (Agent Client Protocol) adapter that lets ACP-aware editors (e.g. Zed) use Bernstein as their multi-agent backend over stdio or HTTP. Implemented in `src/bernstein/core/protocols/acp/`. See `bernstein acp serve --stdio | --http :PORT`.
+
+### Autofix Daemon
+
+A persistent background process that watches Bernstein-opened PRs for CI failures, pulls the failure logs, and dispatches a scoped repair agent. Caps at three attempts per PR and labels each attempt in the audit log. Implemented in `src/bernstein/core/autofix/`. CLI: `bernstein autofix {start|stop|status|attach}`.
+
+### Credential Vault
+
+OS-keychain-backed token store for provider credentials (GitHub, OpenAI, Anthropic, etc.). Agents receive scoped credentials at spawn time without touching `.env` files. Implemented in `src/bernstein/core/security/vault/`. CLI: `bernstein connect <provider>`, `bernstein creds {list|revoke|test}`.
+
+### Fleet Dashboard
+
+A unified view of all Bernstein orchestrator instances reachable on the current host or configured server. Useful for monitoring parallel sessions and CI fleets. Implemented in `src/bernstein/core/fleet/`. CLI: `bernstein fleet [--web HOST:PORT]`.
+
+### MCP Catalog
+
+A community-maintained index of installable MCP servers. Bernstein can browse, search, and install entries without leaving the terminal. Schema: `docs/reference/mcp-catalog-schema.json`. Implemented in `src/bernstein/core/protocols/mcp_catalog/`. CLI: `bernstein mcp catalog {browse|search|install}`.
+
+### Review Pipeline DSL
+
+A YAML format for expressing multi-phase quality-review flows (lint, type-check, security scan, etc.) that run sequentially before a task is accepted. Starter templates live in `templates/review/*.yaml`. Implemented in `src/bernstein/core/quality/review_pipeline/`. CLI: `bernstein review --pipeline review.yaml`.

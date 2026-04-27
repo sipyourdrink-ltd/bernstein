@@ -150,6 +150,143 @@ pip install 'bernstein[openai,docker,e2b,modal,s3,gcs,azure,r2]'
 See the [install section in the README](https://github.com/chernistry/bernstein#install)
 for the full extras matrix.
 
+## ACP native bridge — `bernstein acp serve`
+
+Bernstein speaks [Agent Client Protocol](https://agentclientprotocol.org)
+natively. Editors that ship ACP support can plug Bernstein in as their backend
+with no per-IDE plumbing.
+
+```bash
+bernstein acp serve --stdio          # IDE embedding (Zed, etc.)
+bernstein acp serve --http :8062     # remote / CI / debugging
+```
+
+Full detail: [reference/acp-bridge.md](reference/acp-bridge.md).
+
+## Autofix CI daemon — `bernstein autofix`
+
+A long-running daemon that watches Bernstein-opened PRs, pulls failing CI logs
+via `gh run view --log-failed`, and dispatches a scoped repair run. Each
+attempt is HMAC-audited and label-gated; the daemon stops after three
+consecutive failures on the same PR.
+
+```bash
+bernstein autofix start              # start the daemon
+bernstein autofix status             # show watched PRs and attempt counts
+bernstein autofix attach             # tail the daemon log live
+bernstein autofix stop               # graceful stop
+```
+
+## Credential vault — `bernstein connect`
+
+API tokens now live in the OS keychain, not in `.env` files. `bernstein
+connect <provider>` runs the OAuth / API-key flow for the named provider and
+stores the result securely. Agents receive scoped credentials at spawn time
+via `core/security/vault/`.
+
+```bash
+bernstein connect github             # OAuth flow for GitHub
+bernstein connect openai             # store OpenAI API key
+bernstein creds list                 # show all stored credentials
+bernstein creds test github          # smoke-test stored credential
+bernstein creds revoke github        # delete from keychain
+```
+
+This is now the recommended first step before `bernstein init` when you are
+setting up Bernstein for the first time with external providers.
+
+## Dev preview — `bernstein preview`
+
+After an agent runs a dev server, `bernstein preview start` captures the bound
+port, tunnels it, and returns a shareable HTTPS link with configurable expiry
+and auth mode.
+
+```bash
+bernstein preview start              # expose the running dev server
+bernstein preview list               # list active previews with URLs
+bernstein preview status             # check tunnel health
+bernstein preview stop               # tear down all tunnels
+```
+
+## Fleet dashboard — `bernstein fleet`
+
+A cross-session view of all Bernstein instances running on the same host (or
+reachable via the configured server URL). Useful for teams running parallel
+sessions on a shared development machine or CI cluster.
+
+```bash
+bernstein fleet                      # TUI fleet view
+bernstein fleet --web localhost:9000 # browser fleet dashboard
+```
+
+## MCP catalog client — `bernstein mcp catalog`
+
+Browse and install MCP servers from the community catalog without leaving the
+terminal. The catalog schema lives at
+[`docs/reference/mcp-catalog-schema.json`](reference/mcp-catalog-schema.json).
+
+```bash
+bernstein mcp catalog browse         # paginated catalog listing
+bernstein mcp catalog search pytest  # search by name/tag
+bernstein mcp catalog install <name> # install and register a server
+```
+
+## Notification sinks — `bernstein notify`
+
+Bernstein events (task complete, budget threshold, quality gate failure) can
+now fan out to pluggable notification sinks — Slack, email, webhooks, and more.
+Configure sinks in `.sdd/config.yaml` under `notifications:`.
+
+```bash
+bernstein notify test --sink slack   # send a test notification to a named sink
+```
+
+## Plan archival — `bernstein plan ls/show`
+
+Completed plan runs are now archived and inspectable after the fact.
+
+```bash
+bernstein plan ls                    # list all plan runs with status and cost
+bernstein plan show <id>             # show task breakdown for a specific run
+```
+
+## PR review responder — `bernstein review-responder`
+
+A persistent daemon that monitors open PRs for new review comments and
+auto-dispatches an agent to address each comment, committing a follow-up and
+re-requesting review.
+
+```bash
+bernstein review-responder start     # start the daemon
+bernstein review-responder status    # show watched PRs and response queue
+bernstein review-responder tick      # manual single-pass (useful in CI)
+```
+
+## Review pipeline DSL — `bernstein review --pipeline`
+
+Quality-review flows can now be expressed as YAML pipelines. Starter templates
+live in `templates/review/*.yaml`.
+
+```bash
+bernstein review --pipeline review.yaml  # run the review pipeline
+```
+
+Example pipeline fragment:
+
+```yaml
+# review.yaml
+phases:
+  - name: lint
+    adapter: ruff
+  - name: type-check
+    adapter: pyright
+  - name: security
+    adapter: bandit
+    fail_fast: true
+```
+
+---
+
 ## Upgrade notes
 
 - **No breaking changes.** Existing `plan.yaml` and `bernstein.yaml`

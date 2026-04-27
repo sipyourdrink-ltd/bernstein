@@ -1,6 +1,6 @@
 # Feature Matrix
 
-Shipped capabilities in Bernstein v1.8.4, verified against `src/bernstein/`.
+Shipped capabilities in Bernstein, verified against `src/bernstein/`.
 
 Legend:
 
@@ -85,8 +85,18 @@ Legend:
 | Multi-repo workspaces | Shipped | Full | `workspace:` in bernstein.yaml, workspace CLI |
 | MCP server mode | Shipped | Brief | `bernstein mcp`, MCP server in `mcp/server.py` |
 | MCP tool registry | Shipped | Brief | Auto-discovery and per-task config |
+| MCP catalog client | Shipped | Brief | `bernstein mcp catalog browse/search/install` — installable server catalog (`core/protocols/mcp_catalog/`) |
+| ACP native bridge | Shipped | Full | `bernstein acp serve --stdio\|--http :PORT` — IDE-native bridge (`core/protocols/acp/`); see `reference/acp-bridge.md` |
 | Protocol negotiation | Shipped | Brief | `protocol_negotiation.py` — runtime protocol version handshake |
 | Schema registry | Shipped | Brief | `schema_registry.py` — versioned message schemas for protocols |
+| Credential vault | Shipped | Brief | `bernstein connect <provider>`, `bernstein creds list/revoke/test` — OS-keychain token storage (`core/security/vault/`) |
+| Autofix CI daemon | Shipped | Brief | `bernstein autofix start/stop/status/attach` — watches PRs, dispatches repair runs on CI failure (`core/autofix/`) |
+| Dev preview | Shipped | Brief | `bernstein preview start/stop/list/status` — exposes agent dev server via tunnel with configurable auth (`core/preview/`) |
+| Fleet dashboard | Shipped | Brief | `bernstein fleet [--web HOST:PORT]` — cross-session multi-instance view (`core/fleet/`) |
+| Notification sinks | Shipped | Brief | `bernstein notify test --sink <id>` — pluggable notification backends (`core/notifications/`) |
+| PR review responder | Shipped | Brief | `bernstein review-responder start/status/tick` — auto-responds to PR review comments (`core/review_responder/`) |
+| Review pipeline DSL | Shipped | Brief | `bernstein review --pipeline review.yaml` — YAML-driven multi-phase review (`core/quality/review_pipeline/`) |
+| Plan archival | Shipped | Brief | `bernstein plan ls/show` — list and inspect archived plans (`core/planning/lifecycle.py`) |
 | Slack integration | Shipped | Brief | Slash commands and events API endpoints |
 | Webhook ingestion | Shipped | Brief | `POST /webhooks/` for external event routing |
 | Adaptive parallelism | Partial | Roadmap-level docs | `adaptive_parallelism.py` exists |
@@ -172,6 +182,17 @@ Legend:
 | `bernstein plugins` | Shipped | Brief | List active plugins |
 | `bernstein install-hooks` | Shipped | Brief | Install git hooks |
 | `bernstein debug` | Shipped | Brief | Generate debug bundle for triage |
+| `bernstein acp serve` | Shipped | Full | ACP bridge (`--stdio` or `--http :PORT`) |
+| `bernstein autofix ...` | Shipped | Brief | CI autofix daemon (start/stop/status/attach) |
+| `bernstein connect` | Shipped | Brief | Credential vault setup for a provider |
+| `bernstein creds ...` | Shipped | Brief | Credential management (list/revoke/test) |
+| `bernstein preview ...` | Shipped | Brief | Dev server preview (start/stop/list/status) |
+| `bernstein fleet` | Shipped | Brief | Fleet dashboard (optionally `--web HOST:PORT`) |
+| `bernstein mcp catalog ...` | Shipped | Brief | MCP catalog browser (browse/search/install) |
+| `bernstein notify test` | Shipped | Brief | Notification sink smoke test |
+| `bernstein plan ls/show` | Shipped | Brief | List and inspect archived plans |
+| `bernstein review-responder ...` | Shipped | Brief | PR review responder (start/status/tick) |
+| `bernstein review --pipeline` | Shipped | Brief | Review with YAML pipeline DSL |
 
 ---
 
