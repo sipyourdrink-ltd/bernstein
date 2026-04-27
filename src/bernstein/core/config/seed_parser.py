@@ -64,7 +64,7 @@ type _StrObjDict = dict[str, object]
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
 _ENV_REF_RE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
-_VALID_CLIS = frozenset({"claude", "codex", "gemini", "qwen", "auto"})
+_VALID_CLIS = frozenset({"claude", "codex", "gemini", "qwen", "opencode", "aider", "auto"})
 _ALLOWED_WEBHOOK_EVENTS = frozenset(
     {
         "run.started",

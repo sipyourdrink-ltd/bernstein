@@ -471,17 +471,27 @@ class CatalogRegistry:
         keywords: set[str],
         desc_lower: str,
         role: str,
-    ) -> CatalogAgent:
-        """Pick the best agent from an exact-role match list."""
+    ) -> CatalogAgent | None:
+        """Pick the best agent from an exact-role match list.
+
+        Returns None when no agent has meaningful capability or keyword
+        overlap with the task description — lets the spawner fall back
+        to template-based prompts instead of injecting an irrelevant
+        catalog persona.
+        """
         if keywords:
             scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
-            if all(score == 0 for score, _ in scored_exact):
-                scored_exact = [
-                    (len(keywords & {w for w in a.description.lower().split() if len(w) > 3}), a) for a in exact
-                ]
             scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
             winner = scored_exact[0][1]
             best_score = scored_exact[0][0]
+            if best_score < _MIN_FUZZY_SCORE:
+                logger.debug(
+                    "Catalog exact match rejected: best capability score %d < %d for role '%s'",
+                    best_score,
+                    _MIN_FUZZY_SCORE,
+                    role,
+                )
+                return None
             logger.debug(
                 "Catalog exact match: '%s' (score=%d) for '%s'",
                 winner.name,
@@ -492,8 +502,13 @@ class CatalogRegistry:
 
         exact.sort(key=lambda a: a.priority)
         winner = exact[0]
-        logger.debug("Catalog exact match by role only: '%s' for '%s'", winner.name, role)
-        return winner
+        logger.debug(
+            "Catalog exact match by role only (no keywords): '%s' for '%s' — returning None, "
+            "role-only match is too weak without task description keywords",
+            winner.name,
+            role,
+        )
+        return None
 
     def _match_affine_role(
         self,
