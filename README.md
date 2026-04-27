@@ -171,6 +171,18 @@ A `bernstein cloud init` scaffold for `wrangler.toml` and bindings is planned.
 
 Full feature matrix: [FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md) &middot; Recent features: [What's New](docs/whats-new.md)
 
+## What's new in v1.9
+
+**ACP bridge** — `bernstein acp serve --stdio` exposes Bernstein to any editor that speaks the Agent Communication Protocol (Zed, etc.). No plugin code needed on the editor side.
+
+**Autonomous CI repair** — `bernstein autofix` watches open Bernstein PRs and, when CI turns red, spawns a fixer agent automatically. Once green, it pushes the fix and re-requests review.
+
+**Credential vault** — `bernstein connect <provider>` writes API keys to the OS keychain; `bernstein creds` lists and rotates them. Agents inherit scoped credentials without touching environment variables.
+
+**Preview tunnels** — `bernstein preview start` boots a sandboxed dev server and prints a public URL. Useful for sharing a running branch with a reviewer without deploying to staging.
+
+Full changelog: [docs/whats-new.md](docs/whats-new.md)
+
 ## Operator commands
 
 Commands that eliminate the glue code most teams end up writing around their runs.
@@ -186,6 +198,9 @@ Commands that eliminate the glue code most teams end up writing around their run
 | `bernstein approve-tool` / `bernstein reject-tool` | Interactive mid-run tool-call approval. `--latest`, `--id`, `--always`. |
 | `bernstein tunnel start <port> [--provider auto\|cloudflared\|ngrok\|bore\|tailscale]` | One wrapper around four tunnel providers. Also `tunnel list`, `tunnel stop <name>\|--all`. ControlMaster-style process reuse. |
 | `bernstein daemon install [--user\|--system] [--command="..."] [--env KEY=VAL]...` | Installs a systemd (Linux) or launchd (macOS) unit for auto-start. Also `daemon start/stop/restart/status/uninstall`. |
+| `bernstein connect <provider>` / `bernstein creds` | Stores and rotates API credentials in the OS keychain. Agents inherit scoped keys per-run. |
+| `bernstein autofix` | Daemon that monitors open Bernstein PRs; spawns a fixer agent when CI fails and pushes the repair automatically. |
+| `bernstein preview start` | Starts a sandboxed dev server for the current branch and prints a shareable public tunnel URL. |
 
 ## How it compares
 
@@ -224,9 +239,9 @@ The table above compares Bernstein against LLM-orchestration frameworks (they or
 | Coordinator | Deterministic Python scheduler | LLM-driven | Not documented | Linear plan executor |
 | HMAC-chained audit replay | Yes | No | No | No |
 | Cross-model verifier / quality gates | Yes (multi-stage) | No | No | Multi-phase review (Claude only) |
-| Autonomous CI-fix / PR flow | No | Yes | No | No |
+| Autonomous CI-fix / PR flow | Yes (`bernstein autofix`) | Yes | No | No |
 | Visual dashboard | TUI + web | Web | Desktop app | Web (`--serve`) |
-| Notification sinks | Planned (v1.9) | No | No | Telegram / Email / Slack / Webhook |
+| Notification sinks | Telegram/Slack/Discord/Email/Webhook/Shell | No | No | Telegram / Email / Slack / Webhook |
 | Backing | Solo OSS | Funded (Composio.dev) | YC W26 | Solo OSS |
 | License | Apache 2.0 | MIT | Apache 2.0 | MIT |
 
