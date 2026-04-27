@@ -183,6 +183,7 @@ nav:
   - Reference:
       - What's New: whats-new.md
       - API Reference: reference/openapi-reference.md
+      - ACP Bridge: reference/acp-bridge.md
       - Feature Matrix: reference/FEATURE_MATRIX.md
       - Model Policy: operations/MODEL_POLICY.md
       - Compatibility: adapters/compatibility.md
@@ -197,6 +198,7 @@ nav:
       - From LangGraph: migrations/migration-from-langgraph.md
   - Blog:
       - Ten Agents One Release: blog/ten-agents-one-release.md
+      - v1.9 — Four Commands That Close the Last-Mile Gap: blog/v1.9-four-commands-last-mile.md
       - Zero-LLM Coordination: blog/zero-llm-coordination.md
       - Multi-Agent Benchmark: blog/multi-agent-benchmark.md
       - Self-Evolution 30 Days: blog/self-evolution-30-days.md
