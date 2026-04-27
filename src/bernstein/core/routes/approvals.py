@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from bernstein.core.approval.models import ApprovalDecision
 from bernstein.core.approval.models import PendingApproval as QueuedApproval
 from bernstein.core.approval.queue import get_default_queue, promote_to_always_allow
+from bernstein.core.sanitize import sanitize_log
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +297,7 @@ def resolve_queued_approval(approval_id: str, body: ResolveRequest) -> dict[str,
         try:
             promote_to_always_allow(approval)
         except OSError as exc:
-            logger.warning("Could not promote approval %s: %s", approval_id, exc)
+            logger.warning("Could not promote approval %s: %s", sanitize_log(approval_id), exc)
     return {"status": "resolved", "id": approval_id, "decision": resolution.decision.value}
 
 

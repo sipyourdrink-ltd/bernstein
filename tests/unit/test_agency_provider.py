@@ -361,8 +361,10 @@ class TestCatalogRegistryIntegration:
         for a in agents:
             registry.register_agent(a)
 
-        # Code Reviewer is now inferred as "reviewer" role, not "backend"
-        match = registry.match("reviewer", "review code quality")
+        # Code Reviewer is now inferred as "reviewer" role, not "backend".
+        # Description hits all three capabilities (code-review, security-analysis,
+        # static-analysis) to clear _MIN_FUZZY_SCORE=3.
+        match = registry.match("reviewer", "code review with security analysis and static analysis")
         assert match is not None
         assert match.name == "Code Reviewer"
 
@@ -382,7 +384,7 @@ class TestCatalogRegistryIntegration:
             registry.register_agent(a)
 
         # Code Reviewer is now inferred as "reviewer" role
-        match = registry.match("reviewer", "review code")
+        match = registry.match("reviewer", "code review with security analysis and static analysis")
         assert match is not None
         assert "Code Reviewer" in match.system_prompt
 
@@ -446,7 +448,7 @@ class TestCatalogRegistryIntegration:
         for a in agents:
             registry.register_agent(a)
 
-        match = registry.match("reviewer", "review code")
+        match = registry.match("reviewer", "code review with security analysis and static analysis")
         assert match is not None
         assert match.tools == ["ruff", "mypy", "pytest"]
 
