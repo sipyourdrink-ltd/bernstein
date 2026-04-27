@@ -183,6 +183,7 @@ nav:
   - Reference:
       - What's New: whats-new.md
       - API Reference: reference/openapi-reference.md
+      - ACP Bridge: reference/acp-bridge.md
       - Feature Matrix: reference/FEATURE_MATRIX.md
       - Model Policy: operations/MODEL_POLICY.md
       - Compatibility: adapters/compatibility.md

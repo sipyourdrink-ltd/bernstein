@@ -81,6 +81,22 @@ uv run python scripts/run_tests.py -x
 
 ---
 
+## Connect credentials (optional but recommended)
+
+If you are using external providers (GitHub, OpenAI, Anthropic, etc.), store
+their API keys in the OS keychain before initialising your workspace. This
+keeps tokens out of `.env` files and shell history:
+
+```bash
+bernstein connect github             # OAuth flow for GitHub
+bernstein connect openai             # prompts for API key, stores in keychain
+bernstein creds list                 # confirm what is stored
+```
+
+Skip this step if you are using only local agents (e.g. Ollama).
+
+---
+
 ## Initialise a workspace
 
 Run this once inside your project directory:
