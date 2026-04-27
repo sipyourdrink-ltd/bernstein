@@ -474,41 +474,54 @@ class CatalogRegistry:
     ) -> CatalogAgent | None:
         """Pick the best agent from an exact-role match list.
 
-        Returns None when no agent has meaningful capability or keyword
-        overlap with the task description — lets the spawner fall back
-        to template-based prompts instead of injecting an irrelevant
-        catalog persona.
+        Returns None when no agent has meaningful capability overlap with
+        the task description — lets the spawner fall back to template-based
+        prompts instead of injecting an irrelevant catalog persona.
+
+        Agents that declare no capabilities at all (legacy ``load_from_agency``
+        path, simple test fixtures) bypass the score threshold and are
+        selected by priority — there's nothing meaningful to score against.
         """
-        if keywords:
-            scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
-            scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
-            winner = scored_exact[0][1]
-            best_score = scored_exact[0][0]
-            if best_score < _MIN_FUZZY_SCORE:
-                logger.debug(
-                    "Catalog exact match rejected: best capability score %d < %d for role '%s'",
-                    best_score,
-                    _MIN_FUZZY_SCORE,
-                    role,
-                )
-                return None
+        # No-capability cohort: fall through to priority-only selection so
+        # legacy agents loaded without capability metadata remain matchable.
+        if not any(a.capabilities for a in exact):
+            exact.sort(key=lambda a: a.priority)
+            winner = exact[0]
             logger.debug(
-                "Catalog exact match: '%s' (score=%d) for '%s'",
+                "Catalog exact match (no capability metadata): '%s' for '%s'",
                 winner.name,
-                best_score,
                 role,
             )
             return winner
 
-        exact.sort(key=lambda a: a.priority)
-        winner = exact[0]
+        if not keywords:
+            # Generic task description against capability-bearing agents —
+            # too risky to pick a specialised persona without signal.
+            logger.debug(
+                "Catalog exact match skipped for '%s': task has no keywords (>3 chars)",
+                role,
+            )
+            return None
+
+        scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
+        scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
+        winner = scored_exact[0][1]
+        best_score = scored_exact[0][0]
+        if best_score < _MIN_EXACT_SCORE:
+            logger.debug(
+                "Catalog exact match rejected: best capability score %d < %d for role '%s'",
+                best_score,
+                _MIN_EXACT_SCORE,
+                role,
+            )
+            return None
         logger.debug(
-            "Catalog exact match by role only (no keywords): '%s' for '%s' — returning None, "
-            "role-only match is too weak without task description keywords",
+            "Catalog exact match: '%s' (score=%d) for '%s'",
             winner.name,
+            best_score,
             role,
         )
-        return None
+        return winner
 
     def _match_affine_role(
         self,
@@ -608,7 +621,11 @@ _ROLE_AFFINITY: dict[str, frozenset[str]] = {
 
 _AFFINITY_BONUS_EXACT = 5  # bonus when agent.role == requested role
 _AFFINITY_BONUS_RELATED = 1  # bonus for affine (related) role
-_MIN_FUZZY_SCORE = 3  # minimum composite score to accept a fuzzy match
+_MIN_FUZZY_SCORE = 3  # minimum composite score to accept a fuzzy (cross-role) match
+_MIN_EXACT_SCORE = 1  # minimum capability score to accept an exact-role match
+# Exact-role matching is more permissive than fuzzy: the role itself is a
+# strong signal, so a single overlapping capability is enough. Fuzzy/affine
+# matches need more signal because they're crossing role boundaries.
 
 
 def _capability_score(agent: CatalogAgent, desc_lower: str, keywords: set[str]) -> int:
