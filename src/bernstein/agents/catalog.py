@@ -481,16 +481,12 @@ class CatalogRegistry:
         """
         if keywords:
             scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
-            if all(score == 0 for score, _ in scored_exact):
-                scored_exact = [
-                    (len(keywords & {w for w in a.description.lower().split() if len(w) > 3}), a) for a in exact
-                ]
             scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
             winner = scored_exact[0][1]
             best_score = scored_exact[0][0]
             if best_score < _MIN_FUZZY_SCORE:
                 logger.debug(
-                    "Catalog exact match rejected: best score %d < %d for role '%s'",
+                    "Catalog exact match rejected: best capability score %d < %d for role '%s'",
                     best_score,
                     _MIN_FUZZY_SCORE,
                     role,
