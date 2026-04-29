@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chernistry-bernstein-badge.png)](https://mseep.ai/app/chernistry-bernstein)
+
 <div align="center">
 
 <picture>
