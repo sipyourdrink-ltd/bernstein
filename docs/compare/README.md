@@ -33,15 +33,15 @@ How Bernstein compares to other tools in the multi-agent coding space.
 
 |  | Bernstein | [Stoneforge](./bernstein-vs-stoneforge.md) | [Agent HQ](./bernstein-vs-github-agent-hq.md) | [Conductor](./bernstein-vs-conductor.md) | [Crystal](./bernstein-vs-crystal.md) | [Parallel Code](./bernstein-vs-parallel-code.md) | [Dorothy](./bernstein-vs-dorothy.md) | [Single agent](./bernstein-vs-single-agent.md) |
 |--|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Parallel execution** | yes | yes | yes | yes | no | yes | yes | no |
-| **CLI agent support** | 31 adapters | no | Claude/Codex/Copilot | no | no | Claude/Codex/Gemini | Claude/Codex/Gemini/local | yes |
-| **Pluggable sandbox** | worktree/docker/e2b/modal | no | no | no | no | no | no | no |
-| **Result verification** | janitor (tests+lint) | provider-native | GitHub CI | none | LLM reviewer | manual | none | none |
+| **Parallel execution** | yes | yes | yes | yes | yes (worktrees) | yes | yes | no |
+| **CLI agent support** | 31 adapters | no | Claude/Codex/Copilot | no | Claude/Codex | Claude/Codex/Gemini | Claude/Codex/Gemini/local | yes |
+| **Pluggable sandbox** | worktree/docker/e2b/modal | no | no | no | worktree | no | no | no |
+| **Result verification** | janitor (tests+lint) | provider-native | GitHub CI | none | none | manual | none | none |
 | **Task planning from goal** | yes | no | yes | no | no | no | via Super Agent | no |
 | **Self-evolution** | yes | no | no | no | no | no | no | no |
 | **Model routing** | bandit | no | no | no | no | no | no | no |
-| **Headless / overnight** | yes | limited | GitHub Actions | yes | varies | no | app must run | no |
-| **IDE integration** | no | VS Code, JetBrains | GitHub UI | no | varies | desktop app | desktop app | no |
+| **Headless / overnight** | yes | limited | GitHub Actions | yes | no (Electron) | no | app must run | no |
+| **IDE integration** | no | VS Code, JetBrains | GitHub UI | no | no | desktop app | desktop app | no |
 | **Chat bridges (Telegram / Discord / Slack)** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ~ | ✗ |
 | **SSH remote sandbox** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **Lifecycle hooks (pre/post task, merge, spawn)** *(only Bernstein)* | ✓ | ✗ | ~ | ✗ | ✗ | ✗ | ✗ | ✗ |
@@ -49,9 +49,26 @@ How Bernstein compares to other tools in the multi-agent coding space.
 | **Tunnel wrapper (4 providers, one CLI)** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **Interactive tool-call approval** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ~ | ✗ |
 | **Daemon / service install (systemd / launchd)** *(only Bernstein)* | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **Open source** | Apache 2.0 | Apache 2.0 | no | Apache 2.0 | varies | MIT | MIT | varies |
+| **Open source** | Apache 2.0 | Apache 2.0 | no | Apache 2.0 | MIT (deprecated 2026-02 → Nimbalyst) | MIT | MIT | varies |
 
-*Last verified: 2026-04-19. Stoneforge launched 2026-03-03. Paperclip (launched 2026-03-04) is covered on its [own page](./bernstein-vs-paperclip.md); it is an AI-company control plane, not a CLI orchestrator, and is not compared in this table.*
+*Last verified: 2026-04-29. Stoneforge launched 2026-03-03. Paperclip (launched 2026-03-04) is covered on its [own page](./bernstein-vs-paperclip.md); it is an AI-company control plane, not a CLI orchestrator, and is not compared in this table.*
+
+## Table C — Multi-session and swarm orchestrators
+
+A second wave of tools focuses on managing multiple sessions of a single coding agent (usually Claude Code) — tmux-based, Claude-Code-shaped, or workforce-style. Bernstein's wedge against this group is provider breadth (31 cooperating CLI adapters, not Claude-only) and a deterministic Python scheduler (no LLM-driven swarm coordination).
+
+|  | Bernstein | [Claude Squad](./bernstein-vs-claude-squad.md) | [claude-flow / Ruflo](./bernstein-vs-claude-flow.md) | [AgentsMesh](./bernstein-vs-agentsmesh.md) |
+|--|:---:|:---:|:---:|:---:|
+| **Primary scope** | provider-agnostic CLI orchestrator | tmux session manager | Claude Code plugin pack + swarm | self-hosted agent workforce platform |
+| **Built-in agent breadth** | 31 cooperating + 2 delegated | Claude Code (extra via `-p`) | Claude Code | Claude/Codex/Gemini/Aider/OpenCode |
+| **Scheduler** | deterministic Python | human picks per session | LLM-driven hooks + queen agent | service that dispatches AgentPods |
+| **Plan files (`depends_on`)** | yes (YAML stages/steps) | no | partial (SPARC) | no |
+| **Quality gates / janitor** | yes (tests + lint + types + files) | no | safety scans only (PII/CVE) | no |
+| **MCP server (first-class)** | yes | no | yes (built-in MCP server) | no |
+| **Headless / CI** | yes | no (needs tmux) | yes (npm CLI) | server-based |
+| **State** | files (`.sdd/`) | per-session worktrees | vector memory store + Claude state | PostgreSQL + Redis + MinIO |
+| **Cost tracking with budgets** | yes | no | no | partial |
+| **License** | Apache 2.0 | AGPL-3.0 | MIT | BSL-1.1 (→ GPL-2.0-or-later in 2030) |
 
 ---
 
@@ -75,10 +92,12 @@ Earlier drafts of this page cited larger deltas that were not reproducible at n=
 **Consider alternatives if:**
 - You need production workflow orchestration for non-coding workloads (→ Conductor)
 - You want deep IDE integration and are committed to one provider (→ Stoneforge)
-- You need iterative LLM review loops per task rather than external test verification (→ Crystal)
-- You want a desktop app to run a few agents side by side and resolve conflicts manually (→ Parallel Code)
+- You want a desktop app to run a few agents side by side and resolve conflicts manually (→ Parallel Code or Crystal/Nimbalyst)
 - You want an AI-company control plane with org charts, budgets, and governance on top of your agents (→ Paperclip)
 - You want a Kanban-style desktop dashboard to delegate work between a few agents (→ Dorothy)
+- You want a tmux-based multi-session manager for one Claude Code account (→ Claude Squad)
+- Your stack is Claude-Code-only and you want a swarm/SPARC layer on top (→ claude-flow / Ruflo)
+- You need a multi-tenant agent workforce platform with RBAC, SSO, and audit logs (→ AgentsMesh)
 - Your task is simple and well-scoped (→ single agent, no orchestration needed)
 
 ---
@@ -95,8 +114,13 @@ Earlier drafts of this page cited larger deltas that were not reproducible at n=
 - [Bernstein vs. Parallel Code](./bernstein-vs-parallel-code.md) — orchestrated parallel vs manual multi-terminal
 - [Bernstein vs. Stoneforge](./bernstein-vs-stoneforge.md) — provider-agnostic vs provider-integrated (Stoneforge launched March 3, 2026)
 - [Bernstein vs. GitHub Agent HQ](./bernstein-vs-github-agent-hq.md) — open-source alternative to GitHub's multi-agent system (Universe 2025)
-- [Bernstein vs. Crystal](./bernstein-vs-crystal.md) — external test verification vs LLM review loops
+- [Bernstein vs. Crystal](./bernstein-vs-crystal.md) — provider-agnostic CLI orchestrator vs Electron desktop app for Claude Code / Codex worktrees (Crystal deprecated Feb 2026)
 - [Bernstein vs. Conductor](./bernstein-vs-conductor.md) — workflow engine vs coding agent orchestrator (Netflix Conductor and forks)
+
+### Multi-session and swarm orchestrators
+- [Bernstein vs. Claude Squad](./bernstein-vs-claude-squad.md) — orchestrator with plan files and quality gates vs tmux session manager
+- [Bernstein vs. claude-flow](./bernstein-vs-claude-flow.md) — provider-agnostic deterministic scheduler vs Claude Code plugin pack with LLM-driven swarm coordination
+- [Bernstein vs. AgentsMesh](./bernstein-vs-agentsmesh.md) — single-process file-based orchestrator vs server-stack agent workforce platform
 
 ### Agent management overlays
 - [Bernstein vs. Paperclip](./bernstein-vs-paperclip.md) — engineering orchestrator vs AI-company control plane (Paperclip launched March 4, 2026)
