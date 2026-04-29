@@ -10,7 +10,7 @@ Last updated: 2026-04-19
 
 - Python: project targets Python 3.12+.
 - Task server/API: FastAPI-based local or remote server operation.
-- CLI adapters: 31 CLI agent adapters (30 third-party + generic) in `src/bernstein/adapters/`, including the OpenAI Agents SDK v2 adapter (`openai_agents`).
+- CLI adapters: 37 CLI agent adapters (36 third-party + generic) in `src/bernstein/adapters/`, including the OpenAI Agents SDK v2 adapter (`openai_agents`).
 
 ### Supported CLI agent adapters
 

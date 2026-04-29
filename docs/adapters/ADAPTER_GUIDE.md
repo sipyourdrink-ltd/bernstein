@@ -1,6 +1,6 @@
 # Adapter Selection Guide
 
-Bernstein ships 31 CLI agent adapters in `src/bernstein/adapters/` (30 named
+Bernstein ships 37 CLI agent adapters in `src/bernstein/adapters/` (36 named
 third-party wrappers plus a `generic` catch-all), along with support modules
 (caching, conformance testing, environment isolation, plugin SDK, etc.).
 
@@ -587,6 +587,82 @@ Runs OpenAI Codex inside Cloudflare sandboxes for isolated, scalable execution.
 
 ---
 
+### openhands (OpenHands)
+
+**Install:** `uv tool install openhands --python 3.12` (Python 3.12+ required).
+
+**Env vars:** `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` (OpenHands-native), plus `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` (LiteLLM provider keys).
+
+**Invocation:** `openhands --headless --override-with-envs -t '<task>'`. The `--override-with-envs` flag is mandatory — without it OpenHands ignores env vars and reads persisted config from `~/.openhands/agent_settings.json`.
+
+**Best for:** Teams who want OpenHands' autonomous multi-step loop (plan + edit + execute) as a single Bernstein agent. Bernstein wraps the whole loop and only sees the final exit code; OpenHands' own sub-agent steps are not visible to Bernstein's accounting.
+
+---
+
+### open_interpreter (Open Interpreter)
+
+**Install:** `pip install open-interpreter`
+
+**Env vars:** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` (Open Interpreter uses LiteLLM).
+
+**Invocation:** `interpreter -y --model <model> '<prompt>'`. The `-y` (auto-run) flag is mandatory — without it the subprocess hangs forever on the per-code-block confirmation prompt.
+
+**Best for:** Tasks that benefit from Open Interpreter's local code-execution loop. Bernstein's worktree isolation handles the host-level sandbox concern.
+
+---
+
+### gptme
+
+**Install:** `pipx install gptme`
+
+**Env vars:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`.
+
+**Invocation:** `gptme -n -m <model> '<prompt>'`. The `-n` (`--non-interactive`) flag implies `--no-confirm` and exits when the prompt is complete.
+
+**Best for:** Lightweight terminal coding sessions. gptme is a general-purpose agent (code + shell + browser tools); Bernstein invokes it for coding tasks and leaves the browser tooling unused.
+
+---
+
+### plandex (Plandex)
+
+**Install:** `curl -sL https://plandex.ai/install.sh | bash`
+
+**Env vars:** `PLANDEX_API_KEY`, `PLANDEX_ENV`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`.
+
+**Invocation:** `plandex tell '<prompt>' --apply --auto-exec --skip-menu --stop`. The full flag combo is required to bypass Plandex's interactive REPL — `--auto-exec` skips per-command approval, `--apply` applies pending changes, `--skip-menu` avoids the post-response menu, `--stop` exits after one response.
+
+**Server requirement:** Plandex uses a client-server architecture. The CLI must reach Plandex Cloud or a self-hosted server (default `http://localhost:8099`). When no server is reachable, `plandex` exits early with a connection error and Bernstein surfaces it via the standard early-exit fast-fail path.
+
+**Best for:** Teams on Plandex's plan-first workflow who want Bernstein to drive the full plan-and-execute loop as one agent.
+
+---
+
+### aichat
+
+**Install:** `cargo install aichat` (or `brew install aichat`).
+
+**Env vars:** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`.
+
+**Invocation:** `aichat -m <model> -- '<prompt>'`. Prompt is positional; `--` terminates flags so prompts beginning with `-` are not misparsed.
+
+**Best for:** Lightweight tasks where a thin LLM CLI (no built-in repo navigation) is enough. AIChat does not replace coding-specific agents; use it for cost-sensitive simple tasks or as a fallback provider.
+
+---
+
+### letta_code (Letta Code)
+
+**Install:** `npm install -g @letta-ai/letta-code`
+
+**Env vars:** `LETTA_API_KEY`, `LETTA_BASE_URL`, plus `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` for the underlying model.
+
+**Invocation:** `letta --yolo -p '<prompt>'`. The `-p` flag is the documented one-off prompt mode; `--yolo` bypasses most permission prompts.
+
+**Caveats:** Letta Code's signature feature is cross-task memory via Letta Cloud. **Bernstein wraps Letta as a leaf-node one-shot agent** — Bernstein does not coordinate Letta's memory across tasks. Cross-task memory still works in Letta's own backend; it's just opaque to Bernstein's accounting and routing.
+
+**Best for:** Teams running Letta Cloud who want one-shot Letta sessions inside a larger Bernstein plan.
+
+---
+
 ### mock (Testing only)
 
 Simulates agent behavior for unit and integration tests. Not for production use.
@@ -595,7 +671,7 @@ Simulates agent behavior for unit and integration tests. Not for production use.
 
 ## Support Modules
 
-In addition to the 31 CLI agent adapters above, the adapter package includes
+In addition to the 37 CLI agent adapters above, the adapter package includes
 support modules that provide cross-cutting infrastructure:
 
 | Module | Purpose |

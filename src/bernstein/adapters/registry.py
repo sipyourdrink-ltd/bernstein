@@ -6,6 +6,7 @@ import inspect
 import logging
 from importlib.metadata import entry_points
 
+from bernstein.adapters.aichat import AIChatAdapter
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.adapters.amp import AmpAdapter
 from bernstein.adapters.auggie import AuggieAdapter
@@ -26,23 +27,29 @@ from bernstein.adapters.forge import ForgeAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.goose import GooseAdapter
+from bernstein.adapters.gptme import GptmeAdapter
 from bernstein.adapters.hermes import HermesAdapter
 from bernstein.adapters.iac import IaCAdapter
 from bernstein.adapters.kilo import KiloAdapter
 from bernstein.adapters.kimi import KimiAdapter
 from bernstein.adapters.kiro import KiroAdapter
+from bernstein.adapters.letta_code import LettaCodeAdapter
 from bernstein.adapters.mistral import MistralAdapter
 from bernstein.adapters.mock import MockAgentAdapter
 from bernstein.adapters.ollama import OllamaAdapter
+from bernstein.adapters.open_interpreter import OpenInterpreterAdapter
 from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
+from bernstein.adapters.openhands import OpenHandsAdapter
 from bernstein.adapters.pi import PiAdapter
+from bernstein.adapters.plandex import PlandexAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.rovo import RovoAdapter
 
 logger = logging.getLogger(__name__)
 
 _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
+    "aichat": AIChatAdapter,
     "aider": AiderAdapter,
     "amp": AmpAdapter,
     "auggie": AuggieAdapter,
@@ -61,17 +68,22 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "forge": ForgeAdapter,
     "gemini": GeminiAdapter,
     "goose": GooseAdapter,
+    "gptme": GptmeAdapter,
     "hermes": HermesAdapter,
     "iac": IaCAdapter,
     "kilo": KiloAdapter,
     "kimi": KimiAdapter,
     "kiro": KiroAdapter,
+    "letta_code": LettaCodeAdapter,
     "mistral": MistralAdapter,
     "mock": MockAgentAdapter,
     "ollama": OllamaAdapter,
+    "open_interpreter": OpenInterpreterAdapter,
     "openai_agents": OpenAIAgentsAdapter,
     "opencode": OpenCodeAdapter,
+    "openhands": OpenHandsAdapter,
     "pi": PiAdapter,
+    "plandex": PlandexAdapter,
     "qwen": QwenAdapter,
     "rovo": RovoAdapter,
 }

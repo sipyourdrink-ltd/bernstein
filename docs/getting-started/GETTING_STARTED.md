@@ -7,7 +7,7 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 ## Prerequisites
 
 - **Python 3.12+** (macOS, Linux, Windows)
-- **At least one CLI coding agent** installed and authenticated. Bernstein supports 31 adapters out of the box:
+- **At least one CLI coding agent** installed and authenticated. Bernstein supports 37 adapters out of the box:
 
 | Agent | Install |
 |-------|---------|
@@ -42,6 +42,12 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 | [Mistral Vibe](https://github.com/mistralai/mistral-vibe) | `curl -LsSf https://mistral.ai/vibe/install.sh \| bash` |
 | [Autohand](https://autohand.ai/code/) | `npm install -g autohand-cli` |
 | [Forge](https://forgecode.dev/docs/) | `curl -fsSL https://forgecode.dev/cli \| sh` |
+| [OpenHands](https://github.com/OpenHands/OpenHands) | `uv tool install openhands --python 3.12` |
+| [Open Interpreter](https://github.com/OpenInterpreter/open-interpreter) | `pip install open-interpreter` |
+| [gptme](https://github.com/gptme/gptme) | `pipx install gptme` |
+| [Plandex](https://github.com/plandex-ai/plandex) | `curl -sL https://plandex.ai/install.sh \| bash` |
+| [AIChat](https://github.com/sigoden/aichat) | `cargo install aichat` |
+| [Letta Code](https://github.com/letta-ai/letta-code) | `npm install -g @letta-ai/letta-code` |
 
 No agent yet? Run `bernstein demo` for a zero-config walkthrough.
 

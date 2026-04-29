@@ -26,7 +26,7 @@
 
 ---
 
-**What is this?** You tell it what you want built. It splits the work across several AI coding agents (Claude Code, Codex, Gemini CLI, and 28 more), runs the tests, and merges the code that actually passes. You come back to working code.
+**What is this?** You tell it what you want built. It splits the work across several AI coding agents (Claude Code, Codex, Gemini CLI, and 34 more), runs the tests, and merges the code that actually passes. You come back to working code.
 
 ### Install and run
 
@@ -72,7 +72,7 @@ Other install options: `pipx install bernstein`, `pip install bernstein`, `uv to
 
 Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
 
-31 CLI agent adapters: 30 third-party wrappers plus a generic wrapper for anything with `--prompt`.
+37 CLI agent adapters: 36 third-party wrappers plus a generic wrapper for anything with `--prompt`.
 
 | Agent | Models | Install |
 |-------|--------|---------|
@@ -94,6 +94,12 @@ Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap l
 | [OpenCode](https://opencode.ai) | Any provider OpenCode supports | See [OpenCode docs](https://opencode.ai) |
 | [Qwen](https://github.com/QwenLM/qwen-code) | Qwen Code models | `npm install -g @qwen-code/qwen-code` |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | Workers AI models | `bernstein cloud login` |
+| [OpenHands](https://github.com/OpenHands/OpenHands) | Any LiteLLM-supported (Anthropic, OpenAI, ...) | `uv tool install openhands --python 3.12` |
+| [Open Interpreter](https://github.com/OpenInterpreter/open-interpreter) | Any (LiteLLM-backed) | `pip install open-interpreter` |
+| [gptme](https://github.com/gptme/gptme) | Anthropic, OpenAI, OpenRouter | `pipx install gptme` |
+| [Plandex](https://github.com/plandex-ai/plandex) | Plandex Cloud or self-hosted models | `curl -sL https://plandex.ai/install.sh \| bash` |
+| [AIChat](https://github.com/sigoden/aichat) | OpenAI, Anthropic, OpenRouter, Groq, Gemini | `cargo install aichat` |
+| [Letta Code](https://github.com/letta-ai/letta-code) | Letta-routed (Anthropic, OpenAI) | `npm install -g @letta-ai/letta-code` |
 | **Generic** | Any CLI with `--prompt` | Built-in |
 
 Any adapter also works as the **internal scheduler LLM**. Run the entire stack without any specific provider:
@@ -209,7 +215,7 @@ Commands that eliminate the glue code most teams end up writing around their run
 | Feature | Bernstein | CrewAI | AutoGen [^autogen] | LangGraph |
 |---------|-----------|--------|---------|-----------|
 | Orchestrator | Deterministic code | LLM-driven (+ code Flows) | LLM-driven | Graph + LLM |
-| Works with | Any CLI agent (31 adapters) | Python SDK classes | Python agents | LangChain nodes |
+| Works with | Any CLI agent (37 adapters) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
 | Pluggable sandboxes | Worktree, Docker, E2B, Modal | No | No | No |
 | Verification | Janitor + quality gates | Guardrails + Pydantic output | Termination conditions | Conditional edges |
