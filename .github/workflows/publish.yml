@@ -199,14 +199,25 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/v}"
           cd packaging/npm
           npm version "$VERSION" --no-git-tag-version --allow-same-version
+      # Absorb npm-publish failures so they don't fail the tag-triggered
+      # publish workflow (matching the behaviour in auto-release.yml).
+      # NPM_TOKEN currently lacks publish rights for bernstein-orchestrator
+      # after the sipyourdrink-ltd repo transfer; until a fresh token is
+      # provisioned, the npm wrapper stays at its last successful version
+      # while PyPI / GHCR / GitHub Release continue shipping.
       - name: Publish to npm
-        run: cd packaging/npm && npm publish --access public
+        continue-on-error: true
         env:
           # packaging/npm/.npmrc uses ${NPM_TOKEN} for interpolation, so
           # both variables must be set. NODE_AUTH_TOKEN is kept for
           # compatibility with actions/setup-node's default config.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd packaging/npm
+          if ! npm publish --access public; then
+            echo "::warning::npm publish failed — continuing release. Likely cause: NPM_TOKEN needs to be re-issued with publish rights for bernstein-orchestrator."
+          fi
 
   # COPR RPM rebuild — triggers a new build from the updated PyPI release.
   trigger-copr:

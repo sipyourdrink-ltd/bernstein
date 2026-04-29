@@ -199,6 +199,14 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
+      # The npm publish is intentionally fire-and-forget. After the
+      # repo transfer to sipyourdrink-ltd, NPM_TOKEN does not have
+      # permission to publish bernstein-orchestrator (the package is
+      # owned by alexchernysh on npm). Until a fresh token with
+      # publish rights is provisioned and stored as NPM_TOKEN, we
+      # absorb the failure here so it does not poison the release
+      # job's deployment status. PyPI / GitHub Release / GHCR are
+      # unaffected — they ran in earlier steps.
       - name: Publish npm wrapper
         continue-on-error: true
         env:
@@ -206,7 +214,9 @@ jobs:
         run: |
           cd packaging/npm
           npm version "${{ steps.final.outputs.version }}" --no-git-tag-version
-          npm publish --access public
+          if ! npm publish --access public; then
+            echo "::warning::npm publish failed for v${{ steps.final.outputs.version }} — continuing release. Likely cause: NPM_TOKEN needs to be re-issued with publish rights for bernstein-orchestrator. PyPI/GHCR/GitHub Release already succeeded in earlier steps."
+          fi
 
       # --- Docker / OCI ---
       - name: Log in to GitHub Container Registry
