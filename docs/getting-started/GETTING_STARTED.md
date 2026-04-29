@@ -43,6 +43,13 @@ Bernstein orchestrates short-lived CLI coding agents around a central task serve
 | [Autohand](https://autohand.ai/code/) | `npm install -g autohand-cli` |
 | [Forge](https://forgecode.dev/docs/) | `curl -fsSL https://forgecode.dev/cli \| sh` |
 
+Two more adapters wrap **other CLI orchestrators** as if each were a single agent (leaf-node delegation — Bernstein only sees the wrapped tool's exit code, not its internal sub-agents):
+
+| Orchestrator | Install |
+|--------------|---------|
+| [Composio Agent Orchestrator](https://github.com/ComposioHQ/agent-orchestrator) | `npm install -g @aoagents/ao` |
+| [umputun/ralphex](https://github.com/umputun/ralphex) | `go install github.com/umputun/ralphex/cmd/ralphex@latest` |
+
 No agent yet? Run `bernstein demo` for a zero-config walkthrough.
 
 ---
