@@ -593,6 +593,38 @@ Simulates agent behavior for unit and integration tests. Not for production use.
 
 ---
 
+## Orchestrator Delegation Adapters
+
+The 31 adapters above wrap **CLI coding agents** — tools that execute one task per invocation. The two below wrap **other CLI orchestrators** as if each were a single agent. Bernstein hands the wrapped tool a prompt or plan and only sees the final exit code and combined log; sub-agent costs and quality gates *inside* the wrapped orchestrator are not visible to Bernstein. This is leaf-node delegation, not deep meta-orchestration.
+
+Use these when you have an existing workflow built on Composio or ralphex and want to drop it into one step of a larger Bernstein plan, rather than re-implementing it natively.
+
+### composio (Composio Agent Orchestrator, `@aoagents/ao`)
+
+**Install:** `npm install -g @aoagents/ao`
+
+**Env vars:** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, plus optional `COMPOSIO_API_KEY` / `AO_PROJECT_ID`. Composio inherits credentials from whichever underlying agent plugin (`codex`, `claude-code`, …) it's configured with — there is no dedicated key.
+
+**Invocation:** `ao spawn --prompt "<text>"` — the documented non-interactive entry point. The companion `ao start` is interactive (boots a tmux + dashboard) and is unsuitable for headless use. With no `ao start` running, `ao spawn` prints a benign warning that "AO is not running — lifecycle polling is inactive." The session still completes; the warning is expected for leaf-node delegation.
+
+**Best for:** Teams already running Composio's TypeScript orchestrator who want to keep that workflow as a step inside a Bernstein plan.
+
+---
+
+### ralphex (umputun/ralphex)
+
+**Install:** `go install github.com/umputun/ralphex/cmd/ralphex@latest`
+
+**Env vars:** `ANTHROPIC_API_KEY` (ralphex shells out to Claude Code internally), plus `CLAUDE_CONFIG_DIR` / `RALPHEX_CONFIG_DIR` if non-default.
+
+**Invocation:** Ralphex consumes a markdown plan file rather than a prompt string. The adapter materialises the Bernstein prompt into `.sdd/runtime/<session>-plan.md` with a minimal `### Task 1` checkbox block (the format ralphex requires) and runs `ralphex --no-color <plan-file>`. The `--plan "<text>"` flag exists in ralphex but invokes an interactive fzf picker, so it can't be used headlessly.
+
+**Caveats:** Ralphex must run from a git repo root and creates branches and commits on its own as part of its plan-walking flow. Bernstein already isolates agents in worktrees so this is safe, but operators should know.
+
+**Best for:** Teams using ralphex's single-pass plan walker over Claude Code who want to stitch it into a multi-step Bernstein plan without rewriting it.
+
+---
+
 ## Support Modules
 
 In addition to the 31 CLI agent adapters above, the adapter package includes
