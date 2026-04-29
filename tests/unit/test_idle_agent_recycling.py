@@ -283,8 +283,13 @@ def test_heartbeat_idle_threshold_lower_in_evolve_mode(tmp_path: Path) -> None:
     session = _make_session(["T-evolve-1"])
     orch._agents["s-ev-01"] = session
 
-    # Heartbeat is 65s stale — above evolve threshold (60s) but below normal (90s)
-    stale_ts = time.time() - (_IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S + 5)
+    # Heartbeat must exceed the evolve threshold *plus* the liveness-extension
+    # window. Same reason as test_shutdown_sent_on_heartbeat_idle (b5da11a6):
+    # PID 12345 is system-occupied on Ubuntu CI runners, so _is_process_alive
+    # returns True and the agent stays inside the 600s liveness extension —
+    # the recycle path only fires when the heartbeat is stale enough to
+    # exceed *both* gates.
+    stale_ts = time.time() - (_IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S + _IDLE_LIVENESS_EXTENSION_S + 5)
     orch._signal_mgr.read_heartbeat.return_value = AgentHeartbeat(timestamp=stale_ts)
 
     tasks_snapshot = {

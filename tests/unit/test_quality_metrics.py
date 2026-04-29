@@ -509,11 +509,18 @@ def test_quality_endpoint_with_iso8601_timestamps(tmp_path: Path) -> None:
     metrics_dir = tmp_path / ".sdd" / "metrics"
     metrics_dir.mkdir(parents=True)
 
-    # Write gate records with ISO 8601 string timestamps (as found in production)
+    # Write gate records with ISO 8601 string timestamps (as found in production).
+    # Use recent timestamps so the /quality endpoint's 30-day window doesn't
+    # filter them out depending on when the test happens to run.
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    iso_now = now.isoformat()
+    iso_recent = now.replace(microsecond=now.microsecond - 1 if now.microsecond else 0).isoformat()
     gates_file = metrics_dir / "quality_gates.jsonl"
     gate_records = [
-        {"timestamp": "2026-03-29T19:48:43.812896+00:00", "task_id": "t1", "gate": "lint", "result": "pass"},
-        {"timestamp": "2026-03-29T19:50:41.230744+00:00", "task_id": "t2", "gate": "lint", "result": "blocked"},
+        {"timestamp": iso_now, "task_id": "t1", "gate": "lint", "result": "pass"},
+        {"timestamp": iso_recent, "task_id": "t2", "gate": "lint", "result": "blocked"},
     ]
     gates_file.write_text("\n".join(json.dumps(r) for r in gate_records))
 

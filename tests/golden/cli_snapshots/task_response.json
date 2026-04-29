@@ -4,6 +4,7 @@
   "batch_eligible": false,
   "cell_id": null,
   "claimed_at": null,
+  "cli": null,
   "completion_signals": [],
   "complexity": "medium",
   "created_at": 1700000000.0,
