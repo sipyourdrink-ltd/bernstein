@@ -302,6 +302,7 @@ def task_to_response(task: Task) -> TaskResponse:
         upgrade_details=asdict(task.upgrade_details) if task.upgrade_details else None,
         model=task.model,
         effort=task.effort,
+        cli=task.cli,
         batch_eligible=task.batch_eligible,
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
         slack_context=task.slack_context,

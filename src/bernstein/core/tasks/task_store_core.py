@@ -169,6 +169,7 @@ class TaskCreateRequest(Protocol):
 
     model: str | None
     effort: str | None
+    cli: str | None
     batch_eligible: bool
     approval_required: bool
     eu_ai_act_risk: str
@@ -897,6 +898,7 @@ class TaskStore:
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
             effort=req.effort,
+            cli=getattr(req, "cli", None),
             batch_eligible=batch_eligible,
             eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
             approval_required=bool(getattr(req, "approval_required", False)),
@@ -1048,6 +1050,7 @@ class TaskStore:
                     upgrade_details=_parse_upgrade_dict(req.upgrade_details),
                     model=req.model,
                     effort=req.effort,
+                    cli=getattr(req, "cli", None),
                     batch_eligible=batch_eligible,
                     eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
                     approval_required=bool(getattr(req, "approval_required", False)),

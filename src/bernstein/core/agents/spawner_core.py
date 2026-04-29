@@ -1281,8 +1281,13 @@ class AgentSpawner:
     ) -> tuple[ModelConfig, str | None, str]:
         """Select provider and model via router or operator config."""
         provider_name: str | None = None
+        # Per-step `cli:` is treated as a synthetic pinned adapter so the
+        # router-skip decision matches the role_model_policy cli case.
+        effective_role_policy: dict[str, Any] = dict(role_policy)
+        if tasks[0].cli and "cli" not in effective_role_policy:
+            effective_role_policy["cli"] = tasks[0].cli
         use_router = _should_use_router(
-            role_policy=role_policy,
+            role_policy=effective_role_policy,
             adapter_name=self._adapter.name(),
             has_router=self._router is not None and bool(self._router.state.providers),
         )
@@ -1403,7 +1408,11 @@ class AgentSpawner:
         model_config = base_config
         provider_name: str | None = None
         role_policy = self._role_model_policy.get(tasks[0].role, {})
-        preferred_provider = role_policy.get("provider")
+        # Per-step CLI override (plan-file `cli:` field) wins over role-level
+        # role_model_policy.provider, which in turn wins over the default
+        # adapter. The string is treated as a provider/adapter identifier and
+        # resolved via _infer_adapter_name_for_provider downstream.
+        preferred_provider = tasks[0].cli or role_policy.get("provider")
 
         if not tasks[0].model and role_policy.get("model"):
             model_config = ModelConfig(

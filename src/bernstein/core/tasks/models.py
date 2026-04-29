@@ -263,6 +263,7 @@ class Task:
     # Manager-specified routing hints (override auto-routing when set)
     model: str | None = None  # "opus", "sonnet", "haiku"
     effort: str | None = None  # "max", "high", "medium", "low"
+    cli: str | None = None  # adapter override; "claude", "opencode", "codex", … (per-step)
     mcp_servers: list[str] = field(default_factory=list[str])  # MCP server names for this task
     slack_context: dict[str, Any] | None = None  # Slack slash command or event metadata
     metadata: dict[str, Any] = field(default_factory=dict)  # Trigger-source metadata (e.g. issue_number)
@@ -356,6 +357,7 @@ class Task:
             depends_on_repo=raw.get("depends_on_repo"),
             model=raw.get("model"),
             effort=raw.get("effort"),
+            cli=raw.get("cli"),
             mcp_servers=list(raw.get("mcp_servers", [])),
             batch_eligible=(lambda v: None if v is None else bool(v))(raw.get("batch_eligible")),
             eu_ai_act_risk=raw.get("eu_ai_act_risk", "minimal"),
