@@ -18,6 +18,7 @@ from bernstein.adapters.cloudflare_agents import CloudflareAgentsAdapter
 from bernstein.adapters.codebuff import CodebuffAdapter
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.cody import CodyAdapter
+from bernstein.adapters.composio import ComposioAdapter
 from bernstein.adapters.continue_dev import ContinueDevAdapter
 from bernstein.adapters.copilot import CopilotAdapter
 from bernstein.adapters.cursor import CursorAdapter
@@ -38,6 +39,7 @@ from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
 from bernstein.adapters.pi import PiAdapter
 from bernstein.adapters.qwen import QwenAdapter
+from bernstein.adapters.ralphex import RalphexAdapter
 from bernstein.adapters.rovo import RovoAdapter
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "codebuff": CodebuffAdapter,
     "codex": CodexAdapter,
     "cody": CodyAdapter,
+    "composio": ComposioAdapter,
     "continue": ContinueDevAdapter,
     "copilot": CopilotAdapter,
     "cursor": CursorAdapter,
@@ -73,6 +76,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "opencode": OpenCodeAdapter,
     "pi": PiAdapter,
     "qwen": QwenAdapter,
+    "ralphex": RalphexAdapter,
     "rovo": RovoAdapter,
 }
 

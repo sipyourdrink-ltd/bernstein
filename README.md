@@ -96,6 +96,15 @@ Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap l
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | Workers AI models | `bernstein cloud login` |
 | **Generic** | Any CLI with `--prompt` | Built-in |
 
+#### Orchestrator delegation (leaf-node)
+
+A separate, smaller class of adapters that wrap **other CLI orchestrators** as if they were single agents. Bernstein hands the wrapped tool a prompt or plan and only sees the final exit code — sub-agent costs and quality gates inside the wrapped orchestrator are not visible to Bernstein. Useful when you want to drop an existing workflow built on one of these tools into a step of a larger Bernstein plan.
+
+| Orchestrator | Wrapped as | Install |
+|--------------|------------|---------|
+| [Composio Agent Orchestrator](https://github.com/ComposioHQ/agent-orchestrator) (`@aoagents/ao`) | `composio` | `npm install -g @aoagents/ao` |
+| [umputun/ralphex](https://github.com/umputun/ralphex) | `ralphex` | `go install github.com/umputun/ralphex/cmd/ralphex@latest` |
+
 Any adapter also works as the **internal scheduler LLM**. Run the entire stack without any specific provider:
 
 ```yaml
