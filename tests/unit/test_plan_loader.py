@@ -282,6 +282,41 @@ def test_step_model_effort_default_none(tmp_path: Path) -> None:
     tasks = load_plan_from_yaml(plan_file)
     assert tasks[0].model is None
     assert tasks[0].effort is None
+    assert tasks[0].cli is None
+
+
+def test_step_cli_override(tmp_path: Path) -> None:
+    """Per-step `cli:` is parsed onto Task.cli so the spawner can switch adapters."""
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {
+                    "name": "rgr",
+                    "steps": [
+                        {"title": "Red", "cli": "opencode"},
+                        {"title": "Green", "cli": "opencode"},
+                    ],
+                },
+                {
+                    "name": "review",
+                    "steps": [{"title": "Code review", "cli": "claude"}],
+                },
+            ]
+        },
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    assert [t.cli for t in tasks] == ["opencode", "opencode", "claude"]
+
+
+def test_step_cli_empty_string_treated_as_none(tmp_path: Path) -> None:
+    """An empty `cli:` is silently dropped — same convention as model/effort."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T", "cli": ""}]}]},
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    assert tasks[0].cli is None
 
 
 def test_step_estimated_minutes(tmp_path: Path) -> None:

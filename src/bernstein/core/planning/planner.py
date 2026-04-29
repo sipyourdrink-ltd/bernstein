@@ -76,6 +76,9 @@ async def _post_task_to_server(
         "owned_files": task.owned_files,
         "task_type": task.task_type.value,
     }
+    # Forward routing hints declared on the task (per-step plan fields).
+    if task.cli:
+        body["cli"] = task.cli
     # Include upgrade_details if present
     if task.upgrade_details:
         body["upgrade_details"] = asdict(task.upgrade_details)

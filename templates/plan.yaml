@@ -162,6 +162,12 @@ stages:
         # Effort level (optional): low | normal | high | max
         # effort: normal
 
+        # CLI adapter override (optional). Wins over role_model_policy and
+        # the top-level cli: setting. Use this when one stage needs a
+        # different runtime than the rest of the plan, e.g. opencode for
+        # red/green/refactor and claude for code review.
+        # cli: opencode
+
         # Estimated minutes for the agent to complete.
         # estimated_minutes: 30
 

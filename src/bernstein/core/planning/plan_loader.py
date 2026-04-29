@@ -254,6 +254,7 @@ def _parse_step(
 
     model_raw = step.get("model")
     effort_raw = step.get("effort")
+    cli_raw = step.get("cli")
     estimated_minutes_raw = step.get("estimated_minutes")
     mode_raw = step.get("mode")
     execution_mode: str | None = str(mode_raw) if mode_raw else None
@@ -278,6 +279,7 @@ def _parse_step(
         completion_signals=signals,
         model=str(model_raw) if model_raw else None,
         effort=str(effort_raw) if effort_raw else None,
+        cli=str(cli_raw) if cli_raw else None,
         execution_mode=execution_mode,
         repo=task_repo,
         depends_on_repo=task_depends_on_repo,

@@ -89,6 +89,7 @@ class TaskCreate(BaseModel):
     upgrade_details: dict[str, Any] | None = None
     model: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # "opus", "sonnet", "haiku"
     effort: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # "max", "high", "medium", "low"
+    cli: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)  # adapter override: "claude", "opencode", …
     batch_eligible: bool = False  # Non-urgent: eligible for provider batch APIs at ~50% cost
     completion_signals: list[CompletionSignalSchema] = Field(default_factory=list, max_length=_MAX_LIST_LEN)
     slack_context: dict[str, Any] | None = None  # Slack slash command metadata
@@ -175,6 +176,7 @@ class TaskResponse(BaseModel):
     upgrade_details: dict[str, Any] | None
     model: str | None
     effort: str | None
+    cli: str | None = None
     batch_eligible: bool = False
     completion_signals: list[dict[str, str]] = Field(default_factory=lambda: list[dict[str, str]]())
     slack_context: dict[str, Any] | None = None

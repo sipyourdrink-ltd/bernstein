@@ -494,6 +494,62 @@ class TestSpawnerWithRouter:
         assert session.model_config.model == "openai/gpt-5.4-mini"
         assert session.pid == 777
 
+    def test_per_step_cli_overrides_default_adapter(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        """Task.cli (per-step `cli:` from plan YAML) drives adapter selection,
+        winning over the spawner's default adapter when no role policy is set."""
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        default_adapter = mock_adapter_factory(pid=100)
+        default_adapter.name.return_value = "claude"
+
+        opencode_adapter = mock_adapter_factory(pid=555)
+        opencode_adapter.name.return_value = "opencode"
+
+        spawner = AgentSpawner(
+            default_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+        )
+
+        task = make_task(role="backend")
+        task.cli = "opencode"
+
+        with patch.object(spawner, "_get_adapter_by_name", return_value=opencode_adapter):
+            session = spawner.spawn_for_tasks([task])
+
+        assert session.provider == "opencode"
+        assert session.pid == 555
+
+    def test_per_step_cli_beats_role_policy_provider(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        """When both task.cli and role_model_policy.provider are set, the
+        per-step value wins — that's the whole point of the field."""
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        default_adapter = mock_adapter_factory(pid=100)
+        default_adapter.name.return_value = "claude"
+
+        opencode_adapter = mock_adapter_factory(pid=601)
+        opencode_adapter.name.return_value = "opencode"
+
+        spawner = AgentSpawner(
+            default_adapter,
+            templates_dir,
+            tmp_path,
+            role_model_policy={"backend": {"provider": "codex"}},
+            use_worktrees=False,
+        )
+
+        task = make_task(role="backend")
+        task.cli = "opencode"
+
+        with patch.object(spawner, "_get_adapter_by_name", return_value=opencode_adapter):
+            session = spawner.spawn_for_tasks([task])
+
+        assert session.provider == "opencode"
+
     def test_spawn_rate_limiter_blocks_repeated_spawns(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=321)
         adapter.name.return_value = "claude"
