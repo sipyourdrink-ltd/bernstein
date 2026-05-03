@@ -18,9 +18,9 @@
   "author": "Alex Chernysh <alex@alexchernysh.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/chernistry/bernstein.git"
+    "url": "https://github.com/sipyourdrink-ltd/bernstein.git"
   },
-  "homepage": "https://github.com/chernistry/bernstein",
+  "homepage": "https://github.com/sipyourdrink-ltd/bernstein",
   "bin": {
     "bernstein": "index.js"
   },
@@ -40,5 +40,5 @@
     "install.js",
     "README.md"
   ],
-  "mcpName": "io.github.chernistry/bernstein"
+  "mcpName": "io.github.sipyourdrink-ltd/bernstein"
 }

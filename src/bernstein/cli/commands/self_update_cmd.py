@@ -27,7 +27,7 @@ from bernstein.cli.helpers import console
 
 _PACKAGE_NAME: str = "bernstein"
 _PYPI_URL: str = "https://pypi.org/pypi/bernstein/json"
-_GITHUB_RELEASES_URL: str = "https://api.github.com/repos/chernistry/bernstein/releases"
+_GITHUB_RELEASES_URL: str = "https://api.github.com/repos/sipyourdrink-ltd/bernstein/releases"
 _PREV_VERSION_FILE: Path = Path.home() / ".bernstein" / "previous-version"
 
 

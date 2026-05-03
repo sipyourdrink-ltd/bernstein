@@ -14,10 +14,10 @@
 
 <img alt="Bernstein in action: parallel AI agents orchestrated in real time" src="docs/assets/in-action-small.gif" width="700">
 
-[![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
+[![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![License](https://img.shields.io/github/license/chernistry/bernstein)](LICENSE)
+[![License](https://img.shields.io/github/license/sipyourdrink-ltd/bernstein)](LICENSE)
 [![MseeP.ai](https://img.shields.io/badge/MseeP.ai-verified-2496ed)](https://mseep.ai/app/chernistry-bernstein)
 
 [Website](https://bernstein.run) &middot; [Documentation](https://bernstein.readthedocs.io/) &middot; [Getting Started](docs/getting-started/GETTING_STARTED.md) &middot; [Glossary](docs/reference/GLOSSARY.md) &middot; [Limitations](docs/reference/KNOWN_LIMITATIONS.md)
@@ -303,7 +303,7 @@ bernstein fingerprint check src/foo.py                 # check generated code ag
 | **pip** | `pip install bernstein` |
 | **pipx** | `pipx install bernstein` |
 | **uv** | `uv tool install bernstein` |
-| **Homebrew** | `brew tap chernistry/bernstein && brew install bernstein` |
+| **Homebrew** | `brew tap sipyourdrink-ltd/bernstein && brew install bernstein` |
 | **Fedora / RHEL** | `sudo dnf copr enable alexchernysh/bernstein && sudo dnf install bernstein` |
 | **npm** (wrapper) | `npx bernstein-orchestrator` |
 
@@ -366,7 +366,7 @@ Curated lists, newsletters, and peer projects that picked up Bernstein:
 - [caramaschiHG/awesome-ai-agents-2026](https://github.com/caramaschiHG/awesome-ai-agents-2026)
 - [ai-for-developers/awesome-vibe-coding](https://github.com/ai-for-developers/awesome-vibe-coding)
 - [killop/anything_about_game](https://github.com/killop/anything_about_game) (`AI.md`)
-- [Glama MCP Catalog](https://glama.ai/mcp/servers/chernistry/bernstein) — editorial MCP server listing.
+- [Glama MCP Catalog](https://glama.ai/mcp/servers/sipyourdrink-ltd/bernstein) — editorial MCP server listing.
 - Mirrors: [icopy-site/awesome](https://github.com/icopy-site/awesome), [icopy-site/awesome-cn](https://github.com/icopy-site/awesome-cn), [trackawesomelist/trackawesomelist](https://github.com/trackawesomelist/trackawesomelist).
 
 </details>
@@ -383,7 +383,7 @@ Curated lists, newsletters, and peer projects that picked up Bernstein:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=chernistry/bernstein&type=Date)](https://star-history.com/#chernistry/bernstein&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=sipyourdrink-ltd/bernstein&type=Date)](https://star-history.com/#sipyourdrink-ltd/bernstein&Date)
 
 ## License
 
@@ -393,4 +393,4 @@ Curated lists, newsletters, and peer projects that picked up Bernstein:
 
 Made with love by [Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [bernstein.run](https://bernstein.run)
 
-<!-- mcp-name: io.github.chernistry/bernstein -->
+<!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

@@ -1109,4 +1109,4 @@ If `bernstein-server` shows as `DOWN`, the metrics endpoint is not reachable. Ve
 
 1. Run `bernstein doctor` — it checks the most common issues automatically.
 2. Check the [Troubleshooting guide](TROUBLESHOOTING.md) for agent-level issues (API errors, quality gate failures, cost overruns).
-3. Open an issue at [chernistry/bernstein](https://github.com/chernistry/bernstein/issues) with the output of `bernstein doctor --json`.
+3. Open an issue at [sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein/issues) with the output of `bernstein doctor --json`.

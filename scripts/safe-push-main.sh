@@ -559,7 +559,7 @@ do_merge_all() {
 main_menu() {
   while true; do
     clear
-    echo -e "\n${BOLD}${BLU}  ◆ bernstein dev toolkit${RST}${DIM}  (chernistry/bernstein)${RST}"
+    echo -e "\n${BOLD}${BLU}  ◆ bernstein dev toolkit${RST}${DIM}  (sipyourdrink-ltd/bernstein)${RST}"
     _sidebar
 
     echo -e "\n  ${BOLD}Choose an action:${RST}\n"

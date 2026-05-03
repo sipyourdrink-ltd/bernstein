@@ -5,7 +5,7 @@ Thanks for your interest! Here's how to get started.
 ## Quick Start
 
 ```bash
-git clone https://github.com/chernistry/bernstein && cd bernstein
+git clone https://github.com/sipyourdrink-ltd/bernstein && cd bernstein
 uv venv && uv pip install -e ".[dev]"
 ```
 

@@ -63,7 +63,7 @@ fpm -s dir -t deb \
   -v "$VERSION" \
   --iteration 1 \
   --description "Declarative agent orchestration for engineering teams" \
-  --url "https://github.com/chernistry/bernstein" \
+  --url "https://github.com/sipyourdrink-ltd/bernstein" \
   --maintainer "Alex Chernysh <alex@alexchernysh.com>" \
   --license Apache-2.0 \
   --category utils \
@@ -84,7 +84,7 @@ fpm -s dir -t rpm \
   -v "$VERSION" \
   --iteration 1 \
   --description "Declarative agent orchestration for engineering teams" \
-  --url "https://github.com/chernistry/bernstein" \
+  --url "https://github.com/sipyourdrink-ltd/bernstein" \
   --maintainer "Alex Chernysh <alex@alexchernysh.com>" \
   --license Apache-2.0 \
   --category utils \

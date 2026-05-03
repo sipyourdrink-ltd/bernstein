@@ -187,10 +187,10 @@ As Workflow Architect, I have **discovered and documented three comprehensive wo
 2. Update CHANGELOG with release notes
 3. Create git tag: `git tag ext-v0.1.0` (or next version)
 4. Push: `git push origin ext-v0.1.0`
-5. Monitor GitHub Actions: https://github.com/chernistry/bernstein/actions
+5. Monitor GitHub Actions: https://github.com/sipyourdrink-ltd/bernstein/actions
 6. Once published, verify in both marketplaces:
    - VS Code: https://marketplace.visualstudio.com/items?itemName=chernistry.bernstein
-   - Open VSX: https://open-vsx.org/extension/chernistry/bernstein
+   - Open VSX: https://open-vsx.org/extension/sipyourdrink-ltd/bernstein
    - Cursor: Search extensions for "bernstein"
 7. Post verification on Cursor forum (link to extensions page)
 

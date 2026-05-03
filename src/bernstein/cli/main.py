@@ -376,7 +376,7 @@ def print_rich_help() -> None:
     opts.add_row("", "--version", "Show version")
     c.print(opts)
     c.print("\n  [dim]Docs:[/dim] https://chernistry.github.io/bernstein/")
-    c.print("  [dim]Repo:[/dim] https://github.com/chernistry/bernstein\n")
+    c.print("  [dim]Repo:[/dim] https://github.com/sipyourdrink-ltd/bernstein\n")
 
 
 # ---------------------------------------------------------------------------

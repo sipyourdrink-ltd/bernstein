@@ -10,7 +10,7 @@ name: bernstein-orchestrator
 description: >-
   Declarative agent orchestration for engineering teams.
   Converts GitHub issues, PRs, and pushes into Bernstein tasks.
-url: https://github.com/chernistry/bernstein
+url: https://github.com/sipyourdrink-ltd/bernstein
 
 # Webhook configuration
 hook_attributes:

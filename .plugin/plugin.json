@@ -6,8 +6,8 @@
     "name": "chernistry",
     "url": "https://github.com/chernistry"
   },
-  "homepage": "https://github.com/chernistry/bernstein",
-  "repository": "https://github.com/chernistry/bernstein",
+  "homepage": "https://github.com/sipyourdrink-ltd/bernstein",
+  "repository": "https://github.com/sipyourdrink-ltd/bernstein",
   "license": "Apache-2.0",
   "keywords": ["orchestration", "multi-agent", "coding-agents", "claude-code", "codex", "gemini"],
   "commands": "./commands/",

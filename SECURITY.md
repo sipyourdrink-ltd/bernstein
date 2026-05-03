@@ -28,7 +28,7 @@ For issues outside the HackerOne scope or if you prefer direct contact:
 
 | Target | Notes |
 |--------|-------|
-| `github.com/chernistry/bernstein` — Python package | `src/bernstein/` |
+| `github.com/sipyourdrink-ltd/bernstein` — Python package | `src/bernstein/` |
 | Task server API (`localhost:8052` when self-hosted) | All HTTP endpoints |
 | Agent spawner / orchestrator | Privilege escalation, task injection |
 | Docker images (`bernstein:latest`, `bernstein:sandbox`) | Container escapes |
@@ -91,7 +91,7 @@ A pre-configured, network-isolated Bernstein instance is available for security 
 ### Quick start
 
 ```bash
-git clone https://github.com/chernistry/bernstein
+git clone https://github.com/sipyourdrink-ltd/bernstein
 cd bernstein
 ./scripts/researcher_sandbox.sh start
 ```

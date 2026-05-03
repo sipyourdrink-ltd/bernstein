@@ -422,7 +422,7 @@ def render_public_html(context: PublicBenchmarkContext) -> str:
       <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
         <span id="theme-icon">&#9681;</span>
       </button>
-      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+      <a href="https://github.com/sipyourdrink-ltd/bernstein" class="btn-primary" target="_blank" rel="noopener">
         GitHub &#8599;
       </a>
       <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">&#9776;</button>
@@ -510,7 +510,7 @@ uv run python scripts/generate_benchmark_docs.py</code></pre>
 
 <footer>
   <div class="container">
-    <p>Bernstein &middot; <a href="index.html">Overview</a> &middot; <a href="https://github.com/chernistry/bernstein">GitHub</a> &middot; Apache 2.0</p>
+    <p>Bernstein &middot; <a href="index.html">Overview</a> &middot; <a href="https://github.com/sipyourdrink-ltd/bernstein">GitHub</a> &middot; Apache 2.0</p>
   </div>
 </footer>
 

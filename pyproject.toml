@@ -84,10 +84,10 @@ dependencies = [
 [project.urls]
 Homepage = "https://bernstein.run"
 Documentation = "https://bernstein.readthedocs.io"
-Repository = "https://github.com/chernistry/bernstein"
-Source = "https://github.com/chernistry/bernstein"
-Issues = "https://github.com/chernistry/bernstein/issues"
-Changelog = "https://github.com/chernistry/bernstein/releases"
+Repository = "https://github.com/sipyourdrink-ltd/bernstein"
+Source = "https://github.com/sipyourdrink-ltd/bernstein"
+Issues = "https://github.com/sipyourdrink-ltd/bernstein/issues"
+Changelog = "https://github.com/sipyourdrink-ltd/bernstein/releases"
 Funding = "https://github.com/sponsors/chernistry"
 Author = "https://alexchernysh.com"
 

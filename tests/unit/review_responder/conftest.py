@@ -22,7 +22,7 @@ def sample_comment() -> ReviewComment:
     return ReviewComment(
         comment_id=12345,
         pr_number=314,
-        repo="chernistry/bernstein",
+        repo="sipyourdrink-ltd/bernstein",
         reviewer="alice",
         body="rename foo to bar in src/util.py:42",
         path="src/util.py",
@@ -42,7 +42,7 @@ def question_comment() -> ReviewComment:
     return ReviewComment(
         comment_id=999,
         pr_number=314,
-        repo="chernistry/bernstein",
+        repo="sipyourdrink-ltd/bernstein",
         reviewer="bob",
         body="Could you explain why this uses a tuple here?",
         path="src/util.py",
@@ -62,7 +62,7 @@ def stale_comment() -> ReviewComment:
     return ReviewComment(
         comment_id=42,
         pr_number=314,
-        repo="chernistry/bernstein",
+        repo="sipyourdrink-ltd/bernstein",
         reviewer="carol",
         body="Use a list comprehension here.",
         path="src/util.py",
@@ -80,7 +80,7 @@ def stale_comment() -> ReviewComment:
 def default_config() -> ResponderConfig:
     """Return a quick-cycle :class:`ResponderConfig` for tests."""
     return ResponderConfig(
-        repo="chernistry/bernstein",
+        repo="sipyourdrink-ltd/bernstein",
         quiet_window_s=0.5,
         per_round_cost_cap_usd=1.0,
     )

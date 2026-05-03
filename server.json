@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.chernistry/bernstein",
+  "name": "io.github.sipyourdrink-ltd/bernstein",
   "description": "Declarative agent orchestration for engineering teams",
   "repository": {
-    "url": "https://github.com/chernistry/bernstein",
+    "url": "https://github.com/sipyourdrink-ltd/bernstein",
     "source": "github"
   },
   "version": "1.5.0",
@@ -26,7 +26,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/chernistry/bernstein",
+      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein",
       "version": "1.5.0",
       "transport": {
         "type": "stdio"

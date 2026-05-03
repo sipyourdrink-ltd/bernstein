@@ -10,7 +10,7 @@ small so operators can hand-edit it without learning a schema:
     log_byte_budget = 65536
 
     [[repo]]
-    name = "chernistry/bernstein"
+    name = "sipyourdrink-ltd/bernstein"
     cost_cap_usd = 5.0
     allow_force_push = false
     label = "bernstein-autofix"

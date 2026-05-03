@@ -25,7 +25,7 @@ We provide a purpose-built Docker environment so researchers can explore the ful
 ### Start the sandbox
 
 ```bash
-git clone https://github.com/chernistry/bernstein
+git clone https://github.com/sipyourdrink-ltd/bernstein
 cd bernstein
 ./scripts/researcher_sandbox.sh start
 ```

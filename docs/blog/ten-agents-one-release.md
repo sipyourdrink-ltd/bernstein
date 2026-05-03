@@ -119,8 +119,8 @@ The other six are infrastructure that makes the first four work cleanly under lo
 
 ---
 
-**Bernstein 1.9.0 is on PyPI now: `pip install bernstein`. The full release notes are at [github.com/chernistry/bernstein/releases/tag/v1.9.0](https://github.com/chernistry/bernstein/releases/tag/v1.9.0).**
+**Bernstein 1.9.0 is on PyPI now: `pip install bernstein`. The full release notes are at [github.com/sipyourdrink-ltd/bernstein/releases/tag/v1.9.0](https://github.com/sipyourdrink-ltd/bernstein/releases/tag/v1.9.0).**
 
 ---
 
-*Bernstein orchestrates short-lived AI coding agents — Claude Code, Codex, Gemini CLI, and 28 more — through a deterministic Python dispatcher. State lives in files, not in agent memory. The orchestrator is code, not a model. Apache-2.0. [github.com/chernistry/bernstein](https://github.com/chernistry/bernstein).*
+*Bernstein orchestrates short-lived AI coding agents — Claude Code, Codex, Gemini CLI, and 28 more — through a deterministic Python dispatcher. State lives in files, not in agent memory. The orchestrator is code, not a model. Apache-2.0. [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein).*

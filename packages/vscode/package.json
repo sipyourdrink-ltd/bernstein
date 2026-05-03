@@ -9,7 +9,7 @@
   "keywords": ["ai", "agents", "orchestration", "multi-agent", "claude", "codex", "gemini"],
   "icon": "media/bernstein-icon.png",
   "galleryBanner": { "color": "#1a1a2e", "theme": "dark" },
-  "repository": { "type": "git", "url": "https://github.com/chernistry/bernstein" },
+  "repository": { "type": "git", "url": "https://github.com/sipyourdrink-ltd/bernstein" },
   "homepage": "https://chernistry.github.io/bernstein/",
   "license": "Apache-2.0",
   "activationEvents": ["onStartupFinished"],

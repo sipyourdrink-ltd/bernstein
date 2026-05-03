@@ -69,7 +69,7 @@ uv tool install bernstein
 # Or any of these
 pip install bernstein
 pipx install bernstein
-brew tap chernistry/bernstein && brew install bernstein
+brew tap sipyourdrink-ltd/bernstein && brew install bernstein
 
 # Fedora / RHEL
 sudo dnf copr enable alexchernysh/bernstein
@@ -87,7 +87,7 @@ bernstein --version
 ### Development install
 
 ```bash
-git clone https://github.com/chernistry/bernstein && cd bernstein
+git clone https://github.com/sipyourdrink-ltd/bernstein && cd bernstein
 uv venv && uv pip install -e ".[dev]"
 uv run python scripts/run_tests.py -x
 ```
@@ -185,7 +185,7 @@ tasks:
     depends_on: ["TSK-001"]
 ```
 
-Full seed file reference at [`templates/bernstein.yaml`](https://github.com/chernistry/bernstein/blob/main/templates/bernstein.yaml).
+Full seed file reference at [`templates/bernstein.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/templates/bernstein.yaml).
 
 ### Path 3: Plan file (multi-stage projects)
 
@@ -195,7 +195,7 @@ For projects with known stages, write a plan file with stages and steps — like
 bernstein run plan.yaml
 ```
 
-Plan files skip the manager decomposition step and go straight to execution. See [`templates/plan.yaml`](https://github.com/chernistry/bernstein/blob/main/templates/plan.yaml) for the format.
+Plan files skip the manager decomposition step and go straight to execution. See [`templates/plan.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/templates/plan.yaml) for the format.
 
 ---
 
@@ -510,6 +510,6 @@ The 1.78× speedup headline comes from the simulation harness in `benchmarks/run
 ## Learn more
 
 - Project site: [bernstein.run](https://bernstein.run)
-- Source: [github.com/chernistry/bernstein](https://github.com/chernistry/bernstein)
+- Source: [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein)
 - PyPI: [pypi.org/project/bernstein](https://pypi.org/project/bernstein/)
 - Author: [Alex Chernysh](https://alexchernysh.com) ([@chernistry](https://github.com/chernistry))

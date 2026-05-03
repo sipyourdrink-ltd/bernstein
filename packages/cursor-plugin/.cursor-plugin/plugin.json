@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "author": {
     "name": "Alex Chernysh",
-    "url": "https://github.com/chernistry/bernstein"
+    "url": "https://github.com/sipyourdrink-ltd/bernstein"
   },
   "license": "Apache-2.0",
-  "repository": "https://github.com/chernistry/bernstein",
+  "repository": "https://github.com/sipyourdrink-ltd/bernstein",
   "keywords": ["ai", "agents", "orchestration", "multi-agent", "bernstein"],
   "compatibility": {
     "cursor": ">=2.4.0"

@@ -22,7 +22,7 @@ class TestNormalizeRoutineWebhook:
             "goal": "Review this PR",
             "github": {
                 "event_type": "pull_request.opened",
-                "repo": "chernistry/bernstein",
+                "repo": "sipyourdrink-ltd/bernstein",
                 "pr_number": 42,
                 "ref": "refs/heads/feature-x",
                 "author": "contributor",
@@ -31,7 +31,7 @@ class TestNormalizeRoutineWebhook:
         event = normalize_routine_webhook({}, payload)
         assert event.metadata["github_event"] == "pull_request.opened"
         assert event.metadata["github_pr_number"] == 42
-        assert event.metadata["github_repo"] == "chernistry/bernstein"
+        assert event.metadata["github_repo"] == "sipyourdrink-ltd/bernstein"
 
     def test_scenario_id_in_metadata(self) -> None:
         payload = {"scenario_id": "pr-review-comprehensive", "goal": "Run review"}

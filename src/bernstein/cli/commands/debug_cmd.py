@@ -31,7 +31,7 @@ No source code is included."""
 
 _NEXT_STEPS = """\
 Next steps:
-  1. Open a bug report: https://github.com/chernistry/bernstein/issues/new?template=bug_report.yml
+  1. Open a bug report: https://github.com/sipyourdrink-ltd/bernstein/issues/new?template=bug_report.yml
   2. Drag and drop the zip file into the "Debug bundle" field
   3. Describe what went wrong"""
 

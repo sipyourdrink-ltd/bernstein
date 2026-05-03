@@ -6,8 +6,8 @@ site_description: >-
   agents. Run Claude Code, Codex, Gemini CLI, and the OpenAI Agents SDK in
   parallel with deterministic scheduling, 18 adapters, pluggable sandbox
   backends, cloud artifact storage, and zero vendor lock-in.
-repo_url: https://github.com/chernistry/bernstein
-repo_name: chernistry/bernstein
+repo_url: https://github.com/sipyourdrink-ltd/bernstein
+repo_name: sipyourdrink-ltd/bernstein
 edit_uri: edit/main/docs/
 copyright: >-
   Copyright &copy; 2025–2026 <a href="https://alexchernysh.com">Alex Chernysh</a>
@@ -60,7 +60,7 @@ theme:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/chernistry/bernstein
+      link: https://github.com/sipyourdrink-ltd/bernstein
       name: Bernstein on GitHub
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/bernstein/

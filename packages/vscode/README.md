@@ -1,6 +1,6 @@
 # Bernstein — Multi-Agent Orchestration for VS Code
 
-VS Code extension for monitoring and controlling [Bernstein](https://github.com/chernistry/bernstein), a multi-agent orchestration system that runs parallel AI coding agents. Gives you real-time visibility into tasks, agents, and costs without leaving your editor.
+VS Code extension for monitoring and controlling [Bernstein](https://github.com/sipyourdrink-ltd/bernstein), a multi-agent orchestration system that runs parallel AI coding agents. Gives you real-time visibility into tasks, agents, and costs without leaving your editor.
 
 ## Features
 
@@ -41,7 +41,7 @@ VS Code extension for monitoring and controlling [Bernstein](https://github.com/
 ## Requirements
 
 - VS Code 1.100+ (or compatible forks: Cursor, VSCodium)
-- Bernstein orchestrator running locally — install from [github.com/chernistry/bernstein](https://github.com/chernistry/bernstein)
+- Bernstein orchestrator running locally — install from [github.com/sipyourdrink-ltd/bernstein](https://github.com/sipyourdrink-ltd/bernstein)
 
 ## Quick Start
 

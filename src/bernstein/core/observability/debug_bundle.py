@@ -377,7 +377,7 @@ def generate_readme(manifest: BundleManifest) -> str:
         "## How to use\n"
         "\n"
         "Attach this zip file to your GitHub issue:\n"
-        "  https://github.com/chernistry/bernstein/issues/new\n"
+        "  https://github.com/sipyourdrink-ltd/bernstein/issues/new\n"
         "\n"
         "All secrets, tokens, and email addresses have been redacted.\n"
         "Review the contents before sharing if you have concerns.\n"

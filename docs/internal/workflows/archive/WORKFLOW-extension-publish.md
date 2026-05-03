@@ -228,7 +228,7 @@ This triggers `.github/workflows/publish-extension.yml` because the tag matches 
   - Access token (from GitHub secret)
   - Open VSX registry URL
 **Output on SUCCESS**:
-  - Extension published at open-vsx.org/extension/chernistry/bernstein
+  - Extension published at open-vsx.org/extension/sipyourdrink-ltd/bernstein
   - Searchable in Cursor extensions within ~5 minutes
   - GO TO STEP 10
 **Output on FAILURE**:
@@ -251,7 +251,7 @@ This triggers `.github/workflows/publish-extension.yml` because the tag matches 
   - .vsix file
   - Release body (markdown with install instructions)
 **Output on SUCCESS**:
-  - GitHub Release created at github.com/chernistry/bernstein/releases/tag/ext-v0.1.0
+  - GitHub Release created at github.com/sipyourdrink-ltd/bernstein/releases/tag/ext-v0.1.0
   - .vsix attached as downloadable asset
   - Release notes visible (3 install options listed)
   - GO TO STEP 11
@@ -297,7 +297,7 @@ This workflow has no rollback capability once a version is published to marketpl
   4. GitHub Release: Not created (Step 10 not reached unless earlier step failed)
 
 **What developer sees**:
-  - Red X on workflow run in github.com/chernistry/bernstein/actions
+  - Red X on workflow run in github.com/sipyourdrink-ltd/bernstein/actions
   - Error message in log describing exact failure point
   - No extension published to any marketplace
 
@@ -335,7 +335,7 @@ This workflow has no rollback capability once a version is published to marketpl
 {
   "vsix": "[binary VSIX file]",
   "metadata": {
-    "assetUri": "https://github.com/chernistry/bernstein/releases/tag/ext-v0.1.0",
+    "assetUri": "https://github.com/sipyourdrink-ltd/bernstein/releases/tag/ext-v0.1.0",
     "fallbackAssetUri": null
   }
 }

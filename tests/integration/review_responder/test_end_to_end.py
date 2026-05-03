@@ -65,7 +65,7 @@ def _envelope(comment_id: int, updated_at: str = "2026-04-25T10:00:00Z") -> dict
             "updated_at": updated_at,
         },
         "pull_request": {"number": 314},
-        "repository": {"full_name": "chernistry/bernstein"},
+        "repository": {"full_name": "sipyourdrink-ltd/bernstein"},
     }
 
 
@@ -82,7 +82,7 @@ def _stub_runner(args: list[str], stdin: str | None = None) -> subprocess.Comple
 def test_listener_to_audit_pipeline(tmp_path: Path) -> None:
     """A signed webhook produces a sealed round with an intact audit chain."""
     cfg = ResponderConfig(
-        repo="chernistry/bernstein",
+        repo="sipyourdrink-ltd/bernstein",
         quiet_window_s=0.0,  # seal immediately
         per_round_cost_cap_usd=1.0,
     )

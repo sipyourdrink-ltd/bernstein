@@ -30,7 +30,7 @@ def _webhook_envelope() -> dict[str, object]:
             "in_reply_to_id": None,
         },
         "pull_request": {"number": 314},
-        "repository": {"full_name": "chernistry/bernstein"},
+        "repository": {"full_name": "sipyourdrink-ltd/bernstein"},
     }
 
 
@@ -38,7 +38,7 @@ def test_normalise_webhook_happy_path() -> None:
     """A well-formed envelope produces every comment field."""
     c = normalise_webhook_payload(_webhook_envelope())
     assert c.comment_id == 12345
-    assert c.repo == "chernistry/bernstein"
+    assert c.repo == "sipyourdrink-ltd/bernstein"
     assert c.pr_number == 314
     assert c.reviewer == "alice"
     assert (c.line_start, c.line_end) == (40, 42)

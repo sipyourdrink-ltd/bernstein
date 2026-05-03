@@ -145,7 +145,7 @@ build_comment() {
 <details>
 <summary>What is Bernstein?</summary>
 Bernstein is a multi-agent orchestration system that hires short-lived CLI coding agents to complete tasks autonomously.
-Learn more at https://github.com/chernistry/bernstein
+Learn more at https://github.com/sipyourdrink-ltd/bernstein
 </details>
 MARKDOWN
     return 0

@@ -14,7 +14,7 @@ ci_status() {
 ci_jobs() {
   local run_id=${1:-$(gh run list --workflow ci.yml --branch main --limit 1 --json databaseId --jq '.[0].databaseId')}
   echo "=== Jobs for run $run_id ==="
-  gh api "repos/chernistry/bernstein/actions/runs/$run_id/jobs" --jq '.jobs[] | "\(.status) \(.conclusion // "...") \(.name)"'
+  gh api "repos/sipyourdrink-ltd/bernstein/actions/runs/$run_id/jobs" --jq '.jobs[] | "\(.status) \(.conclusion // "...") \(.name)"'
   return 0
 }
 
@@ -22,11 +22,11 @@ ci_errors() {
   local run_id=${1:-$(gh run list --workflow ci.yml --branch main --limit 1 --json databaseId --jq '.[0].databaseId')}
   echo "=== Errors in run $run_id ==="
   for job_name in "Lint" "Type check" "Test (Python 3.12)" "Test (Python 3.13)" "Dead code (Vulture)" "Spelling (typos)"; do
-    JID=$(gh api "repos/chernistry/bernstein/actions/runs/$run_id/jobs" --jq ".jobs[] | select(.name == \"$job_name\" and .conclusion == \"failure\") | .id" 2>/dev/null)
+    JID=$(gh api "repos/sipyourdrink-ltd/bernstein/actions/runs/$run_id/jobs" --jq ".jobs[] | select(.name == \"$job_name\" and .conclusion == \"failure\") | .id" 2>/dev/null)
     if [[ -n "$JID" ]]; then
       echo ""
       echo "--- $job_name ---"
-      gh api "repos/chernistry/bernstein/actions/jobs/$JID/logs" 2>&1 | grep -E "error:|FAILED|Error" | head -5
+      gh api "repos/sipyourdrink-ltd/bernstein/actions/jobs/$JID/logs" 2>&1 | grep -E "error:|FAILED|Error" | head -5
     fi
   done
   return 0

@@ -147,7 +147,7 @@ pip install 'bernstein[openai,docker,s3]'
 pip install 'bernstein[openai,docker,e2b,modal,s3,gcs,azure,r2]'
 ```
 
-See the [install section in the README](https://github.com/chernistry/bernstein#install)
+See the [install section in the README](https://github.com/sipyourdrink-ltd/bernstein#install)
 for the full extras matrix.
 
 ## ACP native bridge — `bernstein acp serve`

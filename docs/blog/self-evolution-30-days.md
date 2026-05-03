@@ -312,7 +312,7 @@ bernstein init
 bernstein evolve --budget 5.00
 ```
 
-Source: https://github.com/chernistry/bernstein
+Source: https://github.com/sipyourdrink-ltd/bernstein
 
 ---
 

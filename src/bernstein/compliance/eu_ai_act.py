@@ -1128,7 +1128,7 @@ def bernstein_descriptor(
         SystemDescriptor configured for Bernstein.
     """
     base_metadata: dict[str, Any] = {
-        "provider": "Bernstein open-source project (chernistry/bernstein)",
+        "provider": "Bernstein open-source project (sipyourdrink-ltd/bernstein)",
         "model_architecture": (
             "Multi-agent orchestration layer; underlying LLMs are third-party "
             "(Anthropic Claude, OpenAI Codex, Google Gemini, etc.)"

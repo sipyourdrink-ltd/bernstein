@@ -81,15 +81,15 @@ bernstein --version
 
 ## Direct download (no repository)
 
-Download the latest package directly from [GitHub Releases](https://github.com/chernistry/bernstein/releases/latest):
+Download the latest package directly from [GitHub Releases](https://github.com/sipyourdrink-ltd/bernstein/releases/latest):
 
 ```bash
 # Debian/Ubuntu
-curl -LO https://github.com/chernistry/bernstein/releases/latest/download/bernstein_amd64.deb
+curl -LO https://github.com/sipyourdrink-ltd/bernstein/releases/latest/download/bernstein_amd64.deb
 sudo dpkg -i bernstein_amd64.deb
 
 # RHEL/Fedora
-curl -LO https://github.com/chernistry/bernstein/releases/latest/download/bernstein-x86_64.rpm
+curl -LO https://github.com/sipyourdrink-ltd/bernstein/releases/latest/download/bernstein-x86_64.rpm
 sudo rpm -i bernstein-x86_64.rpm
 ```
 
@@ -115,7 +115,7 @@ rpm -K bernstein-*.rpm
 | uv     | `uv tool install bernstein` |
 | pip    | `pip install bernstein` |
 | npm    | `npx bernstein-orchestrator` (requires Python 3.12+) |
-| Docker | `docker run ghcr.io/chernistry/bernstein` |
+| Docker | `docker run ghcr.io/sipyourdrink-ltd/bernstein` |
 
 ---
 

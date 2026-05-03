@@ -29,7 +29,7 @@ Restart Cursor or run `Developer: Reload Window`.
 
 In Cursor Settings → Rules → Add Rule → Remote Rule (GitHub) → paste:
 ```
-https://github.com/chernistry/bernstein
+https://github.com/sipyourdrink-ltd/bernstein
 ```
 
 ## Configuration
@@ -43,7 +43,7 @@ export BERNSTEIN_API_TOKEN="your-token"             # if auth enabled
 
 ## Requirements
 
-- [Bernstein](https://github.com/chernistry/bernstein) running locally (`bernstein run`)
+- [Bernstein](https://github.com/sipyourdrink-ltd/bernstein) running locally (`bernstein run`)
 - Cursor 2.4+
 - `curl`, `python3` (for script execution)
 

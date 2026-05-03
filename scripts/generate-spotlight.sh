@@ -31,7 +31,7 @@ info "Generating Community Spotlight for $MONTH_NAME $YEAR"
 info "Period: $SINCE → $UNTIL"
 
 # --- Collect contributors ---
-CONTRIBUTORS=$(gh api repos/chernistry/bernstein/pulls --paginate \
+CONTRIBUTORS=$(gh api repos/sipyourdrink-ltd/bernstein/pulls --paginate \
   -q ".[] | select(.merged_at != null) | select(.merged_at >= \"$SINCE\" and .merged_at < \"$UNTIL\") | {
     author: .user.login,
     title: .title,
@@ -74,7 +74,7 @@ cat >> "$OUTFILE" << FOOTER
 
 A huge thank you to all $COUNT contributor(s) who made $MONTH_NAME $YEAR a great month for Bernstein!
 
-> Want to be featured? Contribute to [Bernstein](https://github.com/chernistry/bernstein) and your work could appear here next month!
+> Want to be featured? Contribute to [Bernstein](https://github.com/sipyourdrink-ltd/bernstein) and your work could appear here next month!
 FOOTER
 
 info "✅ Generated: $OUTFILE"

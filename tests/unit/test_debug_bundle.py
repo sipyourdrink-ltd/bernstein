@@ -463,7 +463,7 @@ class TestGenerateReadme:
             redactions_applied=5,
         )
         readme = generate_readme(manifest)
-        assert "github.com/chernistry/bernstein/issues" in readme
+        assert "github.com/sipyourdrink-ltd/bernstein/issues" in readme
 
     def test_contains_version(self) -> None:
         manifest = BundleManifest(
@@ -542,7 +542,7 @@ class TestCreateDebugBundle:
             readme_files = [n for n in names if n.endswith("README.md")]
             assert len(readme_files) == 1
             content = zf.read(readme_files[0]).decode()
-            assert "github.com/chernistry/bernstein/issues" in content
+            assert "github.com/sipyourdrink-ltd/bernstein/issues" in content
 
     def test_zip_contains_config(self, tmp_path: Path) -> None:
         (tmp_path / "bernstein.yaml").write_text("model: claude-4\n")

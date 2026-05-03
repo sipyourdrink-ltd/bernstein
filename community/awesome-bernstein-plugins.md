@@ -1,6 +1,6 @@
 # awesome-bernstein-plugins
 
-> A curated list of plugins, adapters, role templates, and integrations for [Bernstein](https://github.com/chernistry/bernstein) — the multi-agent orchestration system.
+> A curated list of plugins, adapters, role templates, and integrations for [Bernstein](https://github.com/sipyourdrink-ltd/bernstein) — the multi-agent orchestration system.
 
 Plugins extend Bernstein without touching core code. They hook into the task and agent lifecycle via [pluggy](https://pluggy.readthedocs.io/) — the same machinery used by pytest. A plugin is a plain Python class. No subclassing. No registration boilerplate.
 
@@ -446,4 +446,4 @@ This is a community-maintained list. To add your plugin:
 3. It must include a README with installation instructions and at least one usage example.
 4. Open a pull request adding it to the relevant section above.
 
-For questions, open an issue on the [Bernstein repository](https://github.com/chernistry/bernstein).
+For questions, open an issue on the [Bernstein repository](https://github.com/sipyourdrink-ltd/bernstein).

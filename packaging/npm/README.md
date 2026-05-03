@@ -24,9 +24,9 @@ bernstein agents
 
 ## Links
 
-- [GitHub](https://github.com/chernistry/bernstein)
+- [GitHub](https://github.com/sipyourdrink-ltd/bernstein)
 - [PyPI](https://pypi.org/project/bernstein/)
-- [Documentation](https://github.com/chernistry/bernstein#readme)
+- [Documentation](https://github.com/sipyourdrink-ltd/bernstein#readme)
 
 ## License
 

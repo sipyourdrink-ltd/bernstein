@@ -14,7 +14,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Default remote changelog URL for Bernstein
-_DEFAULT_CHANGELOG_URL = "https://raw.githubusercontent.com/chernistry/bernstein/main/CHANGELOG.md"
+_DEFAULT_CHANGELOG_URL = "https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/CHANGELOG.md"
 
 # Local fallback paths (relative to project root)
 _LOCAL_PATHS = ["CHANGELOG.md", "README.md"]
@@ -47,7 +47,7 @@ def fetch_release_notes(
     if local is not None:
         return local
 
-    return "Changelog not available. Visit https://github.com/chernistry/bernstein/releases for release notes."
+    return "Changelog not available. Visit https://github.com/sipyourdrink-ltd/bernstein/releases for release notes."
 
 
 def _fetch_remote(url: str) -> str | None:

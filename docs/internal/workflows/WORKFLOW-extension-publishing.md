@@ -343,7 +343,7 @@ Body: VSIX file (binary)
   "name": "bernstein",
   "namespace": "chernistry",
   "version": "0.1.0",
-  "url": "https://open-vsx.org/extension/chernistry/bernstein/0.1.0"
+  "url": "https://open-vsx.org/extension/sipyourdrink-ltd/bernstein/0.1.0"
 }
 ```
 **Failure response** (HTTP 400/401/409/500):

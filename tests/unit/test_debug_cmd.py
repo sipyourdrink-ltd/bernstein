@@ -205,7 +205,7 @@ class TestDebugCmdBannerAndOutput:
         result = runner.invoke(_make_cli(), ["debug", "--yes"])
         assert result.exit_code == 0
         assert "Next steps:" in result.output
-        assert "github.com/chernistry/bernstein/issues" in result.output
+        assert "github.com/sipyourdrink-ltd/bernstein/issues" in result.output
 
     @patch(f"{_MODULE}._load_bundle_module")
     def test_bundle_path_shown(self, mock_load: MagicMock) -> None:

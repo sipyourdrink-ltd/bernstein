@@ -525,5 +525,5 @@ If you cannot resolve an issue with this guide:
 1. **Run `bernstein doctor`** — the built-in diagnostic prints the most common configuration problems.
 2. **Run `bernstein debug`** — generates a debug bundle with logs, config, metrics, and git state for sharing.
 3. **Check agent logs** — `.sdd/runtime/<session>.log` contains the full CLI output including provider error messages.
-4. **Search GitHub Issues** — many error messages are already tracked at `https://github.com/chernistry/bernstein/issues`.
+4. **Search GitHub Issues** — many error messages are already tracked at `https://github.com/sipyourdrink-ltd/bernstein/issues`.
 5. **File a bug report** — include the output of `bernstein debug`, the relevant log snippet, and your `bernstein.yaml` (redact API keys).
