@@ -345,7 +345,7 @@ jobs:
         # `crate-ci/typos` is the upstream-recommended GH action and
         # mirrors the binary used by the spelling job in ci.yml.
         if: needs.triage.outputs.strategy == 'typos-allowlist'
-        uses: crate-ci/typos@7b04f660f4ee4f048d18fd341887cf28dfbedfe2 # v1
+        uses: crate-ci/typos@f8a58b6b53f2279f71eb605f03a4ae4d10608f45 # v1
         with:
           # `--format json` would normally print findings; we only need
           # the binary on $PATH for the apply step below to invoke.
