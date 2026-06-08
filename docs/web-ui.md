@@ -14,6 +14,8 @@ The Vite bundle is committed under `src/bernstein/gui/static/`, so wheel install
 
 ## Surface
 
+![Bernstein web UI — Tasks view](assets/webui-tasks.png)
+
 Top-level tabs:
 
 - **Tasks**

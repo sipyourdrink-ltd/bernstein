@@ -16,6 +16,20 @@ Five routes. Source: `web/src/routes/`. Design reference: `.sdd/backlog/open/fro
 
 ![Agents grid with token meter drawer](../assets/webui-agents-panel.png)
 
+![Tasks — empty state, filter chips and Run new task button](../assets/webui-tasks.png)
+
+![Agents — agent card grid view](../assets/webui-agents.png)
+
+![Approvals — empty approvals queue](../assets/webui-approvals.png)
+
+![Audit — audit log with chain status and filters](../assets/webui-audit.png)
+
+![Costs — KPI cards, sparkline and by-adapter table](../assets/webui-costs.png)
+
+![Fleet — fleet management scaffold](../assets/webui-fleet.png)
+
+![Settings — settings placeholder screen](../assets/webui-settings.png)
+
 ## Tasks (`/ui/tasks`, default route)
 
 - **Source:** `web/src/routes/Tasks.tsx`.
