@@ -228,7 +228,7 @@ jobs:
           egress-policy: audit
       # persist-credentials kept: this job pushes back to git (auto-heal branch).
       - name: Checkout failing commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6  # zizmor: ignore[artipacked]
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6  # zizmor: ignore[artipacked]
         with:
           ref: ${{ needs.triage.outputs.head_sha }}
           fetch-depth: 0
@@ -435,7 +435,7 @@ jobs:
         with:
           egress-policy: audit
       - name: Checkout main (trusted ref)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: main
           fetch-depth: 0
@@ -520,7 +520,7 @@ jobs:
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
       - name: Create or update ci-fix issue
