@@ -136,25 +136,28 @@ The real metric that matters: **how much of your day do you save?** If a single 
 
 Real runs from the community. Submit yours via [issue #787](https://github.com/sipyourdrink-ltd/bernstein/issues/787) or open a PR adding a row here.
 
-### Component benchmarks — Intel i3-6006U, Linux, Python 3.14.5
+### Component benchmarks — Intel i3-6006U, Linux, Python 3.14 (pre-release)
 
-**Hardware:** Intel Core i3-6006U @ 2.00GHz, 4 cores, 3.7 GB RAM, Ubuntu (kernel 6.17.0), SSD
+**Hardware:** Intel Core i3-6006U @ 2.00GHz, 4 cores, 3.7 GB RAM, Ubuntu (kernel 6.17.0-35-generic), SSD
+
 **Bernstein version:** v2.7.0
-**Python:** 3.14.5 (venv)
+
+**Python:** 3.14.5 (pre-release dev build, inside project venv — `uv venv`)
+
 **Submitted by:** [@Om-Rohilla](https://github.com/Om-Rohilla)
 
 | Benchmark | Result | Command |
 |-----------|--------|---------|
-| Orchestrator tick latency (100-task backlog) — avg | 5.89 ms | `bench_orchestrator.py` |
-| Orchestrator tick latency (100-task backlog) — max | 7.35 ms | `bench_orchestrator.py` |
-| Task store: creations | 251.83 tasks/sec | `bench_task_store.py` |
-| Task store: claims | 253.38 tasks/sec | `bench_task_store.py` |
-| Task store: completions | 162.19 tasks/sec | `bench_task_store.py` |
-| Task store: flush latency (buffer=1) | 3.32 ms | `bench_task_store.py` |
-| Quality gate verify_task — 1 signal | 0.038 ms | `bench_quality_gates.py` |
-| Quality gate verify_task — 10 signals | 0.231 ms | `bench_quality_gates.py` |
-| Quality gate verify_task — 50 signals | 1.134 ms | `bench_quality_gates.py` |
-| Quality gate verify_task — 100 signals | 1.915 ms | `bench_quality_gates.py` |
-| Startup latency (avg, 5 runs) | 3048.61 ms | `bench_startup.py` |
+| Orchestrator tick latency (100-task backlog) — avg | 5.89 ms | `uv run python benchmarks/bench_orchestrator.py` |
+| Orchestrator tick latency (100-task backlog) — max | 7.35 ms | `uv run python benchmarks/bench_orchestrator.py` |
+| Task store: creations | 251.83 tasks/sec | `uv run python benchmarks/bench_task_store.py` |
+| Task store: claims | 253.38 tasks/sec | `uv run python benchmarks/bench_task_store.py` |
+| Task store: completions | 162.19 tasks/sec | `uv run python benchmarks/bench_task_store.py` |
+| Task store: flush latency (buffer=1) | 3.32 ms | `uv run python benchmarks/bench_task_store.py` |
+| Quality gate verify_task — 1 signal | 0.038 ms | `uv run python benchmarks/bench_quality_gates.py` |
+| Quality gate verify_task — 10 signals | 0.231 ms | `uv run python benchmarks/bench_quality_gates.py` |
+| Quality gate verify_task — 50 signals | 1.134 ms | `uv run python benchmarks/bench_quality_gates.py` |
+| Quality gate verify_task — 100 signals | 1.915 ms | `uv run python benchmarks/bench_quality_gates.py` |
+| Startup latency (avg, 5 runs) | 3048.61 ms | `uv run python benchmarks/bench_startup.py` |
 
-**Notes:** This is a low-end consumer laptop (budget i3, 2016 generation). Startup latency is higher than expected — likely a cold import cost on Python 3.14. Orchestrator tick and task store throughput look reasonable for this hardware class. Quality gate scaling is near-linear as described in the docs.
+**Notes:** Low-end consumer laptop (budget i3, 2016 generation, 3.7 GB RAM). Startup latency is higher than expected — likely cold import overhead from running a Python 3.14 pre-release build; expect lower on stable Python 3.12/3.13. Orchestrator tick and task store throughput look normal for this hardware class. Quality gate scaling is near-linear as the docs describe.
