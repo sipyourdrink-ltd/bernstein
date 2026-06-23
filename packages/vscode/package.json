@@ -104,7 +104,7 @@
     "@types/node": "^24.0.0",
     "@types/vscode": "^1.100.0",
     "@vscode/vsce": "^3.0.0",
-    "ovsx": "^0.10.0",
+    "ovsx": "^1.0.0",
     "esbuild": "^0.28.1",
     "jest": "^30.0.0",
     "ts-jest": "^29.1",
