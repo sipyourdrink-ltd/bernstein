@@ -117,7 +117,7 @@ services:
   # and optionally Jaeger/Datadog/New Relic.
   # Profile: docker compose --profile otel up -d
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.152.1
+    image: otel/opentelemetry-collector-contrib:0.155.0
     profiles: [otel]
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
