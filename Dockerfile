@@ -1,6 +1,6 @@
 # Stage 1: build
 # python:3.13-slim
-FROM python:3.13-slim@sha256:b04b5d7233d2ad9c379e22ea8927cd1378cd15c60d4ef876c065b25ea8fb3bf3 AS build
+FROM python:3.13-slim@sha256:2b7445fb71ca9cb15e9aab053fe8cb3162796f8e1d92ada12a49c766a811bc1e AS build
 
 WORKDIR /app
 COPY . /app
@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir hatchling==1.29.0 && \
 
 # Stage 2: runtime
 # python:3.13-slim
-FROM python:3.13-slim@sha256:b04b5d7233d2ad9c379e22ea8927cd1378cd15c60d4ef876c065b25ea8fb3bf3
+FROM python:3.13-slim@sha256:2b7445fb71ca9cb15e9aab053fe8cb3162796f8e1d92ada12a49c766a811bc1e
 
 LABEL org.opencontainers.image.title="bernstein" \
       org.opencontainers.image.description="Declarative agent orchestration for engineering teams" \
