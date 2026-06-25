@@ -693,7 +693,7 @@ def unlock_cmd(workdir: Path, force: bool, as_json: bool) -> None:
     age = status.get("age_seconds")
     age_str = f"{int(age)}s" if isinstance(age, (int, float)) else "unknown age"
     owner = f"pid {pid}" if pid else "an unknown process"
-    liveness = "alive" if alive else ("not running" if alive is False else "liveness unknown")
+    liveness = {True: "alive", False: "not running", None: "liveness unknown"}[alive]
 
     if as_json:
         click.echo(json.dumps({**status, "removed": removed}, default=str))
