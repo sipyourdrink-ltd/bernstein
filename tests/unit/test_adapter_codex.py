@@ -299,11 +299,13 @@ class TestCodexSpawnMissingBinary:
 
 
 class TestCodexWarningsAndFastExit:
-    def test_warns_when_openai_api_key_missing(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def test_warns_when_no_key_and_no_oauth(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         adapter = CodexAdapter()
         proc_mock = _make_popen_mock(pid=301)
+        missing_auth = tmp_path / "no-codex" / "auth.json"
         with (
             patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock),
+            patch("bernstein.adapters.codex._CODEX_AUTH_FILE", missing_auth),
             patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
             caplog.at_level("WARNING"),
         ):
@@ -313,7 +315,42 @@ class TestCodexWarningsAndFastExit:
                 model_config=ModelConfig(model="o3", effort="high"),
                 session_id="warn-missing-key",
             )
-        assert "OPENAI_API_KEY is not set - spawn will fail" in caplog.text
+        assert "no OPENAI_API_KEY and no Codex OAuth session" in caplog.text
+
+    def test_no_auth_warning_with_oauth_session(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """A valid ChatGPT OAuth session (~/.codex/auth.json) must not warn (issue #2075)."""
+        adapter = CodexAdapter()
+        proc_mock = _make_popen_mock(pid=303)
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text("{}")
+        with (
+            patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock),
+            patch("bernstein.adapters.codex._CODEX_AUTH_FILE", auth_file),
+            patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            caplog.at_level("WARNING"),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="o3", effort="high"),
+                session_id="oauth-session",
+            )
+        assert not any("OPENAI_API_KEY" in r.message or "OAuth session" in r.message for r in caplog.records)
+
+    def test_claude_tier_model_mapped_to_codex_default(self, tmp_path: Path) -> None:
+        """A Claude tier name reaching the adapter must not become `codex exec -m opus` (issue #2075)."""
+        adapter = CodexAdapter()
+        proc_mock = _make_popen_mock(pid=304)
+        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="opus", effort="max"),
+                session_id="codex-opus",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("-m") + 1] == "gpt-5.4"
+        assert "opus" not in inner
 
     def test_fast_exit_rate_limit_raises(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()

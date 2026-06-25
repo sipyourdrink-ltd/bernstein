@@ -452,8 +452,16 @@ def _print_demo_summary(project_dir: Path, server_url: str, elapsed_secs: float 
         resp = httpx.get(f"{server_url}/status", timeout=3.0, headers=auth_headers())
         if resp.status_code == 200:
             payload = resp.json()
-            tasks_data = payload.get("tasks", [])
-            total_cost = payload.get("total_cost_usd", 0.0)
+            # /status returns tasks as {"count": N, "items": [...]}; tolerate a
+            # bare list too. Iterating the dict form would yield its string keys
+            # and crash on ``t.get`` (the historical AttributeError), so unwrap
+            # to the items list and keep only dict rows.
+            raw_tasks = payload.get("tasks", [])
+            if isinstance(raw_tasks, dict):
+                raw_tasks = raw_tasks.get("items", [])
+            if isinstance(raw_tasks, list):
+                tasks_data = [t for t in raw_tasks if isinstance(t, dict)]
+            total_cost = float(payload.get("total_cost_usd", 0.0) or 0.0)
 
     done = sum(1 for t in tasks_data if t.get("status") == "done")
     failed = sum(1 for t in tasks_data if t.get("status") == "failed")

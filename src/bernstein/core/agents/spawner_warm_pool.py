@@ -60,6 +60,44 @@ def _should_use_router(
     return BanditRouter.router_applicable(effective_adapter)
 
 
+_CLAUDE_TIER_MODELS = frozenset({"opus", "sonnet", "haiku"})
+
+
+def _coerce_model_for_non_claude_adapter(
+    model_config: ModelConfig,
+    *,
+    adapter_name: str,
+    adapter_default_model: str | None,
+) -> ModelConfig:
+    """Replace an unpinned Claude tier name with the adapter's default model.
+
+    The batch/heuristic selectors emit Claude cascade tier names (opus/sonnet/
+    haiku) with no adapter awareness. Handing one to a non-Claude adapter (e.g.
+    Codex) produces ``codex exec -m opus``, which the CLI rejects, and records a
+    model in the manifest that never actually ran. This normalises the selected
+    model so the recorded and executed model agree.
+
+    Returns the input unchanged for Claude-compatible adapters (byte-identical),
+    for models that are not Claude tiers, or when no adapter default is known.
+    Callers must only invoke this when the operator did not pin a model
+    (no per-task ``model`` and no ``role_model_policy`` model).
+    """
+    from bernstein.core.bandit_router import BanditRouter
+
+    if BanditRouter.router_applicable(adapter_name):
+        return model_config
+    if model_config.model not in _CLAUDE_TIER_MODELS:
+        return model_config
+    if not adapter_default_model:
+        return model_config
+    return ModelConfig(
+        model=adapter_default_model,
+        effort=model_config.effort,
+        max_tokens=model_config.max_tokens,
+        is_batch=model_config.is_batch,
+    )
+
+
 def _load_role_config(role: str, templates_dir: Path) -> ModelConfig | None:
     """Load ModelConfig from a role's config.yaml if present.
 

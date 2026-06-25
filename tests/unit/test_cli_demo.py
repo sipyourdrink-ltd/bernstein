@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import io
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
+from rich.console import Console
 
 from bernstein.cli.main import (
     DEMO_TASKS,
@@ -12,6 +14,48 @@ from bernstein.cli.main import (
     detect_available_adapter,
     setup_demo_project,
 )
+
+
+def test_demo_summary_handles_status_tasks_dict_shape(tmp_path):
+    """GET /status returns tasks as {"count", "items"}; the summary must not crash.
+
+    Regression for issue #2075: iterating the dict form yielded its string keys
+    and raised ``AttributeError: 'str' object has no attribute 'get'``.
+    """
+    from bernstein.cli import run_confirm
+
+    payload = {
+        "total": 3,
+        "done": 1,
+        "failed": 1,
+        "total_cost_usd": 0.5,
+        "tasks": {
+            "count": 3,
+            "items": [
+                {"status": "done", "title": "a"},
+                {"status": "failed", "title": "b"},
+                {"status": "open", "title": "c"},
+            ],
+        },
+    }
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = payload
+
+    buf = io.StringIO()
+    rec_console = Console(file=buf, force_terminal=False, width=100)
+    with (
+        patch.object(run_confirm.httpx, "get", return_value=resp),
+        patch.object(run_confirm, "console", rec_console),
+    ):
+        run_confirm._print_demo_summary(tmp_path, "http://127.0.0.1:9999", elapsed_secs=12.0)
+
+    out = buf.getvalue()
+    # 1 done out of 3 total, rendered without raising.
+    assert "1" in out
+    assert "/ 3" in out
+    assert "$0.5000" in out
+
 
 # ---------------------------------------------------------------------------
 # detect_available_adapter

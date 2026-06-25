@@ -48,7 +48,11 @@ from bernstein.core.agents.spawner_sandbox_session import (
     submit_session_exec,
     write_prompt_to_session,
 )
-from bernstein.core.agents.spawner_warm_pool import _select_batch_config, _should_use_router
+from bernstein.core.agents.spawner_warm_pool import (
+    _coerce_model_for_non_claude_adapter,
+    _select_batch_config,
+    _should_use_router,
+)
 from bernstein.core.agents.spawner_worktree import (
     cleanup_worktree as _cleanup_worktree,
 )
@@ -1793,6 +1797,19 @@ class AgentSpawner:
             role_policy,
             preferred_provider,
         )
+
+        # When the run-level adapter is non-Claude and no model was pinned by the
+        # operator, the heuristic/batch selector may still have produced a Claude
+        # tier name (opus/sonnet/haiku). Substitute the adapter's own default so
+        # the model recorded here matches what the adapter actually runs (e.g.
+        # Codex gets gpt-5.4, not `codex exec -m opus`). Claude-compatible
+        # adapters are returned unchanged.
+        if provider_name is None and not tasks[0].model and not role_policy.get("model"):
+            model_config = _coerce_model_for_non_claude_adapter(
+                model_config,
+                adapter_name=self._adapter.name(),
+                adapter_default_model=getattr(self._adapter, "default_model", None),
+            )
 
         logger.info(
             "Model selection for role=%s: model=%s effort=%s provider=%s source=%s",
