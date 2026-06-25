@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
 
       - name: Run trufflehog
-        uses: trufflesecurity/trufflehog@d411fff7b8879a62509f3fa98c07f247ac089a51  # v3.95.5
+        uses: trufflesecurity/trufflehog@30d5bb91af1a771378349dbbb0c82129392acf70  # v3.95.6
         with:
           # Only report verified secrets - keeps signal-to-noise high and
           # lets the job act as a hard gate. Unknown / unverified results
