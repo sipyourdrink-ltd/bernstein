@@ -158,7 +158,7 @@ def _cosine(left: dict[str, float], right: dict[str, float]) -> float:
         return 0.0
     left_norm = math.sqrt(sum(weight * weight for weight in left.values()))
     right_norm = math.sqrt(sum(weight * weight for weight in right.values()))
-    if left_norm == 0 or right_norm == 0:
+    if 0 in (left_norm, right_norm):
         return 0.0
     return numerator / (left_norm * right_norm)
 

@@ -524,7 +524,7 @@ def _is_criterion_name(name: str) -> bool:
     first = name[0]
     if not (first == "_" or "A" <= first <= "Z" or "a" <= first <= "z"):
         return False
-    return all(ch == "_" or ch == "-" or "0" <= ch <= "9" or "A" <= ch <= "Z" or "a" <= ch <= "z" for ch in name[1:])
+    return all(ch in ("_", "-") or "0" <= ch <= "9" or "A" <= ch <= "Z" or "a" <= ch <= "z" for ch in name[1:])
 
 
 def _split_retry_budget_spec(spec: str) -> tuple[int, str | None]:

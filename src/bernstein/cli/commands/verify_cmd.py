@@ -643,7 +643,7 @@ def _verify_determinism(
 
     fingerprint = fp.compute()
 
-    if expect is None and baseline_run_id is None:
+    if expect is None is baseline_run_id:
         # Bare mode: observe-only, byte-identical to the original surface.
         # The entry count is only displayed in this branch, so the second WAL
         # scan stays scoped here rather than running for every gated call.

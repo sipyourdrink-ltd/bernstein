@@ -174,8 +174,7 @@ def load_schema(version: str = "v1") -> dict[str, Any]:
         raise SchemaNotFoundError(f"schema {filename} is not valid JSON: {exc}") from exc
     if not isinstance(loaded_raw, dict):
         raise SchemaNotFoundError(f"schema {filename} is not a JSON object")
-    loaded_dict = cast("dict[str, Any]", loaded_raw)
-    loaded: dict[str, Any] = dict(loaded_dict)
+    loaded: dict[str, Any] = cast("dict[str, Any]", loaded_raw).copy()
     # Sanity-check it really is Draft-07 compatible.
     jsonschema.Draft7Validator.check_schema(loaded)
     _SCHEMA_CACHE[canonical] = loaded

@@ -143,7 +143,7 @@ def telemetry_status(home: Path | None) -> None:
     dsn = os.environ.get(sidechannel.DSN_ENV) or "(unset)"
     from bernstein.core.telemetry.share import resolve_share_endpoint
 
-    share_endpoint_configured = resolve_share_endpoint(dict(os.environ)) is not None
+    share_endpoint_configured = resolve_share_endpoint(os.environ.copy()) is not None
     lines: list[str] = [
         f"enabled: {str(state.enabled).lower()}",
         f"source: {state.source.value}",

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import operator
 import os
 import threading
 import time
@@ -319,7 +320,7 @@ class ReplayGateway:
 
         # Sort by (seq, file_pos) so the per-kind lists are in recorded order
         # even if the log was written or stitched out of strict line order.
-        rows.sort(key=lambda r: (r[0], r[1]))
+        rows.sort(key=operator.itemgetter(0, 1))
         for _seq, _pos, kind, key, response in rows:
             ordered = self._ordered_by_kind.setdefault(kind, [])
             fixture = _Fixture(response=response)

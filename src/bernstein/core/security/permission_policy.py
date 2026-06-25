@@ -241,8 +241,7 @@ def _load_yaml_permissions(workdir: Path) -> Mapping[str, Any] | None:
         return None
     if not isinstance(raw, dict):
         return None
-    raw_mapping = cast("Mapping[str, Any]", raw)
-    section = raw_mapping.get("permissions")
+    section = cast("Mapping[str, Any]", raw).get("permissions")
     if not isinstance(section, dict):
         return None
     return cast("Mapping[str, Any]", section)

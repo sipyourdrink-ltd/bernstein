@@ -96,8 +96,7 @@ def load_approval_config(workdir: Path | None = None) -> ApprovalConfig:
         return ApprovalConfig()
     if not isinstance(raw, dict):
         return ApprovalConfig()
-    raw_mapping = cast("dict[str, Any]", raw)
-    raw_section: object = raw_mapping.get("approvals")
+    raw_section: object = cast("dict[str, Any]", raw).get("approvals")
     if not isinstance(raw_section, dict):
         return ApprovalConfig()
     section = cast("dict[str, Any]", raw_section)

@@ -1305,14 +1305,6 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      # Required by mikepenz/action-junit-report to create check-run
-      # annotations surfaced in the PR Checks tab.
-      checks: write
-      # Required by ctrf-io/github-test-reporter to post the test-result
-      # summary comment on the PR that triggered the run. The action no-
-      # ops gracefully on push events; the workflow-level Step Summary
-      # is always populated.
-      pull-requests: write
     env:
       # Single source of truth for the shard count. The `--shard i/N`
       # denominator below and the per-shard slice both key off this; bump
@@ -1531,7 +1523,6 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      checks: write
     env:
       # Per-push macOS runs only shard 1 of this many - a deterministic
       # ~1/4 subset of the file list. ci-macos-nightly.yml runs the full

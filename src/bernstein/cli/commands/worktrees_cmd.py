@@ -318,7 +318,7 @@ def gc_cmd(workdir: Path, yes: bool, dry_run: bool, force_unsaved: bool) -> None
         console.print("[green]No reapable worktrees - nothing to do.[/green]")
         return
 
-    targets = list(reapable)
+    targets = reapable.copy()
     if force_unsaved:
         targets.extend(unsaved)
 

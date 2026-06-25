@@ -102,8 +102,7 @@ def load_trigger_suite(path: Path) -> tuple[TriggerCase, ...]:
         raise SkillAuthoringError(f"{path}: failed to read trigger suite: {exc}") from exc
     if not isinstance(loaded, dict):
         raise SkillAuthoringError(f"{path}: suite must be a YAML mapping")
-    suite_data = cast("dict[str, object]", loaded)
-    raw_cases = suite_data.get("cases")
+    raw_cases = cast("dict[str, object]", loaded).get("cases")
     if not isinstance(raw_cases, list):
         raise SkillAuthoringError(f"{path}: suite must contain a cases list")
 

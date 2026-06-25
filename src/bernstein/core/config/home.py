@@ -208,8 +208,7 @@ class BernsteinHome:
 
     def load_raw(self) -> dict[str, object]:
         """Return raw persisted global settings without default expansion."""
-        data = self._load()
-        return dict(data)
+        return self._load().copy()
 
     def _save(self, data: dict[str, Any]) -> None:
         """Persist data to config.yaml, creating home dir if needed."""

@@ -624,7 +624,7 @@ def _read_schedule_fire_entries(sdd_dir: Path) -> dict[tuple[str, int], dict[str
                 key = (str(details["schedule_id"]), int(details["fire_time"]))
             except (KeyError, TypeError, ValueError):
                 continue
-            enriched: dict[str, Any] = dict(details)
+            enriched: dict[str, Any] = details.copy()
             enriched["__hmac__"] = str(entry.get("hmac", ""))
             # Last writer wins: later daily segments override earlier ones
             # for the same (id, fire_time), which cannot legitimately
@@ -704,26 +704,24 @@ class AuditReport:
 
     def to_json(self) -> list[dict[str, Any]]:
         """Return a JSON-safe per-receipt view for ``--json`` output."""
-        out: list[dict[str, Any]] = []
-        for r in self.results:
-            out.append(
-                {
-                    "schedule_id": r.schedule_id,
-                    "fire_time": r.fire_time,
-                    "counterfactual": r.counterfactual,
-                    "rev": r.rev,
-                    "recorded_projection_hash": r.recorded_projection_hash,
-                    "recomputed_projection_hash": r.recomputed_projection_hash,
-                    "projection_match": r.projection_match,
-                    "chain_match": r.chain_match,
-                    "rev_skipped": r.rev_skipped,
-                    "skipped": r.skipped,
-                    "verified": r.verified,
-                    "mismatch": r.mismatch,
-                    "reasons": list(r.reasons),
-                },
-            )
-        return out
+        return [
+            {
+                "schedule_id": r.schedule_id,
+                "fire_time": r.fire_time,
+                "counterfactual": r.counterfactual,
+                "rev": r.rev,
+                "recorded_projection_hash": r.recorded_projection_hash,
+                "recomputed_projection_hash": r.recomputed_projection_hash,
+                "projection_match": r.projection_match,
+                "chain_match": r.chain_match,
+                "rev_skipped": r.rev_skipped,
+                "skipped": r.skipped,
+                "verified": r.verified,
+                "mismatch": r.mismatch,
+                "reasons": list(r.reasons),
+            }
+            for r in self.results
+        ]
 
 
 def verify_receipts(sdd_dir: Path) -> AuditReport:
