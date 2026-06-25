@@ -577,3 +577,138 @@ def _append_reap_event(
             "dry_run": dry_run,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Lock inspection + recovery (`worktrees unlock`)
+# ---------------------------------------------------------------------------
+
+#: Audit event-type appended to the HMAC-chained log when an operator clears
+#: a stuck GC lock, so a recovery is forensically reconstructable rather than a
+#: silent file deletion.
+_WORKTREE_GC_UNLOCK_EVENT = "worktree.gc_unlock"
+
+
+def _gc_lock_status(repo_root: Path) -> dict[str, object]:
+    """Return the current GC lock status without mutating it."""
+    lock_path = repo_root / GC_LOCK_RELPATH
+    if not lock_path.exists():
+        return {"held": False}
+    meta = _read_gc_lock(lock_path)
+    pid = meta.get("pid") if isinstance(meta, dict) else None
+    started = meta.get("started_at") if isinstance(meta, dict) else None
+    age: float | None = None
+    if isinstance(started, (int, float)):
+        age = max(0.0, time.time() - started)
+    alive: bool | None = None
+    if isinstance(pid, int) and pid > 0:
+        alive = is_process_alive(pid)
+    return {
+        "held": True,
+        "path": str(lock_path),
+        "pid": pid,
+        "alive": alive,
+        "age_seconds": age,
+        "stale": _gc_lock_is_stale(meta),
+        "readable": isinstance(meta, dict),
+    }
+
+
+def _append_gc_unlock_event(repo_root: Path, status: dict[str, object], *, forced: bool) -> None:
+    """Record the unlock on the HMAC-chained audit log.
+
+    Unlike a reap (which destroys work and is fail-closed), clearing a lock
+    file destroys nothing, so the caller treats a failed append as a warning
+    and still recovers: refusing to clear the lock when the audit log is
+    unavailable would recreate the very wedge this command exists to fix.
+    """
+    age = status.get("age_seconds")
+    log = _open_audit_log(repo_root)
+    log.log(
+        event_type=_WORKTREE_GC_UNLOCK_EVENT,
+        actor=_AUDIT_ACTOR,
+        resource_type="worktree_gc_lock",
+        resource_id=str(repo_root / GC_LOCK_RELPATH),
+        details={
+            "previous_pid": status.get("pid"),
+            "previous_owner_alive": status.get("alive"),
+            "age_seconds": int(age) if isinstance(age, (int, float)) else None,
+            "stale": status.get("stale"),
+            "forced": forced,
+        },
+    )
+
+
+@worktrees_group.command("unlock")
+@click.option(
+    "--workdir",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=Path(),
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Remove the lock even when its owner process still looks alive.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def unlock_cmd(workdir: Path, force: bool, as_json: bool) -> None:
+    """Inspect and clear a stuck worktree GC lock.
+
+    ``worktrees gc`` takes an exclusive lock; a crashed or killed run can leave
+    it behind and wedge every later gc. This reports who holds the lock and
+    removes it when the owner process is gone (or with ``--force``), recording
+    the unlock as a tamper-evident ``worktree.gc_unlock`` audit event so the
+    recovery is never silent. A lock held by a live, recent process is refused
+    unless ``--force`` is passed.
+    """
+    repo_root = workdir.resolve()
+    status = _gc_lock_status(repo_root)
+    console = Console()
+
+    if not status["held"]:
+        if as_json:
+            click.echo(json.dumps({"held": False, "removed": False}, default=str))
+        else:
+            console.print("[green]No worktree GC lock is held.[/green]")
+        return
+
+    removable = bool(status["stale"]) or force
+    removed = False
+    if removable:
+        forced_live = force and not status["stale"]
+        try:
+            _append_gc_unlock_event(repo_root, status, forced=forced_live)
+        except Exception as exc:  # best-effort: never wedge recovery on audit failure
+            logger.warning("worktree.gc_unlock audit append failed (continuing): %s", exc)
+        lock_path = repo_root / GC_LOCK_RELPATH
+        with contextlib.suppress(OSError):
+            lock_path.unlink()
+        removed = not lock_path.exists()
+
+    pid = status.get("pid")
+    alive = status.get("alive")
+    age = status.get("age_seconds")
+    age_str = f"{int(age)}s" if isinstance(age, (int, float)) else "unknown age"
+    owner = f"pid {pid}" if pid else "an unknown process"
+    liveness = "alive" if alive else ("not running" if alive is False else "liveness unknown")
+
+    if as_json:
+        click.echo(json.dumps({**status, "removed": removed}, default=str))
+        if not removable:
+            raise SystemExit(1)
+        return
+
+    if removed:
+        console.print(f"[green]Cleared worktree GC lock[/green] (previous owner {owner}, {liveness}, {age_str}).")
+        console.print("[dim]Recorded as a worktree.gc_unlock audit event.[/dim]")
+    elif removable:
+        console.print("[yellow]GC lock was already gone.[/yellow]")
+    else:
+        console.print(
+            f"[red]A worktree GC appears to be running ({owner}, {liveness}, {age_str}).[/red]\n"
+            "Pass --force only if you are sure that process is dead."
+        )
+        raise SystemExit(1)

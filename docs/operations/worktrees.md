@@ -64,6 +64,7 @@ only ever blocks deletion, it never deletes more.
 ```text
 bernstein worktrees list   [--workdir DIR] [--json]
 bernstein worktrees gc     [--workdir DIR] [--yes] [--dry] [--force-unsaved]
+bernstein worktrees unlock [--workdir DIR] [--force] [--json]
 ```
 
 - `list` - tabular dump with path, task id, state, age, size, PID. Use
@@ -78,14 +79,23 @@ bernstein worktrees gc     [--workdir DIR] [--yes] [--dry] [--force-unsaved]
   confirmation (unless `--yes` is also passed) and mirrors the
   `maintenance` command's `--force`. The reap is recorded with
   `forced=true` in the audit trail.
+- `unlock` - inspect and clear a stuck GC lock. It reports who holds the
+  lock (pid, liveness, age) and removes it when the owner process is gone;
+  pass `--force` to clear a lock whose owner still looks alive. The unlock
+  is recorded as a `worktree.gc_unlock` event in the audit trail, so a
+  manual recovery is never silent.
 
 ## GC lock
 
 A single-file lock at `.sdd/runtime/worktree-gc.lock` is held via
-`O_EXCL` for the duration of `gc`. The lock is released on exception.
+`O_EXCL` for the duration of `gc`. The lock file records the owner pid and
+start time, and is released on exception.
 
-Exit code `2` indicates a lock collision (another `gc` is in flight or
-the lock file is stale).
+A lock left behind by a crashed or killed `gc` is reclaimed automatically on
+the next run once its owner process is gone (or the lock is older than a
+generous bound), so a crash no longer wedges future runs. Exit code `2`
+still indicates a genuine collision with a live, recent `gc`. To inspect or
+clear a lock by hand, use `bernstein worktrees unlock`.
 
 ## Lifecycle event
 

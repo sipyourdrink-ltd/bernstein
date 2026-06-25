@@ -852,3 +852,96 @@ def test_lock_gc_respects_live_owner(repo_root: Path) -> None:
         with pytest.raises(GcLockError):
             with lock_gc(repo_root):
                 pass
+
+
+# ----------------------------------------------------------------------------
+# `worktrees unlock` (GC lock inspection + recovery)
+# ----------------------------------------------------------------------------
+
+
+def _write_lock(repo_root: Path, pid: int, started_at: float) -> Path:
+    import json as _json
+
+    from bernstein.cli.commands.worktrees_cmd import GC_LOCK_RELPATH
+
+    lock_path = repo_root / GC_LOCK_RELPATH
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(_json.dumps({"pid": pid, "started_at": started_at}), encoding="utf-8")
+    return lock_path
+
+
+def test_gc_lock_status_reports_no_lock(repo_root: Path) -> None:
+    from bernstein.cli.commands.worktrees_cmd import _gc_lock_status
+
+    assert _gc_lock_status(repo_root) == {"held": False}
+
+
+def test_gc_lock_status_flags_dead_owner(repo_root: Path) -> None:
+    import time as _time
+    from unittest.mock import patch
+
+    from bernstein.cli.commands.worktrees_cmd import _gc_lock_status
+
+    _write_lock(repo_root, pid=999999, started_at=_time.time())
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=False):
+        st = _gc_lock_status(repo_root)
+    assert st["held"] is True
+    assert st["alive"] is False
+    assert st["stale"] is True
+
+
+def test_unlock_no_lock(repo_root: Path) -> None:
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.worktrees_cmd import worktrees_group
+
+    result = CliRunner().invoke(worktrees_group, ["unlock", "--workdir", str(repo_root)])
+    assert result.exit_code == 0, result.output
+    assert "No worktree GC lock is held" in result.output
+
+
+def test_unlock_clears_dead_owner_lock(repo_root: Path) -> None:
+    import time as _time
+    from unittest.mock import patch
+
+    from click.testing import CliRunner
+
+    lock_path = _write_lock(repo_root, pid=999999, started_at=_time.time())
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=False):
+        result = CliRunner().invoke(worktrees_group_ref(), ["unlock", "--workdir", str(repo_root)])
+    assert result.exit_code == 0, result.output
+    assert "Cleared worktree GC lock" in result.output
+    assert not lock_path.exists()
+
+
+def test_unlock_refuses_live_owner_without_force(repo_root: Path) -> None:
+    import time as _time
+    from unittest.mock import patch
+
+    from click.testing import CliRunner
+
+    lock_path = _write_lock(repo_root, pid=4321, started_at=_time.time())
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=True):
+        result = CliRunner().invoke(worktrees_group_ref(), ["unlock", "--workdir", str(repo_root)])
+    assert result.exit_code == 1
+    assert "appears to be running" in result.output
+    assert lock_path.exists()  # not removed
+
+
+def test_unlock_force_clears_live_owner(repo_root: Path) -> None:
+    import time as _time
+    from unittest.mock import patch
+
+    from click.testing import CliRunner
+
+    lock_path = _write_lock(repo_root, pid=4321, started_at=_time.time())
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=True):
+        result = CliRunner().invoke(worktrees_group_ref(), ["unlock", "--workdir", str(repo_root), "--force"])
+    assert result.exit_code == 0, result.output
+    assert not lock_path.exists()
+
+
+def worktrees_group_ref():  # small helper so the import lives next to use
+    from bernstein.cli.commands.worktrees_cmd import worktrees_group
+
+    return worktrees_group
