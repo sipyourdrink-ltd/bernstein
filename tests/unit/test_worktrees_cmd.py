@@ -772,3 +772,83 @@ def test_tampering_with_recorded_head_breaks_verify(repo_root: Path) -> None:
     valid, errors = fresh.verify()
     assert valid is False
     assert any("HMAC mismatch" in e or "non-canonical" in e for e in errors)
+
+
+# ----------------------------------------------------------------------------
+# GC lock stale recovery (gc-reliability): a crashed GC must not wedge future runs
+# ----------------------------------------------------------------------------
+
+
+def test_gc_lock_stale_when_pid_dead() -> None:
+    import time as _time
+    from unittest.mock import patch
+
+    from bernstein.cli.commands.worktrees_cmd import _gc_lock_is_stale
+
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=False):
+        assert _gc_lock_is_stale({"pid": 999999, "started_at": _time.time()}) is True
+
+
+def test_gc_lock_not_stale_when_pid_alive() -> None:
+    import os as _os
+    import time as _time
+    from unittest.mock import patch
+
+    from bernstein.cli.commands.worktrees_cmd import _gc_lock_is_stale
+
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=True):
+        assert _gc_lock_is_stale({"pid": _os.getpid(), "started_at": _time.time()}) is False
+
+
+def test_gc_lock_stale_when_too_old() -> None:
+    import os as _os
+    import time as _time
+    from unittest.mock import patch
+
+    from bernstein.cli.commands.worktrees_cmd import _gc_lock_is_stale
+
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=True):
+        assert _gc_lock_is_stale({"pid": _os.getpid(), "started_at": _time.time() - 7 * 3600}) is True
+
+
+def test_gc_lock_unreadable_is_not_stale() -> None:
+    from bernstein.cli.commands.worktrees_cmd import _gc_lock_is_stale
+
+    assert _gc_lock_is_stale(None) is False
+
+
+def test_lock_gc_reclaims_lock_from_dead_owner(repo_root: Path) -> None:
+    """A lock left by a crashed GC (dead pid) is reclaimed, not wedged forever."""
+    import json as _json
+    import time as _time
+    from unittest.mock import patch
+
+    from bernstein.cli.commands.worktrees_cmd import GC_LOCK_RELPATH
+
+    lock_path = repo_root / GC_LOCK_RELPATH
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(_json.dumps({"pid": 999999, "started_at": _time.time()}), encoding="utf-8")
+
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=False):
+        with lock_gc(repo_root):
+            assert lock_path.exists()
+    assert not lock_path.exists()
+
+
+def test_lock_gc_respects_live_owner(repo_root: Path) -> None:
+    """A lock held by a live, recent process is NOT reclaimed."""
+    import json as _json
+    import os as _os
+    import time as _time
+    from unittest.mock import patch
+
+    from bernstein.cli.commands.worktrees_cmd import GC_LOCK_RELPATH
+
+    lock_path = repo_root / GC_LOCK_RELPATH
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(_json.dumps({"pid": _os.getpid(), "started_at": _time.time()}), encoding="utf-8")
+
+    with patch("bernstein.cli.commands.worktrees_cmd.is_process_alive", return_value=True):
+        with pytest.raises(GcLockError):
+            with lock_gc(repo_root):
+                pass

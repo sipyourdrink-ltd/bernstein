@@ -336,20 +336,80 @@ def setup_worktree_env(
             logger.warning("Failed to run worktree setup command: %s", exc)
 
 
+def _branch_exists(repo_root: Path, branch: str) -> bool:
+    """Return True if *branch* resolves to a commit in *repo_root*."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", branch],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+    return result.returncode == 0
+
+
+def _resolve_graveyard_base(repo_root: Path) -> str:
+    """Resolve the default-branch ref used as the merge baseline for graveyard capture.
+
+    A repository whose default branch is not ``main`` (``master``, ``trunk``,
+    ...) would otherwise lose unmerged agent work, because ``git rev-list
+    <branch> ^main`` fails when ``main`` does not exist and the failure was
+    read as "nothing to preserve". Resolution order mirrors the project's
+    canonical default-branch detection: ``origin/HEAD``, then the conventional
+    names locally and as remote-tracking refs. Falls back to ``"main"`` only as
+    a last resort.
+    """
+    try:
+        head = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+        )
+        if head.returncode == 0:
+            ref = head.stdout.strip()
+            if ref.startswith("refs/remotes/origin/"):
+                return ref.removeprefix("refs/remotes/origin/")
+        for candidate in ("main", "master", "refs/remotes/origin/main", "refs/remotes/origin/master"):
+            probe = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", candidate],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=_GRAVEYARD_GIT_TIMEOUT_S,
+            )
+            if probe.returncode == 0:
+                return candidate
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return "main"
+
+
 def _count_unmerged_commits(repo_root: Path, branch: str, base: str = "main") -> int:
     """Return how many commits on *branch* are not reachable from *base*.
 
-    Uses ``git rev-list <branch> ^<base> --count``.  If the branch is missing
-    or the command fails, returns ``0`` - callers treat that as "nothing to
-    preserve" which is safe because graveyard capture is best-effort.
+    Uses ``git rev-list <branch> ^<base> --count``.
+
+    Returns the real count, ``0`` when the branch is gone or genuinely fully
+    merged, and ``-1`` when the branch still exists but the count could not be
+    computed (for example the *base* ref does not exist). Callers treat any
+    non-zero result, including ``-1``, as "preserve to the graveyard" so that
+    unmerged work is never silently dropped on an inconclusive check.
 
     Args:
         repo_root: Repository root directory.
         branch: Branch name to compare against *base* (e.g. ``agent/<sid>``).
-        base: Reference to compare against.  Defaults to ``main``.
+        base: Reference to compare against. Resolve it with
+            :func:`_resolve_graveyard_base` so it matches the repo default
+            branch rather than assuming ``main``.
 
     Returns:
-        Number of commits on *branch* not in *base*.  ``0`` on any failure.
+        Number of commits on *branch* not in *base*; ``0`` when nothing is at
+        risk; ``-1`` when the check was inconclusive but the branch exists.
     """
     try:
         result = subprocess.run(
@@ -363,10 +423,10 @@ def _count_unmerged_commits(repo_root: Path, branch: str, base: str = "main") ->
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
         logger.debug("rev-list for %s failed: %s", branch, exc)
-        return 0
+        return -1 if _branch_exists(repo_root, branch) else 0
     if result.returncode != 0:
         logger.debug("rev-list for %s exited %d: %s", branch, result.returncode, result.stderr.strip())
-        return 0
+        return -1 if _branch_exists(repo_root, branch) else 0
     raw = result.stdout.strip()
     if not raw:
         return 0
@@ -374,7 +434,7 @@ def _count_unmerged_commits(repo_root: Path, branch: str, base: str = "main") ->
         return int(raw)
     except ValueError:
         logger.debug("rev-list for %s produced non-integer output: %r", branch, raw)
-        return 0
+        return -1 if _branch_exists(repo_root, branch) else 0
 
 
 def _resolve_ref(repo_root: Path, ref: str) -> str | None:
@@ -849,16 +909,20 @@ class WorktreeManager:
                 # remove --force`` followed by ``git branch -D`` would make
                 # those commits unreachable and gc-eligible.
                 branch_name = f"agent/{session_id}"
+                base_ref = _resolve_graveyard_base(self.repo_root)
                 try:
-                    unmerged = _count_unmerged_commits(self.repo_root, branch_name, base="main")
-                except Exception as exc:  # defensive - never block cleanup
+                    unmerged = _count_unmerged_commits(self.repo_root, branch_name, base=base_ref)
+                except Exception as exc:  # defensive - preserve rather than drop work
                     logger.debug("Graveyard pre-check failed for %s: %s", session_id, exc)
-                    unmerged = 0
-                if unmerged > 0:
+                    unmerged = -1 if _branch_exists(self.repo_root, branch_name) else 0
+                # Any non-zero result preserves: >0 is a real count, -1 means the
+                # check was inconclusive but the branch exists, so we keep the work.
+                if unmerged != 0:
                     logger.warning(
-                        "Stale worktree %s has %d unmerged commit(s); preserving to graveyard",
+                        "Stale worktree %s has %s unmerged commit(s) (base %s); preserving to graveyard",
                         session_id,
-                        unmerged,
+                        unmerged if unmerged > 0 else "an unknown number of",
+                        base_ref,
                     )
                     try:
                         preserve_branch_to_graveyard(self.repo_root, session_id, branch=branch_name)

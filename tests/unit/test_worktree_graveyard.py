@@ -244,3 +244,61 @@ def test_purge_graveyard_zero_days_purges_everything(repo: Path) -> None:
 def test_purge_graveyard_rejects_negative_age(repo: Path) -> None:
     with pytest.raises(ValueError, match=">= 0"):
         purge_graveyard(repo, older_than_days=-1)
+
+
+# ----------------------------------------------------------------------------
+# Non-`main` default branch must not lose unmerged work (gc-reliability)
+# ----------------------------------------------------------------------------
+
+
+def _init_repo_on(tmp_path: Path, branch: str) -> Path:
+    repo = tmp_path / f"repo_{branch}"
+    repo.mkdir()
+    _run(["git", "init", "-b", branch], repo)
+    _run(["git", "config", "user.email", "test@example.com"], repo)
+    _run(["git", "config", "user.name", "Test User"], repo)
+    _run(["git", "config", "commit.gpgsign", "false"], repo)
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    _run(["git", "add", "README.md"], repo)
+    _run(["git", "commit", "-m", "seed"], repo)
+    return repo
+
+
+def test_resolve_graveyard_base_finds_master(tmp_path: Path) -> None:
+    from bernstein.core.git.worktree import _resolve_graveyard_base
+
+    repo = _init_repo_on(tmp_path, "master")
+    assert _resolve_graveyard_base(repo) == "master"
+
+
+def test_count_unmerged_uncertain_when_base_missing_branch_exists(tmp_path: Path) -> None:
+    """On a master-default repo, the old hardcoded ^main check failed -> 0 (delete).
+
+    It must now report -1 (inconclusive but the branch exists) so the caller
+    preserves the unmerged work instead of silently dropping it.
+    """
+    repo = _init_repo_on(tmp_path, "master")
+    wt = repo / ".sdd" / "worktrees" / "sid-x"
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    _run(["git", "worktree", "add", "-b", "agent/sid-x", str(wt)], repo)
+    (wt / "f.txt").write_text("work\n", encoding="utf-8")
+    _run(["git", "add", "f.txt"], wt)
+    _run(["git", "commit", "-m", "unmerged work"], wt)
+
+    assert _count_unmerged_commits(repo, "agent/sid-x", base="main") == -1
+
+
+def test_count_unmerged_accurate_with_resolved_base(tmp_path: Path) -> None:
+    from bernstein.core.git.worktree import _resolve_graveyard_base
+
+    repo = _init_repo_on(tmp_path, "master")
+    wt = repo / ".sdd" / "worktrees" / "sid-y"
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    _run(["git", "worktree", "add", "-b", "agent/sid-y", str(wt)], repo)
+    for i in range(2):
+        (wt / f"f{i}.txt").write_text("x\n", encoding="utf-8")
+        _run(["git", "add", f"f{i}.txt"], wt)
+        _run(["git", "commit", "-m", f"c{i}"], wt)
+
+    base = _resolve_graveyard_base(repo)
+    assert _count_unmerged_commits(repo, "agent/sid-y", base=base) == 2
