@@ -96,7 +96,7 @@ dependencies = [
     # Pure-Python PDF generation for the EU AI Act Article 12 evidence pack
     # rendered by `bernstein compliance pack`. MIT-licensed, no native deps.
     # Used exclusively by ``bernstein.core.compliance.article12``.
-    "reportlab>=4.0,<5",
+    "reportlab>=5,<6",
     # YAML frontmatter parsing for `bernstein ticket validate` (SDD ticket
     # schema). Lightweight, MIT-licensed; piggybacks on the already-pinned
     # PyYAML for the YAML body. The validator gracefully falls back to a
