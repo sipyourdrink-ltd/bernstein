@@ -58,7 +58,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-extension.yml | Publish VS Code Extension | push, release | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
-| .github/workflows/publish.yml | Publish | push | - | 7 |
+| .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 7 |
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
 | .github/workflows/release-please.yml | Release Please | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-please-${{ github.ref }}"} | 1 |

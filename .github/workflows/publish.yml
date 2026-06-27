@@ -4,11 +4,26 @@ on:
   push:
     tags:
       - "v*"
+  # Manual re-publish path: dispatch on the default branch with the tag to
+  # publish. Used when an auto-release tag push did not start this workflow
+  # (a tag pushed with GITHUB_TOKEN does not always trigger downstream runs).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v2.8.1)"
+        required: true
+        type: string
 
 # Permissions are declared per-job so that each job gets only what it
 # needs (Sonar S8264). The default permission for any job that does not
 # declare ``permissions:`` is an empty set.
 permissions: {}
+
+# Resolved release tag: the dispatch input when run manually, else the tag
+# that triggered the push. Drives the version checks, the GitHub Release
+# name, the npm version, and the ref every job checks out.
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   # Protocol compatibility gate - blocks release if breaking changes found
@@ -25,6 +40,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -32,7 +48,7 @@ jobs:
 
       - name: Run protocol compatibility check
         env:
-          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_REF: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
 
@@ -111,6 +127,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -133,10 +150,11 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - name: Compare tag to pyproject.toml version
         run: |
-          TAG="${GITHUB_REF#refs/tags/v}"
+          TAG="${RELEASE_TAG#v}"
           PKG=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "Tag version:    $TAG"
           echo "Package version: $PKG"
@@ -159,6 +177,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -221,6 +240,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -232,7 +252,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${RELEASE_TAG}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
           else
@@ -261,6 +281,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       # zizmor cache-poisoning: explicit no-cache on tag-triggered npm publish
       # so a transitive lockfile bump can't be cached and re-served.
@@ -270,7 +291,7 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Sync version from tag
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          VERSION="${RELEASE_TAG#v}"
           cd packaging/npm
           npm version "$VERSION" --no-git-tag-version --allow-same-version
       - name: Publish to npm
