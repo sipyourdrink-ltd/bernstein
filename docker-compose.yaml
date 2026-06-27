@@ -174,7 +174,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:13.0.1
+    image: grafana/grafana:13.1.0
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
