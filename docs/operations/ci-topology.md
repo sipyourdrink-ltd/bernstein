@@ -226,7 +226,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/release-please.yml | workflow: {"contents": "read"}<br>release-please: {"contents": "write", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN, RELEASE_PLEASE_PAT |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
 | .github/workflows/review-bot-ack.yml | review-bot-ack: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
-| .github/workflows/review-bot-sweep.yml | sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
+| .github/workflows/review-bot-sweep.yml | sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, LANDING_REPO_PAT |
 | .github/workflows/sbom-upload.yml | workflow: {"contents": "read"} | DT_API_KEY |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard-90d-check.yml | workflow: {"contents": "read"}<br>age-check: {"contents": "read"}<br>scorecard-rerun: {"actions": "read", "contents": "read", "id-token": "write", "issues": "write", "security-events": "write"} | - |
