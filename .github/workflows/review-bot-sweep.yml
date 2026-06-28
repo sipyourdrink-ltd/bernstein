@@ -47,7 +47,7 @@ jobs:
       - name: Sweep merged PRs and collect missed findings
         id: collect
         env:
-          GH_TOKEN: ${{ secrets.LANDING_REPO_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
           SINCE_DAYS: ${{ github.event.inputs.since_days || '30' }}
@@ -67,7 +67,7 @@ jobs:
         if: steps.collect.outputs.has_findings == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ secrets.LANDING_REPO_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "fix(review): apply deferred review-bot findings"
           title: "fix(review): apply deferred review-bot findings"
           body-path: review-sweep-manifest.md
