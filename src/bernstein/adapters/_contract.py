@@ -530,7 +530,9 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "cody": AdapterStrategy(),
     "composio": AdapterStrategy(event_channel=EventChannel.HOOKS),
     "continue": AdapterStrategy(),
-    "copilot": AdapterStrategy(),
+    # Copilot drives unattended via --allow-all-tools / --no-ask-user in print
+    # mode; the deterministic session id is pinned through --session-id.
+    "copilot": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "devin_terminal": AdapterStrategy(event_channel=EventChannel.POLL_PTY),
     "droid": AdapterStrategy(),
     "forge": AdapterStrategy(),

@@ -150,6 +150,11 @@ def test_real_codex_contract_declares_session_id_flag() -> None:
     assert spec.session_id_flag == "--session-id"
 
 
+def test_real_copilot_contract_declares_session_id_flag() -> None:
+    spec = _contract.ContractSpec.load("copilot")
+    assert spec.session_id_flag == "--session-id"
+
+
 # ---------------------------------------------------------------------------
 # AC #3 - spawn-time wiring
 # ---------------------------------------------------------------------------

@@ -1,0 +1,27 @@
+# Contract for the GitHub Copilot CLI (adapter: copilot).
+#
+# Always-passed surface from src/bernstein/adapters/copilot.py:
+# ``copilot -p <prompt> -s --allow-all-tools --no-ask-user --model <model>``.
+adapter: copilot
+binary: copilot
+install:
+  method: npm
+  spec: "@github/copilot@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "GITHUB_TOKEN"
+required_flags:
+  - "-p"
+  - "-s"
+  - "--allow-all-tools"
+  - "--no-ask-user"
+  - "--model"
+required_subcommands: []
+# Deterministic session-id binding: ``copilot --session-id`` sets the UUID for
+# a new session (and resumes an existing one), so the adapter pins the derived
+# id for replay isolation. See docs/adapters/session_isolation.md.
+session_id_flag: "--session-id"
+expected_models:
+  command: []
+  required_present: []

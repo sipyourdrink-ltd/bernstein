@@ -143,6 +143,12 @@ USE_CASES: dict[str, AdapterUseCase] = {
     "copilot": AdapterUseCase(
         headline="GitHub Copilot CLI driven headlessly from Bernstein",
         binary="copilot",
+        details=(
+            "Non-interactive print mode runs with -p and -s, plus "
+            "--allow-all-tools and --no-ask-user so the agent works "
+            "autonomously without blocking on permission or clarifying "
+            "prompts. Reuses existing GitHub Copilot auth."
+        ),
     ),
     "cursor": AdapterUseCase(
         headline="Cursor Agent CLI - print mode with workspace trust",

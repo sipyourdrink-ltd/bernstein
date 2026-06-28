@@ -476,7 +476,9 @@ Runs OpenAI Codex inside Cloudflare sandboxes for isolated, scalable execution.
 
 **Install:** `npm install -g @github/copilot`
 
-**Env vars:** `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_COPILOT_TOKEN`.
+**Env vars:** `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` (in order of precedence).
+
+**Invocation:** `copilot -p '<prompt>' -s --allow-all-tools --no-ask-user --model <model>`. The non-interactive print mode (`-p`) runs a single prompt and exits; `-s` keeps stdout to the agent's final response; `--allow-all-tools` plus `--no-ask-user` make the run autonomous so it never blocks on a permission prompt or a clarifying question. `--model` passes through (`auto` lets Copilot pick); Claude tier names map to `auto`. The deterministic session id is pinned via `--session-id` for replay isolation.
 
 **Best for:** GitHub-Copilot-subscribed teams who want to reuse existing GitHub auth.
 
