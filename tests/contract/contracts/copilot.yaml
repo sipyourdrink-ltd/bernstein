@@ -10,7 +10,11 @@ install:
 auth:
   required_for_help: false
   required_for_models: false
-  secret_env: "GITHUB_TOKEN"
+  # In order of precedence; mirrors CopilotAdapter env isolation + ADAPTER_GUIDE.
+  secret_env:
+    - "COPILOT_GITHUB_TOKEN"
+    - "GH_TOKEN"
+    - "GITHUB_TOKEN"
 required_flags:
   - "-p"
   - "-s"

@@ -46,6 +46,14 @@ SKILLS_AUTO_ROUTE_ENV: Final[str] = "BERNSTEIN_SKILLS_AUTO_ROUTE"
 SKILLS_AUTO_ROUTE_DEFAULT_LIMIT: Final[int] = 2
 """Default number of auto-routed skill templates to inject."""
 
+COPILOT_DEFAULT_MODEL: Final[str] = "auto"
+"""Copilot model used when no operator-pinned model reaches the adapter; ``auto``
+lets Copilot's own router pick the best available model."""
+
+COPILOT_CLAUDE_TIER_MODELS: Final[frozenset[str]] = frozenset({"opus", "sonnet", "haiku"})
+"""Claude cascade tier names that are not valid Copilot model ids; any that reach
+the Copilot adapter are remapped to ``COPILOT_DEFAULT_MODEL``."""
+
 
 @dataclass(frozen=True)
 class DashboardStaticAsset:

@@ -75,6 +75,11 @@ class ContractSpec:
     #: orchestrator state for cross-reference but pass no flag. See
     #: ``docs/adapters/session_isolation.md``.
     session_id_flag: str | None = None
+    #: Full ordered allow-list of secret env vars the adapter accepts (highest
+    #: precedence first). ``auth_secret_env`` is the highest-precedence entry,
+    #: kept singular for back-compat; this carries the complete set when the
+    #: contract lists more than one.
+    auth_secret_envs: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, name: str, contracts_dir: Path | None = None) -> ContractSpec:
@@ -91,6 +96,16 @@ class ContractSpec:
         expected = data.get("expected_models") or {}
         raw_session_flag = data.get("session_id_flag")
         session_id_flag = str(raw_session_flag) if raw_session_flag else None
+        # ``secret_env`` accepts either a single name or an ordered allow-list
+        # (highest precedence first). The singular ``auth_secret_env`` mirrors
+        # the highest-precedence entry for back-compat with existing consumers.
+        raw_secret = auth.get("secret_env")
+        if isinstance(raw_secret, (list, tuple)):
+            secret_envs = tuple(str(s) for s in raw_secret if s)
+        elif raw_secret:
+            secret_envs = (str(raw_secret),)
+        else:
+            secret_envs = ()
         return cls(
             adapter=str(data.get("adapter", name)),
             binary=str(data.get("binary", name)),
@@ -98,13 +113,14 @@ class ContractSpec:
             install_spec=str(install.get("spec", "")),
             auth_required_for_help=bool(auth.get("required_for_help", False)),
             auth_required_for_models=bool(auth.get("required_for_models", False)),
-            auth_secret_env=str(auth.get("secret_env", "") or ""),
+            auth_secret_env=secret_envs[0] if secret_envs else "",
             required_flags=tuple(data.get("required_flags") or ()),
             required_subcommands=tuple(data.get("required_subcommands") or ()),
             help_command=tuple(data.get("help_command") or ()),
             models_command=tuple(expected.get("command") or ()),
             models_required_present=tuple(expected.get("required_present") or ()),
             session_id_flag=session_id_flag,
+            auth_secret_envs=secret_envs,
         )
 
     def resolved_help_command(self) -> list[str]:

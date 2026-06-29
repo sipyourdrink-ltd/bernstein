@@ -77,6 +77,34 @@ def test_claude_tier_model_mapped_to_auto(tmp_path: Path) -> None:
     assert "sonnet" not in inner
 
 
+@pytest.mark.parametrize("tier", ["Sonnet", "HAIKU", "Opus"])
+def test_claude_tier_model_mapping_is_case_insensitive(tmp_path: Path, tier: str) -> None:
+    """Casing variants of a Claude tier must still map to ``auto``."""
+    adapter = CopilotAdapter()
+    proc_mock = make_popen_mock(805)
+
+    with patch("bernstein.adapters.copilot.subprocess.Popen", return_value=proc_mock) as popen:
+        adapter.spawn(
+            prompt="hello",
+            workdir=tmp_path,
+            model_config=ModelConfig(model=tier, effort="max"),
+            session_id="copilot-s3b",
+        )
+
+    inner = inner_cmd(popen.call_args.args[0])
+    assert inner[inner.index("--model") + 1] == "auto"
+    assert tier not in inner
+
+
+def test_contract_lists_full_token_surface() -> None:
+    """The copilot contract advertises every token the adapter accepts."""
+    from bernstein.adapters._contract import ContractSpec
+
+    spec = ContractSpec.load("copilot")
+    assert spec.auth_secret_env == "COPILOT_GITHUB_TOKEN"
+    assert spec.auth_secret_envs == ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+
+
 def test_spawn_pins_deterministic_session_id(tmp_path: Path) -> None:
     adapter = CopilotAdapter()
     proc_mock = make_popen_mock(803)

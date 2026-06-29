@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.core.defaults import COPILOT_CLAUDE_TIER_MODELS, COPILOT_DEFAULT_MODEL
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,21 +33,30 @@ logger = logging.getLogger(__name__)
 # haiku) that are not valid Copilot model ids, so map any that reach the adapter
 # to ``auto`` rather than passing ``--model sonnet`` (which Copilot rejects). The
 # real selection fix lives in the spawner; this is a last-resort safety net.
-_DEFAULT_COPILOT_MODEL = "auto"
-_CLAUDE_TIER_MODELS = frozenset({"opus", "sonnet", "haiku"})
+# Constants centralised in core.defaults per the repo guideline.
+_copilot_tier_warning_emitted = False
 
 
 def _copilot_model(model: str) -> str:
-    """Map a Claude cascade tier name to Copilot's ``auto``; pass others through."""
-    if model in _CLAUDE_TIER_MODELS:
-        logger.warning(
-            "CopilotAdapter: model %r is a Claude tier name Copilot cannot run; using %r "
-            "instead. Set role_model_policy.<role>.model or default_model to a Copilot "
-            "model (e.g. gpt-5.4 or claude-sonnet-4.5) to choose explicitly.",
-            model,
-            _DEFAULT_COPILOT_MODEL,
-        )
-        return _DEFAULT_COPILOT_MODEL
+    """Map a Claude cascade tier name to Copilot's ``auto``; pass others through.
+
+    The tier value is normalised to lower case so casing variants ("Sonnet",
+    "HAIKU") also map to ``auto`` instead of being passed to ``--model``. The
+    cascade emits these names on almost every run, so the safety net logs once
+    per process at info level rather than warning on every spawn.
+    """
+    if model.lower() in COPILOT_CLAUDE_TIER_MODELS:
+        global _copilot_tier_warning_emitted
+        if not _copilot_tier_warning_emitted:
+            logger.info(
+                "CopilotAdapter: model %r is a Claude tier name Copilot cannot run; using %r "
+                "instead. Set role_model_policy.<role>.model or default_model to a Copilot "
+                "model (e.g. gpt-5.4 or claude-sonnet-4.5) to choose explicitly.",
+                model,
+                COPILOT_DEFAULT_MODEL,
+            )
+            _copilot_tier_warning_emitted = True
+        return COPILOT_DEFAULT_MODEL
     return model
 
 
@@ -64,7 +74,7 @@ class CopilotAdapter(CLIAdapter):
     registry_name = "copilot"
     # Default model when no operator-pinned model reaches this adapter. Read by
     # the spawner to substitute Claude tier names for non-Claude adapters.
-    default_model = _DEFAULT_COPILOT_MODEL
+    default_model = COPILOT_DEFAULT_MODEL
     # GitHub Copilot surfaces 429s when the underlying account hits the
     # Copilot quota; we record under the Copilot label so the panel
     # attributes pressure to the right surface.
