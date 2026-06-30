@@ -696,7 +696,7 @@ def unlock_cmd(workdir: Path, force: bool, as_json: bool) -> None:
     liveness = {True: "alive", False: "not running", None: "liveness unknown"}[alive]
 
     if as_json:
-        click.echo(json.dumps({**status, "removed": removed}, default=str))
+        click.echo(json.dumps(status | {"removed": removed}, default=str))
         if not removable:
             raise SystemExit(1)
         return
