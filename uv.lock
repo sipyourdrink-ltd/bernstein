@@ -294,7 +294,7 @@ wheels = [
 
 [[package]]
 name = "bernstein"
-version = "2.8.5"
+version = "2.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "asn1crypto" },
