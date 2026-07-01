@@ -29,16 +29,17 @@ take the new ``session.exec`` path.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from bernstein.core.sandbox.backend import ExecResult, SandboxSession
 
@@ -125,6 +126,62 @@ def _run_session_loop(
             logger.debug("loop close raised", exc_info=True)
 
 
+def _start_heartbeat_proxy(
+    session_id: str,
+    future: Future[ExecResult],
+    workdir: Path,
+    interval_s: float = 15.0,
+) -> threading.Event:
+    """Write heartbeat files on behalf of a sandbox agent until its future resolves.
+
+    Agents running inside Docker via ``exec_run`` cannot write to the host
+    filesystem where the orchestrator expects heartbeat files.  This proxy
+    thread periodically touches the heartbeat file on the host so the
+    orchestrator's ``HeartbeatMonitor`` sees the agent as alive.
+
+    Args:
+        session_id: Agent session identifier (heartbeat file basename).
+        future: The :class:`Future` tracking the sandbox exec.  The proxy
+            stops when the future is done.
+        workdir: Host-side working directory (project root) where
+            ``.sdd/runtime/heartbeats/`` lives.
+        interval_s: Seconds between heartbeat writes (default 15).
+
+    Returns:
+        A :class:`threading.Event` that can be set to stop the proxy
+        early (e.g. on cancellation).
+    """
+    stop_event = threading.Event()
+    heartbeat_dir = workdir / ".sdd" / "runtime" / "heartbeats"
+
+    def _proxy_loop() -> None:
+        heartbeat_dir.mkdir(parents=True, exist_ok=True)
+        heartbeat_file = heartbeat_dir / f"{session_id}.json"
+        while not stop_event.is_set() and not future.done():
+            payload = json.dumps({
+                "timestamp": int(time.time()),
+                "phase": "implementing",
+                "progress_pct": 0,
+                "current_file": "",
+                "message": "sandbox agent working",
+                "status": "working",
+                "files_changed": 0,
+            })
+            try:
+                heartbeat_file.write_text(payload, encoding="utf-8")
+            except OSError:
+                pass  # best effort
+            stop_event.wait(interval_s)
+
+    thread = threading.Thread(
+        target=_proxy_loop,
+        name=f"heartbeat-proxy-{session_id}",
+        daemon=True,
+    )
+    thread.start()
+    return stop_event
+
+
 def submit_session_exec(
     *,
     session: SandboxSession,
@@ -134,6 +191,7 @@ def submit_session_exec(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     timeout: int | None = None,
+    workdir: Path | None = None,
 ) -> SandboxExecHandle:
     """Run *cmd* through ``session.exec`` on a dedicated background thread.
 
@@ -158,6 +216,9 @@ def submit_session_exec(
             base environment.
         timeout: Wall-clock timeout in seconds; ``None`` lets the
             backend pick its default.
+        workdir: Host-side project root.  When provided, a heartbeat
+            proxy thread writes periodic heartbeat files so the
+            orchestrator does not reap the sandbox agent as stale.
 
     Returns:
         A :class:`SandboxExecHandle` whose :attr:`SandboxExecHandle.future`
@@ -187,12 +248,30 @@ def submit_session_exec(
     )
     thread.start()
 
+    # Start heartbeat proxy so the orchestrator sees the sandbox agent
+    # as alive. The proxy writes heartbeat files on the host every 15s
+    # and stops when the exec future resolves or is cancelled.
+    hb_stop_event: threading.Event | None = None
+    if workdir is not None:
+        hb_stop_event = _start_heartbeat_proxy(session_id, fut, workdir)
+
     # Mirror logs once the future resolves so consumers can tail
     # log_path even though session.exec captures bytes in memory.
     def _persist_log(f: Future[ExecResult]) -> None:
-        if f.cancelled() or f.exception() is not None:
+        if f.cancelled():
+            logger.warning("Sandbox exec %s was cancelled", session_id)
+            return
+        if f.exception() is not None:
+            logger.error("Sandbox exec %s failed with exception: %s", session_id, f.exception())
             return
         result = f.result()
+        if result.exit_code != 0:
+            logger.warning(
+                "Sandbox exec %s non-zero exit (%d). stderr: %s",
+                session_id,
+                result.exit_code,
+                result.stderr[:500].decode("utf-8", errors="replace"),
+            )
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("ab") as fh:
@@ -204,6 +283,11 @@ def submit_session_exec(
             logger.debug("Could not mirror sandbox exec log to %s: %s", log_path, exc)
 
     fut.add_done_callback(_persist_log)
+
+    # Stop the heartbeat proxy once the exec finishes.
+    if hb_stop_event is not None:
+        fut.add_done_callback(lambda _f: hb_stop_event.set())
+
     return handle
 
 

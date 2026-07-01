@@ -1812,12 +1812,16 @@ class AgentSpawner:
             )
 
         logger.info(
-            "Model selection for role=%s: model=%s effort=%s provider=%s source=%s",
+            "Model selection for role=%s: model=%s effort=%s provider=%s source=%s "
+            "role_policy_model=%s task_model=%s base_config_model=%s",
             tasks[0].role,
             model_config.model,
             model_config.effort,
             provider_name or self._adapter.name(),
             routing_source,
+            role_policy.get("model"),
+            tasks[0].model,
+            base_config.model,
         )
 
         provider_for_rate_limit = provider_name or self._adapter.name()
@@ -2781,6 +2785,21 @@ class AgentSpawner:
             adapter=adapter,
         )
 
+        # 2b) Forward API keys to the sandbox so adapters can authenticate.
+        #     IMPORTANT: do NOT use build_filtered_env() here -- it copies
+        #     PATH and other host-specific vars that OVERRIDE the container's
+        #     own env when passed to Docker exec_run(environment=...).
+        #     Only forward the specific API keys the adapter needs.
+        import os as _os
+
+        adapter_name_lc = adapter.name().lower()
+        _env_keys: list[str] = ["OPENAI_API_KEY", "OPENAI_BASE_URL"]
+        if "claude" in adapter_name_lc:
+            _env_keys.append("ANTHROPIC_API_KEY")
+        elif "gemini" in adapter_name_lc:
+            _env_keys.extend(["GOOGLE_API_KEY", "GEMINI_API_KEY"])
+        sandbox_env = {k: v for k in _env_keys if (v := _os.environ.get(k)) is not None}
+
         # 3) Submit the exec on a dedicated thread; the future drives
         #    liveness checks via SandboxSession-aware paths.
         handle = submit_session_exec(
@@ -2788,6 +2807,8 @@ class AgentSpawner:
             cmd=cmd,
             session_id=session_id,
             log_path=log_path,
+            env=sandbox_env,
+            workdir=self._workdir,
         )
         self._sandbox_exec_handles[session_id] = handle
 
@@ -2844,6 +2865,19 @@ class AgentSpawner:
         # Build a generic shell command that reads the prompt and pipes it
         # to the adapter CLI. This works across all adapters.
         adapter_name = adapter.name().lower()
+
+        # Resolve the actual CLI binary name. adapter.name() may return a
+        # display name like "Qwen CLI" which is not a valid command. Map
+        # known adapters to their binary names.
+        _ADAPTER_BINARY_MAP: dict[str, str] = {
+            "qwen cli": "qwen",
+            "claude code": "claude",
+            "codex cli": "codex",
+            "gemini cli": "gemini",
+            "aider": "aider",
+        }
+        cli_binary = _ADAPTER_BINARY_MAP.get(adapter_name, adapter_name.split()[0])
+
         if "claude" in adapter_name:
             cmd = [
                 "sh",
@@ -2855,12 +2889,21 @@ class AgentSpawner:
                 f"--output-format stream-json "
                 f'-p "$(cat {container_prompt})"',
             ]
+        elif "qwen" in adapter_name:
+            # Qwen CLI uses positional arg for prompt, -y for auto-approve.
+            # Inside containers, --auth-type openai is required because the
+            # default qwen auth config is not present.
+            cmd = [
+                "sh",
+                "-c",
+                f'{cli_binary} -y --auth-type openai --model {model_config.model} "$(cat {container_prompt})"',
+            ]
         else:
             # Generic: assume the adapter CLI reads from stdin or -p flag
             cmd = [
                 "sh",
                 "-c",
-                f'cat {container_prompt} | {adapter_name} -p "$(cat {container_prompt})"',
+                f'cat {container_prompt} | {cli_binary} -p "$(cat {container_prompt})"',
             ]
         return cmd
 
