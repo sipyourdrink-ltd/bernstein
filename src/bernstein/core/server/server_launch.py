@@ -85,11 +85,12 @@ def _clean_stale_runtime(workdir: Path) -> None:
             lock_file.unlink(missing_ok=True)
 
 
-def ensure_sdd(workdir: Path) -> bool:
+def ensure_sdd(workdir: Path, *, model: str = "opus") -> bool:
     """Create .sdd/ workspace structure if it does not exist.
 
     Args:
         workdir: Project root directory.
+        model: Default model name for the workspace config.
 
     Returns:
         True if the workspace was newly created, False if it already existed.
@@ -118,7 +119,7 @@ def ensure_sdd(workdir: Path) -> bool:
             "# Bernstein workspace config\n"
             "server_port: 8052\n"
             "max_workers: 4\n"
-            "default_model: opus\n"
+            f"default_model: {model}\n"
             "default_effort: max\n"
         )
 
@@ -426,7 +427,7 @@ def _inject_manager_task(
         "priority": 1,
         "scope": "large",
         "complexity": "high",
-        "model": "opus",
+        "model": seed.model or "opus",
         "effort": "max",
     }
 
