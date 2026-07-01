@@ -411,6 +411,14 @@ class DockerSandboxBackend:
 
         client = self._get_client()
 
+        # When the manifest carries a repo entry, bind-mount the host
+        # checkout read-only rather than handing the container write
+        # access to it directly - the container clones its own working
+        # copy under ``manifest.root`` below, so host-side git state
+        # (index, HEAD, uncommitted changes) is never touched by the
+        # sandboxed agent.
+        volumes = {manifest.repo.src_path: {"bind": "/host-repo", "mode": "ro"}} if manifest.repo else None
+
         def _spawn_container() -> Any:
             container = client.containers.run(
                 image=image,
@@ -425,13 +433,32 @@ class DockerSandboxBackend:
                 cpu_quota=cpu_quota,
                 network_disabled=network_disabled,
                 labels=labels,
+                volumes=volumes,
             )
-            # Ensure the workdir exists inside the container.
-            mkdir = container.exec_run(["mkdir", "-p", manifest.root])
-            if mkdir.exit_code != 0:
-                raise RuntimeError(
-                    f"mkdir -p {manifest.root} failed in container: {mkdir.output.decode('utf-8', 'replace')}"
-                )
+            if manifest.repo is not None:
+                # Give the container its own writable git checkout cloned
+                # from the read-only host bind-mount, then check out the
+                # requested branch so the sandboxed agent's commits land
+                # in the container, not on the host working tree.
+                clone = container.exec_run(["git", "clone", "/host-repo", manifest.root])
+                if clone.exit_code != 0:
+                    raise RuntimeError(
+                        f"git clone /host-repo {manifest.root} failed in container: "
+                        f"{clone.output.decode('utf-8', 'replace')}"
+                    )
+                checkout = container.exec_run(["git", "checkout", manifest.repo.branch], workdir=manifest.root)
+                if checkout.exit_code != 0:
+                    raise RuntimeError(
+                        f"git checkout {manifest.repo.branch} failed in container: "
+                        f"{checkout.output.decode('utf-8', 'replace')}"
+                    )
+            else:
+                # No repo to seed - just ensure the (empty) workdir exists.
+                mkdir = container.exec_run(["mkdir", "-p", manifest.root])
+                if mkdir.exit_code != 0:
+                    raise RuntimeError(
+                        f"mkdir -p {manifest.root} failed in container: {mkdir.output.decode('utf-8', 'replace')}"
+                    )
             return container
 
         container = await asyncio.to_thread(_spawn_container)

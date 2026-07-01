@@ -4688,6 +4688,58 @@ if __name__ == "__main__":
 
             ensure_agent_image(_container_iso.runtime, _container_iso.image)
 
+        # ``--sandbox docker`` (BERNSTEIN_SANDBOX_RUNTIME=docker) previously
+        # only built the ``sandbox_config`` dataclass above, which routes
+        # spawns through the legacy ``ContainerManager`` bind-mount path
+        # (``AgentSpawner._spawn_in_sandbox``). Provision an actual
+        # DockerSandboxBackend SandboxSession here and attach it to the
+        # spawner so runs prefer the newer, fully-isolated
+        # ``_spawn_via_sandbox_session`` path (oai-002b). Fully
+        # backward-compatible: without ``--sandbox docker`` this block
+        # never runs, and any provisioning failure falls back to the
+        # existing legacy container path unchanged.
+        docker_sandbox_session = None
+        if _sandbox_runtime == "docker":
+            try:
+                import subprocess as _subprocess
+
+                from bernstein.core.sandbox.backends.docker import (
+                    DockerSandboxBackend,
+                    DockerUnavailableError,
+                )
+                from bernstein.core.sandbox.manifest import GitRepoEntry, WorkspaceManifest
+
+                _branch_result = _subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=workdir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                _current_branch = _branch_result.stdout.strip() or "HEAD"
+
+                _docker_manifest = WorkspaceManifest(
+                    root="/workspace",
+                    repo=GitRepoEntry(src_path=str(workdir), branch=_current_branch),
+                )
+                _docker_backend = DockerSandboxBackend()
+                docker_sandbox_session = _asyncio.run(
+                    _docker_backend.create(_docker_manifest, options={"image": _container_image}),
+                )
+                logger.info(
+                    "Docker sandbox session %s provisioned for this run (branch=%s)",
+                    docker_sandbox_session.session_id,
+                    _current_branch,
+                )
+            except DockerUnavailableError as exc:
+                logger.warning("Docker sandbox unavailable (%s); falling back to legacy container isolation", exc)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to provision Docker sandbox session, falling back to legacy container isolation: %s",
+                    exc,
+                )
+
         runtime_bridge = None
         openclaw_cfg = seed.bridges.openclaw if seed is not None and seed.bridges is not None else None
         if openclaw_cfg is not None and openclaw_cfg.enabled:
@@ -4754,6 +4806,7 @@ if __name__ == "__main__":
             runtime_bridge=runtime_bridge,
             resource_limits=agent_rlimits,
             warm_pool=warm_pool,
+            sandbox_session=docker_sandbox_session,
         )
         run_config_budget_usd: float | None = None
         dry_run = False
