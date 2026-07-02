@@ -1,0 +1,107 @@
+"""Adapter minimum-safe-version advisories (supply-chain posture).
+
+Bernstein spawns 30+ third-party CLI coding agents.  When an installed adapter
+binary sits below a known-unsafe version floor, operators should be warned
+before that binary is trusted to run inside a worker.  This module holds a
+curated, data-driven floor map plus a pure comparison helper.
+
+The map is *data*, not code: adding or bumping a floor is a one-line edit to
+:data:`ADAPTER_MIN_SAFE_VERSIONS` with no logic change.  The doctor surface
+(``bernstein doctor``) consumes :func:`check_adapter_version` to report each
+discovered adapter as OK, below-floor (WARN), or unknown.
+
+Lever: this couples to the adapter conformance contract and the doctor observe
+surface.  A below-floor binary is a conformance signal an operator can act on
+before the worker's HMAC audit chain records a run against a version we already
+know is unsafe.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AdapterAdvisory:
+    """A minimum-safe-version advisory for one adapter binary.
+
+    Attributes:
+        adapter: Adapter name as discovered on PATH (e.g. ``"aider"``).
+        min_safe_version: Lowest version considered safe.  Anything strictly
+            below this floor is flagged.
+        advisory_id: Stable bernstein-local identifier for the advisory, so a
+            report can be cross-referenced without embedding external narratives.
+        note: One-line functional note.  Kept generic ("known-unsafe below X,
+            upgrade recommended") rather than reciting any specific external
+            vulnerability narrative.
+    """
+
+    adapter: str
+    min_safe_version: str
+    advisory_id: str
+    note: str
+
+
+# Curated floor map.  Data-driven: entries can be added or bumped without a
+# code change.  Notes stay functional and generic - name the adapter, the floor,
+# and "upgrade recommended".  Seeded conservatively; expand as floors are
+# confirmed.
+ADAPTER_MIN_SAFE_VERSIONS: dict[str, AdapterAdvisory] = {
+    "aider": AdapterAdvisory(
+        adapter="aider",
+        min_safe_version="0.60.0",
+        advisory_id="BSA-0001",
+        note="aider below 0.60.0 is known-unsafe for spawned use; upgrade recommended.",
+    ),
+    "goose": AdapterAdvisory(
+        adapter="goose",
+        min_safe_version="1.0.0",
+        advisory_id="BSA-0002",
+        note="goose below 1.0.0 is known-unsafe for spawned use; upgrade recommended.",
+    ),
+    "gptme": AdapterAdvisory(
+        adapter="gptme",
+        min_safe_version="0.20.0",
+        advisory_id="BSA-0003",
+        note="gptme below 0.20.0 is known-unsafe for spawned use; upgrade recommended.",
+    ),
+}
+
+
+def check_adapter_version(name: str, installed_version: str | None) -> AdapterAdvisory | None:
+    """Return an advisory when an installed adapter is below its safe floor.
+
+    Args:
+        name: Adapter name (matched against :data:`ADAPTER_MIN_SAFE_VERSIONS`).
+        installed_version: The discovered version string, or ``None`` when the
+            version could not be determined.
+
+    Returns:
+        The matching :class:`AdapterAdvisory` when the adapter is tracked and
+        ``installed_version`` parses to a value strictly below the floor.
+        ``None`` when the adapter is untracked, the version is unknown or
+        unparseable, or the installed version meets/exceeds the floor.
+    """
+    advisory = ADAPTER_MIN_SAFE_VERSIONS.get(name)
+    if advisory is None:
+        return None
+    if installed_version is None:
+        return None
+
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        installed = Version(installed_version)
+        floor = Version(advisory.min_safe_version)
+    except InvalidVersion:
+        # An unparseable version is treated as unknown, not below-floor: we do
+        # not want a garbled ``--version`` string to fabricate a warning.
+        logger.debug("Unparseable version %r for adapter %s", installed_version, name)
+        return None
+
+    if installed < floor:
+        return advisory
+    return None

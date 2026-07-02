@@ -77,6 +77,92 @@ def check_adapters_installed() -> list[dict[str, Any]]:
     return results
 
 
+def _probe_adapter_version(name: str) -> str | None:
+    """Return the installed version string for an adapter binary, or None.
+
+    Runs ``<name> --version`` and extracts the first dotted-numeric token.
+    Best-effort: any launch failure, timeout, or unparseable output yields
+    ``None`` (reported as "unknown" rather than a false below-floor warning).
+    """
+    import re
+
+    exe = shutil.which(name)
+    if exe is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [exe, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    blob = f"{proc.stdout}\n{proc.stderr}"
+    match = re.search(r"\d+(?:\.\d+){1,3}", blob)
+    return match.group(0) if match else None
+
+
+def check_adapter_advisories() -> list[dict[str, Any]]:
+    """Report a supply-chain version-floor status for each tracked adapter.
+
+    For every adapter with a curated minimum-safe-version floor, reports:
+
+    - OK (PASS) when the discovered version meets or exceeds the floor,
+    - below-floor (WARN) when it is strictly below the floor,
+    - unknown (WARN) when the binary is present but the version cannot be
+      determined,
+    - not installed (PASS/skip) is omitted so the surface stays quiet for
+      adapters the operator does not run.
+
+    Couples to the adapter conformance contract: a below-floor binary is a
+    conformance signal an operator can act on before a worker records a run
+    against a version we already know is unsafe.
+    """
+    from bernstein.adapters.advisories import (
+        ADAPTER_MIN_SAFE_VERSIONS,
+        check_adapter_version,
+    )
+
+    results: list[dict[str, Any]] = []
+    for name, advisory in sorted(ADAPTER_MIN_SAFE_VERSIONS.items()):
+        if shutil.which(name) is None:
+            continue  # adapter not installed: nothing to warn about
+        version = _probe_adapter_version(name)
+        label = f"Adapter version: {name}"
+        if version is None:
+            results.append(
+                {
+                    "name": label,
+                    "status": _CHECK_WARN,
+                    "detail": f"installed, version unknown (safe floor {advisory.min_safe_version})",
+                    "fix": f"Verify {name} version is >= {advisory.min_safe_version}",
+                }
+            )
+            continue
+        hit = check_adapter_version(name, version)
+        if hit is not None:
+            results.append(
+                {
+                    "name": label,
+                    "status": _CHECK_WARN,
+                    "detail": (f"{version} below safe floor {hit.min_safe_version} [{hit.advisory_id}]: {hit.note}"),
+                    "fix": f"Upgrade {name} to >= {hit.min_safe_version}",
+                }
+            )
+        else:
+            results.append(
+                {
+                    "name": label,
+                    "status": _CHECK_PASS,
+                    "detail": f"{version} >= safe floor {advisory.min_safe_version}",
+                    "fix": "",
+                }
+            )
+    return results
+
+
 def check_api_keys() -> list[dict[str, Any]]:
     """Check environment variables for common API keys."""
     results: list[dict[str, Any]] = []
@@ -325,6 +411,7 @@ def run_all_checks() -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     checks.append(check_python_version())
     checks.extend(check_adapters_installed())
+    checks.extend(check_adapter_advisories())
     checks.extend(check_api_keys())
     checks.extend(
         (
