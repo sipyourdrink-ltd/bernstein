@@ -71,6 +71,23 @@ class TestBuildFilteredEnv:
         assert result["BERNSTEIN_HOOK_SECRET"] == "shared-secret"
         assert result["BERNSTEIN_AUTH_DISABLED"] == "0"
 
+    def test_bernstein_server_url_passes_through(self) -> None:
+        """BERNSTEIN_SERVER_URL must reach the agent.
+
+        Remote workers export it before spawning so the agent's
+        server-facing plumbing targets the central server instead of
+        falling back to http://localhost:8052. It is a URL, not a
+        credential, so the allowlist passes it through.
+        """
+        env = {
+            "PATH": "/bin",
+            "HOME": "/home/u",
+            "BERNSTEIN_SERVER_URL": "http://central:8052",
+        }
+        with patch("bernstein.adapters.env_isolation.os.environ", env):
+            result = build_filtered_env()
+        assert result["BERNSTEIN_SERVER_URL"] == "http://central:8052"
+
     def test_extra_keys_included(self) -> None:
         """API key names passed via extra_keys are included."""
         env = {"PATH": "/bin", "ANTHROPIC_API_KEY": "sk-ant-abc", "UNRELATED_SECRET": "boom"}

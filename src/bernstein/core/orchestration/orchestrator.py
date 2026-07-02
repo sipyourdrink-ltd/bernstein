@@ -4705,17 +4705,17 @@ if __name__ == "__main__":
             ensure_agent_image(_container_iso.runtime, _container_iso.image)
 
         # ``--sandbox docker`` (BERNSTEIN_SANDBOX_RUNTIME=docker) previously
-        # only built the ``sandbox_config`` dataclass above, which routes
-        # spawns through the legacy ``ContainerManager`` bind-mount path
-        # (``AgentSpawner._spawn_in_sandbox``). Provision an actual
-        # DockerSandboxBackend SandboxSession here and attach it to the
-        # spawner so runs prefer the newer, fully-isolated
-        # ``_spawn_via_sandbox_session`` path (oai-002b). Fully
+        # provisioned one run-level SandboxSession shared by every agent,
+        # so a single exec timeout killed the container for all of them
+        # and concurrent agents shared one /workspace clone. Attach the
+        # DockerSandboxBackend plus a manifest factory instead: the
+        # spawner provisions ONE session per spawn and destroys it when
+        # the exec future resolves (issue #2162). Fully
         # backward-compatible: without ``--sandbox docker`` this block
-        # never runs, and any provisioning failure falls back to the
-        # existing legacy container path unchanged.
-        docker_sandbox_session = None
+        # never runs, and any wiring failure falls back to the existing
+        # legacy container path unchanged.
         _docker_sandbox_backend = None
+        _docker_manifest_factory = None
         if _sandbox_runtime == "docker":
             try:
                 import subprocess as _subprocess
@@ -4736,42 +4736,47 @@ if __name__ == "__main__":
                 )
                 _current_branch = _branch_result.stdout.strip() or "HEAD"
 
-                _docker_manifest = WorkspaceManifest(
-                    root="/workspace",
-                    repo=GitRepoEntry(src_path=str(workdir), branch=_current_branch),
-                )
+                def _make_docker_manifest(
+                    _src: str = str(workdir), _branch: str = _current_branch
+                ) -> WorkspaceManifest:
+                    return WorkspaceManifest(
+                        root="/workspace",
+                        repo=GitRepoEntry(src_path=_src, branch=_branch),
+                    )
+
                 _docker_backend = DockerSandboxBackend()
-                docker_sandbox_session = _asyncio.run(
-                    _docker_backend.create(_docker_manifest, options={"image": _container_image}),
-                )
+                # Fail fast at wiring time so a dead daemon still falls
+                # back to legacy isolation instead of failing per spawn.
+                _docker_backend.ensure_available()
                 _docker_sandbox_backend = _docker_backend
+                _docker_manifest_factory = _make_docker_manifest
                 logger.info(
-                    "Docker sandbox session %s provisioned for this run (branch=%s)",
-                    docker_sandbox_session.session_id,
+                    "Docker sandbox backend attached; one session per agent spawn (branch=%s)",
                     _current_branch,
                 )
             except DockerUnavailableError as exc:
                 logger.warning("Docker sandbox unavailable (%s); falling back to legacy container isolation", exc)
             except Exception as exc:
                 logger.warning(
-                    "Failed to provision Docker sandbox session, falling back to legacy container isolation: %s",
+                    "Failed to attach Docker sandbox backend, falling back to legacy container isolation: %s",
                     exc,
                 )
 
         def _teardown_docker_sandbox() -> None:
-            """Destroy the run-level Docker sandbox session, if any.
+            """Destroy any Docker sandbox sessions the backend still tracks.
 
-            Without this every ``--sandbox docker`` run leaves a
-            ``sleep infinity`` container behind after the orchestrator
-            exits.
+            Per-agent sessions are normally destroyed when their exec
+            future resolves; this backend-level sweep catches anything
+            left behind so no ``sleep infinity`` container outlives the
+            orchestrator.
             """
-            if docker_sandbox_session is None or _docker_sandbox_backend is None:
+            if _docker_sandbox_backend is None:
                 return
             try:
-                _asyncio.run(_docker_sandbox_backend.destroy(docker_sandbox_session))
-                logger.info("Docker sandbox session %s destroyed", docker_sandbox_session.session_id)
+                _asyncio.run(_docker_sandbox_backend.destroy_all())
+                logger.info("Docker sandbox backend cleanup complete")
             except Exception:
-                logger.warning("Failed to destroy Docker sandbox session", exc_info=True)
+                logger.warning("Failed to clean up Docker sandbox sessions", exc_info=True)
 
         runtime_bridge = None
         openclaw_cfg = seed.bridges.openclaw if seed is not None and seed.bridges is not None else None
@@ -4839,7 +4844,10 @@ if __name__ == "__main__":
             runtime_bridge=runtime_bridge,
             resource_limits=agent_rlimits,
             warm_pool=warm_pool,
-            sandbox_session=docker_sandbox_session,
+            sandbox_backend=_docker_sandbox_backend,
+            sandbox_manifest_factory=_docker_manifest_factory,
+            sandbox_options={"image": _container_image} if _docker_sandbox_backend is not None else None,
+            sandbox_server_port=args.port,
             default_model=run_model,
         )
         run_config_budget_usd: float | None = None

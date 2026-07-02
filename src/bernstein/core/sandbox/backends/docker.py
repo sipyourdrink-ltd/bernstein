@@ -368,6 +368,23 @@ class DockerSandboxBackend:
                 raise DockerUnavailableError(f"Could not connect to Docker daemon: {exc}") from exc
         return self._client
 
+    def ensure_available(self) -> None:
+        """Verify the SDK imports and the daemon answers a ping.
+
+        Lets callers that provision sessions lazily (one session per
+        agent spawn) fail fast at wiring time instead of at the first
+        spawn, preserving the fall-back-to-legacy-isolation behaviour.
+
+        Raises:
+            DockerUnavailableError: The SDK is missing or the daemon
+                did not respond.
+        """
+        client = self._get_client()
+        try:
+            client.ping()
+        except Exception as exc:
+            raise DockerUnavailableError(f"Docker daemon did not respond to ping: {exc}") from exc
+
     @staticmethod
     def _allocate_session_id(hint: str | None = None) -> str:
         if hint:
@@ -502,6 +519,22 @@ class DockerSandboxBackend:
     async def destroy(self, session: SandboxSession) -> None:
         await session.shutdown()
         self._sessions.pop(session.session_id, None)
+
+    async def destroy_all(self) -> None:
+        """Destroy every session this backend still tracks.
+
+        Run-teardown safety net for per-agent sessions: any session
+        whose exec-done destroy hook never fired (orchestrator crash,
+        SIGKILL'd worker thread) is stopped and removed here so no
+        ``sleep infinity`` container outlives the run. Failures are
+        logged and never raised - teardown must not mask the run's
+        own exit path.
+        """
+        for session in list(self._sessions.values()):
+            try:
+                await self.destroy(session)
+            except Exception:
+                logger.warning("Failed to destroy sandbox session %s during cleanup", session.session_id, exc_info=True)
 
 
 __all__ = [

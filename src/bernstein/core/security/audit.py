@@ -84,6 +84,23 @@ REPLAY_EXPORT = "replay.export"
 #: privacy transform.
 REPLAY_PUBLISH = "replay.publish"
 
+#: Issue #2162 - emitted when a per-agent sandbox session is provisioned.
+#: Details carry the sandbox session id, image, and backend name.
+SANDBOX_SESSION_CREATE = "sandbox.session_create"
+
+#: Issue #2162 - emitted when an adapter command is submitted to a sandbox
+#: session. Details carry the sandbox session id, adapter name, and a
+#: SHA-256 hash of the command (the raw argv embeds prompt paths and model
+#: names; the hash keeps the chain verifiable without recording them).
+SANDBOX_EXEC_START = "sandbox.exec_start"
+
+#: Issue #2162 - emitted when a sandbox exec future resolves. Details carry
+#: the sandbox session id and the exit code (or ``cancelled``/``error``).
+SANDBOX_EXEC_END = "sandbox.exec_end"
+
+#: Issue #2162 - emitted when a per-agent sandbox session is destroyed.
+SANDBOX_SESSION_DESTROY = "sandbox.session_destroy"
+
 
 class AuditKeyPermissionError(RuntimeError):
     """Raised when the audit key file has permissions looser than 0600."""
@@ -172,7 +189,14 @@ def load_or_create_audit_key(key_path: Path | None = None) -> bytes:
 
     key = secrets.token_hex(32).encode()
     # Create with restrictive mode from the start - never widen then narrow.
-    fd = os.open(str(resolved), os.O_WRONLY | os.O_CREAT | os.O_EXCL, _REQUIRED_KEY_MODE)
+    try:
+        fd = os.open(str(resolved), os.O_WRONLY | os.O_CREAT | os.O_EXCL, _REQUIRED_KEY_MODE)
+    except FileExistsError:
+        # Another thread/process won the first-boot race between the
+        # exists() check above and this O_EXCL create. Their key is as
+        # good as ours; adopt it instead of failing the caller.
+        _enforce_key_permissions(resolved)
+        return resolved.read_bytes().strip()
     try:
         os.write(fd, key)
     finally:

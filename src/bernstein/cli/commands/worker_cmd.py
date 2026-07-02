@@ -226,6 +226,9 @@ class WorkerLoop:
 
     def _spawn_agent(self, task: dict) -> int | None:
         """Spawn a CLI agent process to work on a task. Returns PID or None."""
+        from bernstein import get_templates_dir
+        from bernstein.adapters.registry import get_adapter
+        from bernstein.core.models import Task
         from bernstein.core.spawner import AgentSpawner
 
         task_id = task.get("id", "unknown")
@@ -236,18 +239,21 @@ class WorkerLoop:
         logger.info("Spawning agent for task %s: %s", task_id, title[:60])
 
         try:
+            adapter = get_adapter(self._adapter_name)
             spawner = AgentSpawner(
-                adapter_name=self._adapter_name,
+                adapter=adapter,
+                templates_dir=get_templates_dir(self._workdir) / "roles",
                 workdir=self._workdir,
-                server_url=self._server_url,
-                auth_token=self._auth_token,
             )
-            session = spawner.spawn_for_task(
-                task_id=task_id,
-                title=title,
-                description=description,
-                role=role,
-            )
+            # Spawned agents reach the central server through the standard
+            # env vars. Adapters launch agents with an allowlist-filtered
+            # environment (build_filtered_env), so only allowlisted vars
+            # propagate; both vars below are in the base allowlist in
+            # adapters/env_isolation.py.
+            os.environ["BERNSTEIN_SERVER_URL"] = self._server_url
+            if self._auth_token:
+                os.environ["BERNSTEIN_AUTH_TOKEN"] = self._auth_token
+            session = spawner.spawn_for_tasks([Task(id=task_id, title=title, description=description, role=role)])
             if session and session.pid:
                 return session.pid
         except Exception as exc:
