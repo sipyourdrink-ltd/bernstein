@@ -194,7 +194,13 @@ class TestSpawnerConflictResolution:
         spawner._worktree_paths[session.id] = tmp_path / ".sdd" / "worktrees" / session.id
 
         clean_result = MergeResult(success=True, conflicting_files=[], merge_diff="ok")
-        with patch.object(spawner, "_merge_worktree_branch", return_value=clean_result):
+        # Default-branch merge guard: real agent runs land on a feature branch,
+        # so pin the resolvers to a non-default target to exercise the merge.
+        with (
+            patch("bernstein.core.git_ops.current_branch", return_value="feat/work"),
+            patch("bernstein.core.git_ops.resolve_default_branch", return_value="main"),
+            patch.object(spawner, "_merge_worktree_branch", return_value=clean_result),
+        ):
             result = spawner.reap_completed_agent(session)
 
         assert result is not None
@@ -216,7 +222,13 @@ class TestSpawnerConflictResolution:
             success=False,
             conflicting_files=["src/a.py"],
         )
-        with patch.object(spawner, "_merge_worktree_branch", return_value=conflict_result):
+        # Default-branch merge guard: pin the resolvers to a non-default target
+        # so the merge runs and the conflict result propagates.
+        with (
+            patch("bernstein.core.git_ops.current_branch", return_value="feat/work"),
+            patch("bernstein.core.git_ops.resolve_default_branch", return_value="main"),
+            patch.object(spawner, "_merge_worktree_branch", return_value=conflict_result),
+        ):
             result = spawner.reap_completed_agent(session)
 
         assert result is not None

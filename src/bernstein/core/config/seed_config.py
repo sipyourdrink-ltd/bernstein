@@ -97,6 +97,67 @@ class SessionConfig:
     stale_after_minutes: int = 30
 
 
+#: Environment variable that forces the GitHub backlog auto-sync on or off,
+#: overriding whatever ``github.sync_backlog`` says in ``bernstein.yaml``.
+#: Accepts the project's standard truthy/falsy words. Left unset means the
+#: config value (default off) wins.
+ENV_SYNC_GITHUB_BACKLOG = "BERNSTEIN_SYNC_GITHUB_BACKLOG"
+
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
+_FALSY_ENV = frozenset({"0", "false", "no", "off", "disable", "disabled"})
+
+
+@dataclass(frozen=True)
+class GithubConfig:
+    """GitHub integration configuration.
+
+    Attributes:
+        sync_backlog: When ``True``, open GitHub issues are pulled into
+            ``.sdd/backlog/open/`` at bootstrap before task scoping. Defaults
+            to ``False``: pulling every open issue into the backlog on every
+            run is surprising and can silently displace a seeded goal, so the
+            behaviour is opt-in. The ``BERNSTEIN_SYNC_GITHUB_BACKLOG`` env var
+            overrides this value at runtime.
+    """
+
+    sync_backlog: bool = False
+
+
+def github_backlog_sync_enabled(
+    seed: Any,
+    env: dict[str, str] | None = None,
+) -> bool:
+    """Resolve whether GitHub backlog auto-sync should run for this bootstrap.
+
+    Precedence: an explicit ``BERNSTEIN_SYNC_GITHUB_BACKLOG`` env value wins
+    (truthy enables, falsy disables); otherwise the seed's
+    ``github.sync_backlog`` flag applies; otherwise the default is ``False``.
+
+    Args:
+        seed: Parsed seed config (or any object exposing ``.github``).
+        env: Environment mapping to consult; defaults to ``os.environ``.
+
+    Returns:
+        ``True`` only when auto-sync is explicitly enabled.
+    """
+    source = os.environ if env is None else env
+    raw = source.get(ENV_SYNC_GITHUB_BACKLOG)
+    if raw is not None:
+        lowered = raw.strip().lower()
+        if lowered in _TRUTHY_ENV:
+            return True
+        if lowered in _FALSY_ENV:
+            return False
+        # Unrecognised value: ignore it and fall through to the config.
+        logger.warning(
+            "%s=%r not understood; using github.sync_backlog from config",
+            ENV_SYNC_GITHUB_BACKLOG,
+            raw,
+        )
+    github_cfg = getattr(seed, "github", None)
+    return bool(getattr(github_cfg, "sync_backlog", False))
+
+
 @dataclass(frozen=True)
 class NotifyConfig:
     """Webhook notification configuration.
@@ -296,6 +357,7 @@ class SeedConfig:
     cluster: ClusterConfig | None = None
     workspace: Workspace | None = None
     session: SessionConfig = field(default_factory=SessionConfig)
+    github: GithubConfig = field(default_factory=GithubConfig)
     worktree_setup: WorktreeSetupConfig | None = None
     quality_gates: QualityGatesConfig | None = None
     formal_verification: FormalVerificationConfig | None = None

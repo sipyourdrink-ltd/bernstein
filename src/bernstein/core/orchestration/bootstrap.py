@@ -42,7 +42,12 @@ from bernstein.core.orchestration.preflight import (
     gemini_has_auth,
     preflight_checks,
 )
-from bernstein.core.seed import NotifyConfig, SeedConfig, parse_seed
+from bernstein.core.seed import (
+    NotifyConfig,
+    SeedConfig,
+    github_backlog_sync_enabled,
+    parse_seed,
+)
 from bernstein.core.server_launch import (
     BootstrapResult,
     _build_codebase_index,
@@ -326,6 +331,66 @@ def _load_secrets_provider(seed: Any) -> None:
         raise SystemExit(1) from sec_exc
 
 
+def _maybe_sync_github_backlog(seed: Any, workdir: Path) -> int:
+    """Pull open GitHub issues into the backlog only when explicitly enabled.
+
+    Auto-sync is opt-in (``github.sync_backlog`` in bernstein.yaml, or the
+    ``BERNSTEIN_SYNC_GITHUB_BACKLOG`` env override). When it is off (the
+    default) no issues are synced and ``0`` is returned. This keeps a seeded
+    goal from being silently displaced by every open issue in the repo.
+
+    Returns:
+        Number of issues synced (``0`` when disabled or on any failure).
+    """
+    if not github_backlog_sync_enabled(seed):
+        logger.debug("GitHub backlog auto-sync disabled (github.sync_backlog off); skipping")
+        return 0
+    try:
+        from bernstein.core.github import sync_github_issues_to_backlog
+
+        return sync_github_issues_to_backlog(workdir)
+    except Exception as exc:
+        logger.debug("GitHub issue sync skipped: %s", exc)
+        return 0
+
+
+def _warn_if_goal_shadowed_by_backlog(
+    seed: Any,
+    *,
+    backlog_count: int,
+    prior_session: Any,
+    gh_synced: int,
+) -> None:
+    """Emit a LOUD warning when a seeded goal is dropped for a non-empty backlog.
+
+    Precedence at bootstrap is: resume prior session, else run the backlog,
+    else inject the seed goal. So a seeded goal never runs while the backlog is
+    non-empty. That is intentional for people who rely on backlog runs, but it
+    used to happen silently. Here we name the precedence and how to force the
+    goal so the operator is never surprised.
+    """
+    goal = str(getattr(seed, "goal", "") or "").strip()
+    if not goal or backlog_count <= 0 or prior_session is not None:
+        return
+    console.print(
+        "[bold yellow]WARNING[/bold yellow] seeded goal is being ignored: "
+        f"the backlog is non-empty ({backlog_count} task(s)), and the backlog "
+        "takes precedence over the goal at bootstrap."
+    )
+    console.print(
+        "[yellow]  precedence:[/yellow] prior session > backlog > seed goal. "
+        "To run the goal instead, start from an empty backlog (clear "
+        ".sdd/backlog/open/) or narrow the run with the BERNSTEIN_TASK_FILTER "
+        "sentinel so no backlog task matches."
+    )
+    if gh_synced > 0:
+        console.print(
+            "[yellow]  note:[/yellow] this backlog was just auto-synced from "
+            f"GitHub ({gh_synced} issue(s)); if you meant to run the goal, "
+            "disable github.sync_backlog (it is opt-in and off by default)."
+        )
+
+
 def _sync_and_plan_tasks(
     seed: Any,
     workdir: Path,
@@ -344,14 +409,11 @@ def _sync_and_plan_tasks(
     from bernstein.core.sync import sync_backlog_to_server
 
     # Sync open GitHub Issues into .sdd/backlog/open/ before server sync.
-    try:
-        from bernstein.core.github import sync_github_issues_to_backlog
-
-        gh_count = sync_github_issues_to_backlog(workdir)
-        if gh_count > 0:
-            console.print(f"  [dim]github[/dim]  synced {gh_count} issue(s) to backlog")
-    except Exception as exc:
-        logger.debug("GitHub issue sync skipped: %s", exc)
+    # Opt-in only (github.sync_backlog / BERNSTEIN_SYNC_GITHUB_BACKLOG);
+    # off by default so it cannot silently displace a seeded goal.
+    gh_count = _maybe_sync_github_backlog(seed, workdir)
+    if gh_count > 0:
+        console.print(f"  [dim]github[/dim]  synced {gh_count} issue(s) to backlog")
 
     _resume = seed.session.resume
     _stale_minutes = seed.session.stale_after_minutes
@@ -381,6 +443,13 @@ def _sync_and_plan_tasks(
             backlog_count += _wf_imported
     except Exception as _wf_exc:
         logger.debug("Workflow import skipped: %s", _wf_exc)
+
+    _warn_if_goal_shadowed_by_backlog(
+        seed,
+        backlog_count=backlog_count,
+        prior_session=prior_session,
+        gh_synced=gh_count,
+    )
 
     manager_task_id = ""
     if prior_session is not None:
@@ -833,14 +902,11 @@ def _goal_sync_and_plan(
     from bernstein.core.sync import sync_backlog_to_server
 
     # Sync open GitHub Issues into .sdd/backlog/open/ before server sync.
-    try:
-        from bernstein.core.github import sync_github_issues_to_backlog
-
-        gh_count = sync_github_issues_to_backlog(workdir)
-        if gh_count > 0:
-            console.print(f"[green]{icons.arrow_right}[/green] Synced {gh_count} GitHub issue(s) to backlog")
-    except Exception as exc:
-        logger.debug("GitHub issue sync skipped: %s", exc)
+    # Opt-in only (github.sync_backlog / BERNSTEIN_SYNC_GITHUB_BACKLOG);
+    # off by default so it cannot silently displace a seeded goal.
+    gh_count = _maybe_sync_github_backlog(seed, workdir)
+    if gh_count > 0:
+        console.print(f"[green]{icons.arrow_right}[/green] Synced {gh_count} GitHub issue(s) to backlog")
 
     # An explicit ``tasks`` payload (typically from ``--plan_file <yaml>``)
     # is an intentional re-run signal: the operator told us exactly which
@@ -870,6 +936,16 @@ def _goal_sync_and_plan(
             backlog_count += _wf_imported
     except Exception as _wf_exc:
         logger.debug("Workflow import skipped: %s", _wf_exc)
+
+    # An explicit ``tasks`` payload is an intentional operator signal and wins
+    # over the seed goal on purpose, so only warn on the plain goal path.
+    if not tasks:
+        _warn_if_goal_shadowed_by_backlog(
+            seed,
+            backlog_count=backlog_count,
+            prior_session=prior_session,
+            gh_synced=gh_count,
+        )
 
     manager_task_id = ""
     if prior_session is not None:

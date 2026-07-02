@@ -1017,7 +1017,13 @@ class TestWorktreeIntegration:
         mock_proc = MagicMock()
         spawner._procs[session.id] = mock_proc
 
+        # The default-branch merge guard requires the checked-out target to be
+        # a non-default branch (real agent runs land on a feature branch, not
+        # main/master).  Pin the resolvers so the merge is allowed to proceed
+        # and we still verify the reap -> merge -> cleanup wiring.
         with (
+            patch("bernstein.core.git_ops.current_branch", return_value="feat/work"),
+            patch("bernstein.core.git_ops.resolve_default_branch", return_value="main"),
             patch.object(spawner, "_merge_worktree_branch") as mock_merge,
             patch.object(spawner._worktree_mgr, "cleanup") as mock_cleanup,
         ):

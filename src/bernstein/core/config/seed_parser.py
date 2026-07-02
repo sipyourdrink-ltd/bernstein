@@ -23,6 +23,7 @@ from bernstein.core.compliance import ComplianceConfig, CompliancePreset
 from bernstein.core.config.seed_config import (
     CORSConfig,
     DashboardAuthConfig,
+    GithubConfig,
     MetricSchema,
     ModelFallbackSeedConfig,
     NetworkConfig,
@@ -891,6 +892,24 @@ def _parse_session(raw: object) -> SessionConfig:
     return SessionConfig(resume=resume_raw, stale_after_minutes=stale_raw)
 
 
+def _parse_github(raw: object) -> GithubConfig:
+    """Parse the optional ``github`` section.
+
+    Only ``sync_backlog`` is recognised today. Auto-sync of open issues into
+    the backlog is opt-in (default ``False``) because it can silently displace
+    a seeded goal on a non-empty backlog.
+    """
+    if raw is None:
+        return GithubConfig()
+    if not isinstance(raw, dict):
+        raise SeedError(f"github must be a mapping, got: {type(raw).__name__}")
+    github_dict: dict[str, object] = cast("_StrObjDict", raw)
+    sync_raw: object = github_dict.get("sync_backlog", False)
+    if not isinstance(sync_raw, bool):
+        raise SeedError(f"github.sync_backlog must be a bool, got: {type(sync_raw).__name__}")
+    return GithubConfig(sync_backlog=sync_raw)
+
+
 def _parse_workspace(
     workspace_raw: object,
     repos_raw: object,
@@ -1556,6 +1575,7 @@ def parse_seed(path: Path) -> SeedConfig:
 
     cluster = _parse_cluster(data.get("cluster"))
     session_cfg = _parse_session(data.get("session"))
+    github_cfg = _parse_github(data.get("github"))
     workspace = _parse_workspace(data.get("workspace"), data.get("repos"), path.parent)
     worktree_setup = _parse_worktree_setup(data.get("worktree_setup"))
     batch = _parse_batch(data.get("batch"))
@@ -1613,6 +1633,7 @@ def parse_seed(path: Path) -> SeedConfig:
         cluster=cluster,
         workspace=workspace,
         session=session_cfg,
+        github=github_cfg,
         worktree_setup=worktree_setup,
         secrets=secrets,
         key_rotation=key_rotation,

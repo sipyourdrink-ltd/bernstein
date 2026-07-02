@@ -198,6 +198,22 @@ class SessionSchema(BaseModel):
     stale_after_minutes: int = Field(default=30, ge=1)
 
 
+class GithubSchema(BaseModel):
+    """GitHub integration configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sync_backlog: bool = Field(
+        default=False,
+        description=(
+            "Pull open GitHub issues into .sdd/backlog/open/ at bootstrap. "
+            "Off by default: syncing every open issue can silently displace a "
+            "seeded goal on a non-empty backlog. Overridable at runtime with "
+            "BERNSTEIN_SYNC_GITHUB_BACKLOG."
+        ),
+    )
+
+
 class ClusterSchema(BaseModel):
     """Cluster mode configuration."""
 
@@ -494,6 +510,7 @@ class BernsteinConfig(BaseModel):
     notify: NotifyConfigSchema | None = None
     storage: StorageSchema | None = None
     session: SessionSchema | None = None
+    github: GithubSchema | None = None
     cluster: ClusterSchema | None = None
     remote: RemoteSchema | None = None
     agency: AgencySchema | None = None

@@ -421,6 +421,75 @@ def remote_exists(cwd: Path, remote: str = "origin") -> bool:
     return result.ok
 
 
+def _run_git_quiet(args: list[str], cwd: Path) -> GitResult:
+    """Run a read-only git query, converting OS-level errors into a failed
+    :class:`GitResult` instead of raising.
+
+    Used by the branch resolvers below so they honour their "never raises"
+    contract even when *cwd* does not exist, git is not installed, or the
+    command times out.
+    """
+    try:
+        return run_git(args, cwd, timeout=5)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError) as exc:
+        logger.debug("git %s failed at %s: %s", args[0] if args else "?", cwd, exc)
+        return GitResult(returncode=1, stdout="", stderr=str(exc))
+
+
+def current_branch(cwd: Path) -> str | None:
+    """Return the branch currently checked out at *cwd*, or ``None``.
+
+    ``None`` covers detached-HEAD and any git failure. Never raises.
+    """
+    result = _run_git_quiet(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+    if not result.ok:
+        return None
+    name = result.stdout.strip()
+    if not name or name == "HEAD":  # detached HEAD
+        return None
+    return name
+
+
+def resolve_default_branch(cwd: Path, remote: str = "origin") -> str:
+    """Resolve the repository's default branch (the protected trunk).
+
+    Resolution order matches the project's canonical detection used for
+    graveyard capture: ``origin/HEAD`` first, then conventional local and
+    remote-tracking names, then ``init.defaultBranch`` from git config, and
+    finally ``"main"`` as a last resort. Never raises.
+
+    Args:
+        cwd: Repository root.
+        remote: Remote whose ``HEAD`` symbolic ref names the default branch.
+
+    Returns:
+        The default branch short name (e.g. ``"main"`` or ``"master"``).
+    """
+    head = _run_git_quiet(["symbolic-ref", f"refs/remotes/{remote}/HEAD"], cwd)
+    if head.ok:
+        ref = head.stdout.strip()
+        prefix = f"refs/remotes/{remote}/"
+        if ref.startswith(prefix):
+            return ref.removeprefix(prefix)
+
+    abbrev = _run_git_quiet(["rev-parse", "--abbrev-ref", f"{remote}/HEAD"], cwd)
+    if abbrev.ok:
+        ref = abbrev.stdout.strip()
+        if ref and ref != f"{remote}/HEAD":
+            return ref.removeprefix(f"{remote}/")
+
+    for candidate in ("main", "master"):
+        probe = _run_git_quiet(["rev-parse", "--verify", "--quiet", candidate], cwd)
+        if probe.ok:
+            return candidate
+
+    cfg = _run_git_quiet(["config", "--get", "init.defaultBranch"], cwd)
+    if cfg.ok and cfg.stdout.strip():
+        return cfg.stdout.strip()
+
+    return "main"
+
+
 def safe_push(
     cwd: Path,
     branch: str,

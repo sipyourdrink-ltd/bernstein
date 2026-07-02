@@ -20,6 +20,7 @@ import yaml
 from bernstein.core.config.seed_config import (  # noqa: F401
     CORSConfig,
     DashboardAuthConfig,
+    GithubConfig,
     MetricSchema,
     ModelFallbackSeedConfig,
     NetworkConfig,
@@ -31,6 +32,7 @@ from bernstein.core.config.seed_config import (  # noqa: F401
     SessionConfig,
     StorageConfig,
     WebhookConfig,
+    github_backlog_sync_enabled,
 )
 
 # Re-export all parsing functions from seed_parser

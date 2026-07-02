@@ -231,6 +231,63 @@ For security-sensitive deployments, prefer explicit config in `bernstein.yaml` o
 
 ---
 
+## Bootstrap and merge safety
+
+### GitHub backlog auto-sync (opt-in, off by default)
+
+At bootstrap, Bernstein can pull open GitHub issues into `.sdd/backlog/open/`
+before task scoping. This is **opt-in and off by default** so it cannot
+silently fill the backlog and displace a seeded goal.
+
+Enable it in `bernstein.yaml`:
+
+```yaml
+github:
+  sync_backlog: true   # default: false
+```
+
+Or override at runtime (wins over the config value):
+
+```bash
+BERNSTEIN_SYNC_GITHUB_BACKLOG=1   # truthy enables; falsy (0/false/off) disables
+```
+
+When disabled (the default), no issues are synced.
+
+### Goal-vs-backlog precedence
+
+When a run starts, the planning source is chosen in this order:
+
+1. **Prior session** - resume and skip re-planning.
+2. **Non-empty backlog** - run the backlog tasks.
+3. **Seed goal** - inject the manager/worker task from `goal`.
+
+So a **non-empty backlog takes precedence over the seed goal**. This is kept
+for back-compat with backlog-driven runs, but Bernstein now prints a LOUD
+warning when a seeded goal is skipped because the backlog is non-empty. To run
+the goal instead:
+
+- start from an empty backlog (clear `.sdd/backlog/open/`), or
+- narrow the run with the `BERNSTEIN_TASK_FILTER` sentinel so no backlog task
+  matches.
+
+### Default-branch merge guard
+
+Agent worktree work is merged into whatever branch is checked out at the repo
+root. Bernstein **refuses to merge or push agent work onto the repository's
+default (protected) branch** (`main`/`master`, resolved via `origin/HEAD` with
+a `init.defaultBranch` fallback). The refusal is recorded to
+`.sdd/runtime/refused_merges.jsonl` and the merge is reported as failed rather
+than silently landing unreviewed commits on the trunk.
+
+Check out a non-default branch before merging, or opt in explicitly:
+
+```bash
+BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH=1
+```
+
+---
+
 ## Always-allow rules (`.bernstein/always_allow.yaml`)
 
 Always-allow rules short-circuit approval prompts when a tool invocation matches a known-safe signature. For example, allowing `grep` on `src/*` paths while still asking or denying `grep` on `/etc`.
