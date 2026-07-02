@@ -381,7 +381,7 @@ def run_command_in_workdir(
     at the builtin layer; ``run_command`` remains a process-exec primitive
     whose filesystem confinement is the configured OS sandbox, not this check.
     """
-    argv_list = [str(a) for a in argv]
+    argv_list = list(argv)
     emit(
         {
             "type": "tool_call",

@@ -934,8 +934,7 @@ def _parse_github(raw: object) -> GithubConfig:
         return GithubConfig()
     if not isinstance(raw, dict):
         raise SeedError(f"github must be a mapping, got: {type(raw).__name__}")
-    github_dict: dict[str, object] = cast("_StrObjDict", raw)
-    sync_raw: object = github_dict.get("sync_backlog", False)
+    sync_raw: object = cast("_StrObjDict", raw).get("sync_backlog", False)
     if not isinstance(sync_raw, bool):
         raise SeedError(f"github.sync_backlog must be a bool, got: {type(sync_raw).__name__}")
     return GithubConfig(sync_backlog=sync_raw)
