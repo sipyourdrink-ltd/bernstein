@@ -3074,7 +3074,7 @@ class AgentSpawner:
         assert self._sandbox_backend is not None
         assert self._sandbox_manifest_factory is not None
         manifest = self._sandbox_manifest_factory()
-        sbx_session = asyncio.run(self._sandbox_backend.create(manifest, options=dict(self._sandbox_options)))
+        sbx_session = asyncio.run(self._sandbox_backend.create(manifest, options=self._sandbox_options.copy()))
         backend_name = getattr(sbx_session, "backend_name", "unknown")
         sandbox_session_created_total.labels(backend=backend_name).inc()
         logger.info(

@@ -229,8 +229,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
             if isinstance(heartbeat_dir, str) and heartbeat_dir:
                 overrides["heartbeat_dir"] = heartbeat_dir
 
-        return {
-            **overrides,
+        return overrides | {
             "session_id": session_id,
             "prompt": prompt,
             "workdir": str(workdir),
