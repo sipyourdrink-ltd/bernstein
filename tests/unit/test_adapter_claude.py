@@ -799,18 +799,28 @@ class TestBuildCommandSystemAddendum:
 
 
 # ---------------------------------------------------------------------------
-# Provider-side context-compaction policy (deterministic replay protection)
+# Context-compaction policy (recorded in the replay fingerprint)
 # ---------------------------------------------------------------------------
 
 
 class TestCompactionPolicy:
-    """apply_compaction_policy disables provider compaction in deterministic modes.
+    """apply_compaction_policy requests best-effort suppression + records policy.
 
-    The step-journal replay guarantee only holds when the model sees exactly
-    the context we sent. Provider-side compaction can rewrite older context
-    server-side, so deterministic-record / hermetic-replay runs must turn it
-    off. These tests pin that policy and the recorded enabled/disabled flag.
+    The load-bearing replay guarantee is that the compaction policy state is
+    recorded in the step fingerprint, so a compaction-driven divergence is
+    detected and attributable. In deterministic-record / hermetic-replay mode
+    the adapter additionally emits a best-effort request to suppress the CLI's
+    client-side auto-compaction. These tests pin that policy and the recorded
+    policy flag.
     """
+
+    def test_suppression_env_var_is_the_recognized_cli_name(self) -> None:
+        # The suppression request must target the CLI's recognized
+        # auto-compaction variable, not an invented name that no consumer
+        # honours (which would make the request a silent no-op).
+        from bernstein.adapters.claude import _DISABLE_COMPACTION_ENV
+
+        assert _DISABLE_COMPACTION_ENV == "DISABLE_AUTO_COMPACT"
 
     def test_default_mode_leaves_env_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from bernstein.adapters.claude import (
@@ -825,7 +835,7 @@ class TestCompactionPolicy:
         assert disabled is False
         assert _DISABLE_COMPACTION_ENV not in env
 
-    def test_record_mode_disables_compaction(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_record_mode_requests_suppression(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from bernstein.adapters.claude import (
             _DISABLE_COMPACTION_ENV,
             apply_compaction_policy,
@@ -838,7 +848,7 @@ class TestCompactionPolicy:
         assert disabled is True
         assert env[_DISABLE_COMPACTION_ENV] == "1"
 
-    def test_replay_mode_disables_compaction(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_replay_mode_requests_suppression(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from bernstein.adapters.claude import (
             _DISABLE_COMPACTION_ENV,
             apply_compaction_policy,

@@ -6,11 +6,11 @@ not match`` signature. ``diff_steps`` is the per-step primitive;
 ``diff_journals`` walks two chains side-by-side and returns the first
 divergence (or ``None`` if the chains match).
 
-This module deliberately operates on the six canonical fields only
+This module deliberately operates on the hashed canonical fields only
 (``prev_hash``, ``input_hash``, ``model``, ``prompt``, ``tool_call``,
-``tool_result``). Auxiliary fields like ``ts`` and ``seq`` are ignored
-for divergence-detection purposes because they are not part of the
-``step_hash`` contract.
+``tool_result``, ``effort``). Auxiliary fields like ``ts`` and ``seq``
+are ignored for divergence-detection purposes because they are not part
+of the ``step_hash`` contract.
 """
 
 from __future__ import annotations
@@ -25,6 +25,9 @@ if TYPE_CHECKING:
 
 
 #: Fields the step hash is computed over - see ``journal.canonical_step_payload``.
+#: ``effort`` folds into the hash when non-None, so two runs that differ only
+#: in reasoning effort surface as a named ``effort`` field divergence rather
+#: than as an unexplained hash mismatch.
 _HASHED_FIELDS = (
     "prev_hash",
     "input_hash",
@@ -32,6 +35,7 @@ _HASHED_FIELDS = (
     "prompt",
     "tool_call",
     "tool_result",
+    "effort",
 )
 
 
@@ -41,9 +45,9 @@ class StepDivergence:
 
     Attributes:
         seq: Zero-based step index on which the divergence was observed.
-        fields_changed: Tuple of field names (a subset of the canonical
-            six) whose values differ between left and right. Always
-            non-empty.
+        fields_changed: Tuple of field names (a subset of the hashed
+            canonical fields) whose values differ between left and right.
+            Always non-empty.
         left_values: ``field -> value`` for the changed fields on the
             *left* chain.
         right_values: ``field -> value`` for the changed fields on the
@@ -65,7 +69,7 @@ class StepDivergence:
 
 
 def _coerce_for_diff(row: dict[str, Any]) -> dict[str, Any]:
-    """Project a journal row onto the six hashed fields only."""
+    """Project a journal row onto the hashed fields only."""
     return {key: row.get(key) for key in _HASHED_FIELDS}
 
 
@@ -73,7 +77,7 @@ def diff_steps(left: dict[str, Any], right: dict[str, Any]) -> StepDivergence | 
     """Return the per-field divergence between two journal rows, or ``None``.
 
     Args:
-        left: One step row (canonical six fields; extra fields ignored).
+        left: One step row (hashed canonical fields; extra fields ignored).
         right: The opposing row.
 
     Returns:
