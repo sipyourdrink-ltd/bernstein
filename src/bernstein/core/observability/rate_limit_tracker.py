@@ -153,22 +153,43 @@ _CONTEXT_OVERFLOW_PATTERNS: tuple[str, ...] = (
 # `"max_tokens": 16384` (which incidentally contains the digits 4-1-3 nowhere,
 # but DOES contain other risky substrings like "429" in unrelated counters)
 # does not. See 2026-07-02 false-positive incident (runs 4/5/6 killed).
-_RISKY_BARE_TOKENS: frozenset[str] = frozenset({
-    # bare HTTP codes — match inside byte counts / ids / timestamps
-    "413", "429", "401", "403", "504",
-    # generic words/phrases — appear freely in tool output, target-repo code
-    # being read, and test stdout (2026-07-02 run 7: `"timeout": 5` in a
-    # tool-call JSON killed a healthy manager)
-    "context window",
-    "timeout", "timed out", "time out",
-    "request timeout", "connect timeout", "read timeout", "gateway timeout",
-    "rate limit", "rate_limit", "ratelimit", "overloaded",
-    "hit your limit", "usage cap",
-    "unauthorized", "forbidden",
-    "invalid_client", "invalid_token", "expired_token",
-    "connection refused", "connection reset", "econnrefused", "econnreset",
-    "api_error",
-})
+_RISKY_BARE_TOKENS: frozenset[str] = frozenset(
+    {
+        # bare HTTP codes — match inside byte counts / ids / timestamps
+        "413",
+        "429",
+        "401",
+        "403",
+        "504",
+        # generic words/phrases — appear freely in tool output, target-repo code
+        # being read, and test stdout (2026-07-02 run 7: `"timeout": 5` in a
+        # tool-call JSON killed a healthy manager)
+        "context window",
+        "timeout",
+        "timed out",
+        "time out",
+        "request timeout",
+        "connect timeout",
+        "read timeout",
+        "gateway timeout",
+        "rate limit",
+        "rate_limit",
+        "ratelimit",
+        "overloaded",
+        "hit your limit",
+        "usage cap",
+        "unauthorized",
+        "forbidden",
+        "invalid_client",
+        "invalid_token",
+        "expired_token",
+        "connection refused",
+        "connection reset",
+        "econnrefused",
+        "econnreset",
+        "api_error",
+    }
+)
 
 # Structured agent-log lines that carry DATA (tool traffic, heartbeats), not
 # provider errors. Never scanned: a tool result legitimately contains target
@@ -178,9 +199,7 @@ _DATA_LINE_TYPES: frozenset[str] = frozenset({"tool_call", "tool_result", "heart
 # Words that indicate a line is plausibly describing a real provider/HTTP
 # error, rather than incidental structured data. Deliberately narrow —
 # broadening this list re-opens the false-positive hole this patch closes.
-_ERROR_CONTEXT_RE = re.compile(
-    r"\b(error|status|http|code|exception|failed|failure|traceback)\b", re.IGNORECASE
-)
+_ERROR_CONTEXT_RE = re.compile(r"\b(error|status|http|code|exception|failed|failure|traceback)\b", re.IGNORECASE)
 
 _BASE_THROTTLE_S: float = 60.0
 _MAX_THROTTLE_S: float = 3600.0
@@ -550,8 +569,7 @@ class RateLimitTracker:
                     if not _ERROR_CONTEXT_RE.search(lower_line):
                         continue
                     logger.info(
-                        "_scan_log_for_patterns: matched RISKY pattern %r "
-                        "(with error context) in %s, line: %s",
+                        "_scan_log_for_patterns: matched RISKY pattern %r (with error context) in %s, line: %s",
                         pat,
                         log_path,
                         line.strip()[:300],

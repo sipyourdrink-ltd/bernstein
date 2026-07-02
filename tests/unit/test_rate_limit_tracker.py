@@ -317,9 +317,7 @@ class TestRiskyBareTokenFalsePositives:
 
     def test_no_rate_limit_on_json_counters_line(self, tmp_path: Path) -> None:
         log = tmp_path / "agent.log"
-        log.write_text(
-            '{"type": "tool_result", "bytes_written": 429, "duration_ms": 129413}\n'
-        )
+        log.write_text('{"type": "tool_result", "bytes_written": 429, "duration_ms": 129413}\n')
         tracker = RateLimitTracker()
         assert not tracker.scan_log_for_429(log)
 
@@ -329,9 +327,7 @@ class TestRiskyBareTokenFalsePositives:
         tracker = RateLimitTracker()
         assert not tracker.scan_log_for_auth_error(log)
 
-    def test_no_failure_type_detected_on_healthy_worker_json_log(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_failure_type_detected_on_healthy_worker_json_log(self, tmp_path: Path) -> None:
         """The exact incident shape: a healthy worker's structured log full
         of tool results and a manifest dump must classify as no failure."""
         log = tmp_path / "agent.log"
@@ -348,9 +344,7 @@ class TestRiskyBareTokenFalsePositives:
         tracker = RateLimitTracker()
         assert tracker.detect_failure_type(log) is None
 
-    def test_max_tokens_removed_outright_even_with_error_context(
-        self, tmp_path: Path
-    ) -> None:
+    def test_max_tokens_removed_outright_even_with_error_context(self, tmp_path: Path) -> None:
         """max_tokens was removed from the pattern list entirely, not just
         demoted to risky — it must not fire even next to the word "error"."""
         log = tmp_path / "agent.log"
@@ -406,6 +400,7 @@ class TestDataLineAndGenericWordFalsePositives:
 
     def _tracker(self):
         from bernstein.core.observability.rate_limit_tracker import RateLimitTracker
+
         return RateLimitTracker()
 
     def test_tool_traffic_lines_never_match(self, tmp_path):

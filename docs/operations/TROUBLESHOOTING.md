@@ -120,6 +120,45 @@ grep -i "rate limit\|429\|hit your limit\|resets" .sdd/runtime/*.log
 - Use the `TierAwareRouter` to balance across multiple providers (Claude + Codex + Gemini).
 - For batch-eligible tasks, set `batch_eligible: true` to route to provider batch APIs at reduced cost.
 
+### 4a. Healthy worker killed as a false-positive rate-limit hit
+
+**Symptom:** A worker that was making normal progress gets killed and the
+run falls back to a more expensive sticky provider, even though the
+provider dashboard shows no throttling. `.sdd/runtime/*.log` shows a
+`_scan_log_for_patterns: matched RISKY pattern ...` line pointing at a
+structured `tool_call`/`tool_result` JSON line, a `"max_tokens": ...`
+manifest dump, or a `"timeout": <n>` tool argument.
+
+**Cause:** `core/observability/rate_limit_tracker.py`'s log-scanning
+classifier (`_scan_log_for_patterns`) infers 429/throttle events from raw
+agent subprocess output. Bare substrings (`"413"`, `"429"`, `"401"`,
+`"403"`, `"504"`) and generic English words (`timeout`, `rate limit`,
+`unauthorized`, ...) previously matched anywhere in the log tail,
+including inside an agent's own JSON tool traffic where those tokens
+carry zero relation to a real provider error (byte counts, arg names,
+target-repo code being read). Fixed 2026-07-02 (#2183): structured
+`tool_call`/`tool_result`/`heartbeat` lines are now skipped entirely, and
+every remaining risky bare token/word only counts as a match when it
+appears on a line that also carries explicit error context
+(`error|status|http|code|exception|failed|failure|traceback`, matched
+with a word boundary via `_ERROR_CONTEXT_RE`).
+
+**Diagnosis:**
+```bash
+# Every classifier match is logged with the matched line - one read
+# tells you whether it was a real provider error or a data false-positive.
+grep "_scan_log_for_patterns: matched" .sdd/runtime/*.log
+```
+
+**Resolution:**
+- If the matched line is agent-produced data (tool JSON, code being
+  read) rather than a real HTTP/provider error, it's a classifier gap -
+  file an issue with the matched line so the pattern/context list can be
+  tightened further.
+- No operator action needed for the fixed patterns above; upgrade to a
+  release containing #2183 if you're still seeing this on unrelated data
+  lines.
+
 ---
 
 ## 5. Budget Exceeded
