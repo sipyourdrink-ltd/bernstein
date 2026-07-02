@@ -254,6 +254,14 @@ def _create_task(
         "metadata": {
             "ab_test_id": test_id,
             "ab_variant": variant,
+            # A/B tests intentionally pin two different models (often two
+            # different Claude tier names, e.g. --model-a opus --model-b
+            # sonnet) so they can be compared. The non-Claude-adapter tier
+            # coercion guard in spawner_core.py must not rewrite these to
+            # the adapter's single default model, or the two variants
+            # collapse into an A-vs-A test. See spawner_core.py's
+            # task_model_is_tier_name coercion check.
+            "pinned_model": True,
         },
     }
     resp = client.post(f"{server_url}/tasks", json=payload, timeout=10.0)

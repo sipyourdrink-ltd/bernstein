@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from bernstein.core.ab_test import (
     ABTestConfig,
     ABTestReport,
     ABTestResult,
+    _create_task,
     determine_winner,
 )
 
@@ -318,3 +321,29 @@ class TestABTestResult:
         assert r.passed is False
         assert r.quality_passed is False
         assert r.status == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# _create_task - server payload construction
+# ---------------------------------------------------------------------------
+
+
+class TestCreateTaskPinnedModel:
+    """Tasks created by an A/B test must mark their model as pinned so the
+    non-Claude-adapter tier-coercion guard in spawner_core.py doesn't
+    collapse both variants onto the same model."""
+
+    def test_created_task_payload_marks_model_pinned(self) -> None:
+        client = MagicMock()
+        client.post.return_value.json.return_value = {"id": "task-123"}
+        client.post.return_value.raise_for_status.return_value = None
+
+        task_id = _create_task(client, "http://server", _CONFIG, "test-id", "a", "opus")
+
+        assert task_id == "task-123"
+        _, kwargs = client.post.call_args
+        payload = kwargs["json"]
+        assert payload["metadata"]["pinned_model"] is True
+        assert payload["metadata"]["ab_test_id"] == "test-id"
+        assert payload["metadata"]["ab_variant"] == "a"
+        assert payload["model"] == "opus"

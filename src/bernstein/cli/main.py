@@ -823,6 +823,7 @@ def cli(
         sandbox=sandbox_override,
         allow_paid=allow_paid,
         two_phase_sandbox=False,
+        worker_role=None,
         plan_only=plan_only,
         from_plan=Path(from_plan) if from_plan else None,
         auto_approve=auto_approve or yes,

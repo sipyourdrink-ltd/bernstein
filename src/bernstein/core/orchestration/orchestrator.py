@@ -4416,6 +4416,14 @@ if __name__ == "__main__":
     _adapter_env_default = os.environ.get("BERNSTEIN_ADAPTER", "").strip() or "claude"
     parser.add_argument("--adapter", type=str, default=_adapter_env_default)
     parser.add_argument("--cells", type=int, default=1, help="Number of parallel cells (1=single-cell)")
+    # Run-level model override (from ``bernstein run --model``), threaded through
+    # by the CLI's spawner launcher. Falls back to BERNSTEIN_MODEL env var so
+    # any nested resolve_adapter()-style callers can also honour it. This is
+    # the value AgentSpawner uses to coerce Claude tier names (opus/sonnet/
+    # haiku) emitted by the heuristic model selector into a model the active
+    # non-Claude adapter understands - see _coerce_model_for_non_claude_adapter.
+    _model_env_default = os.environ.get("BERNSTEIN_MODEL", "").strip() or None
+    parser.add_argument("--model", type=str, default=_model_env_default)
     args = parser.parse_args()
 
     workdir = Path.cwd()
@@ -4501,6 +4509,14 @@ if __name__ == "__main__":
                 adapter_name = getattr(seed, "cli", adapter_name)
             except Exception as exc:
                 logger.warning("Failed to parse seed for adapter config: %s", exc)
+
+        # Run-level model: ``--model`` flag (threaded from ``bernstein run
+        # --model``) wins, falling back to the seed's resolved model (also
+        # set from the same CLI flag when the seed is parsed in-process).
+        # This is the value that reaches AgentSpawner as ``default_model``
+        # so child-task spawns can coerce Claude tier names for non-Claude
+        # adapters instead of passing them through literally.
+        run_model: str | None = args.model or (getattr(seed, "model", None) if seed else None)
 
         if adapter_name == "auto":
             # Auto mode: default to Claude Code (primary), others used via routing
@@ -4789,7 +4805,7 @@ if __name__ == "__main__":
 
         spawner = AgentSpawner(
             adapter=adapter_inst,
-            templates_dir=get_templates_dir(workdir),
+            templates_dir=get_templates_dir(workdir) / "roles",
             workdir=workdir,
             router=router,
             mcp_config=mcp_config,
@@ -4807,6 +4823,7 @@ if __name__ == "__main__":
             resource_limits=agent_rlimits,
             warm_pool=warm_pool,
             sandbox_session=docker_sandbox_session,
+            default_model=run_model,
         )
         run_config_budget_usd: float | None = None
         dry_run = False

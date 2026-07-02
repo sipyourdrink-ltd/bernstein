@@ -449,6 +449,65 @@ def _inject_manager_task(
     return str(data.get("id", "unknown"))
 
 
+def _inject_worker_task(
+    seed: SeedConfig,
+    workdir: Path,
+    port: int,
+    *,
+    role: str,
+    server_url: str | None = None,
+    auth_token: str | None = None,
+) -> str:
+    """Create a single worker task that works the seed goal directly.
+
+    Unlike the manager task, the worker skips decomposition and tackles the
+    goal in the given *role* (e.g. ``backend``, ``qa``, ``frontend``).
+
+    Args:
+        seed: Parsed seed configuration.
+        workdir: Project root for resolving context files.
+        port: Server port (used if server_url is None).
+        role: Agent role name (e.g. "backend", "qa").
+        server_url: Explicit base URL of the task server.
+        auth_token: Bearer token for authenticated requests.
+
+    Returns:
+        The task ID assigned by the server.
+
+    Raises:
+        RuntimeError: If the server rejects the task.
+    """
+    task = seed_to_initial_task(seed, workdir=workdir)
+
+    payload: dict[str, Any] = {
+        "title": f"[{role}] {seed.goal[:70]}",
+        "role": role,
+        "description": task.description,
+        "priority": 1,
+        "scope": "large",
+        "complexity": "high",
+        "model": seed.model or "sonnet",
+        "effort": "max",
+    }
+
+    base = server_url or f"http://127.0.0.1:{port}"
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
+    resp = httpx.post(
+        f"{base}/tasks",
+        json=payload,
+        headers=headers,
+        timeout=5.0,
+    )
+    if resp.status_code != 201:
+        raise RuntimeError(f"Failed to create {role} task: {resp.status_code} {resp.text}")
+
+    data: dict[str, Any] = resp.json()
+    return str(data.get("id", "unknown"))
+
+
 def _start_spawner(
     workdir: Path,
     port: int,
@@ -458,6 +517,7 @@ def _start_spawner(
     cluster_enabled: bool = False,
     ab_test: bool = False,
     adapter: str | None = None,
+    model: str | None = None,
 ) -> int:
     """Launch the spawner process in the background.
 
@@ -467,6 +527,12 @@ def _start_spawner(
     ``--adapter claude``.  This closes a long-standing GUI-smoke bug where
     ``bernstein run --idle`` would burn real tokens because the orchestrator
     subprocess defaulted to Claude regardless of the resolved adapter.
+
+    ``model`` (e.g. from ``bernstein run --model MiniMax-M3``) is threaded
+    through the same way so the orchestrator subprocess -- which never sees
+    the CLI's own argv -- can coerce Claude tier names (opus/sonnet/haiku)
+    emitted by the heuristic model selector for manager-spawned child tasks
+    into a model the resolved non-Claude adapter actually understands.
     """
     pid_path = workdir / ".sdd" / "runtime" / "spawner.pid"
     log_path = workdir / ".sdd" / "runtime" / "spawner.log"
@@ -487,6 +553,8 @@ def _start_spawner(
         # Propagate via env too so any nested resolve_adapter() callers (and
         # the orchestrator __main__'s argparse default-override) honour it.
         env["BERNSTEIN_ADAPTER"] = adapter
+    if model:
+        env["BERNSTEIN_MODEL"] = model
 
     argv = [
         sys.executable,
@@ -499,6 +567,8 @@ def _start_spawner(
     ]
     if adapter:
         argv.extend(["--adapter", adapter])
+    if model:
+        argv.extend(["--model", model])
 
     log_fh = log_path.open("a")
     proc = subprocess.Popen(

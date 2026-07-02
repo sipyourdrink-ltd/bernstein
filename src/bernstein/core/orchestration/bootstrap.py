@@ -49,6 +49,7 @@ from bernstein.core.server_launch import (
     _clean_stale_runtime,
     _discover_catalog,
     _inject_manager_task,
+    _inject_worker_task,
     _is_alive,
     _read_pid,
     _resolve_auth_token,
@@ -332,6 +333,7 @@ def _sync_and_plan_tasks(
     server_url: str,
     auth_token: str | None,
     force_fresh: bool,
+    worker_role: str | None = None,
 ) -> tuple[int, str, Any]:
     """Sync backlog to server, import workflows, and determine planning mode.
 
@@ -386,14 +388,25 @@ def _sync_and_plan_tasks(
     elif backlog_count > 0:
         console.print(f"  [dim]tasks[/dim]   {backlog_count} from backlog")
     else:
-        manager_task_id = _inject_manager_task(
-            seed,
-            workdir,
-            port,
-            server_url=server_url,
-            auth_token=auth_token,
-        )
-        console.print("  [dim]plan[/dim]    manager agent will decompose goal")
+        if worker_role:
+            manager_task_id = _inject_worker_task(
+                seed,
+                workdir,
+                port,
+                role=worker_role,
+                server_url=server_url,
+                auth_token=auth_token,
+            )
+            console.print(f"  [dim]plan[/dim]    single {worker_role} agent will work the goal directly")
+        else:
+            manager_task_id = _inject_manager_task(
+                seed,
+                workdir,
+                port,
+                server_url=server_url,
+                auth_token=auth_token,
+            )
+            console.print("  [dim]plan[/dim]    manager agent will decompose goal")
 
     return backlog_count, manager_task_id, prior_session
 
@@ -409,6 +422,7 @@ def bootstrap_from_seed(
     cli: str | None = None,
     model: str | None = None,
     ab_test: bool = False,
+    worker_role: str | None = None,
 ) -> BootstrapResult:
     """Full bootstrap: parse seed -> init .sdd -> start server -> plan -> orchestrate.
 
@@ -521,6 +535,7 @@ def bootstrap_from_seed(
         server_url,
         auth_token,
         force_fresh,
+        worker_role=worker_role,
     )
 
     # Cost estimate (single compact line)
@@ -547,8 +562,9 @@ def bootstrap_from_seed(
         cluster_enabled=cluster_enabled,
         ab_test=ab_test,
         adapter=_resolved_adapter,
+        model=getattr(seed, "model", None) or None,
     )
-    _start_watchdog(workdir, port)
+    _start_watchdog(workdir, port, adapter=_resolved_adapter, model=getattr(seed, "model", None) or None)
     console.print(f"  [dim]agents[/dim]  spawning (max {seed.max_agents})")
 
     result = BootstrapResult(
@@ -573,12 +589,16 @@ def bootstrap_from_seed(
     return result
 
 
-def _start_watchdog(workdir: Path, port: int) -> int:
+def _start_watchdog(workdir: Path, port: int, adapter: str | None = None, model: str | None = None) -> int:
     """Launch the watchdog as a background process.
 
     Args:
         workdir: Project root.
         port: Task server port.
+        adapter: Resolved CLI adapter override (e.g. ``mock`` from ``--idle``).
+            Threaded through so a watchdog-triggered spawner restart doesn't
+            silently drop back to the default ``claude`` adapter.
+        model: ``--model`` override to preserve across spawner restarts.
 
     Returns:
         PID of the watchdog process.
@@ -586,16 +606,22 @@ def _start_watchdog(workdir: Path, port: int) -> int:
     pid_path = workdir / ".sdd" / "runtime" / "watchdog.pid"
     log_path = workdir / ".sdd" / "runtime" / "watchdog.log"
 
+    argv = [
+        sys.executable,
+        "-m",
+        "bernstein.core.bootstrap",
+        "--watchdog",
+        "--port",
+        str(port),
+    ]
+    if adapter:
+        argv.extend(["--adapter", adapter])
+    if model:
+        argv.extend(["--model", model])
+
     log_fh = log_path.open("w")
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "bernstein.core.bootstrap",
-            "--watchdog",
-            "--port",
-            str(port),
-        ],
+        argv,
         stdout=log_fh,
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -665,7 +691,13 @@ def _watchdog_check_process(
     return None, restarts, give_up_logged
 
 
-def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
+def run_watchdog(
+    workdir: Path,
+    port: int,
+    poll_s: float = 5.0,
+    adapter: str | None = None,
+    model: str | None = None,
+) -> None:
     """Monitor the server and orchestrator, restarting them if they die.
 
     This blocks forever and should be run as a background daemon.
@@ -682,6 +714,9 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
         workdir: Project root directory.
         port: Task server port.
         poll_s: Seconds between health checks.
+        adapter: Resolved CLI adapter override to preserve across
+            watchdog-triggered spawner restarts (see ``_restart_spawner``).
+        model: ``--model`` override to preserve across spawner restarts.
     """
     server_pid_path = workdir / ".sdd" / "runtime" / "server.pid"
     spawner_pid_path = workdir / ".sdd" / "runtime" / "spawner.pid"
@@ -720,7 +755,7 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
             cur_server_pid = _read_pid(server_pid_path)
             if cur_server_pid is None or not _is_alive(cur_server_pid):
                 return -1  # signal: skip restart
-            return _start_spawner(workdir, port)
+            return _start_spawner(workdir, port, adapter=adapter, model=model)
 
         spawner_alive_since, spawner_restarts, spawner_give_up_logged = _watchdog_check_process(
             name="Orchestrator",
@@ -1058,8 +1093,9 @@ def _bootstrap_from_goal_impl(
             cells=cells,
             ab_test=ab_test,
             adapter=_resolved_adapter,
+            model=model,
         )
-        _start_watchdog(workdir, port)
+        _start_watchdog(workdir, port, adapter=_resolved_adapter, model=model)
     console.print(f"[green]{_icons.arrow_right}[/green] Spawning agents (PID {spawner_pid})")
 
     console.print("\n[bold green]Dashboard ready.[/bold green] Use [bold]bernstein stop[/bold] to stop.")
@@ -1078,6 +1114,8 @@ if __name__ == "__main__":
     _parser = _argparse.ArgumentParser()
     _parser.add_argument("--watchdog", action="store_true")
     _parser.add_argument("--port", type=int, default=8052)
+    _parser.add_argument("--adapter", type=str, default=None)
+    _parser.add_argument("--model", type=str, default=None)
     _args = _parser.parse_args()
 
     if _args.watchdog:
@@ -1090,7 +1128,7 @@ if __name__ == "__main__":
                 level=logging.INFO,
                 format="%(asctime)s %(levelname)s %(name)s: %(message)s",
             )
-        run_watchdog(Path.cwd(), _args.port)
+        run_watchdog(Path.cwd(), _args.port, adapter=_args.adapter, model=_args.model)
 
 
 # ---------------------------------------------------------------------------

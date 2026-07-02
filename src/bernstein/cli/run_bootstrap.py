@@ -897,6 +897,15 @@ def exec_restart() -> None:
     ),
 )
 @click.option(
+    "--worker",
+    "worker_role",
+    default=None,
+    help=(
+        "Skip manager decomposition and spawn a single agent with this role "
+        "(e.g. backend, qa, frontend) directly against the seed goal."
+    ),
+)
+@click.option(
     "--plan-only",
     is_flag=True,
     default=False,
@@ -1153,13 +1162,14 @@ def run(
     container: bool,
     container_image: str | None,
     two_phase_sandbox: bool,
-    plan_only: bool,
-    from_plan: Path | None,
-    auto_approve: bool,
-    quiet: bool,
-    skip_gate: tuple[str, ...],
-    skip_gate_reason: str | None,
-    audit: bool,
+    worker_role: str | None = None,
+    plan_only: bool = False,
+    from_plan: Path | None = None,
+    auto_approve: bool = False,
+    quiet: bool = False,
+    skip_gate: tuple[str, ...] = (),
+    skip_gate_reason: str | None = None,
+    audit: bool = False,
     sandbox: str | None = None,
     allow_paid: bool = False,
     ab_test: bool = False,
@@ -1203,6 +1213,7 @@ def run(
             container=container,
             container_image=container_image,
             two_phase_sandbox=two_phase_sandbox,
+            worker_role=worker_role,
             plan_only=plan_only,
             from_plan=from_plan,
             auto_approve=auto_approve,
@@ -1253,6 +1264,7 @@ def _run_impl(
     container: bool,
     container_image: str | None,
     two_phase_sandbox: bool,
+    worker_role: str | None = None,
     plan_only: bool,
     from_plan: Path | None,
     auto_approve: bool,
@@ -1636,6 +1648,7 @@ def _run_impl(
                 remote=remote,
                 cli=cli,
                 model=model,
+                worker_role=worker_role,
             )
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error

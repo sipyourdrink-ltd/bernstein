@@ -51,3 +51,15 @@ def test_no_default_leaves_model_unchanged() -> None:
         adapter_default_model=None,
     )
     assert out.model == "sonnet"
+
+
+def test_run_level_default_model_coerces_haiku_for_qwen() -> None:
+    """The run-level model (e.g. threaded from ``bernstein run --model``
+    through AgentSpawner's ``default_model``) is a valid ``adapter_default_model``
+    source, same as an adapter class attribute - see spawner_core.py's call site."""
+    out = _coerce_model_for_non_claude_adapter(
+        ModelConfig(model="haiku", effort="normal"),
+        adapter_name="qwen",
+        adapter_default_model="MiniMax-M3",
+    )
+    assert out.model == "MiniMax-M3"

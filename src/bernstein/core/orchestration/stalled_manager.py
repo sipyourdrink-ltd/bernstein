@@ -40,8 +40,13 @@ logger = logging.getLogger(__name__)
 
 # How long the manager may run with zero child tasks before we declare a stall.
 # Chosen to comfortably exceed the manager's own LLM-call latency (typically
-# 30-60 s) while firing well inside the generic 3-minute watchdog window.
-STALL_THRESHOLD_S: float = 90.0
+# 30-60 s). The generic watchdog here is `AGENT.idle_log_age_threshold_s`
+# (src/bernstein/core/defaults.py, also 180.0 s) which kills any agent -
+# including the manager - whose log hasn't grown in 3 minutes. 180.0 would
+# race that idle-kill instead of firing before it, so this stays a few
+# seconds under it to guarantee the stalled-manager detector reports the
+# real cause first.
+STALL_THRESHOLD_S: float = 170.0
 
 # Path to the operator-facing remediation doc. A sibling effort owns the
 # actual document; if it already lives elsewhere we still emit a pointer so
