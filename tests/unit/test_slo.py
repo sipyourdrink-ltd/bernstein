@@ -65,6 +65,21 @@ def test_error_budget_floor_honors_tuning_override() -> None:
         defaults.reset()
 
 
+def test_error_budget_floor_clamps_negative_override() -> None:
+    """A misconfigured negative error_budget_min_failures must not suppress the
+    SLO-target-derived budget below what an unset floor would allow."""
+    from bernstein.core import defaults
+    from bernstein.core.observability.slo import ErrorBudget
+
+    defaults.override("slo", {"error_budget_min_failures": -5})
+    try:
+        budget = ErrorBudget(total_tasks=10, failed_tasks=0)
+        # round(10 * (1 - 0.90)) == 1, clamped floor of 0 must not pull this below 1.
+        assert budget.budget_total == 1
+    finally:
+        defaults.reset()
+
+
 def test_slo_tracker_update_from_collector() -> None:
     """Test updating SLO values from metrics collector."""
     tracker = SLOTracker()

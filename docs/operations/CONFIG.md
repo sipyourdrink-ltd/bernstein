@@ -186,13 +186,18 @@ now tunable, with defaults unchanged so nothing breaks for existing users:
   applies exactly as before. A task that legitimately needs more turns
   before `MaxTurnsExceeded` (large-repo investigation, multi-file
   refactors) can raise this via `tuning.agent.max_turns: 200` or the
-  `BERNSTEIN_MAX_TURNS` env var (checked first).
+  `BERNSTEIN_MAX_TURNS` env var (checked first). `BERNSTEIN_MAX_TURNS` must
+  parse as a positive integer — `0`, a negative value, or a non-numeric
+  string is rejected with a warning and falls through to
+  `tuning.agent.max_turns`/the SDK default, rather than being forwarded to
+  `Runner.run_sync` where it would fail every run on the first turn.
 - **`error_budget_min_failures`** (`SLODefaults.error_budget_min_failures`,
   default `3`) — the floor `ErrorBudget.budget_total` never goes below,
   even when `total_tasks * (1 - slo_target)` rounds lower. Raise it via
   `tuning.slo.error_budget_min_failures` when a run's early failures are
   infra-death retries (rate limits, transient auth) that shouldn't trip
-  `IncidentManager`'s auto-pause.
+  `IncidentManager`'s auto-pause. A negative override is clamped to `0`
+  rather than being allowed to suppress the SLO-target-derived budget.
 - **`max_agent_runtime_s`** (`OrchestratorDefaults.max_agent_runtime_s`,
   default `1800`) — the starting wall-clock kill deadline for a spawned
   agent, now sourced through `OrchestratorConfig` via the same

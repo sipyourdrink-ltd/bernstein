@@ -87,10 +87,18 @@ def _resolve_max_turns() -> int | None:
     raw_env = os.environ.get(MAX_TURNS_ENV_VAR)
     if raw_env is not None and raw_env.strip():
         try:
-            return int(raw_env)
+            parsed = int(raw_env)
         except ValueError:
             logger.warning(
                 "%s=%r is not a valid int; falling back to tuning.agent.max_turns/SDK default",
+                MAX_TURNS_ENV_VAR,
+                raw_env,
+            )
+        else:
+            if parsed > 0:
+                return parsed
+            logger.warning(
+                "%s=%r must be a positive int; falling back to tuning.agent.max_turns/SDK default",
                 MAX_TURNS_ENV_VAR,
                 raw_env,
             )
@@ -98,6 +106,7 @@ def _resolve_max_turns() -> int | None:
     from bernstein.core.defaults import AGENT
 
     return AGENT.max_turns
+
 
 # ``api_key_env`` must name a known LLM-provider credential.  The name both
 # widens the filtered environment handed to this subprocess and selects the

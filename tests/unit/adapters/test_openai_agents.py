@@ -938,6 +938,32 @@ class TestRunnerHelpers:
         monkeypatch.setenv(MAX_TURNS_ENV_VAR, "notanumber")
         assert _resolve_max_turns() is None
 
+    def test_resolve_max_turns_zero_env_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A 0 max_turns would fail every run on turn one - reject, don't forward."""
+        from bernstein.core import defaults as core_defaults
+
+        core_defaults.reset()
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "0")
+        assert _resolve_max_turns() is None
+
+    def test_resolve_max_turns_negative_env_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core import defaults as core_defaults
+
+        core_defaults.reset()
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "-5")
+        assert _resolve_max_turns() is None
+
+    def test_resolve_max_turns_negative_env_falls_back_to_tuning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A non-positive env value falls through to tuning.agent.max_turns, not just None."""
+        from bernstein.core import defaults as core_defaults
+
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "-5")
+        core_defaults.override("agent", {"max_turns": 80})
+        try:
+            assert _resolve_max_turns() == 80
+        finally:
+            core_defaults.reset()
+
     def test_build_model_settings_kwargs_empty_when_absent(self) -> None:
         manifest = RunnerManifest(
             session_id="s",

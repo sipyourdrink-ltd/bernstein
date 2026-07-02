@@ -128,7 +128,11 @@ class ErrorBudget:
 
         if self.total_tasks == 0:
             return 0
-        return max(SLO.error_budget_min_failures, round(self.total_tasks * (1.0 - self.slo_target)))
+        # Clamp a misconfigured (e.g. negative) tuning.slo.error_budget_min_failures
+        # to 0 rather than letting a pathological floor suppress the budget below
+        # what the raw SLO-target computation would allow.
+        min_failures = max(0, SLO.error_budget_min_failures)
+        return max(min_failures, round(self.total_tasks * (1.0 - self.slo_target)))
 
     @property
     def budget_remaining(self) -> int:
