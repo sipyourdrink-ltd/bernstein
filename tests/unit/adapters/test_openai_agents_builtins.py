@@ -1,12 +1,17 @@
-"""Security tests for the opt-in workdir-sandboxed builtin tools.
+"""Security tests for the opt-in builtin tools.
 
-These cover the three hard conditions the builtins must satisfy:
+These cover the hard conditions the builtins must satisfy:
 
-1. Path confinement: absolute paths and ``..`` escapes are rejected; an
-   in-workdir path is accepted.
+1. Path confinement (file tools): absolute paths and ``..`` escapes are
+   rejected; an in-workdir path is accepted.
 2. ``run_command`` uses an argv list with ``shell=False`` - a metacharacter
    in an argument is passed literally, never interpreted by a shell.
-3. Every builtin call emits an audit event to the run event stream.
+3. ``run_command`` rejects absolute / path-separator / shell-interpreter
+   ``argv[0]`` (the proven filesystem-escape vectors) and only runs bare
+   commands resolved on ``PATH``.
+4. ``run_command`` is only exposed (registered) under an OS sandbox provider
+   or the explicit opt-in.
+5. Every builtin call emits an audit event to the run event stream.
 """
 
 from __future__ import annotations
@@ -17,11 +22,15 @@ import pytest
 
 from bernstein.adapters.openai_agents_builtins import (
     BUILTIN_TOOL_NAMES,
+    CommandNotAllowedError,
     WorkdirEscapeError,
     list_dir_in_workdir,
     read_file_in_workdir,
+    resolve_command,
     resolve_in_workdir,
+    run_command_available,
     run_command_in_workdir,
+    selected_builtin_names,
     write_file_in_workdir,
 )
 
@@ -106,6 +115,97 @@ class TestRunCommandNoShell:
         _events, emit = _sink()
         out = run_command_in_workdir(tmp_path, [], emit=emit)
         assert out.startswith("error:")
+
+
+class TestRunCommandArgvRestriction:
+    """The two proven escapes must now fail closed at the builtin layer."""
+
+    def test_absolute_argv0_rejected(self, tmp_path: Path) -> None:
+        # Proven escape #1: ['/bin/cat', '/outside'] read an outside file.
+        outside = tmp_path.parent / "secret.txt"
+        outside.write_text("TOPSECRET")
+        events, emit = _sink()
+        out = run_command_in_workdir(tmp_path, ["/bin/cat", str(outside)], emit=emit)
+        assert out.startswith("error:")
+        assert "TOPSECRET" not in out
+        result = next(e for e in events if e["type"] == "tool_result")
+        assert result["status"] == "error"
+
+    def test_shell_interpreter_argv0_rejected(self, tmp_path: Path) -> None:
+        # Proven escape #2: ['/bin/sh', '-c', ...] wrote outside the workdir.
+        outside = tmp_path.parent / "via_sh.txt"
+        _events, emit = _sink()
+        out = run_command_in_workdir(
+            tmp_path,
+            ["/bin/sh", "-c", f"echo INJECTED > {outside}"],
+            emit=emit,
+        )
+        assert out.startswith("error:")
+        assert not outside.exists()
+
+    def test_bare_shell_name_rejected(self, tmp_path: Path) -> None:
+        # Even a bare interpreter name (resolvable on PATH) is blocked.
+        _events, emit = _sink()
+        out = run_command_in_workdir(tmp_path, ["sh", "-c", "echo hi"], emit=emit)
+        assert out.startswith("error:")
+
+    def test_relative_path_separator_argv0_rejected(self, tmp_path: Path) -> None:
+        _events, emit = _sink()
+        out = run_command_in_workdir(tmp_path, ["../x"], emit=emit)
+        assert out.startswith("error:")
+
+    def test_bare_allowed_command_runs_and_is_audited(self, tmp_path: Path) -> None:
+        events, emit = _sink()
+        out = run_command_in_workdir(tmp_path, ["echo", "hi"], emit=emit)
+        stdout = out.split("stdout:\n", 1)[1].split("\nstderr:", 1)[0].strip()
+        assert stdout == "hi"
+        result = next(e for e in events if e["type"] == "tool_result")
+        assert result["status"] == "ok"
+        assert result["exit_code"] == 0
+
+    def test_resolve_command_returns_absolute_path(self) -> None:
+        resolved = resolve_command("echo")
+        assert resolved.startswith("/")
+        assert resolved.endswith("echo") or "echo" in resolved
+
+    def test_resolve_command_rejects_unresolvable(self) -> None:
+        with pytest.raises(CommandNotAllowedError, match="PATH"):
+            resolve_command("definitely-not-a-real-command-xyz")
+
+
+class TestRunCommandGating:
+    """``run_command`` is only registered under a sandbox provider or opt-in."""
+
+    def test_not_available_under_bare_local(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        assert run_command_available("unix_local") is False
+        assert run_command_available(None) is False
+
+    def test_available_under_os_sandbox_providers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        assert run_command_available("docker") is True
+        assert run_command_available("e2b") is True
+        assert run_command_available("modal") is True
+
+    def test_available_under_explicit_opt_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", "1")
+        assert run_command_available("unix_local") is True
+
+    def test_opt_in_requires_exact_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", "true")
+        assert run_command_available("unix_local") is False
+
+    def test_selected_names_exclude_run_command_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        names = selected_builtin_names("unix_local")
+        assert "run_command" not in names
+        assert set(names) == {"read_file", "write_file", "list_dir"}
+
+    def test_selected_names_include_run_command_under_sandbox(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        names = selected_builtin_names("docker")
+        assert "run_command" in names
+        assert set(names) == set(BUILTIN_TOOL_NAMES)
 
 
 class TestAuditEvents:

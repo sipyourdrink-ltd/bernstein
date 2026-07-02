@@ -351,7 +351,11 @@ def _build_run_config(manifest: RunnerManifest) -> dict[str, Any]:
     }
 
 
-def _build_model_settings_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
+def _build_model_settings_kwargs(
+    manifest: RunnerManifest,
+    *,
+    model_settings_cls: type[Any] | None = None,
+) -> dict[str, Any]:
     """Translate optional sampling params into ``ModelSettings`` kwargs.
 
     Only fields present in the manifest are emitted so an all-``None``
@@ -359,6 +363,11 @@ def _build_model_settings_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
     entirely (exactly today's behavior).  ``top_k`` is not a first-class
     ``ModelSettings`` field in the SDK, so it travels via ``extra_args``
     for OpenAI-compatible endpoints that accept it.
+
+    ``max_tokens`` is forwarded only when the SDK's ``ModelSettings`` exposes
+    a ``max_tokens`` field. ``model_settings_cls`` is the SDK class to probe;
+    when ``None`` the field is not forwarded (the SDK is not loaded, e.g. in
+    unit tests), keeping the kwargs SDK-version safe.
 
     Returns:
         Kwargs for ``agents.ModelSettings``, possibly empty.
@@ -370,7 +379,23 @@ def _build_model_settings_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
         kwargs["top_p"] = manifest.top_p
     if manifest.top_k is not None:
         kwargs["extra_args"] = {"top_k": manifest.top_k}
+    if manifest.max_tokens and _model_settings_accepts(model_settings_cls, "max_tokens"):
+        kwargs["max_tokens"] = manifest.max_tokens
     return kwargs
+
+
+def _model_settings_accepts(model_settings_cls: type[Any] | None, field_name: str) -> bool:
+    """Return whether the SDK ``ModelSettings`` class exposes *field_name*.
+
+    ``ModelSettings`` is a dataclass in the SDK, so its declared fields are
+    the accepted constructor kwargs. When the class is unavailable or is not
+    a dataclass the answer is ``False`` so the runner never passes a kwarg the
+    installed SDK would reject.
+    """
+    if model_settings_cls is None:
+        return False
+    fields = getattr(model_settings_cls, "__dataclass_fields__", None)
+    return isinstance(fields, dict) and field_name in fields
 
 
 def _resolve_client_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
@@ -598,19 +623,24 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
             # reachable. Every call is recorded to this same event stream via
             # ``emit_event`` so the run stays auditable and replayable.
             from bernstein.adapters.openai_agents_builtins import (
-                BUILTIN_TOOL_NAMES,
                 build_builtin_tools,
+                selected_builtin_names,
             )
 
+            active_names = selected_builtin_names(manifest.sandbox_provider)
             emit_event(
                 {
                     "type": "progress",
-                    "message": f"builtin tools active: {', '.join(BUILTIN_TOOL_NAMES)}",
+                    "message": f"builtin tools active: {', '.join(active_names)}",
                     "tool_source": "builtin",
                 },
             )
-            agent_kwargs["tools"] = build_builtin_tools(Path(manifest.workdir), emit_event)
-        settings_kwargs = _build_model_settings_kwargs(manifest)
+            agent_kwargs["tools"] = build_builtin_tools(
+                Path(manifest.workdir),
+                emit_event,
+                sandbox_provider=manifest.sandbox_provider,
+            )
+        settings_kwargs = _build_model_settings_kwargs(manifest, model_settings_cls=sdk.ModelSettings)
         if settings_kwargs:
             agent_kwargs["model_settings"] = sdk.ModelSettings(**settings_kwargs)
         agent: Any = agent_cls(**agent_kwargs)

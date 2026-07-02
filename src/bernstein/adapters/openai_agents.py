@@ -226,6 +226,9 @@ class OpenAIAgentsAdapter(PluginAdapter):
             top_k = mcp_config.get("top_k")
             if isinstance(top_k, int) and not isinstance(top_k, bool):
                 overrides["top_k"] = top_k
+            max_tokens = mcp_config.get("max_tokens")
+            if isinstance(max_tokens, int) and not isinstance(max_tokens, bool):
+                overrides["max_tokens"] = max_tokens
             for str_key in ("base_url", "api_key_env"):
                 str_value = mcp_config.get(str_key)
                 if isinstance(str_value, str) and str_value:
@@ -238,13 +241,18 @@ class OpenAIAgentsAdapter(PluginAdapter):
             if isinstance(heartbeat_dir, str) and heartbeat_dir:
                 overrides["heartbeat_dir"] = heartbeat_dir
 
+        # ``max_tokens`` from ``mcp_config`` (mode-profile override) wins; the
+        # model_config value is only the fallback when the override is absent.
+        # It is applied here on the RIGHT of the merge so an ``overrides``
+        # value survives, matching the other sampling overrides above.
+        overrides.setdefault("max_tokens", int(getattr(model_config, "max_tokens", 200_000)))
+
         return overrides | {
             "session_id": session_id,
             "prompt": prompt,
             "workdir": str(workdir),
             "model": str(getattr(model_config, "model", "")),
             "effort": str(getattr(model_config, "effort", "high")),
-            "max_tokens": int(getattr(model_config, "max_tokens", 200_000)),
             "timeout_seconds": timeout_seconds,
             "task_scope": task_scope,
             "budget_multiplier": budget_multiplier,

@@ -214,27 +214,49 @@ environment - and would otherwise have no sanctioned way to act on the
 workdir at all.
 
 Setting `tool_source: "builtin"` in the per-spawn `mcp_config` (which the
-adapter forwards to the runner manifest) opts into four small
-workdir-sandboxed builtins:
+adapter forwards to the runner manifest) opts into a small set of builtins.
+They split into two confinement tiers - do not conflate them:
 
-| Tool | Purpose |
-| --- | --- |
-| `read_file(path)` | Read a UTF-8 file relative to the run workdir. |
-| `write_file(path, content)` | Write UTF-8 text relative to the run workdir. |
-| `list_dir(path)` | List a directory relative to the run workdir. |
-| `run_command(argv)` | Run an argv list inside the workdir. |
+| Tool | Confinement | Purpose |
+| --- | --- | --- |
+| `read_file(path)` | Workdir-confined (builtin layer) | Read a UTF-8 file relative to the run workdir. |
+| `write_file(path, content)` | Workdir-confined (builtin layer) | Write UTF-8 text relative to the run workdir. |
+| `list_dir(path)` | Workdir-confined (builtin layer) | List a directory relative to the run workdir. |
+| `run_command(argv)` | Restricted process-exec primitive; filesystem confinement is the OS sandbox | Run a bare-name command inside the run workdir. |
+
+`read_file`, `write_file`, and `list_dir` are workdir-confined **at the
+builtin layer**: every path argument is resolved against the run workdir, and
+absolute paths and `..` escapes are rejected on the real (symlink-resolved)
+target.
+
+`run_command` is **not** workdir-sandboxed. It runs a child process, and a
+child process can read and write anywhere the runner process can reach, so its
+TRUE filesystem confinement is the configured OS sandbox
+(`docker`/`e2b`/`modal`), not the builtin. The builtin layer applies only
+defense-in-depth: `argv` is a list run with `shell=False` (no shell string, no
+interpolation), and `argv[0]` must be a bare command name - absolute paths,
+path separators, and known shell/interpreters (`sh`, `bash`, `python`, `env`,
+...) are rejected, and the survivor is resolved on `PATH` and run by its
+resolved absolute path. Because true confinement is the OS sandbox,
+`run_command` is exposed **only** when the run has an OS sandbox provider
+configured, or the operator explicitly opts in with
+`BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND=1`. Under the bare local/worktree path
+with no opt-in, `run_command` is withheld and the three file tools remain
+available.
 
 The builtins never become the default; `gateway` stays the default and any
-value other than `"builtin"` selects it. The builtins enforce three
+value other than `"builtin"` selects it. The builtins enforce these
 properties, each covered by tests in
 [`tests/unit/adapters/test_openai_agents_builtins.py`](../../tests/unit/adapters/test_openai_agents_builtins.py):
 
-1. **Path confinement.** Every path argument is resolved against the run
-   workdir. Absolute paths and `..` escapes are rejected: the real
+1. **Path confinement** (file tools). Every path argument is resolved against
+   the run workdir. Absolute paths and `..` escapes are rejected: the real
    (symlink-resolved) target must stay inside the real workdir.
-2. **No shell.** `run_command` takes an argv **list** and runs it with
-   `shell=False`. There is no shell string and no interpolation, so a
-   metacharacter in an argument is passed to the program literally.
+2. **Restricted exec** (`run_command`). `argv` is a list run with
+   `shell=False` (no shell string, no interpolation), and `argv[0]` is a bare
+   command name resolved on `PATH`; absolute paths, path separators, and
+   shell/interpreters are rejected. Availability is gated on an OS sandbox
+   provider or the explicit opt-in.
 3. **Audited.** Every call emits a `tool_call` and a `tool_result` event to
    the runner's line-delimited JSON event stream, tagged
    `"tool_source": "builtin"`, with the tool name, arguments, and outcome -
