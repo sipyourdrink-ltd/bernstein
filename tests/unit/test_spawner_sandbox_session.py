@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,6 +23,7 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.sandbox import WorkspaceManifest
 from bernstein.core.sandbox.backend import ExecResult, SandboxSession
+from bernstein.core.security.audit import AuditLog
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -429,6 +431,49 @@ def test_audit_events_appended_for_session_lifecycle(tmp_path: Path, monkeypatch
         "sandbox.session_destroy",
     ):
         assert expected in types, f"missing audit event {expected} in {types}"
+
+    valid, errors = AuditLog(audit_dir=audit_dir).verify()
+    assert valid, f"audit chain not verifiable: {errors}"
+
+
+def test_concurrent_lifecycles_keep_audit_chain_verifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent emissions from spawn + exec-done threads never fork the HMAC chain.
+
+    Overlapping spawns emit session_create/exec_start from the spawning
+    threads while exec_end/session_destroy fire from per-agent exec-done
+    callback threads. Unserialized appends would recover the same chain
+    tail twice and write sibling records, so verify() - not mere event
+    presence - is the assertion that matters here.
+    """
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    backend = _FakeBackend(tmp_path)
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+
+    session_ids = [f"S-CC-{i}" for i in range(4)]
+    spawn_threads = [threading.Thread(target=_spawn_one, args=(spawner, adapter, sid)) for sid in session_ids]
+    for thread in spawn_threads:
+        thread.start()
+    for thread in spawn_threads:
+        thread.join(timeout=10.0)
+
+    for sid in session_ids:
+        spawner._sandbox_exec_handles[sid].future.result(timeout=5.0)  # pyright: ignore[reportPrivateUsage]
+
+    audit_dir = tmp_path / ".sdd" / "audit"
+
+    def _destroy_events() -> int:
+        count = 0
+        for jsonl in audit_dir.glob("*.jsonl"):
+            for line in jsonl.read_text(encoding="utf-8").splitlines():
+                if json.loads(line)["event_type"] == "sandbox.session_destroy":
+                    count += 1
+        return count
+
+    _wait_until(lambda: _destroy_events() >= len(session_ids))
+
+    valid, errors = AuditLog(audit_dir=audit_dir).verify()
+    assert valid, f"audit chain forked under concurrent emission: {errors}"
+    assert errors == []
 
 
 class _GitBundleSession(_FakeSession):

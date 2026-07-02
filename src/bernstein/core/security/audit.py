@@ -189,7 +189,14 @@ def load_or_create_audit_key(key_path: Path | None = None) -> bytes:
 
     key = secrets.token_hex(32).encode()
     # Create with restrictive mode from the start - never widen then narrow.
-    fd = os.open(str(resolved), os.O_WRONLY | os.O_CREAT | os.O_EXCL, _REQUIRED_KEY_MODE)
+    try:
+        fd = os.open(str(resolved), os.O_WRONLY | os.O_CREAT | os.O_EXCL, _REQUIRED_KEY_MODE)
+    except FileExistsError:
+        # Another thread/process won the first-boot race between the
+        # exists() check above and this O_EXCL create. Their key is as
+        # good as ours; adopt it instead of failing the caller.
+        _enforce_key_permissions(resolved)
+        return resolved.read_bytes().strip()
     try:
         os.write(fd, key)
     finally:

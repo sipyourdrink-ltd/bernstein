@@ -7,6 +7,7 @@ import concurrent.futures
 import json
 import logging
 import shutil
+import threading
 import time
 import uuid
 from contextlib import suppress
@@ -95,7 +96,6 @@ from bernstein.templates.renderer import TemplateError, render_role_prompt
 
 if TYPE_CHECKING:
     import subprocess
-    import threading
     from collections.abc import Callable
 
     from bernstein.adapters.base import CLIAdapter
@@ -117,6 +117,18 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 _FILE_CACHE: dict[str, tuple[float, str]] = {}
 _DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
+
+# Serializes every sandbox lifecycle audit append across threads.
+#
+# AuditLog has no internal locking: each instance recovers the chain tail
+# from disk in __init__ and appends with that prev_hmac. Sandbox events are
+# emitted concurrently - session_create/exec_start on the spawn thread,
+# exec_end/session_destroy on per-agent exec-done callback threads - so
+# unserialized appends let two writers recover the same tail and write
+# sibling records, forking the HMAC chain and breaking verify() for the
+# whole daily log. Module-level (not per-spawner) so multiple spawner
+# instances in one process share the same critical section.
+_SANDBOX_AUDIT_LOCK = threading.Lock()
 
 
 def _read_cached(path: Path) -> str:
@@ -3187,6 +3199,12 @@ class AgentSpawner:
         permission, disk full) are logged at warning level and never
         block the spawn or teardown paths that emit them.
 
+        All emissions are serialized through ``_SANDBOX_AUDIT_LOCK``:
+        exec_end/session_destroy fire from exec-done callback threads
+        while the spawn thread emits session_create/exec_start for other
+        agents, and AuditLog's tail-recover-then-append sequence is not
+        concurrency-safe (overlapping writers fork the HMAC chain).
+
         Args:
             event_type: One of the ``sandbox.*`` event-type constants
                 from :mod:`bernstein.core.security.audit`.
@@ -3196,14 +3214,15 @@ class AgentSpawner:
         try:
             from bernstein.core.security.audit import AuditLog
 
-            audit = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
-            audit.log(
-                event_type=event_type,
-                actor="spawner",
-                resource_type="sandbox_session",
-                resource_id=resource_id,
-                details=details,
-            )
+            with _SANDBOX_AUDIT_LOCK:
+                audit = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
+                audit.log(
+                    event_type=event_type,
+                    actor="spawner",
+                    resource_type="sandbox_session",
+                    resource_id=resource_id,
+                    details=details,
+                )
         except Exception as exc:  # audit must never block execution
             logger.warning("Could not emit %s audit event for %s: %s", event_type, resource_id, exc)
 
