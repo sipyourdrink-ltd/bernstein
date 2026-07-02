@@ -417,3 +417,50 @@ class TestEmbeddedAgentTeamsDeny:
         assert events[0].actor == "claude"
         assert events[0].resource_id == "qa-abc12345"
         assert events[0].details["adapter"] == "claude"
+
+    def test_secrets_overlay_cannot_reintroduce_gate(self) -> None:
+        """A secrets provider returning the gate is re-stripped before return.
+
+        The embedded-team strip runs both before and after the secrets
+        overlay.  If an external provider returned the agent-team gate, the
+        post-overlay strip must remove it again so the deny-by-default posture
+        holds right up to the return.
+        """
+        from bernstein.core.security.secrets import SecretsConfig
+
+        cfg = SecretsConfig(provider="vault", path="secret/test")
+        fake_env = {"PATH": "/usr/bin"}
+        provider_secrets = {
+            "SOME_API_KEY": "value",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+        }
+        with (
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch(
+                "bernstein.core.security.secrets.load_secrets",
+                return_value=provider_secrets,
+            ),
+        ):
+            result = build_filtered_env(secrets_config=cfg)
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" not in result
+        assert result["SOME_API_KEY"] == "value"
+
+    def test_secrets_overlay_gate_kept_when_opted_in(self) -> None:
+        """When the operator opts in, a provider-returned gate survives."""
+        from bernstein.core.security.secrets import SecretsConfig
+
+        cfg = SecretsConfig(provider="vault", path="secret/test")
+        fake_env = {
+            "PATH": "/usr/bin",
+            "BERNSTEIN_ALLOW_EMBEDDED_AGENT_TEAMS": "1",
+        }
+        provider_secrets = {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}
+        with (
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch(
+                "bernstein.core.security.secrets.load_secrets",
+                return_value=provider_secrets,
+            ),
+        ):
+            result = build_filtered_env(secrets_config=cfg)
+        assert result["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] == "1"

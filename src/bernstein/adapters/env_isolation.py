@@ -349,4 +349,11 @@ def build_filtered_env(
             )
             env.update(provider_secrets)
 
+    # Re-apply the deny after every later env mutation (secrets overlay,
+    # PYTHONPATH injection).  A secrets provider that returned an embedded
+    # agent-team gate must not be able to reintroduce it past the earlier
+    # strip; the deny-by-default posture holds right up to the return.
+    if not _embedded_teams_opt_in():
+        env = {k: v for k, v in env.items() if not _is_embedded_teams_gate(k)}
+
     return env
