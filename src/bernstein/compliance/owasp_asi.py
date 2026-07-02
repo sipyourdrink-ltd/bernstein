@@ -190,8 +190,8 @@ def control_map() -> dict[str, Any]:
     """
     return {
         "regulation": REGULATION,
-        "controls": [dict(c) for c in CONTROLS],
-        "deferred": list(DEFERRED),
+        "controls": [c.copy() for c in CONTROLS],
+        "deferred": DEFERRED.copy(),
     }
 
 
