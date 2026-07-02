@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
-from bernstein.adapters.plugin_sdk import ensure_sampling_params_supported
+from bernstein.adapters.plugin_sdk import (
+    SAMPLING_PARAM_KEYS,
+    SamplingParamsRefusal,
+    ensure_sampling_params_supported,
+)
 from bernstein.adapters.registry import get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
@@ -1556,6 +1560,29 @@ class AgentSpawner:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, awaitable).result()
 
+    def _mcp_config_for_adapter(
+        self,
+        adapter: CLIAdapter,
+        mcp_config: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Attach adapter-specific extras to the per-spawn MCP config.
+
+        Adapters that opt in via a truthy ``consumes_heartbeat_dir``
+        attribute (currently ``openai_agents``) receive the orchestrator
+        root's heartbeat directory as a ``heartbeat_dir`` key.  Their
+        runner processes write heartbeats themselves, but they execute
+        inside a per-session worktree and cannot derive the project root
+        the ``HeartbeatMonitor`` polls - without this injection the
+        heartbeat would land in the worktree and never be observed.
+
+        Adapters without the attribute get ``mcp_config`` back unchanged
+        so their MCP config files stay byte-identical.
+        """
+        if not getattr(adapter, "consumes_heartbeat_dir", False):
+            return mcp_config
+        heartbeat_dir = str(self._workdir / ".sdd" / "runtime" / "heartbeats")
+        return {**(mcp_config or {}), "heartbeat_dir": heartbeat_dir}
+
     def _spawn_via_runtime_bridge(
         self,
         *,
@@ -2138,6 +2165,16 @@ class AgentSpawner:
 
         remote_spawned = False
         if self._runtime_bridge is not None:
+            # Same capability gate as the local adapter loop below: the
+            # bridge spawn request has no way to carry sampling/endpoint
+            # overrides, so requesting them alongside a configured bridge
+            # must fail loudly instead of running the task remotely with
+            # provider defaults.
+            _bridge_sampling_keys = tuple(
+                key for key in SAMPLING_PARAM_KEYS if effective_mcp is not None and effective_mcp.get(key) is not None
+            )
+            if _bridge_sampling_keys:
+                raise SamplingParamsRefusal(self._runtime_bridge.name(), _bridge_sampling_keys)
             try:
                 remote_spawned = self._spawn_via_runtime_bridge(
                     session=session,
@@ -2215,6 +2252,10 @@ class AgentSpawner:
                     # falling through to provider failover.
                     ensure_sampling_params_supported(target_adapter, effective_mcp)
 
+                    # Per-attempt config so a failover to a different
+                    # adapter never inherits another adapter's extras.
+                    attempt_mcp = self._mcp_config_for_adapter(target_adapter, effective_mcp)
+
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.
                         target_adapter.set_resource_limits(self._resource_limits)
@@ -2227,7 +2268,7 @@ class AgentSpawner:
                                 workdir=spawn_cwd,
                                 model_config=model_config,
                                 session_id=session_id,
-                                mcp_config=effective_mcp,
+                                mcp_config=attempt_mcp,
                             )
                             result = SpawnResult(pid=fake_pid, log_path=actual_log_path)
                         elif (
@@ -2245,7 +2286,7 @@ class AgentSpawner:
                                 prompt=prompt,
                                 spawn_cwd=spawn_cwd,
                                 model_config=model_config,
-                                mcp_config=effective_mcp,
+                                mcp_config=attempt_mcp,
                                 session=session,
                                 adapter=target_adapter,
                             )
@@ -2255,7 +2296,7 @@ class AgentSpawner:
                                 prompt=prompt,
                                 spawn_cwd=spawn_cwd,
                                 model_config=model_config,
-                                mcp_config=effective_mcp,
+                                mcp_config=attempt_mcp,
                                 session=session,
                                 adapter=target_adapter,
                                 task_scope=max_scope,
@@ -2266,7 +2307,7 @@ class AgentSpawner:
                                 prompt=prompt,
                                 spawn_cwd=spawn_cwd,
                                 model_config=model_config,
-                                mcp_config=effective_mcp,
+                                mcp_config=attempt_mcp,
                                 session=session,
                                 adapter=target_adapter,
                                 task_scope=max_scope,
@@ -2282,7 +2323,7 @@ class AgentSpawner:
                                 workdir=spawn_cwd,
                                 model_config=model_config,
                                 session_id=session_id,
-                                mcp_config=effective_mcp,
+                                mcp_config=attempt_mcp,
                                 task_scope=max_scope,
                                 budget_multiplier=_budget_mult,
                                 system_addendum="",

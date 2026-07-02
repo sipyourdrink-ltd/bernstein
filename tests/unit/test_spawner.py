@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -38,7 +38,12 @@ from bernstein.core.spawner import (
 )
 from bernstein.core.worktree import WorktreeError
 
-from bernstein.adapters.base import SpawnError
+from bernstein.adapters.base import SpawnError, SpawnResult
+from bernstein.adapters.plugin_sdk import (
+    AdapterCapability,
+    AdapterPluginInfo,
+    PluginAdapter,
+)
 
 # --- spawn_for_tasks ---
 
@@ -1390,3 +1395,106 @@ class TestOrchestratorSpawnerCallSite:
             "(templates root breaks every role template lookup; see #2155)"
         )
         assert "templates_dir=get_templates_dir(workdir),\n            adapter" not in source
+
+
+# --- Sampling/endpoint overrides and heartbeat delivery through spawn ---
+
+
+class _SamplingCapableAdapter(PluginAdapter):
+    """Concrete plugin adapter that records the mcp_config it received.
+
+    Declares ``SUPPORTS_SAMPLING_PARAMS`` (so the capability gate passes)
+    and opts into spawner-injected heartbeat delivery via
+    ``consumes_heartbeat_dir`` - the same shape as the openai_agents
+    adapter, without spawning a real subprocess.
+    """
+
+    consumes_heartbeat_dir = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_mcp_config: dict[str, Any] | None = None
+
+    def plugin_info(self) -> AdapterPluginInfo:
+        return AdapterPluginInfo(
+            name="sampling-capable",
+            version="1.0.0",
+            capabilities=(AdapterCapability.SUPPORTS_SAMPLING_PARAMS,),
+        )
+
+    def health_check(self) -> bool:
+        return True
+
+    def supported_models(self) -> list[str]:
+        return []
+
+    def spawn(
+        self,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: object,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = 1800,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
+    ) -> SpawnResult:
+        self.seen_mcp_config = mcp_config
+        return SpawnResult(pid=4242, log_path=workdir / "stub.log")
+
+    def name(self) -> str:
+        return "sampling-capable"
+
+
+class TestSamplingParamsSpawnPath:
+    """Sampling keys and heartbeat_dir must reach the adapter intact."""
+
+    def test_sampling_params_reach_capable_adapter(self, tmp_path: Path, make_task) -> None:
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            mcp_config={"temperature": 0.2, "top_k": 40, "api_key_env": "MY_PROXY_KEY"},
+        )
+
+        spawner.spawn_for_tasks([make_task()])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["temperature"] == 0.2
+        assert adapter.seen_mcp_config["top_k"] == 40
+        assert adapter.seen_mcp_config["api_key_env"] == "MY_PROXY_KEY"
+
+    def test_heartbeat_dir_injected_at_orchestrator_root(self, tmp_path: Path, make_task) -> None:
+        """The injected heartbeat_dir must equal the HeartbeatMonitor path.
+
+        The monitor polls ``<orchestrator_workdir>/.sdd/runtime/heartbeats``;
+        the runner writes wherever the spawner points it. Both sides must
+        agree even when the spawn cwd is a per-session worktree.
+        """
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+
+        spawner.spawn_for_tasks([make_task()])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["heartbeat_dir"] == str(tmp_path / ".sdd" / "runtime" / "heartbeats")
+
+    def test_heartbeat_dir_not_injected_for_regular_adapter(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        adapter = mock_adapter_factory(pid=99)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+
+        spawner.spawn_for_tasks([make_task()])
+
+        assert adapter.spawn.call_args.kwargs["mcp_config"] is None

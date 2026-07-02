@@ -395,7 +395,10 @@ class MCPRegistry:
         if auto_config is None:
             return base_config
 
-        # Both exist - merge auto into base (base takes precedence)
+        # Both exist - merge auto into base (base takes precedence).
+        # Non-mcpServers keys from base_config (per-spawn sampling and
+        # endpoint overrides such as temperature/base_url) must survive
+        # the merge so the adapter capability gate can see them.
         merged_servers = dict(auto_config.get("mcpServers", {}))
         merged_servers.update(base_config.get("mcpServers", {}))
-        return {"mcpServers": merged_servers}
+        return {**base_config, "mcpServers": merged_servers}

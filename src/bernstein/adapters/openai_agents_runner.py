@@ -49,6 +49,7 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -68,6 +69,39 @@ EXIT_GENERIC: int = 1
 EXIT_MANIFEST_ERROR: int = 2
 EXIT_SDK_MISSING: int = 3
 EXIT_RATE_LIMIT: int = 4
+
+# ``api_key_env`` must look like a credential variable name.  The name both
+# widens the filtered environment handed to this subprocess and selects the
+# secret sent as the bearer key to ``base_url``, so an unconstrained value
+# would let a repo-carried config forward arbitrary host variables to an
+# arbitrary endpoint.  Keep in sync with the constraint documented in
+# ``docs/adapters/capability_contract.md``.
+_API_KEY_ENV_RE: re.Pattern[str] = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_API_KEY_ENV_SUFFIXES: tuple[str, ...] = ("_API_KEY", "_KEY", "_TOKEN")
+
+
+def validate_api_key_env_name(name: str) -> None:
+    """Reject ``api_key_env`` values that are not credential-shaped names.
+
+    Accepted names match ``^[A-Z][A-Z0-9_]*$`` AND end with ``_API_KEY``,
+    ``_KEY``, or ``_TOKEN``.  Everything else (``PATH``, ``HOME``,
+    lowercase names, names with other suffixes) is rejected so the
+    override cannot be used to read unrelated host environment variables.
+
+    Args:
+        name: Candidate environment variable name from the manifest.
+
+    Raises:
+        RuntimeError: The name does not satisfy the constraint above.
+    """
+    if _API_KEY_ENV_RE.match(name) and name.endswith(_API_KEY_ENV_SUFFIXES):
+        return
+    msg = (
+        f"api_key_env {name!r} is not an accepted credential variable "
+        f"name: it must match ^[A-Z][A-Z0-9_]*$ and end with _API_KEY, "
+        f"_KEY, or _TOKEN."
+    )
+    raise RuntimeError(msg)
 
 
 @dataclass(frozen=True)
@@ -106,11 +140,23 @@ class RunnerManifest:
             ``None`` keeps the provider default.
         base_url: Optional OpenAI-compatible endpoint URL.  When set the
             runner constructs its own ``AsyncOpenAI`` client instead of the
-            SDK default.  ``None`` keeps today's single-endpoint behavior.
+            SDK default, switches the SDK to the chat-completions API
+            (third-party endpoints do not serve ``/responses``), and
+            excludes the client from tracing so the endpoint's key is
+            never sent to api.openai.com.  ``None`` keeps today's
+            single-endpoint behavior.
         api_key_env: Optional NAME of the environment variable holding the
-            API key for ``base_url``.  Never a literal key.  When set but
-            the variable is missing the runner fails at startup with
-            :data:`EXIT_MANIFEST_ERROR`.
+            API key for ``base_url``.  Never a literal key.  Must satisfy
+            :func:`validate_api_key_env_name`.  When set but the variable
+            is missing (or the name is rejected) the runner fails at
+            startup with :data:`EXIT_MANIFEST_ERROR`.
+        heartbeat_dir: Optional absolute path of the heartbeat directory
+            the orchestrator's ``HeartbeatMonitor`` watches (the project
+            root's ``.sdd/runtime/heartbeats``).  Set by the spawner
+            because ``workdir`` is a per-session worktree under default
+            isolation - a worktree-relative heartbeat would never be
+            observed.  When absent the runner falls back to
+            ``<workdir>/.sdd/runtime/heartbeats``.
     """
 
     session_id: str
@@ -131,6 +177,7 @@ class RunnerManifest:
     top_k: int | None = None
     base_url: str | None = None
     api_key_env: str | None = None
+    heartbeat_dir: str | None = None
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RunnerManifest:
@@ -282,13 +329,15 @@ def _resolve_client_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
     carries a literal secret.
 
     Raises:
-        RuntimeError: ``api_key_env`` is set but the named environment
+        RuntimeError: ``api_key_env`` is set but the name fails
+            :func:`validate_api_key_env_name`, or the named environment
             variable is missing or empty.
     """
     kwargs: dict[str, Any] = {}
     if manifest.base_url:
         kwargs["base_url"] = manifest.base_url
     if manifest.api_key_env:
+        validate_api_key_env_name(manifest.api_key_env)
         api_key = os.environ.get(manifest.api_key_env)
         if not api_key:
             msg = (
@@ -302,9 +351,21 @@ def _resolve_client_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
     return kwargs
 
 
+def _resolve_heartbeat_dir(manifest: RunnerManifest) -> Path:
+    """Return the directory heartbeat files must be written to.
+
+    Prefers ``manifest.heartbeat_dir`` (the orchestrator-root directory
+    the ``HeartbeatMonitor`` polls, injected by the spawner) and falls
+    back to a workdir-relative path for standalone runner invocations.
+    """
+    if manifest.heartbeat_dir:
+        return Path(manifest.heartbeat_dir)
+    return Path(manifest.workdir) / ".sdd" / "runtime" / "heartbeats"
+
+
 def _start_heartbeat(
     session_id: str,
-    workdir: Path,
+    heartbeat_dir: Path,
     interval_s: float = 15.0,
 ) -> threading.Event:
     """Write heartbeat files while the runner process is alive.
@@ -316,15 +377,16 @@ def _start_heartbeat(
 
     Args:
         session_id: Runner session identifier (heartbeat file basename).
-        workdir: Working directory (project root) where
-            ``.sdd/runtime/heartbeats/`` lives.
+        heartbeat_dir: Directory the heartbeat file is written to.  Must
+            be the same ``.sdd/runtime/heartbeats`` directory the
+            orchestrator's ``HeartbeatMonitor`` reads - see
+            :func:`_resolve_heartbeat_dir`.
         interval_s: Seconds between heartbeat writes (default 15).
 
     Returns:
         A :class:`threading.Event` the caller sets to stop the writer.
     """
     stop_event = threading.Event()
-    heartbeat_dir = workdir / ".sdd" / "runtime" / "heartbeats"
 
     def _heartbeat_loop() -> None:
         with contextlib.suppress(OSError):  # best effort
@@ -397,7 +459,7 @@ def run(manifest: RunnerManifest) -> int:
         )
         return EXIT_MANIFEST_ERROR
 
-    heartbeat_stop = _start_heartbeat(manifest.session_id, Path(manifest.workdir))
+    heartbeat_stop = _start_heartbeat(manifest.session_id, _resolve_heartbeat_dir(manifest))
     try:
         return _run_session(manifest, client_kwargs)
     finally:
@@ -454,7 +516,18 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
         try:
             from openai import AsyncOpenAI  # type: ignore[import-not-found]
 
-            sdk.set_default_openai_client(AsyncOpenAI(**client_kwargs))
+            client = AsyncOpenAI(**client_kwargs)
+            if manifest.base_url:
+                # Third-party OpenAI-compatible endpoints (the reason
+                # ``base_url`` exists) serve the chat-completions API,
+                # not ``/responses``, so switch the SDK's default API.
+                # ``use_for_tracing=False`` keeps the SDK's tracing
+                # exporter from uploading traces to api.openai.com
+                # authenticated with the third-party key.
+                sdk.set_default_openai_client(client, use_for_tracing=False)
+                sdk.set_default_openai_api("chat_completions")
+            else:
+                sdk.set_default_openai_client(client)
         except Exception as exc:
             emit_event(
                 {

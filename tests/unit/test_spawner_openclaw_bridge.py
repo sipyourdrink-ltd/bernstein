@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
+import pytest
 from bernstein.core.models import AgentSession
 from bernstein.core.spawner import AgentSpawner
 
+from bernstein.adapters.plugin_sdk import SamplingParamsRefusal
 from bernstein.bridges.base import AgentState, AgentStatus, BridgeConfig, BridgeError, RuntimeBridge, SpawnRequest
 
 if TYPE_CHECKING:
@@ -181,3 +183,34 @@ def test_reap_completed_agent_syncs_remote_logs(
     spawner.reap_completed_agent(session, skip_merge=True)
 
     assert bridge.log_calls == [session.id]
+
+
+def test_bridge_refuses_sampling_params(
+    tmp_path: Path,
+    make_task: Callable[..., Task],
+    mock_adapter_factory: Callable[..., CLIAdapter],
+) -> None:
+    """Sampling/endpoint overrides must not be silently dropped by the bridge.
+
+    The bridge spawn request has no way to carry them, so a configured
+    bridge plus requested overrides raises the same refusal the local
+    adapter capability gate uses - never a remote run with defaults.
+    """
+    adapter = cast("MagicMock", mock_adapter_factory(pid=42))
+    bridge = _FakeBridge()
+    templates_dir = tmp_path / "templates" / "roles"
+    templates_dir.mkdir(parents=True)
+    spawner = AgentSpawner(
+        adapter,
+        templates_dir,
+        tmp_path,
+        use_worktrees=False,
+        runtime_bridge=bridge,
+        mcp_config={"temperature": 0.2, "base_url": "http://localhost:8000/v1"},
+    )
+
+    with pytest.raises(SamplingParamsRefusal, match="temperature"):
+        spawner.spawn_for_tasks([make_task()])
+
+    assert bridge.spawn_calls == []
+    adapter.spawn.assert_not_called()

@@ -604,10 +604,13 @@ class MCPManager:
         if task_config is None:
             return base_config
 
-        # Merge: task config wins on conflicts (task explicitly requested those)
+        # Merge: task config wins on conflicts (task explicitly requested
+        # those).  Non-mcpServers keys from base_config (per-spawn sampling
+        # and endpoint overrides such as temperature/base_url) must survive
+        # the merge so the adapter capability gate can see them.
         merged_servers = dict(base_config.get("mcpServers", {}))
         merged_servers.update(task_config.get("mcpServers", {}))
-        return {"mcpServers": merged_servers}
+        return {**base_config, "mcpServers": merged_servers}
 
 
 # ---------------------------------------------------------------------------

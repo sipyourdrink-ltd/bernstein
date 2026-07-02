@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.adapters.openai_agents_runner import validate_api_key_env_name
 from bernstein.adapters.plugin_sdk import (
     AdapterCapability,
     AdapterPluginInfo,
@@ -94,6 +95,13 @@ class OpenAIAgentsAdapter(PluginAdapter):
     # The SDK forwards 429s from api.openai.com with the standard
     # ``rate_limit_exceeded`` / ``insufficient_quota`` error codes.
     rate_limit_provider = "openai"
+
+    # The runner writes its own heartbeat files, but it runs inside a
+    # per-session worktree and cannot derive the orchestrator project
+    # root on its own.  This flag tells the spawner to inject a
+    # ``heartbeat_dir`` key (the orchestrator-root heartbeat directory
+    # the HeartbeatMonitor polls) into the per-spawn ``mcp_config``.
+    consumes_heartbeat_dir = True
 
     def plugin_info(self) -> AdapterPluginInfo:
         """Return metadata for the ``bernstein agents`` listing."""
@@ -173,9 +181,10 @@ class OpenAIAgentsAdapter(PluginAdapter):
             workdir: Worktree root for sandbox constraint.
             model_config: Model/effort selection.
             session_id: Bernstein session ID for log correlation.
-            mcp_config: Optional MCP servers, sandbox provider choice, and
+            mcp_config: Optional MCP servers, sandbox provider choice,
                 sampling/endpoint overrides (``temperature``, ``top_p``,
-                ``top_k``, ``base_url``, ``api_key_env``).
+                ``top_k``, ``base_url``, ``api_key_env``), and the
+                spawner-injected ``heartbeat_dir``.
             timeout_seconds: Hard timeout forwarded to the runner.
             task_scope: "small" | "medium" | "large".
             budget_multiplier: Retry multiplier applied to the scope budget.
@@ -187,7 +196,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
         sandbox_provider = _DEFAULT_SANDBOX_PROVIDER
         tools: list[dict[str, Any]] = []
         mcp_servers: dict[str, Any] = {}
-        sampling: dict[str, Any] = {}
+        overrides: dict[str, Any] = {}
         if mcp_config:
             provider = mcp_config.get("sandbox_provider")
             if isinstance(provider, str) and provider:
@@ -204,17 +213,24 @@ class OpenAIAgentsAdapter(PluginAdapter):
             for float_key in ("temperature", "top_p"):
                 float_value = mcp_config.get(float_key)
                 if isinstance(float_value, (int, float)) and not isinstance(float_value, bool):
-                    sampling[float_key] = float(float_value)
+                    overrides[float_key] = float(float_value)
             top_k = mcp_config.get("top_k")
             if isinstance(top_k, int) and not isinstance(top_k, bool):
-                sampling["top_k"] = top_k
+                overrides["top_k"] = top_k
             for str_key in ("base_url", "api_key_env"):
                 str_value = mcp_config.get(str_key)
                 if isinstance(str_value, str) and str_value:
-                    sampling[str_key] = str_value
+                    overrides[str_key] = str_value
+            # Heartbeat delivery target injected by the spawner: the
+            # orchestrator-root directory the HeartbeatMonitor polls.
+            # ``workdir`` is a per-session worktree under default
+            # isolation, so the runner cannot derive this path itself.
+            heartbeat_dir = mcp_config.get("heartbeat_dir")
+            if isinstance(heartbeat_dir, str) and heartbeat_dir:
+                overrides["heartbeat_dir"] = heartbeat_dir
 
         return {
-            **sampling,
+            **overrides,
             "session_id": session_id,
             "prompt": prompt,
             "workdir": str(workdir),
@@ -279,8 +295,13 @@ class OpenAIAgentsAdapter(PluginAdapter):
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         # ``api_key_env`` overrides which env var holds the key; only its
-        # NAME is ever recorded, never the value.
-        api_key_env = str(manifest.get("api_key_env") or "OPENAI_API_KEY")
+        # NAME is ever recorded, never the value.  The name is validated
+        # BEFORE it widens the filtered environment below so a repo-carried
+        # config cannot forward arbitrary host variables to the runner.
+        api_key_env_override = manifest.get("api_key_env")
+        if api_key_env_override is not None:
+            validate_api_key_env_name(str(api_key_env_override))
+        api_key_env = str(api_key_env_override or "OPENAI_API_KEY")
         if not os.environ.get(api_key_env):
             logger.warning(
                 "OpenAIAgentsAdapter: %s is not set - spawn will fail",

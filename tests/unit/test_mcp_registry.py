@@ -394,6 +394,37 @@ class TestMCPRegistryResolveForTasks:
         # Base config should win
         assert result["mcpServers"]["tavily"]["command"] == "custom"
 
+    def test_merge_preserves_sampling_overrides_from_base(self, make_task) -> None:
+        """Top-level sampling/endpoint keys must survive the merge.
+
+        The spawn path transports per-spawn sampling and endpoint
+        overrides as top-level keys of the base MCP config; dropping
+        them here would bypass the adapter capability gate silently.
+        """
+        registry = _make_registry(
+            [
+                {"name": "tavily", "package": "pkg", "keywords": ["web search"], "env_required": []},
+            ]
+        )
+        base_config: dict[str, Any] = {
+            "mcpServers": {"existing": {"command": "npx", "args": ["-y", "existing-pkg"]}},
+            "temperature": 0.2,
+            "top_k": 40,
+            "base_url": "http://localhost:8000/v1",
+            "api_key_env": "MY_PROXY_KEY",
+        }
+        task = make_task(description="Use web search to find docs")
+
+        result = registry.resolve_for_tasks([task], base_config=base_config)
+
+        assert result is not None
+        assert "existing" in result["mcpServers"]
+        assert "tavily" in result["mcpServers"]
+        assert result["temperature"] == 0.2
+        assert result["top_k"] == 40
+        assert result["base_url"] == "http://localhost:8000/v1"
+        assert result["api_key_env"] == "MY_PROXY_KEY"
+
     def test_no_servers_returns_base(self, make_task) -> None:
         registry = _make_registry(
             [

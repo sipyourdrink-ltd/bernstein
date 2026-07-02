@@ -161,10 +161,18 @@ capabilities. The overrides travel in the per-spawn `mcp_config` and, for
 | `api_key_env` | str | NAME of the environment variable holding the API key for `base_url`. Never a literal key. |
 
 All fields are optional; a manifest without them behaves exactly as before.
-If `api_key_env` names a variable that is not set, the runner fails at
-startup with an error naming the variable (exit code 2). The runner logs
-every effective value in its `start` event; only the env var name is ever
-logged, never the key itself.
+When `base_url` is set, the runner switches the SDK to the chat-completions
+API (third-party OpenAI-compatible endpoints do not serve `/responses`) and
+excludes the custom client from tracing so the endpoint's key is never sent
+to api.openai.com.
+
+`api_key_env` must match `^[A-Z][A-Z0-9_]*$` AND end with `_API_KEY`,
+`_KEY`, or `_TOKEN`. Any other name is rejected at startup with a
+`config_invalid` error (exit code 2), the same failure path as a name whose
+variable is not set. This keeps the override from being used to read
+unrelated host environment variables. The runner logs every effective value
+in its `start` event; only the env var name is ever logged, never the key
+itself.
 
 The spawn path enforces the capability: requesting any of these keys for an
 adapter that does not declare `SUPPORTS_SAMPLING_PARAMS` raises

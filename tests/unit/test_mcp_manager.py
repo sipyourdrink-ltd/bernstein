@@ -524,6 +524,44 @@ class TestBuildMCPConfigForTask:
         # Task config should win
         assert result["mcpServers"]["github"]["command"] == "custom-github"
 
+    @patch("bernstein.core.protocols.mcp_manager.subprocess.Popen")
+    def test_merge_preserves_sampling_overrides_from_base(self, mock_popen: MagicMock) -> None:
+        """Top-level sampling/endpoint keys must survive the merge.
+
+        The spawn path transports per-spawn sampling and endpoint
+        overrides as top-level keys of the base MCP config; dropping
+        them here would bypass the adapter capability gate silently.
+        """
+        mock_proc = MagicMock()
+        mock_proc.pid = 100
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        cfg = MCPServerConfig(name="github", command=["npx"])
+        mgr = MCPManager([cfg])
+        mgr.start_all()
+
+        base = {
+            "mcpServers": {"tavily": {"command": "npx", "args": ["tavily"]}},
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "top_k": 40,
+            "base_url": "http://localhost:8000/v1",
+            "api_key_env": "MY_PROXY_KEY",
+        }
+        result = mgr.build_mcp_config_for_task(
+            task_mcp_servers=["github"],
+            base_config=base,
+        )
+        assert result is not None
+        assert "tavily" in result["mcpServers"]
+        assert "github" in result["mcpServers"]
+        assert result["temperature"] == 0.2
+        assert result["top_p"] == 0.9
+        assert result["top_k"] == 40
+        assert result["base_url"] == "http://localhost:8000/v1"
+        assert result["api_key_env"] == "MY_PROXY_KEY"
+
 
 # ---------------------------------------------------------------------------
 # Env merging
