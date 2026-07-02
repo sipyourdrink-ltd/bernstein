@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
+from bernstein.adapters.plugin_sdk import ensure_sampling_params_supported
 from bernstein.adapters.registry import get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
@@ -2205,6 +2206,14 @@ class AgentSpawner:
                     except Exception as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
                         break
+
+                    # Fail loudly when sampling/endpoint overrides are
+                    # requested for an adapter that does not declare the
+                    # SUPPORTS_SAMPLING_PARAMS capability.  Silently
+                    # dropping them would run the task with parameters the
+                    # operator did not ask for, so this raises instead of
+                    # falling through to provider failover.
+                    ensure_sampling_params_supported(target_adapter, effective_mcp)
 
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.

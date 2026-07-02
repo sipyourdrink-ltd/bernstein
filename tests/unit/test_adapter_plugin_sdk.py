@@ -13,6 +13,8 @@ from bernstein.adapters.plugin_sdk import (
     AdapterPluginInfo,
     PluginAdapter,
     PluginRegistry,
+    SamplingParamsRefusal,
+    ensure_sampling_params_supported,
     validate_plugin,
 )
 
@@ -149,6 +151,7 @@ class TestAdapterCapability:
             "RATE_LIMIT_DETECTION",
             "STRUCTURED_OUTPUT",
             "BATCH_MODE",
+            "SUPPORTS_SAMPLING_PARAMS",
         }
         assert set(AdapterCapability.__members__.keys()) == expected
 
@@ -163,6 +166,7 @@ class TestAdapterCapability:
         assert AdapterCapability.RATE_LIMIT_DETECTION.value == "rate_limit_detection"
         assert AdapterCapability.STRUCTURED_OUTPUT.value == "structured_output"
         assert AdapterCapability.BATCH_MODE.value == "batch_mode"
+        assert AdapterCapability.SUPPORTS_SAMPLING_PARAMS.value == "supports_sampling_params"
 
 
 # ---------------------------------------------------------------------------
@@ -383,3 +387,51 @@ class TestPluginRegistry:
 
         assert count == 1
         assert registry.get("prebuilt") is instance
+
+
+# ---------------------------------------------------------------------------
+# Sampling params capability gate
+# ---------------------------------------------------------------------------
+
+
+class _SamplingStubAdapter(_StubPluginAdapter):
+    """Stub adapter that declares SUPPORTS_SAMPLING_PARAMS."""
+
+    def plugin_info(self) -> AdapterPluginInfo:
+        return AdapterPluginInfo(
+            name="sampling-stub",
+            version="1.0.0",
+            capabilities=(AdapterCapability.SUPPORTS_SAMPLING_PARAMS,),
+        )
+
+
+class TestEnsureSamplingParamsSupported:
+    """Tests for the spawn-time sampling/endpoint capability gate."""
+
+    def test_none_config_passes(self) -> None:
+        ensure_sampling_params_supported(_StubPluginAdapter(), None)
+
+    def test_config_without_sampling_keys_passes(self) -> None:
+        ensure_sampling_params_supported(
+            _StubPluginAdapter(),
+            {"sandbox_provider": "e2b", "tools": []},
+        )
+
+    def test_raises_for_non_supporting_adapter(self) -> None:
+        with pytest.raises(SamplingParamsRefusal, match="temperature"):
+            ensure_sampling_params_supported(_StubPluginAdapter(), {"temperature": 0.2})
+
+    def test_error_names_adapter_and_keys(self) -> None:
+        with pytest.raises(SamplingParamsRefusal) as excinfo:
+            ensure_sampling_params_supported(
+                _StubPluginAdapter(),
+                {"top_k": 40, "base_url": "http://localhost:8000/v1"},
+            )
+        assert excinfo.value.adapter_name == "stub"
+        assert excinfo.value.requested_keys == ("top_k", "base_url")
+
+    def test_passes_for_supporting_adapter(self) -> None:
+        ensure_sampling_params_supported(
+            _SamplingStubAdapter(),
+            {"temperature": 0.2, "top_p": 0.9, "api_key_env": "MY_PROXY_KEY"},
+        )

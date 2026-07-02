@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +14,7 @@ import pytest
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
 from bernstein.adapters import openai_agents as adapter_module
+from bernstein.adapters import openai_agents_runner as runner_module
 from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
 from bernstein.adapters.openai_agents_runner import (
     EXIT_GENERIC,
@@ -21,14 +24,20 @@ from bernstein.adapters.openai_agents_runner import (
     EXIT_SDK_MISSING,
     RunnerManifest,
     _build_agent_kwargs,
+    _build_model_settings_kwargs,
     _build_run_config,
     _is_rate_limit,
+    _resolve_client_kwargs,
+    _start_heartbeat,
     emit_event,
     load_manifest,
     main,
     run,
 )
-from bernstein.adapters.plugin_sdk import AdapterCapability
+from bernstein.adapters.plugin_sdk import (
+    AdapterCapability,
+    ensure_sampling_params_supported,
+)
 from bernstein.adapters.registry import get_adapter
 
 if TYPE_CHECKING:
@@ -75,6 +84,13 @@ class TestPluginInfo:
         assert AdapterCapability.MULTI_MODEL in info.capabilities
         assert AdapterCapability.RATE_LIMIT_DETECTION in info.capabilities
         assert AdapterCapability.STRUCTURED_OUTPUT in info.capabilities
+        assert AdapterCapability.SUPPORTS_SAMPLING_PARAMS in info.capabilities
+
+    def test_sampling_gate_passes_for_openai_agents(self) -> None:
+        ensure_sampling_params_supported(
+            OpenAIAgentsAdapter(),
+            {"temperature": 0.5, "base_url": "http://localhost:8000/v1"},
+        )
 
     def test_display_name(self) -> None:
         assert OpenAIAgentsAdapter().name() == "OpenAI Agents SDK"
@@ -215,6 +231,54 @@ class TestSpawnCommand:
         assert manifest["sandbox_provider"] == "e2b"
         assert manifest["tools"] == [{"name": "file_read"}]
 
+    def test_manifest_includes_sampling_overrides(self, tmp_path: Path) -> None:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1007)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-s6",
+                mcp_config={
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "top_k": 40,
+                    "base_url": "http://localhost:8000/v1",
+                    "api_key_env": "MY_PROXY_KEY",
+                },
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-s6.manifest.json").read_text(),
+        )
+        assert manifest["temperature"] == pytest.approx(0.2)
+        assert manifest["top_p"] == pytest.approx(0.9)
+        assert manifest["top_k"] == 40
+        assert manifest["base_url"] == "http://localhost:8000/v1"
+        assert manifest["api_key_env"] == "MY_PROXY_KEY"
+
+    def test_manifest_omits_absent_sampling_fields(self, tmp_path: Path) -> None:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1008)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-s7",
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-s7.manifest.json").read_text(),
+        )
+        for key in ("temperature", "top_p", "top_k", "base_url", "api_key_env"):
+            assert key not in manifest
+
     def test_log_path_uses_session_id(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()
         proc_mock = _make_popen_mock(pid=1005)
@@ -312,6 +376,30 @@ class TestSpawnEnvIsolation:
         env = popen.call_args.kwargs.get("env", {})
         assert "ANTHROPIC_API_KEY" not in env
         assert "DATABASE_URL" not in env
+
+    def test_env_passes_api_key_env_override_through(self, tmp_path: Path) -> None:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=2003)
+        with (
+            patch(
+                "bernstein.adapters.openai_agents.subprocess.Popen",
+                return_value=proc_mock,
+            ) as popen,
+            patch.dict(
+                "os.environ",
+                {"MY_PROXY_KEY": "sk-proxy", "PATH": "/usr/bin"},
+                clear=True,
+            ),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5-mini", effort="high"),
+                session_id="oai-env3",
+                mcp_config={"api_key_env": "MY_PROXY_KEY"},
+            )
+        env = popen.call_args.kwargs.get("env", {})
+        assert env["MY_PROXY_KEY"] == "sk-proxy"
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +604,41 @@ class TestRunnerManifest:
         with pytest.raises(TypeError):
             load_manifest(path)
 
+    def test_sampling_fields_default_to_none(self) -> None:
+        manifest = RunnerManifest.from_dict(
+            {
+                "session_id": "s1",
+                "prompt": "hi",
+                "workdir": "/workspace",
+                "model": "gpt-5-mini",
+            },
+        )
+        assert manifest.temperature is None
+        assert manifest.top_p is None
+        assert manifest.top_k is None
+        assert manifest.base_url is None
+        assert manifest.api_key_env is None
+
+    def test_from_dict_parses_sampling_fields(self) -> None:
+        manifest = RunnerManifest.from_dict(
+            {
+                "session_id": "s1",
+                "prompt": "hi",
+                "workdir": "/workspace",
+                "model": "gpt-5-mini",
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "top_k": 40,
+                "base_url": "http://localhost:8000/v1",
+                "api_key_env": "MY_PROXY_KEY",
+            },
+        )
+        assert manifest.temperature == pytest.approx(0.2)
+        assert manifest.top_p == pytest.approx(0.9)
+        assert manifest.top_k == 40
+        assert manifest.base_url == "http://localhost:8000/v1"
+        assert manifest.api_key_env == "MY_PROXY_KEY"
+
 
 # ---------------------------------------------------------------------------
 # Runner helpers
@@ -565,6 +688,68 @@ class TestRunnerHelpers:
         # Defensive copy - mutating the output must not mutate manifest state.
         cfg["mcp_servers"]["other"] = {"command": "x"}
         assert "other" not in manifest.mcp_servers
+
+    def test_build_model_settings_kwargs_empty_when_absent(self) -> None:
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+        )
+        assert _build_model_settings_kwargs(manifest) == {}
+
+    def test_build_model_settings_kwargs_maps_params(self) -> None:
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            temperature=0.2,
+            top_p=0.9,
+            top_k=40,
+        )
+        kwargs = _build_model_settings_kwargs(manifest)
+        assert kwargs["temperature"] == pytest.approx(0.2)
+        assert kwargs["top_p"] == pytest.approx(0.9)
+        # top_k travels via extra_args - the OpenAI API has no first-class
+        # top_k field but OpenAI-compatible endpoints accept it.
+        assert kwargs["extra_args"] == {"top_k": 40}
+
+    def test_resolve_client_kwargs_empty_by_default(self) -> None:
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+        )
+        assert _resolve_client_kwargs(manifest) == {}
+
+    def test_resolve_client_kwargs_reads_key_from_env(self) -> None:
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            base_url="http://localhost:8000/v1",
+            api_key_env="MY_PROXY_KEY",
+        )
+        with patch.dict("os.environ", {"MY_PROXY_KEY": "sk-proxy"}, clear=True):
+            kwargs = _resolve_client_kwargs(manifest)
+        assert kwargs == {"base_url": "http://localhost:8000/v1", "api_key": "sk-proxy"}
+
+    def test_resolve_client_kwargs_raises_when_env_var_missing(self) -> None:
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            api_key_env="MISSING_PROXY_KEY",
+        )
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            pytest.raises(RuntimeError, match="MISSING_PROXY_KEY"),
+        ):
+            _resolve_client_kwargs(manifest)
 
     def test_is_rate_limit_detects_429_message(self) -> None:
         assert _is_rate_limit(RuntimeError("429 Too Many Requests")) is True
@@ -703,6 +888,222 @@ class TestRunnerRun:
         assert rc == EXIT_GENERIC
         events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
         assert any(e["type"] == "error" and e["kind"] == "runtime" for e in events)
+
+    def test_run_start_event_logs_sampling_and_endpoint_params(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir="/workspace",
+            model="gpt-5-mini",
+            temperature=0.2,
+            top_p=0.9,
+            top_k=40,
+            base_url="http://localhost:8000/v1",
+            api_key_env="MY_PROXY_KEY",
+        )
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        fake_openai = MagicMock()
+        with (
+            patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
+            patch.dict("os.environ", {"MY_PROXY_KEY": "sk-proxy"}, clear=True),
+        ):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        start = next(e for e in events if e["type"] == "start")
+        assert start["temperature"] == pytest.approx(0.2)
+        assert start["top_p"] == pytest.approx(0.9)
+        assert start["top_k"] == 40
+        assert start["base_url"] == "http://localhost:8000/v1"
+        # Only the env var NAME is logged - never the key value.
+        assert start["api_key_env"] == "MY_PROXY_KEY"
+        assert "sk-proxy" not in json.dumps(events)
+
+    def test_run_start_event_defaults_are_null(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            run(self._manifest())
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        start = next(e for e in events if e["type"] == "start")
+        for key in ("temperature", "top_p", "top_k", "base_url", "api_key_env"):
+            assert start[key] is None
+
+    def test_run_wires_model_settings_into_agent(self) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir="/workspace",
+            model="gpt-5-mini",
+            temperature=0.3,
+            top_p=0.8,
+            top_k=20,
+        )
+        settings_sentinel = object()
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(
+            Agent=fake_agent_cls,
+            Runner=fake_runner,
+            ModelSettings=MagicMock(return_value=settings_sentinel),
+        )
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        fake_sdk.ModelSettings.assert_called_once_with(
+            temperature=0.3,
+            top_p=0.8,
+            extra_args={"top_k": 20},
+        )
+        assert fake_agent_cls.call_args.kwargs["model_settings"] is settings_sentinel
+
+    def test_run_skips_model_settings_when_no_params(self) -> None:
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=fake_agent_cls, Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            run(self._manifest())
+        fake_sdk.ModelSettings.assert_not_called()
+        assert "model_settings" not in fake_agent_cls.call_args.kwargs
+
+    def test_run_constructs_client_from_manifest(self) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir="/workspace",
+            model="gpt-5-mini",
+            base_url="http://localhost:8000/v1",
+            api_key_env="MY_PROXY_KEY",
+        )
+        client_sentinel = object()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        fake_openai = MagicMock(AsyncOpenAI=MagicMock(return_value=client_sentinel))
+        with (
+            patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
+            patch.dict("os.environ", {"MY_PROXY_KEY": "sk-proxy"}, clear=True),
+        ):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        fake_openai.AsyncOpenAI.assert_called_once_with(
+            base_url="http://localhost:8000/v1",
+            api_key="sk-proxy",
+        )
+        fake_sdk.set_default_openai_client.assert_called_once_with(client_sentinel)
+
+    def test_run_leaves_default_client_alone_without_overrides(self) -> None:
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            run(self._manifest())
+        fake_sdk.set_default_openai_client.assert_not_called()
+
+    def test_run_fails_loudly_when_api_key_env_var_missing(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir="/workspace",
+            model="gpt-5-mini",
+            api_key_env="MISSING_PROXY_KEY",
+        )
+        with patch.dict("os.environ", {}, clear=True):
+            rc = run(manifest)
+        assert rc == EXIT_MANIFEST_ERROR
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        error = next(e for e in events if e["type"] == "error")
+        assert error["kind"] == "config_invalid"
+        assert "MISSING_PROXY_KEY" in error["message"]
+
+    def test_run_starts_and_stops_heartbeat(self) -> None:
+        stop_event = threading.Event()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        with (
+            patch.object(
+                runner_module,
+                "_start_heartbeat",
+                return_value=stop_event,
+            ) as start_hb,
+            patch.dict(sys.modules, {"agents": fake_sdk}),
+        ):
+            run(self._manifest())
+        start_hb.assert_called_once()
+        assert stop_event.is_set()
+
+    def test_run_stops_heartbeat_on_sdk_missing(self) -> None:
+        stop_event = threading.Event()
+        with (
+            patch.object(
+                runner_module,
+                "_start_heartbeat",
+                return_value=stop_event,
+            ),
+            patch.dict(sys.modules, {"agents": None}),
+        ):
+            rc = run(self._manifest())
+        assert rc == EXIT_SDK_MISSING
+        assert stop_event.is_set()
+
+
+# ---------------------------------------------------------------------------
+# Runner heartbeat
+# ---------------------------------------------------------------------------
+
+
+class TestRunnerHeartbeat:
+    def test_heartbeat_writes_proxy_shaped_payload(self, tmp_path: Path) -> None:
+        stop_event = _start_heartbeat("hb-sess", tmp_path, interval_s=0.05)
+        hb_file = tmp_path / ".sdd" / "runtime" / "heartbeats" / "hb-sess.json"
+        try:
+            deadline = time.monotonic() + 5.0
+            while not hb_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+        finally:
+            stop_event.set()
+        assert hb_file.exists()
+        payload = json.loads(hb_file.read_text(encoding="utf-8"))
+        # Schema mirrors _start_heartbeat_proxy in spawner_sandbox_session.
+        assert set(payload) == {
+            "timestamp",
+            "phase",
+            "progress_pct",
+            "current_file",
+            "message",
+            "status",
+            "files_changed",
+        }
+        assert payload["status"] == "working"
+        assert payload["phase"] == "implementing"
+        assert isinstance(payload["timestamp"], int)
+
+    def test_heartbeat_stops_after_event_set(self, tmp_path: Path) -> None:
+        stop_event = _start_heartbeat("hb-stop", tmp_path, interval_s=0.05)
+        hb_file = tmp_path / ".sdd" / "runtime" / "heartbeats" / "hb-stop.json"
+        deadline = time.monotonic() + 5.0
+        while not hb_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        stop_event.set()
+        time.sleep(0.15)
+        hb_file.unlink()
+        time.sleep(0.15)
+        assert not hb_file.exists()
 
 
 # ---------------------------------------------------------------------------

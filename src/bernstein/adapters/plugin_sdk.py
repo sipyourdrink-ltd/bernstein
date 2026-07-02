@@ -57,6 +57,75 @@ class AdapterCapability(Enum):
     RATE_LIMIT_DETECTION = "rate_limit_detection"
     STRUCTURED_OUTPUT = "structured_output"
     BATCH_MODE = "batch_mode"
+    SUPPORTS_SAMPLING_PARAMS = "supports_sampling_params"
+
+
+# Per-spawn keys in ``mcp_config`` that request sampling or endpoint
+# overrides.  An adapter must declare
+# :attr:`AdapterCapability.SUPPORTS_SAMPLING_PARAMS` before any of these
+# are honoured - see :func:`ensure_sampling_params_supported`.
+SAMPLING_PARAM_KEYS: tuple[str, ...] = (
+    "temperature",
+    "top_p",
+    "top_k",
+    "base_url",
+    "api_key_env",
+)
+
+
+class SamplingParamsRefusal(RuntimeError):
+    """Raised when sampling params are requested for an incapable adapter.
+
+    Attributes:
+        adapter_name: The adapter that was asked.
+        requested_keys: The sampling/endpoint keys present in the request.
+    """
+
+    def __init__(self, adapter_name: str, requested_keys: tuple[str, ...]) -> None:
+        self.adapter_name = adapter_name
+        self.requested_keys = requested_keys
+        super().__init__(
+            f"Adapter {adapter_name!r} does not declare the "
+            f"{AdapterCapability.SUPPORTS_SAMPLING_PARAMS.value!r} capability "
+            f"but sampling/endpoint parameters were requested: "
+            f"{', '.join(requested_keys)}. Refusing to spawn instead of "
+            f"silently dropping them."
+        )
+
+
+def ensure_sampling_params_supported(
+    adapter: CLIAdapter,
+    mcp_config: dict[str, Any] | None,
+) -> None:
+    """Refuse sampling/endpoint overrides for adapters that cannot honour them.
+
+    Silently dropping a requested ``temperature`` or ``base_url`` would run
+    the task with parameters the operator did not ask for, so the spawn path
+    calls this gate before dispatching to the adapter.
+
+    Args:
+        adapter: The adapter selected for the spawn attempt.
+        mcp_config: Per-spawn configuration that may carry keys from
+            :data:`SAMPLING_PARAM_KEYS`.
+
+    Raises:
+        SamplingParamsRefusal: When any sampling/endpoint key is present and
+            the adapter does not declare
+            :attr:`AdapterCapability.SUPPORTS_SAMPLING_PARAMS`.
+    """
+    if not mcp_config:
+        return
+    requested = tuple(k for k in SAMPLING_PARAM_KEYS if mcp_config.get(k) is not None)
+    if not requested:
+        return
+    if isinstance(adapter, PluginAdapter):
+        try:
+            capabilities = adapter.plugin_info().capabilities
+        except Exception:  # pragma: no cover - defensive against bad plugins
+            capabilities = ()
+        if AdapterCapability.SUPPORTS_SAMPLING_PARAMS in capabilities:
+            return
+    raise SamplingParamsRefusal(adapter.name(), requested)
 
 
 @dataclass(frozen=True)

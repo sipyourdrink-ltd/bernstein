@@ -20,7 +20,9 @@ events strictly - they are persisted to the session log and exposed via
 the existing log tail + hooks plumbing - but the schema below is what
 tests and downstream cost-tracking code rely on::
 
-    {"type": "start", "session_id": "...", "model": "gpt-5-mini"}
+    {"type": "start", "session_id": "...", "model": "gpt-5-mini",
+     "temperature": null, "top_p": null, "top_k": null,
+     "base_url": null, "api_key_env": null}
     {"type": "tool_call", "name": "file_read", "args": {...}}
     {"type": "tool_result", "name": "file_read", "output": "..."}
     {"type": "progress", "message": "..."}
@@ -32,7 +34,8 @@ Exit codes
 ----------
 
 * ``0`` - completion event emitted successfully
-* ``2`` - manifest missing or malformed
+* ``2`` - manifest missing or malformed, or ``api_key_env`` names an
+  environment variable that is not set
 * ``3`` - optional ``openai-agents`` SDK not installed
 * ``4`` - provider rate-limit detected (maps to Bernstein's back-off)
 * ``1`` - any other runtime error
@@ -41,10 +44,14 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import logging
+import os
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -89,6 +96,21 @@ class RunnerManifest:
             the SDK so the Agent can call into them *without* letting the
             SDK spawn its own server processes (avoids duplicate
             connections and double cost accounting).
+        temperature: Optional sampling temperature forwarded to the SDK's
+            ``ModelSettings``.  ``None`` keeps the provider default.
+        top_p: Optional nucleus-sampling value forwarded to
+            ``ModelSettings``.  ``None`` keeps the provider default.
+        top_k: Optional top-k sampling value forwarded to ``ModelSettings``
+            via ``extra_args`` (the OpenAI API itself has no ``top_k``, but
+            OpenAI-compatible endpoints selected via ``base_url`` do).
+            ``None`` keeps the provider default.
+        base_url: Optional OpenAI-compatible endpoint URL.  When set the
+            runner constructs its own ``AsyncOpenAI`` client instead of the
+            SDK default.  ``None`` keeps today's single-endpoint behavior.
+        api_key_env: Optional NAME of the environment variable holding the
+            API key for ``base_url``.  Never a literal key.  When set but
+            the variable is missing the runner fails at startup with
+            :data:`EXIT_MANIFEST_ERROR`.
     """
 
     session_id: str
@@ -104,6 +126,11 @@ class RunnerManifest:
     sandbox_provider: str = "unix_local"
     tools: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     mcp_servers: dict[str, Any] = field(default_factory=dict[str, Any])
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    base_url: str | None = None
+    api_key_env: str | None = None
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RunnerManifest:
@@ -224,6 +251,110 @@ def _build_run_config(manifest: RunnerManifest) -> dict[str, Any]:
     }
 
 
+def _build_model_settings_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
+    """Translate optional sampling params into ``ModelSettings`` kwargs.
+
+    Only fields present in the manifest are emitted so an all-``None``
+    manifest yields an empty dict and the runner skips ``ModelSettings``
+    entirely (exactly today's behavior).  ``top_k`` is not a first-class
+    ``ModelSettings`` field in the SDK, so it travels via ``extra_args``
+    for OpenAI-compatible endpoints that accept it.
+
+    Returns:
+        Kwargs for ``agents.ModelSettings``, possibly empty.
+    """
+    kwargs: dict[str, Any] = {}
+    if manifest.temperature is not None:
+        kwargs["temperature"] = manifest.temperature
+    if manifest.top_p is not None:
+        kwargs["top_p"] = manifest.top_p
+    if manifest.top_k is not None:
+        kwargs["extra_args"] = {"top_k": manifest.top_k}
+    return kwargs
+
+
+def _resolve_client_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
+    """Build ``AsyncOpenAI(...)`` kwargs for the optional endpoint override.
+
+    Returns an empty dict when neither ``base_url`` nor ``api_key_env`` is
+    set, in which case the runner leaves the SDK's default client alone.
+    The key is resolved from the environment by NAME - the manifest never
+    carries a literal secret.
+
+    Raises:
+        RuntimeError: ``api_key_env`` is set but the named environment
+            variable is missing or empty.
+    """
+    kwargs: dict[str, Any] = {}
+    if manifest.base_url:
+        kwargs["base_url"] = manifest.base_url
+    if manifest.api_key_env:
+        api_key = os.environ.get(manifest.api_key_env)
+        if not api_key:
+            msg = (
+                f"manifest api_key_env names environment variable "
+                f"{manifest.api_key_env!r} but it is not set. Export "
+                f"{manifest.api_key_env} before spawning the openai_agents "
+                f"runner."
+            )
+            raise RuntimeError(msg)
+        kwargs["api_key"] = api_key
+    return kwargs
+
+
+def _start_heartbeat(
+    session_id: str,
+    workdir: Path,
+    interval_s: float = 15.0,
+) -> threading.Event:
+    """Write heartbeat files while the runner process is alive.
+
+    Mirrors the payload schema of ``_start_heartbeat_proxy`` in
+    :mod:`bernstein.core.agents.spawner_sandbox_session` so the
+    orchestrator's ``HeartbeatMonitor`` treats runner sessions exactly
+    like sandbox sessions.
+
+    Args:
+        session_id: Runner session identifier (heartbeat file basename).
+        workdir: Working directory (project root) where
+            ``.sdd/runtime/heartbeats/`` lives.
+        interval_s: Seconds between heartbeat writes (default 15).
+
+    Returns:
+        A :class:`threading.Event` the caller sets to stop the writer.
+    """
+    stop_event = threading.Event()
+    heartbeat_dir = workdir / ".sdd" / "runtime" / "heartbeats"
+
+    def _heartbeat_loop() -> None:
+        with contextlib.suppress(OSError):  # best effort
+            heartbeat_dir.mkdir(parents=True, exist_ok=True)
+        heartbeat_file = heartbeat_dir / f"{session_id}.json"
+        while not stop_event.is_set():
+            payload = json.dumps(
+                {
+                    "timestamp": int(time.time()),
+                    "phase": "implementing",
+                    "progress_pct": 0,
+                    "current_file": "",
+                    "message": "openai-agents runner working",
+                    "status": "working",
+                    "files_changed": 0,
+                }
+            )
+            with contextlib.suppress(OSError):  # best effort
+                heartbeat_file.write_text(payload, encoding="utf-8")
+            stop_event.wait(interval_s)
+
+    thread = threading.Thread(
+        target=_heartbeat_loop,
+        name=f"heartbeat-runner-{session_id}",
+        daemon=True,
+    )
+    thread.start()
+    return stop_event
+
+
 def run(manifest: RunnerManifest) -> int:
     """Execute the SDK session described by ``manifest``.
 
@@ -236,15 +367,54 @@ def run(manifest: RunnerManifest) -> int:
     Returns:
         Process exit code.  See module docstring for the contract.
     """
+    # Every effective sampling/endpoint param is logged here.  The key
+    # itself is never logged - only the NAME of the env var that holds it.
     emit_event(
         {
             "type": "start",
             "session_id": manifest.session_id,
             "model": manifest.model,
             "sandbox_provider": manifest.sandbox_provider,
+            "temperature": manifest.temperature,
+            "top_p": manifest.top_p,
+            "top_k": manifest.top_k,
+            "base_url": manifest.base_url,
+            "api_key_env": manifest.api_key_env,
         },
     )
 
+    # Resolve the endpoint override before any SDK work so a missing key
+    # env var fails loudly at startup instead of mid-session.
+    try:
+        client_kwargs = _resolve_client_kwargs(manifest)
+    except RuntimeError as exc:
+        emit_event(
+            {
+                "type": "error",
+                "kind": "config_invalid",
+                "message": str(exc),
+            },
+        )
+        return EXIT_MANIFEST_ERROR
+
+    heartbeat_stop = _start_heartbeat(manifest.session_id, Path(manifest.workdir))
+    try:
+        return _run_session(manifest, client_kwargs)
+    finally:
+        heartbeat_stop.set()
+
+
+def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int:
+    """Run the SDK session after startup validation has passed.
+
+    Args:
+        manifest: Parsed manifest describing the run.
+        client_kwargs: Non-empty when the manifest overrides the endpoint
+            or API key; forwarded to ``AsyncOpenAI``.
+
+    Returns:
+        Process exit code.  See module docstring for the contract.
+    """
     try:
         # Lazy import so the module itself stays importable without
         # the optional ``openai-agents`` package.  Tests stub this by
@@ -277,8 +447,30 @@ def run(manifest: RunnerManifest) -> int:
         )
         return EXIT_GENERIC
 
+    if client_kwargs:
+        # The manifest overrides the endpoint and/or API key.  Hand the SDK
+        # a dedicated client instead of letting it read the ambient
+        # OPENAI_* environment.
+        try:
+            from openai import AsyncOpenAI  # type: ignore[import-not-found]
+
+            sdk.set_default_openai_client(AsyncOpenAI(**client_kwargs))
+        except Exception as exc:
+            emit_event(
+                {
+                    "type": "error",
+                    "kind": "runtime",
+                    "message": f"failed to configure OpenAI client: {type(exc).__name__}: {exc}",
+                },
+            )
+            return EXIT_GENERIC
+
     try:
-        agent: Any = agent_cls(**_build_agent_kwargs(manifest))
+        agent_kwargs = _build_agent_kwargs(manifest)
+        settings_kwargs = _build_model_settings_kwargs(manifest)
+        if settings_kwargs:
+            agent_kwargs["model_settings"] = sdk.ModelSettings(**settings_kwargs)
+        agent: Any = agent_cls(**agent_kwargs)
         run_config = _build_run_config(manifest)
         # ``Runner.run_sync`` is the SDK's synchronous API - we avoid
         # ``asyncio.run`` here so the runner stays compatible with
