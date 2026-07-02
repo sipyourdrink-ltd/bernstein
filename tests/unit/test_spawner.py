@@ -1498,3 +1498,84 @@ class TestSamplingParamsSpawnPath:
         spawner.spawn_for_tasks([make_task()])
 
         assert adapter.spawn.call_args.kwargs["mcp_config"] is None
+
+    def test_role_policy_base_url_and_api_key_env_reach_adapter(self, tmp_path: Path, make_task) -> None:
+        """Per-role base_url/api_key_env must land in the adapter mcp_config.
+
+        This is the Feature 1 wiring: role_model_policy endpoint overrides
+        flow through the spawn path into the same slots the adapter manifest
+        reads, exactly the way model/provider do today.
+        """
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            role_model_policy={
+                "backend": {
+                    "base_url": "http://localhost:8000/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                }
+            },
+        )
+
+        spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["base_url"] == "http://localhost:8000/v1"
+        assert adapter.seen_mcp_config["api_key_env"] == "OPENROUTER_API_KEY"
+
+    def test_operator_mcp_config_wins_over_role_policy_endpoint(self, tmp_path: Path, make_task) -> None:
+        """An explicit mcp_config value must not be replaced by role policy."""
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            mcp_config={"base_url": "http://operator-set/v1"},
+            role_model_policy={"backend": {"base_url": "http://role-set/v1"}},
+        )
+
+        spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["base_url"] == "http://operator-set/v1"
+
+    def test_mode_profile_sampling_params_reach_adapter(self, tmp_path: Path, make_task) -> None:
+        """Feature 2 wiring: a ModeProfile's sampling params reach the adapter.
+
+        A profile carrying explicit sampling params is returned by the
+        resolver; the spawn path must fold those params into the adapter
+        mcp_config when the target adapter declares
+        SUPPORTS_SAMPLING_PARAMS. Patching the resolver keeps the test
+        independent of the bundled YAML profiles.
+        """
+        from bernstein.core.routing.mode_profile import ModeProfile
+
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+
+        custom = ModeProfile(
+            name="deep",
+            system_prompt_preamble="",
+            temperature=0.35,
+            top_p=0.8,
+            top_k=25,
+            max_tokens=1234,
+        )
+        with patch("bernstein.core.agents.spawner_prompt.select_mode", return_value=custom):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["temperature"] == pytest.approx(0.35)
+        assert adapter.seen_mcp_config["top_p"] == pytest.approx(0.8)
+        assert adapter.seen_mcp_config["top_k"] == 25
+        assert adapter.seen_mcp_config["max_tokens"] == 1234

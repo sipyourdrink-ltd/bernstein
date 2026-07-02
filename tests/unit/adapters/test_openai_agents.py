@@ -229,6 +229,43 @@ class TestSpawnCommand:
         assert manifest["sandbox_provider"] == "e2b"
         assert manifest["tools"] == [{"name": "file_read"}]
 
+    def test_manifest_tool_source_defaults_to_gateway(self, tmp_path: Path) -> None:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1104)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-tsg",
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-tsg.manifest.json").read_text(),
+        )
+        assert manifest["tool_source"] == "gateway"
+
+    def test_manifest_carries_builtin_tool_source(self, tmp_path: Path) -> None:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1105)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-tsb",
+                mcp_config={"tool_source": "builtin"},
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-tsb.manifest.json").read_text(),
+        )
+        assert manifest["tool_source"] == "builtin"
+
     def test_manifest_includes_sampling_overrides(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()
         proc_mock = _make_popen_mock(pid=1007)
@@ -738,6 +775,29 @@ class TestRunnerManifest:
         assert manifest.base_url == "http://localhost:8000/v1"
         assert manifest.api_key_env == "OPENROUTER_API_KEY"
 
+    def test_tool_source_defaults_to_gateway(self) -> None:
+        manifest = RunnerManifest.from_dict(
+            {
+                "session_id": "s1",
+                "prompt": "hi",
+                "workdir": "/workspace",
+                "model": "gpt-5-mini",
+            },
+        )
+        assert manifest.tool_source == "gateway"
+
+    def test_tool_source_parses_builtin(self) -> None:
+        manifest = RunnerManifest.from_dict(
+            {
+                "session_id": "s1",
+                "prompt": "hi",
+                "workdir": "/workspace",
+                "model": "gpt-5-mini",
+                "tool_source": "builtin",
+            },
+        )
+        assert manifest.tool_source == "builtin"
+
 
 # ---------------------------------------------------------------------------
 # Runner helpers
@@ -770,6 +830,31 @@ class TestRunnerHelpers:
         kwargs = _build_agent_kwargs(manifest)
         assert "instructions" not in kwargs
         assert "tools" not in kwargs
+
+    def test_build_agent_kwargs_omits_gateway_tools_for_builtin_source(self) -> None:
+        # When builtins are selected the gateway descriptors are not attached
+        # here; the runner constructs SDK builtins later in ``_run_session``.
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            tools=[{"name": "file_read"}],
+            tool_source="builtin",
+        )
+        kwargs = _build_agent_kwargs(manifest)
+        assert "tools" not in kwargs
+
+    def test_build_agent_kwargs_keeps_gateway_tools_by_default(self) -> None:
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            tools=[{"name": "file_read"}],
+        )
+        kwargs = _build_agent_kwargs(manifest)
+        assert kwargs["tools"] == [{"name": "file_read"}]
 
     def test_build_run_config_copies_mcp_servers(self) -> None:
         manifest = RunnerManifest(
@@ -1121,6 +1206,54 @@ class TestRunnerRun:
             extra_args={"top_k": 20},
         )
         assert fake_agent_cls.call_args.kwargs["model_settings"] is settings_sentinel
+
+    def test_run_attaches_builtin_tools_when_tool_source_builtin(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir=str(tmp_path),
+            model="gpt-5-mini",
+            tools=[{"name": "gateway_tool"}],
+            tool_source="builtin",
+        )
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        # Identity decorator so the wrapped function object flows through.
+        fake_sdk = MagicMock(
+            Agent=fake_agent_cls,
+            Runner=fake_runner,
+            function_tool=lambda fn: fn,
+        )
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        # Builtins replace the gateway descriptors entirely.
+        attached = fake_agent_cls.call_args.kwargs["tools"]
+        assert [t.__name__ for t in attached] == ["read_file", "write_file", "list_dir", "run_command"]
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        assert any(e["type"] == "progress" and e.get("tool_source") == "builtin" for e in events)
+
+    def test_run_uses_gateway_tools_by_default(self, tmp_path: Path) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir=str(tmp_path),
+            model="gpt-5-mini",
+            tools=[{"name": "gateway_tool"}],
+        )
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=fake_agent_cls, Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        assert fake_agent_cls.call_args.kwargs["tools"] == [{"name": "gateway_tool"}]
 
     def test_run_skips_model_settings_when_no_params(self) -> None:
         fake_agent_cls = MagicMock()

@@ -184,3 +184,61 @@ adapter that does not declare `SUPPORTS_SAMPLING_PARAMS` raises
 `SamplingParamsRefusal` instead of silently dropping the parameters. See
 `ensure_sampling_params_supported` in
 [`src/bernstein/adapters/plugin_sdk.py`](../../src/bernstein/adapters/plugin_sdk.py).
+
+### Where these values come from
+
+Three sources feed the per-spawn slots above, in ascending precedence:
+
+1. **Mode profile** - the resolved `ModeProfile` for the spawn carries
+   optional `temperature`, `top_p`, `top_k`, and `max_tokens`. They are
+   folded in only when the target adapter declares
+   `SUPPORTS_SAMPLING_PARAMS`, so a default profile never breaks a spawn on
+   an adapter that cannot honour sampling.
+2. **`role_model_policy[<role>]`** - a role may set `base_url` and
+   `api_key_env` in `bernstein.yaml` to target an OpenAI-compatible
+   endpoint other than the default. `api_key_env` is the NAME of an
+   environment variable, validated at parse time against the same
+   fail-closed credential allowlist described above; a rejected name fails
+   `bernstein.yaml` parsing rather than reaching a spawn.
+3. **Explicit `mcp_config`** - an operator-set value always wins over the
+   two derived sources; the merge only fills slots the operator left unset.
+
+A run that sets none of these behaves exactly as before.
+
+## Builtin tool source
+
+By default the runner gives the agent the tools brokered by the Bernstein
+MCP gateway (`tool_source: "gateway"`). Some runs execute with no MCP
+gateway reachable - an isolated worktree with no bridge, a minimal offline
+environment - and would otherwise have no sanctioned way to act on the
+workdir at all.
+
+Setting `tool_source: "builtin"` in the per-spawn `mcp_config` (which the
+adapter forwards to the runner manifest) opts into four small
+workdir-sandboxed builtins:
+
+| Tool | Purpose |
+| --- | --- |
+| `read_file(path)` | Read a UTF-8 file relative to the run workdir. |
+| `write_file(path, content)` | Write UTF-8 text relative to the run workdir. |
+| `list_dir(path)` | List a directory relative to the run workdir. |
+| `run_command(argv)` | Run an argv list inside the workdir. |
+
+The builtins never become the default; `gateway` stays the default and any
+value other than `"builtin"` selects it. The builtins enforce three
+properties, each covered by tests in
+[`tests/unit/adapters/test_openai_agents_builtins.py`](../../tests/unit/adapters/test_openai_agents_builtins.py):
+
+1. **Path confinement.** Every path argument is resolved against the run
+   workdir. Absolute paths and `..` escapes are rejected: the real
+   (symlink-resolved) target must stay inside the real workdir.
+2. **No shell.** `run_command` takes an argv **list** and runs it with
+   `shell=False`. There is no shell string and no interpolation, so a
+   metacharacter in an argument is passed to the program literally.
+3. **Audited.** Every call emits a `tool_call` and a `tool_result` event to
+   the runner's line-delimited JSON event stream, tagged
+   `"tool_source": "builtin"`, with the tool name, arguments, and outcome -
+   so a run with no MCP gateway stays auditable and replayable.
+
+See `build_builtin_tools` in
+[`src/bernstein/adapters/openai_agents_builtins.py`](../../src/bernstein/adapters/openai_agents_builtins.py).

@@ -77,6 +77,9 @@ class SpawnModeBundle:
         tools: Tool list filtered through the profile's allowlist.
         max_turns: Per-spawn turn budget from the profile.
         temperature: Sampling temperature target from the profile.
+        top_p: Optional nucleus-sampling target (``None`` = provider default).
+        top_k: Optional top-k target (``None`` = provider default).
+        max_tokens: Optional output-token cap (``None`` = adapter default).
     """
 
     profile: ModeProfile
@@ -84,6 +87,9 @@ class SpawnModeBundle:
     tools: list[str]
     max_turns: int
     temperature: float
+    top_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
 
 
 def apply_mode_to_spawn(
@@ -123,6 +129,9 @@ def apply_mode_to_spawn(
             tools=available,
             max_turns=smart.max_turns,
             temperature=smart.temperature,
+            top_p=smart.top_p,
+            top_k=smart.top_k,
+            max_tokens=smart.max_tokens,
         )
 
     ensure_profiles_loaded(workdir)
@@ -141,6 +150,9 @@ def apply_mode_to_spawn(
         tools=applied.tools,
         max_turns=profile.max_turns,
         temperature=profile.temperature,
+        top_p=profile.top_p,
+        top_k=profile.top_k,
+        max_tokens=profile.max_tokens,
     )
 
 

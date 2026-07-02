@@ -1635,6 +1635,123 @@ class AgentSpawner:
         heartbeat_dir = str(self._workdir / ".sdd" / "runtime" / "heartbeats")
         return {**(mcp_config or {}), "heartbeat_dir": heartbeat_dir}
 
+    def _primary_adapter_supports_sampling(self, model_config: ModelConfig) -> bool:
+        """Best-effort probe: does the adapter for this spawn honour sampling?
+
+        Used to decide whether mode-profile sampling params may be folded
+        into the per-spawn config. Only adapters that declare
+        :attr:`AdapterCapability.SUPPORTS_SAMPLING_PARAMS` accept them; for
+        any other adapter the spawn path's
+        :func:`ensure_sampling_params_supported` gate would refuse the
+        spawn, so injecting profile defaults there would break otherwise
+        valid runs.
+
+        The probe only inspects adapters that are already known - the
+        default adapter and any already-cached instance - and never calls
+        :meth:`_get_adapter_by_name`. Building or caching a new adapter here
+        would perturb the failover loop's own adapter resolution (and its
+        side effects), so the probe stays read-only. An adapter that is not
+        yet known is treated as not supporting sampling, the conservative
+        choice that preserves today's behavior.
+        """
+
+        def _supports(adapter: object) -> bool:
+            from bernstein.adapters.plugin_sdk import AdapterCapability, PluginAdapter
+
+            if not isinstance(adapter, PluginAdapter):
+                return False
+            try:
+                return AdapterCapability.SUPPORTS_SAMPLING_PARAMS in adapter.plugin_info().capabilities
+            except Exception:  # pragma: no cover - defensive against bad plugins
+                return False
+
+        adapter_name = self._infer_adapter_name_for_provider(None, model_config.model)
+        cached = self._adapter_cache.get(adapter_name)
+        if cached is not None and _supports(cached):
+            return True
+        return _supports(self._adapter)
+
+    def _apply_sampling_overrides(
+        self,
+        mcp_config: dict[str, Any] | None,
+        *,
+        role_policy: dict[str, Any],
+        model_config: ModelConfig,
+        tasks: list[Task],
+    ) -> dict[str, Any] | None:
+        """Fold per-role endpoint and mode-profile sampling params into config.
+
+        Two opt-in sources feed the per-spawn ``mcp_config`` slots the
+        adapter manifest reads (see :data:`SAMPLING_PARAM_KEYS`):
+
+        1. ``role_model_policy[role].base_url`` / ``.api_key_env`` - the
+           per-role OpenAI-compatible endpoint override parsed from
+           ``bernstein.yaml``. ``api_key_env`` was already validated at
+           parse time against the fail-closed credential allowlist. These
+           are explicit operator config, so they forward unconditionally;
+           the spawn path's capability gate still guards the target adapter.
+        2. The resolved :class:`ModeProfile`'s deterministic sampling params
+           (``temperature``, ``top_p``, ``top_k``, ``max_tokens``) via
+           :func:`apply_mode_to_spawn`. These are implicit defaults, so they
+           are folded in only when the target adapter declares
+           ``SUPPORTS_SAMPLING_PARAMS`` - otherwise the capability gate
+           would refuse an otherwise valid spawn.
+
+        Precedence is: an explicit value already present in ``mcp_config``
+        (operator-set) wins over a role-policy value, which wins over a
+        mode-profile value. Absent config leaves ``mcp_config`` unchanged,
+        so a run without any of these keys is byte-identical to before.
+
+        The merge is deterministic: it reads only the parsed config, the
+        selected model id, and the task metadata - no wall-clock or random
+        input - so two operators with identical state build identical
+        manifests.
+        """
+        derived: dict[str, Any] = {}
+
+        # Mode-profile sampling params (lowest precedence). Wiring these here
+        # is what makes a ModeProfile's sampling params actually reach the
+        # adapter manifest; the profile object defined them but nothing
+        # forwarded them before. Guarded by the target adapter's capability
+        # so a default profile temperature never breaks a spawn on an
+        # adapter that cannot honour sampling params.
+        if self._primary_adapter_supports_sampling(model_config):
+            from bernstein.core.agents.spawner_prompt import apply_mode_to_spawn
+
+            bundle = apply_mode_to_spawn(
+                model_id=model_config.model,
+                prompt="",
+                tools=None,
+                task=tasks[0] if tasks else None,
+                workdir=self._workdir,
+            )
+            profile = bundle.profile
+            if profile.temperature is not None:
+                derived["temperature"] = profile.temperature
+            if profile.top_p is not None:
+                derived["top_p"] = profile.top_p
+            if profile.top_k is not None:
+                derived["top_k"] = profile.top_k
+            if profile.max_tokens is not None:
+                derived["max_tokens"] = profile.max_tokens
+
+        # Per-role endpoint override (higher precedence than the profile).
+        for key in ("base_url", "api_key_env"):
+            value = role_policy.get(key)
+            if isinstance(value, str) and value:
+                derived[key] = value
+
+        if not derived:
+            return mcp_config
+
+        # Operator-set values in ``mcp_config`` always win: only fill slots
+        # the caller did not already set.
+        merged = dict(mcp_config or {})
+        for key, value in derived.items():
+            if merged.get(key) is None:
+                merged[key] = value
+        return merged
+
     def _spawn_via_runtime_bridge(
         self,
         *,
@@ -2170,6 +2287,19 @@ class AgentSpawner:
                 )
             except Exception:
                 logger.warning("MCP readiness probe raised unexpectedly (non-fatal)", exc_info=True)
+
+        # Layer per-role endpoint overrides and mode-profile sampling params
+        # onto the per-spawn config. Both feed the same ``SAMPLING_PARAM_KEYS``
+        # slots the adapter manifest reads, and both are opt-in: absent config
+        # leaves ``effective_mcp`` byte-identical to today. An explicit value
+        # already present in ``mcp_config`` always wins over these derived
+        # defaults, so operator-set overrides are never silently replaced.
+        effective_mcp = self._apply_sampling_overrides(
+            effective_mcp,
+            role_policy=role_policy,
+            model_config=model_config,
+            tasks=tasks,
+        )
 
         log_dir = spawn_cwd / ".sdd" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)

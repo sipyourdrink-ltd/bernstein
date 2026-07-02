@@ -183,8 +183,9 @@ class OpenAIAgentsAdapter(PluginAdapter):
             session_id: Bernstein session ID for log correlation.
             mcp_config: Optional MCP servers, sandbox provider choice,
                 sampling/endpoint overrides (``temperature``, ``top_p``,
-                ``top_k``, ``base_url``, ``api_key_env``), and the
-                spawner-injected ``heartbeat_dir``.
+                ``top_k``, ``base_url``, ``api_key_env``), the tool source
+                selector (``tool_source``), and the spawner-injected
+                ``heartbeat_dir``.
             timeout_seconds: Hard timeout forwarded to the runner.
             task_scope: "small" | "medium" | "large".
             budget_multiplier: Retry multiplier applied to the scope budget.
@@ -194,6 +195,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
             Plain dict ready for ``json.dumps``.
         """
         sandbox_provider = _DEFAULT_SANDBOX_PROVIDER
+        tool_source = "gateway"
         tools: list[dict[str, Any]] = []
         mcp_servers: dict[str, Any] = {}
         overrides: dict[str, Any] = {}
@@ -201,6 +203,13 @@ class OpenAIAgentsAdapter(PluginAdapter):
             provider = mcp_config.get("sandbox_provider")
             if isinstance(provider, str) and provider:
                 sandbox_provider = provider
+            # ``tool_source: "builtin"`` opts into the runner's
+            # workdir-sandboxed builtins.  Any other value keeps the default
+            # MCP-gateway path, so the manifest stays byte-identical for
+            # runs that do not request builtins.
+            raw_tool_source = mcp_config.get("tool_source")
+            if raw_tool_source == "builtin":
+                tool_source = "builtin"
             raw_tools: object = mcp_config.get("tools")
             if isinstance(raw_tools, list):
                 tools = [cast("dict[str, Any]", t) for t in cast("list[Any]", raw_tools) if isinstance(t, dict)]
@@ -242,6 +251,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
             "system_addendum": system_addendum,
             "sandbox_provider": sandbox_provider,
             "tools": tools,
+            "tool_source": tool_source,
             "mcp_servers": mcp_servers,
         }
 

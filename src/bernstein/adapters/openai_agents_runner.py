@@ -168,6 +168,13 @@ class RunnerManifest:
             ``SandboxRunConfig`` client.
         tools: Normalized tool descriptors from the Bernstein MCP gateway.
             The runner translates each entry into an SDK ``Tool``.
+        tool_source: Where the agent's tools come from. ``"gateway"``
+            (default) uses the MCP-gateway descriptors in ``tools`` exactly
+            as before. ``"builtin"`` opts into the four workdir-sandboxed
+            builtins (``read_file``, ``write_file``, ``list_dir``,
+            ``run_command``) so a run with no MCP gateway reachable still
+            has an audited way to act on the workdir. Any other value falls
+            back to ``"gateway"``.
         mcp_servers: MCP servers Bernstein already manages.  Forwarded to
             the SDK so the Agent can call into them *without* letting the
             SDK spawn its own server processes (avoids duplicate
@@ -213,6 +220,7 @@ class RunnerManifest:
     system_addendum: str = ""
     sandbox_provider: str = "unix_local"
     tools: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    tool_source: str = "gateway"
     mcp_servers: dict[str, Any] = field(default_factory=dict[str, Any])
     temperature: float | None = None
     top_p: float | None = None
@@ -321,7 +329,10 @@ def _build_agent_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
     }
     if instructions:
         kwargs["instructions"] = instructions
-    if manifest.tools:
+    # Builtin tools are constructed later in ``_run_session`` (they need the
+    # SDK's ``function_tool`` and the event sink), so when the manifest opts
+    # into them the gateway descriptors are intentionally not attached here.
+    if manifest.tool_source != "builtin" and manifest.tools:
         kwargs["tools"] = manifest.tools.copy()
     return kwargs
 
@@ -582,6 +593,23 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
 
     try:
         agent_kwargs = _build_agent_kwargs(manifest)
+        if manifest.tool_source == "builtin":
+            # Opt-in workdir-sandboxed builtins for runs with no MCP gateway
+            # reachable. Every call is recorded to this same event stream via
+            # ``emit_event`` so the run stays auditable and replayable.
+            from bernstein.adapters.openai_agents_builtins import (
+                BUILTIN_TOOL_NAMES,
+                build_builtin_tools,
+            )
+
+            emit_event(
+                {
+                    "type": "progress",
+                    "message": f"builtin tools active: {', '.join(BUILTIN_TOOL_NAMES)}",
+                    "tool_source": "builtin",
+                },
+            )
+            agent_kwargs["tools"] = build_builtin_tools(Path(manifest.workdir), emit_event)
         settings_kwargs = _build_model_settings_kwargs(manifest)
         if settings_kwargs:
             agent_kwargs["model_settings"] = sdk.ModelSettings(**settings_kwargs)

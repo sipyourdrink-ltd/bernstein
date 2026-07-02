@@ -37,6 +37,13 @@ class ModeProfile:
         system_prompt_preamble: Text prepended to the agent's system prompt.
         tool_subset: Allowlist of tool names; empty tuple means "all tools".
         temperature: Sampling temperature target for the adapter.
+        top_p: Optional nucleus-sampling target. ``None`` leaves the
+            provider default in place (the profile expresses no preference).
+        top_k: Optional top-k sampling target, forwarded to
+            OpenAI-compatible endpoints that accept it. ``None`` leaves the
+            provider default in place.
+        max_tokens: Optional per-run output-token cap. ``None`` leaves the
+            adapter's own default in place.
         max_turns: Upper bound on conversation turns for this profile.
         expected_runtime_minutes: Wall-clock budget hint for callers.
     """
@@ -45,6 +52,9 @@ class ModeProfile:
     system_prompt_preamble: str
     tool_subset: tuple[str, ...] = ()
     temperature: float = 0.2
+    top_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
     max_turns: int = 40
     expected_runtime_minutes: int = 15
 
@@ -197,11 +207,17 @@ def _coerce_profile(name: str, raw: dict[str, Any]) -> ModeProfile | None:
             tool_subset_raw = cast(list[object], tool_subset_value)
         else:
             raise TypeError(f"tool_subset must be a list, got {type(tool_subset_value).__name__}")
+        top_p_raw = raw.get("top_p")
+        top_k_raw = raw.get("top_k")
+        max_tokens_raw = raw.get("max_tokens")
         return ModeProfile(
             name=str(raw.get("name", name)),
             system_prompt_preamble=str(raw.get("system_prompt_preamble", "")),
             tool_subset=tuple(str(t) for t in tool_subset_raw),
             temperature=float(raw.get("temperature", 0.2)),
+            top_p=None if top_p_raw is None else float(top_p_raw),
+            top_k=None if top_k_raw is None else int(top_k_raw),
+            max_tokens=None if max_tokens_raw is None else int(max_tokens_raw),
             max_turns=int(raw.get("max_turns", 40)),
             expected_runtime_minutes=int(raw.get("expected_runtime_minutes", 15)),
         )

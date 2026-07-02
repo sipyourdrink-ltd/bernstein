@@ -254,6 +254,62 @@ class TestSpawnerPromptIntegration:
         assert bundle.tools == ["Read", "Edit", "WebFetch"]
 
 
+class TestOptionalSamplingFields:
+    def test_new_sampling_fields_default_to_none(self) -> None:
+        profile = ModeProfile(name="x", system_prompt_preamble="")
+        assert profile.top_p is None
+        assert profile.top_k is None
+        assert profile.max_tokens is None
+
+    def test_coerce_profile_parses_optional_sampling_fields(self) -> None:
+        from bernstein.core.routing.mode_profile import _coerce_profile
+
+        profile = _coerce_profile(
+            "custom",
+            {
+                "system_prompt_preamble": "hi",
+                "temperature": 0.4,
+                "top_p": 0.85,
+                "top_k": 30,
+                "max_tokens": 2048,
+            },
+        )
+        assert profile is not None
+        assert profile.top_p == pytest.approx(0.85)
+        assert profile.top_k == 30
+        assert profile.max_tokens == 2048
+
+    def test_coerce_profile_leaves_absent_fields_none(self) -> None:
+        from bernstein.core.routing.mode_profile import _coerce_profile
+
+        profile = _coerce_profile("custom", {"system_prompt_preamble": "hi"})
+        assert profile is not None
+        assert profile.top_p is None
+        assert profile.top_k is None
+        assert profile.max_tokens is None
+
+    def test_apply_mode_to_spawn_bundle_carries_sampling_fields(self) -> None:
+        from unittest.mock import patch
+
+        from bernstein.core.agents.spawner_prompt import apply_mode_to_spawn
+        from bernstein.core.routing.mode_profile import ModeProfile
+
+        custom = ModeProfile(
+            name="deep",
+            system_prompt_preamble="",
+            temperature=0.3,
+            top_p=0.7,
+            top_k=15,
+            max_tokens=999,
+        )
+        with patch("bernstein.core.agents.spawner_prompt.select_mode", return_value=custom):
+            bundle = apply_mode_to_spawn(model_id="gpt-5.2", prompt="p", tools=[])
+        assert bundle.temperature == pytest.approx(0.3)
+        assert bundle.top_p == pytest.approx(0.7)
+        assert bundle.top_k == 15
+        assert bundle.max_tokens == 999
+
+
 class TestBundledYamlProfiles:
     def test_bundled_profiles_exist_and_load(self) -> None:
         from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
