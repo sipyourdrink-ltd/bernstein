@@ -107,6 +107,13 @@ class OrchestratorDefaults:
     manager_review_completion_threshold: int = 7  # trigger review every 7 done
     manager_review_stall_s: float = 900.0  # 15 min
 
+    # Starting wall-clock kill deadline for a spawned agent (OrchestratorConfig.
+    # max_agent_runtime_s). Self-extends +600s/tick up to a 5400s hard cap while
+    # the agent is heartbeating (see core/agents/agent_lifecycle.py); this is
+    # only the initial value before any extension. Tunable via
+    # ``tuning.orchestrator.max_agent_runtime_s``.
+    max_agent_runtime_s: int = 1800  # 30 min
+
 
 # ---------------------------------------------------------------------------
 # Spawn / Agent defaults
@@ -141,6 +148,27 @@ class AgentDefaults:
     escalation_med_count: int = 3
 
     zombie_pid_max_age_s: float = 7 * 24 * 3600  # 7 days
+
+    # Max SDK turns forwarded to ``Runner.run_sync`` by the openai_agents
+    # runner (adapters/openai_agents_runner.py). ``None`` preserves prior
+    # behavior exactly: the kwarg is omitted and the OpenAI Agents SDK's own
+    # default (10) applies. Set via ``tuning.agent.max_turns`` or the
+    # ``BERNSTEIN_MAX_TURNS`` env var when a task needs more turns than the
+    # SDK default allows before ``MaxTurnsExceeded``.
+    max_turns: int | None = None
+
+
+@dataclass(frozen=True)
+class SLODefaults:
+    """Error-budget floor for the observability SLO/incident subsystem."""
+
+    # ErrorBudget.budget_total always tolerates at least this many failures,
+    # even when total_tasks * (1 - slo_target) rounds below it (e.g. a small
+    # task count). Raising this delays IncidentManager's auto-pause-on-
+    # error-budget-depletion response, useful when early infra-death retries
+    # (rate limits, transient auth) shouldn't count against a healthy run.
+    # Tunable via ``tuning.slo.error_budget_min_failures``.
+    error_budget_min_failures: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +708,7 @@ SCHEMA_RETRY = SchemaRetryDefaults()
 LINEAGE = LineageDefaults()
 REWORK_LEDGER = ReworkLedgerDefaults()
 COMPACTION = CompactionDefaults()
+SLO = SLODefaults()
 
 # Module-level constant for direct import - preferred when only the
 # numeric cap is needed (no need to import the whole singleton).
@@ -735,6 +764,7 @@ _SECTION_TO_ATTR: Mapping[str, str] = MappingProxyType(
         "lineage": "LINEAGE",
         "rework_ledger": "REWORK_LEDGER",
         "compaction": "COMPACTION",
+        "slo": "SLO",
     }
 )
 
@@ -765,6 +795,7 @@ _ATTR_TO_FACTORY: Mapping[str, type[Any]] = MappingProxyType(
         "LINEAGE": LineageDefaults,
         "REWORK_LEDGER": ReworkLedgerDefaults,
         "COMPACTION": CompactionDefaults,
+        "SLO": SLODefaults,
     }
 )
 

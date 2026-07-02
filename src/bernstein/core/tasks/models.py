@@ -28,6 +28,16 @@ def _default_poll_interval_s() -> int:
     return int(_defaults.ORCHESTRATOR.tick_interval_s)
 
 
+def _default_max_agent_runtime_s() -> int:
+    """Return the current canonical agent wall-clock kill starting value.
+
+    Reads from :mod:`bernstein.core.defaults` each call (same pattern as
+    :func:`_default_poll_interval_s`) so that ``tuning.orchestrator.
+    max_agent_runtime_s`` overrides are honoured.
+    """
+    return int(_defaults.ORCHESTRATOR.max_agent_runtime_s)
+
+
 class TaskStoreUnavailable(Exception):
     """Raised when the task store cannot operate after exhausting retries.
 
@@ -1225,7 +1235,12 @@ class OrchestratorConfig:
     # Deployments that explicitly relied on the 900s value must set this field explicitly.
     heartbeat_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_stale_s))
     heartbeat_enabled: bool = True
-    max_agent_runtime_s: int = 1800  # 30 min wall-clock kill (agents need time for complex tasks)
+    # Derived from ORCHESTRATOR.max_agent_runtime_s (canonical) so
+    # ``tuning.orchestrator.max_agent_runtime_s`` overrides the starting
+    # wall-clock kill deadline (agents need time for complex tasks; this
+    # self-extends up to a 5400s hard cap while heartbeating, see
+    # core/agents/agent_lifecycle.py - this is only the starting value).
+    max_agent_runtime_s: int = field(default_factory=_default_max_agent_runtime_s)
     max_tasks_per_agent: int = 2  # batch 2 same-role tasks per agent to reduce context overhead
     server_url: str = "http://localhost:8052"
     evolution_enabled: bool = True

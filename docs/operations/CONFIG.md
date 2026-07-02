@@ -142,6 +142,7 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_COMPLIANCE` | Compliance preset override |
 | `BERNSTEIN_QUIET` | Quiet mode (reduced terminal output) |
 | `BERNSTEIN_AUDIT` | Enable extra audit behavior in run flow |
+| `BERNSTEIN_MAX_TURNS` | Override the SDK turn ceiling for the openai_agents runner (see §4.1). Takes precedence over `tuning.agent.max_turns`. |
 
 ---
 
@@ -155,18 +156,50 @@ tuning:
     tick_interval_s: 5.0
     drain_timeout_s: 120.0
     stale_claim_timeout_s: 1800.0
+    max_agent_runtime_s: 3600.0
   spawn:
     spawn_backoff_base_s: 60.0
+  agent:
+    max_turns: 200
+  slo:
+    error_budget_min_failures: 10
 ```
 
 Key default groups:
 
 | Group | Examples |
 |-------|---------|
-| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s` |
+| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s`, `max_agent_runtime_s` |
 | `SpawnDefaults` | `spawn_backoff_base_s`, `spawn_backoff_max_s`, `max_spawn_failures` |
 | `TaskDefaults` | Retry limits, deadline windows |
-| `AgentDefaults` | Heartbeat intervals, max dead agents kept |
+| `AgentDefaults` | Heartbeat intervals, max dead agents kept, `max_turns` |
+| `SLODefaults` | `error_budget_min_failures` |
+
+### 4.1) Agent run-length limits (SDK turns, error budget, wall-clock)
+
+Three previously-hardcoded ceilings on the `openai_agents` adapter path are
+now tunable, with defaults unchanged so nothing breaks for existing users:
+
+- **`max_turns`** (`AgentDefaults.max_turns`, default `None`) — forwarded to
+  the OpenAI Agents SDK's `Runner.run_sync(..., max_turns=...)` only when
+  set. `None` omits the kwarg entirely, so the SDK's own default (`10`)
+  applies exactly as before. A task that legitimately needs more turns
+  before `MaxTurnsExceeded` (large-repo investigation, multi-file
+  refactors) can raise this via `tuning.agent.max_turns: 200` or the
+  `BERNSTEIN_MAX_TURNS` env var (checked first).
+- **`error_budget_min_failures`** (`SLODefaults.error_budget_min_failures`,
+  default `3`) — the floor `ErrorBudget.budget_total` never goes below,
+  even when `total_tasks * (1 - slo_target)` rounds lower. Raise it via
+  `tuning.slo.error_budget_min_failures` when a run's early failures are
+  infra-death retries (rate limits, transient auth) that shouldn't trip
+  `IncidentManager`'s auto-pause.
+- **`max_agent_runtime_s`** (`OrchestratorDefaults.max_agent_runtime_s`,
+  default `1800`) — the starting wall-clock kill deadline for a spawned
+  agent, now sourced through `OrchestratorConfig` via the same
+  `tuning.orchestrator.*` mechanism as `stale_claim_timeout_s`. This is
+  only the *starting* value — the agent lifecycle reaper already
+  self-extends it by 600s per cycle up to a 5400s hard cap while the agent
+  keeps heartbeating.
 
 See `defaults.py` for the full list of parameters and their default values.
 

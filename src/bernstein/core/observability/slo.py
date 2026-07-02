@@ -119,12 +119,16 @@ class ErrorBudget:
     def budget_total(self) -> int:
         """Total allowed failures given current task count.
 
-        Always allows at least 3 failures to avoid false depletion when
-        only a few tasks have completed (e.g. 2 * 0.10 rounds to 0).
+        Always allows at least ``SLO.error_budget_min_failures`` (default 3)
+        failures to avoid false depletion when only a few tasks have
+        completed (e.g. 2 * 0.10 rounds to 0). Tunable via
+        ``tuning.slo.error_budget_min_failures`` in bernstein.yaml.
         """
+        from bernstein.core.defaults import SLO
+
         if self.total_tasks == 0:
             return 0
-        return max(3, round(self.total_tasks * (1.0 - self.slo_target)))
+        return max(SLO.error_budget_min_failures, round(self.total_tasks * (1.0 - self.slo_target)))
 
     @property
     def budget_remaining(self) -> int:

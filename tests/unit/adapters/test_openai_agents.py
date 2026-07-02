@@ -22,6 +22,7 @@ from bernstein.adapters.openai_agents_runner import (
     EXIT_OK,
     EXIT_RATE_LIMIT,
     EXIT_SDK_MISSING,
+    MAX_TURNS_ENV_VAR,
     RunnerManifest,
     _build_agent_kwargs,
     _build_model_settings_kwargs,
@@ -29,6 +30,7 @@ from bernstein.adapters.openai_agents_runner import (
     _is_rate_limit,
     _resolve_client_kwargs,
     _resolve_heartbeat_dir,
+    _resolve_max_turns,
     _start_heartbeat,
     emit_event,
     load_manifest,
@@ -897,6 +899,45 @@ class TestRunnerHelpers:
         cfg["mcp_servers"]["other"] = {"command": "x"}
         assert "other" not in manifest.mcp_servers
 
+    def test_resolve_max_turns_defaults_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default preserves prior behavior exactly: no kwarg, SDK default (10) applies."""
+        from bernstein.core import defaults as core_defaults
+
+        monkeypatch.delenv(MAX_TURNS_ENV_VAR, raising=False)
+        core_defaults.reset()
+        assert _resolve_max_turns() is None
+
+    def test_resolve_max_turns_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        assert _resolve_max_turns() == 200
+
+    def test_resolve_max_turns_tuning_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core import defaults as core_defaults
+
+        monkeypatch.delenv(MAX_TURNS_ENV_VAR, raising=False)
+        core_defaults.override("agent", {"max_turns": 80})
+        try:
+            assert _resolve_max_turns() == 80
+        finally:
+            core_defaults.reset()
+
+    def test_resolve_max_turns_env_beats_tuning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core import defaults as core_defaults
+
+        core_defaults.override("agent", {"max_turns": 80})
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        try:
+            assert _resolve_max_turns() == 200
+        finally:
+            core_defaults.reset()
+
+    def test_resolve_max_turns_unparseable_env_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core import defaults as core_defaults
+
+        core_defaults.reset()
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "notanumber")
+        assert _resolve_max_turns() is None
+
     def test_build_model_settings_kwargs_empty_when_absent(self) -> None:
         manifest = RunnerManifest(
             session_id="s",
@@ -1145,6 +1186,42 @@ class TestRunnerRun:
         assert usage_event["input_tokens"] == 10
         assert usage_event["output_tokens"] == 20
         assert usage_event["tool_calls"] == 1
+
+    def test_run_omits_max_turns_kwarg_by_default(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Unset BERNSTEIN_MAX_TURNS / tuning -> no kwarg -> SDK default (10) applies unchanged."""
+        from bernstein.core import defaults as core_defaults
+
+        monkeypatch.delenv(MAX_TURNS_ENV_VAR, raising=False)
+        core_defaults.reset()
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(self._manifest())
+        assert rc == EXIT_OK
+        _, kwargs = fake_runner.run_sync.call_args
+        assert "max_turns" not in kwargs
+
+    def test_run_forwards_max_turns_from_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(self._manifest())
+        assert rc == EXIT_OK
+        _, kwargs = fake_runner.run_sync.call_args
+        assert kwargs["max_turns"] == 200
 
     def test_run_without_usage_still_emits_completion(
         self,

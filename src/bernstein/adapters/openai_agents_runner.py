@@ -70,6 +70,35 @@ EXIT_MANIFEST_ERROR: int = 2
 EXIT_SDK_MISSING: int = 3
 EXIT_RATE_LIMIT: int = 4
 
+# Env var overriding AGENT.max_turns (tuning.agent.max_turns in bernstein.yaml).
+# Checked first; an unset/blank/unparseable value falls through to the
+# yaml-tunable default, which itself defaults to ``None`` (SDK default of 10
+# applies, unchanged from prior behavior).
+MAX_TURNS_ENV_VAR: str = "BERNSTEIN_MAX_TURNS"
+
+
+def _resolve_max_turns() -> int | None:
+    """Resolve the effective ``max_turns`` for ``Runner.run_sync``.
+
+    Precedence: ``BERNSTEIN_MAX_TURNS`` env var > ``AGENT.max_turns`` (yaml
+    ``tuning.agent.max_turns``) > ``None`` (SDK default applies - unchanged
+    behavior for anyone not opting in).
+    """
+    raw_env = os.environ.get(MAX_TURNS_ENV_VAR)
+    if raw_env is not None and raw_env.strip():
+        try:
+            return int(raw_env)
+        except ValueError:
+            logger.warning(
+                "%s=%r is not a valid int; falling back to tuning.agent.max_turns/SDK default",
+                MAX_TURNS_ENV_VAR,
+                raw_env,
+            )
+
+    from bernstein.core.defaults import AGENT
+
+    return AGENT.max_turns
+
 # ``api_key_env`` must name a known LLM-provider credential.  The name both
 # widens the filtered environment handed to this subprocess and selects the
 # secret sent as the bearer key to ``base_url``, so an unconstrained value
@@ -645,11 +674,17 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
             agent_kwargs["model_settings"] = sdk.ModelSettings(**settings_kwargs)
         agent: Any = agent_cls(**agent_kwargs)
         run_config = _build_run_config(manifest)
+        run_sync_kwargs: dict[str, Any] = {"run_config": run_config}
+        max_turns = _resolve_max_turns()
+        if max_turns is not None:
+            run_sync_kwargs["max_turns"] = max_turns
         # ``Runner.run_sync`` is the SDK's synchronous API - we avoid
         # ``asyncio.run`` here so the runner stays compatible with
         # environments where the event loop is already running
-        # (e.g. pytest-asyncio tests that import this module).
-        result: Any = runner_cls.run_sync(agent, manifest.prompt, run_config=run_config)
+        # (e.g. pytest-asyncio tests that import this module). ``max_turns``
+        # is only forwarded when configured (env/tuning) - omitting the
+        # kwarg preserves the SDK's own default exactly, as before.
+        result: Any = runner_cls.run_sync(agent, manifest.prompt, **run_sync_kwargs)
     except Exception as exc:  # SDK errors are varied - catch broadly
         if _is_rate_limit(exc):
             emit_event(

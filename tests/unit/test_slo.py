@@ -41,6 +41,30 @@ def test_error_budget_remediation() -> None:
     assert tracker.error_budget.status == SLOStatus.RED
 
 
+def test_error_budget_floor_defaults_to_three() -> None:
+    """Regression test: budget_total floor is tunable, default unchanged at 3."""
+    from bernstein.core import defaults
+    from bernstein.core.observability.slo import ErrorBudget
+
+    defaults.reset()
+    budget = ErrorBudget(total_tasks=10, failed_tasks=0)
+    assert budget.budget_total == 3
+
+
+def test_error_budget_floor_honors_tuning_override() -> None:
+    """tuning.slo.error_budget_min_failures raises the tolerated-failure floor (#run5 audit)."""
+    from bernstein.core import defaults
+    from bernstein.core.observability.slo import ErrorBudget
+
+    defaults.override("slo", {"error_budget_min_failures": 20})
+    try:
+        budget = ErrorBudget(total_tasks=10, failed_tasks=10)
+        assert budget.budget_total == 20
+        assert not budget.is_depleted
+    finally:
+        defaults.reset()
+
+
 def test_slo_tracker_update_from_collector() -> None:
     """Test updating SLO values from metrics collector."""
     tracker = SLOTracker()
