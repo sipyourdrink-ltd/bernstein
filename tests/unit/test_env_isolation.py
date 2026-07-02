@@ -330,3 +330,90 @@ class TestAdaptersUseFilteredEnv:
         kwargs = popen_spy.call_args.kwargs
         assert "env" in kwargs
         assert kwargs["env"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Embedded agent-team spawning gate - deny by default
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddedAgentTeamsDeny:
+    """The embedded agent-team spawning gate is stripped by default.
+
+    A spawned worker that inherits ``CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS``
+    can launch its own teammate instances; those teammates inherit the
+    lead's permission mode and run outside this worker's HMAC audit trail,
+    breaking the one-worker-one-audit-trail invariant.  The gate must be
+    denied even if it somehow reaches the allowlist.
+    """
+
+    def test_gate_stripped_by_default(self) -> None:
+        fake_env = {
+            "PATH": "/usr/bin",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+        }
+        with patch("bernstein.adapters.env_isolation.os.environ", fake_env):
+            result = build_filtered_env()
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" not in result
+        assert result["PATH"] == "/usr/bin"
+
+    def test_gate_stripped_even_when_in_extra_keys(self) -> None:
+        """An operator-widened allowlist cannot re-open the hole."""
+        fake_env = {
+            "PATH": "/usr/bin",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+        }
+        with patch("bernstein.adapters.env_isolation.os.environ", fake_env):
+            result = build_filtered_env(["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"])
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" not in result
+
+    def test_forward_looking_suffixes_stripped(self) -> None:
+        """A future ``*_AGENT_TEAMS`` gate is denied without a code change."""
+        fake_env = {
+            "PATH": "/usr/bin",
+            "SOMEVENDOR_EXPERIMENTAL_AGENT_TEAMS": "1",
+            "OTHER_AGENT_TEAMS": "yes",
+        }
+        with patch("bernstein.adapters.env_isolation.os.environ", fake_env):
+            result = build_filtered_env(["SOMEVENDOR_EXPERIMENTAL_AGENT_TEAMS", "OTHER_AGENT_TEAMS"])
+        assert "SOMEVENDOR_EXPERIMENTAL_AGENT_TEAMS" not in result
+        assert "OTHER_AGENT_TEAMS" not in result
+
+    def test_opt_in_repermits_gate(self) -> None:
+        """An explicit host opt-in re-permits the gate."""
+        fake_env = {
+            "PATH": "/usr/bin",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+            "BERNSTEIN_ALLOW_EMBEDDED_AGENT_TEAMS": "1",
+        }
+        with patch("bernstein.adapters.env_isolation.os.environ", fake_env):
+            result = build_filtered_env(["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"])
+        assert result["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] == "1"
+
+    def test_opt_in_falsey_value_still_denies(self) -> None:
+        """A stray empty/``0`` opt-in value keeps deny-by-default."""
+        fake_env = {
+            "PATH": "/usr/bin",
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+            "BERNSTEIN_ALLOW_EMBEDDED_AGENT_TEAMS": "0",
+        }
+        with patch("bernstein.adapters.env_isolation.os.environ", fake_env):
+            result = build_filtered_env(["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"])
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" not in result
+
+    def test_opt_in_emits_audit_event(self, tmp_path: Path) -> None:
+        """record_embedded_teams_opt_in appends an attestation to the chain."""
+        from bernstein.adapters.env_isolation import record_embedded_teams_opt_in
+        from bernstein.core.security.audit import AuditLog
+
+        audit_dir = tmp_path / ".sdd" / "audit"
+        record_embedded_teams_opt_in(
+            adapter="claude",
+            session_id="qa-abc12345",
+            audit_dir=audit_dir,
+        )
+        events = AuditLog(audit_dir=audit_dir).query(event_type="adapter.embedded_agent_teams_enabled")
+        assert len(events) == 1
+        assert events[0].actor == "claude"
+        assert events[0].resource_id == "qa-abc12345"
+        assert events[0].details["adapter"] == "claude"

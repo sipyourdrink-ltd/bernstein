@@ -43,7 +43,11 @@ from bernstein.adapters.claude_mcp_loader import (
     load_mcp_config as load_mcp_config,
 )
 from bernstein.adapters.claude_wrapper_script import build_wrapper_script
-from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.adapters.env_isolation import (
+    _embedded_teams_opt_in,
+    build_filtered_env,
+    record_embedded_teams_opt_in,
+)
 from bernstein.core.defaults import COST
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 from bernstein.core.platform_compat import kill_process_group_graceful, process_alive
@@ -548,6 +552,21 @@ class ClaudeCodeAdapter(CLIAdapter):
                     existing = cast(_CAST_DICT_STR_ANY, raw)
 
         existing["hooks"] = hooks_config
+
+        # We own the merged settings file handed to the worker, so pin the
+        # embedded agent-team gate off unless the operator explicitly opts in.
+        # Teammates a worker spawns inherit the lead's permission mode and run
+        # outside this worker's HMAC audit trail; a stray truthy value in a
+        # pre-existing settings file must not silently re-open that hole. The
+        # env-var path is denied in build_filtered_env(); this covers the
+        # settings.json path Claude Code also reads.
+        if not _embedded_teams_opt_in():
+            env_block = existing.get("env")
+            if not isinstance(env_block, dict):
+                env_block = {}
+            env_block["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] = "false"
+            existing["env"] = env_block
+
         try:
             settings_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
         except OSError:
@@ -652,6 +671,17 @@ class ClaudeCodeAdapter(CLIAdapter):
         # rather than overwrite. Filter is empty-safe when the env var
         # is unset.
         env = build_filtered_env(["ANTHROPIC_API_KEY", "ANTHROPIC_BETA"])
+        # Embedded agent-team spawning is denied by default in
+        # build_filtered_env(); when an operator re-permits it via
+        # BERNSTEIN_ALLOW_EMBEDDED_AGENT_TEAMS we attest the decision to this
+        # worker's HMAC audit chain so the teammate hierarchy stays auditable
+        # rather than invisible.
+        if _embedded_teams_opt_in():
+            record_embedded_teams_opt_in(
+                adapter="claude",
+                session_id=session_id,
+                audit_dir=workdir / ".sdd" / "audit",
+            )
         # Anthropic Opus 4.7 ``task-budgets-2026-03-13`` beta header. Set
         # via ``ANTHROPIC_BETA`` so the Claude Code CLI forwards it to
         # every API call. Gated behind ``BERNSTEIN_ANTHROPIC_TASK_BUDGETS``

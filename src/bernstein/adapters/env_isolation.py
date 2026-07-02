@@ -138,6 +138,100 @@ _BASE_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+# Host env var an operator sets to *re-permit* embedded agent-team spawning.
+# Off by default: absent (or any value other than the truthy set below) keeps
+# the deny-by-default posture.  See :func:`_embedded_teams_opt_in`.
+_EMBEDDED_TEAMS_OPT_IN_VAR = "BERNSTEIN_ALLOW_EMBEDDED_AGENT_TEAMS"
+
+# Exact gate variables a spawned worker could use to launch its own autonomous
+# teammate instances.  ``CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`` is the Claude
+# Code adapter's own opt-in variable; teammates it spawns inherit the lead's
+# permission mode and run OUTSIDE the per-worker HMAC audit trail, breaking the
+# one-worker-one-audit-trail invariant our replay guarantee depends on.  These
+# are stripped unconditionally (even if an operator widens ``extra_keys`` to
+# include them) unless the host explicitly opts in.
+_EMBEDDED_TEAMS_DENYLIST: frozenset[str] = frozenset(
+    {
+        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+    }
+)
+
+# Forward-looking suffix match: any variable ending in one of these is treated
+# as an embedded-orchestration gate and denied by default, so a future adapter
+# introducing e.g. ``<VENDOR>_EXPERIMENTAL_AGENT_TEAMS`` or ``<VENDOR>_AGENT_TEAMS``
+# is covered without a code change.  Kept narrow to avoid stripping unrelated
+# vars that merely mention "agent".
+_EMBEDDED_TEAMS_DENY_SUFFIXES: tuple[str, ...] = (
+    "_EXPERIMENTAL_AGENT_TEAMS",
+    "_AGENT_TEAMS",
+)
+
+
+def _embedded_teams_opt_in() -> bool:
+    """Return True only when the operator explicitly re-permits embedded teams.
+
+    Truthy set is deliberately narrow (``1``/``true``/``yes``/``on``, case
+    insensitive) so a stray empty or ``0`` value keeps deny-by-default.
+    """
+    raw = os.environ.get(_EMBEDDED_TEAMS_OPT_IN_VAR, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_embedded_teams_gate(key: str) -> bool:
+    """Return True when ``key`` is an embedded agent-team spawning gate."""
+    if key in _EMBEDDED_TEAMS_DENYLIST:
+        return True
+    return any(key.endswith(suffix) for suffix in _EMBEDDED_TEAMS_DENY_SUFFIXES)
+
+
+def record_embedded_teams_opt_in(
+    *,
+    adapter: str,
+    session_id: str,
+    audit_dir: Path | None = None,
+) -> None:
+    """Attest an operator opt-in that re-permits embedded agent-team spawning.
+
+    When ``BERNSTEIN_ALLOW_EMBEDDED_AGENT_TEAMS`` re-permits the gate, the
+    embedded team must be *attested* rather than invisible: we append an
+    ``adapter.embedded_agent_teams_enabled`` event to the per-worker HMAC audit
+    chain so an auditor replaying the log can see exactly which spawn opted a
+    teammate hierarchy back in.  Removing the audit chain removes the meaning
+    of this feature, not just its log - the whole point is that a re-permitted
+    team stays inside the one-worker-one-audit-trail invariant.
+
+    Failures (missing key, disk full) are caught and logged; audit emission
+    must never mask the spawn.
+
+    Args:
+        adapter: Adapter name performing the spawn (e.g. ``"claude"``).
+        session_id: Spawn session identifier (becomes the audit resource id).
+        audit_dir: Audit directory override.  Defaults to ``.sdd/audit`` under
+            the current working directory, matching the spawner convention.
+    """
+    try:
+        from bernstein.core.security.audit import AuditLog
+
+        target_dir = audit_dir if audit_dir is not None else Path.cwd() / ".sdd" / "audit"
+        audit = AuditLog(audit_dir=target_dir)
+        audit.log(
+            event_type="adapter.embedded_agent_teams_enabled",
+            actor=adapter,
+            resource_type="agent_session",
+            resource_id=session_id,
+            details={
+                "adapter": adapter,
+                "opt_in_var": _EMBEDDED_TEAMS_OPT_IN_VAR,
+            },
+        )
+    except Exception as exc:  # audit must never mask the spawn - log and move on
+        logger.warning(
+            "Could not emit embedded_agent_teams_enabled audit event for %s: %s",
+            session_id,
+            exc,
+        )
+
+
 def build_filtered_env(
     extra_keys: Iterable[str] = (),
     *,
@@ -218,6 +312,16 @@ def build_filtered_env(
 
     allowed = _BASE_ALLOWLIST | requested_extra
     env = {k: v for k, v in os.environ.items() if k in allowed}
+
+    # Deny-by-default: strip embedded agent-team spawning gates even if an
+    # operator-widened allowlist (or a future permissive path) let one through.
+    # A teammate spawned by a worker inherits the lead's permission mode and
+    # runs outside this worker's HMAC audit trail, so we close the hole here
+    # rather than trusting every caller's ``extra_keys``.  An explicit host
+    # opt-in re-permits it; the spawn path is expected to attest the decision
+    # via :func:`record_embedded_teams_opt_in` so the team stays auditable.
+    if not _embedded_teams_opt_in():
+        env = {k: v for k, v in env.items() if not _is_embedded_teams_gate(k)}
 
     # Ensure PYTHONPATH includes directories needed by bernstein-worker.
     # When the orchestrator runs via ``uv run``, sys.executable may point
