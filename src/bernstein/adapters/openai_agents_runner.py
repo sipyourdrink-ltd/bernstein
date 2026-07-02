@@ -70,23 +70,64 @@ EXIT_MANIFEST_ERROR: int = 2
 EXIT_SDK_MISSING: int = 3
 EXIT_RATE_LIMIT: int = 4
 
-# ``api_key_env`` must look like a credential variable name.  The name both
+# ``api_key_env`` must name a known LLM-provider credential.  The name both
 # widens the filtered environment handed to this subprocess and selects the
 # secret sent as the bearer key to ``base_url``, so an unconstrained value
-# would let a repo-carried config forward arbitrary host variables to an
-# arbitrary endpoint.  Keep in sync with the constraint documented in
-# ``docs/adapters/capability_contract.md``.
+# would let a repo-carried config forward arbitrary host secrets
+# (``GITHUB_TOKEN``, ``AWS_SESSION_TOKEN``, ...) to an arbitrary endpoint.
+# Fail-closed: names outside the built-in provider set are rejected unless
+# the OPERATOR allows them via ``BERNSTEIN_ALLOWED_API_KEY_ENVS`` on the
+# host (a repo-carried config cannot set host environment variables, so the
+# override cannot be forged by the repo).  Keep in sync with the constraint
+# documented in ``docs/adapters/capability_contract.md``.
 _API_KEY_ENV_RE: re.Pattern[str] = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_API_KEY_ENV_SUFFIXES: tuple[str, ...] = ("_API_KEY", "_KEY", "_TOKEN")
+_API_KEY_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "TOGETHER_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "FIREWORKS_API_KEY",
+        "XAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "AZURE_OPENAI_API_KEY",
+        "CEREBRAS_API_KEY",
+        "MOONSHOT_API_KEY",
+        "MINIMAX_API_KEY",
+        "NVIDIA_API_KEY",
+        "PERPLEXITY_API_KEY",
+        "HF_TOKEN",
+        "LLM_API_KEY",
+    }
+)
+_ALLOWED_API_KEY_ENVS_VAR = "BERNSTEIN_ALLOWED_API_KEY_ENVS"
+
+
+def _operator_allowed_api_key_envs() -> frozenset[str]:
+    """Extra credential names the operator allowed on this host.
+
+    Read from the comma-separated ``BERNSTEIN_ALLOWED_API_KEY_ENVS``
+    host environment variable. Names are stripped; empty entries are
+    ignored.
+    """
+    raw = os.environ.get(_ALLOWED_API_KEY_ENVS_VAR, "")
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
 def validate_api_key_env_name(name: str) -> None:
-    """Reject ``api_key_env`` values that are not credential-shaped names.
+    """Reject ``api_key_env`` values outside the credential allowlist.
 
-    Accepted names match ``^[A-Z][A-Z0-9_]*$`` AND end with ``_API_KEY``,
-    ``_KEY``, or ``_TOKEN``.  Everything else (``PATH``, ``HOME``,
-    lowercase names, names with other suffixes) is rejected so the
-    override cannot be used to read unrelated host environment variables.
+    Accepted names match ``^[A-Z][A-Z0-9_]*$`` AND are either in the
+    built-in LLM-provider allowlist or explicitly allowed by the
+    operator via ``BERNSTEIN_ALLOWED_API_KEY_ENVS`` (comma-separated,
+    host-set). Everything else - including credential-shaped names of
+    unrelated secrets such as ``GITHUB_TOKEN`` - is rejected so a
+    repo-carried config cannot forward arbitrary host secrets to an
+    arbitrary ``base_url``.
 
     Args:
         name: Candidate environment variable name from the manifest.
@@ -94,12 +135,13 @@ def validate_api_key_env_name(name: str) -> None:
     Raises:
         RuntimeError: The name does not satisfy the constraint above.
     """
-    if _API_KEY_ENV_RE.match(name) and name.endswith(_API_KEY_ENV_SUFFIXES):
+    if _API_KEY_ENV_RE.match(name) and (name in _API_KEY_ENV_ALLOWLIST or name in _operator_allowed_api_key_envs()):
         return
     msg = (
-        f"api_key_env {name!r} is not an accepted credential variable "
-        f"name: it must match ^[A-Z][A-Z0-9_]*$ and end with _API_KEY, "
-        f"_KEY, or _TOKEN."
+        f"api_key_env {name!r} is not an allowed credential variable name: "
+        f"it must match ^[A-Z][A-Z0-9_]*$ and be a known LLM provider key, "
+        f"or be explicitly allowed by the operator via "
+        f"{_ALLOWED_API_KEY_ENVS_VAR} (comma-separated env var names)."
     )
     raise RuntimeError(msg)
 

@@ -166,13 +166,18 @@ API (third-party OpenAI-compatible endpoints do not serve `/responses`) and
 excludes the custom client from tracing so the endpoint's key is never sent
 to api.openai.com.
 
-`api_key_env` must match `^[A-Z][A-Z0-9_]*$` AND end with `_API_KEY`,
-`_KEY`, or `_TOKEN`. Any other name is rejected at startup with a
-`config_invalid` error (exit code 2), the same failure path as a name whose
-variable is not set. This keeps the override from being used to read
-unrelated host environment variables. The runner logs every effective value
-in its `start` event; only the env var name is ever logged, never the key
-itself.
+`api_key_env` must match `^[A-Z][A-Z0-9_]*$` AND be a known LLM provider
+key (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, and the
+rest of the built-in allowlist in `openai_agents_runner.py`). Any other
+name - including credential-shaped names of unrelated secrets such as
+`GITHUB_TOKEN` - is rejected at startup with a `config_invalid` error
+(exit code 2), the same failure path as a name whose variable is not set.
+To use a provider key outside the built-in set, the operator sets
+`BERNSTEIN_ALLOWED_API_KEY_ENVS` (comma-separated names) on the host; a
+repo-carried config cannot set host environment variables, so the
+override cannot be forged by the repo. The runner logs every effective
+value in its `start` event; only the env var name is ever logged, never
+the key itself.
 
 The spawn path enforces the capability: requesting any of these keys for an
 adapter that does not declare `SUPPORTS_SAMPLING_PARAMS` raises

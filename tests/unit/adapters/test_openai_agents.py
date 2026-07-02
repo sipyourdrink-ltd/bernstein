@@ -246,7 +246,7 @@ class TestSpawnCommand:
                     "top_p": 0.9,
                     "top_k": 40,
                     "base_url": "http://localhost:8000/v1",
-                    "api_key_env": "MY_PROXY_KEY",
+                    "api_key_env": "OPENROUTER_API_KEY",
                 },
             )
         manifest = json.loads(
@@ -256,7 +256,7 @@ class TestSpawnCommand:
         assert manifest["top_p"] == pytest.approx(0.9)
         assert manifest["top_k"] == 40
         assert manifest["base_url"] == "http://localhost:8000/v1"
-        assert manifest["api_key_env"] == "MY_PROXY_KEY"
+        assert manifest["api_key_env"] == "OPENROUTER_API_KEY"
 
     def test_manifest_omits_absent_sampling_fields(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()
@@ -332,7 +332,7 @@ class TestSpawnCommand:
                 "top_p": 0.9,
                 "top_k": 40,
                 "base_url": "http://localhost:8000/v1",
-                "api_key_env": "MY_PROXY_KEY",
+                "api_key_env": "OPENROUTER_API_KEY",
             }
             merged = mgr.build_mcp_config_for_task(
                 task_mcp_servers=["github"],
@@ -360,7 +360,7 @@ class TestSpawnCommand:
         assert manifest["top_p"] == pytest.approx(0.9)
         assert manifest["top_k"] == 40
         assert manifest["base_url"] == "http://localhost:8000/v1"
-        assert manifest["api_key_env"] == "MY_PROXY_KEY"
+        assert manifest["api_key_env"] == "OPENROUTER_API_KEY"
         assert set(manifest["mcp_servers"]) == {"tavily", "github"}
 
     def test_spawn_rejects_non_credential_api_key_env(self, tmp_path: Path) -> None:
@@ -486,7 +486,7 @@ class TestSpawnEnvIsolation:
             ) as popen,
             patch.dict(
                 "os.environ",
-                {"MY_PROXY_KEY": "sk-proxy", "PATH": "/usr/bin"},
+                {"OPENROUTER_API_KEY": "sk-proxy", "PATH": "/usr/bin"},
                 clear=True,
             ),
         ):
@@ -495,10 +495,10 @@ class TestSpawnEnvIsolation:
                 workdir=tmp_path,
                 model_config=ModelConfig(model="gpt-5-mini", effort="high"),
                 session_id="oai-env3",
-                mcp_config={"api_key_env": "MY_PROXY_KEY"},
+                mcp_config={"api_key_env": "OPENROUTER_API_KEY"},
             )
         env = popen.call_args.kwargs.get("env", {})
-        assert env["MY_PROXY_KEY"] == "sk-proxy"
+        assert env["OPENROUTER_API_KEY"] == "sk-proxy"
 
 
 # ---------------------------------------------------------------------------
@@ -729,14 +729,14 @@ class TestRunnerManifest:
                 "top_p": 0.9,
                 "top_k": 40,
                 "base_url": "http://localhost:8000/v1",
-                "api_key_env": "MY_PROXY_KEY",
+                "api_key_env": "OPENROUTER_API_KEY",
             },
         )
         assert manifest.temperature == pytest.approx(0.2)
         assert manifest.top_p == pytest.approx(0.9)
         assert manifest.top_k == 40
         assert manifest.base_url == "http://localhost:8000/v1"
-        assert manifest.api_key_env == "MY_PROXY_KEY"
+        assert manifest.api_key_env == "OPENROUTER_API_KEY"
 
 
 # ---------------------------------------------------------------------------
@@ -830,9 +830,9 @@ class TestRunnerHelpers:
             workdir="/workspace",
             model="gpt-5",
             base_url="http://localhost:8000/v1",
-            api_key_env="MY_PROXY_KEY",
+            api_key_env="OPENROUTER_API_KEY",
         )
-        with patch.dict("os.environ", {"MY_PROXY_KEY": "sk-proxy"}, clear=True):
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True):
             kwargs = _resolve_client_kwargs(manifest)
         assert kwargs == {"base_url": "http://localhost:8000/v1", "api_key": "sk-proxy"}
 
@@ -842,11 +842,11 @@ class TestRunnerHelpers:
             prompt="p",
             workdir="/workspace",
             model="gpt-5",
-            api_key_env="MISSING_PROXY_KEY",
+            api_key_env="OPENROUTER_API_KEY",
         )
         with (
             patch.dict("os.environ", {}, clear=True),
-            pytest.raises(RuntimeError, match="MISSING_PROXY_KEY"),
+            pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"),
         ):
             _resolve_client_kwargs(manifest)
 
@@ -855,14 +855,19 @@ class TestRunnerHelpers:
         [
             "OPENAI_API_KEY",
             "OPENROUTER_API_KEY",
-            "MY_PROXY_KEY",
             "HF_TOKEN",
             "DEEPSEEK_API_KEY",
-            "A_KEY",
+            "MISTRAL_API_KEY",
         ],
     )
-    def test_validate_api_key_env_name_accepts_credential_names(self, name: str) -> None:
+    def test_validate_api_key_env_name_accepts_allowlisted_names(self, name: str) -> None:
         validate_api_key_env_name(name)
+
+    def test_validate_api_key_env_name_accepts_operator_allowed_name(self) -> None:
+        """Names outside the built-in set pass only with the host override."""
+        with patch.dict("os.environ", {"BERNSTEIN_ALLOWED_API_KEY_ENVS": "MY_PROXY_KEY, OTHER_KEY"}):
+            validate_api_key_env_name("MY_PROXY_KEY")
+            validate_api_key_env_name("OTHER_KEY")
 
     @pytest.mark.parametrize(
         "name",
@@ -877,6 +882,10 @@ class TestRunnerHelpers:
             "SSH_AUTH_SOCK",
             "KEY",
             "TOKEN",
+            "GITHUB_TOKEN",
+            "AWS_SESSION_TOKEN",
+            "STRIPE_SECRET_KEY",
+            "MY_PROXY_KEY",
         ],
     )
     def test_validate_api_key_env_name_rejects_non_credential_names(self, name: str) -> None:
@@ -1048,7 +1057,7 @@ class TestRunnerRun:
             top_p=0.9,
             top_k=40,
             base_url="http://localhost:8000/v1",
-            api_key_env="MY_PROXY_KEY",
+            api_key_env="OPENROUTER_API_KEY",
         )
         fake_runner = MagicMock()
         fake_runner.run_sync.return_value = _FakeResult(summary="ok")
@@ -1056,7 +1065,7 @@ class TestRunnerRun:
         fake_openai = MagicMock()
         with (
             patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
-            patch.dict("os.environ", {"MY_PROXY_KEY": "sk-proxy"}, clear=True),
+            patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True),
         ):
             rc = run(manifest)
         assert rc == EXIT_OK
@@ -1067,7 +1076,7 @@ class TestRunnerRun:
         assert start["top_k"] == 40
         assert start["base_url"] == "http://localhost:8000/v1"
         # Only the env var NAME is logged - never the key value.
-        assert start["api_key_env"] == "MY_PROXY_KEY"
+        assert start["api_key_env"] == "OPENROUTER_API_KEY"
         assert "sk-proxy" not in json.dumps(events)
 
     def test_run_start_event_defaults_are_null(
@@ -1130,7 +1139,7 @@ class TestRunnerRun:
             workdir="/workspace",
             model="gpt-5-mini",
             base_url="http://localhost:8000/v1",
-            api_key_env="MY_PROXY_KEY",
+            api_key_env="OPENROUTER_API_KEY",
         )
         client_sentinel = object()
         fake_runner = MagicMock()
@@ -1139,7 +1148,7 @@ class TestRunnerRun:
         fake_openai = MagicMock(AsyncOpenAI=MagicMock(return_value=client_sentinel))
         with (
             patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
-            patch.dict("os.environ", {"MY_PROXY_KEY": "sk-proxy"}, clear=True),
+            patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True),
         ):
             rc = run(manifest)
         assert rc == EXIT_OK
@@ -1163,7 +1172,7 @@ class TestRunnerRun:
             prompt="hello",
             workdir="/workspace",
             model="gpt-5-mini",
-            api_key_env="MY_PROXY_KEY",
+            api_key_env="OPENROUTER_API_KEY",
         )
         client_sentinel = object()
         fake_runner = MagicMock()
@@ -1172,7 +1181,7 @@ class TestRunnerRun:
         fake_openai = MagicMock(AsyncOpenAI=MagicMock(return_value=client_sentinel))
         with (
             patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
-            patch.dict("os.environ", {"MY_PROXY_KEY": "sk-proxy"}, clear=True),
+            patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True),
         ):
             rc = run(manifest)
         assert rc == EXIT_OK
