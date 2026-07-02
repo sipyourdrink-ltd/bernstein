@@ -29,17 +29,18 @@ take the new ``session.exec`` path.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
 import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from bernstein.core.sandbox.backend import ExecResult, SandboxSession
 
@@ -167,10 +168,8 @@ def _start_heartbeat_proxy(
                 "status": "working",
                 "files_changed": 0,
             })
-            try:
+            with contextlib.suppress(OSError):  # best effort
                 heartbeat_file.write_text(payload, encoding="utf-8")
-            except OSError:
-                pass  # best effort
             stop_event.wait(interval_s)
 
     thread = threading.Thread(
