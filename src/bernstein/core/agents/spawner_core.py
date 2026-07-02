@@ -96,6 +96,7 @@ from bernstein.templates.renderer import TemplateError, render_role_prompt
 if TYPE_CHECKING:
     import subprocess
     import threading
+    from collections.abc import Callable
 
     from bernstein.adapters.base import CLIAdapter
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
@@ -107,7 +108,8 @@ if TYPE_CHECKING:
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.resource_limits import ResourceLimits
-    from bernstein.core.sandbox.backend import SandboxSession
+    from bernstein.core.sandbox.backend import SandboxBackend, SandboxSession
+    from bernstein.core.sandbox.manifest import WorkspaceManifest
     from bernstein.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------
@@ -870,6 +872,10 @@ class AgentSpawner:
         warm_pool: WarmPool | None = None,
         spawn_rate_limiter: SpawnRateLimiter | None = None,
         sandbox_session: SandboxSession | None = None,
+        sandbox_backend: SandboxBackend | None = None,
+        sandbox_manifest_factory: Callable[[], WorkspaceManifest] | None = None,
+        sandbox_options: dict[str, Any] | None = None,
+        sandbox_server_port: int | None = None,
         default_model: str | None = None,
     ) -> None:
         self._enable_caching = enable_caching
@@ -950,6 +956,25 @@ class AgentSpawner:
         self._sandbox_session: SandboxSession | None = sandbox_session
         if sandbox_session is not None:
             sandbox_session_created_total.labels(backend=getattr(sandbox_session, "backend_name", "unknown")).inc()
+        # Issue #2162: per-agent sandbox sessions. When a backend plus a
+        # manifest factory are attached (instead of a single pre-built
+        # session), _spawn_via_sandbox_session provisions ONE session per
+        # spawn and destroys it when the exec future resolves, so an exec
+        # timeout that kills a container only kills that agent and
+        # concurrent agents never share a single workspace clone. The
+        # sandbox_session parameter above keeps working unchanged for
+        # callers that pass a shared session (tests, back-compat).
+        self._sandbox_backend = sandbox_backend
+        self._sandbox_manifest_factory = sandbox_manifest_factory
+        self._sandbox_options: dict[str, Any] = dict(sandbox_options or {})
+        self._sandbox_server_port = sandbox_server_port
+        # session_id -> per-spawn SandboxSession owned (and destroyed)
+        # by this spawner.  Popped exactly once by _destroy_sandbox_session
+        # so the exec-done callback and kill() cannot double-destroy.
+        self._sandbox_owned_sessions: dict[str, SandboxSession] = {}
+        # One reachability probe per spawner instance is enough - the
+        # answer is a property of the Docker daemon, not of the session.
+        self._sandbox_reachability_checked = False
         # session_id -> SandboxExecHandle for agents whose exec went
         # through SandboxSession.exec.  Consulted by check_alive / kill
         # so the orchestrator's lifecycle paths keep working without a
@@ -1097,6 +1122,21 @@ class AgentSpawner:
         routes adapter exec through ``sandbox_session.exec``.
         """
         return self._sandbox_session
+
+    def _sandbox_session_routing_active(self) -> bool:
+        """Return True when spawns must route through a sandbox session.
+
+        Two wiring shapes activate the routing seam:
+
+        1. A shared non-worktree :class:`SandboxSession` attached at
+           construction (oai-002 phase 2 back-compat).
+        2. A :class:`SandboxBackend` plus manifest factory attached at
+           construction, which makes ``_spawn_via_sandbox_session``
+           provision one session per spawn (issue #2162).
+        """
+        if self._sandbox_session is not None:
+            return getattr(self._sandbox_session, "backend_name", "worktree") != "worktree"
+        return self._sandbox_backend is not None and self._sandbox_manifest_factory is not None
 
     def cleanup_worktree(self, session_id: str) -> None:
         """Remove the worktree and branch for a dead agent session."""
@@ -2221,13 +2261,13 @@ class AgentSpawner:
                                 mcp_config=effective_mcp,
                             )
                             result = SpawnResult(pid=fake_pid, log_path=actual_log_path)
-                        elif (
-                            self._sandbox_session is not None
-                            and getattr(self._sandbox_session, "backend_name", "worktree") != "worktree"
-                        ):
-                            # oai-002 phase 2: route exec through the
-                            # attached SandboxSession (Docker, E2B,
-                            # Modal, plugin).  The local-worktree
+                        elif self._sandbox_session_routing_active():
+                            # oai-002 phase 2: route exec through a
+                            # SandboxSession (Docker, E2B, Modal,
+                            # plugin) - either the shared session
+                            # attached at construction or a per-spawn
+                            # session provisioned from the attached
+                            # backend (issue #2162).  The local-worktree
                             # backend is intentionally excluded so the
                             # existing direct-subprocess path keeps
                             # worker-wrapper / PID semantics intact.
@@ -2773,14 +2813,18 @@ class AgentSpawner:
         session: AgentSession,
         adapter: CLIAdapter,
     ) -> SpawnResult:
-        """Route adapter exec through the attached :class:`SandboxSession`.
+        """Route adapter exec through a :class:`SandboxSession`.
 
         Phase 2 of ``oai-002``. When the spawner has been wired with a
         non-worktree :class:`SandboxBackend` (Docker, E2B, Modal,
         custom plugin), the adapter command is run via
         :meth:`SandboxSession.exec` and the prompt is injected via
         :meth:`SandboxSession.write` instead of mutating the host
-        worktree directly. The local-worktree backend is intentionally
+        worktree directly. Issue #2162: when a backend plus manifest
+        factory are attached (production wiring), a dedicated session
+        is provisioned for this spawn and destroyed when the exec
+        future resolves; a shared session attached at construction is
+        used as-is for back-compat. The local-worktree backend is intentionally
         excluded: keeping it on the legacy direct-subprocess path
         preserves the worker-wrapper, process-group, and timeout-watchdog
         bookkeeping that production tooling depends on, and matches the
@@ -2804,8 +2848,34 @@ class AgentSpawner:
             the :class:`SandboxExecHandle` stored in
             ``_sandbox_exec_handles``.
         """
-        assert self._sandbox_session is not None
-        sbx_session = self._sandbox_session
+        sbx_session: SandboxSession
+        owned = False
+        if self._sandbox_session is not None:
+            # Back-compat: a single shared session attached at
+            # construction. Its lifecycle belongs to whoever built it.
+            sbx_session = self._sandbox_session
+        else:
+            # Issue #2162: one session per spawn. Provisioning failure
+            # falls back to the direct adapter spawn, mirroring the
+            # ContainerError fallback in _spawn_in_sandbox.
+            try:
+                sbx_session = self._provision_sandbox_session(session_id)
+            except Exception as exc:
+                logger.warning(
+                    "Sandbox session provisioning failed for %s, falling back to direct spawn: %s",
+                    session_id,
+                    exc,
+                )
+                session.isolation = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+                return adapter.spawn(
+                    prompt=prompt,
+                    workdir=spawn_cwd,
+                    model_config=model_config,
+                    session_id=session_id,
+                    mcp_config=mcp_config,
+                )
+            owned = True
+            self._sandbox_owned_sessions[session_id] = sbx_session
 
         log_dir = spawn_cwd / ".sdd" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -2851,6 +2921,23 @@ class AgentSpawner:
             _env_keys.extend(["OPENAI_API_KEY", "OPENAI_BASE_URL"])
         sandbox_env = {k: v for k in _env_keys if (v := _os.environ.get(k)) is not None}
 
+        # 2c) Audit the exec submission (issue #2162). The argv embeds
+        #     prompt paths and model names, so only its hash is chained.
+        import hashlib as _hashlib
+
+        from bernstein.core.security.audit import SANDBOX_EXEC_START
+
+        self._emit_sandbox_audit(
+            SANDBOX_EXEC_START,
+            resource_id=sbx_session.session_id,
+            details={
+                "session_id": sbx_session.session_id,
+                "adapter": adapter.name(),
+                "cmd_hash": _hashlib.sha256(" ".join(cmd).encode("utf-8")).hexdigest(),
+                "agent_session_id": session_id,
+            },
+        )
+
         # 3) Submit the exec on a dedicated thread; the future drives
         #    liveness checks via SandboxSession-aware paths.
         handle = submit_session_exec(
@@ -2864,9 +2951,10 @@ class AgentSpawner:
         self._sandbox_exec_handles[session_id] = handle
 
         # When the future resolves we increment the per-exit-code
-        # counter so operators can see how often agents inside a given
-        # backend exit cleanly.
-        def _record_exit(_h: SandboxExecHandle = handle) -> None:
+        # counter, chain the exec_end audit event, sync committed work
+        # back to the host, and (for per-spawn sessions) destroy the
+        # session so no container outlives its agent (issue #2162).
+        def _record_exit(_h: SandboxExecHandle = handle, _owned: bool = owned) -> None:
             try:
                 if _h.future.cancelled():
                     code = "cancelled"
@@ -2877,12 +2965,247 @@ class AgentSpawner:
             except Exception:  # pragma: no cover - defensive
                 code = "error"
             sandbox_exec_count_total.labels(backend=_h.backend_name, exit_code=code).inc()
+            from bernstein.core.security.audit import SANDBOX_EXEC_END
+
+            self._emit_sandbox_audit(
+                SANDBOX_EXEC_END,
+                resource_id=sbx_session.session_id,
+                details={
+                    "session_id": sbx_session.session_id,
+                    "exit_code": code,
+                    "agent_session_id": session_id,
+                },
+            )
+            # Retrieve committed work from the sandbox-local clone
+            # before the session goes away. Skipped for cancelled or
+            # crashed execs where the container state is undefined.
+            if code not in ("cancelled", "error"):
+                self._sync_back_sandbox_work(sbx_session, session_id)
+            if _owned:
+                self._destroy_sandbox_session(session_id)
 
         handle.future.add_done_callback(lambda _f: _record_exit())
 
         session.isolation = IsolationMode.CONTAINER.value
         session.runtime_backend = handle.backend_name
         return SpawnResult(pid=0, log_path=log_path)
+
+    def _provision_sandbox_session(self, session_id: str) -> SandboxSession:
+        """Provision a dedicated sandbox session for one spawn (issue #2162).
+
+        One session per agent means one container per agent: an exec
+        timeout that kills a container only kills that agent, and
+        concurrent agents no longer share a single workspace clone.
+
+        Args:
+            session_id: Agent session identifier, recorded in the audit
+                event for correlation. The backend allocates its own
+                sandbox session id.
+
+        Returns:
+            The freshly created :class:`SandboxSession`.
+
+        Raises:
+            Exception: Whatever the backend raised; the caller falls
+                back to a direct adapter spawn.
+        """
+        assert self._sandbox_backend is not None
+        assert self._sandbox_manifest_factory is not None
+        manifest = self._sandbox_manifest_factory()
+        sbx_session = asyncio.run(self._sandbox_backend.create(manifest, options=dict(self._sandbox_options)))
+        backend_name = getattr(sbx_session, "backend_name", "unknown")
+        sandbox_session_created_total.labels(backend=backend_name).inc()
+        logger.info(
+            "Provisioned sandbox session %s for agent %s (backend=%s)",
+            sbx_session.session_id,
+            session_id,
+            backend_name,
+        )
+        from bernstein.core.security.audit import SANDBOX_SESSION_CREATE
+
+        self._emit_sandbox_audit(
+            SANDBOX_SESSION_CREATE,
+            resource_id=sbx_session.session_id,
+            details={
+                "session_id": sbx_session.session_id,
+                "image": self._sandbox_options.get("image"),
+                "backend": backend_name,
+                "agent_session_id": session_id,
+            },
+        )
+        self._check_task_server_reachability(sbx_session)
+        return sbx_session
+
+    def _destroy_sandbox_session(self, session_id: str) -> None:
+        """Destroy the per-spawn sandbox session owned by *session_id*.
+
+        Idempotent and race-safe: the owned-session map is popped
+        first, so a :meth:`kill` racing the exec-done callback destroys
+        the session exactly once. Failures log a warning, never raise.
+
+        Args:
+            session_id: Agent session whose sandbox session should go.
+        """
+        sbx_session = self._sandbox_owned_sessions.pop(session_id, None)
+        if sbx_session is None:
+            return
+        try:
+            if self._sandbox_backend is not None:
+                asyncio.run(self._sandbox_backend.destroy(sbx_session))
+            else:  # pragma: no cover - owned sessions always have a backend
+                asyncio.run(sbx_session.shutdown())
+        except Exception as exc:
+            logger.warning(
+                "Failed to destroy sandbox session %s for agent %s: %s",
+                sbx_session.session_id,
+                session_id,
+                exc,
+            )
+            return
+        logger.info("Destroyed sandbox session %s for agent %s", sbx_session.session_id, session_id)
+        from bernstein.core.security.audit import SANDBOX_SESSION_DESTROY
+
+        self._emit_sandbox_audit(
+            SANDBOX_SESSION_DESTROY,
+            resource_id=sbx_session.session_id,
+            details={"session_id": sbx_session.session_id, "agent_session_id": session_id},
+        )
+
+    def _sync_back_sandbox_work(self, sbx_session: SandboxSession, session_id: str) -> None:
+        """Best-effort sync of sandbox-local commits back to the host.
+
+        Agent commits land in the sandbox's own clone (e.g.
+        ``/workspace`` inside a Docker container) and would vanish with
+        the session. Bundle every ref inside the sandbox, copy the
+        bundle to ``.sdd/runtime/sandbox/<session_id>.bundle`` on the
+        host, then fetch it into ``refs/remotes/sandbox/<session_id>/*``
+        so the work stays inspectable after the run (issue #2162).
+
+        Failures log a warning and never crash the run.
+
+        Args:
+            sbx_session: The session holding the agent's clone.
+            session_id: Agent session identifier; used as the bundle
+                basename and the remote-ref namespace.
+        """
+        import subprocess as _subprocess
+
+        bundle_in_sandbox = f"/tmp/{session_id}.bundle"
+        try:
+            bundle_result = asyncio.run(
+                sbx_session.exec(["git", "bundle", "create", bundle_in_sandbox, "--all"], timeout=120)
+            )
+            if bundle_result.exit_code != 0:
+                logger.warning(
+                    "Sandbox sync-back for %s: git bundle create failed (exit %d): %s",
+                    session_id,
+                    bundle_result.exit_code,
+                    bundle_result.stderr[:500].decode("utf-8", errors="replace"),
+                )
+                return
+            bundle_bytes = asyncio.run(sbx_session.read(bundle_in_sandbox))
+            bundle_dir = self._workdir / ".sdd" / "runtime" / "sandbox"
+            bundle_dir.mkdir(parents=True, exist_ok=True)
+            bundle_path = bundle_dir / f"{session_id}.bundle"
+            bundle_path.write_bytes(bundle_bytes)
+
+            refspec = f"refs/heads/*:refs/remotes/sandbox/{session_id}/*"
+            fetch = _subprocess.run(
+                ["git", "fetch", str(bundle_path), refspec],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if fetch.returncode != 0:
+                logger.warning(
+                    "Sandbox sync-back for %s: git fetch from bundle failed: %s",
+                    session_id,
+                    fetch.stderr.strip()[:500],
+                )
+                return
+            refs_result = _subprocess.run(
+                ["git", "for-each-ref", "--format=%(refname)", f"refs/remotes/sandbox/{session_id}/"],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            fetched_refs = [line for line in refs_result.stdout.splitlines() if line]
+            logger.info(
+                "Synced sandbox work for %s: bundle at %s, fetched refs: %s",
+                session_id,
+                bundle_path,
+                ", ".join(fetched_refs) or "(none)",
+            )
+        except Exception as exc:
+            logger.warning("Sandbox sync-back for %s failed: %s", session_id, exc)
+
+    def _check_task_server_reachability(self, sbx_session: SandboxSession) -> None:
+        """Warn once when the sandbox cannot reach the host task server.
+
+        Some Docker Desktop configurations do not support host
+        networking, so agents inside the container cannot POST to the
+        task server on 127.0.0.1. This probe surfaces the condition as
+        an explicit warning instead of a silent run stall; the run
+        proceeds and relies on the legacy path behavior (issue #2162).
+        Never fails the run.
+
+        Args:
+            sbx_session: A freshly provisioned session to probe from.
+        """
+        port = self._sandbox_server_port
+        if port is None or self._sandbox_reachability_checked:
+            return
+        self._sandbox_reachability_checked = True
+        probe = f'import socket; socket.create_connection(("127.0.0.1", {int(port)}), timeout=3).close()'
+        try:
+            result = asyncio.run(sbx_session.exec(["python3", "-c", probe], timeout=15))
+        except Exception as exc:
+            logger.warning(
+                "Could not probe task server reachability from sandbox session %s: %s",
+                sbx_session.session_id,
+                exc,
+            )
+            return
+        if result.exit_code != 0:
+            logger.warning(
+                "Sandbox session %s cannot reach the task server on 127.0.0.1:%d; "
+                "agents inside containers on this Docker daemon will not reach the "
+                "task server (some Docker Desktop configurations do not support "
+                "host networking). The run will rely on the legacy path behavior.",
+                sbx_session.session_id,
+                port,
+            )
+
+    def _emit_sandbox_audit(self, event_type: str, *, resource_id: str, details: dict[str, Any]) -> None:
+        """Append a sandbox lifecycle event to the HMAC-chained audit log.
+
+        Best-effort by design (issue #2162): audit failures (key
+        permission, disk full) are logged at warning level and never
+        block the spawn or teardown paths that emit them.
+
+        Args:
+            event_type: One of the ``sandbox.*`` event-type constants
+                from :mod:`bernstein.core.security.audit`.
+            resource_id: Audit resource identifier (sandbox session id).
+            details: Structured event payload.
+        """
+        try:
+            from bernstein.core.security.audit import AuditLog
+
+            audit = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
+            audit.log(
+                event_type=event_type,
+                actor="spawner",
+                resource_type="sandbox_session",
+                resource_id=resource_id,
+                details=details,
+            )
+        except Exception as exc:  # audit must never block execution
+            logger.warning("Could not emit %s audit event for %s: %s", event_type, resource_id, exc)
 
     def _adapter_cmd_for_container(
         self,
@@ -3101,6 +3424,10 @@ class AgentSpawner:
         if sbx_handle is not None:
             cancel_session_exec(sbx_handle)
             self._sandbox_exec_handles.pop(session.id, None)
+            # Issue #2162: per-spawn sessions are destroyed on kill so a
+            # cancelled agent never leaves its container behind. No-op
+            # when the exec-done callback already destroyed it.
+            self._destroy_sandbox_session(session.id)
             self._transition_to_dead(
                 session,
                 "kill requested",
