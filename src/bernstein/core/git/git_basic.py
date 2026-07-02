@@ -450,20 +450,12 @@ def current_branch(cwd: Path) -> str | None:
     return name
 
 
-def resolve_default_branch(cwd: Path, remote: str = "origin") -> str:
-    """Resolve the repository's default branch (the protected trunk).
+def _resolve_default_branch_from_remote_head(cwd: Path, remote: str) -> str | None:
+    """Return the default branch named by ``<remote>/HEAD``, or ``None``.
 
-    Resolution order matches the project's canonical detection used for
-    graveyard capture: ``origin/HEAD`` first, then conventional local and
-    remote-tracking names, then ``init.defaultBranch`` from git config, and
-    finally ``"main"`` as a last resort. Never raises.
-
-    Args:
-        cwd: Repository root.
-        remote: Remote whose ``HEAD`` symbolic ref names the default branch.
-
-    Returns:
-        The default branch short name (e.g. ``"main"`` or ``"master"``).
+    ``None`` means ``<remote>/HEAD`` is unset (common in ``git worktree``
+    checkouts and partial clones where ``git remote set-head`` was never run),
+    so callers must fall back to a heuristic and treat the result as ambiguous.
     """
     head = _run_git_quiet(["symbolic-ref", f"refs/remotes/{remote}/HEAD"], cwd)
     if head.ok:
@@ -478,16 +470,84 @@ def resolve_default_branch(cwd: Path, remote: str = "origin") -> str:
         if ref and ref != f"{remote}/HEAD":
             return ref.removeprefix(f"{remote}/")
 
-    for candidate in ("main", "master"):
-        probe = _run_git_quiet(["rev-parse", "--verify", "--quiet", candidate], cwd)
-        if probe.ok:
-            return candidate
+    return None
+
+
+def _branch_exists(cwd: Path, branch: str) -> bool:
+    """Return ``True`` if a local ``branch`` ref exists at *cwd*."""
+    probe = _run_git_quiet(["rev-parse", "--verify", "--quiet", branch], cwd)
+    return probe.ok
+
+
+def resolve_default_branch(cwd: Path, remote: str = "origin") -> str:
+    """Resolve the repository's default branch (the protected trunk).
+
+    Resolution order: ``<remote>/HEAD`` first (the authoritative signal), then
+    ``init.defaultBranch`` from git config, then the ``<remote>/master``
+    remote-tracking ref, then the conventional ``main``/``master`` local probe,
+    and finally ``"main"`` as a last resort. Consulting ``init.defaultBranch``
+    and ``<remote>/master`` BEFORE the hard-coded ``main``-first local probe
+    means a repo whose real trunk is ``master`` is not mis-resolved to a stray
+    local ``main`` when ``<remote>/HEAD`` is unavailable. Never raises.
+
+    Args:
+        cwd: Repository root.
+        remote: Remote whose ``HEAD`` symbolic ref names the default branch.
+
+    Returns:
+        The default branch short name (e.g. ``"main"`` or ``"master"``).
+    """
+    from_head = _resolve_default_branch_from_remote_head(cwd, remote)
+    if from_head is not None:
+        return from_head
 
     cfg = _run_git_quiet(["config", "--get", "init.defaultBranch"], cwd)
+    if cfg.ok and cfg.stdout.strip():
+        configured = cfg.stdout.strip()
+        if _branch_exists(cwd, configured):
+            return configured
+
+    master_tracking = _run_git_quiet(["rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/master"], cwd)
+    if master_tracking.ok:
+        return "master"
+
+    for candidate in ("main", "master"):
+        if _branch_exists(cwd, candidate):
+            return candidate
+
     if cfg.ok and cfg.stdout.strip():
         return cfg.stdout.strip()
 
     return "main"
+
+
+def protected_default_branches(cwd: Path, remote: str = "origin") -> frozenset[str]:
+    """Return the set of branch names that must be treated as protected trunks.
+
+    Normally this is the single :func:`resolve_default_branch` result. But when
+    ``<remote>/HEAD`` is unavailable (unset ``set-head``, partial clone, some
+    ``git worktree`` checkouts) AND both a local ``main`` and a local ``master``
+    exist, the true trunk is genuinely ambiguous: neither the local probe order
+    nor the remote-tracking heuristic can be trusted to pick correctly. In that
+    ambiguous state this returns BOTH names so a merge guard fails closed and
+    refuses to land unreviewed commits on either candidate. Never raises.
+
+    Args:
+        cwd: Repository root.
+        remote: Remote whose ``HEAD`` symbolic ref names the default branch.
+
+    Returns:
+        A frozenset of protected branch short names (usually one, two when the
+        default is ambiguous).
+    """
+    from_head = _resolve_default_branch_from_remote_head(cwd, remote)
+    if from_head is not None:
+        return frozenset({from_head})
+
+    if _branch_exists(cwd, "main") and _branch_exists(cwd, "master"):
+        return frozenset({"main", "master"})
+
+    return frozenset({resolve_default_branch(cwd, remote)})
 
 
 def safe_push(

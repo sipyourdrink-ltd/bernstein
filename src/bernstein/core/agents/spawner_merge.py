@@ -104,18 +104,22 @@ def _run_merge_and_push(
     """
     from bernstein.core.git_ops import (
         current_branch,
+        protected_default_branches,
         resolve_default_branch,
         safe_push,
     )
 
     # Safety guardrail: agent work is merged into whatever branch is checked
-    # out at ``worktree_root``. If that target IS the repository's default
-    # (protected) branch, refuse the merge instead of silently landing
-    # unreviewed commits on the trunk. An explicit opt-in env override lets
-    # operators who really want this proceed.
+    # out at ``worktree_root``. If that target IS one of the repository's
+    # protected (default trunk) branches, refuse the merge instead of silently
+    # landing unreviewed commits on the trunk. ``protected_default_branches``
+    # fails closed on an ambiguous default (``origin/HEAD`` unset AND both a
+    # local ``main`` and ``master`` present), returning BOTH names so the guard
+    # refuses either. An explicit opt-in env override lets operators who really
+    # want this proceed.
     target_branch = current_branch(worktree_root)
-    default_branch = resolve_default_branch(worktree_root)
-    if target_branch is not None and target_branch == default_branch and not _allow_merge_to_default_branch():
+    protected = protected_default_branches(worktree_root)
+    if target_branch is not None and target_branch in protected and not _allow_merge_to_default_branch():
         _record_merge_refusal(worktree_root, session.id, target_branch)
         logger.error(
             "Refusing to merge agent work from %s onto default branch %r: agent "
@@ -150,7 +154,9 @@ def _run_merge_and_push(
 
     if merge_result and merge_result.success:
         # Push the branch we actually merged into (never a hard-coded "main").
-        push_branch = target_branch or default_branch
+        # ``target_branch`` is None only on detached HEAD; fall back to the
+        # resolved default there.
+        push_branch = target_branch or resolve_default_branch(worktree_root)
         push_result = safe_push(worktree_root, push_branch)
         if push_result.ok:
             logger.info("Pushed merged work from %s to origin/%s", session.id, push_branch)

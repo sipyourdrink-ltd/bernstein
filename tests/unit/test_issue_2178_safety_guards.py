@@ -78,6 +78,80 @@ def test_maybe_sync_called_when_enabled() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Problem A (call-site wiring): both bootstrap plan paths route GitHub sync
+# through the opt-in guard, so with sync OFF (the default) the underlying
+# sync_github_issues_to_backlog is never invoked at either call site.
+# ---------------------------------------------------------------------------
+
+
+def _bootstrap_seed(sync_backlog: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+        goal="Ship the parser",
+        github=GithubConfig(sync_backlog=sync_backlog),
+        session=SimpleNamespace(resume=False, stale_after_minutes=60),
+    )
+
+
+def test_sync_and_plan_tasks_skips_github_sync_when_disabled(tmp_path: Path) -> None:
+    """Default (off): _sync_and_plan_tasks never calls sync_github_issues_to_backlog."""
+    from bernstein.core.orchestration import bootstrap
+
+    sync_mock = MagicMock(return_value=7)
+    empty_sync = SimpleNamespace(created=[], skipped=[])
+    with (
+        patch("bernstein.core.github.sync_github_issues_to_backlog", sync_mock),
+        patch("bernstein.core.session.check_resume_session", return_value=None),
+        patch("bernstein.core.sync.sync_backlog_to_server", return_value=empty_sync),
+        patch(
+            "bernstein.core.workflow_importer.import_workflow_tasks",
+            return_value=0,
+        ),
+        patch.object(bootstrap, "_inject_manager_task", return_value="mgr-1"),
+    ):
+        bootstrap._sync_and_plan_tasks(
+            _bootstrap_seed(sync_backlog=False),
+            tmp_path,
+            port=8052,
+            server_url="http://localhost:8052",
+            auth_token=None,
+            force_fresh=True,
+        )
+
+    sync_mock.assert_not_called()
+
+
+def test_goal_sync_and_plan_skips_github_sync_when_disabled(tmp_path: Path) -> None:
+    """Default (off): _goal_sync_and_plan never calls sync_github_issues_to_backlog."""
+    from bernstein.core.orchestration import bootstrap
+
+    sync_mock = MagicMock(return_value=7)
+    empty_sync = SimpleNamespace(created=[], skipped=[])
+    icons = SimpleNamespace(arrow_right=">")
+    with (
+        patch("bernstein.core.github.sync_github_issues_to_backlog", sync_mock),
+        patch("bernstein.core.session.check_resume_session", return_value=None),
+        patch("bernstein.core.sync.sync_backlog_to_server", return_value=empty_sync),
+        patch(
+            "bernstein.core.workflow_importer.import_workflow_tasks",
+            return_value=0,
+        ),
+        patch.object(bootstrap, "_inject_manager_task", return_value="mgr-1"),
+    ):
+        bootstrap._goal_sync_and_plan(
+            seed=_bootstrap_seed(sync_backlog=False),
+            workdir=tmp_path,
+            port=8052,
+            server_url="http://localhost:8052",
+            auth_token=None,
+            force_fresh=True,
+            tasks=None,
+            icons=icons,
+        )
+
+    sync_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Problem B: loud warning when a seeded goal is shadowed by a non-empty backlog
 # ---------------------------------------------------------------------------
 
@@ -173,7 +247,10 @@ def test_merge_refused_on_default_branch(tmp_path: Path) -> None:
     coll_patch, collector = _patched_collector()
     with (
         patch("bernstein.core.git_ops.current_branch", return_value="main"),
-        patch("bernstein.core.git_ops.resolve_default_branch", return_value="main"),
+        patch(
+            "bernstein.core.git_ops.protected_default_branches",
+            return_value=frozenset({"main"}),
+        ),
         patch("bernstein.core.git_ops.safe_push") as safe_push_mock,
         patch.object(spawner_merge, "_allow_merge_to_default_branch", return_value=False),
         coll_patch,
@@ -201,7 +278,10 @@ def test_merge_proceeds_on_non_default_branch(tmp_path: Path) -> None:
     coll_patch, _collector = _patched_collector()
     with (
         patch("bernstein.core.git_ops.current_branch", return_value="feat/x"),
-        patch("bernstein.core.git_ops.resolve_default_branch", return_value="main"),
+        patch(
+            "bernstein.core.git_ops.protected_default_branches",
+            return_value=frozenset({"main"}),
+        ),
         patch("bernstein.core.git_ops.safe_push", return_value=push_ok) as safe_push_mock,
         coll_patch,
     ):
@@ -223,7 +303,10 @@ def test_merge_allowed_on_default_branch_with_override(tmp_path: Path) -> None:
     coll_patch, _collector = _patched_collector()
     with (
         patch("bernstein.core.git_ops.current_branch", return_value="main"),
-        patch("bernstein.core.git_ops.resolve_default_branch", return_value="main"),
+        patch(
+            "bernstein.core.git_ops.protected_default_branches",
+            return_value=frozenset({"main"}),
+        ),
         patch("bernstein.core.git_ops.safe_push", return_value=push_ok) as safe_push_mock,
         patch.object(spawner_merge, "_allow_merge_to_default_branch", return_value=True),
         coll_patch,
