@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import operator
+import os
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -47,6 +48,12 @@ logger = logging.getLogger(__name__)
 # seconds under it to guarantee the stalled-manager detector reports the
 # real cause first.
 STALL_THRESHOLD_S: float = 170.0
+
+# Env var checked ahead of ``OrchestratorConfig.stalled_manager_threshold_s``
+# (which itself defaults from ``tuning.orchestrator.stalled_manager_threshold_s``
+# in bernstein.yaml, see core.defaults.OrchestratorDefaults). Precedence:
+# env var > yaml-tunable config field > the module constant above.
+STALL_THRESHOLD_ENV_VAR: str = "BERNSTEIN_STALL_THRESHOLD_S"
 
 # Path to the operator-facing remediation doc. A sibling effort owns the
 # actual document; if it already lives elsewhere we still emit a pointer so
@@ -82,12 +89,35 @@ class StalledManagerDiagnostic:
     remediation: str = REMEDIATION_DOC
 
     def message(self) -> str:
-        """Return the one-line operator-facing console message."""
+        """Return the one-line operator-facing console message.
+
+        ``hook_event_count`` is sourced from the hook sidecar file
+        (``.sdd/runtime/hooks/{session_id}.jsonl``), a different telemetry
+        channel from the manager's own per-session activity log. A manager
+        can be genuinely alive and working (reading files, planning) for
+        the full stall window while that sidecar still reads 0 events, so
+        ``hook_event_count == 0`` does not by itself prove the manager
+        never authenticated to the task server - only that this specific
+        channel saw nothing. Only assert an auth failure when there is
+        corroborating evidence (a nonzero hook-event count).
+        """
+        if self.hook_event_count == 0 and not self.last_bash_commands:
+            explanation = (
+                "manager active but no child tasks yet - NOT confirmed as an auth failure; "
+                "hook_event_count is a separate telemetry channel from the manager's own "
+                "activity log and can read 0 even while the manager is working. The stall "
+                "threshold may simply be too low for this codebase's decomposition time - see "
+                f"{STALL_THRESHOLD_ENV_VAR} / tuning.orchestrator.stalled_manager_threshold_s"
+            )
+        else:
+            explanation = (
+                f"this is NOT a generic server timeout - the manager likely cannot authenticate "
+                f"to the task server ({self.hook_event_count} hook event(s) recorded)"
+            )
         return (
             f"Manager session {self.session_id} ran for {self.runtime_s:.0f}s without "
             f"creating any child tasks ({self.hook_event_count} hook event(s) recorded). "
-            f"This is NOT a generic server timeout - the manager likely cannot authenticate "
-            f"to the task server. See {self.remediation} for remediation."
+            f"{explanation}. See {self.remediation} for remediation."
         )
 
     def to_record(self) -> dict[str, Any]:
@@ -234,6 +264,61 @@ def build_diagnostic(
     )
 
 
+def _resolve_stall_threshold_s(orch: Any) -> float:
+    """Resolve the effective stall threshold.
+
+    Precedence: ``BERNSTEIN_STALL_THRESHOLD_S`` env var > ``OrchestratorConfig.
+    stalled_manager_threshold_s`` (yaml-tunable via ``tuning.orchestrator.
+    stalled_manager_threshold_s``, see ``core.defaults.OrchestratorDefaults``)
+    > the ``STALL_THRESHOLD_S`` module default. An unparseable env var falls
+    through to the config/default value with a warning rather than crashing.
+    """
+    raw_env = os.environ.get(STALL_THRESHOLD_ENV_VAR)
+    if raw_env is not None and raw_env.strip():
+        try:
+            value = float(raw_env)
+        except ValueError:
+            logger.warning(
+                "%s=%r is not a valid float; falling back to config/default stall threshold",
+                STALL_THRESHOLD_ENV_VAR,
+                raw_env,
+            )
+        else:
+            logger.info(
+                "stalled_manager: threshold resolved to %.1fs from env %s=%r",
+                value,
+                STALL_THRESHOLD_ENV_VAR,
+                raw_env,
+            )
+            return value
+
+    config_value = getattr(getattr(orch, "_config", None), "stalled_manager_threshold_s", None)
+    resolved = float(config_value) if config_value is not None else STALL_THRESHOLD_S
+    _warn_if_races_idle_kill(resolved)
+    return resolved
+
+
+def _warn_if_races_idle_kill(threshold_s: float) -> None:
+    """Warn when the stall threshold has been raised past the idle-agent deadline.
+
+    ``detect_idle_agents`` (``core.agents.heartbeat``) has no call site in the
+    orchestrator tick loop today, so this is not a live race - but the two
+    deadlines' 170-vs-180s spacing is intentional, and a raised threshold
+    should still surface if that watchdog is ever wired up later.
+    """
+    from bernstein.core.defaults import AGENT
+
+    idle_threshold = float(AGENT.idle_log_age_threshold_s)
+    if threshold_s >= idle_threshold:
+        logger.warning(
+            "stalled_manager_threshold_s (%.0fs) >= AGENT.idle_log_age_threshold_s (%.0fs); "
+            "if idle-log-kill is ever wired into the tick loop it may fire before the "
+            "stalled-manager diagnostic can produce its more specific message",
+            threshold_s,
+            idle_threshold,
+        )
+
+
 def detect_stalled_manager(orch: Any) -> StalledManagerDiagnostic | None:
     """Return a diagnostic if a manager session has stalled, else ``None``.
 
@@ -255,7 +340,7 @@ def detect_stalled_manager(orch: Any) -> StalledManagerDiagnostic | None:
         return None
 
     runtime = max(now - float(getattr(session, "spawn_ts", now)), 0.0)
-    threshold = float(getattr(getattr(orch, "_config", None), "stalled_manager_threshold_s", STALL_THRESHOLD_S))
+    threshold = _resolve_stall_threshold_s(orch)
     if runtime < threshold:
         return None
 

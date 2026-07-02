@@ -107,6 +107,14 @@ class OrchestratorDefaults:
     manager_review_completion_threshold: int = 7  # trigger review every 7 done
     manager_review_stall_s: float = 900.0  # 15 min
 
+    # How long a manager session may run with zero child tasks before
+    # ``core.orchestration.stalled_manager`` declares a stall and aborts the
+    # run. Tunable via ``tuning.orchestrator.stalled_manager_threshold_s`` in
+    # bernstein.yaml, or the ``BERNSTEIN_STALL_THRESHOLD_S`` env var (checked
+    # first). See ``stalled_manager.py`` module docstring for the detection
+    # logic and its relationship to ``AGENT.idle_log_age_threshold_s``.
+    stalled_manager_threshold_s: float = 170.0
+
 
 # ---------------------------------------------------------------------------
 # Spawn / Agent defaults

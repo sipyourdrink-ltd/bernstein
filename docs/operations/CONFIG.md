@@ -142,6 +142,7 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_COMPLIANCE` | Compliance preset override |
 | `BERNSTEIN_QUIET` | Quiet mode (reduced terminal output) |
 | `BERNSTEIN_AUDIT` | Enable extra audit behavior in run flow |
+| `BERNSTEIN_STALL_THRESHOLD_S` | Override the manager-stall deadline (see §4.1 below). Takes precedence over the `tuning.orchestrator.stalled_manager_threshold_s` yaml key. |
 
 ---
 
@@ -155,6 +156,7 @@ tuning:
     tick_interval_s: 5.0
     drain_timeout_s: 120.0
     stale_claim_timeout_s: 1800.0
+    stalled_manager_threshold_s: 300.0
   spawn:
     spawn_backoff_base_s: 60.0
 ```
@@ -163,12 +165,37 @@ Key default groups:
 
 | Group | Examples |
 |-------|---------|
-| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s` |
+| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s`, `stalled_manager_threshold_s` |
 | `SpawnDefaults` | `spawn_backoff_base_s`, `spawn_backoff_max_s`, `max_spawn_failures` |
 | `TaskDefaults` | Retry limits, deadline windows |
 | `AgentDefaults` | Heartbeat intervals, max dead agents kept |
 
 See `defaults.py` for the full list of parameters and their default values.
+
+### 4.1) Manager-stall deadline
+
+`core/orchestration/stalled_manager.py` aborts a run when the manager agent
+has been alive for `stalled_manager_threshold_s` (default `170.0`) with zero
+child tasks posted to the task server. On a larger codebase, or a goal whose
+acceptance criteria demand root-cause investigation before decomposition, the
+manager can legitimately need longer than that before its first `POST /tasks`
+call. Raise the deadline via either:
+
+```yaml
+tuning:
+  orchestrator:
+    stalled_manager_threshold_s: 900.0
+```
+
+or the `BERNSTEIN_STALL_THRESHOLD_S` env var (checked first, so it overrides
+the yaml value for a single run without editing `bernstein.yaml`). Precedence:
+env var > yaml `tuning.orchestrator.stalled_manager_threshold_s` > the
+`170.0` default.
+
+If the resolved threshold reaches or exceeds `AGENT.idle_log_age_threshold_s`
+(`180.0` by default — a separate, currently-unwired idle-agent watchdog), a
+warning is logged, since that watchdog would race the stalled-manager
+diagnostic if it is ever wired into the tick loop.
 
 ---
 
