@@ -6,6 +6,7 @@ import os
 from typing import TYPE_CHECKING
 from unittest import mock
 
+import pytest
 from bernstein.core.models import AgentSession, Task
 
 from bernstein.cli.commands.worker_cmd import WorkerLoop
@@ -19,6 +20,26 @@ TASK_DICT = {
     "description": "Heartbeat loop drops the node after eviction.",
     "role": "backend",
 }
+
+_ENV_KEYS = ("BERNSTEIN_SERVER_URL", "BERNSTEIN_AUTH_TOKEN")
+
+
+@pytest.fixture(autouse=True)
+def _restore_server_env():
+    """Snapshot and restore the env vars _spawn_agent mutates.
+
+    _spawn_agent exports BERNSTEIN_SERVER_URL / BERNSTEIN_AUTH_TOKEN into
+    os.environ as a side effect. Without an explicit restore those values
+    leak into the rest of the pytest session and change the behaviour of
+    later tests that read them (e.g. auth middleware and CLI helpers).
+    """
+    saved = {key: os.environ.get(key) for key in _ENV_KEYS}
+    yield
+    for key, value in saved.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def _make_loop(tmp_path: Path) -> WorkerLoop:

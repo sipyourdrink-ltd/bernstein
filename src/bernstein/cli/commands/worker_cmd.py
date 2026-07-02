@@ -246,7 +246,10 @@ class WorkerLoop:
                 workdir=self._workdir,
             )
             # Spawned agents reach the central server through the standard
-            # env vars (agent subprocesses inherit the worker environment).
+            # env vars. Adapters launch agents with an allowlist-filtered
+            # environment (build_filtered_env), so only allowlisted vars
+            # propagate; both vars below are in the base allowlist in
+            # adapters/env_isolation.py.
             os.environ["BERNSTEIN_SERVER_URL"] = self._server_url
             if self._auth_token:
                 os.environ["BERNSTEIN_AUTH_TOKEN"] = self._auth_token

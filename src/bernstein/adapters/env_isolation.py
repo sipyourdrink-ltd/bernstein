@@ -127,6 +127,13 @@ _BASE_ALLOWLIST: frozenset[str] = frozenset(
         # bypasses verification - not a failure, but keeps behaviour
         # symmetric.
         "BERNSTEIN_AUTH_DISABLED",
+        # ``BERNSTEIN_SERVER_URL`` tells the agent's server-facing plumbing
+        # (CLI helpers, hook posts) where the central server lives.  Remote
+        # workers export it before spawning; without it in the allowlist
+        # the agent falls back to http://localhost:8052 and its progress
+        # reporting never reaches the central server.  It is a URL, not a
+        # credential, so passing it through is safe.
+        "BERNSTEIN_SERVER_URL",
     }
 )
 
