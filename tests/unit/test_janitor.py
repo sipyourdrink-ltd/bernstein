@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -75,10 +76,23 @@ class TestPathExists:
         assert passed is True
 
 
-class TestPathExistsFallback:
+class TestPathExistsGlobAndFuzzy:
     """Issue #2186: manager-guessed literal paths vs. worker-chosen
-    repo-idiomatic paths. path_exists should fall back to glob, then a
-    fuzzy basename match, before failing."""
+    repo-idiomatic paths. Conservative matching contract:
+      - exact-path matching is the default, unchanged;
+      - explicit glob syntax in the criterion always works (opt-in
+        per-check by construction);
+      - the fuzzy basename fallback is opt-in via
+        BERNSTEIN_JANITOR_FUZZY_PATHS=1, default OFF."""
+
+    _GUESSED = "packages/db/test/seed-workers.test.ts"
+
+    def _write_idiomatic_file(self, tmp_path: Path) -> None:
+        """Worker output at the repo's actual convention -- a fuzzy (but
+        not literal or glob) match for the manager's guessed path."""
+        actual_dir = tmp_path / "packages" / "db" / "src" / "__tests__"
+        actual_dir.mkdir(parents=True)
+        (actual_dir / "seed-workers-demo-link.test.ts").write_text("x")
 
     def test_literal_hit_unaffected(self, tmp_path: Path) -> None:
         """A literal hit keeps the original ("exists") detail string --
@@ -90,60 +104,103 @@ class TestPathExistsFallback:
         assert passed is True
         assert detail == "exists"
 
-    def test_literal_miss_glob_hit(self, tmp_path: Path) -> None:
-        """Literal path string with a glob-shaped guess matches via the
-        glob fallback."""
-        nested = tmp_path / "packages" / "db"
-        nested.mkdir(parents=True)
-        (nested / "seed-workers.test.ts").write_text("x")
+    def test_fuzzy_off_by_default(self, tmp_path: Path) -> None:
+        """DEFAULT behavior: a literal miss FAILS even when a would-be
+        fuzzy match exists -- exact-path matching is the contract
+        operators rely on."""
+        self._write_idiomatic_file(tmp_path)
 
-        signal = CompletionSignal(type="path_exists", value="packages/*/seed-workers.test.ts")
-        passed, detail = evaluate_signal(signal, tmp_path)
-        assert passed is True
-        assert "glob fallback" in detail
-        assert "seed-workers.test.ts" in detail
-
-    def test_literal_miss_fuzzy_hit_different_depth(self, tmp_path: Path) -> None:
-        """The exact #2186 repro: manager guesses `packages/db/test/...`,
-        worker writes to `packages/db/src/__tests__/...` -- a different
-        directory depth and name suffix. The fuzzy basename fallback
-        should still find it."""
-        actual_dir = tmp_path / "packages" / "db" / "src" / "__tests__"
-        actual_dir.mkdir(parents=True)
-        (actual_dir / "seed-workers-demo-link.test.ts").write_text("x")
-
-        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
-        passed, detail = evaluate_signal(signal, tmp_path)
-        assert passed is True
-        assert "fuzzy fallback" in detail
-        assert "seed-workers-demo-link.test.ts" in detail
-
-    def test_true_miss_still_fails(self, tmp_path: Path) -> None:
-        """No literal, glob, or fuzzy match anywhere under workdir --
-        must still fail; the fallback must not become a rubber stamp."""
-        (tmp_path / "unrelated.txt").write_text("x")
-
-        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
-        passed, detail = evaluate_signal(signal, tmp_path)
-        assert passed is False
-        assert detail == "not found"
-
-    def test_fuzzy_fallback_can_be_disabled_via_env(self, tmp_path: Path) -> None:
-        """BERNSTEIN_JANITOR_FUZZY_PATH_MATCH=0 pins the old
-        literal(+glob)-only behavior."""
-        actual_dir = tmp_path / "packages" / "db" / "src" / "__tests__"
-        actual_dir.mkdir(parents=True)
-        (actual_dir / "seed-workers-demo-link.test.ts").write_text("x")
-
-        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
-        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATH_MATCH": "0"}):
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        env = {k: v for k, v in os.environ.items() if k != "BERNSTEIN_JANITOR_FUZZY_PATHS"}
+        with patch.dict("os.environ", env, clear=True):
             passed, detail = evaluate_signal(signal, tmp_path)
         assert passed is False
         assert detail == "not found"
 
-    def test_glob_fallback_logs_literal_miss_and_match(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """The janitor must log which path satisfied a glob-fallback match
-        (logging is the debugging interface -- see #2186 postmortem)."""
+    def test_fuzzy_explicit_zero_also_off(self, tmp_path: Path) -> None:
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "0"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_explicit_glob_works_without_flag(self, tmp_path: Path) -> None:
+        """Explicit glob syntax in the criterion is honored regardless of
+        the fuzzy flag -- opt-in per-check by construction."""
+        nested = tmp_path / "packages" / "db"
+        nested.mkdir(parents=True)
+        (nested / "seed-workers.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/*/seed-workers.test.ts")
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "0"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "glob pattern matched" in detail
+        assert "seed-workers.test.ts" in detail
+
+    def test_explicit_glob_recursive_different_depth(self, tmp_path: Path) -> None:
+        """A `**` glob written in the criterion matches at any depth,
+        with the fuzzy flag off."""
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value="packages/db/**/seed-workers*.test.ts")
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "0"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "seed-workers-demo-link.test.ts" in detail
+
+    def test_explicit_glob_no_match_fails(self, tmp_path: Path) -> None:
+        (tmp_path / "unrelated.txt").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/**/seed-workers*.test.ts")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_fuzzy_opt_in_hits_at_different_depth(self, tmp_path: Path) -> None:
+        """The exact #2186 repro with BERNSTEIN_JANITOR_FUZZY_PATHS=1:
+        manager guesses `packages/db/test/...`, worker writes to
+        `packages/db/src/__tests__/...` -- a different directory depth
+        and name suffix. The opt-in fuzzy basename fallback finds it."""
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "fuzzy fallback" in detail
+        assert "seed-workers-demo-link.test.ts" in detail
+
+    def test_fuzzy_opt_in_true_miss_still_fails(self, tmp_path: Path) -> None:
+        """With fuzzy enabled, a path with no literal or fuzzy match
+        anywhere under workdir must still fail -- the fallback is not a
+        rubber stamp."""
+        (tmp_path / "unrelated.txt").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_fuzzy_match_logs_loudly_with_matched_path(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """When the fuzzy fallback satisfies a check it must WARN, naming
+        the literal miss, the pattern, and the matched path (logging is
+        the debugging interface -- see #2186 postmortem)."""
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}), caplog.at_level("WARNING"):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        fuzzy_warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "FUZZY MATCH" in rec.message]
+        assert fuzzy_warnings, "expected a WARNING log for the fuzzy match"
+        assert any(self._GUESSED in rec.message for rec in fuzzy_warnings)
+        assert any("seed-workers-demo-link.test.ts" in rec.message for rec in fuzzy_warnings)
+
+    def test_glob_match_logs_matched_path(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         nested = tmp_path / "packages" / "db"
         nested.mkdir(parents=True)
         (nested / "seed-workers.test.ts").write_text("x")
@@ -152,23 +209,11 @@ class TestPathExistsFallback:
         with caplog.at_level("INFO"):
             passed, _ = evaluate_signal(signal, tmp_path)
         assert passed is True
-        assert any("literal miss" in rec.message for rec in caplog.records)
-        assert any("seed-workers.test.ts" in rec.message for rec in caplog.records)
+        assert any("glob pattern" in rec.message and "seed-workers.test.ts" in rec.message for rec in caplog.records)
 
-    def test_fuzzy_fallback_logs_named_match(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        actual_dir = tmp_path / "packages" / "db" / "src" / "__tests__"
-        actual_dir.mkdir(parents=True)
-        (actual_dir / "seed-workers-demo-link.test.ts").write_text("x")
-
-        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
-        with caplog.at_level("INFO"):
-            passed, _ = evaluate_signal(signal, tmp_path)
-        assert passed is True
-        assert any("seed-workers-demo-link.test.ts" in rec.message and "fuzzy" in rec.message for rec in caplog.records)
-
-    def test_true_miss_logs_all_patterns_tried(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
-        with caplog.at_level("INFO"):
+    def test_fuzzy_true_miss_logs_patterns_tried(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}), caplog.at_level("INFO"):
             passed, _ = evaluate_signal(signal, tmp_path)
         assert passed is False
         assert any("no match" in rec.message and "seed-workers" in rec.message for rec in caplog.records)

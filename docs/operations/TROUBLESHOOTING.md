@@ -472,16 +472,22 @@ find . -name "*<basename-without-extension>*"
 ```
 
 **Resolution:**
-- As of this fix, `path_exists` no longer fails on a pure literal miss. It
-  falls back, in order: (1) the literal path, (2) the same string
-  interpreted as a glob pattern, (3) a fuzzy pattern derived from the
-  basename (`**/<stem>*<suffix>`) that tolerates a different directory
-  depth/convention. Every fallback match (or a true miss) is logged at INFO
-  level naming the pattern tried and the path that satisfied it — check
-  `.sdd/runtime/*.log` for `janitor path_exists:` lines.
-- The fuzzy fallback is on by default. To pin the old literal-only
-  behavior (e.g. if a project intentionally wants `path_exists` to reject
-  near-miss paths), set `BERNSTEIN_JANITOR_FUZZY_PATH_MATCH=0`. See
+- **Default behavior is unchanged**: `path_exists` with a plain literal
+  path still means exactly that path — operators can rely on the check
+  meaning the path they wrote.
+- **Explicit glob syntax always works**: a criterion that itself contains
+  glob characters (e.g. `path_exists: packages/db/**/seed-workers*.test.ts`)
+  is evaluated as a glob pattern. This is opt-in per-check by
+  construction, and the recommended way for plans/decompositions to
+  express "a test file matching this shape exists" without guessing the
+  repo's directory convention.
+- **Opt-in fuzzy fallback**: set `BERNSTEIN_JANITOR_FUZZY_PATHS=1` to make
+  a literal miss fall back to a fuzzy pattern derived from the basename
+  (`**/<stem>*<suffix>`), tolerating a different directory
+  depth/convention. Default OFF. When a fuzzy match satisfies a check, the
+  janitor logs a WARNING (`janitor path_exists: FUZZY MATCH ...`) naming
+  the literal path that missed, the pattern tried, and the path that
+  matched — check `.sdd/runtime/*.log`. See
   [CONFIG.md](CONFIG.md#3-environment-variables).
 - **Known limitation:** `test_passes` signals (e.g. `pnpm exec vitest run
   test/seed-workers.test.ts`) still reference the manager's guessed literal
