@@ -156,7 +156,7 @@ CONTROLS: list[dict[str, Any]] = [
             "raises a signed supervisor escalation."
         ),
         "artefact": "audit-chain/events.jsonl",
-        "selector": "run_start,task.transition,agent.transition,supervisor.escalated",
+        "selector": "task.transition,agent.transition,supervisor.escalated",
         "status": "mapped",
     },
     {
