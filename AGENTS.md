@@ -76,6 +76,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | File                       | Purpose |
 |----------------------------|---------|
 | `_contract.py`             | Adapter contract loader and capability checker |
+| `advisories.py`            | Adapter minimum-safe-version advisories (supply-chain posture) |
 | `aichat.py`                | AIChat CLI adapter |
 | `aider.py`                 | Aider CLI adapter |
 | `amp.py`                   | Amp CLI adapter |
