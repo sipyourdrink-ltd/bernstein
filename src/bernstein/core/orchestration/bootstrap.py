@@ -481,7 +481,7 @@ def bootstrap_from_seed(
     effective_cells = cells if cells is not None else seed.cells
 
     # 2. Workspace + catalog + index (silent - errors logged, not printed)
-    ensure_sdd(workdir)
+    ensure_sdd(workdir, model=seed.model or "opus")
     _clean_stale_runtime(workdir)
     _discover_catalog(workdir)
     _index_codebase_with_timeout(workdir)
@@ -998,7 +998,7 @@ def _bootstrap_from_goal_impl(
 
     # Initialise workspace
     with Status("[bold]Creating workspace...[/bold]", console=console):
-        created = ensure_sdd(workdir)
+        created = ensure_sdd(workdir, model=model or "opus")
         if first_run and not (workdir / "bernstein.yaml").exists():
             auto_write_bernstein_yaml(workdir)
         _clean_stale_runtime(workdir)

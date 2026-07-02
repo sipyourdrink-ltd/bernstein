@@ -159,15 +159,17 @@ def _start_heartbeat_proxy(
         heartbeat_dir.mkdir(parents=True, exist_ok=True)
         heartbeat_file = heartbeat_dir / f"{session_id}.json"
         while not stop_event.is_set() and not future.done():
-            payload = json.dumps({
-                "timestamp": int(time.time()),
-                "phase": "implementing",
-                "progress_pct": 0,
-                "current_file": "",
-                "message": "sandbox agent working",
-                "status": "working",
-                "files_changed": 0,
-            })
+            payload = json.dumps(
+                {
+                    "timestamp": int(time.time()),
+                    "phase": "implementing",
+                    "progress_pct": 0,
+                    "current_file": "",
+                    "message": "sandbox agent working",
+                    "status": "working",
+                    "files_changed": 0,
+                }
+            )
             with contextlib.suppress(OSError):  # best effort
                 heartbeat_file.write_text(payload, encoding="utf-8")
             stop_event.wait(interval_s)

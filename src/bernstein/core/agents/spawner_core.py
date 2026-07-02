@@ -2838,11 +2838,17 @@ class AgentSpawner:
         import os as _os
 
         adapter_name_lc = adapter.name().lower()
-        _env_keys: list[str] = ["OPENAI_API_KEY", "OPENAI_BASE_URL"]
+        _env_keys: list[str] = []
         if "claude" in adapter_name_lc:
             _env_keys.append("ANTHROPIC_API_KEY")
         elif "gemini" in adapter_name_lc:
             _env_keys.extend(["GOOGLE_API_KEY", "GEMINI_API_KEY"])
+        else:
+            # OpenAI-compatible adapters (codex, qwen, generic) only.
+            # Claude/Gemini sandboxes must not receive OpenAI credentials
+            # they never use (least-privilege, same per-adapter gating as
+            # the legacy container env allowlists).
+            _env_keys.extend(["OPENAI_API_KEY", "OPENAI_BASE_URL"])
         sandbox_env = {k: v for k in _env_keys if (v := _os.environ.get(k)) is not None}
 
         # 3) Submit the exec on a dedicated thread; the future drives
@@ -2902,6 +2908,8 @@ class AgentSpawner:
         Returns:
             Command argument list.
         """
+        import shlex
+
         _ = prompt_file  # Part of interface; container path is reconstructed from session_id
         _ = mcp_config  # Part of interface; not used in container command
         # Map container path: host workspace is mounted at /workspace
@@ -2923,16 +2931,26 @@ class AgentSpawner:
         }
         cli_binary = _ADAPTER_BINARY_MAP.get(adapter_name, adapter_name.split()[0])
 
+        # Shell-quote every interpolated value. ``model`` and the role
+        # segment of ``session_id`` originate from task-server payloads
+        # (length-checked only), so unquoted interpolation into ``sh -c``
+        # would let a crafted task run arbitrary commands at container
+        # startup, outside the adapter's own tool-approval gate.
+        q_prompt = shlex.quote(container_prompt)
+        q_model = shlex.quote(str(model_config.model))
+        q_effort = shlex.quote(str(model_config.effort))
+        q_binary = shlex.quote(cli_binary)
+
         if "claude" in adapter_name:
             cmd = [
                 "sh",
                 "-c",
-                f"claude --model {model_config.model} "
-                f"--effort {model_config.effort} "
+                f"claude --model {q_model} "
+                f"--effort {q_effort} "
                 f"--max-turns 50 "
                 f"--dangerously-skip-permissions "
                 f"--output-format stream-json "
-                f'-p "$(cat {container_prompt})"',
+                f'-p "$(cat {q_prompt})"',
             ]
         elif "qwen" in adapter_name:
             # Qwen CLI uses positional arg for prompt, -y for auto-approve.
@@ -2941,14 +2959,14 @@ class AgentSpawner:
             cmd = [
                 "sh",
                 "-c",
-                f'{cli_binary} -y --auth-type openai --model {model_config.model} "$(cat {container_prompt})"',
+                f'{q_binary} -y --auth-type openai --model {q_model} "$(cat {q_prompt})"',
             ]
         else:
             # Generic: assume the adapter CLI reads from stdin or -p flag
             cmd = [
                 "sh",
                 "-c",
-                f'cat {container_prompt} | {cli_binary} -p "$(cat {container_prompt})"',
+                f'cat {q_prompt} | {q_binary} -p "$(cat {q_prompt})"',
             ]
         return cmd
 

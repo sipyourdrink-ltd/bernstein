@@ -1523,6 +1523,12 @@ def _run_impl(
             console.print(f"[dim]Plan name:[/dim] {goal}")
             loaded_goal = goal or str(plan_file)
 
+            if worker_role:
+                # Fail loudly instead of silently running full manager
+                # decomposition, which is exactly what the flag exists
+                # to bypass.
+                raise click.UsageError("--worker requires a seed file; it is not supported with --plan-file.")
+
             with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
                 bootstrap_from_goal(
                     goal=loaded_goal,
@@ -1603,6 +1609,11 @@ def _run_impl(
 
     if goal is not None:
         # Inline goal mode -- no YAML needed
+        if worker_role:
+            # Fail loudly instead of silently running full manager
+            # decomposition, which is exactly what the flag exists to
+            # bypass.
+            raise click.UsageError("--worker requires a seed file; it is not supported with an inline goal.")
         try:
             with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
                 bootstrap_from_goal(

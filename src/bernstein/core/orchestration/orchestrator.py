@@ -4715,6 +4715,7 @@ if __name__ == "__main__":
         # never runs, and any provisioning failure falls back to the
         # existing legacy container path unchanged.
         docker_sandbox_session = None
+        _docker_sandbox_backend = None
         if _sandbox_runtime == "docker":
             try:
                 import subprocess as _subprocess
@@ -4743,6 +4744,7 @@ if __name__ == "__main__":
                 docker_sandbox_session = _asyncio.run(
                     _docker_backend.create(_docker_manifest, options={"image": _container_image}),
                 )
+                _docker_sandbox_backend = _docker_backend
                 logger.info(
                     "Docker sandbox session %s provisioned for this run (branch=%s)",
                     docker_sandbox_session.session_id,
@@ -4755,6 +4757,21 @@ if __name__ == "__main__":
                     "Failed to provision Docker sandbox session, falling back to legacy container isolation: %s",
                     exc,
                 )
+
+        def _teardown_docker_sandbox() -> None:
+            """Destroy the run-level Docker sandbox session, if any.
+
+            Without this every ``--sandbox docker`` run leaves a
+            ``sleep infinity`` container behind after the orchestrator
+            exits.
+            """
+            if docker_sandbox_session is None or _docker_sandbox_backend is None:
+                return
+            try:
+                _asyncio.run(_docker_sandbox_backend.destroy(docker_sandbox_session))
+                logger.info("Docker sandbox session %s destroyed", docker_sandbox_session.session_id)
+            except Exception:
+                logger.warning("Failed to destroy Docker sandbox session", exc_info=True)
 
         runtime_bridge = None
         openclaw_cfg = seed.bridges.openclaw if seed is not None and seed.bridges is not None else None
@@ -4949,6 +4966,7 @@ if __name__ == "__main__":
             try:
                 multi_orchestrator.run()
             finally:
+                _teardown_docker_sandbox()
                 if mcp_manager is not None:
                     mcp_manager.stop_all()
         else:
@@ -4995,6 +5013,7 @@ if __name__ == "__main__":
                 else:
                     orchestrator.run()
             finally:
+                _teardown_docker_sandbox()
                 if mcp_manager is not None:
                     mcp_manager.stop_all()
     except Exception:

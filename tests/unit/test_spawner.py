@@ -1214,6 +1214,16 @@ class TestRenderPromptWithCatalogSystemPrompt:
         decomposition - the manager would have a persona but no idea how to
         create child tasks.
         """
+        # A real manager template with a sentinel line proves the template
+        # itself is rendered; asserting only on the completion-curl block
+        # would pass even with the generic fallback (the block is appended
+        # to every prompt regardless of template resolution).
+        manager_dir = tmp_path / "manager"
+        manager_dir.mkdir()
+        (manager_dir / "system_prompt.md").write_text(
+            "MANAGER-TEMPLATE-SENTINEL\nCreate child tasks via POST /tasks.\n",
+            encoding="utf-8",
+        )
         task = make_task(role="manager", title="Decompose the goal")
         prompt = _render_prompt(
             [task],
@@ -1222,7 +1232,7 @@ class TestRenderPromptWithCatalogSystemPrompt:
             catalog_system_prompt="You are the Agency project-manager persona.",
         )
         assert "You are the Agency project-manager persona." not in prompt
-        assert "POST http://127.0.0.1:8052/tasks" in prompt
+        assert "MANAGER-TEMPLATE-SENTINEL" in prompt
 
 
 # --- AgentSpawner.spawn_for_tasks with CatalogRegistry ---
@@ -1354,3 +1364,29 @@ class TestSpawnForTasksWithCatalog:
         session = spawner.spawn_for_tasks([task])
 
         assert session.agent_source == "built-in"
+
+
+# --- Regression: orchestrator call site passes templates/roles/ (issue #2155) ---
+
+
+class TestOrchestratorSpawnerCallSite:
+    """The one production AgentSpawner construction must pass templates/roles/.
+
+    The original bug: the orchestrator passed the templates *root* where
+    AgentSpawner's whole internal contract expects the ``roles/`` directory,
+    so every role template lookup raised FileNotFoundError and silently fell
+    back to the generic prompt. A static source assertion is the cheapest
+    net that survives refactors of either side independently.
+    """
+
+    def test_orchestrator_appends_roles_to_templates_dir(self) -> None:
+        from pathlib import Path as _RuntimePath
+
+        import bernstein.core.orchestration.orchestrator as orch_mod
+
+        source = _RuntimePath(orch_mod.__file__).read_text(encoding="utf-8")
+        assert 'templates_dir=get_templates_dir(workdir) / "roles"' in source, (
+            "orchestrator must pass templates/roles/ to AgentSpawner "
+            "(templates root breaks every role template lookup; see #2155)"
+        )
+        assert "templates_dir=get_templates_dir(workdir),\n            adapter" not in source

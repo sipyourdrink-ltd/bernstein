@@ -497,6 +497,7 @@ class Task:
             effort=raw.get("effort"),
             cli=raw.get("cli"),
             mcp_servers=list(raw.get("mcp_servers", [])),
+            metadata=dict(raw.get("metadata") or {}),
             batch_eligible=(lambda v: None if v is None else bool(v))(raw.get("batch_eligible")),
             eu_ai_act_risk=raw.get("eu_ai_act_risk", "minimal"),
             approval_required=bool(raw.get("approval_required", False)),
