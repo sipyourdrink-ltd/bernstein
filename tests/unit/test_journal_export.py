@@ -116,3 +116,36 @@ class TestExport:
         receipt_path = tmp_path / "receipt.tar"
         with pytest.raises(ReceiptError):
             export_receipt(agent_dir, receipt_path, agent_id="agent-1")
+
+
+class TestExportEffortRoundTrip:
+    """An effort-bearing journal must stay offline-verifiable end to end.
+
+    Regression for the export/publish recompute paths that folded every
+    hashed field except ``effort``: an effort-bearing row's bundled step_hash
+    included effort while the offline walker recomputed without it, so
+    ``verify_receipt`` failed on a chain the local reader accepted.
+    """
+
+    def test_effort_bearing_journal_roundtrips_offline(self, tmp_path: Path) -> None:
+        agent_dir = tmp_path / "agent-effort"
+        journal = Journal.open(agent_dir)
+        journal.append(input_hash="a0", model="m1", prompt="p0", effort="high")
+        journal.append(input_hash="a1", model="m1", prompt="p1", effort="low")
+        journal.close()
+
+        reader = JournalReader(agent_dir)
+        # Local reader must accept the effort-bearing chain.
+        assert reader.verify().ok
+        head = reader.head().step_hash  # type: ignore[union-attr]
+
+        receipt_path = tmp_path / "receipt.tar"
+        result = export_receipt(agent_dir, receipt_path, agent_id="agent-effort")
+        assert result.head_hash == head
+
+        # OFFLINE third-party verify must reproduce the same head_hash from the
+        # bundled bytes, which only holds if the walker folds effort into the
+        # recomputed step hash.
+        verified = verify_receipt(receipt_path, expected_head=head)
+        assert verified.ok, f"offline verify must pass; errors={verified.errors}"
+        assert verified.steps == 2

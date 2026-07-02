@@ -118,3 +118,46 @@ class TestJournalDiff:
             reason="model differs",
         )
         assert hash(d) == hash(d)
+
+
+class TestEffortDivergence:
+    """Two chains differing only in effort must surface a named ``effort`` diff.
+
+    Regression: ``_HASHED_FIELDS`` omitted ``effort`` while ``effort`` folds
+    into the step hash, so two runs identical except for reasoning effort had
+    divergent step hashes yet ``diff_journals`` reported no divergence - the
+    exact hash-soup blindness the module exists to prevent.
+    """
+
+    def test_effort_only_change_named_in_step_diff(self) -> None:
+        entry_a = {
+            "prev_hash": "0" * 64,
+            "input_hash": "aa",
+            "model": "m1",
+            "prompt": "hi",
+            "tool_call": None,
+            "tool_result": None,
+            "effort": "low",
+        }
+        entry_b = dict(entry_a, effort="high")
+        result = diff_steps(entry_a, entry_b)
+        assert result is not None
+        assert "effort" in result.fields_changed
+        assert result.left_values["effort"] == "low"
+        assert result.right_values["effort"] == "high"
+
+    def test_effort_only_change_surfaces_in_diff_journals(self, tmp_path: Path) -> None:
+        journal_a = Journal.open(tmp_path / "a")
+        journal_a.append(input_hash="a0", model="m1", prompt="p0", effort="low")
+        journal_a.close()
+
+        journal_b = Journal.open(tmp_path / "b")
+        journal_b.append(input_hash="a0", model="m1", prompt="p0", effort="high")
+        journal_b.close()
+
+        result = diff_journals(tmp_path / "a", tmp_path / "b")
+        assert result is not None, "an effort-only divergence must be reported"
+        assert result.seq == 0
+        assert "effort" in result.fields_changed
+        assert result.left_values["effort"] == "low"
+        assert result.right_values["effort"] == "high"

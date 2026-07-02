@@ -19,12 +19,16 @@ if TYPE_CHECKING:
 
 
 def _task(role: str = "backend") -> Task:
+    # HIGH complexity so the deterministic effort mapping lands on "high",
+    # matching the effort the rework ledger is seeded at below. The cascade
+    # for a HIGH task starts at sonnet, which is the tier these rework-driven
+    # promotion tests exercise.
     return Task(
         id="t1",
         title="Do something",
         description="desc",
         role=role,
-        complexity=Complexity.MEDIUM,
+        complexity=Complexity.HIGH,
         scope=Scope.MEDIUM,
         priority=2,
     )
