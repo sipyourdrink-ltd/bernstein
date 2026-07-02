@@ -648,13 +648,32 @@ def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
     return parsed
 
 
+_ROLE_POLICY_KEYS: tuple[str, ...] = (
+    "provider",
+    "model",
+    "effort",
+    "cli",
+    "base_url",
+    "api_key_env",
+)
+
+
 def _parse_single_role_policy(role: str, settings: object) -> dict[str, str]:
-    """Parse and validate a single role's model policy settings."""
+    """Parse and validate a single role's model policy settings.
+
+    ``base_url`` and ``api_key_env`` are optional per-role endpoint
+    overrides that flow through the spawn path into the adapter manifest
+    the same way ``model``/``provider`` do. ``api_key_env`` is the NAME of
+    an environment variable, never a literal key, and is validated against
+    the same fail-closed credential allowlist the ``openai_agents`` runner
+    enforces so a repo-carried config cannot forward an unrelated host
+    secret to an arbitrary endpoint.
+    """
     if not isinstance(settings, dict):
         raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
 
     normalized: dict[str, str] = {}
-    for key in ("provider", "model", "effort", "cli"):
+    for key in _ROLE_POLICY_KEYS:
         value = settings.get(key)
         if value is None:
             continue
@@ -662,10 +681,22 @@ def _parse_single_role_policy(role: str, settings: object) -> dict[str, str]:
             raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a non-empty string")
         normalized[key] = value
 
+    # Reuse the adapter's fail-closed credential-name allowlist. Imported
+    # lazily so parsing a seed file does not import the adapters package
+    # (and its optional SDK path) at module load. A rejected name surfaces
+    # as a SeedError so the misconfig fails at parse time, not at spawn.
+    if "api_key_env" in normalized:
+        from bernstein.adapters.openai_agents_runner import validate_api_key_env_name
+
+        try:
+            validate_api_key_env_name(normalized["api_key_env"])
+        except RuntimeError as exc:
+            raise SeedError(f"role_model_policy[{role!r}][api_key_env]: {exc}") from exc
+
     if "cli" in normalized and "provider" not in normalized:
         normalized["provider"] = normalized["cli"]
 
-    unknown_keys = sorted(set(settings) - {"provider", "model", "effort", "cli"})
+    unknown_keys = sorted(set(settings) - set(_ROLE_POLICY_KEYS))
     if unknown_keys:
         raise SeedError(f"role_model_policy[{role!r}] has unknown keys: {', '.join(unknown_keys)}")
     return normalized

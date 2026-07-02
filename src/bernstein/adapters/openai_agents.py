@@ -183,8 +183,9 @@ class OpenAIAgentsAdapter(PluginAdapter):
             session_id: Bernstein session ID for log correlation.
             mcp_config: Optional MCP servers, sandbox provider choice,
                 sampling/endpoint overrides (``temperature``, ``top_p``,
-                ``top_k``, ``base_url``, ``api_key_env``), and the
-                spawner-injected ``heartbeat_dir``.
+                ``top_k``, ``base_url``, ``api_key_env``), the tool source
+                selector (``tool_source``), and the spawner-injected
+                ``heartbeat_dir``.
             timeout_seconds: Hard timeout forwarded to the runner.
             task_scope: "small" | "medium" | "large".
             budget_multiplier: Retry multiplier applied to the scope budget.
@@ -194,6 +195,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
             Plain dict ready for ``json.dumps``.
         """
         sandbox_provider = _DEFAULT_SANDBOX_PROVIDER
+        tool_source = "gateway"
         tools: list[dict[str, Any]] = []
         mcp_servers: dict[str, Any] = {}
         overrides: dict[str, Any] = {}
@@ -201,6 +203,13 @@ class OpenAIAgentsAdapter(PluginAdapter):
             provider = mcp_config.get("sandbox_provider")
             if isinstance(provider, str) and provider:
                 sandbox_provider = provider
+            # ``tool_source: "builtin"`` opts into the runner's
+            # workdir-sandboxed builtins.  Any other value keeps the default
+            # MCP-gateway path, so the manifest stays byte-identical for
+            # runs that do not request builtins.
+            raw_tool_source = mcp_config.get("tool_source")
+            if raw_tool_source == "builtin":
+                tool_source = "builtin"
             raw_tools: object = mcp_config.get("tools")
             if isinstance(raw_tools, list):
                 tools = [cast("dict[str, Any]", t) for t in cast("list[Any]", raw_tools) if isinstance(t, dict)]
@@ -217,6 +226,9 @@ class OpenAIAgentsAdapter(PluginAdapter):
             top_k = mcp_config.get("top_k")
             if isinstance(top_k, int) and not isinstance(top_k, bool):
                 overrides["top_k"] = top_k
+            max_tokens = mcp_config.get("max_tokens")
+            if isinstance(max_tokens, int) and not isinstance(max_tokens, bool):
+                overrides["max_tokens"] = max_tokens
             for str_key in ("base_url", "api_key_env"):
                 str_value = mcp_config.get(str_key)
                 if isinstance(str_value, str) and str_value:
@@ -229,19 +241,25 @@ class OpenAIAgentsAdapter(PluginAdapter):
             if isinstance(heartbeat_dir, str) and heartbeat_dir:
                 overrides["heartbeat_dir"] = heartbeat_dir
 
+        # ``max_tokens`` from ``mcp_config`` (mode-profile override) wins; the
+        # model_config value is only the fallback when the override is absent.
+        # It is applied here on the RIGHT of the merge so an ``overrides``
+        # value survives, matching the other sampling overrides above.
+        overrides.setdefault("max_tokens", int(getattr(model_config, "max_tokens", 200_000)))
+
         return overrides | {
             "session_id": session_id,
             "prompt": prompt,
             "workdir": str(workdir),
             "model": str(getattr(model_config, "model", "")),
             "effort": str(getattr(model_config, "effort", "high")),
-            "max_tokens": int(getattr(model_config, "max_tokens", 200_000)),
             "timeout_seconds": timeout_seconds,
             "task_scope": task_scope,
             "budget_multiplier": budget_multiplier,
             "system_addendum": system_addendum,
             "sandbox_provider": sandbox_provider,
             "tools": tools,
+            "tool_source": tool_source,
             "mcp_servers": mcp_servers,
         }
 
