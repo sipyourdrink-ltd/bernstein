@@ -28,6 +28,8 @@ from bernstein.compliance.evidence_pack import (
     build_evidence_pack,
     get_standard_map,
 )
+from bernstein.compliance.owasp_asi import control_map as owasp_asi_control_map
+from bernstein.compliance.owasp_skills import control_map as owasp_skills_control_map
 
 __all__ = [
     "EVIDENCE_PACK_SCHEMA_VERSION",
@@ -45,4 +47,6 @@ __all__ = [
     "TechDocGenerator",
     "build_evidence_pack",
     "get_standard_map",
+    "owasp_asi_control_map",
+    "owasp_skills_control_map",
 ]
