@@ -14,6 +14,7 @@ Implements:
 from __future__ import annotations
 
 import enum
+import json
 import logging
 import os
 import re
@@ -152,7 +153,27 @@ _CONTEXT_OVERFLOW_PATTERNS: tuple[str, ...] = (
 # `"max_tokens": 16384` (which incidentally contains the digits 4-1-3 nowhere,
 # but DOES contain other risky substrings like "429" in unrelated counters)
 # does not. See 2026-07-02 false-positive incident (runs 4/5/6 killed).
-_RISKY_BARE_TOKENS: frozenset[str] = frozenset({"413", "429", "401", "403", "504", "context window"})
+_RISKY_BARE_TOKENS: frozenset[str] = frozenset({
+    # bare HTTP codes — match inside byte counts / ids / timestamps
+    "413", "429", "401", "403", "504",
+    # generic words/phrases — appear freely in tool output, target-repo code
+    # being read, and test stdout (2026-07-02 run 7: `"timeout": 5` in a
+    # tool-call JSON killed a healthy manager)
+    "context window",
+    "timeout", "timed out", "time out",
+    "request timeout", "connect timeout", "read timeout", "gateway timeout",
+    "rate limit", "rate_limit", "ratelimit", "overloaded",
+    "hit your limit", "usage cap",
+    "unauthorized", "forbidden",
+    "invalid_client", "invalid_token", "expired_token",
+    "connection refused", "connection reset", "econnrefused", "econnreset",
+    "api_error",
+})
+
+# Structured agent-log lines that carry DATA (tool traffic, heartbeats), not
+# provider errors. Never scanned: a tool result legitimately contains target
+# repo code/output with words like "unauthorized" or "TimeoutError" in it.
+_DATA_LINE_TYPES: frozenset[str] = frozenset({"tool_call", "tool_result", "heartbeat"})
 
 # Words that indicate a line is plausibly describing a real provider/HTTP
 # error, rather than incidental structured data. Deliberately narrow —
@@ -512,6 +533,14 @@ class RateLimitTracker:
 
         lines = text.splitlines()[-_LOG_SCAN_TAIL_LINES:]
         for line in lines:
+            stripped = line.lstrip()
+            if stripped.startswith("{"):
+                try:
+                    _obj = json.loads(stripped)
+                except ValueError:
+                    _obj = None
+                if isinstance(_obj, dict) and _obj.get("type") in _DATA_LINE_TYPES:
+                    continue
             lower_line = line.lower()
             for pat in patterns:
                 pat_lower = pat.lower()

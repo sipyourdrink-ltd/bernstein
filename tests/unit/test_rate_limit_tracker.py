@@ -398,3 +398,45 @@ class TestRiskyBareTokenTruePositives:
         log.write_text("Error: context window exceeded for this request\n")
         tracker = RateLimitTracker()
         assert tracker.scan_log_for_context_overflow(log)
+
+
+class TestDataLineAndGenericWordFalsePositives:
+    """2026-07-02 run-7 regression: healthy agents killed by generic words in
+    structured JSON log lines (`"timeout": 5` in a tool_call payload)."""
+
+    def _tracker(self):
+        from bernstein.core.observability.rate_limit_tracker import RateLimitTracker
+        return RateLimitTracker()
+
+    def test_tool_traffic_lines_never_match(self, tmp_path):
+        log = tmp_path / "agent.log"
+        log.write_text(
+            '{"type": "tool_call", "name": "run_command", "args": {"argv": ["pnpm", "test"], "timeout": 5}}\n'
+            '{"type": "tool_result", "name": "read_file", "ok": true, "result": {"bytes": 64133, "preview": "if (unauthorized) throw new Error(\'forbidden\'); // rate limit retry"}}\n'
+            '{"type": "tool_result", "name": "run_command", "ok": false, "result": {"stderr_preview": "Error: connect ECONNREFUSED 127.0.0.1:5432 — test timed out"}}\n'
+            '{"type": "heartbeat", "phase": "running", "timeout": 429}\n'
+            '{"type": "tool_result", "name": "read_file", "result": {"preview": "max_tokens: 16384, TimeoutError handling, status 413 code"}}\n'
+        )
+        assert self._tracker().detect_failure_type(log) is None
+
+    def test_generic_words_without_error_context_never_match(self, tmp_path):
+        log = tmp_path / "agent.log"
+        log.write_text(
+            "setting request timeout to 30s for provider\n"
+            "the rate limit configuration was loaded\n"
+            "unauthorized users are redirected to login\n"
+        )
+        assert self._tracker().detect_failure_type(log) is None
+
+    def test_real_provider_errors_still_detected(self, tmp_path):
+        cases = {
+            "rate_limit": '{"type": "error", "kind": "api", "message": "Error code: 429 - rate limit exceeded"}\n',
+            "timeout": "openai.APITimeoutError: HTTP request failed: read timeout\n",
+            "context_overflow": '{"type": "error", "message": "Error code: 413 - request too large: maximum context length exceeded"}\n',
+            "auth_error": "openai.AuthenticationError: Error code: 401 - invalid api key\n",
+            "api_error": "httpx.ConnectError: connection refused (APIConnectionError) — request failed\n",
+        }
+        for expected, line in cases.items():
+            log = tmp_path / f"{expected}.log"
+            log.write_text(line)
+            assert self._tracker().detect_failure_type(log) == expected, expected
