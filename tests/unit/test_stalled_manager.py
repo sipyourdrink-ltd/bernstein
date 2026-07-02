@@ -341,6 +341,66 @@ def test_resolve_threshold_warns_when_it_would_race_idle_kill(monkeypatch: Any, 
     assert "idle_log_age_threshold_s" in caplog.text
 
 
+def test_resolve_threshold_env_path_also_warns_when_it_would_race_idle_kill(monkeypatch: Any, caplog: Any) -> None:
+    """The race-check must fire for the env override too, not just the config/default path -
+    BERNSTEIN_STALL_THRESHOLD_S is the primary way an operator raises the threshold (#2179)."""
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "250")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=90.0))
+    with caplog.at_level("WARNING"):
+        result = _resolve_stall_threshold_s(orch)
+    assert result == 250.0
+    assert "idle_log_age_threshold_s" in caplog.text
+
+
+def test_resolve_threshold_zero_env_falls_back_to_config_with_warning(monkeypatch: Any, caplog: Any) -> None:
+    """A 0/negative env value must not silently disable the watchdog (fires on turn one)."""
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "0")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    with caplog.at_level("WARNING"):
+        result = _resolve_stall_threshold_s(orch)
+    assert result == 222.0
+    assert "positive, finite" in caplog.text
+
+
+def test_resolve_threshold_negative_env_falls_back(monkeypatch: Any) -> None:
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "-5")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    assert _resolve_stall_threshold_s(orch) == 222.0
+
+
+def test_resolve_threshold_nan_env_falls_back(monkeypatch: Any) -> None:
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "nan")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    assert _resolve_stall_threshold_s(orch) == 222.0
+
+
+def test_resolve_threshold_inf_env_falls_back(monkeypatch: Any) -> None:
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "inf")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    assert _resolve_stall_threshold_s(orch) == 222.0
+
+
+def test_resolve_threshold_non_positive_config_falls_back_to_default(monkeypatch: Any, caplog: Any) -> None:
+    monkeypatch.delenv(STALL_THRESHOLD_ENV_VAR, raising=False)
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=-10.0))
+    with caplog.at_level("WARNING"):
+        result = _resolve_stall_threshold_s(orch)
+    assert result == STALL_THRESHOLD_S
+    assert "positive, finite" in caplog.text
+
+
+def test_resolve_threshold_caches_per_orchestrator_instance(monkeypatch: Any, caplog: Any) -> None:
+    """Resolution + its log lines must happen once per orchestrator, not once per tick."""
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "250")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=90.0))
+    with caplog.at_level("INFO"):
+        first = _resolve_stall_threshold_s(orch)
+        caplog.clear()
+        second = _resolve_stall_threshold_s(orch)
+    assert first == second == 250.0
+    assert caplog.text == ""
+
+
 def test_detect_stalled_manager_honors_raised_threshold_via_config(monkeypatch: Any, tmp_path: Path) -> None:
     """A manager alive past the old 170s default but under a raised threshold is not aborted."""
     monkeypatch.delenv(STALL_THRESHOLD_ENV_VAR, raising=False)

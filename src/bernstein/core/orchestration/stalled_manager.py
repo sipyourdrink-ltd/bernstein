@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import operator
 import os
 import time
@@ -36,6 +37,8 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from bernstein.core import defaults as _defaults
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,13 @@ logger = logging.getLogger(__name__)
 # race that idle-kill instead of firing before it, so this stays a few
 # seconds under it to guarantee the stalled-manager detector reports the
 # real cause first.
-STALL_THRESHOLD_S: float = 170.0
+#
+# This is only reached when ``orch._config`` is unset entirely (bare test
+# doubles) - production always carries a value via
+# ``OrchestratorConfig.stalled_manager_threshold_s``'s ``default_factory``.
+# Derived from ``core.defaults.ORCHESTRATOR`` rather than a second hardcoded
+# literal so there is exactly one authoritative default to tune.
+STALL_THRESHOLD_S: float = _defaults.ORCHESTRATOR.stalled_manager_threshold_s
 
 # Env var checked ahead of ``OrchestratorConfig.stalled_manager_threshold_s``
 # (which itself defaults from ``tuning.orchestrator.stalled_manager_threshold_s``
@@ -264,19 +273,44 @@ def build_diagnostic(
     )
 
 
+def _is_sane_threshold(value: float) -> bool:
+    """A stall threshold must be a positive, finite number of seconds.
+
+    ``0``/negative would fire the watchdog on the very first tick after
+    spawn for every manager session. ``nan``/``inf`` would make the
+    ``runtime < threshold`` comparison in :func:`detect_stalled_manager`
+    permanently false/true, silently disabling or permanently no-op'ing the
+    watchdog with no operator-visible signal - a real risk once this value
+    can come from an operator-typable env var.
+    """
+    return math.isfinite(value) and value > 0
+
+
 def _resolve_stall_threshold_s(orch: Any) -> float:
-    """Resolve the effective stall threshold.
+    """Resolve the effective stall threshold, cached once per orchestrator.
 
     Precedence: ``BERNSTEIN_STALL_THRESHOLD_S`` env var > ``OrchestratorConfig.
     stalled_manager_threshold_s`` (yaml-tunable via ``tuning.orchestrator.
     stalled_manager_threshold_s``, see ``core.defaults.OrchestratorDefaults``)
-    > the ``STALL_THRESHOLD_S`` module default. An unparseable env var falls
-    through to the config/default value with a warning rather than crashing.
+    > the ``STALL_THRESHOLD_S`` module default. An unparseable, non-positive,
+    or non-finite value at any tier falls through to the next tier with a
+    warning rather than crashing or silently disabling the watchdog.
+
+    The resolved value is cached on ``orch`` so env/config are only
+    re-parsed - and the resolution + race-check logged - once per
+    orchestrator instance, instead of on every tick for the lifetime of the
+    manager session (``detect_stalled_manager`` is called every tick while
+    the manager is alive and below threshold).
     """
+    cached = getattr(orch, "_stalled_manager_threshold_cache", None)
+    if cached is not None:
+        return cached
+
+    resolved: float | None = None
     raw_env = os.environ.get(STALL_THRESHOLD_ENV_VAR)
     if raw_env is not None and raw_env.strip():
         try:
-            value = float(raw_env)
+            env_value = float(raw_env)
         except ValueError:
             logger.warning(
                 "%s=%r is not a valid float; falling back to config/default stall threshold",
@@ -284,17 +318,41 @@ def _resolve_stall_threshold_s(orch: Any) -> float:
                 raw_env,
             )
         else:
-            logger.info(
-                "stalled_manager: threshold resolved to %.1fs from env %s=%r",
-                value,
-                STALL_THRESHOLD_ENV_VAR,
-                raw_env,
-            )
-            return value
+            if _is_sane_threshold(env_value):
+                logger.info(
+                    "stalled_manager: threshold resolved to %.1fs from env %s=%r",
+                    env_value,
+                    STALL_THRESHOLD_ENV_VAR,
+                    raw_env,
+                )
+                resolved = env_value
+            else:
+                logger.warning(
+                    "%s=%r must be a positive, finite number of seconds; "
+                    "falling back to config/default stall threshold",
+                    STALL_THRESHOLD_ENV_VAR,
+                    raw_env,
+                )
 
-    config_value = getattr(getattr(orch, "_config", None), "stalled_manager_threshold_s", None)
-    resolved = float(config_value) if config_value is not None else STALL_THRESHOLD_S
+    if resolved is None:
+        config_value = getattr(getattr(orch, "_config", None), "stalled_manager_threshold_s", None)
+        if config_value is not None and _is_sane_threshold(float(config_value)):
+            resolved = float(config_value)
+        else:
+            if config_value is not None:
+                logger.warning(
+                    "tuning.orchestrator.stalled_manager_threshold_s=%r must be a positive, "
+                    "finite number of seconds; falling back to the %.1fs default",
+                    config_value,
+                    STALL_THRESHOLD_S,
+                )
+            resolved = STALL_THRESHOLD_S
+
+    # Race-check runs for every resolution path (env, config, and default),
+    # not just the config/default fallback - env is the primary way an
+    # operator raises the threshold, so it's the path that most needs this.
     _warn_if_races_idle_kill(resolved)
+    orch._stalled_manager_threshold_cache = resolved
     return resolved
 
 
@@ -306,9 +364,7 @@ def _warn_if_races_idle_kill(threshold_s: float) -> None:
     deadlines' 170-vs-180s spacing is intentional, and a raised threshold
     should still surface if that watchdog is ever wired up later.
     """
-    from bernstein.core.defaults import AGENT
-
-    idle_threshold = float(AGENT.idle_log_age_threshold_s)
+    idle_threshold = float(_defaults.AGENT.idle_log_age_threshold_s)
     if threshold_s >= idle_threshold:
         logger.warning(
             "stalled_manager_threshold_s (%.0fs) >= AGENT.idle_log_age_threshold_s (%.0fs); "

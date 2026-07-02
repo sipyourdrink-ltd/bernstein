@@ -190,12 +190,20 @@ tuning:
 or the `BERNSTEIN_STALL_THRESHOLD_S` env var (checked first, so it overrides
 the yaml value for a single run without editing `bernstein.yaml`). Precedence:
 env var > yaml `tuning.orchestrator.stalled_manager_threshold_s` > the
-`170.0` default.
+`170.0` default. Each tier must resolve to a positive, finite number of
+seconds — an unparseable, zero, negative, `nan`, or `inf` value at a given
+tier is rejected with a warning and falls through to the next tier, rather
+than silently disabling the watchdog (fires on turn one) or making it a
+permanent no-op.
 
 If the resolved threshold reaches or exceeds `AGENT.idle_log_age_threshold_s`
 (`180.0` by default — a separate, currently-unwired idle-agent watchdog), a
 warning is logged, since that watchdog would race the stalled-manager
-diagnostic if it is ever wired into the tick loop.
+diagnostic if it is ever wired into the tick loop. This check runs for the
+env var, yaml, and default resolution paths alike, so raising the threshold
+via `BERNSTEIN_STALL_THRESHOLD_S` — the primary way an operator raises it —
+surfaces the warning too. The resolution (and this check) happens once per
+orchestrator instance, not on every tick.
 
 ---
 
