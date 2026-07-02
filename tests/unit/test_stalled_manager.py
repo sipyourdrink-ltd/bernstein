@@ -92,7 +92,7 @@ def test_detect_returns_none_when_manager_under_threshold(tmp_path: Path) -> Non
 
 def test_detect_returns_none_when_child_tasks_exist(tmp_path: Path) -> None:
     now = 1_000.0
-    session = _manager_session(spawn_ts=now - 120.0)  # past threshold
+    session = _manager_session(spawn_ts=now - (STALL_THRESHOLD_S + 30.0))  # past threshold
     orch = _build_orch(tmp_path, session=session, extra_tasks=["task-2"])
     with patch("bernstein.core.orchestration.stalled_manager.time.time", return_value=now):
         assert detect_stalled_manager(orch) is None
@@ -100,7 +100,7 @@ def test_detect_returns_none_when_child_tasks_exist(tmp_path: Path) -> None:
 
 def test_detect_fires_when_manager_alive_with_no_children(tmp_path: Path) -> None:
     now = 1_000.0
-    session = _manager_session(spawn_ts=now - 120.0)
+    session = _manager_session(spawn_ts=now - (STALL_THRESHOLD_S + 30.0))
     _write_hook_events(
         tmp_path,
         session.id,
@@ -116,7 +116,7 @@ def test_detect_fires_when_manager_alive_with_no_children(tmp_path: Path) -> Non
     assert diag is not None
     assert diag.session_id == session.id
     assert diag.manager_task_id == "manager-task-1"
-    assert diag.runtime_s == 120.0
+    assert diag.runtime_s == STALL_THRESHOLD_S + 30.0
     assert diag.hook_event_count == 3
     # Last 5 Bash commands - there are only 2 here.
     assert diag.last_bash_commands == [
@@ -151,7 +151,7 @@ def test_detect_ignores_non_manager_roles(tmp_path: Path) -> None:
 
 def test_handle_writes_failure_record_and_log_and_aborts(tmp_path: Path, capsys: Any) -> None:
     now = 1_000.0
-    session = _manager_session(spawn_ts=now - 120.0)
+    session = _manager_session(spawn_ts=now - (STALL_THRESHOLD_S + 30.0))
     _write_hook_events(
         tmp_path,
         session.id,
