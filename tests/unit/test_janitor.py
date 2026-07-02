@@ -75,6 +75,105 @@ class TestPathExists:
         assert passed is True
 
 
+class TestPathExistsFallback:
+    """Issue #2186: manager-guessed literal paths vs. worker-chosen
+    repo-idiomatic paths. path_exists should fall back to glob, then a
+    fuzzy basename match, before failing."""
+
+    def test_literal_hit_unaffected(self, tmp_path: Path) -> None:
+        """A literal hit keeps the original ("exists") detail string --
+        no behavior change for the common case."""
+        (tmp_path / "foo.py").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="foo.py")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert detail == "exists"
+
+    def test_literal_miss_glob_hit(self, tmp_path: Path) -> None:
+        """Literal path string with a glob-shaped guess matches via the
+        glob fallback."""
+        nested = tmp_path / "packages" / "db"
+        nested.mkdir(parents=True)
+        (nested / "seed-workers.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/*/seed-workers.test.ts")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "glob fallback" in detail
+        assert "seed-workers.test.ts" in detail
+
+    def test_literal_miss_fuzzy_hit_different_depth(self, tmp_path: Path) -> None:
+        """The exact #2186 repro: manager guesses `packages/db/test/...`,
+        worker writes to `packages/db/src/__tests__/...` -- a different
+        directory depth and name suffix. The fuzzy basename fallback
+        should still find it."""
+        actual_dir = tmp_path / "packages" / "db" / "src" / "__tests__"
+        actual_dir.mkdir(parents=True)
+        (actual_dir / "seed-workers-demo-link.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "fuzzy fallback" in detail
+        assert "seed-workers-demo-link.test.ts" in detail
+
+    def test_true_miss_still_fails(self, tmp_path: Path) -> None:
+        """No literal, glob, or fuzzy match anywhere under workdir --
+        must still fail; the fallback must not become a rubber stamp."""
+        (tmp_path / "unrelated.txt").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_fuzzy_fallback_can_be_disabled_via_env(self, tmp_path: Path) -> None:
+        """BERNSTEIN_JANITOR_FUZZY_PATH_MATCH=0 pins the old
+        literal(+glob)-only behavior."""
+        actual_dir = tmp_path / "packages" / "db" / "src" / "__tests__"
+        actual_dir.mkdir(parents=True)
+        (actual_dir / "seed-workers-demo-link.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATH_MATCH": "0"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_glob_fallback_logs_literal_miss_and_match(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """The janitor must log which path satisfied a glob-fallback match
+        (logging is the debugging interface -- see #2186 postmortem)."""
+        nested = tmp_path / "packages" / "db"
+        nested.mkdir(parents=True)
+        (nested / "seed-workers.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/*/seed-workers.test.ts")
+        with caplog.at_level("INFO"):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert any("literal miss" in rec.message for rec in caplog.records)
+        assert any("seed-workers.test.ts" in rec.message for rec in caplog.records)
+
+    def test_fuzzy_fallback_logs_named_match(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        actual_dir = tmp_path / "packages" / "db" / "src" / "__tests__"
+        actual_dir.mkdir(parents=True)
+        (actual_dir / "seed-workers-demo-link.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
+        with caplog.at_level("INFO"):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert any("seed-workers-demo-link.test.ts" in rec.message and "fuzzy" in rec.message for rec in caplog.records)
+
+    def test_true_miss_logs_all_patterns_tried(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        signal = CompletionSignal(type="path_exists", value="packages/db/test/seed-workers.test.ts")
+        with caplog.at_level("INFO"):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert any("no match" in rec.message and "seed-workers" in rec.message for rec in caplog.records)
+
+
 # --- glob_exists ---
 
 

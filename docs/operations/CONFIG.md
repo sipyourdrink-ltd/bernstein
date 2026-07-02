@@ -142,6 +142,7 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_COMPLIANCE` | Compliance preset override |
 | `BERNSTEIN_QUIET` | Quiet mode (reduced terminal output) |
 | `BERNSTEIN_AUDIT` | Enable extra audit behavior in run flow |
+| `BERNSTEIN_JANITOR_FUZZY_PATH_MATCH` | `path_exists` completion-signal matching. Default `1` (on): a literal miss falls back to interpreting the value as a glob, then to a fuzzy basename pattern (`**/<stem>*<suffix>`), so a manager-guessed path (e.g. `packages/db/test/foo.test.ts`) still matches a worker's repo-idiomatic path (e.g. `packages/db/src/__tests__/foo.test.ts`). Set to `0`/`false`/`no`/`off` to require an exact literal path match (pre-#2186 behavior). See [TROUBLESHOOTING.md #21](TROUBLESHOOTING.md#21-janitor-path_exists-fails-on-a-correctly-placed-file-acceptance-path-mismatch). |
 
 ---
 

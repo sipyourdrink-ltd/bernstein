@@ -10,6 +10,7 @@ from __future__ import annotations
 import glob as globmod
 import json
 import logging
+import os
 import re
 import subprocess
 import uuid
@@ -60,8 +61,7 @@ def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]
     """
     match signal.type:
         case "path_exists":
-            ok = _check_path_exists(signal.value, workdir)
-            return ok, "exists" if ok else "not found"
+            return _check_path_exists(signal.value, workdir)
         case "glob_exists":
             ok = _check_glob_exists(signal.value, workdir)
             return ok, "matched" if ok else "no matches"
@@ -719,9 +719,115 @@ def _resolve(path_str: str, workdir: Path) -> Path:
     return workdir / p
 
 
-def _check_path_exists(path_str: str, workdir: Path) -> bool:
-    """Check if a file or directory exists."""
-    return _resolve(path_str, workdir).exists()
+def _fuzzy_path_match_enabled() -> bool:
+    """Whether the fuzzy basename fallback for ``path_exists`` is active.
+
+    Issue #2186: manager decompositions guess exact file paths at planning
+    time (e.g. ``packages/db/test/seed-workers.test.ts``), before any code
+    exists. Workers legitimately place files at repo-idiomatic paths (e.g.
+    ``packages/db/src/__tests__/seed-workers-demo-link.test.ts``). A literal
+    miss then fails the janitor, drains the retry/error budget, and can
+    trip a sev1 orchestration pause even though the work was done correctly.
+
+    Default ON: the glob and fuzzy-basename fallbacks below are strictly
+    more permissive than a bare literal check, so this is safe to leave on.
+    Set ``BERNSTEIN_JANITOR_FUZZY_PATH_MATCH=0`` to pin the old
+    literal-path-only behavior (e.g. if a project relies on path_exists
+    rejecting near-miss paths).
+    """
+    raw = os.environ.get("BERNSTEIN_JANITOR_FUZZY_PATH_MATCH", "1").strip().lower()
+    enabled = raw not in {"0", "false", "no", "off"}
+    if raw not in {"0", "1", "false", "true", "no", "yes", "off", "on"}:
+        logger.warning(
+            "BERNSTEIN_JANITOR_FUZZY_PATH_MATCH=%r not recognized; defaulting to enabled",
+            raw,
+        )
+    return enabled
+
+
+def _check_path_exists(path_str: str, workdir: Path) -> tuple[bool, str]:
+    """Check if a file or directory exists, tolerating path-guess drift.
+
+    Three attempts, in order (issue #2186):
+      1. Literal path, resolved against ``workdir`` -- the original,
+         backwards-compatible behavior.
+      2. The same string interpreted as a glob pattern -- covers a manager
+         guessing a wildcard-shaped path.
+      3. A fuzzy fallback pattern derived from the path's basename
+         (``**/<stem>*<suffix>``) -- covers a manager guessing the wrong
+         directory convention (e.g. ``test/`` vs ``src/__tests__/``) for a
+         file the worker did create. Gated by
+         ``BERNSTEIN_JANITOR_FUZZY_PATH_MATCH`` (default on).
+
+    Every fallback match is logged with the literal miss, the pattern
+    tried, and the path that satisfied it, so a janitor failure (or a
+    fallback rescue) is diagnosable from logs alone.
+
+    Returns:
+        (passed, detail). ``detail`` is "exists"/"not found" for the
+        literal case (unchanged wire format) and a longer message
+        identifying the matched path when a fallback is what passed.
+    """
+    literal = _resolve(path_str, workdir)
+    if literal.exists():
+        return True, "exists"
+
+    glob_pattern = str(workdir / path_str)
+    glob_matches = sorted(globmod.glob(glob_pattern, recursive=True))
+    if glob_matches:
+        matched = glob_matches[0]
+        logger.info(
+            "janitor path_exists: literal miss for %r; glob pattern %r matched %r",
+            path_str,
+            glob_pattern,
+            matched,
+        )
+        return True, f"exists via glob fallback: matched {matched} (pattern: {path_str})"
+
+    if not _fuzzy_path_match_enabled():
+        logger.info(
+            "janitor path_exists: no match for %r (literal + glob both missed; "
+            "fuzzy fallback disabled via BERNSTEIN_JANITOR_FUZZY_PATH_MATCH=0)",
+            path_str,
+        )
+        return False, "not found"
+
+    # Split on the FIRST dot, not the last: multi-part suffixes like
+    # ".test.ts" / ".spec.tsx" are common in this exact scenario (a manager
+    # guessing "seed-workers.test.ts" vs. a worker naming it
+    # "seed-workers-demo-link.test.ts") and Path.stem/.suffix would only
+    # peel off ".ts", leaving ".test" glued onto a stem that then fails to
+    # prefix-match the worker's actual filename.
+    name = Path(path_str).name
+    name_parts = name.split(".", 1)
+    stem = name_parts[0]
+    suffix = f".{name_parts[1]}" if len(name_parts) > 1 else ""
+    if not stem:
+        logger.info(
+            "janitor path_exists: no match for %r (literal + glob missed; no basename to fuzzy-match)",
+            path_str,
+        )
+        return False, "not found"
+    fuzzy_pattern = f"**/{stem}*{suffix}" if suffix else f"**/{stem}*"
+    full_fuzzy_pattern = str(workdir / fuzzy_pattern)
+    fuzzy_matches = sorted(globmod.glob(full_fuzzy_pattern, recursive=True))
+    if fuzzy_matches:
+        matched = fuzzy_matches[0]
+        logger.info(
+            "janitor path_exists: literal+glob miss for %r; fuzzy pattern %r matched %r",
+            path_str,
+            fuzzy_pattern,
+            matched,
+        )
+        return True, f"exists via fuzzy fallback: matched {matched} (basename pattern: {fuzzy_pattern})"
+
+    logger.info(
+        "janitor path_exists: no match for %r (tried literal, glob %r, fuzzy %r)",
+        path_str,
+        glob_pattern,
+        fuzzy_pattern,
+    )
+    return False, "not found"
 
 
 def _check_glob_exists(pattern: str, workdir: Path) -> bool:

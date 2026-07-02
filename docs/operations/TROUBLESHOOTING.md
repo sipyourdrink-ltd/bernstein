@@ -456,6 +456,45 @@ print(yaml.dump(plan, default_flow_style=False))
 
 ---
 
+## 21. Janitor `path_exists` Fails on a Correctly-Placed File (Acceptance-Path Mismatch)
+
+**Symptom:** A task's actual code/test changes are correct and merge cleanly, but the janitor still fails it with `path_exists: <some/guessed/path>`, the task retries and fails again with the identical mismatch, and enough of these in a run trip the `>75% of tasks failing` sev1 orchestration pause. See issue [#2186](https://github.com/sipyourdrink-ltd/bernstein/issues/2186).
+
+**Cause:** The manager's decomposition writes `completion_signals` with exact literal file paths guessed at planning time (e.g. `path_exists: packages/db/test/seed-workers.test.ts`), before any code exists. Workers legitimately place new files at the repo's actual idiomatic location (e.g. `packages/db/src/__tests__/seed-workers-demo-link.test.ts`). The literal path never existed and never will; the check is a coin flip decided before implementation starts, and retries can't fix a decomposition-time guess.
+
+**Diagnosis:**
+```bash
+grep "janitor failed" .sdd/runtime/*.log
+# Look for `path_exists: <path>` entries where the referenced directory
+# convention (e.g. `test/` vs `src/__tests__/`) doesn't match what's
+# actually in the repo:
+find . -name "*<basename-without-extension>*"
+```
+
+**Resolution:**
+- As of this fix, `path_exists` no longer fails on a pure literal miss. It
+  falls back, in order: (1) the literal path, (2) the same string
+  interpreted as a glob pattern, (3) a fuzzy pattern derived from the
+  basename (`**/<stem>*<suffix>`) that tolerates a different directory
+  depth/convention. Every fallback match (or a true miss) is logged at INFO
+  level naming the pattern tried and the path that satisfied it — check
+  `.sdd/runtime/*.log` for `janitor path_exists:` lines.
+- The fuzzy fallback is on by default. To pin the old literal-only
+  behavior (e.g. if a project intentionally wants `path_exists` to reject
+  near-miss paths), set `BERNSTEIN_JANITOR_FUZZY_PATH_MATCH=0`. See
+  [CONFIG.md](CONFIG.md#3-environment-variables).
+- **Known limitation:** `test_passes` signals (e.g. `pnpm exec vitest run
+  test/seed-workers.test.ts`) still reference the manager's guessed literal
+  path and are not rewritten by this fix — a command-level mismatch there
+  will still fail. If you hit this, prefer directory-wide test commands
+  (`pnpm --filter db test`) in the plan/decomposition rather than a single
+  guessed file path.
+- If the manager's decompositions repeatedly guess paths for a repo with an
+  unusual layout, consider using `glob_exists` (already supported) instead
+  of `path_exists` in hand-authored plan YAML.
+
+---
+
 ## Quick Reference: Exit Codes
 
 | Exit code | Meaning | Likely cause |
