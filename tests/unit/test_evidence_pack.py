@@ -191,6 +191,7 @@ class TestBuildEvidencePack:
         assert pack.lineage_count == 2
         assert pack.cost_count == 2
         assert pack.controls_mapped >= 5
+        assert pack.controls_partial == 0  # ai-act is fully mapped, no partials
         assert pack.controls_todo == 0  # ai-act is real
 
     def test_task_scoping_filters_events(self, sdd_dir: Path) -> None:

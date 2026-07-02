@@ -703,8 +703,8 @@ def _run_standard_export(
     table.add_row("Lineage entries", str(pack.lineage_count))
     table.add_row("Cost snapshots", str(pack.cost_count))
     table.add_row(
-        "Controls mapped/todo",
-        f"{pack.controls_mapped} / {pack.controls_todo}",
+        "Controls mapped/partial/todo",
+        f"{pack.controls_mapped} / {pack.controls_partial} / {pack.controls_todo}",
     )
     table.add_row("SHA-256", pack.sha256[:16] + "...")
     if pack.archive_path is not None:

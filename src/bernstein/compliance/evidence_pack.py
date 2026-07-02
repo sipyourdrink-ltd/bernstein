@@ -185,6 +185,7 @@ class EvidencePack:
         lineage_count: Number of lineage entries captured.
         cost_count: Number of cost snapshots captured.
         controls_mapped: How many controls have ``status == "mapped"``.
+        controls_partial: How many controls have ``status == "partial"``.
         controls_todo: How many controls remain TODO for the standard.
         archive_path: On-disk path to the written zip (``None`` for dry-run).
         sha256: SHA-256 of the produced zip bytes.
@@ -198,6 +199,7 @@ class EvidencePack:
     lineage_count: int
     cost_count: int
     controls_mapped: int
+    controls_partial: int
     controls_todo: int
     archive_path: Path | None
     sha256: str
@@ -214,6 +216,7 @@ class EvidencePack:
             "lineage_count": self.lineage_count,
             "cost_count": self.cost_count,
             "controls_mapped": self.controls_mapped,
+            "controls_partial": self.controls_partial,
             "controls_todo": self.controls_todo,
             "sha256": self.sha256,
         }
@@ -611,6 +614,7 @@ def build_evidence_pack(
 
     controls = mapping["controls"]
     controls_mapped = sum(1 for c in controls if c.get("status") == "mapped")
+    controls_partial = sum(1 for c in controls if c.get("status") == "partial")
     controls_todo = sum(1 for c in controls if c.get("status") == "todo")
 
     bundle_id = _bundle_id(standard, since, task)
@@ -625,6 +629,7 @@ def build_evidence_pack(
         "lineage_count": len(lineage_entries),
         "cost_count": len(cost_entries),
         "controls_mapped": controls_mapped,
+        "controls_partial": controls_partial,
         "controls_todo": controls_todo,
         "generated_at_utc": "1970-01-01T00:00:00+00:00",  # deterministic, see note below
         "artefacts": dict(sorted(artefact_hashes.items())),
@@ -659,6 +664,7 @@ def build_evidence_pack(
         lineage_count=len(lineage_entries),
         cost_count=len(cost_entries),
         controls_mapped=controls_mapped,
+        controls_partial=controls_partial,
         controls_todo=controls_todo,
         archive_path=archive_path,
         sha256=archive_sha256,

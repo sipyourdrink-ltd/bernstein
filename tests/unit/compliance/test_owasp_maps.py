@@ -191,7 +191,11 @@ def test_build_evidence_pack_wellformed(standard: str, tmp_path: Path) -> None:
     )
     assert pack.standard == standard
     assert pack.event_count == 1
-    assert pack.controls_mapped >= 1
+    # Both catalogues are honest partial maps: 6 mapped + 4 partial of 10.
+    # The partial controls must be counted, not silently dropped from the
+    # summary (which previously reported "6 / 0" as if nothing was outstanding).
+    assert pack.controls_mapped == 6
+    assert pack.controls_partial == 4
     assert pack.controls_todo == 0
     assert out.is_file()
 
@@ -212,6 +216,10 @@ def test_build_evidence_pack_wellformed(standard: str, tmp_path: Path) -> None:
         assert len(controls["controls"]) == 10
 
         manifest = json.loads(zf.read("manifest.json"))
+        # The partial count reaches the manifest and the to_dict summary, so
+        # an operator reading either sees the 4 outstanding partial controls.
+        assert manifest["controls_partial"] == 4
+        assert pack.to_dict()["controls_partial"] == 4
         # Every artefact hash in the manifest agrees with the bytes.
         for name, digest in manifest["artefacts"].items():
             if name == "manifest.json":
