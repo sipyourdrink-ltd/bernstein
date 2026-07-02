@@ -225,6 +225,21 @@ git diff main...agent/<session-id>
 - Prevent future conflicts by adding explicit `owned_files` to tasks in plan YAML files.
 - Increase the `depends_on` declarations between tasks that touch the same code.
 
+**Injected skill files (`.claude/skills/bernstein-*.md`) causing conflicts on
+*every* worker merge:** See [issue #2187](https://github.com/sipyourdrink-ltd/bernstein/issues/2187).
+Each worker's worktree gets its own rendered copy of the always-injected
+skills (`bernstein-completion-protocol.md`, `bernstein-signal-check.md`, plus
+role-specific skills), with session-specific content
+(`{{SESSION_ID}}`/`{{TASK_IDS}}`). If an agent's `git add -A` stages these
+files, every worker merge conflicts on them - not because of real work
+overlap, but because two agents' injected boilerplate collides. As of this
+fix, `inject_skills()` registers each injected path in the target repo's
+`.git/info/exclude` (resolved correctly for worktrees via
+`git rev-parse --git-path info/exclude`), so the skills stay readable by
+Claude Code but are never staged or committed. If you still see this on an
+older Bernstein version, manually run `git rm --cached .claude/skills/bernstein-*.md`
+and add the paths to `.git/info/exclude` to unblock merges.
+
 ---
 
 ## 10. Config File Errors (bernstein.yaml)
