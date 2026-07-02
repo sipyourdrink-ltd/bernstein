@@ -796,3 +796,124 @@ class TestBuildCommandSystemAddendum:
         cmd = self._build(system_addendum=addendum)
         idx = cmd.index("--append-system-prompt")
         assert cmd[idx + 1] == addendum
+
+
+# ---------------------------------------------------------------------------
+# Provider-side context-compaction policy (deterministic replay protection)
+# ---------------------------------------------------------------------------
+
+
+class TestCompactionPolicy:
+    """apply_compaction_policy disables provider compaction in deterministic modes.
+
+    The step-journal replay guarantee only holds when the model sees exactly
+    the context we sent. Provider-side compaction can rewrite older context
+    server-side, so deterministic-record / hermetic-replay runs must turn it
+    off. These tests pin that policy and the recorded enabled/disabled flag.
+    """
+
+    def test_default_mode_leaves_env_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.adapters.claude import (
+            _DISABLE_COMPACTION_ENV,
+            apply_compaction_policy,
+        )
+
+        monkeypatch.delenv("BERNSTEIN_DETERMINISTIC_SEED", raising=False)
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        env: dict[str, str] = {}
+        disabled = apply_compaction_policy(env)
+        assert disabled is False
+        assert _DISABLE_COMPACTION_ENV not in env
+
+    def test_record_mode_disables_compaction(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.adapters.claude import (
+            _DISABLE_COMPACTION_ENV,
+            apply_compaction_policy,
+        )
+
+        monkeypatch.setenv("BERNSTEIN_DETERMINISTIC_SEED", "42")
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        env: dict[str, str] = {}
+        disabled = apply_compaction_policy(env)
+        assert disabled is True
+        assert env[_DISABLE_COMPACTION_ENV] == "1"
+
+    def test_replay_mode_disables_compaction(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.adapters.claude import (
+            _DISABLE_COMPACTION_ENV,
+            apply_compaction_policy,
+        )
+
+        monkeypatch.delenv("BERNSTEIN_DETERMINISTIC_SEED", raising=False)
+        monkeypatch.setenv("BERNSTEIN_REPLAY_RUN_ID", "run-123")
+        env: dict[str, str] = {}
+        disabled = apply_compaction_policy(env)
+        assert disabled is True
+        assert env[_DISABLE_COMPACTION_ENV] == "1"
+
+    def test_spawn_records_compaction_disabled_in_deterministic_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BERNSTEIN_DETERMINISTIC_SEED", "7")
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1200)
+        wrapper_mock = _make_popen_mock(pid=1201)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]):
+            adapter.spawn(
+                prompt="p",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-det",
+            )
+
+        sidecar = tmp_path / ".sdd" / "runtime" / "compaction" / "sess-det.json"
+        assert sidecar.exists()
+        payload = json.loads(sidecar.read_text())
+        assert payload["compaction_enabled"] is False
+
+    def test_spawn_records_compaction_enabled_outside_deterministic_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("BERNSTEIN_DETERMINISTIC_SEED", raising=False)
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1300)
+        wrapper_mock = _make_popen_mock(pid=1301)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]):
+            adapter.spawn(
+                prompt="p",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-live",
+            )
+
+        sidecar = tmp_path / ".sdd" / "runtime" / "compaction" / "sess-live.json"
+        assert sidecar.exists()
+        payload = json.loads(sidecar.read_text())
+        assert payload["compaction_enabled"] is True
+
+    def test_spawn_forwards_disable_flag_to_process_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The policy must affect the built REQUEST: the disable var has to land
+        # in the child process env the CLI runs with, not just the sidecar.
+        from bernstein.adapters.claude import _DISABLE_COMPACTION_ENV
+
+        monkeypatch.setenv("BERNSTEIN_DETERMINISTIC_SEED", "9")
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1400)
+        wrapper_mock = _make_popen_mock(pid=1401)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]) as popen:
+            adapter.spawn(
+                prompt="p",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-env",
+            )
+
+        child_env = popen.call_args_list[0].kwargs.get("env")
+        assert child_env is not None
+        assert child_env.get(_DISABLE_COMPACTION_ENV) == "1"

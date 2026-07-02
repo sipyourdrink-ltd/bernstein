@@ -64,6 +64,81 @@ def _task_budgets_opt_in() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Provider-side context-compaction policy (protects byte-identical replay)
+# ---------------------------------------------------------------------------
+#
+# The provider API can compact (server-side summarise) older context between
+# turns. That rewrites the history the model sees on a later request, so a run
+# that records "context as sent" and later replays it will diverge: the replay
+# reconstructs the sent context, but the recorded run's model actually saw a
+# non-deterministic server summary. Our deterministic-replay lever (the
+# HMAC/Merkle step journal) only means something if "context as sent ==
+# context as seen"; compaction breaks that equality silently.
+#
+# Policy: when a run is in deterministic-record or hermetic-replay mode, we
+# turn provider-side compaction OFF for every request so the model sees exactly
+# what we sent and the journal stays reconstructable. Outside those modes the
+# behaviour is unchanged from before this feature.
+#
+# The env flags below are the source of truth for the run mode. They mirror
+# the ones read by the orchestrator (BERNSTEIN_DETERMINISTIC_SEED for record,
+# BERNSTEIN_REPLAY_RUN_ID for replay); they are inlined here rather than
+# imported so the adapter stays free of scheduler internals (importlinter
+# contract ``adapters-no-scheduler``).
+_DETERMINISTIC_SEED_ENV: str = "BERNSTEIN_DETERMINISTIC_SEED"
+_REPLAY_RUN_ID_ENV: str = "BERNSTEIN_REPLAY_RUN_ID"
+
+#: Claude Code CLI env var that turns off provider-side context compaction for
+#: this process. Setting it to "1" makes the CLI send context-management "off"
+#: to the API, so no server-side summary can rewrite what we sent. This is the
+#: adapter's own variable name, forwarded to every API call the CLI makes.
+_DISABLE_COMPACTION_ENV: str = "CLAUDE_CODE_DISABLE_CONTEXT_COMPACTION"
+
+
+def _deterministic_run_mode() -> bool:
+    """Return whether this process runs in deterministic-record or hermetic-replay mode.
+
+    Reads :data:`_DETERMINISTIC_SEED_ENV` (record) and
+    :data:`_REPLAY_RUN_ID_ENV` (replay) from the environment. Either being set
+    to a non-empty value means the run must be byte-reconstructable, so
+    provider-side compaction has to be disabled.
+
+    Returns:
+        ``True`` when a deterministic seed or a replay run id is present.
+    """
+    seed = os.environ.get(_DETERMINISTIC_SEED_ENV, "").strip()
+    replay = os.environ.get(_REPLAY_RUN_ID_ENV, "").strip()
+    return bool(seed) or bool(replay)
+
+
+def apply_compaction_policy(env: dict[str, str]) -> bool:
+    """Apply the deterministic context-compaction policy to a spawn *env*.
+
+    In deterministic-record or hermetic-replay mode, sets
+    :data:`_DISABLE_COMPACTION_ENV` so the CLI forwards context-management
+    "off" to the provider and the model sees exactly the context we sent -
+    the precondition our step-journal replay depends on. Outside those modes
+    the env is left untouched (default provider behaviour).
+
+    Mutates *env* in place and returns whether compaction was disabled, so the
+    caller can record the enabled/disabled state in the step fingerprint. A
+    replay mismatch then becomes attributable to a known flag rather than a
+    mysterious server-side rewrite.
+
+    Args:
+        env: The filtered spawn environment dict (mutated in place).
+
+    Returns:
+        ``True`` when compaction was disabled for this request (deterministic
+        modes), ``False`` when it was left at the provider default.
+    """
+    if _deterministic_run_mode():
+        env[_DISABLE_COMPACTION_ENV] = "1"
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Multimodal attachment encoding (issue #1797)
 # ---------------------------------------------------------------------------
 
@@ -415,6 +490,38 @@ class ClaudeCodeAdapter(CLIAdapter):
             completion_path=completion_path,
         )
 
+    @staticmethod
+    def _record_compaction_state(workdir: Path, session_id: str, *, compaction_disabled: bool) -> None:
+        """Persist whether provider-side compaction was disabled for this spawn.
+
+        Writes a small sidecar JSON at
+        ``.sdd/runtime/compaction/<session_id>.json`` recording the
+        enabled/disabled state. The spawner folds this flag into the step
+        journal so a later replay mismatch is attributable to a known request
+        parameter rather than a silent server-side context rewrite. Writing is
+        best-effort: a failure here must never break spawn.
+
+        Args:
+            workdir: Agent working directory (root of ``.sdd``).
+            session_id: Session id used as the sidecar filename.
+            compaction_disabled: ``True`` when compaction was turned off for
+                this request (deterministic / hermetic modes).
+        """
+        try:
+            state_dir = workdir / ".sdd" / "runtime" / "compaction"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            state_path = state_dir / f"{session_id}.json"
+            payload = {
+                "session_id": session_id,
+                # ``compaction_enabled`` is the value folded into the step
+                # fingerprint: True = provider may compact, False = we forced
+                # it off for byte-identical replay.
+                "compaction_enabled": not compaction_disabled,
+            }
+            state_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        except OSError as exc:  # pragma: no cover - best-effort, never blocks spawn
+            _logger.debug("Could not record compaction state for %s: %s", session_id, exc)
+
     def _launch_process(
         self,
         cmd: list[str],
@@ -665,6 +772,13 @@ class ClaudeCodeAdapter(CLIAdapter):
                 env["ANTHROPIC_BETA"] = f"{existing_beta},{_TASK_BUDGETS_BETA_VALUE}"
             else:
                 env["ANTHROPIC_BETA"] = _TASK_BUDGETS_BETA_VALUE
+        # In deterministic-record / hermetic-replay mode, disable provider-side
+        # context compaction so the model sees exactly what we sent - the
+        # equality our step-journal replay depends on. No-op outside those
+        # modes. The returned flag is recorded so a replay mismatch stays
+        # attributable rather than mysterious.
+        compaction_disabled = apply_compaction_policy(env)
+        self._record_compaction_state(workdir, session_id, compaction_disabled=compaction_disabled)
         claude_proc, wrapper_proc = self._launch_process(wrapped_cmd, wrapper, workdir, log_path, env=env)
 
         # Track the worker process (wraps claude) for is_alive/kill
