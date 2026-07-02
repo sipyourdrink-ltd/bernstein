@@ -38,6 +38,7 @@ from bernstein.core.interop.a2a_card import (
     issue_capability_card,
     verify_capability_card,
 )
+from bernstein.core.interop.a2a_conformance import check_card_conformance
 from bernstein.core.interop.a2a_consume import (
     PolicyRequirements,
     policies_meet_requirements,
@@ -238,6 +239,53 @@ def verify(
     console.print(f"  fingerprint: {fingerprint}")
 
 
+@a2a_group.command("conformance")
+@click.option(
+    "--card",
+    "card_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Path to the signed capability card JSON to self-check.",
+)
+def conformance(card_path: Path) -> None:
+    """Self-check that a card round-trips and verifies offline.
+
+    \b
+    Runs, in order: required-field validation, RFC 8785 JCS
+    canonicalisation, detached Ed25519 JWS signature verification,
+    expiry, and issuer. Prints a per-check pass/fail report and exits
+    non-zero if any check fails. This proves the card the operator emits
+    verifies the same way a peer will check it, with no network access.
+    """
+    try:
+        signed = SignedCapabilityCard.from_json(card_path.read_text())
+    except (ValueError, json.JSONDecodeError) as exc:
+        _fail(f"could not parse capability card: {exc}")
+        return
+
+    report = check_card_conformance(signed)
+
+    if is_json():
+        print_json({"card": str(card_path), **report.to_dict()})
+        if not report.ok:
+            sys.exit(1)
+        return
+
+    if report.ok:
+        print_success(f"Capability card {card_path} passes all conformance checks", soft_wrap=True)
+    else:
+        print_error(f"Capability card {card_path} FAILED conformance:", soft_wrap=True)
+    console.print(f"  issuer: [bold]{report.issuer}[/bold]  kid: {report.kid}")
+    if report.fingerprint:
+        console.print(f"  fingerprint: {report.fingerprint}")
+    for check in report.checks:
+        marker = "[green]PASS[/green]" if check.passed else "[red]FAIL[/red]"
+        console.print(f"  {marker} {check.name}: {check.detail}")
+
+    if not report.ok:
+        sys.exit(1)
+
+
 def _fail(message: str) -> None:
     """Print an error (JSON-aware) and exit non-zero."""
     if is_json():
@@ -247,4 +295,4 @@ def _fail(message: str) -> None:
     sys.exit(1)
 
 
-__all__ = ["a2a_group", "card", "interop_group", "verify"]
+__all__ = ["a2a_group", "card", "conformance", "interop_group", "verify"]
