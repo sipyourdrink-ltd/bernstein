@@ -259,6 +259,11 @@ _RATE_LIMIT_COOLDOWN: float = COST.rate_limit_cooldown_s
 class ClaudeCodeAdapter(CLIAdapter):
     """Spawn and monitor Claude Code CLI sessions."""
 
+    # Provider-string aliases this adapter resolves from in
+    # ``_infer_adapter_name_for_provider`` (via the registry's
+    # provider-alias table). Unchanged from the old substring branch.
+    provides = ("claude", "anthropic")
+
     external_endpoints = (("api.anthropic.com", 443),)
     # Surface the upstream provider on the ``bernstein status``
     # rate-limit panel. Anthropic uses HTTP 429 plus structured

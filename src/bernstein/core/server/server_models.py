@@ -254,6 +254,12 @@ class TaskFailRequest(BaseModel):
     reason: str = ""
 
 
+class TaskReopenRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/reopen."""
+
+    reason: str = ""
+
+
 class TaskCancelRequest(BaseModel):
     """Body for POST /tasks/{task_id}/cancel."""
 

@@ -355,3 +355,109 @@ def test_check_loops_recovers_deadlock_victim(tmp_path: Path) -> None:
     check_loops_and_deadlocks(orch)
     lock_mgr.release.assert_called_with("A-9")
     detector.clear_wait.assert_called_with("A-9")
+
+
+# ---------------------------------------------------------------------------
+# Runner-log preservation on the idle/clean-reap paths (D2 MiniMax
+# attempt-3 regression, 2026-07-03): the manager completed cleanly, was
+# reaped via _reap_completed_agent, and its runner transcript - the only
+# artifact carrying its usage/cost diagnostics - was deleted with the
+# worktree because these paths (unlike agent_lifecycle's crash paths)
+# never called _preserve_runner_logs before cleanup_worktree.
+# ---------------------------------------------------------------------------
+
+
+def test_reap_completed_agent_preserves_runner_logs_before_worktree_cleanup(tmp_path: Path) -> None:
+    """_reap_completed_agent must copy the runner transcript out of the
+    worktree BEFORE cleanup_worktree destroys it."""
+    completion_file = tmp_path / "completed" / "A-1"
+    completion_file.parent.mkdir(parents=True)
+    completion_file.write_text("")
+    session = _session("A-1")
+
+    # A real worktree with a real runner log inside it, so the actual
+    # _preserve_runner_logs implementation runs end to end.
+    worktree = tmp_path / "worktrees" / "A-1"
+    wt_runtime = worktree / ".sdd" / "runtime"
+    wt_runtime.mkdir(parents=True)
+    (wt_runtime / "A-1.log").write_text('{"type": "usage", "input_tokens": 10, "output_tokens": 5}\n')
+    (wt_runtime / "A-1.manifest.json").write_text("{}")
+
+    call_order: list[str] = []
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = worktree
+    spawner.cleanup_worktree.side_effect = lambda sid: call_order.append("cleanup")
+
+    orch = SimpleNamespace(
+        _workdir=tmp_path,
+        _spawner=spawner,
+        _signal_mgr=MagicMock(),
+        _idle_shutdown_ts={},
+    )
+
+    import bernstein.core.agents.agent_lifecycle as al
+
+    original_preserve = al._preserve_runner_logs
+
+    def _tracking_preserve(orch_arg, session_arg):  # type: ignore[no-untyped-def]
+        call_order.append("preserve")
+        return original_preserve(orch_arg, session_arg)
+
+    with (
+        patch.object(ar, "_save_partial_work"),
+        patch.object(ar, "_propagate_abort_to_children"),
+        patch("bernstein.core.metrics.get_collector", return_value=MagicMock()),
+        patch.object(al, "_preserve_runner_logs", side_effect=_tracking_preserve),
+    ):
+        ar._reap_completed_agent(orch, session, completion_file)
+
+    # Preservation happened, and strictly before worktree cleanup.
+    assert call_order == ["preserve", "cleanup"]
+    preserved_log = tmp_path / ".sdd" / "runtime" / "agent_logs" / "A-1" / "A-1.log"
+    assert preserved_log.exists()
+    assert "usage" in preserved_log.read_text()
+    preserved_manifest = tmp_path / ".sdd" / "runtime" / "agent_logs" / "A-1" / "A-1.manifest.json"
+    assert preserved_manifest.exists()
+
+
+def test_recycle_or_kill_after_grace_preserves_runner_logs_before_cleanup(tmp_path: Path) -> None:
+    """The grace-elapsed force-kill branch must also preserve runner logs
+    before destroying the worktree."""
+    session = _session("A-1")
+
+    worktree = tmp_path / "worktrees" / "A-1"
+    wt_runtime = worktree / ".sdd" / "runtime"
+    wt_runtime.mkdir(parents=True)
+    (wt_runtime / "A-1.log").write_text('{"type": "error", "kind": "runtime", "message": "x"}\n')
+
+    call_order: list[str] = []
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = worktree
+    spawner.cleanup_worktree.side_effect = lambda sid: call_order.append("cleanup")
+
+    orch = SimpleNamespace(
+        _workdir=tmp_path,
+        _spawner=spawner,
+        _signal_mgr=MagicMock(),
+        _idle_shutdown_ts={"A-1": 1000.0},
+    )
+
+    import bernstein.core.agents.agent_lifecycle as al
+
+    original_preserve = al._preserve_runner_logs
+
+    def _tracking_preserve(orch_arg, session_arg):  # type: ignore[no-untyped-def]
+        call_order.append("preserve")
+        return original_preserve(orch_arg, session_arg)
+
+    with (
+        patch.object(ar, "_save_partial_work"),
+        patch.object(ar, "_propagate_abort_to_children"),
+        patch("bernstein.core.metrics.get_collector", return_value=MagicMock()),
+        patch.object(al, "_preserve_runner_logs", side_effect=_tracking_preserve),
+    ):
+        ar._recycle_or_kill(orch, session, now=1000.0 + _IDLE_GRACE_S + 1, reason="role_drained")
+
+    assert call_order == ["preserve", "cleanup"]
+    preserved_log = tmp_path / ".sdd" / "runtime" / "agent_logs" / "A-1" / "A-1.log"
+    assert preserved_log.exists()

@@ -292,3 +292,191 @@ class TestRouterRateLimitIntegration:
         # With success_rate=1.0 and zero active agents, spreading term = 1.0 * 0.10
         # health=1.0*0.35 + cost=1.0*0.25 + free=0*0.2 + latency=1.0*0.10 + spread=1.0*0.10 = 0.80
         assert abs(score - 0.80) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Regression: risky bare-substring patterns must not false-positive on
+# structured JSON log data (2026-07-02 incident - runs 4/5/6 killed).
+# ---------------------------------------------------------------------------
+
+
+class TestRiskyBareTokenFalsePositives:
+    """Structured JSON tool-result / manifest lines must NOT trigger a
+    failure classification just because they contain a risky bare number or
+    generic phrase like "max_tokens", "413", or "429" with no error context.
+    """
+
+    def test_no_context_overflow_on_json_manifest_line(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text(
+            '{"type": "tool_result", "tool": "spawn", "manifest": '
+            '{"max_tokens": 16384, "model": "MiniMax-M3", "batch_id": 413}}\n'
+        )
+        tracker = RateLimitTracker()
+        assert not tracker.scan_log_for_context_overflow(log)
+
+    def test_no_rate_limit_on_json_counters_line(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text('{"type": "tool_result", "bytes_written": 429, "duration_ms": 129413}\n')
+        tracker = RateLimitTracker()
+        assert not tracker.scan_log_for_429(log)
+
+    def test_no_auth_error_on_json_status_code_line(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text('{"type": "tool_result", "port": 401, "queue_depth": 403}\n')
+        tracker = RateLimitTracker()
+        assert not tracker.scan_log_for_auth_error(log)
+
+    def test_no_failure_type_detected_on_healthy_worker_json_log(self, tmp_path: Path) -> None:
+        """The exact incident shape: a healthy worker's structured log full
+        of tool results and a manifest dump must classify as no failure."""
+        log = tmp_path / "agent.log"
+        log.write_text(
+            "\n".join(
+                [
+                    '{"type": "tool_call", "name": "Read", "input": {"path": "x.py"}}',
+                    '{"type": "tool_result", "manifest": {"max_tokens": 16384}}',
+                    '{"type": "tool_result", "bytes": 413129, "count": 429}',
+                    '{"type": "assistant", "text": "Task complete."}',
+                ]
+            )
+        )
+        tracker = RateLimitTracker()
+        assert tracker.detect_failure_type(log) is None
+
+    def test_max_tokens_removed_outright_even_with_error_context(self, tmp_path: Path) -> None:
+        """max_tokens was removed from the pattern list entirely, not just
+        demoted to risky - it must not fire even next to the word "error"."""
+        log = tmp_path / "agent.log"
+        log.write_text('{"error": "none", "max_tokens": 16384}\n')
+        tracker = RateLimitTracker()
+        assert not tracker.scan_log_for_context_overflow(log)
+
+
+class TestRiskyBareTokenTruePositives:
+    """Genuine provider errors with real error context must still be
+    detected - the fix must not blind the classifier entirely."""
+
+    def test_detects_413_with_error_context(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text("Error code: 413 - request too large\n")
+        tracker = RateLimitTracker()
+        assert tracker.scan_log_for_context_overflow(log)
+
+    def test_detects_context_length_exceeded_phrase(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text("openai.BadRequestError: context_length_exceeded\n")
+        tracker = RateLimitTracker()
+        assert tracker.scan_log_for_context_overflow(log)
+
+    def test_detects_429_with_error_context(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text("HTTP status 429 received from provider\n")
+        tracker = RateLimitTracker()
+        assert tracker.scan_log_for_429(log)
+
+    def test_detects_401_with_error_context(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text("Request failed with HTTP error 401 Unauthorized\n")
+        tracker = RateLimitTracker()
+        assert tracker.scan_log_for_auth_error(log)
+
+    def test_detects_504_with_error_context(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text("gateway returned status 504\n")
+        tracker = RateLimitTracker()
+        assert tracker.scan_log_for_timeout(log)
+
+    def test_detects_context_window_with_error_context(self, tmp_path: Path) -> None:
+        log = tmp_path / "agent.log"
+        log.write_text("Error: context window exceeded for this request\n")
+        tracker = RateLimitTracker()
+        assert tracker.scan_log_for_context_overflow(log)
+
+
+class TestDataLineAndGenericWordFalsePositives:
+    """2026-07-02 run-7 regression: healthy agents killed by generic words in
+    structured JSON log lines (`"timeout": 5` in a tool_call payload)."""
+
+    def _tracker(self):
+        from bernstein.core.observability.rate_limit_tracker import RateLimitTracker
+
+        return RateLimitTracker()
+
+    def test_tool_traffic_lines_never_match(self, tmp_path):
+        log = tmp_path / "agent.log"
+        log.write_text(
+            '{"type": "tool_call", "name": "run_command", "args": {"argv": ["pnpm", "test"], "timeout": 5}}\n'
+            '{"type": "tool_result", "name": "read_file", "ok": true, "result": {"bytes": 64133, "preview": "if (unauthorized) throw new Error(\'forbidden\'); // rate limit retry"}}\n'
+            '{"type": "tool_result", "name": "run_command", "ok": false, "result": {"stderr_preview": "Error: connect ECONNREFUSED 127.0.0.1:5432 - test timed out"}}\n'
+            '{"type": "heartbeat", "phase": "running", "timeout": 429}\n'
+            '{"type": "tool_result", "name": "read_file", "result": {"preview": "max_tokens: 16384, TimeoutError handling, status 413 code"}}\n'
+        )
+        assert self._tracker().detect_failure_type(log) is None
+
+    def test_generic_words_without_error_context_never_match(self, tmp_path):
+        log = tmp_path / "agent.log"
+        log.write_text(
+            "setting request timeout to 30s for provider\n"
+            "the rate limit configuration was loaded\n"
+            "unauthorized users are redirected to login\n"
+        )
+        assert self._tracker().detect_failure_type(log) is None
+
+    def test_real_provider_errors_still_detected(self, tmp_path):
+        cases = {
+            "rate_limit": '{"type": "error", "kind": "api", "message": "Error code: 429 - rate limit exceeded"}\n',
+            "timeout": "openai.APITimeoutError: HTTP request failed: read timeout\n",
+            "context_overflow": '{"type": "error", "message": "Error code: 413 - request too large: maximum context length exceeded"}\n',
+            "auth_error": "openai.AuthenticationError: Error code: 401 - invalid api key\n",
+            "api_error": "httpx.ConnectError: connection refused (APIConnectionError) - request failed\n",
+        }
+        for expected, line in cases.items():
+            log = tmp_path / f"{expected}.log"
+            log.write_text(line)
+            assert self._tracker().detect_failure_type(log) == expected, expected
+
+
+class TestCompletionProgressSkipSet:
+    """2026-07-02 D2 tools-zero diagnosis (Q5): a hallucinated agent's own
+    fabricated JSON tool-call text leaked "timeout" into a "completion"-type
+    event's free-text summary, tripping the false-positive cascade fallback.
+    "completion" and "progress" were added to _DATA_LINE_TYPES so model
+    free-text prose in those event types is never substring-scanned."""
+
+    def _tracker(self):
+        from bernstein.core.observability.rate_limit_tracker import RateLimitTracker
+
+        return RateLimitTracker()
+
+    def test_completion_type_prose_with_timeout_does_not_match(self, tmp_path):
+        log = tmp_path / "agent.log"
+        log.write_text(
+            '{"type": "completion", "summary": "<tool_call>{\\"name\\": \\"bash\\", '
+            '\\"arguments\\": {\\"command\\": \\"pnpm test\\", \\"timeout\\": 10}}</tool_call>"}\n'
+        )
+        assert self._tracker().detect_failure_type(log) is None
+
+    def test_progress_type_prose_with_timeout_does_not_match(self, tmp_path):
+        log = tmp_path / "agent.log"
+        log.write_text('{"type": "progress", "message": "I set a 10s timeout on the curl call and it succeeded"}\n')
+        assert self._tracker().detect_failure_type(log) is None
+
+    def test_bare_timeout_without_error_context_does_not_match(self, tmp_path):
+        """ "timeout" is a _RISKY_BARE_TOKENS entry: even on an unstructured
+        line (not completion/progress), a bare mention with no error-context
+        word on the same line must not trigger a match."""
+        log = tmp_path / "agent.log"
+        log.write_text("setting request timeout to 30s for provider\n")
+        assert self._tracker().detect_failure_type(log) is None
+
+    def test_completion_type_with_real_error_elsewhere_still_detected(self, tmp_path):
+        """Sanity check: the skip-set only covers completion/progress lines
+        themselves -- a genuine error on a different, non-data line type is
+        still detected."""
+        log = tmp_path / "agent.log"
+        log.write_text(
+            '{"type": "completion", "summary": "the task finished after a brief timeout delay"}\n'
+            '{"type": "error", "message": "Error code: 429 - rate limit exceeded"}\n'
+        )
+        assert self._tracker().detect_failure_type(log) == "rate_limit"

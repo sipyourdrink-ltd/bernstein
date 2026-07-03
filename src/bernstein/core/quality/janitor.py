@@ -10,6 +10,7 @@ from __future__ import annotations
 import glob as globmod
 import json
 import logging
+import os
 import re
 import subprocess
 import uuid
@@ -47,6 +48,172 @@ JUDGE_CONFIDENCE_THRESHOLD = 0.7  # Below this, flag for human review
 _JUDGE_RETRY_RE = re.compile(r"\[judge_retry:(\d+)\]")
 _JUDGE_TEMPLATE_PATH = _BUNDLED_TEMPLATES_DIR / "prompts" / "judge.md"
 
+# --- Attribution (item 15 + S2 family) ---
+#
+# The janitor historically judged a task purely by evaluating its completion
+# signals against the SHARED repo state. Two failure modes fell out of that
+# (proofs/d2/minimax/attempt-e938bd33 + S2 orphan family):
+#   1. Misattribution: a 0-file manager task got janitor_passed=true because a
+#      CHILD task's landed work satisfied the manager's signals, while the
+#      backend task that made the real green commit (b9574d9) was judged
+#      against the wrong repo snapshot and failed.
+#   2. Rubber-stamped orphans: crash-recovery auto-completions with an empty
+#      diff ($0 / 0 tokens, no commits) were accepted because "no failing
+#      signal" was treated as "passed".
+#
+# Fix: before accepting, attribute concrete work to THE TASK BEING JUDGED --
+# commits whose message references the task id, falling back to changed files
+# in the task's owned_files -- and REJECT any non-no-op task with an empty
+# attributed diff. Attribution inputs/outputs are logged on every verdict so
+# a future misattribution is a log read, not a proof-archive autopsy.
+
+# Task types that legitimately produce no diff (research/exploration output
+# lives in task notes, not the repo). Everything else must show work.
+_NOOP_TASK_TYPES = frozenset({TaskType.RESEARCH})
+
+_ATTRIBUTION_MAX_COMMITS = 50
+
+# Completion-signal types that constitute real evidence a task did work
+# (as opposed to a bare path_exists / glob_exists that a rubber-stamp could
+# trivially satisfy). A passing signal of one of these types lets the janitor
+# accept a task whose diff is not attributable (empty-diff warn path) instead
+# of hard-rejecting it.
+_NONTRIVIAL_SIGNAL_TYPES = frozenset({"test_passes", "file_contains", "llm_review", "llm_judge"})
+
+
+def _has_nontrivial_passing_signal(task: Task, signal_results: list[tuple[str, bool, str]]) -> bool:
+    """True if the task has at least one passing non-trivial completion signal.
+
+    ``signal_results`` entries are ``(desc, passed, detail)`` where ``desc`` is
+    ``f"{signal.type}: {signal.value}"`` (see :func:`_collect_signal_results`),
+    so the type is the text before the first ``": "``. A passing signal of a
+    :data:`_NONTRIVIAL_SIGNAL_TYPES` type is treated as evidence real work
+    happened, which lets an unattributable-diff task be accepted with a warning
+    rather than hard-rejected.
+    """
+    for desc, passed, _detail in signal_results:
+        if not passed:
+            continue
+        signal_type = desc.split(":", 1)[0].strip()
+        if signal_type in _NONTRIVIAL_SIGNAL_TYPES:
+            return True
+    return False
+
+
+def _is_git_repo(workdir: Path) -> bool:
+    """True when *workdir* is inside a git work tree (attribution possible)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("janitor attribution: git repo detection failed in %s: %s", workdir, exc)
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _attribute_task_work(task: Task, workdir: Path) -> tuple[list[str], list[str], str]:
+    """Attribute concrete repo work to *the task being judged*.
+
+    Resolution order (each step logged):
+      1. Commits on HEAD whose message contains the task id (fixed-string
+         ``git log --grep``) -- the strongest signal that a commit belongs to
+         this task. Changed files are the union across those commits.
+      2. Fallback: files changed in the last commit, restricted to the
+         task's ``owned_files`` when set. This is explicitly weaker (it can
+         see another task's landing commit) and the returned reason says so.
+
+    Args:
+        task: The task under judgment.
+        workdir: Project root (must already be a verified git repo).
+
+    Returns:
+        Tuple of (attributed commit shas, attributed changed files, human
+        reason describing HOW attribution was decided).
+    """
+    try:
+        log_result = subprocess.run(
+            [
+                "git",
+                "log",
+                f"--max-count={_ATTRIBUTION_MAX_COMMITS}",
+                "--format=%H",
+                "--fixed-strings",
+                f"--grep={task.id}",
+            ],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("janitor attribution: git log --grep failed for task=%s: %s", task.id, exc)
+        log_result = None
+
+    if log_result is not None and log_result.returncode == 0:
+        commits = [line.strip() for line in log_result.stdout.splitlines() if line.strip()]
+        if commits:
+            files: list[str] = []
+            for sha in commits:
+                try:
+                    show = subprocess.run(
+                        ["git", "show", "--name-only", "--format=", sha],
+                        cwd=workdir,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                except (subprocess.TimeoutExpired, OSError) as exc:
+                    logger.warning("janitor attribution: git show %s failed: %s", sha, exc)
+                    continue
+                if show.returncode == 0:
+                    files.extend(line.strip() for line in show.stdout.splitlines() if line.strip())
+            unique_files = sorted(set(files))
+            reason = (
+                f"commit-message match: {len(commits)} commit(s) reference task id {task.id!r} "
+                f"({[c[:12] for c in commits]}), {len(unique_files)} changed file(s)"
+            )
+            return commits, unique_files, reason
+
+    # Fallback: last-commit diff scoped to owned_files. Weaker attribution --
+    # says the repo moved in this task's file territory, not that THIS task
+    # moved it. WITHOUT owned_files there is no territory to scope to: an
+    # unscoped last-commit diff would attribute ANOTHER task's landing commit
+    # to this one (exactly the archived manager rubber-stamp), so we
+    # deliberately attribute nothing in that case.
+    if not task.owned_files:
+        return (
+            [],
+            [],
+            f"no commit references task id {task.id!r} and task has no owned_files -- "
+            "nothing attributable to this task (unscoped last-commit diff would "
+            "misattribute another task's work)",
+        )
+    cmd = ["git", "diff", "HEAD~1", "--name-only", "--", *task.owned_files]
+    try:
+        diff_result = subprocess.run(
+            cmd,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("janitor attribution: fallback diff failed for task=%s: %s", task.id, exc)
+        return [], [], f"attribution failed: no task-id commits and fallback diff errored ({exc})"
+
+    files = [line.strip() for line in diff_result.stdout.splitlines() if line.strip()]
+    scope = f"owned_files={task.owned_files}" if task.owned_files else "all files (no owned_files)"
+    reason = (
+        f"fallback last-commit diff over {scope}: {len(files)} changed file(s); "
+        f"NO commit references task id {task.id!r} -- weak attribution"
+    )
+    return [], sorted(set(files)), reason
+
 
 def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]:
     """Evaluate a single completion signal against the filesystem.
@@ -60,13 +227,13 @@ def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]
     """
     match signal.type:
         case "path_exists":
-            ok = _check_path_exists(signal.value, workdir)
-            return ok, "exists" if ok else "not found"
+            return _check_path_exists(signal.value, workdir)
         case "glob_exists":
             ok = _check_glob_exists(signal.value, workdir)
             return ok, "matched" if ok else "no matches"
         case "test_passes":
-            ok = _check_test_passes(signal.value, workdir)
+            command = _resolve_branch_check_command(signal.value, workdir)
+            ok = _check_test_passes(command, workdir)
             return ok, "exit 0" if ok else "non-zero exit"
         case "file_contains":
             ok = _check_file_contains(signal.value, workdir)
@@ -322,6 +489,10 @@ async def run_janitor(
     """
     _guardrails = guardrails_config if guardrails_config is not None else GuardrailsConfig()
     _bypass_guardrails = permission_mode == "bypass"
+    # Attribution needs a git repo; detect once per janitor pass. Non-git
+    # workdirs (unit tests, dry runs) skip the empty-diff guard entirely --
+    # signals-only judgment there is unchanged behavior.
+    _attribution_possible = _is_git_repo(workdir)
     results: list[JanitorResult] = []
     for task in tasks:
         if not task.completion_signals:
@@ -340,7 +511,65 @@ async def run_janitor(
             all_passed = all(passed for _, passed, _ in signal_results)
             failed_descs = [desc for desc, passed, _ in signal_results if not passed]
 
-        diff = _get_git_diff(task, workdir)
+        # Empty-diff guard + attribution (item 15 / S2): a non-no-op task
+        # with zero attributable changed files must NOT pass -- catches both
+        # the 0-file manager rubber-stamp and crash-recovery orphan
+        # auto-completions with no diff.
+        attributed_commits: list[str] = []
+        attributed_files: list[str] = []
+        attribution_reason = "attribution skipped: workdir is not a git repo"
+        if _attribution_possible:
+            attributed_commits, attributed_files, attribution_reason = _attribute_task_work(task, workdir)
+            logger.info(
+                "janitor attribution: task=%s commits=%s files=%s reason=%s",
+                task.id,
+                [c[:12] for c in attributed_commits],
+                attributed_files,
+                attribution_reason,
+            )
+            if not attributed_files and task.task_type not in _NOOP_TASK_TYPES:
+                # An empty attributable diff normally means a 0-file
+                # rubber-stamp or a crash-recovery orphan auto-completion and
+                # must be rejected. BUT a task can legitimately land real work
+                # in a commit whose message omits the task id and which carries
+                # no owned_files (attribution then returns empty even though
+                # work happened). To avoid false-rejecting such a real
+                # completion, only hard-reject when the task has NOT already
+                # proven work via a non-trivial passing signal (a passing
+                # test_passes / file_contains / llm_review / llm_judge). When
+                # such proof exists and all signals passed, downgrade to a
+                # warn-and-flag for review instead of failing the task.
+                has_nontrivial_pass = all_passed and _has_nontrivial_passing_signal(task, signal_results)
+                if has_nontrivial_pass:
+                    warn_detail = f"empty diff but non-trivial completion signals passed: {attribution_reason}"
+                    signal_results.append(("attribution:empty_diff_warn", True, warn_detail))
+                    logger.warning(
+                        "janitor WARN (empty diff, flagged for review): task=%s task_type=%s -- no "
+                        "changed files attributable to this task (attribution: %s), but non-trivial "
+                        "completion signals passed, so accepting rather than rejecting; stamp the "
+                        "task id into the landing commit or set owned_files to make attribution "
+                        "explicit",
+                        task.id,
+                        task.task_type.value,
+                        attribution_reason,
+                    )
+                else:
+                    all_passed = False
+                    empty_diff_detail = f"empty diff: {attribution_reason}"
+                    signal_results.append(("attribution:empty_diff", False, empty_diff_detail))
+                    failed_descs.append(f"attribution:empty_diff: {empty_diff_detail}")
+                    logger.warning(
+                        "janitor REJECT (empty diff): task=%s task_type=%s -- no changed files "
+                        "attributable to this task (attribution: %s); a task with zero changed "
+                        "files must not be accepted unless it is an explicit no-op task type %s "
+                        "or it has a non-trivial passing completion signal",
+                        task.id,
+                        task.task_type.value,
+                        attribution_reason,
+                        sorted(t.value for t in _NOOP_TASK_TYPES),
+                    )
+
+        diff = _get_git_diff(task, workdir, attributed_commits=attributed_commits)
         guardrail_results: list[GuardrailResult] = run_guardrails(
             diff,
             task,
@@ -355,6 +584,11 @@ async def run_janitor(
             for gr in blocked_guards:
                 signal_results.append((f"guardrail:{gr.check}", False, gr.detail))
                 failed_descs.append(f"guardrail:{gr.check}: {gr.detail}")
+            logger.warning(
+                "janitor REJECT (guardrail): task=%s blocked_checks=%s",
+                task.id,
+                [(gr.check, gr.detail) for gr in blocked_guards],
+            )
 
         fix_task_ids = await _create_fix_tasks_if_needed(
             task,
@@ -364,6 +598,31 @@ async def run_janitor(
             server_url,
             workdir,
         )
+
+        # Single-line accept/reject decision with WHY -- inputs (signal
+        # results) and the verdict, so the janitor's per-task disposition is
+        # visible from the log alone without cross-referencing JanitorResult.
+        if all_passed:
+            logger.info(
+                "janitor ACCEPT: task=%s signals=%s attributed_commits=%s attributed_files=%s attribution=%s",
+                task.id,
+                [(desc, ok) for desc, ok, _ in signal_results],
+                [c[:12] for c in attributed_commits],
+                attributed_files,
+                attribution_reason,
+            )
+        else:
+            logger.warning(
+                "janitor REJECT: task=%s failed_signals=%s fix_tasks_created=%s judge_verdict=%s "
+                "attributed_commits=%s attributed_files=%s attribution=%s",
+                task.id,
+                failed_descs,
+                fix_task_ids,
+                judge_verdict.verdict if judge_verdict else None,
+                [c[:12] for c in attributed_commits],
+                attributed_files,
+                attribution_reason,
+            )
 
         results.append(
             JanitorResult(
@@ -484,12 +743,25 @@ def _get_judge_retry_count(task: Task) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _get_git_diff(task: Task, workdir: Path) -> str:
-    """Get git diff for the task's owned files, truncated for cost control."""
+def _get_git_diff(task: Task, workdir: Path, *, attributed_commits: list[str] | None = None) -> str:
+    """Get git diff for the task's work, truncated for cost control.
+
+    When *attributed_commits* is provided (commits whose message references
+    the task id), the diff is the content of exactly those commits -- the
+    work belonging to THE TASK BEING JUDGED. Otherwise falls back to the
+    historical behavior (last-commit diff over owned_files), which can show
+    another task's landing commit and is only used when no attribution
+    exists.
+    """
     try:
-        cmd = ["git", "diff", "HEAD~1", "--"]
-        if task.owned_files:
-            cmd.extend(task.owned_files)
+        if attributed_commits:
+            # The commits themselves are already attributed to this task --
+            # no owned_files path filter, their full content IS the work.
+            cmd = ["git", "show", "--format=", *attributed_commits]
+        else:
+            cmd = ["git", "diff", "HEAD~1", "--"]
+            if task.owned_files:
+                cmd.extend(task.owned_files)
         result = subprocess.run(
             cmd,
             cwd=workdir,
@@ -719,9 +991,135 @@ def _resolve(path_str: str, workdir: Path) -> Path:
     return workdir / p
 
 
-def _check_path_exists(path_str: str, workdir: Path) -> bool:
-    """Check if a file or directory exists."""
-    return _resolve(path_str, workdir).exists()
+_GLOB_CHARS = frozenset("*?[")
+
+
+def _fuzzy_paths_enabled() -> bool:
+    """Whether the OPT-IN fuzzy basename fallback for ``path_exists`` is active.
+
+    Issue #2186: manager decompositions guess exact file paths at planning
+    time (e.g. ``packages/db/test/seed-workers.test.ts``), before any code
+    exists. Workers legitimately place files at repo-idiomatic paths (e.g.
+    ``packages/db/src/__tests__/seed-workers-demo-link.test.ts``). A literal
+    miss then fails the janitor, drains the retry/error budget, and can
+    trip a sev1 orchestration pause even though the work was done correctly.
+
+    Default OFF: exact-path matching is the contract operators rely on --
+    "the check means exactly the path I wrote." Set
+    ``BERNSTEIN_JANITOR_FUZZY_PATHS=1`` to opt in to the fuzzy basename
+    fallback for runs where the manager's decomposition guesses paths.
+    Explicit glob syntax in the criterion itself (``*``, ``?``, ``[``) is
+    honored regardless of this flag -- that's opt-in per-check by
+    construction.
+    """
+    raw = os.environ.get("BERNSTEIN_JANITOR_FUZZY_PATHS", "0").strip().lower()
+    enabled = raw in {"1", "true", "yes", "on"}
+    if raw not in {"0", "1", "false", "true", "no", "yes", "off", "on"}:
+        logger.warning(
+            "BERNSTEIN_JANITOR_FUZZY_PATHS=%r not recognized; fuzzy path matching stays disabled",
+            raw,
+        )
+    return enabled
+
+
+def _check_path_exists(path_str: str, workdir: Path) -> tuple[bool, str]:
+    """Check if a file or directory exists.
+
+    Matching is conservative (issue #2186):
+      1. Literal path, resolved against ``workdir`` -- the default and
+         only out-of-the-box behavior, unchanged: the check means exactly
+         the path the plan author wrote.
+      2. If the literal path does NOT exist AND the criterion contains
+         explicit glob syntax (``*``/``?``/``[``), it is evaluated as a glob
+         pattern. Literal semantics take precedence: a literal path that
+         happens to contain a metacharacter (e.g. a Next.js dynamic-route
+         file ``app/users/[id]/page.tsx`` or a fixture ``foo[1].json``) is
+         matched literally first and is never silently reinterpreted as a
+         glob when it exists on disk.
+      3. OPT-IN fuzzy fallback (``BERNSTEIN_JANITOR_FUZZY_PATHS=1``,
+         default off): on a literal miss, try a pattern derived from the
+         basename (``**/<stem>*<suffix>``) to tolerate a manager guessing
+         the wrong directory convention (e.g. ``test/`` vs
+         ``src/__tests__/``) for a file the worker did create. When it
+         fires, a WARNING log names the literal miss, the pattern, and the
+         path that satisfied the check.
+
+    Returns:
+        (passed, detail). ``detail`` is "exists"/"not found" for the
+        literal case (unchanged wire format) and a longer message
+        identifying the matched path when a glob or fuzzy match passed.
+    """
+    has_glob_syntax = any(c in _GLOB_CHARS for c in path_str)
+
+    # Literal-first: a literal path always wins, even when it contains a glob
+    # metacharacter. This preserves literal-path semantics for real files like
+    # ``app/users/[id]/page.tsx`` or ``foo[1].json`` so they are never silently
+    # reinterpreted as a glob when they exist on disk.
+    literal = _resolve(path_str, workdir)
+    if literal.exists():
+        return True, "exists"
+
+    if has_glob_syntax:
+        # Literal miss AND the criterion contains explicit glob syntax: honor
+        # it as a glob pattern (opt-in per-check by construction).
+        glob_pattern = str(workdir / path_str)
+        glob_matches = sorted(globmod.glob(glob_pattern, recursive=True))
+        if glob_matches:
+            matched = glob_matches[0]
+            logger.info(
+                "janitor path_exists: glob pattern %r matched %r",
+                path_str,
+                matched,
+            )
+            return True, f"exists: glob pattern matched {matched}"
+        logger.info(
+            "janitor path_exists: glob pattern %r matched nothing under %s",
+            path_str,
+            workdir,
+        )
+        return False, "not found"
+
+    if not _fuzzy_paths_enabled():
+        return False, "not found"
+
+    # Opt-in fuzzy basename fallback. Split the basename on the FIRST dot,
+    # not the last: multi-part suffixes like ".test.ts" / ".spec.tsx" are
+    # common in this exact scenario (a manager guessing
+    # "seed-workers.test.ts" vs. a worker naming it
+    # "seed-workers-demo-link.test.ts") and Path.stem/.suffix would only
+    # peel off ".ts", leaving ".test" glued onto a stem that then fails to
+    # prefix-match the worker's actual filename.
+    name = Path(path_str).name
+    name_parts = name.split(".", 1)
+    stem = name_parts[0]
+    suffix = f".{name_parts[1]}" if len(name_parts) > 1 else ""
+    if not stem:
+        logger.info(
+            "janitor path_exists: literal miss for %r and no basename to fuzzy-match",
+            path_str,
+        )
+        return False, "not found"
+    fuzzy_pattern = f"**/{stem}*{suffix}" if suffix else f"**/{stem}*"
+    full_fuzzy_pattern = str(workdir / fuzzy_pattern)
+    fuzzy_matches = sorted(globmod.glob(full_fuzzy_pattern, recursive=True))
+    if fuzzy_matches:
+        matched = fuzzy_matches[0]
+        logger.warning(
+            "janitor path_exists: FUZZY MATCH (BERNSTEIN_JANITOR_FUZZY_PATHS=1): "
+            "literal path %r not found; fuzzy pattern %r matched %r -- "
+            "the check passed on a fuzzy match, not the exact path written in the plan",
+            path_str,
+            fuzzy_pattern,
+            matched,
+        )
+        return True, f"exists via fuzzy fallback: matched {matched} (basename pattern: {fuzzy_pattern})"
+
+    logger.info(
+        "janitor path_exists: no match for %r (tried literal and fuzzy %r; fuzzy matching enabled)",
+        path_str,
+        fuzzy_pattern,
+    )
+    return False, "not found"
 
 
 def _check_glob_exists(pattern: str, workdir: Path) -> bool:
@@ -729,6 +1127,186 @@ def _check_glob_exists(pattern: str, workdir: Path) -> bool:
     full_pattern = str(workdir / pattern)
     matches = globmod.glob(full_pattern, recursive=True)
     return len(matches) > 0
+
+
+# --- bug 12: janitor branch-check acceptance signals vs actual pushed branch ---
+#
+# Task acceptance signals of type ``test_passes`` are sometimes generated as
+# git branch/commit checks, e.g. ``git rev-parse --verify fix-905-x`` or
+# ``git log -1 --format=%s fix-905-x | grep -q '#905'``. The branch name
+# baked into the signal comes from a slugifier at task-generation time
+# (hyphen-separated), while the agent that actually does the work is free to
+# choose its own branch name and conventionally uses a slash after the type
+# prefix (``fix/905-x``, ``feat/905-x``). When the two diverge, the literal
+# shell command fails even though the agent's work (including the pushed
+# branch and PR) is real -- bernstein records its own success as a failure
+# and DLQs the task. See work/agent-reports/2026-07-02-run9-attempt9-audit.md
+# (task d56c18f2fc08): expected ``fix-905-demo-worker-record`` (hyphens),
+# agent pushed ``fix/905-demo-worker-record`` (slash); PR #965 was open and
+# real the entire time.
+#
+# Fix: for git branch/commit-check commands, resolve the referenced token
+# against branches that actually exist (local + remote-tracking), tolerant
+# of slash-vs-hyphen drift, and rewrite the command to the ref that was
+# actually found before running it. Every resolution attempt is logged at
+# INFO with the expected ref(s), the branches actually found, and the
+# verdict + reason, so a future mismatch is a log read, not a DLQ mystery.
+
+_GIT_REF_CHECK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^\s*git\s+rev-parse\s+--verify\s"),
+    re.compile(r"^\s*git\s+log\s+-1\b"),
+)
+
+# Well-known refs that are never task-specific branch names -- never rewrite
+# these even if they happen to appear as the trailing bare token.
+_SPECIAL_REFS = {"HEAD", "head", "main", "master", "trunk", "develop", "@"}
+
+
+def _extract_branch_ref(command: str) -> str | None:
+    """Best-effort extraction of a branch/ref token from a git test_passes command.
+
+    Only fires for the two acceptance-signal shapes bernstein's task
+    generator emits to verify a task pushed a branch: ``git rev-parse
+    --verify <ref>`` and ``git log -1 ... <ref> | ...``. The ref is taken as
+    the last whitespace-separated, non-flag token in the segment before any
+    pipe (flags like ``--format=%s`` are excluded because they start with
+    ``-``).
+
+    Args:
+        command: The raw ``test_passes`` shell command.
+
+    Returns:
+        The extracted ref, or None if the command doesn't look like a
+        branch/commit check, or the trailing token is a well-known special
+        ref (HEAD/main/master/...) rather than a task-specific branch name.
+    """
+    if not any(pattern.match(command) for pattern in _GIT_REF_CHECK_PATTERNS):
+        return None
+    first_segment = command.split("|", 1)[0]
+    tokens = first_segment.split()
+    candidates = [tok for tok in tokens[2:] if tok and not tok.startswith("-")]
+    if not candidates:
+        return None
+    ref = candidates[-1]
+    if ref in _SPECIAL_REFS:
+        return None
+    return ref
+
+
+def _list_git_branches(workdir: Path) -> list[str]:
+    """Return every local and remote-tracking branch name visible in *workdir*."""
+    try:
+        result = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/", "refs/remotes/"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("janitor: git for-each-ref failed in %s: %s", workdir, exc)
+        return []
+    if result.returncode != 0:
+        logger.warning(
+            "janitor: git for-each-ref exited %s in %s: %s",
+            result.returncode,
+            workdir,
+            result.stderr.strip(),
+        )
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _normalize_branch_token(name: str) -> str:
+    """Collapse ``/`` to ``-`` so slash- and hyphen-style branch names compare equal."""
+    return name.replace("/", "-")
+
+
+def _resolve_branch_ref(expected: str, workdir: Path) -> tuple[str | None, list[str]]:
+    """Resolve *expected* against the branches that actually exist in *workdir*.
+
+    Tries, in order: exact local/remote-tracking match, ``origin/<expected>``,
+    then a slash-vs-hyphen-normalized fuzzy match against every branch found
+    (this is what recovers bug 12: signal expects ``fix-905-x``, agent pushed
+    ``fix/905-x``).
+
+    Args:
+        expected: The branch/ref token pulled from the acceptance command.
+        workdir: Project root to inspect for branches.
+
+    Returns:
+        Tuple of (resolved ref name or None if nothing matched, the full
+        list of branches found -- for logging).
+    """
+    branches = _list_git_branches(workdir)
+    if expected in branches:
+        return expected, branches
+    remote_exact = f"origin/{expected}"
+    if remote_exact in branches:
+        return remote_exact, branches
+    target_norm = _normalize_branch_token(expected)
+    for branch in branches:
+        bare = branch.split("/", 1)[1] if branch.startswith("origin/") else branch
+        if _normalize_branch_token(bare) == target_norm:
+            return branch, branches
+    return None, branches
+
+
+def _resolve_branch_check_command(command: str, workdir: Path) -> str:
+    """Rewrite a branch-check ``test_passes`` command to the ref that actually exists.
+
+    No-op for commands that aren't recognized branch/commit checks. For
+    recognized checks, logs the expected ref, every branch found in
+    *workdir*, and the verdict (exact match / rewritten / not found) before
+    returning the (possibly rewritten) command for execution.
+
+    Args:
+        command: The raw ``test_passes`` shell command from the completion signal.
+        workdir: Project root the command will run in.
+
+    Returns:
+        The original command, or the same command with the expected ref
+        token replaced by the actually-existing branch name.
+    """
+    expected = _extract_branch_ref(command)
+    if expected is None:
+        return command
+
+    resolved, branches = _resolve_branch_ref(expected, workdir)
+
+    if resolved == expected:
+        logger.info(
+            "janitor acceptance check: branch ref %r matched exactly in %s "
+            "(branches found: %s) - verdict: PASS-eligible, running command as-is",
+            expected,
+            workdir,
+            branches,
+        )
+        return command
+
+    if resolved is not None:
+        logger.info(
+            "janitor acceptance check: branch ref %r not found verbatim, but "
+            "%r matched under slash/hyphen normalization in %s (branches "
+            "found: %s) - verdict: rewriting command to use the "
+            "actually-pushed ref (bug 12: hyphen-vs-slash naming drift "
+            "between task generation and agent-side branch naming)",
+            expected,
+            resolved,
+            workdir,
+            branches,
+        )
+        return command.replace(expected, resolved, 1)
+
+    logger.info(
+        "janitor acceptance check: branch ref %r not found (exact, "
+        "origin/-prefixed, or slash/hyphen variant) in %s (branches found: "
+        "%s) - verdict: will FAIL, running original command for an honest error",
+        expected,
+        workdir,
+        branches,
+    )
+    return command
 
 
 def _check_test_passes(command: str, workdir: Path) -> bool:
@@ -752,8 +1330,31 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
             capture_output=True,
             timeout=120,
         )
+        if result.returncode != 0:
+            logger.info(
+                "janitor test_passes FAIL: command=%r cwd=%s exit=%d stderr=%s stdout=%s",
+                command,
+                workdir,
+                result.returncode,
+                result.stderr.decode("utf-8", errors="replace")[-2000:],
+                result.stdout.decode("utf-8", errors="replace")[-2000:],
+            )
         return result.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "janitor test_passes TIMEOUT: command=%r cwd=%s timeout=120s exc=%s",
+            command,
+            workdir,
+            exc,
+        )
+        return False
+    except OSError as exc:
+        logger.warning(
+            "janitor test_passes ERROR: command=%r cwd=%s exc=%s",
+            command,
+            workdir,
+            exc,
+        )
         return False
 
 

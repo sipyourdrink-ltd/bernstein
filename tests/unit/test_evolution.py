@@ -1026,3 +1026,44 @@ class TestRecordAgentLifetime:
 
         recent = coordinator.collector.get_recent_agent_metrics(hours=1)
         assert len(recent) == 3
+
+    def test_real_caller_kwarg_shape_underscore_model(self, tmp_path: Path) -> None:
+        """API-drift regression (defect 22): real orchestrator callers
+        (task_lifecycle._record_agent_lifetime, agent_lifecycle's wall-clock
+        and heartbeat reap paths) invoke this with ``_model=`` rather than
+        ``model=``. Before the fix this raised TypeError and was silently
+        swallowed by the caller's except-Exception / suppress(Exception).
+        """
+        coordinator = EvolutionCoordinator(tmp_path)
+
+        # Must not raise -- this is the exact kwarg shape the orchestrator uses.
+        coordinator.record_agent_lifetime(
+            agent_id="agent-underscore",
+            role="backend",
+            lifetime_seconds=42.0,
+            tasks_completed=1,
+            _model="sonnet",
+        )
+
+        recent = coordinator.collector.get_recent_agent_metrics(hours=1)
+        assert len(recent) == 1
+        assert recent[0].agent_id == "agent-underscore"
+
+    def test_record_agent_lifetime_logs_info(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """Every record_agent_lifetime call emits an INFO line with
+        session/role/model/lifetime so the data flow is visible in logs."""
+        coordinator = EvolutionCoordinator(tmp_path)
+
+        with caplog.at_level("INFO", logger="bernstein.evolution"):
+            coordinator.record_agent_lifetime(
+                agent_id="agent-logged",
+                role="qa",
+                lifetime_seconds=99.5,
+                tasks_completed=4,
+                _model="haiku",
+            )
+
+        messages = [r.message for r in caplog.records if r.name == "bernstein.evolution"]
+        assert any("agent-logged" in m and "qa" in m and "haiku" in m and "99.5" in m for m in messages), (
+            f"expected INFO log with session/role/model/lifetime, got: {messages}"
+        )

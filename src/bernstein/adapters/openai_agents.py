@@ -67,6 +67,23 @@ _OPENAI_CREDENTIAL_KEYS: tuple[str, ...] = (
 # full list.
 _DEFAULT_SANDBOX_PROVIDER: str = "unix_local"
 
+# Operator lever for the runner's tool source.  When set to ``"builtin"``
+# every openai_agents spawn uses the runner's workdir-sandboxed builtin
+# tools (read_file/write_file/list_dir/run_command) even when the
+# per-spawn ``mcp_config`` carries no ``tool_source`` key.  An explicit
+# ``mcp_config["tool_source"]`` value always wins over the env var.
+# Without this lever nothing in core/ ever populates ``tools`` or sets
+# ``tool_source``, so spawns arrive with ZERO tools: the model answers
+# the prompt with prose, the SDK sees a final output, and the runner
+# exits 0 in seconds having done no work.
+TOOL_SOURCE_ENV_VAR: str = "BERNSTEIN_OPENAI_AGENTS_TOOL_SOURCE"
+
+# Kept in sync with ``openai_agents_builtins._ALLOW_RUN_COMMAND_ENV``. The
+# spawn side must resolve this itself because ``build_filtered_env`` strips
+# BERNSTEIN_* control vars from the runner subprocess environment - a
+# parent-env opt-in that is not folded into the manifest simply vanishes.
+_ALLOW_RUN_COMMAND_ENV_VAR: str = "BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND"
+
 # Models the runner accepts.  Used for ``supported_models`` reporting and
 # to map effort tiers back to the cheapest viable SKU.  Entries must
 # also appear in ``bernstein.core.cost.cost.MODEL_COSTS_PER_1M_TOKENS``
@@ -91,6 +108,14 @@ class OpenAIAgentsAdapter(PluginAdapter):
     orchestrator's hot path so users without the optional dependency can
     still import the module for discovery/testing.
     """
+
+    # Provider-string aliases this adapter resolves from in
+    # ``_infer_adapter_name_for_provider``. Must resolve ahead of the bare
+    # "openai" alias on CodexAdapter, otherwise openai_agents spawns are
+    # misrouted to the codex adapter (see 042bcbd0). The registry's
+    # exact-match lookup makes ordering irrelevant going forward, but the
+    # alias set itself is unchanged from the old substring branch.
+    provides = ("openai_agents", "openai-agents")
 
     # The SDK forwards 429s from api.openai.com with the standard
     # ``rate_limit_exceeded`` / ``insufficient_quota`` error codes.
@@ -204,12 +229,31 @@ class OpenAIAgentsAdapter(PluginAdapter):
             if isinstance(provider, str) and provider:
                 sandbox_provider = provider
             # ``tool_source: "builtin"`` opts into the runner's
-            # workdir-sandboxed builtins.  Any other value keeps the default
-            # MCP-gateway path, so the manifest stays byte-identical for
-            # runs that do not request builtins.
+            # workdir-sandboxed builtins.  Any other explicit value keeps
+            # the default MCP-gateway path, so the manifest stays
+            # byte-identical for runs that do not request builtins.
             raw_tool_source = mcp_config.get("tool_source")
             if raw_tool_source == "builtin":
                 tool_source = "builtin"
+        # Operator env-var lever: applies only when mcp_config carries no
+        # explicit ``tool_source`` (an explicit value - builtin or not -
+        # always wins over the environment).
+        _env_tool_source_value = os.environ.get(TOOL_SOURCE_ENV_VAR)
+        _mcp_config_has_tool_source_key = bool(mcp_config) and "tool_source" in mcp_config
+        _env_lever_applies = not _mcp_config_has_tool_source_key and _env_tool_source_value == "builtin"
+        if _env_lever_applies:
+            tool_source = "builtin"
+        logger.info(
+            "_build_manifest tool_source decision session=%s: mcp_config_tool_source=%r, "
+            "env %s=%r, env_lever_applied=%s -> resolved tool_source=%r",
+            session_id,
+            (mcp_config or {}).get("tool_source"),
+            TOOL_SOURCE_ENV_VAR,
+            _env_tool_source_value,
+            _env_lever_applies,
+            tool_source,
+        )
+        if mcp_config:
             raw_tools: object = mcp_config.get("tools")
             if isinstance(raw_tools, list):
                 tools = [cast("dict[str, Any]", t) for t in cast("list[Any]", raw_tools) if isinstance(t, dict)]
@@ -247,7 +291,64 @@ class OpenAIAgentsAdapter(PluginAdapter):
         # value survives, matching the other sampling overrides above.
         overrides.setdefault("max_tokens", int(getattr(model_config, "max_tokens", 200_000)))
 
+        # Control knobs the RUNNER cannot see on its own: the spawner hands
+        # the subprocess a filtered environment (env_isolation strips
+        # BERNSTEIN_* control vars) and the runner never loads the operator
+        # yaml, so these must be resolved HERE - where the parent env and
+        # tuning defaults are both visible - and travel in the manifest.
+        raw_allow = (mcp_config or {}).get("allow_run_command")
+        if isinstance(raw_allow, bool):
+            allow_run_command = raw_allow
+        else:
+            allow_run_command = os.environ.get(_ALLOW_RUN_COMMAND_ENV_VAR) == "1"
+        raw_max_turns = (mcp_config or {}).get("max_turns")
+        if isinstance(raw_max_turns, int) and not isinstance(raw_max_turns, bool) and raw_max_turns > 0:
+            max_turns: int | None = raw_max_turns
+        else:
+            # Spawn-side resolution of env > tuning.agent.max_turns > None,
+            # reusing the runner's own resolver (in this process the env is
+            # the parent env and defaults are the yaml-loaded tuning).
+            from bernstein.adapters.openai_agents_runner import _resolve_max_turns
+
+            max_turns = _resolve_max_turns()
+
+        _tool_names = [str(t.get("name", "<unnamed>")) if isinstance(t, dict) else "<non-dict-tool>" for t in tools]
+        logger.info(
+            "_build_manifest tool assembly session=%s: resolved tool_source=%r, gateway tool_names=%r "
+            "(count=%d), mcp_servers=%r, allow_run_command=%s",
+            session_id,
+            tool_source,
+            _tool_names,
+            len(_tool_names),
+            list(mcp_servers.keys()),
+            allow_run_command,
+        )
+        # ``tool_source == "builtin"`` legitimately reports zero tools here -
+        # the builtin tool objects (read_file/write_file/list_dir, plus
+        # run_command when allow_run_command) are constructed later in the
+        # runner's ``_run_session``, not put into this manifest's ``tools``
+        # list (see openai_agents_runner.py's comment on the builtin path).
+        # A "gateway" spawn with zero tools and no mcp servers, however, has
+        # NO way to get any tool at all - the agent can only emit text. This
+        # is exactly the D2 tools-zero failure mode (silent zero-tools spawn,
+        # see work/bernstein/proofs/d2/tools-zero-diagnosis.md).
+        if tool_source != "builtin" and not tools and not mcp_servers:
+            logger.warning(
+                "_build_manifest session=%s: agent will have zero tools - it can only emit text. "
+                "reason=gateway tool_source selected but no gateway tools/mcpServers configured "
+                "(mcp_config tools=%r, mcpServers=%r; env %s=%r). Set mcp_config['tool_source']='builtin' "
+                "or export %s=builtin to grant workdir-sandboxed builtin tools instead.",
+                session_id,
+                (mcp_config or {}).get("tools"),
+                (mcp_config or {}).get("mcpServers"),
+                TOOL_SOURCE_ENV_VAR,
+                _env_tool_source_value,
+                TOOL_SOURCE_ENV_VAR,
+            )
+
         return overrides | {
+            "allow_run_command": allow_run_command,
+            "max_turns": max_turns,
             "session_id": session_id,
             "prompt": prompt,
             "workdir": str(workdir),
@@ -310,6 +411,25 @@ class OpenAIAgentsAdapter(PluginAdapter):
             system_addendum=system_addendum,
         )
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        # A spawn whose manifest carries tool_source="gateway" with zero
+        # tools gives the model NO function tools at all - it can only
+        # answer with prose and exit "successfully" having done nothing.
+        # Log the effective selection so that failure mode is visible in
+        # the orchestrator log instead of only in the (worktree-local,
+        # cleanup-prone) runner log.
+        logger.info(
+            "openai_agents spawn %s: tool_source=%s, tools=%d, model=%s, "
+            "allow_run_command=%s, max_turns=%s (env %s=%r, mcp_config tool_source=%r)",
+            session_id,
+            manifest["tool_source"],
+            len(manifest["tools"]),
+            manifest["model"],
+            manifest["allow_run_command"],
+            manifest["max_turns"],
+            TOOL_SOURCE_ENV_VAR,
+            os.environ.get(TOOL_SOURCE_ENV_VAR),
+            (mcp_config or {}).get("tool_source"),
+        )
 
         # ``api_key_env`` overrides which env var holds the key; only its
         # NAME is ever recorded, never the value.  The name is validated
@@ -324,6 +444,48 @@ class OpenAIAgentsAdapter(PluginAdapter):
                 "OpenAIAgentsAdapter: %s is not set - spawn will fail",
                 api_key_env,
             )
+
+        # One-line spawn-manifest summary: model/base_url/api_key_env NAME
+        # (never the secret value)/max_tokens/tool_source/tool count, all in
+        # one place so a spawn can be fully characterized from a single log
+        # line without cross-referencing the (worktree-local, cleanup-prone)
+        # manifest JSON file.
+        _max_tokens_val = manifest.get("max_tokens")
+        _max_tokens_str = "default:200000" if _max_tokens_val is None else str(_max_tokens_val)
+        logger.info(
+            "openai_agents spawn_manifest_summary session=%s: model=%s, base_url=%s, "
+            "api_key_env=%s, max_tokens=%s, tool_source=%s, tool_count=%d",
+            session_id,
+            manifest.get("model"),
+            manifest.get("base_url") or "<default>",
+            api_key_env,
+            _max_tokens_str,
+            manifest["tool_source"],
+            len(manifest["tools"]),
+        )
+
+        # [DEEPSEEK-DEBUG] Unconditional diagnostic for the
+        # deepseek/deepseek-chat-via-OpenRouter empty-completion / malformed
+        # tool-call investigation (2026-07-03). Confirms at the SPAWN side
+        # (before the runner subprocess even starts) that: (1) the model
+        # string is forwarded to the runner byte-for-byte with no name
+        # mapping/rewriting anywhere in this adapter, and (2) bernstein never
+        # sets any OpenRouter-recommended extra headers (HTTP-Referer,
+        # X-Title) anywhere in ``_build_manifest``/``spawn`` - grep this repo's
+        # ``src/bernstein/adapters/openai_agents*.py`` for "extra_headers" /
+        # "HTTP-Referer" / "X-Title" to confirm; there are none. If OpenRouter
+        # routing/model behavior depends on those headers being present, this
+        # is the log line proving they are absent for this spawn.
+        logger.info(
+            "[DEEPSEEK-DEBUG] spawn session=%s: model string forwarded verbatim (no "
+            "name mapping) model=%r, base_url=%r, api_key_env=%r (value never logged), "
+            "extra_headers_configured=False (bernstein sets no HTTP-Referer/X-Title/"
+            "any custom header anywhere in this adapter or the runner)",
+            session_id,
+            manifest.get("model"),
+            manifest.get("base_url") or "<default>",
+            api_key_env,
+        )
 
         cmd = [*self._runner_command(), "--manifest", str(manifest_path)]
 

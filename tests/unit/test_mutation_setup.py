@@ -113,10 +113,12 @@ class TestKeyMutationScenarios:
 
         from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_task
 
-        # DONE -> OPEN should be illegal (mutant might allow all transitions)
+        # DONE -> IN_PROGRESS should be illegal (mutant might allow all
+        # transitions). Note DONE -> OPEN is intentionally legal now (bounded
+        # janitor reopen), so this guard uses a transition that stays illegal.
         task = Task(id="mut-1", title="t", description="d", role="r", status=TaskStatus.DONE)
         with pytest.raises(IllegalTransitionError):
-            transition_task(task, TaskStatus.OPEN)
+            transition_task(task, TaskStatus.IN_PROGRESS)
 
     def test_env_expansion_blocked_vars(self) -> None:
         """Blocked env vars must stay blocked (mutant might remove the check)."""

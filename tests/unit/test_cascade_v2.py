@@ -479,8 +479,11 @@ class TestExpandedErrorDetection:
         assert tracker.scan_log_for_api_error(log)
 
     def test_detect_connection_refused(self, tmp_path: Path) -> None:
+        # "connection refused"/"ECONNREFUSED" are risky-bare tokens (they also
+        # appear in benign prose/JSON), so a real detection requires same-line
+        # error context -- exactly how a genuine connection failure is logged.
         log = tmp_path / "agent.log"
-        log.write_text("ECONNREFUSED: connection refused by remote host\n")
+        log.write_text("Error: ECONNREFUSED connection refused by remote host\n")
         tracker = RateLimitTracker()
         assert tracker.scan_log_for_api_error(log)
 
@@ -499,15 +502,22 @@ class TestExpandedErrorDetection:
 
 class TestDetectFailureType:
     def test_rate_limit_takes_priority(self, tmp_path: Path) -> None:
-        """Rate limit is detected before timeout or API error."""
+        """Rate limit is detected before timeout or API error.
+
+        "rate limit" and "timeout" are risky-bare tokens (they appear in
+        benign prose/JSON), so a real detection requires same-line error
+        context -- present here on a genuine provider-error line.
+        """
         log = tmp_path / "agent.log"
-        log.write_text("rate limit exceeded and then timeout occurred\n")
+        log.write_text("Error: rate limit exceeded and then timeout occurred\n")
         tracker = RateLimitTracker()
         assert tracker.detect_failure_type(log) == "rate_limit"
 
     def test_timeout_detected(self, tmp_path: Path) -> None:
+        # "timed out" is a risky-bare token; a real timeout is logged with
+        # error context, which is what a genuine failure line carries.
         log = tmp_path / "agent.log"
-        log.write_text("connection timed out\n")
+        log.write_text("Error: connection timed out\n")
         tracker = RateLimitTracker()
         assert tracker.detect_failure_type(log) == "timeout"
 

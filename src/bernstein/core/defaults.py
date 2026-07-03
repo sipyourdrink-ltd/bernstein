@@ -107,6 +107,21 @@ class OrchestratorDefaults:
     manager_review_completion_threshold: int = 7  # trigger review every 7 done
     manager_review_stall_s: float = 900.0  # 15 min
 
+    # How long a manager session may run with zero child tasks before
+    # ``core.orchestration.stalled_manager`` declares a stall and aborts the
+    # run. Tunable via ``tuning.orchestrator.stalled_manager_threshold_s`` in
+    # bernstein.yaml, or the ``BERNSTEIN_STALL_THRESHOLD_S`` env var (checked
+    # first). See ``stalled_manager.py`` module docstring for the detection
+    # logic and its relationship to ``AGENT.idle_log_age_threshold_s``.
+    stalled_manager_threshold_s: float = 170.0
+
+    # Starting wall-clock kill deadline for a spawned agent (OrchestratorConfig.
+    # max_agent_runtime_s). Self-extends +600s/tick up to a 5400s hard cap while
+    # the agent is heartbeating (see core/agents/agent_lifecycle.py); this is
+    # only the initial value before any extension. Tunable via
+    # ``tuning.orchestrator.max_agent_runtime_s``.
+    max_agent_runtime_s: int = 1800  # 30 min
+
 
 # ---------------------------------------------------------------------------
 # Spawn / Agent defaults
@@ -141,6 +156,31 @@ class AgentDefaults:
     escalation_med_count: int = 3
 
     zombie_pid_max_age_s: float = 7 * 24 * 3600  # 7 days
+
+    # Max SDK turns forwarded to ``Runner.run_sync`` by the openai_agents
+    # runner (adapters/openai_agents_runner.py). Bug 13 (D2 minimax
+    # attempt-e938bd33, 2026-07-02): the SDK's own default of 10 was the
+    # dominant failure mode for builtin-tool workflows - backend hit
+    # MaxTurnsExceeded AFTER committing + POSTing /complete (wasted-work
+    # kill) and qa hit it 3x mid-exploration. 30 is the saner default for
+    # multi-tool workflows. Override via ``tuning.agent.max_turns``, the
+    # ``BERNSTEIN_MAX_TURNS`` env var, or the runner manifest's
+    # ``max_turns`` field. Set to ``None`` to omit the kwarg and fall back
+    # to the SDK's own default (10).
+    max_turns: int | None = 30
+
+
+@dataclass(frozen=True)
+class SLODefaults:
+    """Error-budget floor for the observability SLO/incident subsystem."""
+
+    # ErrorBudget.budget_total always tolerates at least this many failures,
+    # even when total_tasks * (1 - slo_target) rounds below it (e.g. a small
+    # task count). Raising this delays IncidentManager's auto-pause-on-
+    # error-budget-depletion response, useful when early infra-death retries
+    # (rate limits, transient auth) shouldn't count against a healthy run.
+    # Tunable via ``tuning.slo.error_budget_min_failures``.
+    error_budget_min_failures: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +720,7 @@ SCHEMA_RETRY = SchemaRetryDefaults()
 LINEAGE = LineageDefaults()
 REWORK_LEDGER = ReworkLedgerDefaults()
 COMPACTION = CompactionDefaults()
+SLO = SLODefaults()
 
 # Module-level constant for direct import - preferred when only the
 # numeric cap is needed (no need to import the whole singleton).
@@ -735,6 +776,7 @@ _SECTION_TO_ATTR: Mapping[str, str] = MappingProxyType(
         "lineage": "LINEAGE",
         "rework_ledger": "REWORK_LEDGER",
         "compaction": "COMPACTION",
+        "slo": "SLO",
     }
 )
 
@@ -765,6 +807,7 @@ _ATTR_TO_FACTORY: Mapping[str, type[Any]] = MappingProxyType(
         "LINEAGE": LineageDefaults,
         "REWORK_LEDGER": ReworkLedgerDefaults,
         "COMPACTION": CompactionDefaults,
+        "SLO": SLODefaults,
     }
 )
 

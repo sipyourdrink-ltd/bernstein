@@ -196,6 +196,24 @@ def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Pat
         orch._signal_mgr.clear_signals(session.id)
     with contextlib.suppress(OSError):
         completion_file.unlink()
+    # Preserve the runner transcript/manifest BEFORE the worktree (and the
+    # ``.sdd/runtime/<session_id>*.log`` inside it) is destroyed. D2 MiniMax
+    # attempt-3 (2026-07-03): the manager completed cleanly, was reaped via
+    # this idle-recycle path, and its runner log - the only artifact carrying
+    # its usage/usage_missing cost diagnostics - was deleted with the
+    # worktree because only the crash paths in agent_lifecycle.py preserved
+    # logs. Mirrors agent_lifecycle.py's _handle_dead_agent/reap paths.
+    # Imported lazily: agent_lifecycle re-imports this module at its EOF for
+    # back-compat re-exports, so a top-level import here would deepen the
+    # existing agent_recycling <-> agent_lifecycle cycle.
+    from bernstein.core.agents.agent_lifecycle import _preserve_runner_logs
+
+    _preserved_dir = _preserve_runner_logs(orch, session)
+    logger.info(
+        "Runner log preservation before worktree cleanup for completed agent %s: %s",
+        session.id,
+        _preserved_dir if _preserved_dir is not None else "nothing to preserve",
+    )
     with contextlib.suppress(Exception):
         orch._spawner.cleanup_worktree(session.id)
     get_collector().end_agent(session.id)
@@ -243,6 +261,18 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
         orch._idle_shutdown_ts.pop(session.id, None)
         with contextlib.suppress(OSError):
             orch._signal_mgr.clear_signals(session.id)
+        # Preserve the runner transcript/manifest BEFORE the worktree is
+        # destroyed (same rationale as _reap_completed_agent above; mirrors
+        # agent_lifecycle.py's crash-path preservation). Lazy import: see
+        # _reap_completed_agent for the cycle rationale.
+        from bernstein.core.agents.agent_lifecycle import _preserve_runner_logs
+
+        _preserved_dir = _preserve_runner_logs(orch, session)
+        logger.info(
+            "Runner log preservation before worktree cleanup for recycled agent %s: %s",
+            session.id,
+            _preserved_dir if _preserved_dir is not None else "nothing to preserve",
+        )
         with contextlib.suppress(Exception):
             orch._spawner.cleanup_worktree(session.id)
         get_collector().end_agent(session.id)

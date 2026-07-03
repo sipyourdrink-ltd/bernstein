@@ -143,6 +143,21 @@ def _run_merge_and_push(
         )
 
     merge_start = time.perf_counter()
+    # Provenance: record the call site before invoking the merge so the
+    # log line identifies the WORKER branch + WORKTREE root that triggered
+    # this merge attempt (defect 28: every merge commit must have
+    # provenance -- a decoy with no provenance must be impossible).
+    # Use ``getattr`` so callers passing a minimal stub session
+    # (e.g. ``_Stub`` in test_spawner_merge_queue_wiring) don't crash on
+    # a missing ``role`` attribute -- the log line must NEVER raise.
+    author_role = getattr(session, "role", "<unknown>")
+    logger.info(
+        "merge_preflight: from=<worktree=%s> to=<main=%s> branch=agent/%s author=<spawner:%s> reason=<reap-and-merge>",
+        worktree_root,
+        worktree_root,
+        session.id,
+        author_role,
+    )
     merge_result = merge_worktree_branch_fn(session.id, repo_root=worktree_root)
     merge_duration.observe(time.perf_counter() - merge_start)
 

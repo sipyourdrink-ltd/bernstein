@@ -350,3 +350,118 @@ def test_emit_orphan_metrics_appends_failure_record(tmp_path: Path) -> None:
     assert failure["success"] is False
     assert failure["test_pass_rate"] == 0.0
     assert failure["error_type"] == "timeout"
+
+
+# ---------------------------------------------------------------------------
+# _preserve_runner_logs
+# ---------------------------------------------------------------------------
+
+
+def test_preserve_runner_logs_copies_logs_and_manifest(tmp_path: Path) -> None:
+    """Runner logs + manifest are copied out of the worktree before cleanup."""
+    from bernstein.core.agents.agent_lifecycle import _preserve_runner_logs
+
+    worktree = tmp_path / "wt"
+    runtime = worktree / ".sdd" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "A-1.log").write_text("runner transcript")
+    (runtime / "A-1.events.log").write_text("events")
+    (runtime / "A-1.manifest.json").write_text("{}")
+    (runtime / "OTHER-SESSION.log").write_text("not ours")
+    orch_dir = tmp_path / "orch"
+    orch_dir.mkdir()
+    orch = SimpleNamespace(
+        _spawner=SimpleNamespace(get_worktree_path=lambda sid: worktree),
+        _workdir=orch_dir,
+    )
+
+    dest = _preserve_runner_logs(orch, _session())
+
+    assert dest == orch_dir / ".sdd" / "runtime" / "agent_logs" / "A-1"
+    names = sorted(p.name for p in dest.iterdir())
+    assert names == ["A-1.events.log", "A-1.log", "A-1.manifest.json"]
+    assert (dest / "A-1.log").read_text() == "runner transcript"
+
+
+def test_preserve_runner_logs_none_without_worktree(tmp_path: Path) -> None:
+    from bernstein.core.agents.agent_lifecycle import _preserve_runner_logs
+
+    orch = SimpleNamespace(
+        _spawner=SimpleNamespace(get_worktree_path=lambda sid: None),
+        _workdir=tmp_path,
+    )
+    assert _preserve_runner_logs(orch, _session()) is None
+
+
+def test_preserve_runner_logs_none_when_no_matching_files(tmp_path: Path) -> None:
+    from bernstein.core.agents.agent_lifecycle import _preserve_runner_logs
+
+    worktree = tmp_path / "wt"
+    (worktree / ".sdd" / "runtime").mkdir(parents=True)
+    orch = SimpleNamespace(
+        _spawner=SimpleNamespace(get_worktree_path=lambda sid: worktree),
+        _workdir=tmp_path / "orch",
+    )
+    assert _preserve_runner_logs(orch, _session()) is None
+    assert not (tmp_path / "orch" / ".sdd" / "runtime" / "agent_logs" / "A-1").exists()
+
+
+# ---------------------------------------------------------------------------
+# suspicious short-lived clean-exit auto-complete warning
+# ---------------------------------------------------------------------------
+
+
+def _orphan_orch(tmp_path: Path) -> SimpleNamespace:
+    return SimpleNamespace(
+        _workdir=tmp_path,
+        _client=MagicMock(),
+        _spawner=SimpleNamespace(get_worktree_path=lambda sid: None),
+    )
+
+
+def test_short_lived_clean_exit_auto_complete_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A <60s 'no changes needed' auto-complete emits a defect-signal WARNING."""
+    import logging
+    import time as _time
+
+    import bernstein.core.agents.agent_lifecycle as al
+
+    monkeypatch.setattr(al, "collect_completion_data", lambda workdir, session: {"files_modified": []})
+    monkeypatch.setattr(al, "complete_task", lambda client, base, task_id, summary: None)
+    session = _session(exit_code=0)
+    session.spawn_ts = _time.time() - 3.0
+    with caplog.at_level(logging.WARNING):
+        success, error_type = al._handle_orphan_no_signals(
+            _orphan_orch(tmp_path), MagicMock(), "T-1", session, "http://srv", _time.time()
+        )
+    assert success is True
+    assert error_type is None
+    warning = next(r for r in caplog.records if "SUSPICIOUS auto-complete" in r.message)
+    assert "A-1" in warning.message
+    assert "agent_logs" in warning.message
+
+
+def test_long_lived_clean_exit_auto_complete_does_not_warn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+    import time as _time
+
+    import bernstein.core.agents.agent_lifecycle as al
+
+    monkeypatch.setattr(al, "collect_completion_data", lambda workdir, session: {"files_modified": []})
+    monkeypatch.setattr(al, "complete_task", lambda client, base, task_id, summary: None)
+    session = _session(exit_code=0)
+    session.spawn_ts = _time.time() - 300.0
+    with caplog.at_level(logging.WARNING):
+        success, _ = al._handle_orphan_no_signals(
+            _orphan_orch(tmp_path), MagicMock(), "T-1", session, "http://srv", _time.time()
+        )
+    assert success is True
+    assert not any("SUSPICIOUS auto-complete" in r.message for r in caplog.records)

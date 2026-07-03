@@ -876,6 +876,15 @@ class CLIAdapter(ABC):
     #: lower-cased :meth:`name` is used as a fallback.
     registry_name: str = ""
 
+    #: Provider-identifier aliases this adapter answers to (for example
+    #: ``("codex", "openai", "gpt")``). Consumed by
+    #: :mod:`bernstein.adapters.registry` to build the
+    #: provider-name -> adapter-name lookup table used by
+    #: ``_infer_adapter_name_for_provider`` in ``spawner_core.py``. Empty by
+    #: default: adapters that never need provider-string inference (most of
+    #: the catalog) do not have to declare anything.
+    provides: tuple[str, ...] = ()
+
     def _derive_session_namespace(self) -> str:
         """Return the namespace label used for deterministic session ids."""
         if self.registry_name:

@@ -88,6 +88,54 @@ def test_render_auth_section_does_not_embed_token_value() -> None:
     assert "$(cat /tmp/tok.jwt)" in out
 
 
+def test_render_auth_section_mirrors_manager_template_shell_contract() -> None:
+    """Mirrors the e2da807d manager-prompt auth contract (see templates/roles/manager).
+
+    The rendered section must:
+    - mandate run_command's single-STRING shell form for the auth curls,
+    - warn that the argv-list form silently drops ``$(...)``/``$VAR`` expansion,
+    - require checking the trailing HTTP status via ``-w '\\n%{http_code}'``
+      and retrying on non-2xx,
+    - contain the string-form curl with ``$(cat <token path>)``.
+    """
+    out = _render_auth_section(Path("/tmp/tok.jwt"))
+    # Single-STRING form mandate + argv-list expansion warning.
+    assert "single command **STRING**" in out
+    assert "argv LIST" in out
+    assert "never expanded" in out
+    assert "single-STRING" in out
+    # String-form curl example interpolating the token path.
+    assert '-H "Authorization: Bearer $(cat /tmp/tok.jwt)"' in out
+    assert "ONE string" in out
+    # HTTP status check + retry-on-non-2xx instruction.
+    assert "-w '\\n%{http_code}'" in out
+    assert "200-299" in out
+    assert "retry" in out
+    # Example curls carry the status-code write-out.
+    assert "curl -sS -w '\\n%{http_code}'" in out
+
+
+def test_render_auth_section_has_no_read_file_token_fallback() -> None:
+    """The unreachable read_file-token fallback is gone; read_file is prohibited.
+
+    e2da807d removed the read_file fallback from the manager templates because
+    read_file is confined to the agent worktree and the token lives outside it.
+    The rendered section must not instruct agents to read the token via
+    read_file - the only read_file mention allowed is the explicit prohibition.
+    """
+    out = _render_auth_section(Path("/tmp/tok.jwt"))
+    assert "**Do not use the `read_file` tool to obtain your token.**" in out
+    # Every read_file mention must be part of the prohibition paragraph,
+    # never a fallback instruction.
+    prohibition_start = out.index("**Do not use the `read_file` tool")
+    prohibition_end = out.index("\n\n", prohibition_start)
+    outside = out[:prohibition_start] + out[prohibition_end:]
+    assert "read_file" not in outside
+    # No fallback phrasing anywhere.
+    assert "fall back to `read_file`" not in out
+    assert "use the `read_file` tool to read" not in out
+
+
 # ---------------------------------------------------------------------------
 # _render_signal_check
 # ---------------------------------------------------------------------------
@@ -231,6 +279,35 @@ def test_set_shutdown_event_stores_event(tmp_path: Path) -> None:
     event = threading.Event()
     spawner.set_shutdown_event(event)
     assert spawner._shutdown_event is event
+
+
+def test_spawn_refused_during_shutdown_is_logged(tmp_path: Path, make_task: Any, caplog: Any) -> None:
+    """Logging gap: a spawn attempt during shutdown raised
+    ``ShutdownInProgress`` with no log line -- an operator reading only the
+    server-side log (not the orchestrator's exception traceback) had no way
+    to see that a spawn was refused and why. Assert the refusal logs the
+    role, task count, and task ids being refused."""
+    import logging
+
+    from bernstein.core.orchestration.orchestrator import ShutdownInProgress
+
+    caplog.set_level(logging.INFO, logger="bernstein.core.agents.spawner_core")
+    spawner = _spawner(tmp_path)
+    event = threading.Event()
+    event.set()
+    spawner.set_shutdown_event(event)
+
+    task = make_task(id="task-shutdown-1")
+    try:
+        spawner.spawn_for_tasks([task])
+        raise AssertionError("expected ShutdownInProgress")
+    except ShutdownInProgress:
+        pass
+
+    messages = [r.message for r in caplog.records]
+    assert any("spawn refused" in m and "shutdown_event is set" in m and "task-shutdown-1" in m for m in messages), (
+        messages
+    )
 
 
 def test_set_merge_queue_stores_queue(tmp_path: Path) -> None:

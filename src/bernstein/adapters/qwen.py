@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
 from bernstein.core.llm import LLMSettings
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 # Maps provider key → (tier, requests_per_minute, tokens_per_minute)
@@ -31,6 +35,11 @@ class QwenAdapter(CLIAdapter):
     Qwen CLI is used as a generic OpenAI-compatible coding agent wrapper.
     It passes the provider's base_url and api_key directly to Qwen CLI.
     """
+
+    # Provider-string alias this adapter resolves from in
+    # ``_infer_adapter_name_for_provider`` (via the registry's
+    # provider-alias table). Unchanged from the old substring branch.
+    provides = ("qwen",)
 
     def _detect_provider(self, settings: LLMSettings) -> str:
         """Select provider based on which API keys are configured."""
@@ -74,7 +83,36 @@ class QwenAdapter(CLIAdapter):
         "auto": _QWEN_PLUS_MODEL,
     }
 
-    def _build_command(self, model_name: str, provider: str, settings: LLMSettings) -> list[str]:
+    def plugin_info(self) -> AdapterPluginInfo:
+        """Declare the sampling surface QwenAdapter genuinely wires.
+
+        The ``qwen`` CLI accepts ``--temperature``/``--top-p`` pass-through
+        flags for its OpenAI-compatible generation config (see
+        :meth:`_build_command`). It does not expose a ``--top-k`` or
+        ``--max-tokens`` flag, so those are NOT declared here -
+        :func:`bernstein.adapters.plugin_sdk.ensure_sampling_params_supported`
+        would refuse a spawn requesting them rather than silently drop
+        them.
+        """
+        return AdapterPluginInfo(
+            name="qwen",
+            version="0.1.0",
+            author="bernstein",
+            description="Qwen CLI adapter for OpenAI compatible models",
+            capabilities=(
+                AdapterCapability.SUPPORTS_TEMPERATURE,
+                AdapterCapability.SUPPORTS_TOP_P,
+            ),
+        )
+
+    def _build_command(
+        self,
+        model_name: str,
+        provider: str,
+        settings: LLMSettings,
+        *,
+        mcp_config: dict[str, Any] | None = None,
+    ) -> list[str]:
         """Build the qwen CLI command list (without the final prompt argument).
 
         The Tavily API key is never placed on argv (it would be visible to
@@ -82,6 +120,11 @@ class QwenAdapter(CLIAdapter):
         spawned process via the ``TAVILY_API_KEY`` environment variable in
         :meth:`spawn`. Only the non-sensitive ``--web-search-default``
         selector is added to argv.
+
+        Args:
+            mcp_config: Per-spawn config that may carry ``temperature``/
+                ``top_p`` overrides - the only two sampling fields this
+                adapter's :meth:`plugin_info` declares support for.
         """
         cmd: list[str] = ["qwen", "-y"]
 
@@ -95,6 +138,25 @@ class QwenAdapter(CLIAdapter):
 
         if settings.tavily_api_key:
             cmd.extend(["--web-search-default", "tavily"])
+
+        if mcp_config:
+            temperature = mcp_config.get("temperature")
+            if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+                logger.debug("qwen adapter: wiring --temperature=%s onto argv", temperature)
+                cmd.extend(["--temperature", str(float(temperature))])
+            top_p = mcp_config.get("top_p")
+            if isinstance(top_p, (int, float)) and not isinstance(top_p, bool):
+                logger.debug("qwen adapter: wiring --top-p=%s onto argv", top_p)
+                cmd.extend(["--top-p", str(float(top_p))])
+            for dropped_key in ("top_k", "max_tokens"):
+                if mcp_config.get(dropped_key) is not None:
+                    logger.warning(
+                        "qwen adapter: %s=%r requested but not wired (qwen CLI has no matching "
+                        "flag) - ensure_sampling_params_supported should have refused this spawn "
+                        "before reaching here",
+                        dropped_key,
+                        mcp_config.get(dropped_key),
+                    )
 
         return cmd
 
@@ -134,7 +196,7 @@ class QwenAdapter(CLIAdapter):
             env["TAVILY_API_KEY"] = settings.tavily_api_key
 
         # Pass the prompt as a positional argument (one-shot mode) instead of deprecated -p
-        cmd = self._build_command(model_config.model, provider, settings)
+        cmd = self._build_command(model_config.model, provider, settings, mcp_config=mcp_config)
         cmd.append(prompt)
 
         # Wrap with bernstein-worker for process visibility

@@ -103,6 +103,7 @@ class TestMergeWithConflictDetection:
         mock.side_effect = [
             GitResult(0, "", ""),  # merge --no-commit --no-ff
             GitResult(0, "", ""),  # _check_python_syntax: diff --cached --name-only
+            GitResult(0, "src/foo.py\n", ""),  # _verify_merge_staging_is_safe: staged files
             GitResult(0, "", ""),  # commit -m <msg>
             GitResult(0, "1 file changed\n", ""),  # diff HEAD~1 --stat
         ]
@@ -116,12 +117,14 @@ class TestMergeWithConflictDetection:
         mock.side_effect = [
             GitResult(0, "", ""),  # merge --no-commit --no-ff
             GitResult(0, "", ""),  # _check_python_syntax
+            GitResult(0, "src/foo.py\n", ""),  # _verify_merge_staging_is_safe
             GitResult(0, "", ""),  # commit
             GitResult(0, "", ""),  # diff --stat
         ]
         merge_with_conflict_detection(REPO, "feature/x", message="Custom merge msg")
-        # Verify the commit used the custom message (index 2: merge, syntax, commit)
-        commit_call = mock.call_args_list[2]
+        # Verify the commit used the custom message. Sequence: merge (0),
+        # syntax-check (1), safety-guard (2), commit (3).
+        commit_call = mock.call_args_list[3]
         assert "Custom merge msg" in commit_call[0][0]
 
     @patch("bernstein.core.git.git_pr.run_git")
@@ -156,6 +159,7 @@ class TestMergeWithConflictDetection:
         mock.side_effect = [
             GitResult(0, "", ""),  # merge --no-commit --no-ff
             GitResult(0, "", ""),  # _check_python_syntax
+            GitResult(0, "", ""),  # _verify_merge_staging_is_safe: nothing staged -> safe
             GitResult(1, "", "nothing to commit"),  # commit fails
             GitResult(0, "", ""),  # merge --abort (fallback)
         ]

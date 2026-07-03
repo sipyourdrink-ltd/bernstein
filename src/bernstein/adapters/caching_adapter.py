@@ -18,6 +18,7 @@ from bernstein.core.semantic_cache import ResponseCacheManager
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.adapters.plugin_sdk import AdapterPluginInfo
     from bernstein.core.models import ModelConfig
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,21 @@ class CachingAdapter(CLIAdapter):
         """Return inner adapter's name."""
         return self._inner.name()
 
+    def plugin_info(self) -> AdapterPluginInfo:
+        """Delegate plugin metadata to the wrapped adapter.
+
+        Capability gates (e.g. ``ensure_sampling_params_supported``)
+        duck-type on ``plugin_info`` to read declared capabilities, so the
+        caching wrapper must be transparent here or the inner adapter's
+        capabilities become invisible and valid spawns are refused.
+
+        Raises:
+            AttributeError: When the wrapped adapter is not a plugin
+                adapter (has no ``plugin_info``), so callers see exactly
+                the behaviour of the unwrapped adapter.
+        """
+        return self._inner.plugin_info()  # type: ignore[attr-defined]
+
     def is_alive(self, pid: int) -> bool:
         """Delegate to inner adapter (always False for cached PID 0)."""
         if pid == 0:
@@ -216,3 +232,34 @@ class CachingAdapter(CLIAdapter):
     def detect_tier(self) -> Any:
         """Delegate to inner adapter."""
         return self._inner.detect_tier()
+
+    def __getattr__(self, name: str) -> Any:
+        """Fall back to the wrapped adapter for any attribute not found here.
+
+        ``CLIAdapter`` subclasses declare capability flags as plain class
+        attributes (e.g. ``consumes_heartbeat_dir``, and any future
+        capability flag not yet known to this wrapper). Callers duck-type
+        on those attributes via ``getattr(adapter, "flag", False)``.
+        Without this delegation, wrapping an adapter in ``CachingAdapter``
+        silently resets every such flag to its ``getattr`` default because
+        Python attribute lookup never reaches the inner adapter's class -
+        the capability appears to vanish with no error (bug #11: the
+        spawner stopped injecting ``heartbeat_dir`` for every
+        caching-wrapped openai_agents spawn, orphaning heartbeats in the
+        worktree and triggering false ``no_heartbeat`` kills).
+
+        ``__getattr__`` only fires when normal attribute lookup (instance
+        ``__dict__`` plus the ``CachingAdapter``/``CLIAdapter`` MRO) fails,
+        so it never shadows an attribute or method this class already
+        defines - it is a pure fallback, not an override.
+
+        Raises:
+            AttributeError: When the wrapped adapter also lacks the
+                attribute, matching the error Python would give for a
+                direct lookup on this class.
+        """
+        try:
+            inner = self.__dict__["_inner"]
+        except KeyError:
+            raise AttributeError(name) from None
+        return getattr(inner, name)

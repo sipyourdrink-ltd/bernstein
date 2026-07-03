@@ -120,6 +120,45 @@ grep -i "rate limit\|429\|hit your limit\|resets" .sdd/runtime/*.log
 - Use the `TierAwareRouter` to balance across multiple providers (Claude + Codex + Gemini).
 - For batch-eligible tasks, set `batch_eligible: true` to route to provider batch APIs at reduced cost.
 
+### 4a. Healthy worker killed as a false-positive rate-limit hit
+
+**Symptom:** A worker that was making normal progress gets killed and the
+run falls back to a more expensive sticky provider, even though the
+provider dashboard shows no throttling. `.sdd/runtime/*.log` shows a
+`_scan_log_for_patterns: matched RISKY pattern ...` line pointing at a
+structured `tool_call`/`tool_result` JSON line, a `"max_tokens": ...`
+manifest dump, or a `"timeout": <n>` tool argument.
+
+**Cause:** `core/observability/rate_limit_tracker.py`'s log-scanning
+classifier (`_scan_log_for_patterns`) infers 429/throttle events from raw
+agent subprocess output. Bare substrings (`"413"`, `"429"`, `"401"`,
+`"403"`, `"504"`) and generic English words (`timeout`, `rate limit`,
+`unauthorized`, ...) previously matched anywhere in the log tail,
+including inside an agent's own JSON tool traffic where those tokens
+carry zero relation to a real provider error (byte counts, arg names,
+target-repo code being read). Fixed 2026-07-02 (#2183): structured
+`tool_call`/`tool_result`/`heartbeat` lines are now skipped entirely, and
+every remaining risky bare token/word only counts as a match when it
+appears on a line that also carries explicit error context
+(`error|status|http|code|exception|failed|failure|traceback`, matched
+with a word boundary via `_ERROR_CONTEXT_RE`).
+
+**Diagnosis:**
+```bash
+# Every classifier match is logged with the matched line - one read
+# tells you whether it was a real provider error or a data false-positive.
+grep "_scan_log_for_patterns: matched" .sdd/runtime/*.log
+```
+
+**Resolution:**
+- If the matched line is agent-produced data (tool JSON, code being
+  read) rather than a real HTTP/provider error, it's a classifier gap -
+  file an issue with the matched line so the pattern/context list can be
+  tightened further.
+- No operator action needed for the fixed patterns above; upgrade to a
+  release containing #2183 if you're still seeing this on unrelated data
+  lines.
+
 ---
 
 ## 5. Budget Exceeded
@@ -224,6 +263,21 @@ git diff main...agent/<session-id>
 - Manually resolve: `git checkout agent/<branch> && git rebase main` then `git checkout main && git merge agent/<branch>`.
 - Prevent future conflicts by adding explicit `owned_files` to tasks in plan YAML files.
 - Increase the `depends_on` declarations between tasks that touch the same code.
+
+**Injected skill files (`.claude/skills/bernstein-*.md`) causing conflicts on
+*every* worker merge:** See [issue #2187](https://github.com/sipyourdrink-ltd/bernstein/issues/2187).
+Each worker's worktree gets its own rendered copy of the always-injected
+skills (`bernstein-completion-protocol.md`, `bernstein-signal-check.md`, plus
+role-specific skills), with session-specific content
+(`{{SESSION_ID}}`/`{{TASK_IDS}}`). If an agent's `git add -A` stages these
+files, every worker merge conflicts on them - not because of real work
+overlap, but because two agents' injected boilerplate collides. As of this
+fix, `inject_skills()` registers each injected path in the target repo's
+`.git/info/exclude` (resolved correctly for worktrees via
+`git rev-parse --git-path info/exclude`), so the skills stay readable by
+Claude Code but are never staged or committed. If you still see this on an
+older Bernstein version, manually run `git rm --cached .claude/skills/bernstein-*.md`
+and add the paths to `.git/info/exclude` to unblock merges.
 
 ---
 
@@ -453,6 +507,51 @@ print(yaml.dump(plan, default_flow_style=False))
 - Stage-level `depends_on: [other_stage]` must reference existing stage names.
 - Step fields: `goal` (required), `role` (required), `priority`, `scope`, `complexity` (optional with defaults).
 - Validate with `python3 -c "from bernstein.core.planning.plan_loader import load_plan; load_plan('plans/my-project.yaml')"`.
+
+---
+
+## 21. Janitor `path_exists` Fails on a Correctly-Placed File (Acceptance-Path Mismatch)
+
+**Symptom:** A task's actual code/test changes are correct and merge cleanly, but the janitor still fails it with `path_exists: <some/guessed/path>`, the task retries and fails again with the identical mismatch, and enough of these in a run trip the `>75% of tasks failing` sev1 orchestration pause. See issue [#2186](https://github.com/sipyourdrink-ltd/bernstein/issues/2186).
+
+**Cause:** The manager's decomposition writes `completion_signals` with exact literal file paths guessed at planning time (e.g. `path_exists: packages/db/test/seed-workers.test.ts`), before any code exists. Workers legitimately place new files at the repo's actual idiomatic location (e.g. `packages/db/src/__tests__/seed-workers-demo-link.test.ts`). The literal path never existed and never will; the check is a coin flip decided before implementation starts, and retries can't fix a decomposition-time guess.
+
+**Diagnosis:**
+```bash
+grep "janitor failed" .sdd/runtime/*.log
+# Look for `path_exists: <path>` entries where the referenced directory
+# convention (e.g. `test/` vs `src/__tests__/`) doesn't match what's
+# actually in the repo:
+find . -name "*<basename-without-extension>*"
+```
+
+**Resolution:**
+- **Default behavior is unchanged**: `path_exists` with a plain literal
+  path still means exactly that path - operators can rely on the check
+  meaning the path they wrote.
+- **Explicit glob syntax always works**: a criterion that itself contains
+  glob characters (e.g. `path_exists: packages/db/**/seed-workers*.test.ts`)
+  is evaluated as a glob pattern. This is opt-in per-check by
+  construction, and the recommended way for plans/decompositions to
+  express "a test file matching this shape exists" without guessing the
+  repo's directory convention.
+- **Opt-in fuzzy fallback**: set `BERNSTEIN_JANITOR_FUZZY_PATHS=1` to make
+  a literal miss fall back to a fuzzy pattern derived from the basename
+  (`**/<stem>*<suffix>`), tolerating a different directory
+  depth/convention. Default OFF. When a fuzzy match satisfies a check, the
+  janitor logs a WARNING (`janitor path_exists: FUZZY MATCH ...`) naming
+  the literal path that missed, the pattern tried, and the path that
+  matched - check `.sdd/runtime/*.log`. See
+  [CONFIG.md](CONFIG.md#3-environment-variables).
+- **Known limitation:** `test_passes` signals (e.g. `pnpm exec vitest run
+  test/seed-workers.test.ts`) still reference the manager's guessed literal
+  path and are not rewritten by this fix - a command-level mismatch there
+  will still fail. If you hit this, prefer directory-wide test commands
+  (`pnpm --filter db test`) in the plan/decomposition rather than a single
+  guessed file path.
+- If the manager's decompositions repeatedly guess paths for a repo with an
+  unusual layout, consider using `glob_exists` (already supported) instead
+  of `path_exists` in hand-authored plan YAML.
 
 ---
 

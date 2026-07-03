@@ -870,3 +870,318 @@ def test_formal_verification_gate_swallows_runner_exception(tmp_path: Path, make
 
     assert passed is True
     assert result.verification_failures == []
+
+
+# ---------------------------------------------------------------------------
+# Normal-completion cost sourcing (D2 canary-host-99d0eac0 regression,
+# 2026-07-03): task_m.cost_usd is populated by nothing on the normal
+# completion path (the live-cost loop feeds CostTracker only), so tasks
+# whose runner wrote a real .tokens sidecar (canary qa task 325c200e1985:
+# 51,880/1,401 tokens) still recorded cost_usd 0.0 in metrics/tasks.jsonl.
+# _record_completion_metrics must fall back to the sidecar.
+# ---------------------------------------------------------------------------
+
+
+def _write_tokens_sidecar(workdir: Path, session_id: str, input_tokens: int, output_tokens: int) -> Path:
+    """Write a runner cost sidecar with one usage record (runner schema)."""
+    import json as _json
+
+    runtime_dir = workdir / ".sdd" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    sidecar = runtime_dir / f"{session_id}.tokens"
+    with sidecar.open("a", encoding="utf-8") as fh:
+        fh.write(_json.dumps({"ts": 1783039683.9, "in": input_tokens, "out": output_tokens}) + "\n")
+    return sidecar
+
+
+def test_record_completion_metrics_sources_cost_from_tokens_sidecar(tmp_path: Path, make_task: Any) -> None:
+    """A normally-completed task whose collector entry has cost_usd=0 but
+    whose session wrote a real .tokens sidecar must record the sidecar's
+    priced cost (and token counts), not 0.0."""
+    from bernstein.core.tasks.task_lifecycle import _record_completion_metrics
+
+    task = make_task(id="T-cost", title="qa task", description="d", status=TaskStatus.DONE)
+    session = _session_for(task.id, exit_code=0)
+    orch = _process_orch(tmp_path, session)
+
+    # Collector entry exists (start_task ran at spawn) but nothing ever
+    # populated its cost - the exact canary state.
+    collector = MagicMock()
+    task_m = SimpleNamespace(
+        cost_usd=0.0,
+        tokens_prompt=0,
+        tokens_completion=0,
+        tokens_used=0,
+        start_time=10.0,
+        end_time=15.0,
+    )
+    collector.task_metrics = {task.id: task_m}
+    collector.agent_metrics = {session.id: SimpleNamespace(tasks_completed=1)}
+
+    # The canary qa task's real figures.
+    _write_tokens_sidecar(tmp_path, session.id, input_tokens=51_880, output_tokens=1_401)
+
+    with patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector):
+        returned_task_m, cost_usd = _record_completion_metrics(
+            orch,
+            task,
+            session,
+            janitor_passed=True,
+            qg_result=None,
+            completion_data=None,
+            agent_just_reaped=False,
+        )
+
+    # Sidecar cost was folded in (sonnet is a priced model).
+    assert cost_usd > 0.0, "cost_usd must come from the sidecar, not the never-populated collector figure"
+    assert returned_task_m is task_m
+    # The in-memory record was reconciled (what retrospective's fallback reads).
+    assert task_m.cost_usd == cost_usd
+    assert task_m.tokens_prompt == 51_880
+    assert task_m.tokens_completion == 1_401
+    assert task_m.tokens_used == 53_281
+    # complete_task received the real figures.
+    _, complete_kwargs = collector.complete_task.call_args
+    assert complete_kwargs["cost_usd"] == cost_usd
+    assert complete_kwargs["tokens_used"] == 53_281
+    # CostTracker got the same cost.
+    _, cumulative_kwargs = orch._cost_tracker.record_cumulative.call_args
+    assert cumulative_kwargs["total_cost_usd"] == cost_usd
+    assert cumulative_kwargs["total_input_tokens"] == 51_880
+
+
+def test_record_completion_metrics_tags_alive_exit_sidecar_source(tmp_path: Path, make_task: Any) -> None:
+    """item 31: an alive-exit /complete that sources cost from the sidecar must
+    tag the ledger mutation with tokens_sidecar_source=alive_exit so the run
+    ledger entry is distinguishable from an orphan/dead-exit recovery."""
+    from bernstein.core.tasks.task_lifecycle import _record_completion_metrics
+
+    task = make_task(id="T-alive", title="qa task", description="d", status=TaskStatus.DONE)
+    session = _session_for(task.id, exit_code=0)
+    orch = _process_orch(tmp_path, session)
+
+    collector = MagicMock()
+    task_m = SimpleNamespace(
+        cost_usd=0.0,
+        tokens_prompt=0,
+        tokens_completion=0,
+        tokens_used=0,
+        start_time=10.0,
+        end_time=15.0,
+    )
+    collector.task_metrics = {task.id: task_m}
+    collector.agent_metrics = {session.id: SimpleNamespace(tasks_completed=1)}
+
+    _write_tokens_sidecar(tmp_path, session.id, input_tokens=51_880, output_tokens=1_401)
+
+    with patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector):
+        _record_completion_metrics(
+            orch,
+            task,
+            session,
+            janitor_passed=True,
+            qg_result=None,
+            completion_data=None,
+            agent_just_reaped=False,
+        )
+
+    _, cumulative_kwargs = orch._cost_tracker.record_cumulative.call_args
+    assert cumulative_kwargs["cost_tags"] == {"tokens_sidecar_source": "alive_exit"}
+
+
+def test_record_completion_metrics_keeps_collector_cost_when_it_knows_more(tmp_path: Path, make_task: Any) -> None:
+    """When the collector already carries a real (higher) cost, the sidecar
+    must not clobber it."""
+    from bernstein.core.tasks.task_lifecycle import _record_completion_metrics
+
+    task = make_task(id="T-keep", title="t", description="d", status=TaskStatus.DONE)
+    session = _session_for(task.id, exit_code=0)
+    orch = _process_orch(tmp_path, session)
+    collector = _collector_for(task.id, session.id)  # cost_usd=2.5 pre-populated
+
+    # A tiny sidecar that prices below the collector figure.
+    _write_tokens_sidecar(tmp_path, session.id, input_tokens=10, output_tokens=5)
+
+    with patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector):
+        _, cost_usd = _record_completion_metrics(
+            orch,
+            task,
+            session,
+            janitor_passed=True,
+            qg_result=None,
+            completion_data=None,
+            agent_just_reaped=False,
+        )
+
+    assert cost_usd == 2.5
+
+
+def test_record_completion_metrics_recovers_sidecar_cost_when_session_reaped(tmp_path: Path, make_task: Any) -> None:
+    """Bug 14 (D2 minimax attempt-e938bd33): the agent died on MaxTurnsExceeded
+    and was reaped BEFORE the completion sweep processed its /complete'd task,
+    so _find_session_for_task returned None and the metrics row recorded $0
+    despite a .tokens sidecar carrying 54,003/1,026 real tokens. With
+    session=None but task.assigned_agent set, the sidecar must still be read
+    (model recovered from the collector's AgentMetrics) and the real cost
+    recorded."""
+    from bernstein.core.tasks.task_lifecycle import _record_completion_metrics
+
+    task = make_task(id="T-dead", title="backend task", description="d", status=TaskStatus.DONE)
+    task.assigned_agent = "backend-ae800d98"
+    # Orch stub: session object irrelevant - we pass session=None directly.
+    orch = _process_orch(tmp_path, _session_for(task.id, exit_code=1))
+
+    collector = MagicMock()
+    task_m = SimpleNamespace(
+        cost_usd=0.0,
+        tokens_prompt=0,
+        tokens_completion=0,
+        tokens_used=0,
+        start_time=10.0,
+        end_time=15.0,
+    )
+    collector.task_metrics = {task.id: task_m}
+    # AgentMetrics recorded at spawn carries the model used for pricing.
+    collector.agent_metrics = {"backend-ae800d98": SimpleNamespace(tasks_completed=0, model="sonnet")}
+
+    # The real figures from the failing run's sidecar.
+    _write_tokens_sidecar(tmp_path, "backend-ae800d98", input_tokens=54_003, output_tokens=1_026)
+
+    with patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector):
+        returned_task_m, cost_usd = _record_completion_metrics(
+            orch,
+            task,
+            None,  # session already reaped - the exact bug-14 state
+            janitor_passed=True,
+            qg_result=None,
+            completion_data=None,
+            agent_just_reaped=False,
+        )
+
+    assert cost_usd > 0.0, "MaxTurns-reaped session's sidecar cost must not be zeroed"
+    assert returned_task_m is task_m
+    assert task_m.tokens_prompt == 54_003
+    assert task_m.tokens_completion == 1_026
+    assert task_m.cost_usd == cost_usd
+    _, complete_kwargs = collector.complete_task.call_args
+    assert complete_kwargs["cost_usd"] == cost_usd
+    assert complete_kwargs["tokens_used"] == 55_029
+
+
+def test_record_completion_metrics_no_session_no_assigned_agent_stays_zero(tmp_path: Path, make_task: Any) -> None:
+    """Without a session AND without task.assigned_agent there is no sidecar
+    key to read - the function must not crash and must record the collector
+    figures unchanged."""
+    from bernstein.core.tasks.task_lifecycle import _record_completion_metrics
+
+    task = make_task(id="T-nokey", title="t", description="d", status=TaskStatus.DONE)
+    task.assigned_agent = None
+    orch = _process_orch(tmp_path, _session_for(task.id, exit_code=1))
+    collector = _collector_for(task.id, "A-1")  # cost_usd=2.5 pre-populated
+
+    with patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector):
+        _, cost_usd = _record_completion_metrics(
+            orch,
+            task,
+            None,
+            janitor_passed=False,
+            qg_result=None,
+            completion_data=None,
+            agent_just_reaped=False,
+        )
+
+    assert cost_usd == 2.5
+
+
+def test_record_evolution_completion_passes_reconciled_tokens(tmp_path: Path, make_task: Any) -> None:
+    """The evolution tasks.jsonl writer receives the reconciled token counts
+    from task_m alongside cost_usd."""
+    from bernstein.core.tasks.task_lifecycle import _record_evolution_completion
+
+    task = make_task(id="T-evo", title="t", description="d", status=TaskStatus.DONE)
+    session = _session_for(task.id, exit_code=0)
+    orch = _process_orch(tmp_path, session)
+    orch._evolution = MagicMock()
+    orch._latest_tasks_by_id = {}
+
+    task_m = SimpleNamespace(
+        cost_usd=0.0123,
+        tokens_prompt=51_880,
+        tokens_completion=1_401,
+        tokens_used=53_281,
+        start_time=10.0,
+        end_time=15.0,
+    )
+
+    _record_evolution_completion(orch, task, session, task_m, cost_usd=0.0123, janitor_passed=True)
+
+    _, kwargs = orch._evolution.record_task_completion.call_args
+    assert kwargs["cost_usd"] == 0.0123
+    assert kwargs["tokens_prompt"] == 51_880
+    assert kwargs["tokens_completion"] == 1_401
+
+
+# ---------------------------------------------------------------------------
+# Bug 1b (2026-07-02, fix/claim-conflict-churn): claim-then-never-spawn
+# deadlock. Root cause: in a multi-task batch, if an EARLIER task claimed
+# successfully but a LATER task in the same batch failed to claim, the whole
+# batch used to abort via `continue`, leaving the already-claimed task
+# server-side claimed with no agent ever spawned for it -- rescued only by
+# the 15-minute stale-claim reaper. Evidence:
+# work/bernstein/proofs/d2/claude/attempt4-meridian-fixed/FAIL-NOTE.md
+# (duplicate-titled task pair, one twin claimed while its sibling's claim
+# was rejected, claimed twin blocked the dependency graph for 15 minutes
+# with agents=0 spawned=0).
+# ---------------------------------------------------------------------------
+
+
+def test_claim_and_spawn_batches_spawns_claimed_subset_on_partial_claim_failure(tmp_path: Path, make_task: Any) -> None:
+    """A batch where task A claims successfully but task B's claim is
+    rejected (409, and B turns out to be claimed by a foreign session on
+    re-fetch) must still spawn an agent for A -- not leave A claimed with no
+    worker."""
+    orch = _claim_orch(tmp_path)
+    task_a = make_task(id="T-a", role="backend")
+    task_b = make_task(id="T-b", role="backend")
+    session = AgentSession(
+        id="A-partial", role="backend", task_ids=[task_a.id], model_config=ModelConfig("sonnet", "high")
+    )
+    orch._spawner.spawn_for_tasks.return_value = session
+
+    def _post_side_effect(url: str, **kwargs: Any) -> SimpleNamespace:
+        if url.endswith("/T-a/claim"):
+            return SimpleNamespace(status_code=200)
+        if url.endswith("/T-b/claim"):
+            return SimpleNamespace(status_code=409, text="task T-b is not open")
+        raise AssertionError(f"unexpected POST {url}")
+
+    def _get_side_effect(url: str, **kwargs: Any) -> SimpleNamespace:
+        assert url.endswith("/tasks/T-b")
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "id": "T-b",
+                "title": task_b.title,
+                "description": task_b.description,
+                "role": "backend",
+                "version": 2,
+                "status": "claimed",
+                "claimed_by_session": "some-other-session",
+            },
+            raise_for_status=lambda: None,
+        )
+
+    orch._client.post.side_effect = _post_side_effect
+    orch._client.get.side_effect = _get_side_effect
+    result = TickResult()
+
+    claim_and_spawn_batches(
+        orch, [[task_a, task_b]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result
+    )
+
+    # The agent was spawned for the claimed subset (task A only).
+    orch._spawner.spawn_for_tasks.assert_called_once()
+    spawned_batch = orch._spawner.spawn_for_tasks.call_args[0][0]
+    assert [t.id for t in spawned_batch] == ["T-a"]
+    # Task B's claim failure is recorded, but does not block A.
+    assert any("T-b" in e for e in result.errors)

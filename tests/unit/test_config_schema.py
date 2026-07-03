@@ -109,6 +109,67 @@ class TestCFGPydanticModel:
         assert cfg.role_model_policy["manager"].effort == "max"
         assert cfg.role_model_policy["backend"].model == "sonnet"
 
+    def test_role_model_policy_sampling_fields_round_trip(self) -> None:
+        """PR3: temperature/top_p/top_k/max_tokens/extra_params on
+        RoleModelPolicyEntry must survive a parse -> dump -> re-parse cycle
+        (mirrors the ModelCard round-trip proven on feat/model-cards-phase1)."""
+        data = _minimal_config(
+            role_model_policy={
+                "backend": {
+                    "model": "deepseek/deepseek-v4-flash",
+                    "provider": "openrouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "top_k": 40,
+                    "max_tokens": 4096,
+                    "extra_params": {"reasoning_effort": "low"},
+                }
+            }
+        )
+        cfg = BernsteinConfig(**data)
+        entry = cfg.role_model_policy["backend"]
+        assert entry.temperature == 0.2
+        assert entry.top_p == 0.9
+        assert entry.top_k == 40
+        assert entry.max_tokens == 4096
+        assert entry.extra_params == {"reasoning_effort": "low"}
+
+        # Round-trip through dict serialization (the shape spawner_core's
+        # role_model_policy consumer receives).
+        dumped = cfg.model_dump()
+        reparsed = BernsteinConfig(**dumped)
+        reentry = reparsed.role_model_policy["backend"]
+        assert reentry.temperature == 0.2
+        assert reentry.top_p == 0.9
+        assert reentry.top_k == 40
+        assert reentry.max_tokens == 4096
+        assert reentry.extra_params == {"reasoning_effort": "low"}
+
+    def test_role_model_policy_sampling_fields_default_to_none_or_empty(self) -> None:
+        """Every new field must be optional so existing configs keep working."""
+        data = _minimal_config(role_model_policy={"backend": {"model": "sonnet"}})
+        cfg = BernsteinConfig(**data)
+        entry = cfg.role_model_policy["backend"]
+        assert entry.temperature is None
+        assert entry.top_p is None
+        assert entry.top_k is None
+        assert entry.max_tokens is None
+        assert entry.extra_params == {}
+
+    def test_role_model_policy_extra_params_default_not_shared_between_instances(self) -> None:
+        """default_factory=dict guard - mutating one entry's extra_params must
+        not leak into a sibling entry constructed without the field."""
+        data = _minimal_config(
+            role_model_policy={
+                "backend": {"model": "sonnet"},
+                "manager": {"model": "opus"},
+            }
+        )
+        cfg = BernsteinConfig(**data)
+        cfg.role_model_policy["backend"].extra_params["leak"] = True
+        assert "leak" not in cfg.role_model_policy["manager"].extra_params
+
     def test_nested_worktree_setup(self) -> None:
         data = _minimal_config(
             worktree_setup={

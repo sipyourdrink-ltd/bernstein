@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -10,15 +11,18 @@ from unittest.mock import patch
 
 import pytest
 from bernstein.core.janitor import (
+    _extract_branch_ref,
     _get_judge_retry_count,
     _parse_judge_response,
+    _resolve_branch_check_command,
+    _resolve_branch_ref,
     create_fix_tasks,
     evaluate_signal,
     judge_task,
     run_janitor,
     verify_task,
 )
-from bernstein.core.models import CompletionSignal, Task
+from bernstein.core.models import CompletionSignal, Task, TaskType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -73,6 +77,186 @@ class TestPathExists:
         signal = CompletionSignal(type="path_exists", value=str(target))
         passed, _ = evaluate_signal(signal, tmp_path)
         assert passed is True
+
+
+class TestPathExistsGlobAndFuzzy:
+    """Issue #2186: manager-guessed literal paths vs. worker-chosen
+    repo-idiomatic paths. Conservative matching contract:
+      - exact-path matching is the default, unchanged;
+      - explicit glob syntax in the criterion always works (opt-in
+        per-check by construction);
+      - the fuzzy basename fallback is opt-in via
+        BERNSTEIN_JANITOR_FUZZY_PATHS=1, default OFF."""
+
+    _GUESSED = "packages/db/test/seed-workers.test.ts"
+
+    def _write_idiomatic_file(self, tmp_path: Path) -> None:
+        """Worker output at the repo's actual convention -- a fuzzy (but
+        not literal or glob) match for the manager's guessed path."""
+        actual_dir = tmp_path / "packages" / "db" / "src" / "__tests__"
+        actual_dir.mkdir(parents=True)
+        (actual_dir / "seed-workers-demo-link.test.ts").write_text("x")
+
+    def test_literal_hit_unaffected(self, tmp_path: Path) -> None:
+        """A literal hit keeps the original ("exists") detail string --
+        no behavior change for the common case."""
+        (tmp_path / "foo.py").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="foo.py")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert detail == "exists"
+
+    def test_fuzzy_off_by_default(self, tmp_path: Path) -> None:
+        """DEFAULT behavior: a literal miss FAILS even when a would-be
+        fuzzy match exists -- exact-path matching is the contract
+        operators rely on."""
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        env = {k: v for k, v in os.environ.items() if k != "BERNSTEIN_JANITOR_FUZZY_PATHS"}
+        with patch.dict("os.environ", env, clear=True):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_fuzzy_explicit_zero_also_off(self, tmp_path: Path) -> None:
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "0"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_explicit_glob_works_without_flag(self, tmp_path: Path) -> None:
+        """Explicit glob syntax in the criterion is honored regardless of
+        the fuzzy flag -- opt-in per-check by construction."""
+        nested = tmp_path / "packages" / "db"
+        nested.mkdir(parents=True)
+        (nested / "seed-workers.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/*/seed-workers.test.ts")
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "0"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "glob pattern matched" in detail
+        assert "seed-workers.test.ts" in detail
+
+    def test_explicit_glob_recursive_different_depth(self, tmp_path: Path) -> None:
+        """A `**` glob written in the criterion matches at any depth,
+        with the fuzzy flag off."""
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value="packages/db/**/seed-workers*.test.ts")
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "0"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "seed-workers-demo-link.test.ts" in detail
+
+    def test_explicit_glob_no_match_fails(self, tmp_path: Path) -> None:
+        (tmp_path / "unrelated.txt").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/**/seed-workers*.test.ts")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_fuzzy_opt_in_hits_at_different_depth(self, tmp_path: Path) -> None:
+        """The exact #2186 repro with BERNSTEIN_JANITOR_FUZZY_PATHS=1:
+        manager guesses `packages/db/test/...`, worker writes to
+        `packages/db/src/__tests__/...` -- a different directory depth
+        and name suffix. The opt-in fuzzy basename fallback finds it."""
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "fuzzy fallback" in detail
+        assert "seed-workers-demo-link.test.ts" in detail
+
+    def test_fuzzy_opt_in_true_miss_still_fails(self, tmp_path: Path) -> None:
+        """With fuzzy enabled, a path with no literal or fuzzy match
+        anywhere under workdir must still fail -- the fallback is not a
+        rubber stamp."""
+        (tmp_path / "unrelated.txt").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "not found"
+
+    def test_fuzzy_match_logs_loudly_with_matched_path(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """When the fuzzy fallback satisfies a check it must WARN, naming
+        the literal miss, the pattern, and the matched path (logging is
+        the debugging interface -- see #2186 postmortem)."""
+        self._write_idiomatic_file(tmp_path)
+
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}), caplog.at_level("WARNING"):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        fuzzy_warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "FUZZY MATCH" in rec.message]
+        assert fuzzy_warnings, "expected a WARNING log for the fuzzy match"
+        assert any(self._GUESSED in rec.message for rec in fuzzy_warnings)
+        assert any("seed-workers-demo-link.test.ts" in rec.message for rec in fuzzy_warnings)
+
+    def test_glob_match_logs_matched_path(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        nested = tmp_path / "packages" / "db"
+        nested.mkdir(parents=True)
+        (nested / "seed-workers.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/*/seed-workers.test.ts")
+        with caplog.at_level("INFO"):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert any("glob pattern" in rec.message and "seed-workers.test.ts" in rec.message for rec in caplog.records)
+
+    def test_fuzzy_true_miss_logs_patterns_tried(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        signal = CompletionSignal(type="path_exists", value=self._GUESSED)
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "1"}), caplog.at_level("INFO"):
+            passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert any("no match" in rec.message and "seed-workers" in rec.message for rec in caplog.records)
+
+    def test_literal_path_with_glob_metachar_matched_literally(self, tmp_path: Path) -> None:
+        """A real file whose literal path contains a glob metacharacter (e.g.
+        a Next.js dynamic-route file `app/users/[id]/page.tsx`) must be
+        matched literally, NOT silently reinterpreted as a glob pattern that
+        would fail to match its own brackets."""
+        route_dir = tmp_path / "app" / "users" / "[id]"
+        route_dir.mkdir(parents=True)
+        (route_dir / "page.tsx").write_text("export default 1")
+
+        signal = CompletionSignal(type="path_exists", value="app/users/[id]/page.tsx")
+        with patch.dict("os.environ", {"BERNSTEIN_JANITOR_FUZZY_PATHS": "0"}):
+            passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert detail == "exists"
+
+    def test_literal_path_with_bracket_fixture_matched_literally(self, tmp_path: Path) -> None:
+        """`foo[1].json` on disk must satisfy a literal `foo[1].json` check;
+        glob would read `[1]` as a character class and miss the real file."""
+        (tmp_path / "foo[1].json").write_text("{}")
+
+        signal = CompletionSignal(type="path_exists", value="foo[1].json")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert detail == "exists"
+
+    def test_glob_still_honored_when_literal_missing(self, tmp_path: Path) -> None:
+        """When no literal file matches, a criterion with glob syntax still
+        falls through to glob interpretation (opt-in per-check)."""
+        nested = tmp_path / "packages" / "db"
+        nested.mkdir(parents=True)
+        (nested / "seed-workers.test.ts").write_text("x")
+
+        signal = CompletionSignal(type="path_exists", value="packages/*/seed-workers.test.ts")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert "glob pattern matched" in detail
 
 
 # --- glob_exists ---
@@ -131,6 +315,150 @@ class TestTestPasses:
         )
         passed, _ = evaluate_signal(signal, tmp_path)
         assert passed is False
+
+    def test_nonzero_exit_logs_failure_detail(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """Logging gap: a failing test_passes command used to fail silently
+        (no log line at all).  Assert the FAIL log line fires with the
+        command, exit code, and captured stderr/stdout."""
+        caplog.set_level("INFO", logger="bernstein.core.quality.janitor")
+        signal = CompletionSignal(
+            type="test_passes",
+            value=f"{sys.executable} -c \"import sys; sys.stderr.write('boom'); raise SystemExit(1)\"",
+        )
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        fail_records = [r for r in caplog.records if "test_passes FAIL" in r.message]
+        assert fail_records, f"expected a test_passes FAIL log line, got: {[r.message for r in caplog.records]}"
+        assert "exit=1" in fail_records[0].message
+        assert "boom" in fail_records[0].message
+
+
+# --- bug 12: branch-check acceptance signals vs actual pushed branch ---
+#
+# Regression coverage for work/agent-reports/2026-07-02-run9-attempt9-audit.md
+# (task d56c18f2fc08): the janitor's acceptance signal expected the branch
+# ``fix-905-demo-worker-record`` (hyphens) but the agent actually pushed
+# ``fix/905-demo-worker-record`` (slash) -- a real, delivered PR was recorded
+# as a DLQ'd failure.
+
+
+def _run_git(args: list[str], cwd: Path) -> None:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, f"git {args} failed: {result.stderr}"
+
+
+def _init_git_repo_with_branch(tmp_path: Path, branch_name: str) -> Path:
+    """Create a throwaway git repo at *tmp_path* with a commit on *branch_name*."""
+    _run_git(["init", "-q"], tmp_path)
+    _run_git(["config", "user.email", "test@example.com"], tmp_path)
+    _run_git(["config", "user.name", "Test"], tmp_path)
+    (tmp_path / "README.md").write_text("seed\n")
+    _run_git(["add", "README.md"], tmp_path)
+    _run_git(["commit", "-q", "-m", "seed"], tmp_path)
+    _run_git(["checkout", "-q", "-b", branch_name], tmp_path)
+    (tmp_path / "work.txt").write_text("work\n")
+    _run_git(["add", "work.txt"], tmp_path)
+    _run_git(["commit", "-q", "-m", "fix: demo worker record (#905)"], tmp_path)
+    _run_git(["checkout", "-q", "-"], tmp_path)  # back to the initial branch
+    return tmp_path
+
+
+class TestExtractBranchRef:
+    def test_extracts_ref_from_rev_parse_verify(self) -> None:
+        assert _extract_branch_ref("git rev-parse --verify fix-905-demo-worker-record") == "fix-905-demo-worker-record"
+
+    def test_extracts_ref_from_git_log_with_pipe(self) -> None:
+        command = "git log -1 --format=%s fix-905-demo-worker-record | grep -q '#905'"
+        assert _extract_branch_ref(command) == "fix-905-demo-worker-record"
+
+    def test_ignores_special_refs(self) -> None:
+        assert _extract_branch_ref("git rev-parse --verify HEAD") is None
+        assert _extract_branch_ref("git rev-parse --verify main") is None
+
+    def test_ignores_non_branch_commands(self) -> None:
+        assert _extract_branch_ref("pytest tests/unit/test_foo.py -x") is None
+
+
+class TestResolveBranchRef:
+    def test_resolves_hyphenated_expectation_to_slash_branch(self, tmp_path: Path) -> None:
+        # Signal expects hyphens; agent actually pushed with a slash.
+        _init_git_repo_with_branch(tmp_path, "fix/905-demo-worker-record")
+        resolved, branches = _resolve_branch_ref("fix-905-demo-worker-record", tmp_path)
+        assert resolved == "fix/905-demo-worker-record"
+        assert "fix/905-demo-worker-record" in branches
+
+    def test_resolves_slash_expectation_to_hyphen_branch(self, tmp_path: Path) -> None:
+        # The reverse drift direction also resolves.
+        _init_git_repo_with_branch(tmp_path, "fix-905-demo-worker-record")
+        resolved, _ = _resolve_branch_ref("fix/905-demo-worker-record", tmp_path)
+        assert resolved == "fix-905-demo-worker-record"
+
+    def test_exact_match_wins_without_fuzzing(self, tmp_path: Path) -> None:
+        _init_git_repo_with_branch(tmp_path, "fix-905-demo-worker-record")
+        resolved, _ = _resolve_branch_ref("fix-905-demo-worker-record", tmp_path)
+        assert resolved == "fix-905-demo-worker-record"
+
+    def test_returns_none_when_branch_truly_absent(self, tmp_path: Path) -> None:
+        _init_git_repo_with_branch(tmp_path, "feat/unrelated-branch")
+        resolved, branches = _resolve_branch_ref("fix-905-demo-worker-record", tmp_path)
+        assert resolved is None
+        assert "feat/unrelated-branch" in branches
+
+
+class TestBranchCheckAcceptanceEndToEnd:
+    """Exercises the actual bug-12 scenario through evaluate_signal()."""
+
+    def test_janitor_accepts_slash_branch_when_signal_expects_hyphens(self, tmp_path: Path) -> None:
+        _init_git_repo_with_branch(tmp_path, "fix/905-demo-worker-record")
+        signal = CompletionSignal(
+            type="test_passes",
+            value="git rev-parse --verify fix-905-demo-worker-record",
+        )
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+
+    def test_janitor_accepts_commit_message_check_across_naming_drift(self, tmp_path: Path) -> None:
+        _init_git_repo_with_branch(tmp_path, "fix/905-demo-worker-record")
+        signal = CompletionSignal(
+            type="test_passes",
+            value="git log -1 --format=%s fix-905-demo-worker-record | grep -q '#905'",
+        )
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is True
+
+    def test_janitor_still_fails_when_branch_never_pushed(self, tmp_path: Path) -> None:
+        _init_git_repo_with_branch(tmp_path, "feat/unrelated-branch")
+        signal = CompletionSignal(
+            type="test_passes",
+            value="git rev-parse --verify fix-905-demo-worker-record",
+        )
+        passed, _ = evaluate_signal(signal, tmp_path)
+        assert passed is False
+
+    def test_logs_expected_and_found_branches_with_verdict(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _init_git_repo_with_branch(tmp_path, "fix/905-demo-worker-record")
+        signal = CompletionSignal(
+            type="test_passes",
+            value="git rev-parse --verify fix-905-demo-worker-record",
+        )
+        with caplog.at_level("INFO", logger="bernstein.core.quality.janitor"):
+            evaluate_signal(signal, tmp_path)
+        combined = "\n".join(rec.getMessage() for rec in caplog.records)
+        assert "fix-905-demo-worker-record" in combined
+        assert "fix/905-demo-worker-record" in combined
+        assert "rewriting command" in combined
+
+    def test_resolve_branch_check_command_is_noop_for_non_git_commands(self, tmp_path: Path) -> None:
+        command = f'{sys.executable} -c "raise SystemExit(0)"'
+        assert _resolve_branch_check_command(command, tmp_path) == command
 
 
 # --- file_contains ---
@@ -403,6 +731,26 @@ class TestRunJanitor:
         assert len(sr) == 2
         assert sr[0] == ("path_exists: a.py", True, "exists")
         assert sr[1] == ("path_exists: missing.py", False, "not found")
+
+    @pytest.mark.asyncio
+    async def test_accept_and_reject_verdicts_are_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Logging gap: run_janitor's accept/reject disposition for each task
+        was only visible via the returned JanitorResult, not the logs. Assert
+        an ACCEPT line for the passing task and a REJECT line (with the
+        failed signals) for the failing task."""
+        caplog.set_level("INFO", logger="bernstein.core.quality.janitor")
+        (tmp_path / "a.py").write_text("x")
+
+        t_pass = _make_task(id="T-PASS", signals=[CompletionSignal(type="path_exists", value="a.py")])
+        t_fail = _make_task(id="T-FAIL", signals=[CompletionSignal(type="path_exists", value="missing.py")])
+        await run_janitor([t_pass, t_fail], tmp_path)
+
+        accept_records = [r.message for r in caplog.records if "janitor ACCEPT" in r.message]
+        reject_records = [r.message for r in caplog.records if "janitor REJECT" in r.message]
+        assert any("T-PASS" in m for m in accept_records), accept_records
+        assert any("T-FAIL" in m and "missing.py" in m for m in reject_records), reject_records
 
 
 # --- create_fix_tasks ---
@@ -899,3 +1247,169 @@ class TestRunJanitorWithJudge:
         assert results[0].passed is True
         assert results[0].judge_verdict is not None
         assert results[0].judge_verdict.flagged_for_review is True
+
+
+# --- Empty-diff guard + attribution (item 15 / S2 family) ---
+
+
+def _init_git_repo(repo: Path) -> None:
+    """Create a git repo with one baseline commit (base.txt)."""
+
+    def _git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    _git("init", "-q")
+    _git("config", "user.email", "janitor-test@example.com")
+    _git("config", "user.name", "Janitor Test")
+    (repo / "base.txt").write_text("baseline\n")
+    _git("add", "base.txt")
+    _git("commit", "-q", "-m", "baseline commit")
+
+
+class TestEmptyDiffGuardAndAttribution:
+    """Regressions for the archived misattribution run (attempt-e938bd33):
+    janitor_passed=true on a 0-file manager task while the worker with the
+    real commit was rejected; S2 orphans with empty diffs rubber-stamped.
+    """
+
+    @pytest.mark.asyncio
+    async def test_manager_zero_file_task_rejected(self, tmp_path: Path) -> None:
+        """A task with no commits and no owned_files must NOT pass, even if
+        its signals are satisfied by repo state another task created."""
+        _init_git_repo(tmp_path)
+        task = _make_task(
+            id="MGR-0FILE",
+            signals=[CompletionSignal(type="path_exists", value="base.txt")],
+        )
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is False
+        empty_diff = [d for d, ok, _ in results[0].signal_results if d == "attribution:empty_diff"]
+        assert empty_diff, f"expected attribution:empty_diff signal, got {results[0].signal_results}"
+
+    @pytest.mark.asyncio
+    async def test_worker_with_real_commit_accepted(self, tmp_path: Path) -> None:
+        """A worker whose commit message references its task id (the b9574d9
+        pattern: '[WIP] qa-5a36fe2a partial work') is attributed and accepted."""
+        _init_git_repo(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "cli.py").write_text("print('hello, world')\n")
+        subprocess.run(["git", "add", "src/cli.py"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "[WIP] WKR-REAL partial work"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        task = Task(
+            id="WKR-REAL",
+            title="Implement hello CLI",
+            description="Add cli.py with a hello command.",
+            role="backend",
+            completion_signals=[CompletionSignal(type="path_exists", value="src/cli.py")],
+            owned_files=["src/cli.py"],
+        )
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is True, f"signal_results={results[0].signal_results}"
+
+    @pytest.mark.asyncio
+    async def test_crash_recovery_orphan_empty_diff_rejected(self, tmp_path: Path) -> None:
+        """S2 family: crash-recovery auto-completion with owned_files it never
+        touched (empty diff, no commits) must be rejected, not rubber-stamped."""
+        _init_git_repo(tmp_path)
+        task = Task(
+            id="ORPHAN-S2",
+            title="Orphan recovered after crash",
+            description="Auto-completed by crash recovery; no work happened.",
+            role="backend",
+            completion_signals=[CompletionSignal(type="path_exists", value="base.txt")],
+            owned_files=["orphan.py"],
+        )
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is False
+        failed = [d for d, ok, _ in results[0].signal_results if not ok]
+        assert any("empty_diff" in d for d in failed), f"failed={failed}"
+
+    @pytest.mark.asyncio
+    async def test_unattributable_diff_with_nontrivial_signal_accepted_with_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A task that landed real work in a commit whose message omits the
+        task id and which has no owned_files (attribution returns empty) must
+        NOT be hard-rejected when it has a passing non-trivial completion
+        signal (a passing test_passes). Instead it is accepted and flagged for
+        review, so real completions are not false-rejected just because the
+        commit did not stamp the task id."""
+        _init_git_repo(tmp_path)
+        # A real landing commit whose message does NOT reference the task id.
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "feature.py").write_text("VALUE = 1\n")
+        subprocess.run(["git", "add", "src/feature.py"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "add feature"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        task = _make_task(
+            id="NOSTAMP-1",
+            signals=[
+                CompletionSignal(
+                    type="test_passes",
+                    value=f'{sys.executable} -c "raise SystemExit(0)"',
+                )
+            ],
+        )
+
+        with caplog.at_level("WARNING"):
+            results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is True, f"signal_results={results[0].signal_results}"
+        # Not hard-rejected: no failing empty_diff signal.
+        failed = [d for d, ok, _ in results[0].signal_results if not ok]
+        assert not any("empty_diff" in d and "warn" not in d for d in failed), f"failed={failed}"
+        assert any("empty diff, flagged for review" in rec.message for rec in caplog.records), (
+            "expected an empty-diff WARN log flagging the task for review"
+        )
+
+    @pytest.mark.asyncio
+    async def test_research_noop_task_type_exempt(self, tmp_path: Path) -> None:
+        """Explicit no-op task types (research) legitimately have no diff."""
+        _init_git_repo(tmp_path)
+        task = Task(
+            id="RSRCH-1",
+            title="Research task",
+            description="Exploration; output lives in notes, not the repo.",
+            role="backend",
+            completion_signals=[CompletionSignal(type="path_exists", value="base.txt")],
+            task_type=TaskType.RESEARCH,
+        )
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is True
+
+    @pytest.mark.asyncio
+    async def test_non_git_workdir_guard_skipped(self, tmp_path: Path) -> None:
+        """Outside a git repo, attribution is impossible; signals-only
+        judgment (historical behavior) is preserved."""
+        task = _make_task(
+            id="NOGIT-1",
+            signals=[CompletionSignal(type="path_exists", value="plain.txt")],
+        )
+        (tmp_path / "plain.txt").write_text("x")
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is True

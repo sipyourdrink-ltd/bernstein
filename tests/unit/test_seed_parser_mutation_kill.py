@@ -27,6 +27,8 @@ from bernstein.core.config.seed_parser import (
     _parse_network_config,  # pyright: ignore[reportPrivateUsage]
     _parse_rate_limit_bucket,  # pyright: ignore[reportPrivateUsage]
     _parse_rate_limit_config,  # pyright: ignore[reportPrivateUsage]
+    _parse_role_model_policy,  # pyright: ignore[reportPrivateUsage]
+    _parse_single_role_policy,  # pyright: ignore[reportPrivateUsage]
     _parse_string_list,  # pyright: ignore[reportPrivateUsage]
     _parse_team,  # pyright: ignore[reportPrivateUsage]
     _parse_tenants,  # pyright: ignore[reportPrivateUsage]
@@ -724,3 +726,51 @@ def test_parse_network_config_empty_dict_yields_empty_allowed_ips() -> None:
     cfg = _parse_network_config({})
     assert isinstance(cfg, NetworkConfig)
     assert cfg.allowed_ips == ()
+
+
+# ---------------------------------------------------------------------------
+# role_model_policy.<role>.max_tokens (D2 OpenRouter KILL-NOTE regression):
+# a seed file setting this key used to be rejected at parse time with
+# "unknown keys: max_tokens" because _ROLE_POLICY_KEYS never listed it even
+# though config_schema.py's RoleModelPolicyEntry and the spawner fold both
+# already supported it (parser/schema divergence). Pin that it now parses
+# and lands correctly typed (as an int, not a string) on the normalized
+# role-policy dict that flows into AgentSpawner.role_model_policy.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_single_role_policy_accepts_max_tokens() -> None:
+    """A role policy with max_tokens=8000 must parse, not raise SeedError."""
+    normalized = _parse_single_role_policy("adversary", {"provider": "openai_agents", "max_tokens": 8000})
+    assert normalized["max_tokens"] == 8000
+    assert isinstance(normalized["max_tokens"], int)
+    assert not isinstance(normalized["max_tokens"], bool)
+    assert normalized["provider"] == "openai_agents"
+
+
+def test_parse_single_role_policy_max_tokens_only() -> None:
+    """max_tokens alone (no other keys) is a valid, minimal role policy."""
+    normalized = _parse_single_role_policy("backend", {"max_tokens": 4096})
+    assert normalized == {"max_tokens": 4096}
+
+
+@pytest.mark.parametrize("bad_value", [0, -1, "8000", 3.5, True])
+def test_parse_single_role_policy_rejects_invalid_max_tokens(bad_value: object) -> None:
+    """max_tokens must be a positive int - not zero/negative/string/float/bool."""
+    with pytest.raises(SeedError, match="max_tokens.*positive integer"):
+        _parse_single_role_policy("qa", {"max_tokens": bad_value})
+
+
+def test_parse_role_model_policy_max_tokens_round_trip() -> None:
+    """Full role_model_policy section with max_tokens round-trips through
+    the public entry point _parse_role_model_policy (what the seed loader
+    actually calls), matching the seed-file shape from the KILL-NOTE:
+    ``role_model_policy: {adversary: {provider: openai_agents, max_tokens: 8000}}``.
+    """
+    parsed = _parse_role_model_policy(
+        {"adversary": {"provider": "openai_agents", "model": "deepseek/deepseek-chat", "max_tokens": 8000}}
+    )
+    assert parsed is not None
+    assert parsed["adversary"]["max_tokens"] == 8000
+    assert parsed["adversary"]["provider"] == "openai_agents"
+    assert parsed["adversary"]["model"] == "deepseek/deepseek-chat"

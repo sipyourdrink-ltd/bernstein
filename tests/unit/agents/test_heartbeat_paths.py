@@ -13,6 +13,8 @@ tests so the real escalation code runs end to end.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -339,4 +341,139 @@ def test_stalled_tasks_no_new_snapshot_is_noop(tmp_path: Path) -> None:
     with patch("bernstein.core.agents.heartbeat.time.time", return_value=300.0):
         check_stalled_tasks(orch)
     orch._spawner.kill.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Defect-10: leaked heartbeat shell loop -- self-termination + reap
+# ---------------------------------------------------------------------------
+
+
+def test_inject_heartbeat_instructions_is_self_terminating(tmp_path: Path) -> None:
+    """The generated loop checks a STOP marker and records its own pid."""
+    monitor = HeartbeatMonitor(tmp_path)
+    snippet = monitor.inject_heartbeat_instructions("SID-1")
+
+    assert "SID-1.stop" in snippet
+    assert "SID-1.pid" in snippet
+    assert "while [ ! -f" in snippet  # self-terminating condition, not `while true`
+    assert "while true" not in snippet
+    assert "echo $!" in snippet  # records loop pid for belt-and-braces reap
+
+
+def test_heartbeat_loop_actually_self_terminates_on_stop_marker(tmp_path: Path) -> None:
+    """End-to-end: run the real generated snippet, request stop, prove no leaked process.
+
+    This is the direct regression test for the observed defect: a bernstein
+    run left a heartbeat shell loop running on the HOST after the run ended.
+    """
+    monitor = HeartbeatMonitor(tmp_path)
+    snippet = monitor.inject_heartbeat_instructions("SID-2")
+
+    # Run the exact generated snippet the way an agent shell would.
+    subprocess.run(["/bin/sh", "-c", snippet], check=True, timeout=10)
+
+    pid_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "SID-2.pid"
+    heartbeat_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "SID-2.json"
+
+    # Loop should have started and written at least one heartbeat + its pidfile.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not (pid_path.exists() and heartbeat_path.exists()):
+        time.sleep(0.1)
+    assert pid_path.exists(), "heartbeat loop never wrote its pidfile"
+    pid = int(pid_path.read_text(encoding="utf-8").strip())
+
+    def _alive(p: int) -> bool:
+        try:
+            os.kill(p, 0)
+        except ProcessLookupError:
+            return False
+        else:
+            return True
+
+    assert _alive(pid), "loop pid should still be running before STOP is requested"
+
+    # This is the fix under test: request stop instead of leaving it running forever.
+    monitor.request_heartbeat_stop("SID-2")
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and _alive(pid):
+        time.sleep(0.2)
+
+    assert not _alive(pid), "heartbeat loop leaked past its STOP marker -- defect-10 regression"
+
+
+def _spawn_fake_heartbeat_loop(tmp_path: Path, session_id: str) -> subprocess.Popen[bytes]:
+    """Spawn a long-lived process whose command line looks like this session's
+    heartbeat loop (it references the session's stop-marker path), so the reap
+    identity check recognizes it as the real loop."""
+    stop_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / f"{session_id}.stop"
+    return subprocess.Popen(
+        ["sh", "-c", f"while [ ! -f '{stop_path}' ]; do sleep 1; done"],
+    )
+
+
+def test_reap_heartbeat_loop_kills_recorded_pid(tmp_path: Path) -> None:
+    """reap_heartbeat_loop is a belt-and-braces kill-by-pid, safe when nothing was spawned."""
+    monitor = HeartbeatMonitor(tmp_path)
+
+    # No heartbeat loop ever spawned for this session: must be a safe no-op.
+    monitor.reap_heartbeat_loop("NEVER-SPAWNED", reason="test_noop")
+
+    # Simulate an orphaned loop by recording a real long-lived process's pid
+    # whose command line identifies it as this session's heartbeat loop.
+    proc = _spawn_fake_heartbeat_loop(tmp_path, "SID-3")
+    pid_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "SID-3.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(proc.pid), encoding="utf-8")
+
+    monitor.reap_heartbeat_loop("SID-3", reason="test_kill")
+    proc.wait(timeout=5)
+
+    assert proc.returncode is not None
+    assert not pid_path.exists()
+    stop_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "SID-3.stop"
+    assert stop_path.exists()
+
+
+def test_reap_heartbeat_loop_spares_recycled_foreign_pid(tmp_path: Path) -> None:
+    """A stale pidfile whose PID was recycled to an unrelated process must NOT
+    be signalled: the reap verifies the process still looks like this session's
+    heartbeat loop before killing it."""
+    monitor = HeartbeatMonitor(tmp_path)
+
+    # A foreign process that has nothing to do with this session's heartbeat.
+    proc = subprocess.Popen(["sleep", "30"])
+    try:
+        pid_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "SID-FOREIGN.pid"
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text(str(proc.pid), encoding="utf-8")
+
+        monitor.reap_heartbeat_loop("SID-FOREIGN", reason="test_recycled")
+
+        # The foreign process must still be alive (not signalled).
+        assert proc.poll() is None, "reap killed a recycled/unrelated PID"
+        # Stale pidfile is cleaned up even though we did not kill the process.
+        assert not pid_path.exists()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_stall_kill_reaps_heartbeat_loop(tmp_path: Path) -> None:
+    """Killing a stalled agent also reaps any heartbeat loop it spawned (belt-and-braces)."""
+    orch = _stall_orch(tmp_path, start_count=4)  # next count -> 5 -> kill
+
+    # Simulate a heartbeat loop the killed session had spawned (command line
+    # identifies it as A-1's heartbeat loop so the reap identity check matches).
+    proc = _spawn_fake_heartbeat_loop(tmp_path, "A-1")
+    pid_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "A-1.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(proc.pid), encoding="utf-8")
+
+    with patch("bernstein.core.agents.heartbeat.time.time", return_value=300.0):
+        check_stalled_tasks(orch)
+
+    orch._spawner.kill.assert_called_once()
+    proc.wait(timeout=5)
+    assert proc.returncode is not None, "heartbeat loop for the killed session was not reaped"
     orch._signal_mgr.write_wakeup.assert_not_called()

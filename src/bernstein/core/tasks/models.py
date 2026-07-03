@@ -28,6 +28,27 @@ def _default_poll_interval_s() -> int:
     return int(_defaults.ORCHESTRATOR.tick_interval_s)
 
 
+def _default_stalled_manager_threshold_s() -> float:
+    """Return the current canonical stalled-manager deadline.
+
+    Reads from :mod:`bernstein.core.defaults` each call (same pattern as
+    :func:`_default_poll_interval_s`) so that ``tuning.orchestrator.
+    stalled_manager_threshold_s`` overrides from ``bernstein.yaml`` are
+    honoured. See ``core.orchestration.stalled_manager`` for the consumer.
+    """
+    return float(_defaults.ORCHESTRATOR.stalled_manager_threshold_s)
+
+
+def _default_max_agent_runtime_s() -> int:
+    """Return the current canonical agent wall-clock kill starting value.
+
+    Reads from :mod:`bernstein.core.defaults` each call (same pattern as
+    :func:`_default_poll_interval_s`) so that ``tuning.orchestrator.
+    max_agent_runtime_s`` overrides are honoured.
+    """
+    return int(_defaults.ORCHESTRATOR.max_agent_runtime_s)
+
+
 class TaskStoreUnavailable(Exception):
     """Raised when the task store cannot operate after exhausting retries.
 
@@ -1225,7 +1246,16 @@ class OrchestratorConfig:
     # Deployments that explicitly relied on the 900s value must set this field explicitly.
     heartbeat_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_stale_s))
     heartbeat_enabled: bool = True
-    max_agent_runtime_s: int = 1800  # 30 min wall-clock kill (agents need time for complex tasks)
+    # Derived from ORCHESTRATOR.max_agent_runtime_s (canonical) so
+    # ``tuning.orchestrator.max_agent_runtime_s`` overrides the starting
+    # wall-clock kill deadline (agents need time for complex tasks; this
+    # self-extends up to a 5400s hard cap while heartbeating, see
+    # core/agents/agent_lifecycle.py - this is only the starting value).
+    max_agent_runtime_s: int = field(default_factory=_default_max_agent_runtime_s)
+    # Derived from ORCHESTRATOR.stalled_manager_threshold_s (canonical) so
+    # ``tuning.orchestrator.stalled_manager_threshold_s`` overrides actually
+    # change the manager-stall deadline. See core.orchestration.stalled_manager.
+    stalled_manager_threshold_s: float = field(default_factory=_default_stalled_manager_threshold_s)
     max_tasks_per_agent: int = 2  # batch 2 same-role tasks per agent to reduce context overhead
     server_url: str = "http://localhost:8052"
     evolution_enabled: bool = True

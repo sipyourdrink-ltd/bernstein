@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -58,6 +59,7 @@ from bernstein.core.server import (
     TaskFailRequest,
     TaskPatchRequest,
     TaskProgressRequest,
+    TaskReopenRequest,
     TaskResponse,
     TaskSelfCreate,
     TaskStore,
@@ -107,6 +109,11 @@ def _get_direct_channel(request: Request) -> DirectChannel:
 
 def _get_runtime_dir(request: Request) -> Path:
     return request.app.state.runtime_dir  # type: ignore[no-any-return]
+
+
+def _get_workdir(request: Request) -> Path:
+    """Return the repository root from application state."""
+    return request.app.state.workdir  # type: ignore[no-any-return]
 
 
 def _get_gate_report_path(request: Request, task_id: str) -> Path:
@@ -196,6 +203,310 @@ def _evict_realtime_session(request: Request, session_id: str | None) -> None:
 
         if isinstance(monitor, RealtimeBehaviorMonitor):
             monitor.evict_session(session_id)
+
+
+# ---------------------------------------------------------------------------
+# Auto-commit pre-/complete hook (defect 33)
+# ---------------------------------------------------------------------------
+#
+# Workers were previously expected to ``git commit`` before POSTing
+# /complete (the prompt contract landed in 59fdc178/88611aab).  This hook
+# moves the obligation from "remember to commit" to "the route commits for
+# you" so a worker that forgets still has its work delivered.  Failures are
+# swallowed: the orchestrator's janitor still observes a 0-diff task on
+# /complete's branch and can FAIL it, which the bounded-reopen path
+# (test_janitor_reopen) handles.  See defect 33 in the scoreboard.
+
+_AUTO_COMMIT_DENY_DIR_PREFIXES: tuple[str, ...] = (
+    ".sdd/",
+    "attestations/",
+    "auth/",
+)
+_AUTO_COMMIT_DENY_EXACT: tuple[str, ...] = (
+    "bernstein.yaml",
+    ".claude/mcp.json",
+)
+_AUTO_COMMIT_DENY_GLOBS: tuple[str, ...] = (".env", ".env.*")
+
+
+def _is_auto_commit_denied(path: str) -> bool:
+    """Return True when *path* matches the auto-commit deny list.
+
+    Rules:
+      * Path starts with any prefix in ``_AUTO_COMMIT_DENY_DIR_PREFIXES``
+        (matched against forward-slash separators).
+      * Path equals any exact entry in ``_AUTO_COMMIT_DENY_EXACT``.
+      * Path matches any glob in ``_AUTO_COMMIT_DENY_GLOBS`` (.env,
+        .env.<anything>).
+    """
+    p = path.replace("\\", "/")
+    if p in _AUTO_COMMIT_DENY_EXACT:
+        return True
+    for prefix in _AUTO_COMMIT_DENY_DIR_PREFIXES:
+        if p.startswith(prefix):
+            return True
+    for glob in _AUTO_COMMIT_DENY_GLOBS:
+        if glob.endswith(".*"):
+            stem = glob[:-2]
+            if p == stem or p.startswith(stem + "."):
+                return True
+        elif glob in p:
+            return True
+    return False
+
+
+def _is_salvage_branch(branch_name: str | None) -> bool:
+    """Return True when *branch_name* is a salvage/graveyard branch.
+
+    The existing convention (bernstein.core.git.salvage) uses
+    ``salvage/<session-id>`` branches.  We also defend against any branch
+    containing ``bernstein-salvage`` as a backstop in case future tooling
+    changes the prefix.
+    """
+    if not branch_name:
+        return False
+    if branch_name.startswith("salvage/"):
+        return True
+    return "bernstein-salvage" in branch_name
+
+
+def _run_auto_commit_pre_complete(
+    request: Request,
+    task: Task,
+) -> None:
+    """Auto-commit any uncommitted changes in the worker's worktree.
+
+    Runs AFTER the worker reports done via /complete, BEFORE the task
+    transitions to done in the store.  Operates only on the worker's
+    primary worktree (``.sdd/worktrees/<session-id>``) and on the
+    worker's ``agent/<session-id>`` branch.  Salvage / graveyard
+    branches are skipped.
+
+    Logging contract (house rule 2 - full logging, never silent):
+
+      * ``auto_commit_pre_complete: task=<id> session=<s> reason=already_committed``
+      * ``auto_commit_pre_complete: task=<id> session=<s> reason=skipped_salvage_branch branch=<name>``
+      * ``auto_commit_pre_complete: task=<id> session=<s> reason=nothing_to_commit``
+      * ``auto_commit_pre_complete: task=<id> session=<s> files=<list> reason=uncommitted_changes_at_complete``
+      * ``auto_commit_pre_complete_failed: task=<id> session=<s> error=<msg> files=<list>`` (WARN)
+
+    All errors are swallowed (fail-open) so the orchestrator's lifecycle
+    machinery still observes a /complete - see spec step 6.
+    """
+    session_id = task.claimed_by_session
+    if not session_id:
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=None reason=no_session",
+            task.id,
+        )
+        return
+
+    workdir = _get_workdir(request)
+    worktree_path = workdir / ".sdd" / "worktrees" / session_id
+
+    if not worktree_path.exists() or not worktree_path.is_dir():
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s reason=no_worktree path=%s",
+            task.id,
+            session_id,
+            str(worktree_path),
+        )
+        return
+
+    branch_name: str | None = None
+    try:
+        branch_proc = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if branch_proc.returncode == 0:
+            branch_name = branch_proc.stdout.strip() or None
+    except Exception as exc:  # pragma: no cover  # intentional-broad-except: branch lookup is best-effort
+        logger.debug(
+            "auto_commit_pre_complete: task=%s session=%s branch_lookup_error=%s",
+            task.id,
+            session_id,
+            exc,
+        )
+
+    if _is_salvage_branch(branch_name):
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s reason=skipped_salvage_branch branch=%s",
+            task.id,
+            session_id,
+            branch_name or "",
+        )
+        return
+
+    try:
+        already = subprocess.run(
+            ["git", "log", "-50", f"--grep={task.id}", "--fixed-strings"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if already.returncode == 0 and already.stdout.strip():
+            logger.info(
+                "auto_commit_pre_complete: task=%s session=%s reason=already_committed",
+                task.id,
+                session_id,
+            )
+            return
+    except Exception as exc:  # intentional-broad-except: already-committed check is best-effort
+        logger.warning(
+            "auto_commit_pre_complete_failed: task=%s session=%s error=%s stage=already_committed_check",
+            task.id,
+            session_id,
+            exc,
+        )
+
+    files_to_commit: list[str] = []
+    try:
+        merge_base_proc = subprocess.run(
+            ["git", "merge-base", "HEAD", "origin/main"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if merge_base_proc.returncode == 0 and merge_base_proc.stdout.strip():
+            base = merge_base_proc.stdout.strip().splitlines()[0]
+            diff_proc = subprocess.run(
+                ["git", "diff", "--name-only", f"{base}..HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            if diff_proc.returncode == 0:
+                files_to_commit.extend(line.strip() for line in diff_proc.stdout.splitlines() if line.strip())
+
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if status_proc.returncode == 0:
+            for line in status_proc.stdout.splitlines():
+                if len(line) < 4:
+                    continue
+                path = line[3:].strip()
+                if " -> " in path:
+                    path = path.split(" -> ", 1)[1].strip()
+                if path and not _is_auto_commit_denied(path):
+                    files_to_commit.append(path)
+    except Exception as exc:  # intentional-broad-except: file enumeration is best-effort
+        logger.warning(
+            "auto_commit_pre_complete_failed: task=%s session=%s error=%s stage=file_enumeration",
+            task.id,
+            session_id,
+            exc,
+        )
+        return
+
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for p in files_to_commit:
+        if p not in seen:
+            seen.add(p)
+            deduped.append(p)
+    files_to_commit = deduped
+
+    if not files_to_commit:
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s reason=nothing_to_commit",
+            task.id,
+            session_id,
+        )
+        return
+
+    try:
+        commit_set = [p for p in files_to_commit if not _is_auto_commit_denied(p)]
+        if not commit_set:
+            logger.info(
+                "auto_commit_pre_complete: task=%s session=%s reason=nothing_to_commit (deny-list excluded all)",
+                task.id,
+                session_id,
+            )
+            return
+
+        add_proc = subprocess.run(
+            ["git", "add", "--", *commit_set],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if add_proc.returncode != 0:
+            logger.warning(
+                "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s stage=git_add",
+                task.id,
+                session_id,
+                (add_proc.stderr or add_proc.stdout or "").strip()[:500],
+                commit_set,
+            )
+            return
+
+        commit_message = f"auto: {task.id} pre-/complete"
+        commit_proc = subprocess.run(
+            ["git", "commit", "-m", commit_message],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        if commit_proc.returncode != 0:
+            stderr = (commit_proc.stderr or commit_proc.stdout or "").strip()
+            if "nothing to commit" in stderr or "no changes added" in stderr:
+                logger.info(
+                    "auto_commit_pre_complete: task=%s session=%s reason=already_committed (raced-during-stage)",
+                    task.id,
+                    session_id,
+                )
+                return
+            logger.warning(
+                "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s stage=git_commit",
+                task.id,
+                session_id,
+                stderr[:500],
+                commit_set,
+            )
+            return
+
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s files=%s reason=uncommitted_changes_at_complete",
+            task.id,
+            session_id,
+            commit_set,
+        )
+    except Exception as exc:  # intentional-broad-except: auto-commit is best-effort, never blocks completion
+        logger.warning(
+            "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s",
+            task.id,
+            session_id,
+            exc,
+            files_to_commit,
+        )
 
 
 def _try_check_realtime_anomaly(
@@ -626,6 +937,12 @@ async def next_task(
         parent_session_id=parent_session_id,
     )
     if task is None:
+        logger.info(
+            "task.next 404: role=%s claimed_by_session=%s parent_session_id=%s no open tasks",
+            role,
+            claimed_by_session,
+            parent_session_id,
+        )
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     return task_to_response(task)
 
@@ -650,6 +967,14 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
             claimed_by_session=body.claimed_by_session,
             tenant_id=tenant_id,
         )
+        if failed:
+            logger.warning(
+                "task.claim_batch partial failure: agent_id=%s requested=%d claimed=%d failed=%s",
+                body.agent_id,
+                len(body.task_ids),
+                len(claimed),
+                failed,
+            )
         return BatchClaimResponse(claimed=claimed, failed=failed)
 
 
@@ -688,16 +1013,42 @@ async def claim_task(
             if task is None:
                 raise KeyError
             _require_task_access(task, request)
+            pre_claim_status = task.status.value
+            pre_claim_version = task.version
             task = await store.claim_by_id(
                 task_id,
                 expected_version=expected_version,
                 claimed_by_session=claimed_by_session,
             )
         except KeyError:
+            logger.warning(
+                "task.claim 404: task_id=%s not found (claimed_by_session=%s)",
+                task_id,
+                claimed_by_session,
+            )
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
         except ValueError as exc:
+            # This is the single most important line for diagnosing claim-conflict
+            # churn: log expected vs. actual version/status so a retry storm is
+            # visible from the server log alone, without needing client-side traces.
+            logger.warning(
+                "task.claim 409: task_id=%s expected_version=%s actual_version=%s "
+                "pre_claim_status=%s claimed_by_session=%s reason=%s",
+                task_id,
+                expected_version,
+                pre_claim_version,
+                pre_claim_status,
+                claimed_by_session,
+                exc,
+            )
             raise HTTPException(status_code=409, detail=str(exc)) from None
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "claimed"}))
+        logger.info(
+            "task.claim ok: task_id=%s new_version=%s claimed_by_session=%s",
+            task.id,
+            task.version,
+            claimed_by_session,
+        )
         return task_to_response(task)
 
 
@@ -728,7 +1079,19 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             # Auto-claim if task reverted to "open" (e.g. after orchestrator
             # restart reconciliation).  Prevents agents from looping on 409.
             if task.status.value == "open":
+                logger.info(
+                    "task.complete auto-claim: task_id=%s reverted to open, re-claiming before complete",
+                    task_id,
+                )
                 await store.claim_by_id(task_id)
+            # Defect 33: auto-commit the worker's uncommitted work BEFORE
+            # the store transitions the task to done, so the commit message
+            # is visible to the janitor (which reads ``git log`` after
+            # /complete lands).  Failures are swallowed - the orchestrator
+            # will catch a 0-diff task on /complete's branch and trigger
+            # the bounded-reopen path.  Logging contract in
+            # ``_run_auto_commit_pre_complete``.
+            _run_auto_commit_pre_complete(request, task)
             task = await store.complete(task_id, body.result_summary)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -798,6 +1161,12 @@ async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, requ
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
+        logger.warning(
+            "task.wait_for_subtasks 409: task_id=%s current_status=%s reason=%s",
+            task_id,
+            existing_task.status.value if existing_task is not None else "unknown",
+            exc,
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
     return task_to_response(task)
@@ -818,11 +1187,21 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
         _require_task_access(existing_task, request)
         # Auto-claim if task reverted to "open" (same rationale as /complete).
         if existing_task.status.value == "open":
+            logger.info(
+                "task.fail auto-claim: task_id=%s reverted to open, re-claiming before fail",
+                task_id,
+            )
             await store.claim_by_id(task_id)
         task = await store.fail(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
+        logger.warning(
+            "task.fail 409: task_id=%s current_status=%s reason=%s",
+            task_id,
+            existing_task.status.value if existing_task is not None else "unknown",
+            exc,
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "failed"}))
     get_plugin_manager().fire_task_failed(task_id=task.id, role=task.role, error=body.reason)
@@ -830,6 +1209,45 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
     # Update per-file health scores with failure outcome (fire-and-forget)
     _update_file_health(request, task.id, list(task.owned_files), "failure")
 
+    return task_to_response(task)
+
+
+@router.post(
+    "/tasks/{task_id}/reopen",
+    responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
+)
+async def reopen_task(task_id: str, body: TaskReopenRequest, request: Request) -> TaskResponse:
+    """Reopen a done task that failed janitor verification (same task id).
+
+    Transitions DONE -> OPEN and increments
+    ``metadata['janitor_reopen_count']``. The orchestrator enforces the
+    reopen budget; this endpoint only performs the state transition.
+    """
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+    try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
+        task = await store.reopen(task_id, body.reason)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except IllegalTransitionError as exc:
+        logger.warning(
+            "task.reopen 409: task_id=%s current_status=%s reason=%s",
+            task_id,
+            existing_task.status.value if existing_task is not None else "unknown",
+            exc,
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    logger.info(
+        "task.reopen: task_id=%s reopen_count=%s reason=%s",
+        task_id,
+        task.metadata.get("janitor_reopen_count"),
+        body.reason,
+    )
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "open"}))
     return task_to_response(task)
 
 
@@ -850,6 +1268,12 @@ async def close_task(task_id: str, request: Request) -> TaskResponse:
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
+        logger.warning(
+            "task.close 409: task_id=%s current_status=%s reason=%s",
+            task_id,
+            existing_task.status.value if existing_task is not None else "unknown",
+            exc,
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "closed"}))
     return task_to_response(task)
@@ -891,6 +1315,12 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except ValueError as exc:
+        logger.warning(
+            "task.cancel 409: task_id=%s current_status=%s reason=%s",
+            task_id,
+            existing_task.status.value if existing_task is not None else "unknown",
+            exc,
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
     # Publish an SSE event for every cancelled task (root + descendants) so
@@ -921,6 +1351,12 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
+        logger.warning(
+            "task.block 409: task_id=%s current_status=%s reason=%s",
+            task_id,
+            existing_task.status.value if existing_task is not None else "unknown",
+            exc,
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "blocked"}))
     return task_to_response(task)

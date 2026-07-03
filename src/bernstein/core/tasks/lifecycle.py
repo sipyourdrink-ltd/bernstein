@@ -190,6 +190,10 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     # Verification gate (orchestrator closes after janitor + merge)
     (TaskStatus.DONE, TaskStatus.CLOSED): _always,
     (TaskStatus.DONE, TaskStatus.FAILED): _always,
+    # Janitor reopen (bounded): a done task that fails janitor verification
+    # is re-queued under the SAME id for another attempt. The reopen budget
+    # is enforced by the orchestrator via metadata['janitor_reopen_count'].
+    (TaskStatus.DONE, TaskStatus.OPEN): _always,
     # Abandon primitive (#1350) - agent-initiated structured exit.
     # ABANDONED is a terminal state distinct from FAILED so dashboards can
     # split intentional vs. unintentional exits. Downstream consumers move

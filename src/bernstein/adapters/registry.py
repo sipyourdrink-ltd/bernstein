@@ -112,6 +112,15 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
 
 _entrypoints_loaded = False
 
+#: provider-alias (lower-cased) -> adapter registry name. Built lazily from
+#: each adapter's ``provides`` class attribute the first time
+#: :func:`adapter_name_for_provider` is called. This is the structural
+#: replacement for the old hand-ordered substring `if`/`elif` chain that
+#: used to live in ``spawner_core._infer_adapter_name_for_provider`` -- see
+#: PR1 of the provider/adapter routing fix ladder.
+_PROVIDER_ALIAS_TABLE: dict[str, str] = {}
+_provider_aliases_built = False
+
 
 def _load_entrypoint_adapters() -> None:
     """Discover and register adapters from the ``bernstein.adapters`` entry-point group.
@@ -226,3 +235,162 @@ def iter_adapter_specs() -> Iterator[tuple[str, type[CLIAdapter] | CLIAdapter]]:
     _load_entrypoint_adapters()
     for name in sorted(_ADAPTERS.keys()):
         yield name, _ADAPTERS[name]
+
+
+def _register_provider_alias(alias: str, adapter_name: str) -> None:
+    """Register a single provider-name alias into the provider alias table.
+
+    Raises ``ValueError`` immediately if ``alias`` is already claimed by a
+    *different* adapter. This is PR1's collision policy: an ambiguous alias
+    fails loudly at table-build time (import/first-use time), never
+    silently at spawn time. This is what actually forecloses the
+    042bcbd0 class of bug (``openai_agents`` silently swallowed by a
+    broader ``openai`` substring match) for good -- a future adapter that
+    tries to claim an alias someone else already owns cannot ship at all.
+
+    Args:
+        alias: Lower-cased provider-name alias, e.g. ``"openai_agents"``.
+        adapter_name: Registry name of the adapter claiming the alias, e.g.
+            ``"openai_agents"``.
+
+    Raises:
+        ValueError: If ``alias`` is already registered to a different
+            adapter name.
+    """
+    existing = _PROVIDER_ALIAS_TABLE.get(alias)
+    if existing is not None and existing != adapter_name:
+        raise ValueError(
+            f"Provider alias {alias!r} is claimed by both adapter {existing!r} "
+            f"and adapter {adapter_name!r}. Provider aliases (the `provides` "
+            "class attribute on each CLIAdapter) must be unique across the "
+            "whole adapter catalog -- rename or narrow one of the "
+            "conflicting `provides` entries before this can load."
+        )
+    _PROVIDER_ALIAS_TABLE[alias] = adapter_name
+    logger.debug("registry: registered provider alias %r -> adapter %r", alias, adapter_name)
+
+
+def _build_provider_alias_table() -> None:
+    """Populate :data:`_PROVIDER_ALIAS_TABLE` from every adapter's ``provides``.
+
+    Idempotent: runs once, guarded by :data:`_provider_aliases_built`.
+    Entry-point adapters are discovered first so third-party adapters'
+    ``provides`` declarations participate in collision detection too.
+
+    Some adapters are registered under more than one ``_ADAPTERS`` key for
+    the *same* underlying class (for example ``GeminiAdapter`` is keyed as
+    both ``"gemini"`` and ``"antigravity"`` during the 2026-06-18
+    dual-binary transition -- see the comment in ``_ADAPTERS`` above). Each
+    distinct adapter object/class must contribute its ``provides`` aliases
+    exactly once, or the second registration would collide with the first
+    under a *different* adapter name and trip the collision guard on a
+    false positive. Entries are grouped by identity first; when a group
+    has more than one registry key, the key that is itself one of the
+    declared aliases (self-referencing / canonical, e.g. ``"gemini"``) is
+    preferred, matching what the old hardcoded substring branch used to
+    return literally.
+    """
+    global _provider_aliases_built
+    if _provider_aliases_built:
+        return
+    logger.info("registry: building provider alias table from %d registered adapters", len(_ADAPTERS))
+    _load_entrypoint_adapters()
+
+    names_by_entry_id: dict[int, list[str]] = {}
+    entry_by_id: dict[int, type[CLIAdapter] | CLIAdapter] = {}
+    for name, entry in _ADAPTERS.items():
+        eid = id(entry)
+        names_by_entry_id.setdefault(eid, []).append(name)
+        entry_by_id[eid] = entry
+
+    for eid, names in names_by_entry_id.items():
+        entry = entry_by_id[eid]
+        provides = getattr(entry, "provides", ()) or ()
+        if not provides:
+            continue
+        canonical = next((n for n in names if n in provides), names[0])
+        if len(names) > 1:
+            logger.debug(
+                "registry: adapter registered under multiple keys %s; using canonical name %r for provides=%s",
+                names,
+                canonical,
+                provides,
+            )
+        for alias in provides:
+            _register_provider_alias(alias.strip().lower(), canonical)
+    _provider_aliases_built = True
+    logger.info(
+        "registry: provider alias table built -- %d aliases across %d adapters: %s",
+        len(_PROVIDER_ALIAS_TABLE),
+        len({v for v in _PROVIDER_ALIAS_TABLE.values()}),
+        _PROVIDER_ALIAS_TABLE,
+    )
+
+
+def adapter_name_for_provider(provider_name: str | None, model: str) -> str | None:
+    """Resolve an adapter registry name from a provider name and/or model string.
+
+    This is the structural replacement for the old
+    ``spawner_core._infer_adapter_name_for_provider`` substring `if`/`elif`
+    chain (Root Cause A: no canonical provider -> adapter table, so any new
+    provider name that happened to be a substring of another's would
+    misroute silently until someone noticed and reordered the branches).
+
+    Resolution order:
+
+    1. **Exact match.** ``provider_name`` (case-insensitive, stripped) is
+       looked up directly against the alias table built from every
+       adapter's ``provides`` declaration. Because
+       :func:`_register_provider_alias` refuses ambiguous aliases at
+       build time, an exact hit here is guaranteed unambiguous.
+    2. **Substring fallback, longest-alias-first.** Some call sites (for
+       example the sampling-capability probe in ``spawner_core.py``, which
+       calls this with ``provider_name=None``) only have a bare model
+       string like ``"gpt-4.1"`` or ``"claude-opus-4"`` to go on. For that
+       case every registered alias is checked as a substring of
+       ``f"{provider_name} {model}"``, longest alias first. Longest-first
+       guarantees a more specific alias (``"openai_agents"``) always wins
+       over a shorter alias it textually contains (``"openai"``) without
+       requiring any hand-maintained ordering -- this is what forecloses
+       the 042bcbd0 bug class structurally rather than only patching the
+       one instance of it.
+
+    Returns:
+        The resolved adapter registry name, or ``None`` if nothing in the
+        alias table matches. Callers apply their own fallback (typically
+        the spawner's currently-active adapter) when ``None`` is returned.
+    """
+    logger.debug("registry.adapter_name_for_provider: provider_name=%r model=%r", provider_name, model)
+    _build_provider_alias_table()
+
+    if provider_name:
+        exact = _PROVIDER_ALIAS_TABLE.get(provider_name.strip().lower())
+        if exact is not None:
+            logger.info(
+                "registry.adapter_name_for_provider: EXACT match provider_name=%r -> adapter=%r",
+                provider_name,
+                exact,
+            )
+            return exact
+
+    text = f"{provider_name or ''} {model}".lower()
+    for alias in sorted(_PROVIDER_ALIAS_TABLE, key=len, reverse=True):
+        if alias in text:
+            adapter_name = _PROVIDER_ALIAS_TABLE[alias]
+            logger.info(
+                "registry.adapter_name_for_provider: SUBSTRING fallback matched "
+                "alias=%r in text=%r -> adapter=%r (provider_name=%r had no exact hit)",
+                alias,
+                text,
+                adapter_name,
+                provider_name,
+            )
+            return adapter_name
+
+    logger.info(
+        "registry.adapter_name_for_provider: NO MATCH for provider_name=%r model=%r; "
+        "caller must apply its own fallback",
+        provider_name,
+        model,
+    )
+    return None

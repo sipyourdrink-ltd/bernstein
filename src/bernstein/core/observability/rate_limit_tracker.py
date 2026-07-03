@@ -14,8 +14,10 @@ Implements:
 from __future__ import annotations
 
 import enum
+import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +51,12 @@ class RequestPriority(enum.Enum):
 
 # Text patterns that indicate a rate-limit / 429 event in agent logs.
 # Checked case-insensitively against the last 500 lines of the log.
+#
+# NOTE: "429" is a *risky bare token* (see _RISKY_BARE_TOKENS below) - a bare
+# number matches freely inside structured JSON log data (byte counts, task
+# IDs, timestamps) that has nothing to do with a rate-limit event. It is only
+# treated as a hit when it appears on a line that ALSO contains explicit
+# error context (see _ERROR_CONTEXT_RE).
 _RATE_LIMIT_PATTERNS: tuple[str, ...] = (
     "rate limit",
     "rate_limit",
@@ -76,7 +84,7 @@ _TIMEOUT_PATTERNS: tuple[str, ...] = (
     "TimeoutError",
     "ConnectTimeoutError",
     "ReadTimeoutError",
-    "504",
+    "504",  # risky bare token - see _RISKY_BARE_TOKENS
     "gateway timeout",
 )
 
@@ -97,6 +105,7 @@ _API_ERROR_PATTERNS: tuple[str, ...] = (
 )
 
 # Text patterns that indicate an authentication error (401, 403) in agent logs.
+# "401"/"403" are risky bare tokens - see _RISKY_BARE_TOKENS.
 _AUTH_ERROR_PATTERNS: tuple[str, ...] = (
     "401",
     "403",
@@ -110,13 +119,21 @@ _AUTH_ERROR_PATTERNS: tuple[str, ...] = (
 )
 
 # Text patterns that indicate a context-overflow / prompt-too-long (413) error.
+#
+# "413" and "context window" are risky bare/generic tokens (see
+# _RISKY_BARE_TOKENS) - they match freely inside structured JSON tool-result
+# and manifest dumps that have nothing to do with a real provider error.
+# "max_tokens" was REMOVED outright (not just demoted to risky): it is a
+# completely ordinary field name in request/response manifests and provides
+# no error signal even with context words nearby - see 2026-07-02 incident
+# (runs 4/5/6 killed by healthy MiniMax-M3 workers whose JSON logs contained
+# `"max_tokens": 16384` and numbers containing 413/429).
 _CONTEXT_OVERFLOW_PATTERNS: tuple[str, ...] = (
     "413",
     "prompt is too long",
     "prompt too long",
     "context window",
     "context_length_exceeded",
-    "max_tokens",
     "maximum context length",
     "token limit exceeded",
     "request too large",
@@ -126,6 +143,72 @@ _CONTEXT_OVERFLOW_PATTERNS: tuple[str, ...] = (
     "context length exceeded",
     "PromptTooLongError",
 )
+
+# Bare numbers / generic words that are common in structured JSON log data
+# (tool-call results, manifest dumps, byte counts, task IDs) and therefore
+# cannot be trusted as failure signals on their own. A risky token only
+# counts as a match when it appears with a word boundary on a line that ALSO
+# contains explicit error context (see _ERROR_CONTEXT_RE) - e.g.
+# "Error code: 413 - request too large" matches, but a JSON blob containing
+# `"max_tokens": 16384` (which incidentally contains the digits 4-1-3 nowhere,
+# but DOES contain other risky substrings like "429" in unrelated counters)
+# does not. See 2026-07-02 false-positive incident (runs 4/5/6 killed).
+_RISKY_BARE_TOKENS: frozenset[str] = frozenset(
+    {
+        # bare HTTP codes - match inside byte counts / ids / timestamps
+        "413",
+        "429",
+        "401",
+        "403",
+        "504",
+        # generic words/phrases - appear freely in tool output, target-repo code
+        # being read, and test stdout (2026-07-02 run 7: `"timeout": 5` in a
+        # tool-call JSON killed a healthy manager)
+        "context window",
+        "timeout",
+        "timed out",
+        "time out",
+        "request timeout",
+        "connect timeout",
+        "read timeout",
+        "gateway timeout",
+        "rate limit",
+        "rate_limit",
+        "ratelimit",
+        "overloaded",
+        "hit your limit",
+        "usage cap",
+        "unauthorized",
+        "forbidden",
+        "invalid_client",
+        "invalid_token",
+        "expired_token",
+        "connection refused",
+        "connection reset",
+        "econnrefused",
+        "econnreset",
+        "api_error",
+    }
+)
+
+# Structured agent-log lines that carry DATA (tool traffic, heartbeats), not
+# provider errors. Never scanned: a tool result legitimately contains target
+# repo code/output with words like "unauthorized" or "TimeoutError" in it.
+#
+# "completion" and "progress" were added 2026-07-02 (D2 tools-zero diagnosis,
+# work/bernstein/proofs/d2/tools-zero-diagnosis.md Q5): both carry raw
+# model-authored free text (a completion's ``summary`` field, a progress
+# event's narration) that legitimately contains words like "timeout" in
+# prose ("I set a 10s timeout on the curl call") without any real failure
+# having occurred. Excluding them from substring scanning closes that
+# false-positive hole; risky-bare-token matches on OTHER line types still
+# require same-line error context via ``_ERROR_CONTEXT_RE``.
+_DATA_LINE_TYPES: frozenset[str] = frozenset({"tool_call", "tool_result", "heartbeat", "completion", "progress"})
+
+# Words that indicate a line is plausibly describing a real provider/HTTP
+# error, rather than incidental structured data. Deliberately narrow -
+# broadening this list re-opens the false-positive hole this patch closes.
+_ERROR_CONTEXT_RE = re.compile(r"\b(error|status|http|code|exception|failed|failure|traceback)\b", re.IGNORECASE)
 
 _BASE_THROTTLE_S: float = 60.0
 _MAX_THROTTLE_S: float = 3600.0
@@ -448,12 +531,25 @@ class RateLimitTracker:
     def _scan_log_for_patterns(self, log_path: Path, patterns: tuple[str, ...]) -> bool:
         """Scan the tail of *log_path* for any of the given patterns.
 
+        Patterns in ``_RISKY_BARE_TOKENS`` (bare numbers like "413"/"429" and
+        generic phrases like "context window") are NOT matched by plain
+        substring containment - structured JSON log lines (tool results,
+        manifest dumps) are full of numbers and common words that would
+        otherwise false-positive-kill a healthy worker (2026-07-02 incident:
+        runs 4/5/6 killed by this exact failure mode). A risky token only
+        counts as a match when (a) it appears with a real word boundary, AND
+        (b) the SAME line also contains explicit error context per
+        ``_ERROR_CONTEXT_RE``. All other patterns keep the original
+        case-insensitive substring behaviour, scanned line-by-line so the
+        matched line can be logged for diagnosis.
+
         Args:
             log_path: Path to the agent's subprocess log file.
             patterns: Tuple of strings to search for (case-insensitive).
 
         Returns:
-            True if any pattern was found, False otherwise.
+            True if any pattern was found, False otherwise (including
+            when the file does not exist or cannot be read).
         """
         if not log_path.exists():
             return False
@@ -464,8 +560,58 @@ class RateLimitTracker:
             return False
 
         lines = text.splitlines()[-_LOG_SCAN_TAIL_LINES:]
-        snippet = "\n".join(lines).lower()
-        return any(pat.lower() in snippet for pat in patterns)
+        for line in lines:
+            stripped = line.lstrip()
+            _line_type: str | None = None
+            if stripped.startswith("{"):
+                try:
+                    _obj = json.loads(stripped)
+                except ValueError:
+                    _obj = None
+                if isinstance(_obj, dict):
+                    _raw_type = _obj.get("type")
+                    _line_type = _raw_type if isinstance(_raw_type, str) else None
+                    if _line_type in _DATA_LINE_TYPES:
+                        logger.debug(
+                            "_scan_log_for_patterns: skipping data-line type=%r in %s (not scanned)",
+                            _line_type,
+                            log_path,
+                        )
+                        continue
+            lower_line = line.lower()
+            for pat in patterns:
+                pat_lower = pat.lower()
+                # log-line type for the matched line: the JSON "type" field
+                # when the line parsed as JSON, else "unstructured" -- this
+                # is the field that let a "completion" line's fabricated
+                # "timeout" text through before the _DATA_LINE_TYPES fix
+                # above (2026-07-02 D2 tools-zero diagnosis).
+                _matched_line_type = _line_type or "unstructured"
+                _excerpt = line.strip()[:120]
+                if pat_lower in _RISKY_BARE_TOKENS:
+                    if not re.search(rf"\b{re.escape(pat_lower)}\b", lower_line):
+                        continue
+                    if not _ERROR_CONTEXT_RE.search(lower_line):
+                        continue
+                    logger.info(
+                        "_scan_log_for_patterns: matched RISKY pattern=%r line_type=%r "
+                        "(with error context) in %s, excerpt=%r",
+                        pat,
+                        _matched_line_type,
+                        log_path,
+                        _excerpt,
+                    )
+                    return True
+                elif pat_lower in lower_line:
+                    logger.info(
+                        "_scan_log_for_patterns: matched pattern=%r line_type=%r in %s, excerpt=%r",
+                        pat,
+                        _matched_line_type,
+                        log_path,
+                        _excerpt,
+                    )
+                    return True
+        return False
 
 
 # ------------------------------------------------------------------

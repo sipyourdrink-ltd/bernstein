@@ -239,8 +239,15 @@ def _try_salvage_branch(
     # 1. Stage everything (including untracked files, skipping .gitignore).
     add_r = run_git(["add", "-A"], worktree_path, timeout=_SALVAGE_TIMEOUT_S)
     if not add_r.ok:
+        logger.warning(
+            "salvage step 1/4 FAILED (git add -A): session=%s worktree=%s stderr=%s",
+            session_id,
+            worktree_path,
+            add_r.stderr.strip(),
+        )
         errors.append(f"git add -A: {add_r.stderr.strip()}")
         return None, False, errors
+    logger.info("salvage step 1/4 ok (git add -A): session=%s worktree=%s", session_id, worktree_path)
 
     # 2. Commit.  --allow-empty so we leave a breadcrumb even when the diff
     #    is purely whitespace or already staged-and-reverted.
@@ -260,14 +267,29 @@ def _try_salvage_branch(
         timeout=_SALVAGE_TIMEOUT_S,
     )
     if not commit_r.ok:
+        logger.warning(
+            "salvage step 2/4 FAILED (git commit): session=%s worktree=%s stderr=%s",
+            session_id,
+            worktree_path,
+            commit_r.stderr.strip(),
+        )
         errors.append(f"git commit: {commit_r.stderr.strip()}")
         return None, False, errors
+    logger.info("salvage step 2/4 ok (git commit %r): session=%s", msg, session_id)
 
     # 3. Rename current branch to salvage/<id>.
     rename_r = run_git(["branch", "-M", branch], worktree_path, timeout=_SALVAGE_TIMEOUT_S)
     if not rename_r.ok:
+        logger.warning(
+            "salvage step 3/4 FAILED (git branch -M %s): session=%s worktree=%s stderr=%s",
+            branch,
+            session_id,
+            worktree_path,
+            rename_r.stderr.strip(),
+        )
         errors.append(f"git branch -M {branch}: {rename_r.stderr.strip()}")
         return None, False, errors
+    logger.info("salvage step 3/4 ok (branch renamed to %s): session=%s", branch, session_id)
 
     # 4. Push best-effort.
     push_r = run_git(
@@ -277,7 +299,17 @@ def _try_salvage_branch(
     )
     pushed = push_r.ok
     if not pushed:
+        logger.warning(
+            "salvage step 4/4 FAILED (git push origin %s): session=%s worktree=%s stderr=%s "
+            "-- branch is committed locally but not pushed; filesystem patch fallback still applies",
+            branch,
+            session_id,
+            worktree_path,
+            push_r.stderr.strip(),
+        )
         errors.append(f"git push origin {branch}: {push_r.stderr.strip()}")
+    else:
+        logger.info("salvage step 4/4 ok (pushed %s to origin): session=%s", branch, session_id)
 
     return branch, pushed, errors
 

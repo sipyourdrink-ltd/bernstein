@@ -304,6 +304,14 @@ def _try_recover_safety_prompt(
         delivered = False
     outcome_event = "watchdog.recover.succeeded" if delivered else "watchdog.recover.failed"
     _emit_audit_event(audit_path, outcome_event, base_payload.copy())
+    logger.info(
+        "watchdog recovery %s: session=%s rule=%s action=%s recovery_id=%s",
+        "SUCCEEDED" if delivered else "FAILED",
+        session.session_id,
+        recovery.rule,
+        recovery.action,
+        recovery.recovery_id,
+    )
     return recovery
 
 
@@ -337,13 +345,35 @@ def tick(
 
     recoveries: list[RecoveryAction] = []
     skipped: list[str] = []
+    sessions = list(sessions)
+    paused_count = sum(1 for s in sessions if s.is_paused)
+    logger.debug(
+        "watchdog tick: probing %d session(s), %d paused",
+        len(sessions),
+        paused_count,
+    )
 
     for session in sessions:
         if not session.is_paused:
             continue
         kind = classify_prompt(session.recent_output)
+        # Every paused-session probe conclusion, logged with the classifier
+        # input (last line) and verdict -- this is the decision that
+        # determines auto-answer vs. escalate vs. no-op.
+        logger.info(
+            "watchdog probe: session=%s is_paused=True classified=%s last_line=%r approved_classes=%s",
+            session.session_id,
+            kind,
+            _last_line(session.recent_output),
+            sorted(session.approved_prompt_classes),
+        )
         if kind == "model_question":
             skipped.append(session.session_id)
+            logger.warning(
+                "watchdog: session=%s prompt classified as model_question -- "
+                "auto-answer suppressed, escalating to operator",
+                session.session_id,
+            )
             _emit_audit_event(
                 audit_path,
                 "watchdog.recover.skipped",
@@ -360,6 +390,11 @@ def tick(
         if recovery is not None:
             recoveries.append(recovery)
 
+    logger.info(
+        "watchdog tick complete: %d recoveries attempted, %d model-question escalations",
+        len(recoveries),
+        len(skipped),
+    )
     return WatchdogResult(
         recoveries=tuple(recoveries),
         skipped_model_questions=tuple(skipped),

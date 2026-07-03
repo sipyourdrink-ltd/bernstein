@@ -150,6 +150,19 @@ class RoleModelPolicyEntry(BaseModel):
     it is validated against the same fail-closed credential allowlist the
     ``openai_agents`` runner enforces so a repo-carried config cannot
     forward arbitrary host secrets to an arbitrary endpoint.
+
+    ``temperature``/``top_p``/``top_k``/``max_tokens``/``extra_params`` mirror
+    the sampling-field shape already proven on the ``ModelCard`` dataclass
+    (see ``feat/model-cards-phase1``): they are per-role sampling overrides
+    that flow into the per-spawn ``mcp_config`` via
+    :meth:`bernstein.core.agents.spawner_core.AgentSpawner._apply_sampling_overrides`,
+    taking precedence over a resolved :class:`ModeProfile`'s sampling
+    defaults for the same role. The spawn-time capability gate
+    (:func:`bernstein.adapters.plugin_sdk.ensure_sampling_params_supported`)
+    still decides whether the target adapter actually honours them -
+    setting these fields for a role pinned to an adapter that does not
+    declare sampling support raises ``SamplingParamsRefusal`` rather than
+    silently dropping the override.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -160,6 +173,11 @@ class RoleModelPolicyEntry(BaseModel):
     effort: str | None = None
     base_url: str | None = None
     api_key_env: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
+    extra_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class RoleConfigEntry(BaseModel):

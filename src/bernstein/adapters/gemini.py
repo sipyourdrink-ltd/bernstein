@@ -199,6 +199,11 @@ def _inject_multimodal_attachments(prompt: str, multimodal_context: Any) -> str:
 class GeminiAdapter(CLIAdapter):
     """Spawn and monitor Google Gemini / Antigravity CLI sessions."""
 
+    # Provider-string aliases this adapter resolves from in
+    # ``_infer_adapter_name_for_provider`` (via the registry's
+    # provider-alias table). Unchanged from the old substring branch.
+    provides = ("gemini", "google")
+
     external_endpoints = (("generativelanguage.googleapis.com", 443),)
     # Google Generative Language returns HTTP 429 with status
     # ``RESOURCE_EXHAUSTED`` once per-minute quotas are tripped.

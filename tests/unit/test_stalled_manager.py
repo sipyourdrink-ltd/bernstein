@@ -13,9 +13,11 @@ from bernstein.core.models import AgentSession, ModelConfig, Task
 
 from bernstein.core.orchestration.stalled_manager import (
     REMEDIATION_DOC,
+    STALL_THRESHOLD_ENV_VAR,
     STALL_THRESHOLD_S,
     StalledManagerDiagnostic,
     _redact_env,
+    _resolve_stall_threshold_s,
     build_diagnostic,
     detect_stalled_manager,
     handle_stalled_manager,
@@ -281,3 +283,130 @@ def test_build_diagnostic_picks_last_five_bash_commands(tmp_path: Path) -> None:
     diag = build_diagnostic(tmp_path, session, now=time.time())
     assert diag.last_bash_commands == ["cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7"]
     assert diag.hook_event_count == 8
+
+
+def test_diagnostic_message_does_not_assert_auth_failure_with_zero_evidence() -> None:
+    """hook_event_count==0 with no bash commands must not assert an auth failure (#2179)."""
+    diag = StalledManagerDiagnostic(
+        session_id="manager-run2",
+        manager_task_id="task-1",
+        runtime_s=174.0,
+        hook_event_count=0,
+        last_bash_commands=[],
+    )
+    msg = diag.message()
+    assert "NOT confirmed as an auth failure" in msg
+    assert "likely cannot authenticate" not in msg
+    assert STALL_THRESHOLD_ENV_VAR in msg
+
+
+# ---------------------------------------------------------------------------
+# Threshold resolution (#2179): CLI/env > yaml-tunable config > default
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_threshold_uses_config_when_no_env(monkeypatch: Any) -> None:
+    monkeypatch.delenv(STALL_THRESHOLD_ENV_VAR, raising=False)
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=300.0))
+    assert _resolve_stall_threshold_s(orch) == 300.0
+
+
+def test_resolve_threshold_falls_back_to_default_without_config(monkeypatch: Any) -> None:
+    monkeypatch.delenv(STALL_THRESHOLD_ENV_VAR, raising=False)
+    orch = SimpleNamespace(_config=None)
+    assert _resolve_stall_threshold_s(orch) == STALL_THRESHOLD_S
+
+
+def test_resolve_threshold_env_beats_config(monkeypatch: Any) -> None:
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "250")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=900.0))
+    assert _resolve_stall_threshold_s(orch) == 250.0
+
+
+def test_resolve_threshold_unparseable_env_falls_back_with_warning(monkeypatch: Any, caplog: Any) -> None:
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "notanumber")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    with caplog.at_level("WARNING"):
+        result = _resolve_stall_threshold_s(orch)
+    assert result == 222.0
+    assert "not a valid float" in caplog.text
+
+
+def test_resolve_threshold_warns_when_it_would_race_idle_kill(monkeypatch: Any, caplog: Any) -> None:
+    monkeypatch.delenv(STALL_THRESHOLD_ENV_VAR, raising=False)
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=200.0))
+    with caplog.at_level("WARNING"):
+        result = _resolve_stall_threshold_s(orch)
+    assert result == 200.0
+    assert "idle_log_age_threshold_s" in caplog.text
+
+
+def test_resolve_threshold_env_path_also_warns_when_it_would_race_idle_kill(monkeypatch: Any, caplog: Any) -> None:
+    """The race-check must fire for the env override too, not just the config/default path -
+    BERNSTEIN_STALL_THRESHOLD_S is the primary way an operator raises the threshold (#2179)."""
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "250")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=90.0))
+    with caplog.at_level("WARNING"):
+        result = _resolve_stall_threshold_s(orch)
+    assert result == 250.0
+    assert "idle_log_age_threshold_s" in caplog.text
+
+
+def test_resolve_threshold_zero_env_falls_back_to_config_with_warning(monkeypatch: Any, caplog: Any) -> None:
+    """A 0/negative env value must not silently disable the watchdog (fires on turn one)."""
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "0")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    with caplog.at_level("WARNING"):
+        result = _resolve_stall_threshold_s(orch)
+    assert result == 222.0
+    assert "positive, finite" in caplog.text
+
+
+def test_resolve_threshold_negative_env_falls_back(monkeypatch: Any) -> None:
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "-5")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    assert _resolve_stall_threshold_s(orch) == 222.0
+
+
+def test_resolve_threshold_nan_env_falls_back(monkeypatch: Any) -> None:
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "nan")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    assert _resolve_stall_threshold_s(orch) == 222.0
+
+
+def test_resolve_threshold_inf_env_falls_back(monkeypatch: Any) -> None:
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "inf")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=222.0))
+    assert _resolve_stall_threshold_s(orch) == 222.0
+
+
+def test_resolve_threshold_non_positive_config_falls_back_to_default(monkeypatch: Any, caplog: Any) -> None:
+    monkeypatch.delenv(STALL_THRESHOLD_ENV_VAR, raising=False)
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=-10.0))
+    with caplog.at_level("WARNING"):
+        result = _resolve_stall_threshold_s(orch)
+    assert result == STALL_THRESHOLD_S
+    assert "positive, finite" in caplog.text
+
+
+def test_resolve_threshold_caches_per_orchestrator_instance(monkeypatch: Any, caplog: Any) -> None:
+    """Resolution + its log lines must happen once per orchestrator, not once per tick."""
+    monkeypatch.setenv(STALL_THRESHOLD_ENV_VAR, "250")
+    orch = SimpleNamespace(_config=SimpleNamespace(stalled_manager_threshold_s=90.0))
+    with caplog.at_level("INFO"):
+        first = _resolve_stall_threshold_s(orch)
+        caplog.clear()
+        second = _resolve_stall_threshold_s(orch)
+    assert first == second == 250.0
+    assert caplog.text == ""
+
+
+def test_detect_stalled_manager_honors_raised_threshold_via_config(monkeypatch: Any, tmp_path: Path) -> None:
+    """A manager alive past the old 170s default but under a raised threshold is not aborted."""
+    monkeypatch.delenv(STALL_THRESHOLD_ENV_VAR, raising=False)
+    now = 1_000.0
+    session = _manager_session(spawn_ts=now - 250.0)  # past old default, under raised threshold
+    orch = _build_orch(tmp_path, session=session)
+    orch._config = SimpleNamespace(stalled_manager_threshold_s=300.0)
+    with patch("bernstein.core.orchestration.stalled_manager.time.time", return_value=now):
+        assert detect_stalled_manager(orch) is None

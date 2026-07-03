@@ -299,6 +299,35 @@ class TestCostTrackerLogging:
         exceeded_messages = [r.message for r in caplog.records if "BUDGET EXCEEDED" in r.message]
         assert len(exceeded_messages) == 2
 
+    def test_ledger_update_logs_tokens_sidecar_source(self, caplog: pytest.LogCaptureFixture) -> None:
+        """item 31: the ledger_update: mutation line carries the origin marker
+        so an alive-exit /complete ingestion is distinguishable from an
+        orphan/dead-exit recovery in the logs."""
+        tracker = CostTracker(run_id="run-1", budget_usd=10.0)
+        with caplog.at_level("INFO"):
+            tracker.record(
+                agent_id="a1",
+                task_id="t1",
+                model="sonnet",
+                input_tokens=51_880,
+                output_tokens=1_401,
+                cost_usd=0.5,
+                cost_tags={"tokens_sidecar_source": "alive_exit"},
+            )
+        ledger_lines = [r.message for r in caplog.records if r.message.startswith("ledger_update:")]
+        assert len(ledger_lines) == 1
+        assert "tokens_sidecar_source=alive_exit" in ledger_lines[0]
+
+    def test_ledger_update_source_empty_when_untagged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A record with no origin tag (e.g. live-cost tick) logs an empty marker,
+        never crashes on the missing tag."""
+        tracker = CostTracker(run_id="run-1", budget_usd=10.0)
+        with caplog.at_level("INFO"):
+            tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=1, output_tokens=1, cost_usd=0.1)
+        ledger_lines = [r.message for r in caplog.records if r.message.startswith("ledger_update:")]
+        assert len(ledger_lines) == 1
+        assert "tokens_sidecar_source=" in ledger_lines[0]
+
 
 # ---------------------------------------------------------------------------
 # CostTracker - persistence

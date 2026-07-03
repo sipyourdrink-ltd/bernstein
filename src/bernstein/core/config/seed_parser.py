@@ -633,14 +633,14 @@ def _parse_bridge_settings(raw: object) -> BridgeConfigSet | None:
     return BridgeConfigSet(openclaw=_parse_openclaw_runtime_config(data.get("openclaw")))
 
 
-def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
+def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str | int]] | None:
     """Parse optional role-specific provider/model overrides."""
     if raw is None:
         return None
     if not isinstance(raw, dict):
         raise SeedError("role_model_policy must be a mapping of role -> settings")
 
-    parsed: dict[str, dict[str, str]] = {}
+    parsed: dict[str, dict[str, str | int]] = {}
     for role, settings in raw.items():
         if not isinstance(role, str) or not role:
             raise SeedError("role_model_policy keys must be non-empty role strings")
@@ -657,8 +657,17 @@ _ROLE_POLICY_KEYS: tuple[str, ...] = (
     "api_key_env",
 )
 
+# Integer-typed role policy keys, validated and stored separately from the
+# string-typed keys above. ``max_tokens`` is a per-role sampling override
+# (see ``RoleModelPolicyEntry.max_tokens`` in config_schema.py:179) that must
+# flow through the seed parser unchanged so an operator can cap completion
+# length for a role - without this branch a seed file setting
+# ``role_model_policy.<role>.max_tokens`` was rejected at parse time with
+# "unknown keys: max_tokens" (parser/schema divergence fixed here).
+_ROLE_POLICY_INT_KEYS: tuple[str, ...] = ("max_tokens",)
 
-def _parse_single_role_policy(role: str, settings: object) -> dict[str, str]:
+
+def _parse_single_role_policy(role: str, settings: object) -> dict[str, str | int]:
     """Parse and validate a single role's model policy settings.
 
     ``base_url`` and ``api_key_env`` are optional per-role endpoint
@@ -668,17 +677,30 @@ def _parse_single_role_policy(role: str, settings: object) -> dict[str, str]:
     the same fail-closed credential allowlist the ``openai_agents`` runner
     enforces so a repo-carried config cannot forward an unrelated host
     secret to an arbitrary endpoint.
+
+    ``max_tokens`` is an optional per-role integer cap on completion length
+    (see :data:`_ROLE_POLICY_INT_KEYS`); it is validated as a positive int
+    here and flows unchanged into
+    :meth:`bernstein.core.agents.spawner_core.AgentSpawner._apply_sampling_overrides`.
     """
     if not isinstance(settings, dict):
         raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
 
-    normalized: dict[str, str] = {}
+    normalized: dict[str, str | int] = {}
     for key in _ROLE_POLICY_KEYS:
         value = settings.get(key)
         if value is None:
             continue
         if not isinstance(value, str) or not value:
             raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a non-empty string")
+        normalized[key] = value
+
+    for key in _ROLE_POLICY_INT_KEYS:
+        value = settings.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a positive integer")
         normalized[key] = value
 
     # Reuse the adapter's fail-closed credential-name allowlist. Imported
@@ -689,14 +711,15 @@ def _parse_single_role_policy(role: str, settings: object) -> dict[str, str]:
         from bernstein.adapters.openai_agents_runner import validate_api_key_env_name
 
         try:
-            validate_api_key_env_name(normalized["api_key_env"])
+            validate_api_key_env_name(str(normalized["api_key_env"]))
         except RuntimeError as exc:
             raise SeedError(f"role_model_policy[{role!r}][api_key_env]: {exc}") from exc
 
     if "cli" in normalized and "provider" not in normalized:
         normalized["provider"] = normalized["cli"]
 
-    unknown_keys = sorted(set(settings) - set(_ROLE_POLICY_KEYS))
+    allowed_keys = set(_ROLE_POLICY_KEYS) | set(_ROLE_POLICY_INT_KEYS)
+    unknown_keys = sorted(set(settings) - allowed_keys)
     if unknown_keys:
         raise SeedError(f"role_model_policy[{role!r}] has unknown keys: {', '.join(unknown_keys)}")
     return normalized

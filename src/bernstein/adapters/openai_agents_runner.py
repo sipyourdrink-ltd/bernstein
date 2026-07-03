@@ -26,7 +26,9 @@ tests and downstream cost-tracking code rely on::
     {"type": "tool_call", "name": "file_read", "args": {...}}
     {"type": "tool_result", "name": "file_read", "output": "..."}
     {"type": "progress", "message": "..."}
-    {"type": "usage", "input_tokens": 123, "output_tokens": 456, "tool_calls": 3}
+    {"type": "usage", "input_tokens": 123, "output_tokens": 456, "tool_calls": 3,
+     "model": "gpt-5-mini", "cost_usd": 0.00123, "priced": true,
+     "running_total_usd": 0.00123}
     {"type": "completion", "status": "done", "summary": "..."}
     {"type": "error", "message": "...", "kind": "rate_limit"}
 
@@ -53,12 +55,10 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,64 @@ EXIT_GENERIC: int = 1
 EXIT_MANIFEST_ERROR: int = 2
 EXIT_SDK_MISSING: int = 3
 EXIT_RATE_LIMIT: int = 4
+
+# Env var overriding AGENT.max_turns (tuning.agent.max_turns in bernstein.yaml).
+# Checked after the manifest value; an unset/blank/unparseable value falls
+# through to the yaml-tunable default, which itself defaults to 30 (bug 13:
+# the SDK's own default of 10 killed builtin-tool workflows mid-flight).
+MAX_TURNS_ENV_VAR: str = "BERNSTEIN_MAX_TURNS"
+
+
+def _resolve_max_turns(manifest_value: int | None = None) -> int | None:
+    """Resolve the effective ``max_turns`` for ``Runner.run_sync``.
+
+    Precedence: manifest ``max_turns`` (resolved by the spawn side, which
+    sees the operator yaml tuning and the un-filtered environment) >
+    ``BERNSTEIN_MAX_TURNS`` env var (direct-invocation fallback; the
+    spawner's filtered env strips it for adapter-spawned runners) >
+    ``AGENT.max_turns`` (yaml ``tuning.agent.max_turns``) > ``None``
+    (SDK default applies - unchanged behavior for anyone not opting in).
+
+    Logs the effective value and its source at INFO so a wrong turn cap
+    (e.g. the SDK's default 10 killing a multi-tool run) is diagnosable
+    from the runner log alone.
+    """
+    if manifest_value is not None:
+        if isinstance(manifest_value, int) and manifest_value > 0:
+            logger.info("max_turns=%d (source=manifest)", manifest_value)
+            return manifest_value
+        logger.warning(
+            "manifest max_turns=%r must be a positive int; falling back to env/tuning/SDK default",
+            manifest_value,
+        )
+    raw_env = os.environ.get(MAX_TURNS_ENV_VAR)
+    if raw_env is not None and raw_env.strip():
+        try:
+            parsed = int(raw_env)
+        except ValueError:
+            logger.warning(
+                "%s=%r is not a valid int; falling back to tuning.agent.max_turns/SDK default",
+                MAX_TURNS_ENV_VAR,
+                raw_env,
+            )
+        else:
+            if parsed > 0:
+                logger.info("max_turns=%d (source=env %s)", parsed, MAX_TURNS_ENV_VAR)
+                return parsed
+            logger.warning(
+                "%s=%r must be a positive int; falling back to tuning.agent.max_turns/SDK default",
+                MAX_TURNS_ENV_VAR,
+                raw_env,
+            )
+
+    from bernstein.core.defaults import AGENT
+
+    if AGENT.max_turns is not None:
+        logger.info("max_turns=%d (source=default tuning.agent.max_turns)", AGENT.max_turns)
+    else:
+        logger.info("max_turns not configured (source=SDK default)")
+    return AGENT.max_turns
+
 
 # ``api_key_env`` must name a known LLM-provider credential.  The name both
 # widens the filtered environment handed to this subprocess and selects the
@@ -228,6 +286,14 @@ class RunnerManifest:
     base_url: str | None = None
     api_key_env: str | None = None
     heartbeat_dir: str | None = None
+    # Control knobs resolved by the SPAWN side. They must travel in the
+    # manifest because the spawner hands the runner a filtered environment
+    # (env_isolation) that strips BERNSTEIN_* control vars - parent-env
+    # values never reach this subprocess on their own. ``None`` means the
+    # manifest did not carry the field (e.g. a hand-written manifest for a
+    # direct invocation) and the runner's own env/defaults apply.
+    allow_run_command: bool | None = None
+    max_turns: int | None = None
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RunnerManifest:
@@ -337,20 +403,6 @@ def _build_agent_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
     return kwargs
 
 
-def _build_run_config(manifest: RunnerManifest) -> dict[str, Any]:
-    """Build the SDK ``RunConfig`` / ``SandboxRunConfig`` shape.
-
-    Returns a plain dict so the caller can hand the pieces to the SDK
-    without this module having to import SDK types.
-    """
-    return {
-        "sandbox_provider": manifest.sandbox_provider,
-        "workdir": manifest.workdir,
-        "timeout_seconds": manifest.timeout_seconds,
-        "mcp_servers": manifest.mcp_servers.copy(),
-    }
-
-
 def _build_model_settings_kwargs(
     manifest: RunnerManifest,
     *,
@@ -427,6 +479,322 @@ def _resolve_client_kwargs(manifest: RunnerManifest) -> dict[str, Any]:
             raise RuntimeError(msg)
         kwargs["api_key"] = api_key
     return kwargs
+
+
+def _resolve_tokens_sidecar_path(manifest: RunnerManifest) -> Path:
+    """Return the ``.tokens`` sidecar path the orchestrator actually reads.
+
+    Bug 13 (2026-07-02): the orchestrator's live cost-metering loop
+    (``Orchestrator._record_live_costs``) only prices a session once
+    ``AgentSession.tokens_used`` is non-zero, and that field is populated
+    exclusively by ``TokenGrowthMonitor.read_tokens()`` tailing
+    ``<orchestrator-root>/.sdd/runtime/<session_id>.tokens`` - the same
+    sidecar Claude Code's wrapper script writes (see
+    :mod:`bernstein.adapters.claude_wrapper_script`). Before this fix the
+    openai_agents runner emitted a ``usage`` event to its own stdout/log
+    only, which nothing tails for cost purposes, so
+    ``AgentSession.tokens_used`` stayed ``0`` for the entire run and the
+    live-cost loop skipped the session on every tick - the direct cause of
+    the observed ``spent_usd: 0.0`` / empty ``usages`` run.
+
+    Mirrors :func:`_resolve_heartbeat_dir`'s resolution logic: ``workdir``
+    is a per-session worktree under default isolation, so the sidecar must
+    live under the orchestrator-root ``.sdd/runtime/`` directory (the
+    heartbeat directory's parent), not a worktree-relative path, or the
+    monitor polling the orchestrator root would never see it.
+    """
+    if manifest.heartbeat_dir:
+        runtime_dir = Path(manifest.heartbeat_dir).parent
+    else:
+        runtime_dir = Path(manifest.workdir) / ".sdd" / "runtime"
+    return runtime_dir / f"{manifest.session_id}.tokens"
+
+
+def _append_tokens_sidecar(path: Path, input_tokens: int, output_tokens: int) -> None:
+    """Append one usage record to the ``.tokens`` sidecar file.
+
+    Uses the exact schema Claude Code's wrapper script writes
+    (``{"ts": float, "in": int, "out": int}``) so the orchestrator's
+    generic ``TokenGrowthMonitor.read_tokens()`` - which just tails
+    whatever provider wrote the file - works unchanged for the
+    openai_agents path. Best-effort: a sidecar write failure must never
+    fail the run, only lose live-cost visibility for this call (logged at
+    WARNING so the loss itself is diagnosable).
+
+    Args:
+        path: Absolute sidecar path from :func:`_resolve_tokens_sidecar_path`.
+        input_tokens: Prompt tokens for this call.
+        output_tokens: Completion tokens for this call.
+    """
+    if input_tokens <= 0 and output_tokens <= 0:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = json.dumps({"ts": time.time(), "in": input_tokens, "out": output_tokens})
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(record + "\n")
+    except OSError as exc:
+        logger.warning("failed to write tokens sidecar %s: %s", path, exc)
+
+
+def _extract_usage_tokens(result: Any) -> tuple[int, int, int]:
+    """Extract ``(input_tokens, output_tokens, tool_calls)`` from a result-like object.
+
+    Accepts anything shaped like an SDK run result: ``result.usage`` first
+    (aggregate), then the ``result.raw_responses`` per-call fallback (bug-13
+    follow-up: ``RunResult`` never defines ``usage``, so the fallback is the
+    path that actually fires on real SDK objects). Also accepts the
+    ``run_data`` payload some SDK exceptions carry (e.g. ``MaxTurnsExceeded``
+    exposes the partial run's ``raw_responses`` via ``exc.run_data``), and
+    ``None`` (returns all zeros).
+
+    Args:
+        result: An SDK ``RunResult``, an exception's ``run_data`` object,
+            or ``None``.
+
+    Returns:
+        ``(input_tokens, output_tokens, tool_calls)``. All zero when no
+        usable usage data exists on the object.
+    """
+    usage: Any = getattr(result, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    tool_calls = int(getattr(usage, "tool_calls", 0) or 0)
+
+    if input_tokens <= 0 and output_tokens <= 0:
+        raw_responses: Any = getattr(result, "raw_responses", None) or []
+        fallback_input = 0
+        fallback_output = 0
+        for raw_response in raw_responses:
+            raw_usage = getattr(raw_response, "usage", None)
+            fallback_input += int(getattr(raw_usage, "input_tokens", 0) or 0)
+            fallback_output += int(getattr(raw_usage, "output_tokens", 0) or 0)
+        if fallback_input > 0 or fallback_output > 0:
+            input_tokens = fallback_input
+            output_tokens = fallback_output
+
+    return input_tokens, output_tokens, tool_calls
+
+
+def _log_max_turns_exceeded(exc: BaseException, max_turns: int | None) -> None:
+    """Log a WARNING with full context when a session hits the turn cap.
+
+    Bug 13 (D2 minimax attempt-e938bd33): MaxTurnsExceeded was the dominant
+    failure and surfaced only as a generic runtime error - no record of the
+    configured cap, the turns actually burned, or whether the agent had
+    already finished its work (backend hit the cap AFTER committing and
+    POSTing /complete, so the kill wasted completed work). This makes the
+    cap-hit a 2-minute diagnosis from the runner log alone.
+
+    Args:
+        exc: The ``MaxTurnsExceeded`` exception (its ``run_data`` carries the
+            partial run's ``raw_responses``/``new_items`` when the SDK
+            populated them).
+        max_turns: The effective cap forwarded to ``Runner.run_sync``
+            (``None`` = SDK default).
+    """
+    run_data = getattr(exc, "run_data", None)
+    raw_responses = getattr(run_data, "raw_responses", None) or []
+    turns_used: int | str = len(raw_responses) if raw_responses else "unknown"
+    # Best-effort detection of already-completed work: the agent signals
+    # completion by POSTing the task /complete endpoint via the run_command
+    # builtin tool, so a "/complete" string inside any tool-call item of the
+    # partial run means the work was ALREADY done when the cap fired.
+    work_completed = "unknown"
+    try:
+        new_items = getattr(run_data, "new_items", None) or []
+        for item in new_items:
+            raw_item = getattr(item, "raw_item", item)
+            arguments = getattr(raw_item, "arguments", None)
+            if isinstance(arguments, str) and "/complete" in arguments:
+                work_completed = "yes"
+                break
+        else:
+            if new_items:
+                work_completed = "no"
+    except Exception:  # diagnostics only - never mask the real failure
+        work_completed = "unknown"
+    logger.warning(
+        "MaxTurnsExceeded: session hit the turn cap "
+        "(max_turns=%s, turns_used=%s, work_already_completed=%s). "
+        "Raise tuning.agent.max_turns / %s / manifest max_turns if this "
+        "workflow legitimately needs more turns.",
+        max_turns if max_turns is not None else "SDK-default",
+        turns_used,
+        work_completed,
+        MAX_TURNS_ENV_VAR,
+    )
+
+
+def _emit_session_usage(manifest: RunnerManifest, usage_source: Any, *, source_desc: str) -> None:
+    """Extract, price, emit, and sidecar the session's token usage.
+
+    Single choke point for usage accounting, callable from BOTH the success
+    path (``usage_source`` = the SDK ``RunResult``) and the exception path
+    (``usage_source`` = the exception's ``run_data`` payload, or ``None``).
+
+    D2 MiniMax attempt-3 (2026-07-03) proof: the usage-extraction block
+    previously lived only after the ``try/except`` around
+    ``Runner.run_sync``, so ANY exception - including ``MaxTurnsExceeded``,
+    a routine condition where the agent has already made up to ``max_turns``
+    real, billable LLM calls - skipped it entirely. Six backend agents each
+    burned 10 real MiniMax turns and emitted zero ``usage`` events; the run's
+    cost file read ``spent_usd: 0.0, usages: []`` despite real spend. This
+    helper makes the extraction reachable from the exception handler: real
+    partial usage is priced and sidecar'd exactly like a successful run's,
+    and when genuinely no data exists a ``usage_missing`` event still fires
+    so downstream sees "unknown", never a silent zero.
+
+    Args:
+        manifest: The runner manifest (model, session id, sidecar path).
+        usage_source: Object to extract usage from - an SDK ``RunResult``,
+            an exception's ``run_data``, or ``None``.
+        source_desc: Human-readable description of where ``usage_source``
+            came from (e.g. ``"result"``, ``"MaxTurnsExceeded.run_data"``),
+            logged so a $0 run names the exact path that produced it.
+    """
+    input_tokens, output_tokens, tool_calls = _extract_usage_tokens(usage_source)
+
+    if input_tokens <= 0 and output_tokens <= 0:
+        # No usable token counts. Never fabricate tokens/cost and never
+        # write the sidecar with zeros - both would poison the
+        # orchestrator's live-cost accounting with fake data. Instead, emit
+        # a usage event flagged ``usage_missing`` (so downstream consumers
+        # can tell "zero spend" apart from "we don't know") and log loudly,
+        # naming the model and source, so a $0.00 run is a 2-minute
+        # diagnosis instead of a silent no-op.
+        logger.warning(
+            "llm_call session=%s model=%s source=%s: SDK returned no usage "
+            "data (usage is None/empty and raw_responses carried no usable "
+            "usage) - cost metering for this call is unavailable, not zero",
+            manifest.session_id,
+            manifest.model,
+            source_desc,
+        )
+        emit_event(
+            {
+                "type": "usage",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "tool_calls": tool_calls,
+                "model": manifest.model,
+                "usage_missing": True,
+                "usage_source": source_desc,
+            },
+        )
+        return
+
+    # Bug 13 fix: price the call (visible $0 + WARNING for unpriced models,
+    # never a silent drop - see price_model_usage docstring), log the
+    # per-call INFO line that would have made the original $0.00 run a
+    # 2-minute diagnosis, and write the .tokens sidecar so the
+    # orchestrator's live cost-metering loop actually sees this session
+    # (see _resolve_tokens_sidecar_path docstring for why the previous
+    # stdout-only "usage" event never reached it).
+    from bernstein.core.cost.model_prices import price_model_usage
+
+    price_result = price_model_usage(manifest.model, input_tokens, output_tokens)
+    # ``Runner.run_sync`` aggregates every internal turn into one cumulative
+    # usage total (whether from ``result.usage``, the ``raw_responses``
+    # fallback sum, or an exception's partial ``run_data``), so this call's
+    # cost *is* the session's running total to this point - there is no
+    # separate accumulator to maintain across multiple SDK calls in-process.
+    running_total_usd = price_result.cost_usd
+    logger.info(
+        "llm_call session=%s model=%s source=%s input_tokens=%d "
+        "output_tokens=%d cost_usd=%.6f priced=%s running_total_usd=%.6f",
+        manifest.session_id,
+        manifest.model,
+        source_desc,
+        input_tokens,
+        output_tokens,
+        price_result.cost_usd,
+        price_result.priced,
+        running_total_usd,
+    )
+
+    emit_event(
+        {
+            "type": "usage",
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "tool_calls": tool_calls,
+            "model": manifest.model,
+            "cost_usd": price_result.cost_usd,
+            "priced": price_result.priced,
+            "running_total_usd": running_total_usd,
+            "usage_source": source_desc,
+        },
+    )
+
+    _append_tokens_sidecar(
+        _resolve_tokens_sidecar_path(manifest),
+        input_tokens,
+        output_tokens,
+    )
+
+
+def _redacted_keys(mapping: Any) -> Any:
+    """Redact a header/body mapping for logging: return only its sorted key
+    names, never the values.
+
+    ``extra_headers``/``extra_body`` are where provider auth
+    (``Authorization: Bearer <key>``, ``X-Api-Key``, OpenRouter keys) is
+    conventionally placed, so their values must never reach the logs. Returns
+    the sorted list of key names for a mapping, ``None`` for ``None`` (nothing
+    configured), and a redacted marker for any non-mapping value so a secret
+    can never be logged verbatim.
+    """
+    if mapping is None:
+        return None
+    if isinstance(mapping, Mapping):
+        return sorted(str(k) for k in mapping)
+    return "<redacted: non-mapping value>"
+
+
+def _deepseek_debug_tool_schema_summary(tools: Any) -> list[dict[str, Any]]:
+    """Best-effort summary of a tool list's name + strict-schema flag.
+
+    [DEEPSEEK-DEBUG] diagnostic helper (2026-07-03): the empty-completion /
+    malformed-tool-call bug on ``deepseek/deepseek-chat`` via OpenRouter is
+    hypothesized to be triggered by the OpenAI Agents SDK's default
+    ``strict_json_schema=True`` on ``FunctionTool`` (see ``agents/tool.py``
+    ``strict_json_schema: bool = True`` and ``function_tool(strict_mode=True)``
+    defaults, and ``Converter.tool_to_openai`` which puts
+    ``"strict": tool.strict_json_schema`` directly into the outbound
+    ``ChatCompletionToolParam``). This walks whatever tool objects/dicts are
+    about to be handed to the SDK and reports, per tool, its name and
+    whatever strict-schema signal is discoverable - without assuming a
+    specific SDK version's exact attribute layout (best-effort; never
+    raises).
+
+    Args:
+        tools: The tool list about to be attached to ``agent_kwargs["tools"]``
+            - either raw dicts (gateway tool_source) or SDK ``Tool``
+            instances (builtin tool_source, built via ``@function_tool``).
+
+    Returns:
+        List of ``{"name": ..., "strict_json_schema": ..., "kind": ...,
+        "params_json_schema": ...}`` summaries. Never raises.
+    """
+    summaries: list[dict[str, Any]] = []
+    try:
+        for tool in tools or []:
+            entry: dict[str, Any] = {"kind": type(tool).__name__}
+            if isinstance(tool, dict):
+                entry["name"] = tool.get("name", "<unnamed-dict-tool>")
+                entry["strict_json_schema"] = tool.get("strict")
+                params = tool.get("parameters") or tool.get("params_json_schema")
+                entry["params_json_schema"] = params
+            else:
+                entry["name"] = getattr(tool, "name", "<unnamed-tool-object>")
+                entry["strict_json_schema"] = getattr(tool, "strict_json_schema", "<attr-absent>")
+                params_schema = getattr(tool, "params_json_schema", None)
+                entry["params_json_schema"] = params_schema
+            summaries.append(entry)
+    except Exception as exc:  # diagnostics only - never mask the real failure
+        summaries.append({"error": f"tool schema summary failed: {type(exc).__name__}: {exc}"})
+    return summaries
 
 
 def _resolve_heartbeat_dir(manifest: RunnerManifest) -> Path:
@@ -587,6 +955,11 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
         )
         return EXIT_GENERIC
 
+    # Set when ``manifest.base_url`` names a custom OpenAI-compatible
+    # endpoint: holds the ``AsyncOpenAI`` client the Agent's model must be
+    # built against explicitly (see the ``explicit_model_client`` usage
+    # below ``_build_agent_kwargs``).
+    explicit_model_client: Any = None
     if client_kwargs:
         # The manifest overrides the endpoint and/or API key.  Hand the SDK
         # a dedicated client instead of letting it read the ambient
@@ -604,6 +977,32 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
                 # authenticated with the third-party key.
                 sdk.set_default_openai_client(client, use_for_tracing=False)
                 sdk.set_default_openai_api("chat_completions")
+                # D1 openrouter fix (2026-07-02): setting the default
+                # client is NOT enough on its own. ``Agent(model=<str>)``
+                # is resolved by ``RunConfig.model_provider`` (a fresh
+                # ``agents.MultiProvider()`` by default -
+                # ``agents/run_config.py:220``) via
+                # ``turn_preparation.get_model()``
+                # (``agents/run_internal/turn_preparation.py:126-135``),
+                # which for a plain string falls through to
+                # ``model_provider.get_model(agent.model)``. ``MultiProvider``
+                # unconditionally splits the model string on the first "/"
+                # to find a provider prefix
+                # (``agents/models/multi_provider.py:154-161``,
+                # ``_get_prefix_and_model_name``) and raises
+                # ``UserError(f"Unknown prefix: {prefix}")`` for anything
+                # that isn't "openai"/"litellm"/"any-llm"/an explicit
+                # provider-map entry (``multi_provider.py:173`` and
+                # ``:221``). OpenRouter model ids legitimately contain a
+                # "vendor/model" slash (e.g. "deepseek/deepseek-chat"), so
+                # the SDK misreads "deepseek" as an SDK provider prefix and
+                # aborts before any tool call. Building the ``Model``
+                # instance ourselves sidesteps this entirely:
+                # ``get_model()`` returns ``agent.model`` directly, with no
+                # prefix parsing, whenever it is already an
+                # ``agents.Model`` instance rather than a string
+                # (``turn_preparation.py:132-133``).
+                explicit_model_client = client
             else:
                 sdk.set_default_openai_client(client)
         except Exception as exc:
@@ -616,8 +1015,27 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
             )
             return EXIT_GENERIC
 
+    # Resolved before the try so the except handler can report the effective
+    # cap even when the exception fires before/inside ``Runner.run_sync``.
+    max_turns: int | None = None
     try:
         agent_kwargs = _build_agent_kwargs(manifest)
+        if explicit_model_client is not None:
+            # Never log the client itself (it carries the API key) - only
+            # the model id and base_url, both non-secret.
+            logger.info(
+                "openai_agents_runner session=%s: routing model=%r through an "
+                "explicit OpenAIChatCompletionsModel bound to base_url=%r "
+                "instead of a bare model string, so the SDK's MultiProvider "
+                "never prefix-parses a vendor/model id from a custom endpoint",
+                manifest.session_id,
+                manifest.model,
+                manifest.base_url,
+            )
+            agent_kwargs["model"] = sdk.OpenAIChatCompletionsModel(
+                model=manifest.model,
+                openai_client=explicit_model_client,
+            )
         if manifest.tool_source == "builtin":
             # Opt-in workdir-sandboxed builtins for runs with no MCP gateway
             # reachable. Every call is recorded to this same event stream via
@@ -627,7 +1045,10 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
                 selected_builtin_names,
             )
 
-            active_names = selected_builtin_names(manifest.sandbox_provider)
+            active_names = selected_builtin_names(
+                manifest.sandbox_provider,
+                allow_run_command=manifest.allow_run_command,
+            )
             emit_event(
                 {
                     "type": "progress",
@@ -639,18 +1060,228 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
                 Path(manifest.workdir),
                 emit_event,
                 sandbox_provider=manifest.sandbox_provider,
+                allow_run_command=manifest.allow_run_command,
             )
+
+            # Disable strict JSON schema for non-OpenAI models (e.g.
+            # deepseek-chat via OpenRouter).  The SDK defaults
+            # strict_json_schema=True on every FunctionTool, which sends
+            # {"strict": true} in the tool schema.  Models that don't
+            # support OpenAI's strict structured-output mode return empty
+            # responses or malformed tool calls when they see this flag.
+            _model_lower = (manifest.model or "").lower()
+            _is_openai_native = any(_model_lower.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-", "chatgpt-"))
+            if not _is_openai_native:
+                _relaxed_count = 0
+                for tool in agent_kwargs.get("tools", []):
+                    if getattr(tool, "strict_json_schema", None) is True:
+                        tool.strict_json_schema = False
+                        _relaxed_count += 1
+                if _relaxed_count:
+                    logger.info(
+                        "[DEEPSEEK-DEBUG] Relaxed strict_json_schema=False on %d tools "
+                        "for non-OpenAI model %r (strict mode causes empty responses "
+                        "on deepseek-chat and other non-OpenAI models via OpenRouter)",
+                        _relaxed_count,
+                        manifest.model,
+                    )
+
         settings_kwargs = _build_model_settings_kwargs(manifest, model_settings_cls=sdk.ModelSettings)
         if settings_kwargs:
             agent_kwargs["model_settings"] = sdk.ModelSettings(**settings_kwargs)
         agent: Any = agent_cls(**agent_kwargs)
-        run_config = _build_run_config(manifest)
+        # No ``run_config`` is passed: the SDK's ``run_config`` kwarg must
+        # be a real ``agents.RunConfig`` instance - a plain dict crashes
+        # inside ``run.py`` on ``run_config.session_input_callback`` - and
+        # none of the manifest fields the old dict carried
+        # (sandbox_provider, workdir, timeout_seconds, mcp_servers) are
+        # ``RunConfig`` fields anyway. Every per-run knob we need (model,
+        # endpoint client, sampling settings) already rides on the Agent
+        # via ``_build_agent_kwargs``.
+        run_sync_kwargs: dict[str, Any] = {}
+        max_turns = _resolve_max_turns(manifest.max_turns)
+        if max_turns is not None:
+            run_sync_kwargs["max_turns"] = max_turns
+        # [DEEPSEEK-DEBUG] Unconditional (not gated behind a debug flag)
+        # pre-call diagnostic for the deepseek/deepseek-chat-via-OpenRouter
+        # empty-completion / malformed-tool-call investigation (2026-07-03).
+        # Logged at INFO so it is captured on every run without operator
+        # opt-in. Never logs the API key itself - only the env var NAME.
+        _model_settings_obj = agent_kwargs.get("model_settings")
+        _model_settings_repr = (
+            {
+                "temperature": getattr(_model_settings_obj, "temperature", None),
+                "top_p": getattr(_model_settings_obj, "top_p", None),
+                "tool_choice": getattr(_model_settings_obj, "tool_choice", None),
+                "parallel_tool_calls": getattr(_model_settings_obj, "parallel_tool_calls", None),
+                "max_tokens": getattr(_model_settings_obj, "max_tokens", None),
+                "extra_args": getattr(_model_settings_obj, "extra_args", None),
+                # extra_headers/extra_body are the SDK-conventional home for
+                # provider auth (Authorization/api-key). Log only the KEY NAMES,
+                # never the values, so this diagnostic can never leak a secret
+                # if an auth header is ever configured here.
+                "extra_headers_keys": _redacted_keys(getattr(_model_settings_obj, "extra_headers", None)),
+                "extra_body_keys": _redacted_keys(getattr(_model_settings_obj, "extra_body", None)),
+            }
+            if _model_settings_obj is not None
+            else "<no ModelSettings constructed - settings_kwargs was empty>"
+        )
+        _tool_list_for_log = agent_kwargs.get("tools", [])
+        logger.info(
+            "[DEEPSEEK-DEBUG] pre-call session=%s model=%r base_url=%r api_key_env=%r "
+            "explicit_model_client=%s tool_source=%r tool_count=%d max_turns=%s",
+            manifest.session_id,
+            manifest.model,
+            manifest.base_url,
+            manifest.api_key_env,
+            explicit_model_client is not None,
+            manifest.tool_source,
+            len(_tool_list_for_log),
+            max_turns,
+        )
+        logger.info(
+            "[DEEPSEEK-DEBUG] pre-call session=%s model_settings=%s "
+            "(tool_choice/parallel_tool_calls of None means the SDK/provider "
+            "default applies - bernstein never sets these explicitly)",
+            manifest.session_id,
+            _model_settings_repr,
+        )
+        logger.info(
+            "[DEEPSEEK-DEBUG] pre-call session=%s no extra_headers configured by bernstein "
+            "(no HTTP-Referer/X-Title sent to OpenRouter unless the SDK's own default "
+            "HEADERS constant includes them) - client_kwargs base_url=%r",
+            manifest.session_id,
+            client_kwargs.get("base_url"),
+        )
+        try:
+            _tool_schema_summary = _deepseek_debug_tool_schema_summary(_tool_list_for_log)
+            logger.info(
+                "[DEEPSEEK-DEBUG] pre-call session=%s tool_schemas=%s",
+                manifest.session_id,
+                json.dumps(_tool_schema_summary, default=str)[:8000],
+            )
+            _any_strict_true = any(entry.get("strict_json_schema") is True for entry in _tool_schema_summary)
+            if _any_strict_true:
+                logger.warning(
+                    "[DEEPSEEK-DEBUG] pre-call session=%s: at least one tool schema has "
+                    "strict_json_schema=True - the OpenAI Agents SDK sends this as "
+                    "'strict': true in the ChatCompletionToolParam.function block "
+                    "(agents/models/chatcmpl_converter.py Converter.tool_to_openai). "
+                    "This is the leading hypothesis for deepseek-chat-via-OpenRouter "
+                    "empty/malformed tool_calls - deepseek's function calling is not "
+                    "confirmed to fully support OpenAI's strict structured-output mode.",
+                    manifest.session_id,
+                )
+        except Exception as exc:  # diagnostics only - never mask the real failure
+            logger.warning(
+                "[DEEPSEEK-DEBUG] pre-call session=%s: tool schema logging itself failed: %s: %s",
+                manifest.session_id,
+                type(exc).__name__,
+                exc,
+            )
+
         # ``Runner.run_sync`` is the SDK's synchronous API - we avoid
         # ``asyncio.run`` here so the runner stays compatible with
         # environments where the event loop is already running
-        # (e.g. pytest-asyncio tests that import this module).
-        result: Any = runner_cls.run_sync(agent, manifest.prompt, run_config=run_config)
+        # (e.g. pytest-asyncio tests that import this module). ``max_turns``
+        # is only forwarded when configured (env/tuning) - omitting the
+        # kwarg preserves the SDK's own default exactly, as before.
+        result: Any = runner_cls.run_sync(agent, manifest.prompt, **run_sync_kwargs)
+
+        # [DEEPSEEK-DEBUG] Unconditional post-call diagnostic: dump as much
+        # of the raw SDK response shape as is discoverable so an empty
+        # completion (zero usage, empty summary) or a malformed-tool-call
+        # response is a direct log read instead of a re-run-and-guess.
+        try:
+            _raw_responses = getattr(result, "raw_responses", None) or []
+            _raw_summaries: list[dict[str, Any]] = []
+            for _rr in _raw_responses:
+                _rr_usage = getattr(_rr, "usage", None)
+                _output = getattr(_rr, "output", None)
+                _choices = getattr(_rr, "choices", None)
+                _summary: dict[str, Any] = {
+                    "usage": {
+                        "input_tokens": getattr(_rr_usage, "input_tokens", None),
+                        "output_tokens": getattr(_rr_usage, "output_tokens", None),
+                        "raw": str(_rr_usage) if _rr_usage is not None else None,
+                    },
+                }
+                if _choices is not None:
+                    _choice_summaries = []
+                    for _choice in _choices:
+                        _message = getattr(_choice, "message", None)
+                        _choice_summaries.append(
+                            {
+                                "finish_reason": getattr(_choice, "finish_reason", None),
+                                "content": getattr(_message, "content", None) if _message else None,
+                                "refusal": getattr(_message, "refusal", None) if _message else None,
+                                "tool_calls": str(getattr(_message, "tool_calls", None)) if _message else None,
+                            },
+                        )
+                    _summary["choices"] = _choice_summaries
+                if _output is not None:
+                    _summary["output"] = str(_output)[:4000]
+                _raw_summaries.append(_summary)
+            logger.info(
+                "[DEEPSEEK-DEBUG] post-call session=%s model=%s raw_responses_count=%d "
+                "final_output=%r raw_responses=%s",
+                manifest.session_id,
+                manifest.model,
+                len(_raw_responses),
+                str(getattr(result, "final_output", ""))[:2000],
+                json.dumps(_raw_summaries, default=str)[:8000],
+            )
+            _result_usage = getattr(result, "usage", None)
+            logger.info(
+                "[DEEPSEEK-DEBUG] post-call session=%s result.usage=%r "
+                "(RunResult/RunResultBase does not define 'usage' on installed SDK "
+                "0.17.7 per _extract_usage_tokens's docstring - expect None here; "
+                "the raw_responses per-call usage above is the real signal)",
+                manifest.session_id,
+                _result_usage,
+            )
+        except Exception as exc:  # diagnostics only - never mask the real failure
+            logger.warning(
+                "[DEEPSEEK-DEBUG] post-call session=%s: raw response logging itself "
+                "failed (SDK shape may differ from expected): %s: %s",
+                manifest.session_id,
+                type(exc).__name__,
+                exc,
+            )
     except Exception as exc:  # SDK errors are varied - catch broadly
+        # D2 MiniMax attempt-3 (2026-07-03): agents that die on an
+        # exception - especially ``MaxTurnsExceeded``, which by definition
+        # fires AFTER ``max_turns`` real, billable LLM calls - previously
+        # emitted zero usage events, so an entire failed run metered
+        # ``spent_usd: 0.0, usages: []`` despite real provider spend.
+        # SDK exceptions derived from ``AgentsException`` carry the partial
+        # run's state on ``exc.run_data`` (``RunErrorDetails``, with the
+        # same ``raw_responses`` list a successful ``RunResult`` has), so
+        # extract and price whatever usage exists before returning; when
+        # the exception carries no run data, ``_emit_session_usage`` still
+        # emits the ``usage_missing`` marker so downstream sees "unknown",
+        # never a silent zero.
+        #
+        # [DEEPSEEK-DEBUG] Before this fix, everything downstream of this
+        # except block only ever saw ``f"{type(exc).__name__}: {exc}"`` -
+        # the full traceback was silently swallowed. Log it unconditionally
+        # at ERROR so an exception raised mid-call (e.g. a malformed
+        # response the SDK's client-side parsing chokes on) is a direct log
+        # read, not a guess from a one-line message.
+        logger.exception(
+            "[DEEPSEEK-DEBUG] exception in Runner.run_sync session=%s model=%s base_url=%r exc_type=%s",
+            manifest.session_id,
+            manifest.model,
+            manifest.base_url,
+            type(exc).__name__,
+        )
+        _emit_session_usage(
+            manifest,
+            getattr(exc, "run_data", None),
+            source_desc=f"{type(exc).__name__}.run_data",
+        )
+        if type(exc).__name__ == "MaxTurnsExceeded":
+            _log_max_turns_exceeded(exc, max_turns)
         if _is_rate_limit(exc):
             emit_event(
                 {
@@ -669,16 +1300,13 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
         )
         return EXIT_GENERIC
 
-    usage: Any = getattr(result, "usage", None)
-    if usage is not None:
-        emit_event(
-            {
-                "type": "usage",
-                "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
-                "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
-                "tool_calls": int(getattr(usage, "tool_calls", 0) or 0),
-            },
-        )
+    # Bug 13 follow-up (2026-07-02): a real MiniMax-M2.7-highspeed smoke run
+    # proved ``result.usage`` is ``None`` on this provider - installed SDK
+    # inspection (openai-agents 0.17.7, ``agents/result.py``) shows
+    # ``RunResult``/``RunResultBase`` never define a ``usage`` attribute at
+    # all, so the ``raw_responses`` fallback inside ``_extract_usage_tokens``
+    # is the path that actually fires on real SDK result objects.
+    _emit_session_usage(manifest, result, source_desc="result")
 
     emit_event(
         {

@@ -58,6 +58,14 @@ class CodexAdapter(CLIAdapter):
     """Spawn and monitor OpenAI Codex CLI sessions."""
 
     registry_name = "codex"
+    # Provider-string aliases this adapter resolves from in
+    # ``_infer_adapter_name_for_provider``. NOTE: "openai" and "gpt" are
+    # broad aliases that historically also matched the openai_agents
+    # provider string via substring search (see 042bcbd0). The registry
+    # requires exact provider-name matches, so this alias set only ever
+    # matches a provider literally named "codex", "openai", or "gpt" --
+    # it can no longer swallow "openai_agents".
+    provides = ("codex", "openai", "gpt")
     # Default model when no operator-pinned model reaches this adapter. Read by
     # the spawner to substitute Claude tier names for non-Claude adapters.
     default_model = _DEFAULT_CODEX_MODEL

@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from bernstein.core.git.git_basic import GitResult, run_git
@@ -33,12 +33,20 @@ class MergeResult:
         conflicting_files: File paths with merge conflicts (empty on success).
         merge_diff: The diff of merged changes (empty on conflict).
         error: Error message if the merge failed for non-conflict reasons.
+        refused_forbidden_files: When ``success`` is False because the
+            merge-preflight safety guard detected staged files that must
+            never reach the default branch (``.sdd/`` runtime state,
+            ``attestations/`` signing material, or ``auth/`` secrets),
+            this is the list of forbidden paths that were staged.  The
+            merge is aborted and never produces a commit in this case
+            (fix for defect 28, the decoy-commit secret-leak path).
     """
 
     success: bool
     conflicting_files: list[str]
     merge_diff: str = ""
     error: str = ""
+    refused_forbidden_files: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -54,6 +62,115 @@ class PullRequestResult:
     success: bool
     pr_url: str = ""
     error: str = ""
+
+
+# ------------------------------------------------------------------
+# Merge-preflight safety guard (defect 28 - decoy commit / secret leak)
+# ------------------------------------------------------------------
+#
+# The orchestrator used to do ``git add -A && git commit`` in the main
+# checkout as part of the merge-to-main path; that swept the full
+# ``.sdd/*`` runtime tree -- including ``.sdd/attestations/ed25519-signing-key.pem``,
+# ``.sdd/auth/agent_identity_jwt_secret``, ``.sdd/runtime/agent_tokens/``
+# cost sidecars, and ``bernstein.yaml`` -- into a single commit on ``main``
+# under a stolen message.  The path that prevented this from being a
+# self-evident bug was the absence of any guard that said "this kind of
+# file must never reach the protected branch".  The deny list below is
+# the answer: a merge whose staged set touches ANY of these prefixes is
+# REFUSED (merge aborted, no commit, refusal recorded) so a silent leak
+# is impossible.
+_MERGE_DENY_PREFIXES: tuple[str, ...] = (
+    ".sdd/",
+    "attestations/",
+    "auth/",
+)
+# Exact filenames that are runtime artefacts, never part of a deliverable.
+_MERGE_DENY_EXACT: frozenset[str] = frozenset(
+    {
+        "bernstein.yaml",
+        ".claude/mcp.json",
+        ".env",
+    }
+)
+
+
+def _is_forbidden_for_merge(path: str) -> bool:
+    """Return True if *path* must never appear in a merge-to-default commit.
+
+    Uses normalised forward-slash paths.  The deny list is intentionally
+    narrow but ABSOLUTE: any match means the merge is refused, even if the
+    caller "really meant to" (the orchestrator never needs runtime state
+    on a protected branch).
+    """
+    if not path:
+        return False
+    norm = path.replace("\\", "/")
+    # Strip only a leading "./" (POSIX literal `./foo`), NOT a stray
+    # leading dot -- ``lstrip("./")`` would also strip the dot from
+    # ``.sdd/`` and ``.env`` which would let them bypass the deny list.
+    while norm.startswith("./"):
+        norm = norm[2:]
+    for prefix in _MERGE_DENY_PREFIXES:
+        if norm == prefix.rstrip("/") or norm.startswith(prefix):
+            return True
+    return norm in _MERGE_DENY_EXACT
+
+
+def _verify_merge_staging_is_safe(
+    cwd: Path,
+    branch: str,
+) -> list[str]:
+    """Return the list of forbidden staged paths (empty = safe to commit).
+
+    Runs ``git diff --cached --name-only`` against the merge working
+    directory and filters against :data:`_MERGE_DENY_PREFIXES` and
+    :data:`_MERGE_DENY_EXACT`.  Emits a single ``merge_preflight`` log
+    line so every merge -- successful or refused -- has provenance in the
+    orchestrator log (fix for defect 28's house-rule-2 requirement:
+    no silent decoy commits).
+
+    Args:
+        cwd: Repository root where the merge has been staged.
+        branch: The branch being merged in (for provenance logging only).
+
+    Returns:
+        List of staged paths that are forbidden on a default-branch commit.
+        Empty list means the staged set is safe to commit.
+    """
+    try:
+        staged_r = run_git(
+            ["diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            cwd,
+            timeout=15,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        # If we cannot read the index we MUST refuse rather than fall
+        # through -- a verification failure is not a clean bill of health.
+        logger.warning(
+            "merge_preflight: STAGED-READ-FAILED cwd=%s branch=%s error=%s -- refusing merge as fail-closed",
+            cwd,
+            branch,
+            exc,
+        )
+        return ["<staged-read-failed>"]
+
+    staged_paths = [p.strip() for p in staged_r.stdout.splitlines() if p.strip()]
+    forbidden = [p for p in staged_paths if _is_forbidden_for_merge(p)]
+
+    # Provenance log -- house-rule-2 corollary says every merge commit must
+    # log INFO with author/reason/added; even a refused merge must be
+    # auditable.  Single line, fixed schema.
+    logger.info(
+        "merge_preflight: cwd=%s branch=%s staged_count=%d forbidden_count=%d added=%s reason=%s",
+        cwd,
+        branch,
+        len(staged_paths),
+        len(forbidden),
+        ",".join(staged_paths) if staged_paths else "<empty>",
+        "deny-list-match" if forbidden else "all-files-deliverable",
+    )
+
+    return forbidden
 
 
 # ------------------------------------------------------------------
@@ -165,6 +282,41 @@ def merge_with_conflict_detection(
                 success=False,
                 conflicting_files=[],
                 error=f"Python syntax errors blocked merge: {error_summary}",
+            )
+
+        # Pre-commit safety guard (defect 28): refuse the merge if the
+        # staged set touches ANY path the orchestrator must never put on a
+        # default branch (.sdd/* runtime state, attestations/* signing
+        # material, auth/* secrets, bernstein.yaml).  This blocks the
+        # decoy-commit / secret-leak path where a ``git add -A`` upstream
+        # swept runtime artefacts into the merge's staged set.  The merge
+        # is aborted -- no commit is ever produced.  See
+        # :func:`_verify_merge_staging_is_safe` for the deny list and
+        # provenance logging.
+        forbidden = _verify_merge_staging_is_safe(cwd, branch)
+        if forbidden:
+            run_git(["merge", "--abort"], cwd, timeout=10)
+            forbidden_str = ", ".join(forbidden[:5])
+            more = f" (+{len(forbidden) - 5} more)" if len(forbidden) > 5 else ""
+            logger.error(
+                "Refusing merge of %s into %s: staged set contains %d forbidden "
+                "path(s) -- refusing to commit runtime state / secrets to a "
+                "default branch (defect 28 decoy-commit guard). forbidden=%s%s",
+                branch,
+                cwd,
+                len(forbidden),
+                forbidden_str,
+                more,
+            )
+            return MergeResult(
+                success=False,
+                conflicting_files=[],
+                error=(
+                    f"merge-preflight safety guard refused: {len(forbidden)} "
+                    f"forbidden path(s) staged (.sdd/, attestations/, auth/, "
+                    f"bernstein.yaml). First: {forbidden_str}{more}"
+                ),
+                refused_forbidden_files=list(forbidden),
             )
 
         # Clean merge - commit it

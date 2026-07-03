@@ -218,6 +218,43 @@ def test_spawn_forwards_budget_multiplier_and_system_addendum(
     assert kwargs["task_scope"] == "medium"
 
 
+def test_forwards_consumes_heartbeat_dir_flag_from_inner(tmp_path: Path) -> None:
+    """Regression for bug #11: capability flags must survive the wrapper.
+
+    ``CachingAdapter`` previously exposed only the attributes/methods it
+    explicitly defined, so ``getattr(wrapped, "consumes_heartbeat_dir",
+    False)`` always returned the default ``False`` even when the wrapped
+    adapter declared ``consumes_heartbeat_dir = True`` (e.g. openai_agents).
+    That silently disabled heartbeat_dir injection for every caching-wrapped
+    spawn, orphaning heartbeats in the worktree and causing false
+    no_heartbeat kills. ``__getattr__`` delegation must make the flag
+    visible through the wrapper.
+    """
+    inner = MagicMock(spec=CLIAdapter)
+    inner.name.return_value = "mock-adapter"
+    inner.consumes_heartbeat_dir = True
+
+    wrapped = CachingAdapter(inner, tmp_path)
+
+    assert getattr(wrapped, "consumes_heartbeat_dir", False) is True
+
+
+def test_does_not_forward_flag_when_inner_lacks_it(tmp_path: Path) -> None:
+    """Adapters that never declared the flag still default to False."""
+    inner = MagicMock(spec=CLIAdapter)
+    inner.name.return_value = "mock-adapter"
+
+    wrapped = CachingAdapter(inner, tmp_path)
+
+    assert getattr(wrapped, "consumes_heartbeat_dir", False) is False
+
+
+def test_unknown_attribute_still_raises_attribute_error(adapter: CachingAdapter) -> None:
+    """__getattr__ delegation must not swallow genuinely missing attributes."""
+    with pytest.raises(AttributeError):
+        _ = adapter.definitely_not_a_real_attribute
+
+
 def test_concurrency_safe_spawns(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
     """Verify that multiple threads can safely spawn through the adapter."""
     import threading

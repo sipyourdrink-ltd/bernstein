@@ -108,12 +108,18 @@ def generate_run_summary(
         duration=duration_str,
     )
 
+    # NOTE: this generate_run_summary() entry point fires from a tick-level
+    # "queue looks empty" heuristic, not true orchestrator shutdown - tasks
+    # spawned just before this point can still fail afterwards. Mark the
+    # retrospective INTERIM so a stale HEALTHY snapshot is never mistaken
+    # for the final report (see A5 stale-retrospective bug).
     generate_retrospective(
         done_tasks=done_tasks,
         failed_tasks=failed_tasks,
         collector=collector,
         runtime_dir=runtime_dir,
         run_start_ts=orch._run_start_ts,
+        trigger_reason="mid-run",
     )
 
     emit_summary_card(

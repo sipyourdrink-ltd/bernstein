@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from bernstein.core.models import Task
@@ -216,6 +217,163 @@ class TestInjectSkills:
             assert "name:" in content, f"{skill_file.name} missing 'name' field"
             assert "description:" in content, f"{skill_file.name} missing 'description' field"
             assert "whenToUse:" in content, f"{skill_file.name} missing 'whenToUse' field"
+
+
+class TestGitExcludeRegistration:
+    """Injected skills must be excluded from git so agents never commit them.
+
+    See https://github.com/sipyourdrink-ltd/bernstein/issues/2187 - every
+    worker's rendered copy differs (session id, task ids), so committing
+    them causes a merge conflict on every worker merge back to the shared
+    work branch.
+    """
+
+    def _make_skills_dir(self, tmp_path: Path) -> Path:
+        skills_dir = tmp_path / "templates" / "skills"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "bernstein-completion-protocol.md").write_text(
+            "---\nname: bernstein-completion-protocol\n"
+            "description: Report task completion\n"
+            "whenToUse: When finished\n---\n"
+            "Complete tasks: {{COMPLETE_CMDS}}\n",
+            encoding="utf-8",
+        )
+        (skills_dir / "bernstein-signal-check.md").write_text(
+            "---\nname: bernstein-signal-check\n"
+            "description: Check signals\n"
+            "whenToUse: Periodically\n---\n"
+            "Signals at {{SESSION_ID}}\n",
+            encoding="utf-8",
+        )
+        return tmp_path / "templates" / "roles"
+
+    def _init_git_repo(self, path: Path) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+
+    def test_injection_adds_exclude_entries(self, tmp_path: Path) -> None:
+        templates_dir = self._make_skills_dir(tmp_path)
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        self._init_git_repo(workdir)
+
+        inject_skills(
+            workdir=workdir,
+            role="docs",
+            tasks=[],
+            session_id="s-1",
+            templates_dir=templates_dir,
+        )
+
+        exclude_file = workdir / ".git" / "info" / "exclude"
+        assert exclude_file.exists()
+        content = exclude_file.read_text()
+        assert ".claude/skills/bernstein-completion-protocol.md" in content
+        assert ".claude/skills/bernstein-signal-check.md" in content
+
+    def test_reinjection_does_not_duplicate_exclude_entries(self, tmp_path: Path) -> None:
+        templates_dir = self._make_skills_dir(tmp_path)
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        self._init_git_repo(workdir)
+
+        for session in ("s-1", "s-2"):
+            inject_skills(
+                workdir=workdir,
+                role="docs",
+                tasks=[],
+                session_id=session,
+                templates_dir=templates_dir,
+            )
+
+        exclude_file = workdir / ".git" / "info" / "exclude"
+        content = exclude_file.read_text()
+        assert content.count(".claude/skills/bernstein-completion-protocol.md") == 1
+        assert content.count(".claude/skills/bernstein-signal-check.md") == 1
+
+    def test_works_when_git_is_a_gitfile_worktree(self, tmp_path: Path) -> None:
+        """In a git worktree, ``.git`` is a file pointing at the real gitdir."""
+        templates_dir = self._make_skills_dir(tmp_path)
+        main_repo = tmp_path / "main-repo"
+        main_repo.mkdir()
+        self._init_git_repo(main_repo)
+        (main_repo / "README.md").write_text("hello\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=main_repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=main_repo, check=True)
+
+        worktree_path = tmp_path / "agent-worktree"
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "agent-branch", str(worktree_path)],
+            cwd=main_repo,
+            check=True,
+        )
+
+        assert (worktree_path / ".git").is_file(), "worktree .git must be a gitfile, not a dir"
+
+        inject_skills(
+            workdir=worktree_path,
+            role="docs",
+            tasks=[],
+            session_id="s-worktree",
+            templates_dir=templates_dir,
+        )
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-path", "info/exclude"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        exclude_file = Path(result.stdout.strip())
+        if not exclude_file.is_absolute():
+            exclude_file = worktree_path / exclude_file
+
+        assert exclude_file.exists()
+        content = exclude_file.read_text()
+        assert ".claude/skills/bernstein-completion-protocol.md" in content
+        # `info/exclude` is repo-wide, resolved via the main repo's real
+        # gitdir rather than a naively-assumed `worktree_path/.git/info/exclude`
+        # (which does not exist - `.git` in a worktree is a file, not a dir).
+        assert str(exclude_file) != str(worktree_path / ".git" / "info" / "exclude")
+        assert not (worktree_path / ".git").is_dir()
+
+    def test_injected_skills_still_readable_after_exclusion(self, tmp_path: Path) -> None:
+        templates_dir = self._make_skills_dir(tmp_path)
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        self._init_git_repo(workdir)
+
+        inject_skills(
+            workdir=workdir,
+            role="docs",
+            tasks=[],
+            session_id="s-1",
+            templates_dir=templates_dir,
+        )
+
+        skill_file = workdir / ".claude" / "skills" / "bernstein-completion-protocol.md"
+        assert skill_file.exists()
+        assert "Complete tasks" in skill_file.read_text()
+
+    def test_non_git_workdir_does_not_raise(self, tmp_path: Path) -> None:
+        """Missing git repo must not block skill injection (best-effort)."""
+        templates_dir = self._make_skills_dir(tmp_path)
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        # Deliberately not a git repo.
+
+        inject_skills(
+            workdir=workdir,
+            role="docs",
+            tasks=[],
+            session_id="s-1",
+            templates_dir=templates_dir,
+        )
+
+        assert (workdir / ".claude" / "skills" / "bernstein-completion-protocol.md").exists()
+        assert not (workdir / ".git").exists()
 
 
 class TestRoleSkillMap:

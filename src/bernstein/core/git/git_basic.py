@@ -14,10 +14,29 @@ logger = logging.getLogger(__name__)
 _CONVENTIONAL_COMMIT_RE = re.compile(r"^(feat|fix|chore|docs|test|refactor)(\([a-z0-9._/-]+\))?: .+")
 
 # Paths that must NEVER be staged, even via explicit add.
+#
+# Extended (defect 28 - decoy commit / secret leak): the previous list
+# only excluded ``.sdd/runtime/`` and ``.sdd/metrics/``.  The decoy commit
+# ``7e2364e`` on ``main`` (see
+# ``work/bernstein/proofs/d2/minimax/attempt-83808a8a/DIAGNOSIS.md``)
+# swept 83 ``.sdd/*`` files including ``.sdd/attestations/ed25519-signing-key.pem``,
+# ``.sdd/auth/agent_identity_jwt_secret``, ``.sdd/runtime/agent_tokens/``,
+# and ``bernstein.yaml`` into a single commit on a default branch.  The
+# merge-preflight safety guard in :mod:`bernstein.core.git.git_pr` blocks
+# the COMMIT, but to close the gap at the staging layer too we extend the
+# deny list with every prefix that must never reach a default branch.
 _NEVER_STAGE: frozenset[str] = frozenset(
     {
+        ".sdd/",
+        "attestations/",
+        "auth/",
         ".sdd/runtime/",
         ".sdd/metrics/",
+        ".sdd/attestations/",
+        ".sdd/auth/",
+        ".sdd/traces/",
+        "bernstein.yaml",
+        ".claude/mcp.json",
         ".env",
         "*.pid",
         "*.log",

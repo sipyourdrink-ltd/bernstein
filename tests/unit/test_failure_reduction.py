@@ -64,8 +64,9 @@ def _make_task(
     )
 
 
-def _mock_adapter(pid: int = 42) -> MagicMock:
+def _mock_adapter(pid: int = 42, name: str = "claude") -> MagicMock:
     adapter = MagicMock(spec=CLIAdapter)
+    adapter.name.return_value = name
     adapter.spawn.return_value = SpawnResult(pid=pid, log_path=Path("/tmp/test.log"))
     adapter.is_alive.return_value = True
     adapter.is_rate_limited.return_value = False
@@ -78,6 +79,8 @@ def _build_orchestrator(
     task: Task,
     *,
     max_retries: int = 2,
+    adapter_name: str = "claude",
+    role_model_policy: dict[str, dict] | None = None,
 ) -> tuple[Orchestrator, list[dict]]:
     """Return (orchestrator, captured_post_bodies) with task-specific mock transport."""
     posted: list[dict] = []
@@ -122,10 +125,10 @@ def _build_orchestrator(
         server_url="http://testserver",
         max_task_retries=max_retries,
     )
-    adp = _mock_adapter()
+    adp = _mock_adapter(name=adapter_name)
     templates_dir = tmp_path / "templates" / "roles"
     templates_dir.mkdir(parents=True)
-    spawner = AgentSpawner(adp, templates_dir, tmp_path)
+    spawner = AgentSpawner(adp, templates_dir, tmp_path, role_model_policy=role_model_policy)
     client = httpx.Client(transport=transport, base_url="http://testserver")
     return Orchestrator(cfg, spawner, tmp_path, client=client), posted
 
@@ -250,6 +253,66 @@ class TestLargeScopeOpusMaxOnRetry:
         assert len(posted) == 1
         # First retry of medium scope: effort bumped, but not opus/max
         assert posted[0]["effort"] != "max" or posted[0]["model"] != "opus"
+
+
+class TestRetryEscalationAdapterAwareness:
+    """PR2 (provider-agnostic precedence): retry escalation must not stamp a
+    Claude tier name ("opus") onto a task that will spawn against a
+    non-Claude adapter - see task_lifecycle.py's ``retry_or_fail_task``
+    docstring for the run-9 attempt-8 defect this closes."""
+
+    def test_claude_adapter_high_stakes_retry_still_escalates_to_opus(self, tmp_path: Path) -> None:
+        """(a) No regression: a Claude-compatible run still gets opus/max
+        for high-stakes roles on retry."""
+        task = _make_task(
+            id="T-arch-claude",
+            role="architect",
+            description="Design the system.",
+        )
+        orch, posted = _build_orchestrator(tmp_path, task, adapter_name="claude")
+
+        orch._retry_or_fail_task("T-arch-claude", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["model"] == "opus"
+        assert posted[0]["effort"] == "max"
+
+    def test_non_claude_default_adapter_high_stakes_retry_leaves_model_unchanged(self, tmp_path: Path) -> None:
+        """(b) A non-Claude default adapter (no role_model_policy at all):
+        high-stakes retry must escalate effort only, never stamp "opus"."""
+        task = _make_task(
+            id="T-arch-qwen",
+            role="architect",
+            description="Design the system.",
+        )
+        orch, posted = _build_orchestrator(tmp_path, task, adapter_name="qwen")
+
+        orch._retry_or_fail_task("T-arch-qwen", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["model"] != "opus"
+        assert posted[0]["effort"] == "max"
+
+    def test_operator_pinned_non_claude_model_survives_retry(self, tmp_path: Path) -> None:
+        """(c) role_model_policy pins a non-Claude model for this role; a
+        high-stakes retry must escalate to THAT model, never "opus"."""
+        task = _make_task(
+            id="T-arch-pinned",
+            role="architect",
+            description="Design the system.",
+        )
+        orch, posted = _build_orchestrator(
+            tmp_path,
+            task,
+            adapter_name="claude",  # default adapter is Claude...
+            role_model_policy={"architect": {"provider": "qwen", "model": "MiniMax-M3"}},
+        )
+
+        orch._retry_or_fail_task("T-arch-pinned", "agent died")
+
+        assert len(posted) == 1
+        assert posted[0]["model"] == "MiniMax-M3"
+        assert posted[0]["effort"] == "max"
 
 
 # ---------------------------------------------------------------------------

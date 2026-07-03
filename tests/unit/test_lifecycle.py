@@ -139,6 +139,8 @@ def test_transition_task_terminal_statuses() -> None:
         transition_task(task, TaskStatus.DONE)
         assert task.status == TaskStatus.DONE
 
-        # Once DONE, no more transitions should be possible
+        # Once DONE, only the explicitly-allowed exits are possible. DONE ->
+        # OPEN is intentionally legal now (bounded janitor reopen), so assert
+        # a transition that remains illegal (DONE -> IN_PROGRESS).
         with pytest.raises(IllegalTransitionError):
-            transition_task(task, TaskStatus.OPEN)
+            transition_task(task, TaskStatus.IN_PROGRESS)

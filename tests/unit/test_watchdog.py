@@ -162,3 +162,101 @@ def test_watchdog_manager_escalates_repeated_high_severity_incident(tmp_path: Pa
     assert notifications[0]["event"] == "approval.needed"
     assert len(bulletins) == 1
     assert bulletins[0][0] == "alert"
+
+
+def test_watchdog_manager_logs_detection_and_escalation(tmp_path: Path, caplog) -> None:
+    """Logging gap: WatchdogManager.sync() persisted new-incident and
+    human-escalation events to JSONL, but never logged them -- an operator
+    tailing the process log saw nothing until the triage-task-created line,
+    which only fires when the triage HTTP call succeeds. Assert the TIER1
+    detected line fires on first sight, and the TIER3 escalation line fires
+    once the incident crosses its threshold."""
+    caplog.set_level("WARNING", logger="bernstein.core.observability.watchdog")
+    client = MagicMock()
+    client.post.return_value = _response("triage-2")
+    manager = WatchdogManager(tmp_path, client, "http://server")
+    finding = WatchdogFinding(
+        key="heartbeat:sess-1:task-1",
+        session_id="sess-1",
+        task_id="task-1",
+        source="heartbeat",
+        severity="high",
+        summary="Heartbeat stale for task task-1",
+        detail="Heartbeat age exceeded the wakeup threshold.",
+    )
+
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=200.0):
+        manager.sync([finding])
+        manager.sync([finding])
+
+    messages = [r.message for r in caplog.records]
+    assert any("watchdog TIER1 detected" in m and "heartbeat:sess-1:task-1" in m for m in messages), messages
+    assert any("watchdog TIER3 escalating to human" in m and "heartbeat:sess-1:task-1" in m for m in messages), messages
+
+
+def test_watchdog_manager_refuses_triage_of_triage(tmp_path: Path) -> None:
+    """Regression test for the 2026-07-02 production incident: a watchdog
+    triage task that itself stalls must NOT spawn a second triage task about
+    it ("Watchdog triage of watchdog triage"). See
+    work/agent-reports/2026-07-02-run9-attempt9-audit.md.
+    """
+    client = MagicMock()
+    client.post.return_value = _response("triage-3")
+    manager = WatchdogManager(tmp_path, client, "http://server")
+
+    # The finding's task_title is itself an existing "Watchdog triage: ..."
+    # meta-task -- i.e. this finding is ABOUT a previously auto-spawned
+    # triage task, which would make a new triage task depth 2.
+    finding = WatchdogFinding(
+        key="heartbeat:sess-2:triage-task-1",
+        session_id="sess-2",
+        task_id="triage-task-1",
+        source="heartbeat",
+        severity="high",
+        summary="Heartbeat stale for task Watchdog triage: Heartbeat stale for task X",
+        detail="Heartbeat age exceeded the wakeup threshold.",
+        task_title="Watchdog triage: Heartbeat stale for task X",
+    )
+
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=300.0):
+        manager.sync([finding])
+
+    assert client.post.call_count == 0
+    state_path = tmp_path / ".sdd" / "runtime" / "watchdog_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state[finding.key]["triage_task_id"] is None
+
+
+def test_watchdog_manager_dedupes_triage_tasks_across_incidents(tmp_path: Path) -> None:
+    """Two distinct incidents that would create identically-worded triage
+    tasks must only spawn one."""
+    client = MagicMock()
+    client.post.return_value = _response("triage-4")
+    manager = WatchdogManager(tmp_path, client, "http://server")
+
+    finding_a = WatchdogFinding(
+        key="heartbeat:sess-a:task-a",
+        session_id="sess-a",
+        task_id="task-a",
+        source="heartbeat",
+        severity="high",
+        summary="Heartbeat stale for task Fix API",
+        detail="detail-a",
+        task_title="Fix API",
+    )
+    finding_b = WatchdogFinding(
+        key="heartbeat:sess-b:task-b",
+        session_id="sess-b",
+        task_id="task-b",
+        source="heartbeat",
+        severity="high",
+        summary="Heartbeat stale for task Fix API",
+        detail="detail-b",
+        task_title="Fix API",
+    )
+
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=300.0):
+        manager.sync([finding_a])
+        manager.sync([finding_b])
+
+    assert client.post.call_count == 1
