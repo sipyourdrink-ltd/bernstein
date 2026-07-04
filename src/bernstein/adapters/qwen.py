@@ -126,7 +126,11 @@ class QwenAdapter(CLIAdapter):
                 ``top_p`` overrides - the only two sampling fields this
                 adapter's :meth:`plugin_info` declares support for.
         """
-        cmd: list[str] = ["qwen", "-y"]
+        # ``--yolo`` is the documented long-form auto-approve (YOLO) flag for
+        # headless/CI use in qwen-code. We pass the long form rather than the
+        # ``-y`` short alias because the long form is the stable, documented
+        # spelling across versions and is what the adapter contract checks for.
+        cmd: list[str] = ["qwen", "--yolo"]
 
         # Map abstract/alias names to real Qwen API model IDs.
         # Always pass --model explicitly to avoid relying on settings.json.
