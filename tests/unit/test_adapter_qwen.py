@@ -96,7 +96,7 @@ class TestQwenAdapterSpawn:
         assert "--model" in inner
         assert inner[inner.index("--model") + 1] == "qwen-max"
 
-    def test_yolo_flag_present(self, tmp_path: Path) -> None:
+    def test_approval_mode_flag_present(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=102)
         settings = _default_settings()
@@ -111,8 +111,10 @@ class TestQwenAdapterSpawn:
                 session_id="qwen-s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--yolo" in inner
+        assert "--approval-mode" in inner
+        assert inner[inner.index("--approval-mode") + 1] == "yolo"
         assert "-y" not in inner
+        assert "--yolo" not in inner
 
     def test_prompt_appended_last(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
