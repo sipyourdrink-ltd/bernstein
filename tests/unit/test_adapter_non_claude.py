@@ -359,7 +359,7 @@ class TestQwenAdapterSpawn:
         inner = _inner_cmd(popen.call_args.args[0])
         assert inner[0] == "qwen"
 
-    def test_yolo_flag_always_present(self, tmp_path: Path) -> None:
+    def test_approval_mode_flag_always_present(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=302)
         settings_mock = _make_llm_settings()
@@ -374,7 +374,9 @@ class TestQwenAdapterSpawn:
                 session_id="q2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "-y" in inner
+        assert "--approval-mode" in inner
+        assert inner[inner.index("--approval-mode") + 1] == "yolo"
+        assert "-y" not in inner
 
     def test_default_provider_maps_sonnet_to_qwen_plus(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
