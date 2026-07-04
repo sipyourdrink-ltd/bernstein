@@ -438,11 +438,14 @@ class OpenAIAgentsAdapter(PluginAdapter):
         api_key_env_override = manifest.get("api_key_env")
         if api_key_env_override is not None:
             validate_api_key_env_name(str(api_key_env_override))
-        api_key_env = str(api_key_env_override or "OPENAI_API_KEY")
-        if not os.environ.get(api_key_env):
+        # ``key_env_name`` holds only the NAME of the environment variable that
+        # carries the credential (e.g. "OPENAI_API_KEY"), never the secret
+        # value itself.  It is safe to log.
+        key_env_name = str(api_key_env_override or "OPENAI_API_KEY")
+        if not os.environ.get(key_env_name):
             logger.warning(
                 "OpenAIAgentsAdapter: %s is not set - spawn will fail",
-                api_key_env,
+                key_env_name,
             )
 
         # One-line spawn-manifest summary: model/base_url/api_key_env NAME
@@ -458,7 +461,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
             session_id,
             manifest.get("model"),
             manifest.get("base_url") or "<default>",
-            api_key_env,
+            key_env_name,
             _max_tokens_str,
             manifest["tool_source"],
             len(manifest["tools"]),
@@ -484,7 +487,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
             session_id,
             manifest.get("model"),
             manifest.get("base_url") or "<default>",
-            api_key_env,
+            key_env_name,
         )
 
         cmd = [*self._runner_command(), "--manifest", str(manifest_path)]
@@ -502,10 +505,10 @@ class OpenAIAgentsAdapter(PluginAdapter):
         )
 
         env_keys = list(_OPENAI_CREDENTIAL_KEYS)
-        if api_key_env not in env_keys:
+        if key_env_name not in env_keys:
             # Pass the override key through the filtered env so the runner
             # can resolve it by name.
-            env_keys.append(api_key_env)
+            env_keys.append(key_env_name)
         env = build_filtered_env(env_keys)
         preexec_fn = self._get_preexec_fn()
         with log_path.open("w") as log_file:

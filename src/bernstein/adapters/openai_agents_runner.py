@@ -534,6 +534,8 @@ def _append_tokens_sidecar(path: Path, input_tokens: int, output_tokens: int) ->
         with path.open("a", encoding="utf-8") as fh:
             fh.write(record + "\n")
     except OSError as exc:
+        # "tokens" here is the usage-count sidecar file, not a credential.
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.warning("failed to write tokens sidecar %s: %s", path, exc)
 
 
@@ -1069,7 +1071,7 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
             # {"strict": true} in the tool schema.  Models that don't
             # support OpenAI's strict structured-output mode return empty
             # responses or malformed tool calls when they see this flag.
-            _model_lower = (manifest.model or "").lower()
+            _model_lower = manifest.model.lower()
             _is_openai_native = any(_model_lower.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-", "chatgpt-"))
             if not _is_openai_native:
                 _relaxed_count = 0
@@ -1127,13 +1129,16 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
             else "<no ModelSettings constructed - settings_kwargs was empty>"
         )
         _tool_list_for_log = agent_kwargs.get("tools", [])
+        # Only the NAME of the credential environment variable is logged here,
+        # never the secret value it resolves to.
+        _key_env_name_for_log = manifest.api_key_env
         logger.info(
             "[DEEPSEEK-DEBUG] pre-call session=%s model=%r base_url=%r api_key_env=%r "
             "explicit_model_client=%s tool_source=%r tool_count=%d max_turns=%s",
             manifest.session_id,
             manifest.model,
             manifest.base_url,
-            manifest.api_key_env,
+            _key_env_name_for_log,
             explicit_model_client is not None,
             manifest.tool_source,
             len(_tool_list_for_log),

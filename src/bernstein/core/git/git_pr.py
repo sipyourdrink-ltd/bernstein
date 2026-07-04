@@ -316,7 +316,7 @@ def merge_with_conflict_detection(
                     f"forbidden path(s) staged (.sdd/, attestations/, auth/, "
                     f"bernstein.yaml). First: {forbidden_str}{more}"
                 ),
-                refused_forbidden_files=list(forbidden),
+                refused_forbidden_files=forbidden.copy(),
             )
 
         # Clean merge - commit it

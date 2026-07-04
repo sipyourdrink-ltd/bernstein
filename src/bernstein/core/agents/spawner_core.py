@@ -1222,7 +1222,7 @@ class AgentSpawner:
         ``_choose_retry_escalation`` for why that matters. Returns a
         shallow copy; mutating it does not affect spawn behavior.
         """
-        return dict(self._role_model_policy)
+        return self._role_model_policy.copy()
 
     @property
     def default_adapter_name(self) -> str:
@@ -2098,7 +2098,7 @@ class AgentSpawner:
             logger.debug(
                 "_apply_sampling_overrides: mode-profile %r contributed sampling keys=%s",
                 profile.name,
-                dict(derived),
+                derived.copy(),
             )
         else:
             logger.debug(
@@ -2119,7 +2119,7 @@ class AgentSpawner:
         # the mode-profile default for the same key. Each field is validated
         # for type before folding in so a malformed role_policy entry cannot
         # inject an unexpected type into the manifest.
-        role_sampling_before = dict(derived)
+        role_sampling_before = derived.copy()
         temperature = role_policy.get("temperature")
         if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
             derived["temperature"] = float(temperature)

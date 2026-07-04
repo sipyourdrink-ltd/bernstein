@@ -188,7 +188,7 @@ class HeartbeatMonitor:
         cmdline = self._pid_cmdline(pid)
         if cmdline is None:
             return None
-        heartbeat_marker = str(self._heartbeat_pid_path(session_id).parent / f"{session_id}")
+        heartbeat_marker = str(self._heartbeat_pid_path(session_id).parent / session_id)
         stop_marker = str(self._heartbeat_stop_path(session_id))
         return heartbeat_marker in cmdline or stop_marker in cmdline
 

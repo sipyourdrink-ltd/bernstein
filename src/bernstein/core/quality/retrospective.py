@@ -283,16 +283,16 @@ def compute_run_health(all_tasks: list[Task], n_unresolved: int = 0) -> tuple[bo
 
     total = len(all_tasks) + n_unresolved
     if total == 0:
-        return True, dict(counts)
+        return True, counts.copy()
 
     n_failed = sum(1 for t in all_tasks if t.status == TaskStatus.FAILED)
     auto_completed = counts.get(TERMINATOR_AUTO_COMPLETED_AFTER_DEATH, 0)
     if n_failed > 0 or auto_completed > 0 or n_unresolved > 0:
-        return False, dict(counts)
+        return False, counts.copy()
 
     non_agent = sum(counts.get(cat, 0) for cat in _NON_AGENT_CATEGORIES)
     healthy = (non_agent / total) <= _UNHEALTHY_NON_AGENT_FRACTION
-    return healthy, dict(counts)
+    return healthy, counts.copy()
 
 
 def _write_run_health_section(
@@ -347,13 +347,15 @@ def _write_run_health_section(
         )
     )
     if not healthy:
-        lines.append(
-            f"- **Warning:** {total - agent_completed}/{total} task terminations were NOT genuine "
-            "agent completions (failed/watchdog/timeout/janitor/other-forced/auto-completed/"
-            "unresolved) - the completion rate above does not reflect real progress. Investigate "
-            "the dominant non-agent category before trusting this run's outcome."
+        lines.extend(
+            (
+                f"- **Warning:** {total - agent_completed}/{total} task terminations were NOT genuine "
+                "agent completions (failed/watchdog/timeout/janitor/other-forced/auto-completed/"
+                "unresolved) - the completion rate above does not reflect real progress. Investigate "
+                "the dominant non-agent category before trusting this run's outcome.",
+                "",
+            )
         )
-        lines.append("")
 
     return healthy, counts
 

@@ -24,6 +24,7 @@ from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.errors import TaskDomainError
 from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_agent, transition_task
 from bernstein.core.tasks.models import (
@@ -1534,9 +1535,9 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             logger.info(
                 "task.reopen: task_id=%s reopen_count=%d reason=%s",
-                task_id,
+                sanitize_log(task_id),
                 reopen_count,
-                reason,
+                sanitize_log(reason),
             )
             return task
 
@@ -2170,7 +2171,7 @@ class TaskStore:
             and (not check_open_deps or self._dependencies_satisfied(t))
         ]
 
-        if offset is None and limit is None:
+        if offset is limit is None:
             return filtered
 
         start = max(0, offset) if offset is not None else 0
@@ -2260,8 +2261,6 @@ class TaskStore:
                 try:
                     transition_agent(agent, status, actor="heartbeat", reason=f"agent {agent_id} self-report")
                 except IllegalTransitionError:
-                    from bernstein.core.sanitize import sanitize_log
-
                     logger.warning(
                         "Ignoring illegal heartbeat transition %s -> %s for %s",
                         sanitize_log(str(agent.status)),

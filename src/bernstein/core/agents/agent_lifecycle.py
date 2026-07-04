@@ -1325,7 +1325,7 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
         "liveness_judgment: session=%s pid=%s pid_alive=%s heartbeat_path=%s heartbeat_age_s=%s "
         "log_path=%s log_age_s=%s git_path=%s git_age_s=%s grace_s=%.0f verdict=%s reason=%s",
         session.id,
-        pid if pid else "unknown",
+        pid or "unknown",
         pid_alive,
         heartbeat_path,
         f"{heartbeat_age:.1f}" if heartbeat_age is not None else "missing",

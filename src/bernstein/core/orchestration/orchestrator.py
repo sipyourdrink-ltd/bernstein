@@ -1796,7 +1796,7 @@ class Orchestrator:
                     # failed tasks in the drain tracker.
                     process_completed_tasks(
                         self,
-                        list(_newly_terminal_for_chain),
+                        _newly_terminal_for_chain.copy(),
                         _chain_result,
                     )
                 except Exception as exc:
@@ -1912,7 +1912,7 @@ class Orchestrator:
                 if settled is not None:
                     settled_open = len(settled["open"])
                     settled_agents = sum(1 for a in self._agents.values() if a.status != "dead")
-                    if settled_open == 0 and settled_agents == 0:
+                    if settled_open == settled_agents == 0:
                         logger.info(
                             "Quiescence confirmed after %.1fs settle window (tick #%d, "
                             "open=%d agents=%d) - self-stopping",
@@ -3104,6 +3104,8 @@ class Orchestrator:
                 token_source = "session.tokens_used"
             else:
                 continue
+            # "tokens" here are LLM usage counts, not credentials.
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.debug(
                 "live_cost_tick: session=%s tokens_in=%d tokens_out=%d source=%s",
                 session.id,
