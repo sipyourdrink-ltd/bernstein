@@ -186,7 +186,9 @@ def test_maybe_retry_ignores_legacy_title_prefix_when_typed_field_disagrees():
     [
         (0, 3, 1, 1),
         (1, 3, 1, 2),
-        (2, 3, 1, 3),
+        # _MAX_REGULAR_TASK_RETRIES=2 hard ceiling: after 2 retries a task
+        # is dead-lettered regardless of task.max_retries or dynamic_limit.
+        (2, 3, 0, None),
         (3, 3, 0, None),  # DLQ: at limit => fail with "Max retries exceeded".
     ],
 )
