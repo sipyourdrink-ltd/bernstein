@@ -23,7 +23,10 @@ async def test_sequential_dependency(test_client: TestClient, orchestrator_facto
         "# INTEGRATION-MOCK\n"
         "import os, subprocess, time\n"
         "from pathlib import Path\n"
-        "Path('api.py').write_text('API v1')\n"
+        # Must be syntactically-valid Python: the merge preflight runs a
+        # syntax check on every staged ``.py`` file and refuses the merge
+        # (task never reaches "done") if it does not parse.
+        "Path('api.py').write_text('# API v1\\n')\n"
         "subprocess.run(['git', 'add', 'api.py'], check=True)\n"
         "subprocess.run(['git', 'commit', '-m', 'add api'], check=True)\n"
         "runtime_dir = Path(__file__).parent\n"
@@ -77,7 +80,7 @@ time.sleep(2)
     orch._spawner.spawn_for_tasks = fixed_spawn
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
-        from tests.integration.conftest import make_proxy_handler
+        from tests.integration.conftest import TERMINAL_SUCCESS_STATUSES, make_proxy_handler
 
         handler = make_proxy_handler(
             test_client,
@@ -96,14 +99,14 @@ time.sleep(2)
                 del orch._agents[sid]
 
             resp = test_client.get("/tasks")
-            if all(t["status"] == "done" for t in resp.json()):
+            if all(t["status"] in TERMINAL_SUCCESS_STATUSES for t in resp.json()):
                 break
             await asyncio.sleep(0.5)
 
         # 4. Verify
         resp = test_client.get("/tasks")
         for t in resp.json():
-            assert t["status"] == "done", f"Task {t['title']} failed: {t['status']}"
+            assert t["status"] in TERMINAL_SUCCESS_STATUSES, f"Task {t['title']} failed: {t['status']}"
 
         assert (integration_sdd.parent / "api.py").exists()
         assert (integration_sdd.parent / "ui.js").exists()

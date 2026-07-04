@@ -12,6 +12,8 @@ import yaml
 from bernstein.core.manager_parsing import _resolve_depends_on
 from bernstein.core.plan_loader import load_plan_from_yaml
 
+from tests.integration.conftest import TERMINAL_SUCCESS_STATUSES
+
 if TYPE_CHECKING:
     from bernstein.core.orchestrator import Orchestrator
     from fastapi.testclient import TestClient
@@ -100,10 +102,10 @@ async def test_plan_execution(test_client: TestClient, orchestrator_factory, int
 
             resp = test_client.get("/tasks")
             all_tasks = resp.json()
-            done_count = sum(1 for t in all_tasks if t["status"] == "done")
+            done_count = sum(1 for t in all_tasks if t["status"] in TERMINAL_SUCCESS_STATUSES)
             print(f"Tick {i}: Done {done_count}/2")
             if done_count == 2:
                 break
 
         resp = test_client.get("/tasks")
-        assert sum(1 for t in resp.json() if t["status"] == "done") == 2
+        assert sum(1 for t in resp.json() if t["status"] in TERMINAL_SUCCESS_STATUSES) == 2

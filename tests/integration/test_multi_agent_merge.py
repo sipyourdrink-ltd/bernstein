@@ -50,7 +50,7 @@ async def test_multi_agent_merge(test_client: TestClient, orchestrator_factory, 
     orch._incident_manager.auto_pause = False
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
-        from tests.integration.conftest import make_proxy_handler
+        from tests.integration.conftest import TERMINAL_SUCCESS_STATUSES, make_proxy_handler
 
         handler = make_proxy_handler(test_client, integration_sdd)
         respx_mock.route().mock(side_effect=handler)
@@ -66,14 +66,14 @@ async def test_multi_agent_merge(test_client: TestClient, orchestrator_factory, 
             await asyncio.sleep(0.5)
 
             resp = test_client.get("/tasks")
-            if all(t["status"] == "done" for t in resp.json()):
+            if all(t["status"] in TERMINAL_SUCCESS_STATUSES for t in resp.json()):
                 orch.tick()  # final pass
                 break
 
         # 3. Verify
         for tid in task_ids:
             resp = test_client.get(f"/tasks/{tid}")
-            assert resp.json()["status"] == "done", f"Task {tid} failed to complete"
+            assert resp.json()["status"] in TERMINAL_SUCCESS_STATUSES, f"Task {tid} failed to complete"
 
         for i in range(1, 4):
             fpath = integration_sdd.parent / f"file_{i}.txt"

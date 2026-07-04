@@ -52,7 +52,7 @@ async def test_batch_execution(test_client: TestClient, orchestrator_factory, in
 
         orch._spawner.spawn_for_tasks = counted_spawn
 
-        from tests.integration.conftest import make_proxy_handler
+        from tests.integration.conftest import TERMINAL_SUCCESS_STATUSES, make_proxy_handler
 
         handler = make_proxy_handler(test_client, integration_sdd)
         respx_mock.route().mock(side_effect=handler)
@@ -62,7 +62,7 @@ async def test_batch_execution(test_client: TestClient, orchestrator_factory, in
             orch.tick()
             resp = test_client.get("/tasks")
             tasks = resp.json()
-            if all(t["status"] == "done" for t in tasks):
+            if all(t["status"] in TERMINAL_SUCCESS_STATUSES for t in tasks):
                 break
             await asyncio.sleep(0.5)
 
@@ -70,6 +70,6 @@ async def test_batch_execution(test_client: TestClient, orchestrator_factory, in
         assert spawn_count == 1
         resp = test_client.get("/tasks")
         for t in resp.json():
-            assert t["status"] == "done"
+            assert t["status"] in TERMINAL_SUCCESS_STATUSES
 
         assert (integration_sdd.parent / "batch.txt").exists()
