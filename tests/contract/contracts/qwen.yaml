@@ -2,9 +2,11 @@
 #
 # Always-passed surface from src/bernstein/adapters/qwen.py::_build_command:
 # ``qwen --approval-mode yolo --model <resolved> [--auth-type openai] [--web-search-default tavily]``.
-# Only ``--approval-mode`` and ``--model`` are unconditional.
-# ``--approval-mode yolo`` is the current documented auto-approve form in
-# qwen-code (older ``-y`` / ``--yolo`` spellings are gone from ``qwen --help``). The Tavily API key is forwarded
+# ``--approval-mode yolo`` and ``--model`` are always passed. Only ``--model``
+# is in ``required_flags`` because ``qwen --help`` does not enumerate the
+# approval-mode flag at the top level (in any spelling: -y / --yolo /
+# --approval-mode), so it cannot be drift-checked via help text; it is the
+# current documented auto-approve form and is exercised by the adapter unit tests. The Tavily API key is forwarded
 # via the ``TAVILY_API_KEY`` environment variable, never on argv, to keep it
 # out of ``ps`` output.
 adapter: qwen
@@ -17,7 +19,6 @@ auth:
   required_for_models: false
   secret_env: "DASHSCOPE_API_KEY"
 required_flags:
-  - "--approval-mode"
   - "--model"
 required_subcommands: []
 expected_models:
