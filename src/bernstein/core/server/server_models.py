@@ -40,6 +40,7 @@ _MAX_PATH_LEN = 4_096  # owned_files / parent_task_id / depends_on entries
 _MAX_LIST_LEN = 100
 _MAX_DICT_SERIALIZED_LEN = 50_000  # cap serialized size of dict[str, Any] fields
 _MAX_META_MESSAGE_LEN = 10_000  # retry meta_messages - operational hints
+_MAX_REASON_LEN = 10_000  # fail/reopen/cancel/block reason - human-readable note
 
 
 def _enforce_dict_size(value: dict[str, Any] | None, *, field_name: str) -> dict[str, Any] | None:
@@ -62,6 +63,23 @@ def _enforce_dict_size(value: dict[str, Any] | None, *, field_name: str) -> dict
             f"{field_name} exceeds {_MAX_DICT_SERIALIZED_LEN} serialized chars",
         )
     return value
+
+
+def _sanitize_reason(value: str, field_name: str) -> str:
+    """Strip CR/LF from a free-text reason and cap its length at the API boundary.
+
+    Reason fields flow into ``logger.*`` calls in the task routes. Stripping
+    carriage returns and newlines here is a root-cause defense against log
+    injection: a caller cannot forge log lines even before the value reaches a
+    log sink. The sink-side ``sanitize_log`` wrapping is kept as well, so the
+    two layers are independent. Length is capped to block multi-MB reasons from
+    bloating the log stream.
+    """
+    if not isinstance(value, str):
+        return value
+    if len(value) > _MAX_REASON_LEN:
+        raise ValueError(f"{field_name} exceeds {_MAX_REASON_LEN} chars")
+    return value.replace("\r", " ").replace("\n", " ")
 
 
 def _ensure_task_enum(value: str, field_name: str) -> str:
@@ -253,11 +271,21 @@ class TaskFailRequest(BaseModel):
 
     reason: str = ""
 
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
+
 
 class TaskReopenRequest(BaseModel):
     """Body for POST /tasks/{task_id}/reopen."""
 
     reason: str = ""
+
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
 
 
 class TaskCancelRequest(BaseModel):
@@ -265,11 +293,21 @@ class TaskCancelRequest(BaseModel):
 
     reason: str = ""
 
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
+
 
 class TaskBlockRequest(BaseModel):
     """Body for POST /tasks/{task_id}/block."""
 
     reason: str = ""
+
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
 
 
 class TaskPatchRequest(BaseModel):

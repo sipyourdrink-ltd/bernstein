@@ -298,7 +298,7 @@ def _run_auto_commit_pre_complete(
     if not session_id:
         logger.info(
             "auto_commit_pre_complete: task=%s session=None reason=no_session",
-            task.id,
+            sanitize_log(str(task.id)),
         )
         return
 
@@ -308,9 +308,9 @@ def _run_auto_commit_pre_complete(
     if not worktree_path.exists() or not worktree_path.is_dir():
         logger.info(
             "auto_commit_pre_complete: task=%s session=%s reason=no_worktree path=%s",
-            task.id,
-            session_id,
-            str(worktree_path),
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(worktree_path)),
         )
         return
 
@@ -330,17 +330,17 @@ def _run_auto_commit_pre_complete(
     except Exception as exc:  # pragma: no cover  # intentional-broad-except: branch lookup is best-effort
         logger.debug(
             "auto_commit_pre_complete: task=%s session=%s branch_lookup_error=%s",
-            task.id,
-            session_id,
-            exc,
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
         )
 
     if _is_salvage_branch(branch_name):
         logger.info(
             "auto_commit_pre_complete: task=%s session=%s reason=skipped_salvage_branch branch=%s",
-            task.id,
-            session_id,
-            branch_name or "",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(branch_name or ""),
         )
         return
 
@@ -357,16 +357,16 @@ def _run_auto_commit_pre_complete(
         if already.returncode == 0 and already.stdout.strip():
             logger.info(
                 "auto_commit_pre_complete: task=%s session=%s reason=already_committed",
-                task.id,
-                session_id,
+                sanitize_log(str(task.id)),
+                sanitize_log(str(session_id)),
             )
             return
     except Exception as exc:  # intentional-broad-except: already-committed check is best-effort
         logger.warning(
             "auto_commit_pre_complete_failed: task=%s session=%s error=%s stage=already_committed_check",
-            task.id,
-            session_id,
-            exc,
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
         )
 
     files_to_commit: list[str] = []
@@ -415,9 +415,9 @@ def _run_auto_commit_pre_complete(
     except Exception as exc:  # intentional-broad-except: file enumeration is best-effort
         logger.warning(
             "auto_commit_pre_complete_failed: task=%s session=%s error=%s stage=file_enumeration",
-            task.id,
-            session_id,
-            exc,
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
         )
         return
 
@@ -432,8 +432,8 @@ def _run_auto_commit_pre_complete(
     if not files_to_commit:
         logger.info(
             "auto_commit_pre_complete: task=%s session=%s reason=nothing_to_commit",
-            task.id,
-            session_id,
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
         )
         return
 
@@ -442,8 +442,8 @@ def _run_auto_commit_pre_complete(
         if not commit_set:
             logger.info(
                 "auto_commit_pre_complete: task=%s session=%s reason=nothing_to_commit (deny-list excluded all)",
-                task.id,
-                session_id,
+                sanitize_log(str(task.id)),
+                sanitize_log(str(session_id)),
             )
             return
 
@@ -459,10 +459,10 @@ def _run_auto_commit_pre_complete(
         if add_proc.returncode != 0:
             logger.warning(
                 "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s stage=git_add",
-                task.id,
-                session_id,
-                (add_proc.stderr or add_proc.stdout or "").strip()[:500],
-                commit_set,
+                sanitize_log(str(task.id)),
+                sanitize_log(str(session_id)),
+                sanitize_log((add_proc.stderr or add_proc.stdout or "").strip()[:500]),
+                sanitize_log(str(commit_set)),
             )
             return
 
@@ -481,32 +481,32 @@ def _run_auto_commit_pre_complete(
             if "nothing to commit" in stderr or "no changes added" in stderr:
                 logger.info(
                     "auto_commit_pre_complete: task=%s session=%s reason=already_committed (raced-during-stage)",
-                    task.id,
-                    session_id,
+                    sanitize_log(str(task.id)),
+                    sanitize_log(str(session_id)),
                 )
                 return
             logger.warning(
                 "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s stage=git_commit",
-                task.id,
-                session_id,
-                stderr[:500],
-                commit_set,
+                sanitize_log(str(task.id)),
+                sanitize_log(str(session_id)),
+                sanitize_log(stderr[:500]),
+                sanitize_log(str(commit_set)),
             )
             return
 
         logger.info(
             "auto_commit_pre_complete: task=%s session=%s files=%s reason=uncommitted_changes_at_complete",
-            task.id,
-            session_id,
-            commit_set,
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(commit_set)),
         )
     except Exception as exc:  # intentional-broad-except: auto-commit is best-effort, never blocks completion
         logger.warning(
             "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s",
-            task.id,
-            session_id,
-            exc,
-            files_to_commit,
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
+            sanitize_log(str(files_to_commit)),
         )
 
 
@@ -547,10 +547,10 @@ def _try_check_realtime_anomaly(
         for signal in signals:
             logger.warning(
                 "Realtime anomaly [%s] agent=%s task=%s: %s",
-                signal.rule,
-                signal.agent_id,
-                signal.task_id,
-                signal.message,
+                sanitize_log(str(signal.rule)),
+                sanitize_log(str(signal.agent_id)),
+                sanitize_log(str(signal.task_id)),
+                sanitize_log(str(signal.message)),
             )
     # intentional-broad-except: best-effort anomaly probe must never break the
     # progress route; surface modes include AttributeError on partial wiring.
@@ -598,9 +598,9 @@ def _try_attest_task_completion(
         method = "Ed25519 fallback" if record.fallback_used else "Sigstore/Rekor"
         logger.info(
             "Task %s attested via %s: bundle=%s",
-            task_id,
-            method,
-            record.bundle_path,
+            sanitize_log(str(task_id)),
+            sanitize_log(str(method)),
+            sanitize_log(str(record.bundle_path)),
         )
     # intentional-broad-except: attestation is opt-in telemetry (Sigstore HTTP,
     # Ed25519 key IO, Rekor rate limits); must never break the task route.
@@ -817,7 +817,7 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
                 description=effective.description,
             )
         except HookBlockingError:
-            logger.warning("Pre-create hook blocked task '%s' - skipping", effective.title)
+            logger.warning("Pre-create hook blocked task '%s' - skipping", sanitize_log(str(effective.title)))
             continue
 
         prepared.append(effective)
@@ -1036,7 +1036,7 @@ async def claim_task(
                 pre_claim_version,
                 pre_claim_status,
                 sanitize_log(str(claimed_by_session)),
-                exc,
+                sanitize_log(str(exc)),
             )
             raise HTTPException(status_code=409, detail=str(exc)) from None
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "claimed"}))
@@ -1162,7 +1162,7 @@ async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, requ
             "task.wait_for_subtasks 409: task_id=%s current_status=%s reason=%s",
             sanitize_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
-            exc,
+            sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
@@ -1197,7 +1197,7 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
             "task.fail 409: task_id=%s current_status=%s reason=%s",
             sanitize_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
-            exc,
+            sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "failed"}))
@@ -1235,7 +1235,7 @@ async def reopen_task(task_id: str, body: TaskReopenRequest, request: Request) -
             "task.reopen 409: task_id=%s current_status=%s reason=%s",
             sanitize_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
-            exc,
+            sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     logger.info(
@@ -1269,7 +1269,7 @@ async def close_task(task_id: str, request: Request) -> TaskResponse:
             "task.close 409: task_id=%s current_status=%s reason=%s",
             sanitize_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
-            exc,
+            sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "closed"}))
@@ -1316,7 +1316,7 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
             "task.cancel 409: task_id=%s current_status=%s reason=%s",
             sanitize_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
-            exc,
+            sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
@@ -1352,7 +1352,7 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
             "task.block 409: task_id=%s current_status=%s reason=%s",
             sanitize_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
-            exc,
+            sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "blocked"}))
