@@ -28,6 +28,13 @@ from .fake_cli.conftest_adapters import (  # noqa: F401
 
 _TASKS_PATH = "/tasks"
 
+# Terminal success states for an integration task. A task first transitions to
+# "done" on completion, then the orchestrator's verify-and-close pass advances
+# a verified/merged task to "closed" (the terminal success state). Tests that
+# poll for completion must treat BOTH as success; asserting strictly on "done"
+# races the verify-close transition and flakes/fails once a task closes.
+TERMINAL_SUCCESS_STATUSES = frozenset({"done", "closed"})
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
@@ -74,7 +81,14 @@ class IntegrationMockAdapter(CLIAdapter):
             marker_dir = self.sdd_path.resolve() / "runtime"
             marker_dir.mkdir(parents=True, exist_ok=True)
 
-            markers_lines = "\n".join(f"(Path('{marker_dir}') / 'DONE_{tid}').write_text('done')" for tid in task_ids)
+            # Each marker line is substituted into the ``try:`` block below, so
+            # it MUST carry the block's 4-space indentation. Without it the
+            # generated script is a SyntaxError ("expected 'except' or 'finally'
+            # block"), the mock never writes its DONE_ markers, and every task
+            # that relies on the default mock stays "claimed" forever.
+            markers_lines = "\n".join(
+                f"    (Path('{marker_dir}') / 'DONE_{tid}').write_text('done')" for tid in task_ids
+            )
 
             script_body = f"""import os
 import subprocess
@@ -145,8 +159,12 @@ def integration_sdd(tmp_path: Path) -> Path:
     (sdd / "config").mkdir(parents=True)
     (sdd / "incidents").mkdir(parents=True)
 
-    # Add dummy templates
-    for role in ["backend", "manager"]:
+    # Add dummy role templates. The integration tests spawn tasks for the
+    # "backend", "frontend", and "manager" roles; every role that any test
+    # spawns must have a template here or the spawned task never reaches
+    # "done" (the spawner cannot resolve a system prompt and the task stays
+    # "claimed").
+    for role in ["backend", "frontend", "manager"]:
         templates = tmp_path / "templates" / "roles" / role
         templates.mkdir(parents=True, exist_ok=True)
         (templates / "system_prompt.md").write_text(f"You are a {role} specialist.")
@@ -156,14 +174,45 @@ def integration_sdd(tmp_path: Path) -> Path:
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(tmp_path), check=True)
     subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(tmp_path), check=True)
     (tmp_path / "README.md").write_text("# Test Project")
-    subprocess.run(["git", "add", "README.md"], cwd=str(tmp_path), check=True)
+    # Real bernstein projects gitignore ``.sdd/`` (workspace runtime state).
+    # Without it, the mock adapter's per-agent log under ``.sdd/runtime/`` is
+    # swept into the merge's staged set and the merge-preflight forbidden-path
+    # guard (defect 28 decoy-commit guard) refuses the merge, so the task never
+    # reaches "done". Mirror production and exclude ``.sdd/``.
+    (tmp_path / ".gitignore").write_text(".sdd/\n")
+    subprocess.run(["git", "add", "README.md", ".gitignore"], cwd=str(tmp_path), check=True)
     subprocess.run(["git", "commit", "-m", "initial commit"], cwd=str(tmp_path), check=True)
+
+    # Give the repo a real (local, bare) "origin" remote. Salvage of an
+    # abandoned worktree runs a best-effort ``git push origin <branch>``; with
+    # no origin configured that push fails and logs noisy
+    # ``'origin' does not appear to be a git repository`` warnings. A bare repo
+    # on disk lets the push succeed cleanly.
+    origin_path = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", str(origin_path)], check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(origin_path)],
+        cwd=str(tmp_path),
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "--set-upstream", "origin", "main"],
+        cwd=str(tmp_path),
+        check=True,
+    )
 
     return sdd
 
 
 @pytest.fixture
-def test_app(integration_sdd: Path) -> FastAPI:
+def test_app(integration_sdd: Path, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    # Disable server auth before the app is built. When any auth secret is
+    # present in the environment, ``create_app`` wires up the auth middleware
+    # and every POST /tasks returns 401, so the tests that expect a created
+    # task see ``KeyError: 'id'``. The supported opt-out is the
+    # ``BERNSTEIN_AUTH_DISABLED`` env var, which must be set *before*
+    # ``create_app`` reads it.
+    monkeypatch.setenv("BERNSTEIN_AUTH_DISABLED", "1")
     jsonl_path = integration_sdd / "runtime" / "tasks.jsonl"
     return create_app(jsonl_path=jsonl_path)
 
@@ -179,12 +228,25 @@ def orchestrator_factory(integration_sdd: Path):
         os.environ["BERNSTEIN_CLI"] = "integration-mock"
         os.environ["BERNSTEIN_MAX_TASK_RETRIES"] = "0"
         os.environ["BERNSTEIN_HEARTBEAT_TIMEOUT"] = "60"
+        # The ephemeral test repo lives on its default branch ("main"), so the
+        # spawner's protected-trunk guard refuses to merge worktree output back
+        # and the task never reaches "done" (it stays "claimed" and is
+        # salvaged). These integration tests deliberately merge onto that
+        # throwaway branch, so opt into the documented override.
+        os.environ["BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH"] = "1"
 
         config = OrchestratorConfig(
             server_url="http://127.0.0.1:8052",
             max_agents=max_agents,
             poll_interval_s=1,
             max_task_retries=0,
+            # One task per agent. The default (2) batches same-role tasks so a
+            # single agent is handed a multi-task batch, but the mock adapter
+            # only executes the first task's embedded script -- the remaining
+            # task in the batch never gets its marker and stays "claimed"
+            # forever. These tests assert one agent per task, so pin the batch
+            # size to 1.
+            max_tasks_per_agent=1,
         )
 
         from bernstein.adapters.registry import register_adapter
@@ -192,13 +254,43 @@ def orchestrator_factory(integration_sdd: Path):
         adapter = IntegrationMockAdapter(integration_sdd)
         register_adapter("integration-mock", adapter)
 
+        # The spawn rate limiter defaults to 2 spawns / 10 s / provider to
+        # avoid throttling real cloud CLIs. Every integration task uses the
+        # single local "integration-mock" provider, so a test that spawns 3
+        # agents at once trips the limit: the 3rd spawn (and its retries within
+        # the 10 s window) fails with "Spawn rate limit exceeded", the task
+        # exhausts its retries and ends "failed". Give the harness a permissive
+        # limiter so all requested agents spawn immediately.
+        from bernstein.core.agents.spawn_rate_limiter import (
+            SpawnRateLimitConfig,
+            SpawnRateLimiter,
+        )
+
+        permissive_rate_limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1000, window_seconds=1.0))
+
         spawner = AgentSpawner(
             adapter=adapter,
             templates_dir=integration_sdd.parent / "templates" / "roles",
             workdir=integration_sdd.parent,
             use_worktrees=use_worktrees,
+            spawn_rate_limiter=permissive_rate_limiter,
         )
-        return Orchestrator(config, spawner, workdir=integration_sdd.parent)
+        orchestrator = Orchestrator(config, spawner, workdir=integration_sdd.parent)
+
+        # Pin the effective agent count to the configured max. Adaptive
+        # parallelism throttles ``effective_max_agents`` based on the host's
+        # 5-minute load average: on a busy machine (loaded CI, or a laptop
+        # running the rest of the suite in parallel) the CPU-overload rule
+        # halves the agent count with no minimum floor, so an orchestrator
+        # asked for max_agents=N spawns fewer than N. That leaves a task
+        # claimed-but-never-spawned, and the tests -- which assert exact,
+        # deterministic concurrency -- fail nondeterministically depending on
+        # host load. Pinning to the configured max removes the load
+        # dependence without touching production behavior.
+        orchestrator._adaptive_parallelism.effective_max_agents = (  # type: ignore[method-assign]
+            lambda: config.max_agents
+        )
+        return orchestrator
 
     return _create
 
