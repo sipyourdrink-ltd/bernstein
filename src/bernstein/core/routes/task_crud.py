@@ -598,8 +598,8 @@ def _try_attest_task_completion(
         method = "Ed25519 fallback" if record.fallback_used else "Sigstore/Rekor"
         logger.info(
             "Task %s attested via %s: bundle=%s",
-            sanitize_log(str(task_id)),
-            sanitize_log(str(method)),
+            sanitize_log(task_id),
+            sanitize_log(method),
             sanitize_log(str(record.bundle_path)),
         )
     # intentional-broad-except: attestation is opt-in telemetry (Sigstore HTTP,
