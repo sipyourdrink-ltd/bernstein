@@ -53,3 +53,47 @@ def _block_real_network(request: pytest.FixtureRequest) -> Iterator[None]:
         return
     with block_network():
         yield
+
+
+@pytest.fixture(autouse=True)
+def _reap_leaked_timeout_watchdogs():
+    """Cancel any timeout-watchdog Timer a spawn test leaves running.
+
+    ``CLIAdapter._start_timeout_watchdog`` starts a ``threading.Timer`` that
+    production code cancels when the agent is reaped. Adapter unit tests
+    routinely discard the ``SpawnResult`` (they only assert on the manifest
+    or log), so each spawn leaks a live Timer that sleeps for the full
+    timeout. Across a shard's worth of adapter tests these accumulate until
+    the process can no longer start new threads
+    (``RuntimeError: can't start new thread``), which flakes an unrelated
+    later test in the same shard. Cancel any that survive a test so worker
+    threads never pile up.
+    """
+    yield
+    import threading
+
+    for thread in threading.enumerate():
+        if isinstance(thread, threading.Timer) and thread.name.startswith("timeout-watchdog"):
+            thread.cancel()
+
+
+@pytest.fixture(autouse=True)
+def _reap_leaked_timeout_watchdogs():
+    """Cancel any timeout-watchdog Timer a spawn test leaves running.
+
+    ``CLIAdapter._start_timeout_watchdog`` starts a ``threading.Timer`` that
+    production code cancels when the agent is reaped. Adapter unit tests
+    routinely discard the ``SpawnResult`` (they only assert on the manifest
+    or log), so each spawn leaks a live Timer that sleeps for the full
+    timeout. Across a shard's worth of adapter tests these accumulate until
+    the process can no longer start new threads
+    (``RuntimeError: can't start new thread``), which flakes an unrelated
+    later test in the same shard. Cancel any that survive a test so worker
+    threads never pile up.
+    """
+    yield
+    import threading
+
+    for thread in threading.enumerate():
+        if isinstance(thread, threading.Timer) and thread.name.startswith("timeout-watchdog"):
+            thread.cancel()
