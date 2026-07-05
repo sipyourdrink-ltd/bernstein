@@ -498,7 +498,9 @@ def _record_team_manifest_lineage(seed: SeedConfig, workdir: Path) -> None:
 
         record_run_team_manifest(workdir, name=name, digest=digest)
     except Exception as exc:  # lineage anchoring must never crash bootstrap
-        logger.warning("team manifest lineage recording failed for %r: %s", name, exc)
+        from bernstein.core.security.sanitize import sanitize_log
+
+        logger.warning("team manifest lineage recording failed for %r: %s", sanitize_log(name), exc)
 
 
 def bootstrap_from_seed(

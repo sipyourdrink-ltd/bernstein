@@ -155,6 +155,8 @@ def record_run_team_manifest(
     Returns:
         The appended audit event, or ``None`` when auditing is disabled.
     """
+    from bernstein.core.security.sanitize import sanitize_log
+
     version = "unknown"
     source = "unknown"
     try:
@@ -162,7 +164,7 @@ def record_run_team_manifest(
         version = manifest.version
         source = str(manifest.source_path) if manifest.source_path is not None else "builtin"
     except TeamManifestError as exc:
-        logger.warning("team manifest %r not re-resolvable for lineage details: %s", name, exc)
+        logger.warning("team manifest %r not re-resolvable for lineage details: %s", sanitize_log(name), exc)
 
     auditor = TeamManifestAuditor(audit_dir=audit_dir or workdir / ".sdd" / "audit")
     event = auditor.resolve(name=name, digest=digest, version=version, source=source)
@@ -180,7 +182,7 @@ def record_run_team_manifest(
     try:
         upsert_team_pin(workdir / TEAMS_LOCK_FILENAME, entry, workdir=workdir)
     except OSError as exc:
-        logger.warning("teams.lock update failed for manifest %r: %s", name, exc)
+        logger.warning("teams.lock update failed for manifest %r: %s", sanitize_log(name), exc)
     return event
 
 
