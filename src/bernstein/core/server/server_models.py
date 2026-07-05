@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
 from bernstein.core.tasks.task_store import ProgressEntry
@@ -280,6 +280,19 @@ class TaskCompleteRequest(BaseModel):
 
     result_summary: str = ""
     payload: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _require_summary_or_payload(cls, data: Any) -> Any:
+        """Reject bodies that carry neither field.
+
+        A body with an explicitly empty ``result_summary`` still validates -
+        the store maps that to the empty-summary auto-fail path - but a body
+        with neither key is a malformed request, not a worker outcome.
+        """
+        if isinstance(data, dict) and "result_summary" not in data and "payload" not in data:
+            raise ValueError("either result_summary or payload is required")
+        return data
 
 
 class TaskFailRequest(BaseModel):
