@@ -968,6 +968,10 @@ cli.add_command(skills_group)
 from bernstein.cli.commands.skills_catalog_cmd import catalog_group as _skills_catalog_group  # noqa: E402
 
 skills_group.add_command(_skills_catalog_group, "catalog")
+# Named team manifests (issue #2248): list/show/drift.
+from bernstein.cli.commands.team_cmd import team_group as _team_group  # noqa: E402
+
+cli.add_command(_team_group, "team")
 cli.add_command(test_cmd, "test")
 cli.add_command(auth_group, "auth")
 cli.add_command(auth_login, "login")
