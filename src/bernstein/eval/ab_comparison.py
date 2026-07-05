@@ -343,7 +343,7 @@ def synthetic_arm_executor(ledger: SpendLedger, *, run_token: str | None = None)
         output = f"{arm.name}::{task.input}"
         if task.expected is None:
             verdict, score = VERDICT_NOT_MEASURED, 0.0
-        elif str(output) == str(task.expected):
+        elif output == str(task.expected):
             verdict, score = VERDICT_PASS, 1.0
         else:
             verdict, score = VERDICT_FAIL, 0.0
@@ -520,7 +520,7 @@ def build_comparison_artifact(
     winner = _decide_winner(plan.honest_pair, aggregates, tolerance=tolerance)
     deltas = _build_deltas(plan, aggregates)
 
-    model_label = model if model else ",".join(sorted(referenced_models)) or "unknown"
+    model_label = model or ",".join(sorted(referenced_models)) or "unknown"
     content: dict[str, Any] = {
         "kind": ARTIFACT_KIND,
         "version": ARTIFACT_VERSION,

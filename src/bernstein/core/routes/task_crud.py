@@ -274,7 +274,7 @@ def _is_auto_commit_denied(path: str) -> bool:
         # paths that merely contain ".env" somewhere, e.g. ".envrc" or
         # "config.envelope.json", silently excluding legitimate files from
         # auto-commit.
-        elif p == glob or base == glob:
+        elif glob in (p, base):
             return True
     return False
 

@@ -298,7 +298,7 @@ def _verify_load_signature(data: dict[str, object], manifest: TeamManifest, *, c
     """Verify an embedded ``signature`` / ``signer_pubkey`` pair, if any."""
     signature = data.get("signature")
     signer_pubkey = data.get("signer_pubkey")
-    if signature is None and signer_pubkey is None:
+    if signature is signer_pubkey is None:
         return
     if signature is not None and not isinstance(signature, str):
         raise TeamManifestValidationError(f"{context}: signature must be a string")
@@ -450,7 +450,7 @@ def expand_manifest(manifest: TeamManifest) -> ExpandedTeam:
     team = [role.role for role in manifest.roles]
     policy: dict[str, dict[str, str | int]] = {}
     for role in manifest.roles:
-        entry: dict[str, str | int] = dict(role.model_policy)
+        entry: dict[str, str | int] = role.model_policy.copy()
         if role.response_profile is not None:
             entry["response_style"] = role.response_profile
         if entry:
