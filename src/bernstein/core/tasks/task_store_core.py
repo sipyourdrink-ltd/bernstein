@@ -866,15 +866,21 @@ class TaskStore:
         return dfs(new_task.id)
 
     def _dependencies_satisfied(self, task: Task) -> bool:
-        done_ids = {done_task.id for done_task in self._by_status[TaskStatus.DONE].values()}
+        # A dependency is satisfied by either terminal-success status: tasks
+        # move from "done" to "closed" once their agent is reaped and its
+        # branch merged (the store soft-archives via status). Accepting only
+        # "done" here rejected claims of dependents whose dependency had
+        # already completed and been closed.
+        completed_tasks = list(self._by_status[TaskStatus.DONE].values()) + list(
+            self._by_status[TaskStatus.CLOSED].values()
+        )
+        done_ids = {done_task.id for done_task in completed_tasks}
         if not all(dep in done_ids for dep in task.depends_on):
             return False
         if task.depends_on_repo is None:
             return True
         if not task.depends_on:
-            return any(
-                done_task.repo == task.depends_on_repo for done_task in self._by_status[TaskStatus.DONE].values()
-            )
+            return any(done_task.repo == task.depends_on_repo for done_task in completed_tasks)
         return all(
             (self._tasks.get(dep_id) is not None and self._tasks[dep_id].repo == task.depends_on_repo)
             for dep_id in task.depends_on
