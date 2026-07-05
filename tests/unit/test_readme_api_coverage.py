@@ -173,6 +173,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "review-responder",
         # May 2026 feature batch
         "cluster",
+    "compaction",
         "handoff",
         "lineage",
         "migrate",

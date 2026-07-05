@@ -44,6 +44,7 @@ Bernstein is a deterministic Python scheduler that runs a crew of CLI coding age
 - **Bearer-token task server** authenticates the manager and every worker. Per-session zero-trust JWT in `.sdd/runtime/agent_tokens/`, legacy `BERNSTEIN_AUTH_TOKEN` fallback, opt-out via `BERNSTEIN_AUTH_DISABLED=1`. Flow + diagnostics: [docs/security/manager-auth.md](docs/security/manager-auth.md).
 - **Signed agent cards** use detached JWS ([RFC 7515 §A.5](https://datatracker.ietf.org/doc/html/rfc7515#appendix-A.5)) over [RFC 8785 (JCS)](https://datatracker.ietf.org/doc/html/rfc8785) canonicalization, with [Ed25519 / EdDSA](https://datatracker.ietf.org/doc/html/rfc8037) keys. Code: [src/bernstein/core/security/agent_card_signer.py](src/bernstein/core/security/agent_card_signer.py).
 - **Per-artefact lineage** records every file write linked back to producer + inputs + prompt SHA + model + cost. CLI: `bernstein lineage verify <run_id>`.
+- **Compaction receipts**: every context compaction of a long-running worker is validated mechanically (code blocks and error text must survive) and recorded as an HMAC-chained receipt. CLI: `bernstein compaction log --task <id>`.
 - **Deterministic scheduler**: zero LLM in the coordination loop. Plain Python decides who runs, where, with what budget. Replay yesterday's plan, get yesterday's task graph.
 
 ### why this exists
