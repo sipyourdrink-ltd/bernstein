@@ -173,7 +173,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "review-responder",
         # May 2026 feature batch
         "cluster",
-    "compaction",
+        "compaction",
         "handoff",
         "lineage",
         "migrate",
@@ -243,7 +243,6 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         # Bot-added: drift autofix (regen_contract_drift.py)
         "schedule",
         # Bot-added: drift autofix (regen_contract_drift.py)
-        "compaction",
         "team",
     }
 )
