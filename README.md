@@ -272,6 +272,7 @@ Highest-value commands; full list in [docs/operations/commands.md](docs/operatio
 | `bernstein chat serve --platform=telegram\|discord\|slack` | Drive runs from chat with `/run`, `/status`, `/approve`, `/reject`. |
 | `bernstein workflow run <name>` | Run a YAML workflow manifest. |
 | `bernstein schedule add\|list\|run` | Manage operator-registered recurring schedules; `schedule audit` walks persisted fire receipts to prove the sequence is replayable. |
+| `bernstein templates compress <role>\|--all` | Operator-gated, one-time LLM compression of role prompt templates: mechanically validated (fenced blocks, headings, URLs, placeholders, completion contract stay byte-equal), originals backed up out of tree by content hash, receipt chained to the audit log. `bernstein templates restore <role>` reverses it byte-identically; savings appear in `bernstein cost --by role`. |
 
 ### retrieval & caching: what's actually under the hood
 
