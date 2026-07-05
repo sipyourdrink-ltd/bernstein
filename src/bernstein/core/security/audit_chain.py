@@ -61,6 +61,14 @@ EVENT_MULTIMODAL_ATTACH = "multimodal.attach"
 #: offending span -- never the span content itself.
 EVENT_COMPACTION_SENSITIVE_GATE = "compaction.sensitive_gate"
 
+#: Issue #2245 -- emitted whenever ``bernstein cost profile-report``
+#: writes a content-addressed per-profile cost report. The event
+#: records the report's SHA-256, the ledger line-hash range the report
+#: was computed from, and the previous chain digest, so a third party
+#: holding the ledger can recompute the report byte-identically and
+#: check it against the chain.
+EVENT_COST_PROFILE_REPORT = "cost.profile_report"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -286,12 +294,91 @@ def record_sensitive_gate(
     )
 
 
+@dataclass(frozen=True)
+class CostProfileReportDetails:
+    """Structured payload for the ``cost.profile_report`` event."""
+
+    report_sha256: str
+    ledger_lines_sha256: str
+    ledger_first_line_sha256: str
+    ledger_last_line_sha256: str
+    ledger_line_count: int
+    window: str
+    artifact_name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "report_sha256": self.report_sha256,
+            "ledger_lines_sha256": self.ledger_lines_sha256,
+            "ledger_first_line_sha256": self.ledger_first_line_sha256,
+            "ledger_last_line_sha256": self.ledger_last_line_sha256,
+            "ledger_line_count": self.ledger_line_count,
+            "window": self.window,
+            "artifact_name": self.artifact_name,
+        }
+
+
+def record_cost_profile_report(
+    *,
+    chain: AuditChainStore,
+    report_sha256: str,
+    ledger_lines_sha256: str,
+    ledger_first_line_sha256: str,
+    ledger_last_line_sha256: str,
+    ledger_line_count: int,
+    window: str,
+    artifact_name: str,
+    actor: str = "cost",
+) -> AuditEvent:
+    """Append a ``cost.profile_report`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        report_sha256: Hex digest of the report's canonical content.
+        ledger_lines_sha256: Digest over every ledger line in the
+            report's window (newline-joined raw line bytes).
+        ledger_first_line_sha256: Digest of the first included ledger
+            line (empty when the window is empty).
+        ledger_last_line_sha256: Digest of the last included ledger
+            line (empty when the window is empty).
+        ledger_line_count: Number of ledger lines in the window.
+        window: Human window spec the report was computed over
+            (for example ``"7d"`` or ``"all"``).
+        artifact_name: Content-addressed artifact filename.
+        actor: Recorded actor; defaults to ``"cost"`` (the CLI surface).
+
+    Returns:
+        The recorded :class:`AuditEvent`. The event details payload
+        carries every input plus ``prev_chain_digest`` (set to the
+        chain head at write time).
+    """
+    payload = CostProfileReportDetails(
+        report_sha256=report_sha256,
+        ledger_lines_sha256=ledger_lines_sha256,
+        ledger_first_line_sha256=ledger_first_line_sha256,
+        ledger_last_line_sha256=ledger_last_line_sha256,
+        ledger_line_count=ledger_line_count,
+        window=window,
+        artifact_name=artifact_name,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_COST_PROFILE_REPORT,
+        actor=actor,
+        resource_type="cost_profile_report",
+        resource_id=report_sha256,
+        details=payload,
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_COMPACTION_SENSITIVE_GATE",
+    "EVENT_COST_PROFILE_REPORT",
     "EVENT_MULTIMODAL_ATTACH",
     "AuditChainStore",
+    "CostProfileReportDetails",
     "MultimodalAttachDetails",
+    "record_cost_profile_report",
     "record_multimodal_attach",
     "record_sensitive_gate",
 ]
