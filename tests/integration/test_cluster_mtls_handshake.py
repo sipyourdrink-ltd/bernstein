@@ -52,6 +52,21 @@ def _make_pki(out_dir: Path) -> dict[str, Path]:
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=1), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
     paths = {
@@ -91,6 +106,14 @@ def _make_pki(out_dir: Path) -> dict[str, Path]:
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(x509.ExtendedKeyUsage([eku]), critical=False)
             .add_extension(san, critical=False)
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                critical=False,
+            )
             .sign(ca_key, hashes.SHA256())
         )
         cert_path.write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
@@ -158,7 +181,6 @@ def pki(tmp_path: Path) -> dict[str, Path]:
     return _make_pki(tmp_path)
 
 
-@pytest.mark.skip(reason="pre-existing failure outside main CI; tracked in #2227")
 def test_client_with_valid_cert_succeeds(pki: dict[str, Path]) -> None:
     server_tls = TLSConfig(
         ca_file=pki["ca"],
