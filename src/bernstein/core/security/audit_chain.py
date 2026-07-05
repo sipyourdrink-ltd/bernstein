@@ -69,6 +69,14 @@ EVENT_COMPACTION_SENSITIVE_GATE = "compaction.sensitive_gate"
 #: check it against the chain.
 EVENT_COST_PROFILE_REPORT = "cost.profile_report"
 
+#: Issue #2247 -- emitted whenever ``bernstein eval ab`` writes a
+#: content-addressed profile comparison artifact. The event records the
+#: artifact's SHA-256 plus the suite and profile-addendum hashes that
+#: pin exactly what was compared, and the previous chain digest, so a
+#: verifier holding the suite and the spend ledger can recompute the
+#: artifact byte-identically and check it against the chain.
+EVENT_EVAL_AB_COMPARISON = "eval.ab_comparison"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -370,15 +378,96 @@ def record_cost_profile_report(
     )
 
 
+@dataclass(frozen=True)
+class EvalAbComparisonDetails:
+    """Structured payload for the ``eval.ab_comparison`` event."""
+
+    artifact_sha256: str
+    suite_sha256: str
+    profile_a_sha256: str
+    profile_b_sha256: str
+    arm_count: int
+    row_count: int
+    winner_arm: str
+    artifact_name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_sha256": self.artifact_sha256,
+            "suite_sha256": self.suite_sha256,
+            "profile_a_sha256": self.profile_a_sha256,
+            "profile_b_sha256": self.profile_b_sha256,
+            "arm_count": self.arm_count,
+            "row_count": self.row_count,
+            "winner_arm": self.winner_arm,
+            "artifact_name": self.artifact_name,
+        }
+
+
+def record_eval_ab_comparison(
+    *,
+    chain: AuditChainStore,
+    artifact_sha256: str,
+    suite_sha256: str,
+    profile_a_sha256: str,
+    profile_b_sha256: str,
+    arm_count: int,
+    row_count: int,
+    winner_arm: str,
+    artifact_name: str,
+    actor: str = "eval",
+) -> AuditEvent:
+    """Append an ``eval.ab_comparison`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        artifact_sha256: Hex digest of the artifact's canonical content.
+        suite_sha256: Hex digest of the eval suite file bytes.
+        profile_a_sha256: Addendum hash of the honest pair's A arm.
+        profile_b_sha256: Addendum hash of the honest pair's B arm.
+        arm_count: Number of arms in the comparison (2 or 3).
+        row_count: Number of per-task run rows in the artifact.
+        winner_arm: Declared winner arm name, ``tie``, or
+            ``incomparable``.
+        artifact_name: Content-addressed artifact filename.
+        actor: Recorded actor; defaults to ``"eval"`` (the CLI surface).
+
+    Returns:
+        The recorded :class:`AuditEvent`. The event details payload
+        carries every input plus ``prev_chain_digest`` (set to the
+        chain head at write time).
+    """
+    payload = EvalAbComparisonDetails(
+        artifact_sha256=artifact_sha256,
+        suite_sha256=suite_sha256,
+        profile_a_sha256=profile_a_sha256,
+        profile_b_sha256=profile_b_sha256,
+        arm_count=arm_count,
+        row_count=row_count,
+        winner_arm=winner_arm,
+        artifact_name=artifact_name,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_EVAL_AB_COMPARISON,
+        actor=actor,
+        resource_type="eval_ab_comparison",
+        resource_id=artifact_sha256,
+        details=payload,
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
+    "EVENT_EVAL_AB_COMPARISON",
     "EVENT_MULTIMODAL_ATTACH",
     "AuditChainStore",
     "CostProfileReportDetails",
+    "EvalAbComparisonDetails",
     "MultimodalAttachDetails",
     "record_cost_profile_report",
+    "record_eval_ab_comparison",
     "record_multimodal_attach",
     "record_sensitive_gate",
 ]
