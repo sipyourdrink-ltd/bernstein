@@ -317,6 +317,12 @@ class SeedConfig:
         goal: The high-level project objective (required).
         budget_usd: Spending cap in USD, parsed from "$N" strings. None if unset.
         team: "auto" for automatic role selection, or an explicit list of role names.
+        team_manifest: Name of the team manifest the ``team_manifest:`` seed
+            key resolved to, when the team was expanded from one (issue
+            #2248). ``None`` for inline/auto teams.
+        team_manifest_digest: Canonical sha256 of the resolved manifest, so
+            run bootstrap can anchor "which team produced this run" in the
+            audit chain.
         cli: Which CLI agent backend to use.
         max_agents: Maximum number of concurrent agents.
         model: Optional model override for the CLI backend.
@@ -342,6 +348,8 @@ class SeedConfig:
     goal: str
     budget_usd: float | None = None
     team: Literal["auto"] | list[str] = "auto"
+    team_manifest: str | None = None
+    team_manifest_digest: str | None = None
     cli: Literal["claude", "codex", "gemini", "qwen", "auto"] = "auto"
     max_agents: int = 6
     model: str | None = None
