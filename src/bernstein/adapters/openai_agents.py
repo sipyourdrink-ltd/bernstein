@@ -209,8 +209,9 @@ class OpenAIAgentsAdapter(PluginAdapter):
             mcp_config: Optional MCP servers, sandbox provider choice,
                 sampling/endpoint overrides (``temperature``, ``top_p``,
                 ``top_k``, ``base_url``, ``api_key_env``), the tool source
-                selector (``tool_source``), and the spawner-injected
-                ``heartbeat_dir``.
+                selector (``tool_source``), the spawner-injected
+                ``heartbeat_dir``, and the optional task-level ``council``
+                block forwarded from ``role_model_policy.<role>.council``.
             timeout_seconds: Hard timeout forwarded to the runner.
             task_scope: "small" | "medium" | "large".
             budget_multiplier: Retry multiplier applied to the scope budget.
@@ -304,6 +305,16 @@ class OpenAIAgentsAdapter(PluginAdapter):
             instrumentation_root = mcp_config.get("instrumentation_root")
             if isinstance(instrumentation_root, str) and instrumentation_root:
                 overrides["instrumentation_root"] = instrumentation_root
+            # Task-level council override injected by spawner_core from an
+            # inline ``role_model_policy.<role>.council`` block (already
+            # parsed/validated by the seed parser). Forwarded verbatim so
+            # ``RunnerManifest.council`` is populated exactly the way the
+            # ``model: councils/<name>.yaml`` file convention populates it
+            # via ``_load_council_config`` - both paths drive the same
+            # ``manifest.council`` branch in the runner.
+            council = mcp_config.get("council")
+            if isinstance(council, dict) and council:
+                overrides["council"] = council
 
         # ``max_tokens`` from ``mcp_config`` (mode-profile override) wins; the
         # model_config value is only the fallback when the override is absent.

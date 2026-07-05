@@ -2982,6 +2982,30 @@ class AgentSpawner:
                         attempt_mcp = dict(attempt_mcp or {})
                         attempt_mcp.setdefault("task_id", tasks[0].id)
 
+                    # Inline per-role council block
+                    # (``role_model_policy.<role>.council``, parsed and
+                    # validated by ``seed_parser._parse_council``): forward
+                    # it so the runner manifest gets the same ``council``
+                    # payload the ``model: councils/<name>.yaml`` file
+                    # convention produces via ``_load_council_config``.
+                    # Scoped to the openai_agents adapter only - its runner
+                    # is the sole consumer of ``manifest.council``, and
+                    # other adapters treat unknown top-level mcp_config
+                    # keys as MCP server entries (see claude.py's
+                    # bare-servers fallback). An operator-set
+                    # ``mcp_config["council"]`` always wins (setdefault).
+                    if "openai_agents" in adapter_name:
+                        role_council = role_policy.get("council")
+                        if isinstance(role_council, dict) and role_council:
+                            attempt_mcp = dict(attempt_mcp or {})
+                            attempt_mcp.setdefault("council", role_council)
+                            logger.info(
+                                "spawn_for_tasks: role=%r inline role_model_policy council block "
+                                "forwarded into the runner manifest (candidates=%d)",
+                                tasks[0].role if tasks else None,
+                                len(role_council.get("candidates") or ()),
+                            )
+
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.
                         target_adapter.set_resource_limits(self._resource_limits)

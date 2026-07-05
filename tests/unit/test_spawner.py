@@ -1973,6 +1973,158 @@ class TestSamplingParamsSpawnPath:
         assert spawn_time_adapter.seen_mcp_config["max_tokens"] == 4096
 
 
+class TestInlineCouncilForwarding:
+    """An inline ``role_model_policy.<role>.council`` block must reach the
+    runner manifest with the exact payload the ``model: councils/<name>.yaml``
+    file convention produces - previously the inline block parsed and
+    validated but was silently dropped on the spawn path."""
+
+    _COUNCIL_BLOCK: dict[str, Any] = {
+        "candidates": [
+            {"model": "gpt-5-mini"},
+            {"model": "gpt-5"},
+        ],
+        "judge": {"model": "gpt-5"},
+        "timeout": 45.0,
+    }
+
+    def _spawn_and_capture(
+        self,
+        tmp_path: Path,
+        make_task,
+        mock_adapter_factory,
+        role_policy: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Spawn one backend task pinned to openai_agents and return the
+        mcp_config the spawn-time adapter received."""
+        primary_adapter = mock_adapter_factory(pid=1)
+        primary_adapter.name.return_value = "claude"
+        spawn_time_adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            primary_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            role_model_policy={"backend": role_policy},
+        )
+        with patch.object(spawner, "_get_adapter_by_name", return_value=spawn_time_adapter):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+        assert spawn_time_adapter.seen_mcp_config is not None
+        return spawn_time_adapter.seen_mcp_config
+
+    def _build_manifest(self, tmp_path: Path, mcp_config: dict[str, Any]) -> dict[str, Any]:
+        from types import SimpleNamespace
+
+        from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
+
+        return OpenAIAgentsAdapter._build_manifest(
+            prompt="do the task",
+            workdir=tmp_path,
+            model_config=SimpleNamespace(model="gpt-5-mini", effort="high", max_tokens=200_000),
+            session_id="sess-council",
+            mcp_config=mcp_config,
+            timeout_seconds=60,
+            task_scope="medium",
+            budget_multiplier=1.0,
+            system_addendum="",
+        )
+
+    def test_inline_council_round_trips_to_manifest_like_council_file(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Round trip: a seed-parsed inline council block must land in the
+        runner manifest and resolve through ``_load_council_config`` to the
+        exact same dict an equivalent ``councils/*.yaml`` file produces."""
+        import yaml
+
+        from bernstein.adapters.openai_agents_runner import (
+            RunnerManifest,
+            _load_council_config,
+        )
+        from bernstein.core.config.seed_parser import _parse_single_role_policy
+
+        role_policy = _parse_single_role_policy(
+            "backend",
+            {
+                "provider": "openai_agents",
+                "model": "gpt-5-mini",
+                "council": self._COUNCIL_BLOCK,
+            },
+        )
+        mcp_config = self._spawn_and_capture(tmp_path, make_task, mock_adapter_factory, role_policy)
+        assert mcp_config["council"] == self._COUNCIL_BLOCK
+
+        manifest = self._build_manifest(tmp_path, mcp_config)
+        assert manifest["council"] == self._COUNCIL_BLOCK
+
+        # File convention: the same block written as councils/roundtrip.yaml
+        # and referenced via ``model:`` must resolve to an identical config.
+        councils_dir = tmp_path / ".bernstein" / "councils"
+        councils_dir.mkdir(parents=True)
+        (councils_dir / "roundtrip.yaml").write_text(
+            yaml.safe_dump(self._COUNCIL_BLOCK),
+            encoding="utf-8",
+        )
+        file_manifest = RunnerManifest(
+            session_id="sess-file",
+            prompt="do the task",
+            workdir=str(tmp_path),
+            model="councils/roundtrip.yaml",
+        )
+        file_council = _load_council_config(file_manifest)
+        inline_council = _load_council_config(RunnerManifest.from_dict(manifest))
+        assert inline_council == file_council == self._COUNCIL_BLOCK
+
+    def test_no_council_in_role_policy_leaves_manifest_unchanged(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Regression: a role policy without a council block must not put a
+        ``council`` key anywhere on the spawn path."""
+        from bernstein.adapters.openai_agents_runner import RunnerManifest
+
+        role_policy: dict[str, Any] = {"provider": "openai_agents", "model": "gpt-5-mini"}
+        mcp_config = self._spawn_and_capture(tmp_path, make_task, mock_adapter_factory, role_policy)
+        assert "council" not in mcp_config
+
+        manifest = self._build_manifest(tmp_path, mcp_config)
+        assert "council" not in manifest
+        assert RunnerManifest.from_dict(manifest).council is None
+
+    def test_operator_mcp_config_council_wins_over_role_policy(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """An explicit mcp_config council must not be replaced by the
+        role-policy block - same precedence rule as the sampling fields."""
+        operator_council: dict[str, Any] = {
+            "candidates": [{"model": "gpt-5"}],
+            "judge": {"model": "gpt-5"},
+        }
+        primary_adapter = mock_adapter_factory(pid=1)
+        primary_adapter.name.return_value = "claude"
+        spawn_time_adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            primary_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            mcp_config={"council": operator_council},
+            role_model_policy={
+                "backend": {
+                    "provider": "openai_agents",
+                    "council": self._COUNCIL_BLOCK,
+                }
+            },
+        )
+        with patch.object(spawner, "_get_adapter_by_name", return_value=spawn_time_adapter):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+        assert spawn_time_adapter.seen_mcp_config is not None
+        assert spawn_time_adapter.seen_mcp_config["council"] == operator_council
+
+
 # --- Error-aware spawn-failure extraction (D2 MiniMax masking bug) ---
 #
 # Ground truth: work/bernstein/proofs/d2/minimax/FAIL-NOTE.md. A real
