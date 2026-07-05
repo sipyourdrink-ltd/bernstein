@@ -20,7 +20,6 @@ from bernstein.core.agents.spawner_core import AgentSpawner
 
 if TYPE_CHECKING:
     from pathlib import Path
-
     from unittest.mock import MagicMock
 
 

@@ -846,8 +846,7 @@ def _parse_single_role_policy(role: str, settings: object) -> dict[str, str | in
         if not isinstance(raw_style, str) or raw_style not in RESPONSE_STYLES:
             allowed = ", ".join(RESPONSE_STYLES)
             raise SeedError(
-                f"role_model_policy[{role!r}][{_ROLE_POLICY_STYLE_KEY!r}] must be one of: {allowed} "
-                f"(got {raw_style!r})"
+                f"role_model_policy[{role!r}][{_ROLE_POLICY_STYLE_KEY!r}] must be one of: {allowed} (got {raw_style!r})"
             )
         normalized[_ROLE_POLICY_STYLE_KEY] = raw_style
 

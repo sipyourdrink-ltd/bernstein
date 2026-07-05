@@ -144,24 +144,14 @@ class TestParseSeedValid:
             parse_seed(seed_file)
 
     def test_role_model_policy_parses_response_style(self, seed_file: Path) -> None:
-        seed_file.write_text(
-            'goal: "T"\n'
-            "role_model_policy:\n"
-            "  backend:\n"
-            "    model: gpt-5\n"
-            "    response_style: terse\n"
-        )
+        seed_file.write_text('goal: "T"\nrole_model_policy:\n  backend:\n    model: gpt-5\n    response_style: terse\n')
         cfg = parse_seed(seed_file)
         assert cfg.role_model_policy is not None
         assert cfg.role_model_policy["backend"]["response_style"] == "terse"
 
     def test_role_model_policy_rejects_unknown_response_style(self, seed_file: Path) -> None:
         seed_file.write_text(
-            'goal: "T"\n'
-            "role_model_policy:\n"
-            "  backend:\n"
-            "    model: gpt-5\n"
-            "    response_style: shouty\n"
+            'goal: "T"\nrole_model_policy:\n  backend:\n    model: gpt-5\n    response_style: shouty\n'
         )
         with pytest.raises(SeedError, match="response_style"):
             parse_seed(seed_file)
@@ -178,13 +168,7 @@ class TestParseSeedValid:
             "name: deep\nsystem_prompt_preamble: |\n  Deep preamble.\n",
             encoding="utf-8",
         )
-        seed_file.write_text(
-            'goal: "T"\n'
-            "role_model_policy:\n"
-            "  backend:\n"
-            "    model: gpt-5\n"
-            "    response_style: terse\n"
-        )
+        seed_file.write_text('goal: "T"\nrole_model_policy:\n  backend:\n    model: gpt-5\n    response_style: terse\n')
         with pytest.raises(SeedError, match="fast.yaml") as excinfo:
             parse_seed(seed_file)
         assert isinstance(excinfo.value, ResponseStyleTemplateError) or isinstance(
@@ -194,11 +178,7 @@ class TestParseSeedValid:
     def test_response_style_with_bundled_templates_passes_validation(self, seed_file: Path) -> None:
         # No workdir override dir -> bundled templates satisfy validation.
         seed_file.write_text(
-            'goal: "T"\n'
-            "role_model_policy:\n"
-            "  default:\n"
-            "    model: gpt-5\n"
-            "    response_style: verbose\n"
+            'goal: "T"\nrole_model_policy:\n  default:\n    model: gpt-5\n    response_style: verbose\n'
         )
         cfg = parse_seed(seed_file)
         assert cfg.role_model_policy is not None

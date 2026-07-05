@@ -412,10 +412,12 @@ class ScheduleSupervisor:
         )
 
         if raw not in RESPONSE_STYLES:
+            from bernstein.core.security.sanitize import sanitize_log
+
             logger.warning(
                 "Schedule %s declares unknown response_profile %r; ignoring",
                 schedule.id,
-                raw,
+                sanitize_log(raw),
             )
             return "", ""
         try:

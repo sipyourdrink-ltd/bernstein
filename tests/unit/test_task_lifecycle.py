@@ -1216,9 +1216,7 @@ def test_record_cost_tags_response_profile_from_session(tmp_path: Path, make_tas
     assert tags["profile_content_sha256"] == "f" * 64
 
 
-def test_record_cost_tags_response_profile_from_task_metadata_when_session_lost(
-    tmp_path: Path, make_task: Any
-) -> None:
+def test_record_cost_tags_response_profile_from_task_metadata_when_session_lost(tmp_path: Path, make_task: Any) -> None:
     """When the session is already gone (dead-exit recovery), the profile
     stamped on task metadata at spawn still reaches the ledger entry."""
     from bernstein.core.tasks.task_lifecycle import _record_cost_and_convergence
