@@ -54,6 +54,13 @@ from bernstein.core.security.audit import (
 #: digest.
 EVENT_MULTIMODAL_ATTACH = "multimodal.attach"
 
+#: Issue #2242 -- emitted whenever the compaction sensitive-content gate
+#: redacts a credential-shaped span, refuses a compaction outright, or
+#: suppresses a rule via an operator allowlist entry. The event records
+#: the task id, the rule id, the action taken, and the SHA-256 of the
+#: offending span -- never the span content itself.
+EVENT_COMPACTION_SENSITIVE_GATE = "compaction.sensitive_gate"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -242,10 +249,49 @@ def record_multimodal_attach(
     )
 
 
+def record_sensitive_gate(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    rule_id: str,
+    action: str,
+    span_hash: str,
+) -> AuditEvent:
+    """Append a ``compaction.sensitive_gate`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: Task (or session) whose compaction input was gated.
+        rule_id: Identifier of the deny rule that fired (e.g.
+            ``content.pem-private-key``).
+        action: One of ``redacted``, ``refused``, or ``suppressed``.
+        span_hash: Hex SHA-256 of the offending span bytes. The hash is
+            the only trace of the span -- content is never recorded.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest``
+        embedded in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_COMPACTION_SENSITIVE_GATE,
+        actor=task_id,
+        resource_type="compaction",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "rule_id": rule_id,
+            "action": action,
+            "span_hash": span_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
+    "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_MULTIMODAL_ATTACH",
     "AuditChainStore",
     "MultimodalAttachDetails",
     "record_multimodal_attach",
+    "record_sensitive_gate",
 ]

@@ -471,6 +471,7 @@ _REDIRECT_MAP: dict[str, str] = {
     "semantic_graph": "bernstein.core.knowledge.ast_symbol_graph",
     "sensitive_data": "bernstein.core.security.sensitive_data",
     "sensitive_file_detector": "bernstein.core.security.sensitive_file_detector",
+    "sensitive_gate": "bernstein.core.tokens.sensitive_gate",
     "server_app": "bernstein.core.server.server_app",
     "server_launch": "bernstein.core.server.server_launch",
     "server_middleware": "bernstein.core.server.server_middleware",
