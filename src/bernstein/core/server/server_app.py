@@ -1220,7 +1220,7 @@ def create_app(
     # is matched before /tasks/{task_id}.
     from bernstein.core.routes.acp import router as acp_router
     from bernstein.core.routes.agent_comparison import router as agent_comparison_router
-    from bernstein.core.routes.api_v1 import router as api_v1_router
+    from bernstein.core.routes.api_v1 import build_router as build_api_v1_router
     from bernstein.core.routes.approvals import router as approvals_router
     from bernstein.core.routes.audit_log import router as audit_log_router
     from bernstein.core.routes.batch_ops import router as batch_ops_router
@@ -1312,6 +1312,12 @@ def create_app(
         session_peek_router,
         orchestrator_holds_router,
     ]
+
+    # Fresh per-app router: including route groups mutates the target router,
+    # so reusing the module-level instance would grow it by a full copy of
+    # the v1 route set on every create_app call (unbounded route/memory
+    # growth in app-per-test suites, ending in RecursionError at startup).
+    api_v1_router = build_api_v1_router()
 
     for r in all_routers:
         application.include_router(r)

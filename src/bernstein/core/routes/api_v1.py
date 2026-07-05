@@ -39,4 +39,22 @@ class _VersionedRoute(APIRoute):
         return handler
 
 
-router = APIRouter(prefix="/api/v1", route_class=_VersionedRoute)
+def build_router() -> APIRouter:
+    """Return a fresh ``/api/v1`` router for a single application instance.
+
+    ``create_app`` includes every route group into this router. Using a
+    module-level router for that would make the mutation global: each
+    ``create_app`` call would append another full copy of the v1 route set
+    to the shared object, so every subsequent app instance grows by ~220
+    routes. In a long-lived process that builds many apps (the test suite
+    creates one per test) the route table grows without bound, RSS climbs
+    with it, and app startup eventually fails with ``RecursionError``.
+    Each app must therefore get its own router instance.
+    """
+    return APIRouter(prefix="/api/v1", route_class=_VersionedRoute)
+
+
+# Kept for backward compatibility with external importers. Application code
+# must not mutate this shared instance; ``create_app`` builds a fresh router
+# via ``build_router()``.
+router = build_router()
