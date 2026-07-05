@@ -17,6 +17,7 @@ import signal
 import subprocess
 import time
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -516,6 +517,31 @@ _COMPACT_RETRY_META = (
 #: After this many compaction-retries the task is failed permanently.
 _COMPACT_MAX_RETRIES: int = 1
 
+#: Typed terminal failure reason recorded when the sensitive gate refuses
+#: a reactive compaction. Deliberately free of the transient-failure
+#: keywords ``task_lifecycle._dynamic_retry_limit`` matches on, so the
+#: reason never earns a retry budget: combined with ``max_task_retries=0``
+#: at the call site, the failure is terminal by construction.
+_GATE_REFUSAL_FAILURE_REASON: str = "Context overflow: compaction refused by sensitive gate"
+
+
+class CompactRetryOutcome(StrEnum):
+    """Typed outcome of the reactive 413 compact-and-retry handler.
+
+    Each value doubles as the ``error_type`` tag on the orphan metric the
+    caller emits, so a gate-refusal fast-fail stays distinguishable from
+    a pipeline failure in post-run analysis.
+    """
+
+    #: Compaction succeeded and a compacted retry task was queued.
+    RETRIED = "context_overflow_compacted"
+    #: Compaction failed or the compact-retry budget was exhausted.
+    FAILED = "context_overflow_compact_failed"
+    #: The sensitive gate refused the compaction; the task was failed
+    #: fast with :data:`_GATE_REFUSAL_FAILURE_REASON` instead of burning
+    #: the remaining compact retries on an unchanged oversized prompt.
+    GATE_REFUSED = "context_overflow_gate_refused"
+
 
 def _try_compact_and_retry(
     *,
@@ -525,7 +551,7 @@ def _try_compact_and_retry(
     session: AgentSession,
     tasks_snapshot: dict[str, list[Task]],
     fallback_model: str | None,
-) -> bool:
+) -> CompactRetryOutcome:
     """Run the compaction pipeline on the task's prompt and retry once.
 
     When an agent crashes with a 413 / context-overflow error, this function:
@@ -535,10 +561,14 @@ def _try_compact_and_retry(
        on the task description (the only mutable part of the prompt).
     3. Creates a retry task with a ``meta_message`` instructing the agent
        to work with reduced context.
-    4. Returns ``True`` if the retry was queued, ``False`` if compaction
-       failed or the retry limit was reached.
 
     Bounded to ``_COMPACT_MAX_RETRIES`` retries to prevent infinite loops.
+
+    When the pipeline's sensitive gate refuses the compaction
+    (``gate_action="refused"``), the description is unchanged and a retry
+    would 413 again with the same oversized prompt - the task is failed
+    fast with a typed terminal reason instead (issue #2253); see
+    :func:`_fail_fast_on_gate_refusal`.
 
     Args:
         orch: Orchestrator instance.
@@ -549,7 +579,10 @@ def _try_compact_and_retry(
         fallback_model: Optional cascade fallback model.
 
     Returns:
-        True if a compacted retry was successfully queued.
+        ``CompactRetryOutcome.RETRIED`` when a compacted retry was queued,
+        ``CompactRetryOutcome.GATE_REFUSED`` when the sensitive gate
+        refused and the task was failed fast, ``CompactRetryOutcome.FAILED``
+        when compaction failed or the compact-retry budget was exhausted.
     """
     from bernstein.core.compaction_pipeline import CompactionPipeline
 
@@ -573,7 +606,7 @@ def _try_compact_and_retry(
             workdir=getattr(orch, "_workdir", None),
             **_retry_escalation_context(orch),
         )
-        return False
+        return CompactRetryOutcome.FAILED
 
     # Run the compaction pipeline on the task description.
     pipeline = CompactionPipeline(plugin_manager=getattr(orch, "_plugin_manager", None))
@@ -621,17 +654,22 @@ def _try_compact_and_retry(
             workdir=getattr(orch, "_workdir", None),
             **_retry_escalation_context(orch),
         )
-        return False
+        return CompactRetryOutcome.FAILED
 
     if result.gate_action == "refused":
         # The sensitive gate found credential-shaped content it could not
         # safely delimit: nothing was sent to the model and the description
-        # is unchanged. The refusal is already in the audit chain; surface
-        # it to the operator log too.
-        logger.warning(
-            "Compaction for task %s skipped by sensitive gate (rules: %s)",
-            task_id,
-            ", ".join(result.gate_rule_ids),
+        # is unchanged, so a retry would 413 again with the same oversized
+        # prompt. Fail fast instead of burning the remaining compact
+        # retries (issue #2253).
+        return _fail_fast_on_gate_refusal(
+            orch=orch,
+            task_id=task_id,
+            session=session,
+            description_text=description_text,
+            result=result,
+            chain=_gate_chain,
+            tasks_snapshot=tasks_snapshot,
         )
 
     # Reconcile post-compaction budget now that we know how many tokens were saved.
@@ -657,19 +695,19 @@ def _try_compact_and_retry(
     # Receipt the compaction (issue #2246): chain event, replay-journal
     # step, ledger row, and metric point. Recording is best-effort and
     # never alters the retry behaviour below; a missing receipt is caught
-    # by the run's audit verification instead.
-    if result.gate_action != "refused":
-        try:
-            _record_reactive_compaction_receipt(
-                orch=orch,
-                session=session,
-                task_id=task_id,
-                pre_text=description_text,
-                result=result,
-                chain=_gate_chain,
-            )
-        except Exception as _receipt_exc:
-            logger.warning("Reactive compaction receipt failed for %s: %s", task_id, _receipt_exc)
+    # by the run's audit verification instead. (The gate-refusal branch
+    # above returned already, anchoring its own refusal receipt.)
+    try:
+        _record_reactive_compaction_receipt(
+            orch=orch,
+            session=session,
+            task_id=task_id,
+            pre_text=description_text,
+            result=result,
+            chain=_gate_chain,
+        )
+    except Exception as _receipt_exc:
+        logger.warning("Reactive compaction receipt failed for %s: %s", task_id, _receipt_exc)
 
     # Retry the task with compacted description and a nudge meta-message.
     retry_or_fail_task(
@@ -718,7 +756,104 @@ def _try_compact_and_retry(
         except OSError:
             logger.debug("WAL write failed for context_overflow_compacted %s", task_id)
 
-    return True
+    return CompactRetryOutcome.RETRIED
+
+
+def _fail_fast_on_gate_refusal(
+    *,
+    orch: Any,
+    task_id: str,
+    session: AgentSession,
+    description_text: str,
+    result: Any,
+    chain: Any,
+    tasks_snapshot: dict[str, list[Task]],
+) -> CompactRetryOutcome:
+    """Terminally fail a task whose reactive compaction the gate refused.
+
+    The refusal is deterministic: the same description scanned again
+    produces the same refusal, so re-queueing the retry can only 413
+    again until ``_COMPACT_MAX_RETRIES`` burns down. Instead the task is
+    failed with :data:`_GATE_REFUSAL_FAILURE_REASON` naming the gate and
+    the deny rules that fired, routing it to the dead-letter queue (and
+    the operator error sink) on the first refusal.
+
+    Visibility contract (issue #2253): the pipeline already chained the
+    gate's own ``compaction.sensitive_gate`` events exactly once; this
+    helper anchors the refusal receipt (``gate_action="refused"``,
+    pre == post hashes) exactly once and never re-emits the gate events.
+    No compaction metric point is written - nothing was compacted.
+
+    Args:
+        orch: Orchestrator instance.
+        task_id: Task being failed.
+        session: Dead agent session that overflowed.
+        description_text: Task description the gate refused (unchanged).
+        result: The refusing ``CompactionResult`` from the pipeline.
+        chain: Audit chain store resolved for this run (may be None).
+        tasks_snapshot: Pre-fetched tasks for dedup checks.
+
+    Returns:
+        Always ``CompactRetryOutcome.GATE_REFUSED``.
+    """
+    logger.warning(
+        "Compaction for task %s refused by sensitive gate (rules: %s) - failing fast instead of retrying",
+        task_id,
+        ", ".join(result.gate_rule_ids),
+    )
+
+    # Anchor the refusal receipt before failing the task so the refusal
+    # stays auditable even if the failure PATCH fails midway.
+    try:
+        _record_reactive_compaction_receipt(
+            orch=orch,
+            session=session,
+            task_id=task_id,
+            pre_text=description_text,
+            result=result,
+            chain=chain,
+            record_metric=False,
+        )
+    except Exception as _receipt_exc:
+        logger.warning("Gate-refusal receipt failed for %s: %s", task_id, _receipt_exc)
+
+    reason = (
+        f"{_GATE_REFUSAL_FAILURE_REASON} "
+        f"(rules: {', '.join(result.gate_rule_ids)}; correlation={result.correlation_id})"
+    )
+    retry_or_fail_task(
+        task_id,
+        reason,
+        client=orch._client,
+        server_url=orch._config.server_url,
+        max_task_retries=0,  # deterministic refusal: force permanent fail
+        retried_task_ids=orch._retried_task_ids,
+        tasks_snapshot=tasks_snapshot,
+        workdir=getattr(orch, "_workdir", None),
+        **_retry_escalation_context(orch),
+    )
+
+    _wal: Any = getattr(orch, "_wal_writer", None)
+    if _wal is not None:
+        try:
+            _wal.write_entry(
+                decision_type="context_overflow_gate_refused",
+                inputs={
+                    "task_id": task_id,
+                    "agent_id": session.id,
+                    "gate_rule_ids": list(result.gate_rule_ids),
+                },
+                output={
+                    "correlation_id": result.correlation_id,
+                    "compacted": False,
+                    "failed_fast": True,
+                },
+                actor="agent_lifecycle",
+            )
+        except OSError:
+            logger.debug("WAL write failed for context_overflow_gate_refused %s", task_id)
+
+    return CompactRetryOutcome.GATE_REFUSED
 
 
 def _record_reactive_compaction_receipt(
@@ -729,6 +864,7 @@ def _record_reactive_compaction_receipt(
     pre_text: str,
     result: Any,
     chain: Any,
+    record_metric: bool = True,
 ) -> None:
     """Anchor the reactive compaction in chain, journal, ledger, metrics.
 
@@ -744,6 +880,9 @@ def _record_reactive_compaction_receipt(
         pre_text: Task description before compaction.
         result: The ``CompactionResult`` from the pipeline.
         chain: Audit chain store resolved for this run (may be None).
+        record_metric: When ``False``, skip the compaction metric point.
+            Used by the gate-refusal fast-fail, which anchors a receipt
+            for auditability but did not compact anything.
     """
     from bernstein.core.tokens.compaction_receipt import (
         build_receipt,
@@ -772,6 +911,8 @@ def _record_reactive_compaction_receipt(
         workdir=Path(_workdir) if _workdir is not None else None,
         spend_ledger=getattr(orch, "_spend_ledger", None),
     )
+    if not record_metric:
+        return
     try:
         get_collector().record_compaction(
             session.id,
@@ -921,6 +1062,27 @@ def _requeue_rate_limited_task(
     return True
 
 
+def _resolve_agent_worktree_dir(workdir: Path, session: AgentSession) -> Path | None:
+    """Find the agent's worktree directory across every layout this codebase supports.
+
+    Checks the current default layout (``.sdd/runtime/worktrees/<id>``) first,
+    then the legacy layout (``.sdd/worktrees/<id>``). Returns ``None`` when
+    neither exists -- e.g. worktrees are disabled entirely and the agent runs
+    directly against ``workdir`` with no per-task worktree at all. Callers
+    must handle the ``None`` case with their own root-level fallback rather
+    than assuming a worktree always exists (see the liveness-probe FAIL-NOTE:
+    hardcoding only the legacy ``.sdd/worktrees/<id>`` layout misjudged a
+    live agent running under either alternate layout as dead).
+    """
+    for _wt_dir in (
+        workdir / ".sdd" / "runtime" / "worktrees" / session.id,
+        workdir / ".sdd" / "worktrees" / session.id,
+    ):
+        if _wt_dir.exists():
+            return _wt_dir
+    return None
+
+
 def _resolve_agent_log_path(workdir: Path, session: AgentSession) -> Path:
     """Find the agent's log file, checking session attribute then standard locations."""
     _session_lp = getattr(session, "log_path", "")
@@ -928,9 +1090,11 @@ def _resolve_agent_log_path(workdir: Path, session: AgentSession) -> Path:
         return Path(_session_lp)
     log_path = workdir / ".sdd" / "runtime" / f"{session.id}.log"
     if not log_path.exists():
-        _wt_log = workdir / ".sdd" / "worktrees" / session.id / ".sdd" / "runtime" / f"{session.id}.log"
-        if _wt_log.exists():
-            return _wt_log
+        _wt_dir = _resolve_agent_worktree_dir(workdir, session)
+        if _wt_dir is not None:
+            _wt_log = _wt_dir / ".sdd" / "runtime" / f"{session.id}.log"
+            if _wt_log.exists():
+                return _wt_log
     return log_path
 
 
@@ -982,16 +1146,30 @@ def _read_runner_cost_usd(
     except OSError:
         return 0.0, 0, 0
 
-    for line in raw.splitlines():
+    for line_num, line in enumerate(raw.splitlines(), 1):
         line = line.strip()
         if not line:
             continue
         try:
             rec = json.loads(line)
-        except ValueError:
+            total_in += int(rec.get("in", 0) or 0)
+            total_out += int(rec.get("out", 0) or 0)
+        except (ValueError, TypeError, AttributeError) as exc:
+            # Widened beyond just the json.loads() parse: a well-formed-but-
+            # wrong-shape record (not a dict, or "in"/"out" not coercible to
+            # int) raises on the SUBSEQUENT .get()/int() calls, not on
+            # json.loads() itself. This is read on the failure-recovery path
+            # for a dead agent, so a malformed record is realistic input --
+            # skip it and keep summing the rest rather than aborting cost
+            # recovery for the whole task.
+            logger.debug(
+                "Skipping malformed .tokens sidecar record at %s:%d: %s - line=%s",
+                sidecar_path,
+                line_num,
+                exc,
+                line[:500],
+            )
             continue
-        total_in += int(rec.get("in", 0) or 0)
-        total_out += int(rec.get("out", 0) or 0)
 
     if total_in <= 0 and total_out <= 0:
         return 0.0, 0, 0
@@ -1110,7 +1288,7 @@ def _handle_failure_detection(
         return True
 
     if _failure_type == "context_overflow":
-        _compacted = _try_compact_and_retry(
+        _outcome = _try_compact_and_retry(
             orch=orch,
             task=task,
             task_id=task_id,
@@ -1118,8 +1296,7 @@ def _handle_failure_detection(
             tasks_snapshot=tasks_snapshot,
             fallback_model=_fallback_model,
         )
-        error_type = "context_overflow_compacted" if _compacted else "context_overflow_compact_failed"
-        emit_orphan_metrics(orch._workdir, task_id, session, start_ts, success=False, error_type=error_type)
+        emit_orphan_metrics(orch._workdir, task_id, session, start_ts, success=False, error_type=_outcome.value)
         orch._record_provider_health(session, success=False)
         return True
 
@@ -1476,11 +1653,29 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
     heartbeat_path = orch._workdir / ".sdd" / "runtime" / "heartbeats" / f"{session.id}.json"
     heartbeat_age = _mtime_age(heartbeat_path, now)
 
-    log_path = orch._workdir / ".sdd" / "worktrees" / session.id / ".sdd" / "runtime" / f"{session.id}.log"
+    # Resolve log/git paths across every layout this codebase supports
+    # (.sdd/runtime/worktrees/<id>/..., legacy .sdd/worktrees/<id>/..., and
+    # the root .sdd/runtime/<id>.log fallback when worktrees are disabled
+    # entirely) rather than hardcoding the legacy worktree layout -- a live
+    # agent running under either alternate layout was previously misjudged
+    # dead (and then killed/reaped) by this probe.
+    log_path = _resolve_agent_log_path(orch._workdir, session)
     log_age = _mtime_age(log_path, now)
 
-    git_path = orch._workdir / ".sdd" / "worktrees" / session.id / ".git"
-    git_age = _mtime_age(git_path, now)
+    # The git signal is only meaningful when this agent has its own worktree:
+    # the worktree ``.git`` mtime reflects THIS agent's commit/branch activity.
+    # When no per-agent worktree exists there is deliberately NO git signal
+    # (git_age stays None) rather than falling back to the root ``workdir/.git``
+    # mtime -- the root repo is shared mutable state touched by the
+    # orchestrator's own git operations, sibling agents, and repo setup, so
+    # its freshness cannot be attributed to this agent. Treating it as a
+    # liveness signal made genuinely dead agents look alive on any busy (or
+    # freshly initialised) repo, deferring the fail path indefinitely. In the
+    # worktrees-disabled layout the agent-specific signals are the heartbeat
+    # file and the root ``.sdd/runtime/<id>.log`` resolved above.
+    _wt_dir = _resolve_agent_worktree_dir(orch._workdir, session)
+    git_path = (_wt_dir / ".git") if _wt_dir is not None else None
+    git_age = _mtime_age(git_path, now) if git_path is not None else None
 
     fresh_ages = [a for a in (heartbeat_age, log_age, git_age) if a is not None and a < _ORPHAN_LIVENESS_GRACE_S]
     has_fresh_signal = bool(fresh_ages)
@@ -1502,7 +1697,7 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
         f"{heartbeat_age:.1f}" if heartbeat_age is not None else "missing",
         log_path,
         f"{log_age:.1f}" if log_age is not None else "missing",
-        git_path,
+        git_path if git_path is not None else "no-per-agent-worktree",
         f"{git_age:.1f}" if git_age is not None else "missing",
         _ORPHAN_LIVENESS_GRACE_S,
         verdict,

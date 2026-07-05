@@ -219,3 +219,35 @@ class TestBudgetKillSwitchRearm:
 
         assert stub._budget_stop_fired_at is None
         assert stub._budget_stop_killed_agents == set()
+
+
+class TestBudgetKillSwitchHeartbeatReap:
+    """Forced SIGKILL must also reap the session's heartbeat shell loop."""
+
+    def test_sigkill_reaps_heartbeat_loop_per_agent(self, tmp_path: Path) -> None:
+        """Every forced-kill path must call the Defect-10 heartbeat reaper so
+        the backgrounded heartbeat shell loop does not outlive the agent it
+        was monitoring (regression: the budget kill-switch SIGKILL path used
+        to call ``spawner.kill`` without reaping)."""
+        from unittest.mock import patch
+
+        sessions = [_session("A-1"), _session("A-2")]
+        stub = _build_orch_stub(
+            tmp_path,
+            sessions,
+            budget_usd=1.0,
+            kill_grace_period_s=30,
+        )
+        stub._cost_tracker.record("A-0", "T-0", "opus", 0, 0, cost_usd=1.5)
+
+        stub._enforce_budget_killswitch()
+        stub._budget_stop_fired_at = time.time() - 31
+
+        with patch("bernstein.core.agents.heartbeat._reap_session_heartbeat_loop") as reap:
+            stub._enforce_budget_killswitch()
+
+        assert stub._spawner.kill.call_count == 2
+        assert reap.call_count == 2
+        reaped_ids = {c.args[1].id for c in reap.call_args_list}
+        assert reaped_ids == {"A-1", "A-2"}
+        assert all(c.kwargs["reason"] == "budget_killswitch" for c in reap.call_args_list)

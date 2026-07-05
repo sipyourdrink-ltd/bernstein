@@ -25,11 +25,18 @@ _CONVENTIONAL_COMMIT_RE = re.compile(r"^(feat|fix|chore|docs|test|refactor)(\([a
 # merge-preflight safety guard in :mod:`bernstein.core.git.git_pr` blocks
 # the COMMIT, but to close the gap at the staging layer too we extend the
 # deny list with every prefix that must never reach a default branch.
+#
+# NOTE: entries here are matched as bare substrings against candidate paths
+# (see ``stage_files``/``stage_task_files`` below), so every entry MUST be
+# scoped with enough of a path prefix to avoid matching unrelated legitimate
+# paths.  A bare ``"attestations/"`` or ``"auth/"`` entry would also match
+# any legitimate path that happens to contain that substring anywhere (e.g.
+# ``src/myapp/auth/handler.py``), silently excluding real work from staging
+# -- the inverse of the leak this list exists to prevent.  Keep only the
+# ``.sdd/``-scoped forms.
 _NEVER_STAGE: frozenset[str] = frozenset(
     {
         ".sdd/",
-        "attestations/",
-        "auth/",
         ".sdd/runtime/",
         ".sdd/metrics/",
         ".sdd/attestations/",

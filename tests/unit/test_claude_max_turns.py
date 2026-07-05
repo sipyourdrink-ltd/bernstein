@@ -54,6 +54,25 @@ class TestComputeMaxTurns:
         cfg = compute_max_turns(complexity="medium", model="sonnet")
         assert len(cfg.reasoning) > 0
 
+    def test_explicit_max_turns_clamped_to_cap(self) -> None:
+        """An absurdly-large explicit override cannot defeat max_turns_cap.
+
+        min_turns/max_turns_cap are documented as "absolute" bounds; the
+        explicit-override path used to bypass them entirely.
+        """
+        cfg = compute_max_turns(explicit_max_turns=100_000, max_turns_cap=200, min_turns=5)
+        assert cfg.max_turns == 200
+
+    def test_explicit_max_turns_clamped_to_min(self) -> None:
+        """A too-small explicit override is raised up to min_turns, not left as-is."""
+        cfg = compute_max_turns(explicit_max_turns=1, max_turns_cap=200, min_turns=5)
+        assert cfg.max_turns == 5
+
+    def test_explicit_max_turns_within_bounds_passes_through(self) -> None:
+        """An explicit value already inside [min_turns, max_turns_cap] is untouched."""
+        cfg = compute_max_turns(explicit_max_turns=50, max_turns_cap=200, min_turns=5)
+        assert cfg.max_turns == 50
+
 
 class TestMaxTurnsConfig:
     def test_to_dict(self) -> None:

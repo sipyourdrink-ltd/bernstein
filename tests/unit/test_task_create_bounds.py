@@ -159,6 +159,34 @@ def test_task_create_meta_messages_list_capped() -> None:
         TaskCreate(title="ok", description="ok", meta_messages=["ok"] * 101)
 
 
+def test_task_create_max_turns_zero_rejected() -> None:
+    """max_turns=0 is rejected by pydantic Field(ge=1) with a clean 422-shaped error.
+
+    Without the ge=1 constraint, 0/negative values sailed through to a
+    confusing CLI-level failure downstream (an invalid --max-turns flag).
+    """
+    with pytest.raises(ValidationError):
+        TaskCreate(title="ok", description="ok", max_turns=0)
+
+
+def test_task_create_max_turns_negative_rejected() -> None:
+    """max_turns=-1 is rejected by pydantic Field(ge=1)."""
+    with pytest.raises(ValidationError):
+        TaskCreate(title="ok", description="ok", max_turns=-1)
+
+
+def test_task_create_max_turns_positive_accepted() -> None:
+    """A positive max_turns still round-trips normally."""
+    t = TaskCreate(title="ok", description="ok", max_turns=25)
+    assert t.max_turns == 25
+
+
+def test_task_create_max_turns_none_accepted() -> None:
+    """max_turns is optional - None (the default) is still accepted."""
+    t = TaskCreate(title="ok", description="ok")
+    assert t.max_turns is None
+
+
 def test_task_create_happy_path_still_works() -> None:
     """Normal-sized input still parses successfully."""
     t = TaskCreate(

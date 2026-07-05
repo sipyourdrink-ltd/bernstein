@@ -2106,6 +2106,63 @@ class TestManifestControlKnobs:
         manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-mt2")
         assert manifest["max_turns"] == 77
 
+    def test_rejected_allow_run_command_override_is_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A non-bool mcp_config allow_run_command must fall back to the env
+        default AND leave a WARNING diagnostic -- a silently-dropped override
+        was previously undiagnosable from logs alone."""
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents"):
+            manifest = self._spawn_and_read_manifest(
+                tmp_path, session_id="oai-arc4", mcp_config={"allow_run_command": "yes"}
+            )
+        assert manifest["allow_run_command"] is False
+        assert "allow_run_command='yes' must be a bool" in caplog.text
+
+    def test_valid_allow_run_command_override_is_not_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents"):
+            self._spawn_and_read_manifest(tmp_path, session_id="oai-arc5", mcp_config={"allow_run_command": True})
+        assert "allow_run_command" not in caplog.text
+
+    def test_rejected_max_turns_override_is_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A non-positive / wrong-type mcp_config max_turns must fall back to
+        env/tuning resolution AND leave a WARNING diagnostic, matching the
+        runner-side _resolve_max_turns rejection logging."""
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "77")
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents"):
+            manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-mt3", mcp_config={"max_turns": 0})
+        assert manifest["max_turns"] == 77
+        assert "max_turns=0 must be a positive int" in caplog.text
+
+    def test_rejected_bool_max_turns_override_is_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """bool is an int subclass; ``True`` must be rejected (and logged),
+        not treated as max_turns=1."""
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "77")
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents"):
+            manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-mt4", mcp_config={"max_turns": True})
+        assert manifest["max_turns"] == 77
+        assert "max_turns=True must be a positive int" in caplog.text
+
     def test_runner_manifest_parses_control_knobs(self) -> None:
         manifest = RunnerManifest.from_dict(
             {

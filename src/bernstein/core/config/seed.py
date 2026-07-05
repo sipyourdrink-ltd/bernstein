@@ -438,6 +438,6 @@ def resolve_seed_path(workdir: Path, explicit: Path | None = None) -> Path:
         logger.debug("resolve_seed_path: using BERNSTEIN_SEED_PATH=%s -> %s", env_path, resolved)
         return resolved
 
-    resolved = workdir / "bernstein.yaml"
+    resolved = (workdir / "bernstein.yaml").resolve()
     logger.debug("resolve_seed_path: falling back to workdir default %s", resolved)
     return resolved

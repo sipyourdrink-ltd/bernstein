@@ -14,6 +14,8 @@ from bernstein.core.teams.audit import (
 )
 from bernstein.core.teams.drift import (
     MISSING_TEMPLATE,
+    RoleDriftFinding,
+    classify_role_template_drift,
     compute_role_digests,
     detect_role_template_drift,
     resolve_roles_dir,
@@ -56,6 +58,7 @@ __all__ = [
     "TEAMS_LOCK_FILENAME",
     "TEAM_MANIFEST_DIR_NAME",
     "ExpandedTeam",
+    "RoleDriftFinding",
     "TeamCoordination",
     "TeamLockEntry",
     "TeamLockState",
@@ -68,6 +71,7 @@ __all__ = [
     "TeamManifestValidationError",
     "TeamRoleSpec",
     "canonical_toml",
+    "classify_role_template_drift",
     "compute_role_digests",
     "detect_role_template_drift",
     "discover_team_manifest_paths",

@@ -43,7 +43,7 @@ import json
 import logging
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -64,6 +64,15 @@ RUN_ID_ENV_VAR = "BERNSTEIN_RUN_ID"
 # wanted here, never full payloads (see module docstring + task spec).
 _ARG_VALUE_TRUNCATE_CHARS = 500
 _TRUNCATE_MARKER = "...[truncated]"
+
+# Truncation cap for captured conversation message content. Deliberately much
+# larger than _ARG_VALUE_TRUNCATE_CHARS: the whole point of recording content
+# (see RunInstrumenter.log_message) is that reviewing a run's prompts and
+# responses is possible without re-running the agent, so a 500-char preview
+# would defeat the purpose. Still bounded so a single enormous prompt cannot
+# bloat conversation.jsonl without limit. content_length always records the
+# TRUE pre-truncation length.
+_MESSAGE_CONTENT_TRUNCATE_CHARS = 20_000
 
 # Filesystem-safe shape for a single directory-name component. run_id arrives
 # via an environment variable and task_id/agent_id via the runner manifest,
@@ -148,10 +157,23 @@ class RunInstrumenter:
     task_id: str
     agent_id: str
     base_dir: Path
+    # Batched-task fan-out (instrumentation audit, bug 3): when one agent
+    # process works MULTIPLE Bernstein tasks (spawner_core role-batched
+    # spawns), only the first task's directory used to receive any
+    # instrumentation - every other task in the batch had zero coverage.
+    # ``extra_dirs`` carries the per-agent directory of every OTHER task in
+    # the batch; each JSONL append is mirrored to all of them so every task
+    # involved gets a full copy of this agent's records. Empty on
+    # single-task spawns (the common case) - behaviour is then byte-identical
+    # to the pre-fan-out implementation.
+    extra_dirs: list[Path] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
         self._dir_ready = False
+        # Extra dirs that were successfully created; a failure to create one
+        # fan-out dir only drops THAT dir (logged below), never the primary.
+        self._ready_extra_dirs: list[Path] = []
         try:
             self.base_dir.mkdir(parents=True, exist_ok=True)
             self._dir_ready = True
@@ -176,6 +198,20 @@ class RunInstrumenter:
                 sanitize_log(self.agent_id),
                 exc,
             )
+        for extra_dir in self.extra_dirs:
+            try:
+                extra_dir.mkdir(parents=True, exist_ok=True)
+                self._ready_extra_dirs.append(extra_dir)
+            except OSError as exc:
+                logger.warning(
+                    "RunInstrumenter: failed to create batched-task fan-out dir %s (run_id=%s "
+                    "agent_id=%s): %s - records will not be mirrored to this dir; the primary "
+                    "dir and other fan-out dirs are unaffected",
+                    extra_dir,
+                    sanitize_log(self.run_id),
+                    sanitize_log(self.agent_id),
+                    exc,
+                )
 
     # -- path helpers ---------------------------------------------------
 
@@ -216,6 +252,24 @@ class RunInstrumenter:
             logger.warning(
                 "RunInstrumenter: failed to write %s record %s=%s to %s: %s", kind, kind, sanitize_log(key), path, exc
             )
+        # Batched-task fan-out: mirror the same line into every other task's
+        # per-agent dir (see the ``extra_dirs`` field docstring). Per-dir
+        # failures are logged and skipped so one bad dir cannot break the
+        # primary write above (already committed) or the remaining mirrors.
+        for extra_dir in self._ready_extra_dirs:
+            mirror_path = extra_dir / path.name
+            try:
+                with self._lock, mirror_path.open("a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+            except OSError as exc:
+                logger.warning(
+                    "RunInstrumenter: failed to mirror %s record %s=%s to %s: %s",
+                    kind,
+                    kind,
+                    sanitize_log(key),
+                    mirror_path,
+                    exc,
+                )
 
     # -- public API -------------------------------------------------------
 
@@ -281,12 +335,17 @@ class RunInstrumenter:
         success: bool,
         error: str | None = None,
         wall_ms: float | None = None,
+        result: Any | None = None,
     ) -> None:
         """Append one record to ``tool-calls.jsonl`` for a single tool invocation.
 
         ``args`` is truncated (see :func:`_truncate_value`) before being
-        written - never the full tool result, only the call's own
-        arguments.
+        written. ``result`` (instrumentation audit, bug 2) carries what the
+        tool actually returned - previously only name/args/success were
+        recorded, making tool output impossible to review without re-running
+        the agent. It is stringified and truncated the same way ``args`` is,
+        so a huge return value (e.g. a full file body) is capped to a
+        preview, never stored whole.
         """
         try:
             if wall_ms is None:
@@ -300,6 +359,7 @@ class RunInstrumenter:
                 "args": _truncate_value(args or {}),
                 "success": success,
                 "error": error,
+                "result": _truncate_value(result) if result is not None else None,
             }
             self._append_line(self._tool_calls_path(), record, kind="tool_call", key=call_id)
         except Exception as exc:  # intentional-broad-except: instrumentation must never raise
@@ -313,11 +373,17 @@ class RunInstrumenter:
         content_length: int,
         tool_calls: list[str] | None = None,
         ts: str | None = None,
+        content: str | None = None,
     ) -> None:
         """Append one record to ``conversation.jsonl`` for a new message.
 
-        Only shape metadata is recorded - never message content - per the
-        task spec's privacy/size constraint.
+        ``content_length`` always records the TRUE length of the message.
+        ``content`` (instrumentation audit, bug 1) optionally carries the
+        message text itself, truncated to
+        :data:`_MESSAGE_CONTENT_TRUNCATE_CHARS` - shape-only records made it
+        impossible to review what an agent was actually told or said without
+        re-running it. ``None`` keeps the original shape-metadata-only
+        record for callers that must not persist content.
         """
         try:
             record: dict[str, Any] = {
@@ -326,6 +392,8 @@ class RunInstrumenter:
                 "content_length": content_length,
                 "ts": ts or _now_iso(),
             }
+            if content is not None:
+                record["content"] = _truncate_value(content, max_chars=_MESSAGE_CONTENT_TRUNCATE_CHARS)
             if tool_calls:
                 record["tool_calls"] = list(tool_calls)
             self._append_line(self._conversation_path(), record, kind="message", key=str(idx))
@@ -361,8 +429,10 @@ class _NullInstrumenter(RunInstrumenter):
         self.task_id = "uninitialized"
         self.agent_id = "uninitialized"
         self.base_dir = Path()
+        self.extra_dirs = []
         self._lock = threading.Lock()
         self._dir_ready = False
+        self._ready_extra_dirs = []
 
 
 _instrumenter_lock = threading.Lock()
@@ -395,16 +465,34 @@ def resolve_agent_dir(workdir: Path, run_id: str, task_id: str, agent_id: str) -
     )
 
 
-def init_instrumenter(*, run_id: str, task_id: str, agent_id: str, base_dir: Path) -> RunInstrumenter:
+def init_instrumenter(
+    *,
+    run_id: str,
+    task_id: str,
+    agent_id: str,
+    base_dir: Path,
+    extra_dirs: list[Path] | None = None,
+) -> RunInstrumenter:
     """Create and install the process-wide :class:`RunInstrumenter` singleton.
 
     Safe to call more than once (e.g. a test re-initializing between cases);
     each call replaces the previous singleton. Never raises - construction
     failures are caught inside :meth:`RunInstrumenter.__post_init__` and
     degrade to a disabled-but-non-crashing instance.
+
+    ``extra_dirs`` (batched-task fan-out - see the
+    :class:`RunInstrumenter` ``extra_dirs`` field docstring) lists the
+    per-agent directories of every OTHER task a batched agent process is
+    working; each JSONL append is mirrored to all of them.
     """
     global _instrumenter
-    instrumenter = RunInstrumenter(run_id=run_id, task_id=task_id, agent_id=agent_id, base_dir=base_dir)
+    instrumenter = RunInstrumenter(
+        run_id=run_id,
+        task_id=task_id,
+        agent_id=agent_id,
+        base_dir=base_dir,
+        extra_dirs=list(extra_dirs or []),
+    )
     with _instrumenter_lock:
         _instrumenter = instrumenter
     return instrumenter

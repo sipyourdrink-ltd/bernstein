@@ -725,3 +725,36 @@ class TestQualityGatesBenchmarkParsing:
         seed_file.write_text('goal: "Test"\nquality_gates:\n  benchmark: "enabled"\n')
         with pytest.raises(SeedError, match="benchmark must be a mapping"):
             parse_seed(seed_file)
+
+
+# ---------------------------------------------------------------------------
+# resolve_seed_path
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSeedPathWorkdirFallback:
+    """The workdir fallback must honour the documented contract of returning
+    a resolved, absolute path -- matching the explicit-path and
+    BERNSTEIN_SEED_PATH branches."""
+
+    def test_fallback_returns_absolute_resolved_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.config.seed import resolve_seed_path
+
+        monkeypatch.delenv("BERNSTEIN_SEED_PATH", raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        resolved = resolve_seed_path(Path("."))
+
+        assert resolved.is_absolute()
+        assert resolved == (tmp_path / "bernstein.yaml").resolve()
+
+    def test_fallback_normalizes_dot_segments(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.config.seed import resolve_seed_path
+
+        monkeypatch.delenv("BERNSTEIN_SEED_PATH", raising=False)
+        (tmp_path / "sub").mkdir()
+
+        resolved = resolve_seed_path(tmp_path / "sub" / "..")
+
+        assert resolved.is_absolute()
+        assert resolved == (tmp_path / "bernstein.yaml").resolve()

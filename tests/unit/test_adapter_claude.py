@@ -141,6 +141,33 @@ class TestSpawnCommandArgs:
         )
         assert cmd[cmd.index("--max-turns") + 1] == expected_turns
 
+    def test_explicit_max_turns_used_verbatim(self, tmp_path: Path) -> None:
+        """A positive explicit_max_turns bypasses scope/effort math and is used as-is."""
+        adapter = ClaudeCodeAdapter()
+        cmd = adapter._build_command(
+            ModelConfig(model="sonnet", effort="high"),
+            None,
+            "do something",
+            explicit_max_turns=7,
+        )
+        assert cmd[cmd.index("--max-turns") + 1] == "7"
+
+    @pytest.mark.parametrize("bad_value", [0, -1, -100])
+    def test_explicit_max_turns_non_positive_rejected(self, tmp_path: Path, bad_value: int) -> None:
+        """0/negative explicit_max_turns must not reach the Claude CLI as --max-turns.
+
+        Without this guard, a caller-supplied 0 or negative value sailed
+        through verbatim to the CLI flag instead of failing fast.
+        """
+        adapter = ClaudeCodeAdapter()
+        with pytest.raises(ValueError, match="positive integer"):
+            adapter._build_command(
+                ModelConfig(model="sonnet", effort="high"),
+                None,
+                "do something",
+                explicit_max_turns=bad_value,
+            )
+
     def test_fixed_flags_always_present(self, tmp_path: Path) -> None:
         cmd, _, __ = self._spawn(tmp_path)
         assert "--permission-mode" in cmd

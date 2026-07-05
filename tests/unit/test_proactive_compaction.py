@@ -329,7 +329,7 @@ class TestTickWiring:
 
 class TestReactiveReceipt:
     def test_reactive_compaction_records_receipt(self, tmp_path: Path) -> None:
-        from bernstein.core.agent_lifecycle import _try_compact_and_retry
+        from bernstein.core.agent_lifecycle import CompactRetryOutcome, _try_compact_and_retry
         from bernstein.core.models import (
             AgentSession,
             Complexity,
@@ -380,13 +380,16 @@ class TestReactiveReceipt:
         orch._plugin_manager = None
 
         snapshot = {"open": [task], "claimed": [], "in_progress": [], "done": []}
-        assert _try_compact_and_retry(
-            orch=orch,
-            task=task,
-            task_id="T-413",
-            session=session,
-            tasks_snapshot=snapshot,
-            fallback_model=None,
+        assert (
+            _try_compact_and_retry(
+                orch=orch,
+                task=task,
+                task_id="T-413",
+                session=session,
+                tasks_snapshot=snapshot,
+                fallback_model=None,
+            )
+            is CompactRetryOutcome.RETRIED
         )
 
         chain = AuditChainStore(tmp_path / ".sdd" / "audit")

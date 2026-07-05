@@ -9,7 +9,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from bernstein.core.git_basic import GitResult, run_git, safe_push, stage_all_except, stage_task_files
+from bernstein.core.git_basic import (
+    GitResult,
+    run_git,
+    safe_push,
+    stage_all_except,
+    stage_files,
+    stage_task_files,
+)
 
 
 def test_run_git_raises_called_process_error_when_check_is_true(tmp_path: Path) -> None:
@@ -49,6 +56,30 @@ def test_stage_all_except_unstages_explicit_and_never_stage_paths(tmp_path: Path
     assert "README.md" in reset_args
     assert ".sdd/runtime/" in reset_args
     assert ".sdd/metrics/" in reset_args
+
+
+def test_stage_files_does_not_exclude_legitimate_paths_that_merely_contain_auth_or_attestations(
+    tmp_path: Path,
+) -> None:
+    """``_NEVER_STAGE`` entries are matched as bare substrings, so a legitimate
+    path that happens to contain ``auth/`` or ``attestations/`` anywhere in
+    it (not under ``.sdd/``) must still be staged -- only the ``.sdd/``-scoped
+    forms are forbidden."""
+    with patch("bernstein.core.git_basic.run_git") as mock_run_git:
+        stage_files(
+            tmp_path,
+            [
+                "src/myapp/auth/handler.py",
+                "src/myapp/attestations/verifier.py",
+                ".sdd/auth/agent_identity_jwt_secret",
+                ".sdd/attestations/ed25519-signing-key.pem",
+            ],
+        )
+
+    mock_run_git.assert_called_once_with(
+        ["add", "--", "src/myapp/auth/handler.py", "src/myapp/attestations/verifier.py"],
+        tmp_path,
+    )
 
 
 def test_safe_push_corrects_master_and_rebases_when_remote_is_ahead(tmp_path: Path) -> None:

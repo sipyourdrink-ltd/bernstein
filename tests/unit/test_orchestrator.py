@@ -6113,6 +6113,103 @@ def test_record_live_costs_enforces_max_cost_per_agent(tmp_path: Path) -> None:
     mock_retry.assert_called_once()
 
 
+def test_orchestrator_honors_external_bernstein_run_id(tmp_path: Path) -> None:
+    """An externally-set BERNSTEIN_RUN_ID (exported by run.py before the
+    orchestrator starts) must be adopted as the orchestrator's run id, not
+    overwritten with a fresh timestamp -- otherwise phase results and
+    per-agent instrumentation land under two different run directories."""
+    import os
+
+    transport = _mock_transport({})
+    with patch.dict(os.environ, {"BERNSTEIN_RUN_ID": "external-run-42"}, clear=False):
+        orch = _build_orchestrator(tmp_path, transport=transport)
+        assert orch._run_id == "external-run-42"
+        assert os.environ["BERNSTEIN_RUN_ID"] == "external-run-42"
+
+
+def test_orchestrator_generates_run_id_when_env_unset(tmp_path: Path) -> None:
+    """Without an external BERNSTEIN_RUN_ID the orchestrator still generates
+    a timestamp id and exports it for spawned-agent instrumentation."""
+    import os
+
+    transport = _mock_transport({})
+    env = {k: v for k, v in os.environ.items() if k != "BERNSTEIN_RUN_ID"}
+    with patch.dict(os.environ, env, clear=True):
+        orch = _build_orchestrator(tmp_path, transport=transport)
+        assert orch._run_id
+        assert os.environ["BERNSTEIN_RUN_ID"] == orch._run_id
+
+
+def test_kill_agent_for_cost_cap_reaps_heartbeat_loop(tmp_path: Path) -> None:
+    """The cost-cap forced-kill path must reap the session's backgrounded
+    heartbeat shell loop (Defect-10) so it does not outlive the agent."""
+    config = OrchestratorConfig(
+        max_agents=2,
+        poll_interval_s=1,
+        heartbeat_timeout_s=60,
+        server_url="http://testserver",
+        max_cost_per_agent=0.001,
+    )
+    transport = _mock_transport({})
+    orch = _build_orchestrator(tmp_path, transport=transport, config=config)
+    session = AgentSession(
+        id="agent-cap-reap",
+        role="backend",
+        task_ids=["task-cap"],
+        status="working",
+    )
+    session.tokens_used = 1000
+    orch._agents[session.id] = session
+    orch._spawner.kill = MagicMock()
+    orch._release_file_ownership = MagicMock()
+    orch._release_task_to_session = MagicMock()
+    orch._record_provider_health = MagicMock()
+
+    with (
+        patch("bernstein.core.orchestrator.retry_or_fail_task"),
+        patch("bernstein.core.agents.heartbeat._reap_session_heartbeat_loop") as reap,
+    ):
+        orch._record_live_costs()
+
+    orch._spawner.kill.assert_called_once()
+    reap.assert_called_once()
+    assert reap.call_args.args[1] is session
+    assert reap.call_args.kwargs["reason"] == "cost_cap_kill"
+
+
+def test_handle_anomaly_signal_kill_reaps_heartbeat_loop(tmp_path: Path) -> None:
+    """The anomaly kill_agent path must reap the session's backgrounded
+    heartbeat shell loop (Defect-10) so it does not outlive the agent."""
+    import time as _time
+
+    from bernstein.core.cost_anomaly import AnomalySignal
+
+    transport = _mock_transport({})
+    orch = _build_orchestrator(tmp_path, transport=transport)
+    session = AgentSession(id="agent-anomaly", role="backend", status="working")
+    orch._agents[session.id] = session
+    orch._spawner.kill = MagicMock()
+
+    signal = AnomalySignal(
+        rule="burn_rate",
+        severity="critical",
+        action="kill_agent",
+        agent_id=session.id,
+        task_id=None,
+        message="burn rate exceeded",
+        details={},
+        timestamp=_time.time(),
+    )
+
+    with patch("bernstein.core.agents.heartbeat._reap_session_heartbeat_loop") as reap:
+        orch._handle_anomaly_signal(signal)
+
+    orch._spawner.kill.assert_called_once_with(session)
+    reap.assert_called_once()
+    assert reap.call_args.args[1] is session
+    assert reap.call_args.kwargs["reason"] == "anomaly_kill"
+
+
 def test_record_live_costs_accumulates_from_tokens_sidecar(tmp_path: Path) -> None:
     """Ledger spent_usd must accumulate from the .tokens sidecar (bug item-7).
 

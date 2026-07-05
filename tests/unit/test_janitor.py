@@ -22,7 +22,7 @@ from bernstein.core.janitor import (
     run_janitor,
     verify_task,
 )
-from bernstein.core.models import CompletionSignal, Task, TaskType
+from bernstein.core.models import CompletionSignal, Task, TaskType, UpgradeProposalDetails
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1398,6 +1398,32 @@ class TestEmptyDiffGuardAndAttribution:
 
         assert len(results) == 1
         assert results[0].passed is True
+
+    @pytest.mark.asyncio
+    async def test_upgrade_proposal_task_exempt_from_empty_diff_guard(self, tmp_path: Path) -> None:
+        """UPGRADE_PROPOSAL tasks are verified by verify_upgrade_task(), which
+        does not require owned_files -- UpgradeProposal.to_task() never sets
+        owned_files, so the generic empty-diff attribution guard would
+        otherwise hard-reject an already-verified upgrade proposal that made
+        no repo changes of its own (e.g. an analysis-only proposal). This
+        regression covers CodeRabbit's janitor.py:72 finding."""
+        _init_git_repo(tmp_path)
+        task = Task(
+            id="UPGRADE-1",
+            title="Upgrade proposal",
+            description="Propose an upgrade; verified via verify_upgrade_task, not a diff.",
+            role="backend",
+            task_type=TaskType.UPGRADE_PROPOSAL,
+            completion_signals=[CompletionSignal(type="path_exists", value="base.txt")],
+            upgrade_details=UpgradeProposalDetails(),
+        )
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is True, f"signal_results={results[0].signal_results}"
+        failed = [d for d, ok, _ in results[0].signal_results if not ok]
+        assert not any("empty_diff" in d for d in failed), f"failed={failed}"
 
     @pytest.mark.asyncio
     async def test_non_git_workdir_guard_skipped(self, tmp_path: Path) -> None:

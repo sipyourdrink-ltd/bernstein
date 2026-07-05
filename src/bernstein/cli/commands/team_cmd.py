@@ -24,7 +24,7 @@ import click
 
 from bernstein.cli.helpers import console
 from bernstein.core.teams.audit import TeamManifestAuditor
-from bernstein.core.teams.drift import detect_role_template_drift
+from bernstein.core.teams.drift import classify_role_template_drift
 from bernstein.core.teams.manifest import (
     TeamManifest,
     TeamManifestError,
@@ -118,7 +118,10 @@ def drift_cmd(name: str | None, workdir: Path) -> None:
     """Compare pinned role template digests to the on-disk templates.
 
     With NAME, checks one manifest; without, checks every visible
-    manifest. Exits 1 when any pinned role template diverged.
+    manifest. A divergence explained by a receipted template
+    compression (``bernstein templates compress``, issue #2249) is
+    reported as intentional. Exits 1 when any pinned role template
+    drifted for another reason.
     """
     if name is not None:
         manifests = [_resolve_or_fail(name, workdir)]
@@ -132,16 +135,27 @@ def drift_cmd(name: str | None, workdir: Path) -> None:
 
     any_drift = False
     for manifest in manifests:
-        drift = detect_role_template_drift(manifest, workdir=workdir)
-        if not drift:
+        findings = classify_role_template_drift(manifest, workdir=workdir)
+        if not findings:
             console.print(f"[green]{manifest.name}: no drift detected[/green]")
             continue
+        drifted = {role: finding for role, finding in findings.items() if not finding.intentional}
+        intentional = {role: finding for role, finding in findings.items() if finding.intentional}
+        for role, finding in sorted(intentional.items()):
+            console.print(
+                f"[cyan]{manifest.name}: {role}: receipted template compression "
+                f"(intentional, not drift)[/cyan] pinned {finding.pinned_digest[:12]}... -> "
+                f"on-disk {finding.actual_digest[:12]}..."
+            )
+        if not drifted:
+            continue
         any_drift = True
-        console.print(f"[yellow]{manifest.name}: drift detected[/yellow] in {len(drift)} role template(s):")
-        for role, (pinned, actual) in sorted(drift.items()):
+        console.print(f"[yellow]{manifest.name}: drift detected[/yellow] in {len(drifted)} role template(s):")
+        for role, finding in sorted(drifted.items()):
+            actual = finding.actual_digest
             actual_label = actual if actual == "<missing>" else actual[:12] + "..."
-            console.print(f"  - {role}: pinned {pinned[:12]}... vs on-disk {actual_label}")
-        _record_drift(workdir, manifest, sorted(drift))
+            console.print(f"  - {role}: pinned {finding.pinned_digest[:12]}... vs on-disk {actual_label}")
+        _record_drift(workdir, manifest, sorted(drifted))
 
     if any_drift:
         raise SystemExit(1)

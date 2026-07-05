@@ -821,7 +821,11 @@ def _create_upgrade_tasks(orch: Any, proposals: list[Any], result: Any) -> None:
                 proposal.title,
                 risk_score.composite_risk,
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, OSError) as exc:
+            # OSError covers AutoSpawnGuard._save_count() raising on a
+            # transient .sdd/runtime write failure (guard.evaluate() above);
+            # without it here, one bad write aborted the ENTIRE upgrade-
+            # proposal batch instead of just skipping this one proposal.
             logger.warning(
                 "Failed to create upgrade task for proposal %s: %s",
                 proposal.id,

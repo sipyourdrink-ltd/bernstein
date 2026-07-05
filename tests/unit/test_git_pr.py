@@ -197,6 +197,59 @@ def test_is_forbidden_for_merge_matches_deny_list() -> None:
         assert git_pr._is_forbidden_for_merge(path) is False, f"path {path!r} should NOT be forbidden"
 
 
+# ---------------------------------------------------------------------------
+# Fail-closed on a FAILED (non-exception) ``git diff --cached`` result.
+#
+# ``run_git`` can report failure two ways: raising (SubprocessError/OSError)
+# or returning a ``GitResult`` with a non-zero ``returncode``/``ok is
+# False``. Only the exception path used to be handled -- a mundane git
+# failure (binary hiccup, filesystem issue) that merely returns a failed
+# result fell through to "no staged files", silently clearing the way for
+# the exact decoy/forbidden-path condition these guards exist to catch.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_merge_staging_is_safe_fails_closed_on_failed_gitresult(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A failed (non-exception) ``git diff --cached`` GitResult must be
+    treated as unsafe, not as an empty (safe) staged set."""
+
+    def _fake_run_git(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
+        if args[:3] == ["diff", "--cached", "--name-only"]:
+            # Failure WITHOUT raising: non-zero exit, empty stdout -- the
+            # exact shape that used to silently look like "no staged files".
+            return GitResult(returncode=128, stdout="", stderr="fatal: unable to read index")
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr(git_pr, "run_git", _fake_run_git)
+
+    forbidden = git_pr._verify_merge_staging_is_safe(tmp_path, "agent/qa-fail-closed")
+
+    assert forbidden, "a failed staged-read must be treated as unsafe, never as an empty/safe staged set"
+
+
+def test_check_python_syntax_fails_closed_on_failed_gitresult(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A failed (non-exception) ``git diff --cached`` GitResult in the
+    syntax-check helper must be reported as a blocking error, not silently
+    treated as "no staged .py files"."""
+
+    def _fake_run_git(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
+        if args[:3] == ["diff", "--cached", "--name-only"]:
+            return GitResult(returncode=128, stdout="", stderr="fatal: unable to read index")
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr(git_pr, "run_git", _fake_run_git)
+
+    errors = git_pr._check_python_syntax(tmp_path)
+
+    assert errors, "a failed staged-read must be reported as a blocking error, never treated as a clean pass"
+
+
 def test_create_task_branch_delegates_to_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     seen: list[str] = []
 

@@ -75,7 +75,13 @@ _JUDGE_TEMPLATE_PATH = _BUNDLED_TEMPLATES_DIR / "prompts" / "judge.md"
 
 # Task types that legitimately produce no diff (research/exploration output
 # lives in task notes, not the repo). Everything else must show work.
-_NOOP_TASK_TYPES = frozenset({TaskType.RESEARCH})
+#
+# TaskType.UPGRADE_PROPOSAL is included because verify_upgrade_task() (see
+# the UPGRADE_PROPOSAL branch above) is the real pass/fail authority for
+# these tasks, and UpgradeProposal.to_task() never sets owned_files -- there
+# is no attribution source for this task type, so the generic empty-diff
+# guard would hard-reject an already-verified upgrade proposal.
+_NOOP_TASK_TYPES = frozenset({TaskType.RESEARCH, TaskType.UPGRADE_PROPOSAL})
 
 _ATTRIBUTION_MAX_COMMITS = 50
 

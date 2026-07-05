@@ -86,6 +86,21 @@ EVENT_COST_PROFILE_REPORT = "cost.profile_report"
 #: artifact byte-identically and check it against the chain.
 EVENT_EVAL_AB_COMPARISON = "eval.ab_comparison"
 
+#: Issue #2249 -- emitted once per applied role-template compression
+#: (``bernstein templates compress``). The event carries the full
+#: compression receipt: role, pre/post role-template directory digests,
+#: token estimates, validator verdicts, adapter and model, per-file
+#: content hashes, and the previous chain digest. See
+#: :mod:`bernstein.core.tokens.template_compression` for the payload
+#: builder and the verification helper.
+EVENT_TEMPLATE_COMPRESSION_RECEIPT = "template.compression.receipt"
+
+#: Issue #2249 -- emitted when ``bernstein templates restore`` reverses
+#: a receipted compression byte-identically. The event references the
+#: compression's correlation id and the verified pre/post role-template
+#: directory digests.
+EVENT_TEMPLATE_COMPRESSION_RESTORE = "template.compression.restore"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -472,6 +487,8 @@ __all__ = [
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_MULTIMODAL_ATTACH",
+    "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
+    "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",

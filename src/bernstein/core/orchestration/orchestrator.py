@@ -500,7 +500,7 @@ class Orchestrator:
         # cap (set by ``bernstein run --hard-budget``). Attach a rolling
         # JSONL ledger so per-call attribution lands in
         # ``.sdd/cost/ledger.jsonl``.
-        run_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        run_id = os.environ.get("BERNSTEIN_RUN_ID") or datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         self._run_id = run_id
         # Wave 3 (per-agent instrumentation): export the run id onto the
         # process environment so it threads through
@@ -3046,6 +3046,7 @@ class Orchestrator:
         """Dispatch an anomaly signal: log, stop spawning, or kill agent."""
         import contextlib
 
+        from bernstein.core import heartbeat as heartbeat_protocol
         from bernstein.core.cost_anomaly import AnomalySignal
 
         assert isinstance(signal, AnomalySignal)
@@ -3056,6 +3057,12 @@ class Orchestrator:
             if session:
                 with contextlib.suppress(Exception):
                     self._spawner.kill(session)
+                # Every forced-kill path must reap the session's backgrounded
+                # heartbeat shell loop (see heartbeat.py's
+                # _reap_session_heartbeat_loop / Defect-10) so the loop does
+                # not outlive the agent it was monitoring.
+                with contextlib.suppress(Exception):
+                    heartbeat_protocol._reap_session_heartbeat_loop(self, session, reason="anomaly_kill")
         elif signal.action == "stop_spawning":
             logger.warning("Anomaly [%s]: %s - stopping new spawns", signal.rule, signal.message)
             self._stop_spawning = True
@@ -3325,6 +3332,14 @@ class Orchestrator:
 
         with contextlib.suppress(Exception):
             self._spawner.kill(session)
+        # Every forced-kill path must reap the session's backgrounded
+        # heartbeat shell loop (see heartbeat.py's
+        # _reap_session_heartbeat_loop / Defect-10) so the loop does not
+        # outlive the agent it was monitoring.
+        with contextlib.suppress(Exception):
+            from bernstein.core import heartbeat as heartbeat_protocol
+
+            heartbeat_protocol._reap_session_heartbeat_loop(self, session, reason="cost_cap_kill")
 
         from bernstein.core.lifecycle import transition_agent
 
@@ -3431,10 +3446,18 @@ class Orchestrator:
             elapsed,
             len(pending_kill),
         )
+        from bernstein.core import heartbeat as heartbeat_protocol
+
         for session in pending_kill:
             self._budget_stop_killed_agents.add(session.id)
             with contextlib.suppress(Exception):
                 self._spawner.kill(session)
+            # Every forced-kill path must reap the session's backgrounded
+            # heartbeat shell loop (see heartbeat.py's
+            # _reap_session_heartbeat_loop / Defect-10) so the loop does
+            # not outlive the agent it was monitoring.
+            with contextlib.suppress(Exception):
+                heartbeat_protocol._reap_session_heartbeat_loop(self, session, reason="budget_killswitch")
         self._post_bulletin(
             "alert",
             f"budget.exhaust: SIGKILLed {len(pending_kill)} agent(s) after "

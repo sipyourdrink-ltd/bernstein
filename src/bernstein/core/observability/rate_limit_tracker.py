@@ -220,7 +220,14 @@ _RISKY_BARE_TOKENS: frozenset[str] = frozenset(
 # having occurred. Excluding them from substring scanning closes that
 # false-positive hole; risky-bare-token matches on OTHER line types still
 # require same-line error context via ``_ERROR_CONTEXT_RE``.
-_DATA_LINE_TYPES: frozenset[str] = frozenset({"tool_call", "tool_result", "heartbeat", "completion", "progress"})
+#
+# "assistant" was added on the same rationale: assistant-type log events
+# carry free-form model narration (the agent's own commentary), not
+# structured provider/HTTP data, so they are just as prone to incidental
+# risky-token false positives as "completion"/"progress" lines.
+_DATA_LINE_TYPES: frozenset[str] = frozenset(
+    {"tool_call", "tool_result", "heartbeat", "completion", "progress", "assistant"}
+)
 
 # Words that indicate a line is plausibly describing a real provider/HTTP
 # error, rather than incidental structured data. Deliberately narrow -

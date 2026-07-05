@@ -154,6 +154,23 @@ def _verify_merge_staging_is_safe(
         )
         return ["<staged-read-failed>"]
 
+    if not staged_r.ok:
+        # The subprocess ran without raising, but git itself reported a
+        # non-zero exit (a binary hiccup, filesystem error, etc.).  Treating
+        # this the same as "no staged files" would silently report the
+        # merge as safe -- exactly the fail-open this guard exists to
+        # prevent.  Fail closed instead: an unverifiable staged set is
+        # never a clean bill of health.
+        logger.warning(
+            "merge_preflight: STAGED-READ-FAILED cwd=%s branch=%s returncode=%d stderr=%s "
+            "-- refusing merge as fail-closed",
+            cwd,
+            branch,
+            staged_r.returncode,
+            staged_r.stderr.strip(),
+        )
+        return ["<staged-read-failed>"]
+
     staged_paths = [p.strip() for p in staged_r.stdout.splitlines() if p.strip()]
     forbidden = [p for p in staged_paths if _is_forbidden_for_merge(p)]
 
@@ -195,6 +212,19 @@ def _check_python_syntax(cwd: Path) -> list[str]:
 
     # Get the list of files modified in the staged merge
     names_result = run_git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"], cwd, timeout=15)
+    if not names_result.ok:
+        # A failed git invocation (non-zero exit, no exception) must not be
+        # treated as "no staged .py files" -- that would silently skip the
+        # syntax gate and let unverified files through to the merge commit.
+        # Fail closed: report it as a blocking error so the merge is
+        # refused rather than let a mundane git hiccup pass as clean.
+        logger.warning(
+            "Syntax check: STAGED-READ-FAILED cwd=%s returncode=%d stderr=%s -- refusing merge as fail-closed",
+            cwd,
+            names_result.returncode,
+            names_result.stderr.strip(),
+        )
+        return [f"<staged-read-failed>: git diff --cached failed (returncode={names_result.returncode})"]
     errors: list[str] = []
     for raw_name in names_result.stdout.strip().splitlines():
         name = raw_name.strip()

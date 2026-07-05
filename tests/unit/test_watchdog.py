@@ -260,3 +260,40 @@ def test_watchdog_manager_dedupes_triage_tasks_across_incidents(tmp_path: Path) 
         manager.sync([finding_b])
 
     assert client.post.call_count == 1
+
+
+def test_watchdog_manager_dedupes_triage_tasks_within_single_sync_pass(tmp_path: Path) -> None:
+    """Same-pass dedupe: two distinct incidents arriving in ONE sync() call
+    must still only spawn one identically-worded triage task. Incidents
+    created earlier in the same pass live only in the in-memory ``active``
+    dict (state is persisted once, after the loop), so a dedupe scan of
+    ``state.values()`` alone missed them."""
+    client = MagicMock()
+    client.post.return_value = _response("triage-5")
+    manager = WatchdogManager(tmp_path, client, "http://server")
+
+    finding_a = WatchdogFinding(
+        key="heartbeat:sess-a:task-a",
+        session_id="sess-a",
+        task_id="task-a",
+        source="heartbeat",
+        severity="high",
+        summary="Heartbeat stale for task Fix API",
+        detail="detail-a",
+        task_title="Fix API",
+    )
+    finding_b = WatchdogFinding(
+        key="heartbeat:sess-b:task-b",
+        session_id="sess-b",
+        task_id="task-b",
+        source="heartbeat",
+        severity="high",
+        summary="Heartbeat stale for task Fix API",
+        detail="detail-b",
+        task_title="Fix API",
+    )
+
+    with patch("bernstein.core.observability.watchdog.time.time", return_value=300.0):
+        manager.sync([finding_a, finding_b])
+
+    assert client.post.call_count == 1

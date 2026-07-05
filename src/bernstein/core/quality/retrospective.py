@@ -78,7 +78,21 @@ def _read_persisted_task_costs(runtime_dir: Path) -> dict[str, float]:
                     continue
                 try:
                     record = json.loads(line)
-                except json.JSONDecodeError as exc:
+                    task_id = record.get("task_id")
+                    if not task_id:
+                        continue
+                    cost_usd = record.get("cost_usd")
+                    if cost_usd is None:
+                        continue
+                    costs[task_id] = float(cost_usd)  # last write wins (final retry outcome)
+                except (json.JSONDecodeError, ValueError, TypeError, AttributeError) as exc:
+                    # Widened beyond json.JSONDecodeError: a well-formed-but-
+                    # wrong-shape record (not a dict, or cost_usd not
+                    # coercible to float) raises on the SUBSEQUENT
+                    # .get()/float() calls, not on json.loads() itself. This
+                    # feeds the final run retrospective, so skip the bad
+                    # record and log the exact exception rather than
+                    # aborting the whole durable cross-check.
                     logger.warning(
                         "cost_aggregation: skipping malformed line %d in %s: %s",
                         line_no,
@@ -86,13 +100,6 @@ def _read_persisted_task_costs(runtime_dir: Path) -> dict[str, float]:
                         exc,
                     )
                     continue
-                task_id = record.get("task_id")
-                if not task_id:
-                    continue
-                cost_usd = record.get("cost_usd")
-                if cost_usd is None:
-                    continue
-                costs[task_id] = float(cost_usd)  # last write wins (final retry outcome)
     except OSError as exc:
         logger.warning("cost_aggregation: failed to read %s: %s", metrics_path, exc)
         return {}

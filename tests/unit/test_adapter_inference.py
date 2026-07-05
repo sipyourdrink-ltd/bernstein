@@ -58,6 +58,37 @@ def test_bare_openai_provider_routes_to_codex(tmp_path: Path) -> None:
     assert result == "codex"
 
 
+def test_gpt_oss_model_does_not_route_to_codex(tmp_path: Path) -> None:
+    """gpt-oss:20b must NOT be misrouted to Codex via the bare 'gpt' substring
+    alias -- gpt-oss is a distinct open-weights model family, not an OpenAI
+    GPT model, despite textually containing 'gpt'."""
+    spawner = _make_spawner(tmp_path)
+    result = spawner._infer_adapter_name_for_provider(None, "gpt-oss:20b")
+    assert result != "codex"
+
+
+def test_gpt_oss_120b_model_does_not_route_to_codex(tmp_path: Path) -> None:
+    """Same exclusion applies to other gpt-oss size variants."""
+    spawner = _make_spawner(tmp_path)
+    result = spawner._infer_adapter_name_for_provider(None, "gpt-oss:120b")
+    assert result != "codex"
+
+
+def test_legitimate_gpt_model_still_routes_to_codex(tmp_path: Path) -> None:
+    """Legitimate gpt-* models (not gpt-oss) must still route to codex after
+    the gpt-oss exclusion is applied."""
+    spawner = _make_spawner(tmp_path)
+    result = spawner._infer_adapter_name_for_provider(None, "gpt-4.1")
+    assert result == "codex"
+
+
+def test_registry_gpt_oss_excluded_from_gpt_alias() -> None:
+    """Direct registry-level coverage: the substring fallback must reject the
+    'gpt' alias match when the model text contains 'gpt-oss'."""
+    assert registry.adapter_name_for_provider(None, "gpt-oss:20b") != "codex"
+    assert registry.adapter_name_for_provider(None, "gpt-5.5") == "codex"
+
+
 def test_unrecognized_provider_falls_back_to_current_adapter(tmp_path: Path) -> None:
     """Unrecognized provider/model still falls back to self._adapter.name(),
     exactly as the old substring chain did -- Claude-only / unrecognized

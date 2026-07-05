@@ -7,6 +7,7 @@ incident to humans via the existing notification and bulletin channels.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import time
@@ -332,9 +333,16 @@ class WatchdogManager:
                 incident.detail = finding.detail
 
             if incident.triage_task_id is None:
+                # Bug fix (2026-07-04): dedupe must also cover incidents
+                # created EARLIER IN THIS SAME sync() call. Those live only
+                # in ``active`` (not yet persisted to ``state`` - that
+                # happens once, after the loop, via ``self._save_state``),
+                # so scanning ``state.values()`` alone missed same-pass
+                # duplicates and could create two "Watchdog triage: ..."
+                # tasks with the same title in one sync.
                 existing_open_titles = [
                     f"Watchdog triage: {other.summary}"
-                    for other in state.values()
+                    for other in itertools.chain(state.values(), active.values())
                     if other.triage_task_id is not None and other.key != finding.key
                 ]
                 triage_task_id = self._create_triage_task(finding, existing_open_titles)

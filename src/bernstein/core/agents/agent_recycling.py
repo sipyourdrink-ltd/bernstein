@@ -190,6 +190,13 @@ def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Pat
     _save_partial_work(orch._spawner, session)
     with contextlib.suppress(Exception):
         orch._spawner.kill(session)
+    # Bug fix (2026-07-04): every forced-kill path must reap the session's
+    # backgrounded heartbeat shell loop (see heartbeat.py's
+    # _reap_session_heartbeat_loop / Defect-10), not just the two stall-kill
+    # paths inside heartbeat.py itself - otherwise the loop outlives the
+    # agent it was monitoring.
+    with contextlib.suppress(Exception):
+        heartbeat_protocol._reap_session_heartbeat_loop(orch, session, reason="completed_reap")
     _propagate_abort_to_children(orch, session.id)
     orch._idle_shutdown_ts.pop(session.id, None)
     with contextlib.suppress(OSError):
@@ -257,6 +264,10 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
         _save_partial_work(orch._spawner, session)
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
+        # Bug fix (2026-07-04): reap the heartbeat loop on every forced kill
+        # (see _reap_completed_agent above for full rationale).
+        with contextlib.suppress(Exception):
+            heartbeat_protocol._reap_session_heartbeat_loop(orch, session, reason="idle_recycle_kill")
         _propagate_abort_to_children(orch, session.id)
         orch._idle_shutdown_ts.pop(session.id, None)
         with contextlib.suppress(OSError):
@@ -306,6 +317,10 @@ def check_kill_signals(orch: Any, result: Any) -> None:
             continue
         logger.info("Kill signal received for %s, terminating", session_id)
         orch._spawner.kill(session)
+        # Bug fix (2026-07-04): reap the heartbeat loop on every forced kill
+        # (see _reap_completed_agent above for full rationale).
+        with contextlib.suppress(Exception):
+            heartbeat_protocol._reap_session_heartbeat_loop(orch, session, reason="kill_signal")
         _propagate_abort_to_children(orch, session_id)
         result.reaped.append(session_id)
 
@@ -397,6 +412,10 @@ def _recover_loops(orch: Any, detector: Any, lock_mgr: Any) -> None:
         )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
+        # Bug fix (2026-07-04): reap the heartbeat loop on every forced kill
+        # (see _reap_completed_agent above for full rationale).
+        with contextlib.suppress(Exception):
+            heartbeat_protocol._reap_session_heartbeat_loop(orch, session, reason="edit_loop_kill")
         _propagate_abort_to_children(orch, loop.agent_id)
         detector.clear_wait(loop.agent_id)
         if lock_mgr is not None:

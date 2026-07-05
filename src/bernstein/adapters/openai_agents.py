@@ -293,6 +293,20 @@ class OpenAIAgentsAdapter(PluginAdapter):
             task_id = mcp_config.get("task_id")
             if isinstance(task_id, str) and task_id:
                 overrides["task_id"] = task_id
+            # Bug fix (instrumentation audit, bug 3 - "4 of 9 implement
+            # tasks have zero instrumentation"): spawner_core batches
+            # multiple tasks onto a single agent process for role-batched
+            # spawns, but only ever injected ``task_id`` (tasks[0].id) here
+            # - every other task in the batch got zero instrumentation
+            # coverage since the runner only knew about one task_id. When
+            # present, ``task_ids`` carries the full batch so the runner can
+            # fan instrumentation out to every task involved (see
+            # RunnerManifest.task_ids / RunInstrumenter.extra_dirs).
+            task_ids = mcp_config.get("task_ids")
+            if isinstance(task_ids, list) and task_ids:
+                cleaned_task_ids = [t for t in task_ids if isinstance(t, str) and t]
+                if cleaned_task_ids:
+                    overrides["task_ids"] = cleaned_task_ids
             # Wave 3 (per-agent instrumentation): orchestrator-root
             # directory injected by spawner_core (mirrors heartbeat_dir
             # above). ``workdir`` is a per-session worktree under default
@@ -331,11 +345,23 @@ class OpenAIAgentsAdapter(PluginAdapter):
         if isinstance(raw_allow, bool):
             allow_run_command = raw_allow
         else:
+            if raw_allow is not None:
+                logger.warning(
+                    "mcp_config allow_run_command=%r must be a bool; falling back to env %s",
+                    raw_allow,
+                    _ALLOW_RUN_COMMAND_ENV_VAR,
+                )
             allow_run_command = os.environ.get(_ALLOW_RUN_COMMAND_ENV_VAR) == "1"
         raw_max_turns = (mcp_config or {}).get("max_turns")
         if isinstance(raw_max_turns, int) and not isinstance(raw_max_turns, bool) and raw_max_turns > 0:
             max_turns: int | None = raw_max_turns
         else:
+            if raw_max_turns is not None:
+                logger.warning(
+                    "mcp_config max_turns=%r must be a positive int; falling back to "
+                    "env/tuning.agent.max_turns/SDK default",
+                    raw_max_turns,
+                )
             # Spawn-side resolution of env > tuning.agent.max_turns > None,
             # reusing the runner's own resolver (in this process the env is
             # the parent env and defaults are the yaml-loaded tuning).

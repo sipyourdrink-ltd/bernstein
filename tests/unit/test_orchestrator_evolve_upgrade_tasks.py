@@ -11,12 +11,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from bernstein.core.models import Task, TaskStatus, TaskType
 
 from bernstein.core.orchestration.evolution import UpgradeStatus
 from bernstein.core.orchestration.orchestrator_evolve import _create_upgrade_tasks
+from bernstein.core.tasks.auto_spawn_guard import AutoSpawnGuard
 
 
 def _proposal(
@@ -106,3 +107,32 @@ def test_non_eligible_proposal_status_is_skipped_before_guard(tmp_path: Path) ->
     _create_upgrade_tasks(orch, [_proposal("p1", "Applied already", status=UpgradeStatus.APPLIED)], result)
 
     assert orch._client.post.call_count == 0
+
+
+def test_oserror_from_guard_save_skips_only_that_proposal(tmp_path: Path) -> None:
+    """AutoSpawnGuard._save_count() can raise OSError on a transient
+    .sdd/runtime write failure. Before this fix, the per-proposal try/except
+    only caught httpx.HTTPError, so an OSError on the first proposal's
+    guard.evaluate() escaped and aborted the ENTIRE batch -- the second,
+    unrelated proposal never got a chance to post. This asserts the OSError
+    is caught, recorded, and the batch continues to the next proposal."""
+    orch = _orch(tmp_path)
+    result = SimpleNamespace(errors=[])
+
+    with patch.object(AutoSpawnGuard, "_save_count", side_effect=OSError("disk full")):
+        _create_upgrade_tasks(
+            orch,
+            [
+                _proposal("p1", "Improve task success rate"),
+                _proposal("p2", "Reduce flaky retries"),
+            ],
+            result,
+        )
+
+    # Both proposals hit the same failing guard.evaluate() -> both are
+    # skipped, but neither raises out of _create_upgrade_tasks, and both
+    # failures are recorded rather than silently swallowed or crashing the
+    # batch.
+    assert orch._client.post.call_count == 0
+    assert len(result.errors) == 2
+    assert all("disk full" in e for e in result.errors)

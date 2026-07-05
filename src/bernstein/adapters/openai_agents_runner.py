@@ -145,15 +145,22 @@ def _log_initial_conversation_messages(manifest: RunnerManifest) -> None:
     """
     instrumenter = get_instrumenter()
     if manifest.system_addendum:
+        logger.debug(
+            "_log_initial_conversation_messages: logging system_addendum, length=%d",
+            len(manifest.system_addendum),
+        )
         instrumenter.log_message(
             idx=next(_conversation_idx_counter),
             role="system",
             content_length=len(manifest.system_addendum),
+            content=manifest.system_addendum,
         )
+    logger.debug("_log_initial_conversation_messages: logging user prompt, length=%d", len(manifest.prompt))
     instrumenter.log_message(
         idx=next(_conversation_idx_counter),
         role="user",
         content_length=len(manifest.prompt),
+        content=manifest.prompt,
     )
 
 
@@ -187,11 +194,13 @@ def _log_result_conversation_messages(result: Any) -> None:
             role = str(getattr(raw_item, "role", None) or _infer_role_from_item_type(item_type))
             content = getattr(raw_item, "content", None)
             tool_name = getattr(raw_item, "name", None)
-            content_length = len(str(content)) if content is not None else len(str(raw_item))
+            content_text = str(content) if content is not None else str(raw_item)
+            content_length = len(content_text)
             instrumenter.log_message(
                 idx=next(_conversation_idx_counter),
                 role=role,
                 content_length=content_length,
+                content=content_text,
                 tool_calls=[str(tool_name)] if tool_name else None,
             )
         except Exception as exc:
@@ -200,10 +209,12 @@ def _log_result_conversation_messages(result: Any) -> None:
     try:
         final_output = getattr(result, "final_output", None)
         if final_output is not None:
+            final_output_text = str(final_output)
             instrumenter.log_message(
                 idx=next(_conversation_idx_counter),
                 role="assistant",
-                content_length=len(str(final_output)),
+                content_length=len(final_output_text),
+                content=final_output_text,
             )
     except Exception as exc:
         logger.warning("_log_result_conversation_messages: failed to log final_output: %s", exc)
@@ -249,11 +260,13 @@ def _log_hook_turn_conversation(response: Any) -> None:
             role = str(getattr(item, "role", None) or _infer_role_from_item_type(item_type))
             content = getattr(item, "content", None)
             tool_name = getattr(item, "name", None)
-            content_length = len(str(content)) if content is not None else len(str(item))
+            content_text = str(content) if content is not None else str(item)
+            content_length = len(content_text)
             instrumenter.log_message(
                 idx=next(_conversation_idx_counter),
                 role=role,
                 content_length=content_length,
+                content=content_text,
                 tool_calls=[str(tool_name)] if tool_name else None,
             )
         except Exception as exc:
@@ -489,6 +502,25 @@ def _build_instrumentation_hooks(sdk: Any, manifest: RunnerManifest) -> Any:
                 ts_start = pending["ts_start"] if pending else ts_end
                 args = pending["args"] if pending else None
                 is_error = isinstance(result, BaseException)
+                # Bug fix (instrumentation audit, bug 2): tool-calls.jsonl
+                # previously never recorded what a tool actually returned -
+                # only its name/args/success flag - making it impossible to
+                # see tool output without re-running the agent. The SDK's
+                # on_tool_end hook receives the tool's return value directly
+                # as `result` (a BaseException on failure per the is_error
+                # check above, otherwise whatever the tool function
+                # returned - str, dict, etc.); RunInstrumenter.log_tool_call
+                # stringifies + truncates it. On the error path pass None
+                # (the error string itself is already captured in the
+                # `error` field) rather than duplicating the exception text.
+                result_for_log = None if is_error else result
+                logger.debug(
+                    "on_tool_end: tool=%s call_id=%s is_error=%s result_type=%s",
+                    tool_name,
+                    call_id,
+                    is_error,
+                    type(result).__name__,
+                )
                 instrumenter.log_tool_call(
                     call_id=call_id,
                     ts_start=ts_start,
@@ -497,6 +529,7 @@ def _build_instrumentation_hooks(sdk: Any, manifest: RunnerManifest) -> Any:
                     args=args,
                     success=not is_error,
                     error=f"{type(result).__name__}: {result}" if is_error else None,
+                    result=result_for_log,
                 )
                 logger.debug(
                     "wrote tool_call entry call_id=%s tool=%s session=%s success=%s",
@@ -582,6 +615,24 @@ def _instrument_event(event: Mapping[str, Any]) -> None:
             ts_start = pending["ts_start"] if pending else now
             args = pending["args"] if pending else None
             is_error = bool(event.get("is_error")) or bool(event.get("error"))
+            # Bug fix (instrumentation audit, bug 2): mirror whatever
+            # result-shaped data the emitting event carries. Today's builtin
+            # tool emitters (openai_agents_builtins.py) only send metadata
+            # (bytes/count), never the actual content, so this is best-effort
+            # and frequently None for builtin-sourced events - the primary
+            # fix for gateway-sourced tools is the on_tool_end hook path
+            # above, which DOES see the tool's real return value.
+            result_value = event.get("result") if "result" in event else event.get("output")
+            if result_value is None and not is_error:
+                # Fall back to whatever non-standard metadata keys this event
+                # carries (e.g. bytes/count) so SOMETHING beyond
+                # success/failure survives to tool-calls.jsonl even without
+                # a first-class result payload.
+                metadata_preview = {
+                    k: v for k, v in event.items() if k not in {"type", "name", "tool_source", "status", "error"}
+                }
+                if metadata_preview:
+                    result_value = metadata_preview
             instrumenter.log_tool_call(
                 call_id=call_id,
                 ts_start=ts_start,
@@ -590,6 +641,7 @@ def _instrument_event(event: Mapping[str, Any]) -> None:
                 args=args if isinstance(args, dict) else {"args": args},
                 success=not is_error,
                 error=str(event.get("error")) if event.get("error") else None,
+                result=result_value,
             )
             return
     except Exception as exc:
@@ -834,6 +886,20 @@ class RunnerManifest:
     # hand-written manifest for a direct invocation/test) - the runner then
     # instruments under a literal "unknown" task bucket rather than failing.
     task_id: str | None = None
+    # Bug fix (instrumentation audit, bug 3 - "4 of 9 implement tasks have
+    # zero instrumentation"): when spawner_core batches multiple Bernstein
+    # tasks onto ONE agent process (``_spawn_for_tasks_internal``'s
+    # ``tasks: list[Task]``), only ``tasks[0].id`` was ever threaded through
+    # as ``task_id`` above - every OTHER task in the batch got no
+    # instrumentation directory at all, since a single RunInstrumenter only
+    # ever knew about one task_id. ``task_ids`` carries the FULL batch (all
+    # task ids this agent process is working, ``task_id`` included) so
+    # :func:`run` can fan the same instrumentation out to every task's
+    # ``.sdd/runs/<run_id>/tasks/<task_id>/agents/<agent_id>/`` directory,
+    # not just the first. ``None``/empty on hand-written manifests and on
+    # single-task spawns (the common case) - the runner then falls back to
+    # the single ``task_id`` dir exactly as before.
+    task_ids: list[str] | None = None
     # Wave 3 (per-agent instrumentation): orchestrator-root directory,
     # injected by ``spawner_core`` (mirrors ``heartbeat_dir`` above - same
     # reasoning: ``workdir`` is a per-session worktree under default
@@ -1764,13 +1830,44 @@ def run(manifest: RunnerManifest) -> int:
     # falling back to ``workdir`` there is correct.
     instrumentation_base = manifest.instrumentation_root or manifest.workdir
     agent_dir = resolve_agent_dir(Path(instrumentation_base), run_id, task_id, manifest.session_id)
-    init_instrumenter(run_id=run_id, task_id=task_id, agent_id=manifest.session_id, base_dir=agent_dir)
+
+    # Bug fix (instrumentation audit, bug 3): if this agent process is
+    # working a BATCH of tasks (manifest.task_ids has more than one entry),
+    # resolve an agent dir for every OTHER task in the batch too and pass
+    # them as extra_dirs so init_instrumenter fans every JSONL write out to
+    # all of them - see RunnerManifest.task_ids and RunInstrumenter.extra_dirs
+    # docstrings for the full root-cause writeup.
+    batch_task_ids = list(manifest.task_ids or [])
+    extra_dirs = [
+        resolve_agent_dir(Path(instrumentation_base), run_id, other_task_id, manifest.session_id)
+        for other_task_id in batch_task_ids
+        if other_task_id and other_task_id != task_id
+    ]
+    if batch_task_ids:
+        logger.info(
+            "Batched-task instrumentation check: manifest.task_ids=%s primary task_id=%s -> "
+            "%d extra instrumentation dir(s) will receive a full copy of this agent's records",
+            batch_task_ids,
+            task_id,
+            len(extra_dirs),
+        )
+    if not manifest.task_id:
+        logger.debug(
+            "run(): manifest.task_id is unset - this session's instrumentation will be bucketed "
+            "under the literal 'unknown' task_id; run_id from env BERNSTEIN_RUN_ID=%s",
+            os.environ.get("BERNSTEIN_RUN_ID"),
+        )
+    init_instrumenter(
+        run_id=run_id, task_id=task_id, agent_id=manifest.session_id, base_dir=agent_dir, extra_dirs=extra_dirs
+    )
     logger.info(
-        "Instrumentation base dir resolved: instrumentation_root=%r workdir=%r -> using %r -> agent_dir=%s",
+        "Instrumentation base dir resolved: instrumentation_root=%r workdir=%r -> using %r -> agent_dir=%s "
+        "extra_dirs=%s",
         manifest.instrumentation_root,
         manifest.workdir,
         instrumentation_base,
         agent_dir,
+        extra_dirs,
     )
 
     # Every effective sampling/endpoint param is logged here.  The key

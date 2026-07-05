@@ -1,15 +1,32 @@
-"""Plan template library: list and scaffold reusable YAML plans."""
+"""Plan template library: list, scaffold, and compress role templates.
+
+Besides the plan/hook template browsing commands, this module carries
+the operator-gated role-template compression surface (issue #2249):
+
+  bernstein templates compress <role>|--all    LLM rewrite, validated,
+                                               backed up, receipted.
+  bernstein templates restore <role>           Byte-identical reversal.
+
+Compression is never automatic - it runs only through this explicit
+command. Savings figures come from the spend ledger on subsequent
+spawns (``bernstein cost --by role``); compression itself reports only
+the template token delta.
+"""
 
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.hook_templates import list_hook_templates, scaffold_hook_template
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _YAML_GLOB = "*.yaml"
 
@@ -190,4 +207,160 @@ def templates_hooks_use(template_name: str, workdir: str, force: bool) -> None:
 
     console.print(f"[green]Installed hook template:[/green] [bold]{template_name}[/bold]")
     for path in created:
+        console.print(f"  [dim]-[/dim] {path}")
+
+
+# ---------------------------------------------------------------------------
+# Role template compression (issue #2249)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_COMPRESS_MODEL = "anthropic/claude-haiku-4-5"
+_DEFAULT_COMPRESS_PROVIDER = "openrouter"
+
+_ROLE_WORKDIR_OPTION = click.option(
+    "--workdir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project root the role templates are resolved from.",
+)
+
+
+def _compress_llm_call(model: str, provider: str) -> Callable[[str], str]:
+    """Return a sync ``prompt -> response`` callable over the configured adapter.
+
+    Module-level indirection so tests can substitute a deterministic
+    rewrite function without a live provider.
+    """
+    import asyncio
+
+    from bernstein.core.llm import call_llm
+
+    def _call(prompt: str) -> str:
+        return asyncio.run(call_llm(prompt, model=model, provider=provider, max_tokens=8_000, temperature=0.0))
+
+    return _call
+
+
+def _resolve_compress_roles(workdir: Path, role: str | None, compress_all: bool) -> list[str]:
+    """Return the role names to compress, validating the role/--all choice."""
+    from bernstein.core.teams.drift import resolve_roles_dir
+
+    if compress_all == (role is not None):
+        raise click.UsageError("Provide exactly one of ROLE or --all.")
+    if role is not None:
+        return [role]
+    roles_dir = resolve_roles_dir(workdir)
+    if not roles_dir.is_dir():
+        raise click.ClickException(f"role templates directory not found: {roles_dir}")
+    return sorted(p.name for p in roles_dir.iterdir() if p.is_dir() and not p.name.startswith("_"))
+
+
+@templates_group.command("compress")
+@click.argument("role", required=False, default=None)
+@click.option("--all", "compress_all", is_flag=True, default=False, help="Compress every role template.")
+@_ROLE_WORKDIR_OPTION
+@click.option("--model", default=_DEFAULT_COMPRESS_MODEL, show_default=True, help="Model for the rewrite.")
+@click.option(
+    "--provider",
+    default=_DEFAULT_COMPRESS_PROVIDER,
+    show_default=True,
+    help="Adapter/provider for the rewrite (openrouter, openai, ...).",
+)
+@click.option("--yes", is_flag=True, default=False, help="Skip the confirmation prompt.")
+def templates_compress(
+    role: str | None,
+    compress_all: bool,
+    workdir: Path,
+    model: str,
+    provider: str,
+    yes: bool,
+) -> None:
+    """Compress role prompt templates in place (operator-gated).
+
+    The rewrite goes through the configured adapter, must pass every
+    mechanical validator (fenced blocks, headings, URLs, inline code,
+    placeholders, completion-contract block; at most two targeted fix
+    passes), and is receipted on the audit chain. Originals are backed
+    up out of tree, keyed by content hash; ``bernstein templates
+    restore ROLE`` reverses the compression byte-identically.
+    """
+    from bernstein.core.tokens.sensitive_gate import resolve_default_chain
+    from bernstein.core.tokens.template_compression import (
+        TemplateCompressionError,
+        compress_role_templates,
+        default_backup_root,
+    )
+
+    roles = _resolve_compress_roles(workdir, role, compress_all)
+    if not roles:
+        console.print("[yellow]No role templates found to compress.[/yellow]")
+        return
+
+    if not yes:
+        console.print(
+            f"About to compress {len(roles)} role template(s) in place: {', '.join(roles)}.\n"
+            f"Originals are backed up under [bold]{default_backup_root()}[/bold] "
+            "(content-hash keyed, readback-verified) and every rewrite is receipted "
+            "on the audit chain."
+        )
+        if not click.confirm("Proceed?", default=False):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    chain = resolve_default_chain(workdir)
+    llm_call = _compress_llm_call(model, provider)
+    failures = 0
+    for role_name in roles:
+        try:
+            outcome = compress_role_templates(
+                role_name,
+                workdir=workdir,
+                llm_call=llm_call,
+                adapter=provider,
+                model=model,
+                chain=chain,
+            )
+        except TemplateCompressionError as exc:
+            console.print(f"[red]{role_name}: {exc}[/red]")
+            failures += 1
+            continue
+        if outcome.applied:
+            console.print(
+                f"{role_name}: template reduced {outcome.pre_tokens} -> {outcome.post_tokens} tokens; "
+                "per-spawn savings will appear in the ledger",
+                soft_wrap=True,
+            )
+        else:
+            console.print(f"[yellow]{role_name}: {outcome.reason}[/yellow]")
+            failures += 1
+    if failures:
+        raise SystemExit(1)
+
+
+@templates_group.command("restore")
+@click.argument("role")
+@_ROLE_WORKDIR_OPTION
+def templates_restore(role: str, workdir: Path) -> None:
+    """Restore ROLE's templates to the byte-identical pre-compression originals.
+
+    Reads the out-of-tree backups keyed by content hash, verifies every
+    hash on the way in and the role directory digest on the way out, and
+    records the reversal on the audit chain.
+    """
+    from bernstein.core.tokens.sensitive_gate import resolve_default_chain
+    from bernstein.core.tokens.template_compression import (
+        TemplateCompressionError,
+        restore_role_templates,
+    )
+
+    try:
+        outcome = restore_role_templates(role, workdir=workdir, chain=resolve_default_chain(workdir))
+    except TemplateCompressionError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    console.print(
+        f"[green]{role}: restored {len(outcome.restored_files)} file(s) byte-identically[/green] "
+        f"(directory digest verified: {outcome.pre_digest[:12]}...)"
+    )
+    for path in outcome.restored_files:
         console.print(f"  [dim]-[/dim] {path}")

@@ -121,6 +121,16 @@ _entrypoints_loaded = False
 _PROVIDER_ALIAS_TABLE: dict[str, str] = {}
 _provider_aliases_built = False
 
+#: Substring-fallback exclusions, keyed by alias. If the alias matches as a
+#: substring of the combined provider/model text but the text ALSO contains
+#: one of the excluded substrings, the match is rejected -- e.g. the bare
+#: "gpt" alias (registered by the Codex adapter's ``provides``) would
+#: otherwise substring-match "gpt-oss:20b", misrouting that distinct model
+#: family to Codex even though it is not an OpenAI GPT model.
+_ALIAS_SUBSTRING_EXCLUSIONS: dict[str, tuple[str, ...]] = {
+    "gpt": ("gpt-oss",),
+}
+
 
 def _load_entrypoint_adapters() -> None:
     """Discover and register adapters from the ``bernstein.adapters`` entry-point group.
@@ -376,6 +386,17 @@ def adapter_name_for_provider(provider_name: str | None, model: str) -> str | No
     text = f"{provider_name or ''} {model}".lower()
     for alias in sorted(_PROVIDER_ALIAS_TABLE, key=len, reverse=True):
         if alias in text:
+            excluded = _ALIAS_SUBSTRING_EXCLUSIONS.get(alias, ())
+            if any(excl in text for excl in excluded):
+                logger.info(
+                    "registry.adapter_name_for_provider: SUBSTRING fallback SKIPPED "
+                    "alias=%r in text=%r -- text matches an exclusion pattern for "
+                    "this alias (e.g. 'gpt-oss' is a distinct model family, not an "
+                    "OpenAI GPT model, despite containing the substring 'gpt')",
+                    alias,
+                    text,
+                )
+                continue
             adapter_name = _PROVIDER_ALIAS_TABLE[alias]
             logger.info(
                 "registry.adapter_name_for_provider: SUBSTRING fallback matched "

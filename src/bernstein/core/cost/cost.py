@@ -92,16 +92,29 @@ def read_tokens_sidecar_totals(sidecar_path: Path) -> tuple[int, int]:
         return 0, 0
     total_in = 0
     total_out = 0
-    for line in raw.splitlines():
+    for line_num, line in enumerate(raw.splitlines(), 1):
         line = line.strip()
         if not line:
             continue
         try:
             rec = json.loads(line)
-        except ValueError:
+            total_in += int(rec.get("in", 0) or 0)
+            total_out += int(rec.get("out", 0) or 0)
+        except (ValueError, TypeError, AttributeError) as exc:
+            # Widened beyond json.loads(): this file is RE-READ IN FULL every
+            # orchestrator tick, so a well-formed-but-wrong-shape record (not
+            # a dict, or "in"/"out" not coercible to int) that raises on the
+            # SUBSEQUENT .get()/int() calls would otherwise poison every
+            # subsequent tick's cost read for the whole session, not just one
+            # call. Skip the bad record and keep summing the rest.
+            logger.debug(
+                "Skipping malformed .tokens sidecar record at %s:%d: %s - line=%s",
+                sidecar_path,
+                line_num,
+                exc,
+                line[:500],
+            )
             continue
-        total_in += int(rec.get("in", 0) or 0)
-        total_out += int(rec.get("out", 0) or 0)
     return total_in, total_out
 
 
