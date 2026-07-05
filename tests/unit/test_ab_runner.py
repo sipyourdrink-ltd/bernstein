@@ -17,6 +17,9 @@ from pathlib import Path
 import pytest
 
 from bernstein.eval.ab_runner import (
+    VARIANT_ADDENDUM_KEY,
+    VARIANT_PROFILE_KEY,
+    ArmCost,
     Comparison,
     RunResult,
     Task,
@@ -27,6 +30,7 @@ from bernstein.eval.ab_runner import (
     load_tasks_yaml,
     load_variant_yaml,
     run_ab,
+    spawn_executor,
 )
 
 # ---------------------------------------------------------------------------
@@ -223,6 +227,110 @@ def test_comparison_dict_shape() -> None:
     )
     expected_keys = {"variant_a", "variant_b", "per_task", "winner", "reason"}
     assert set(cmp.to_dict().keys()) == expected_keys
+
+
+def test_comparison_with_costs_serialises_ledger_refs() -> None:
+    """Cost fields appear in the dict only when attached, with refs intact."""
+    cost_a = ArmCost(arm="A", entries=2, input_tokens=100, output_tokens=50, cost_usd=0.12, ledger_refs=("x1", "x2"))
+    cost_b = ArmCost(arm="B", entries=1, input_tokens=40, output_tokens=20, cost_usd=0.05, ledger_refs=("y1",))
+    cmp = Comparison(
+        variant_a=VariantStats(name="A", n=1, pass_count=1, pass_rate=1.0, mean_score=1.0, mean_duration_ms=0.0),
+        variant_b=VariantStats(name="B", n=1, pass_count=0, pass_rate=0.0, mean_score=0.0, mean_duration_ms=0.0),
+        per_task=(),
+        winner="a",
+        reason="quality",
+        cost_a=cost_a,
+        cost_b=cost_b,
+    )
+    payload = cmp.to_dict()
+    assert payload["cost_a"]["ledger_refs"] == ["x1", "x2"]
+    assert payload["cost_b"]["cost_usd"] == 0.05
+    # JSON round-trip stays byte-stable.
+    assert cmp.to_json() == cmp.to_json()
+
+
+# ---------------------------------------------------------------------------
+# spawn_executor - real path through the task server, mocked transport
+# ---------------------------------------------------------------------------
+
+
+def _mock_server(created: list[dict], status: str = "done", quality_passed: bool = True):
+    """Return an httpx.MockTransport simulating the task server."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/tasks":
+            payload = json.loads(request.content.decode("utf-8"))
+            created.append(payload)
+            return httpx.Response(200, json={"id": f"srv-{len(created)}"})
+        if request.method == "GET" and request.url.path.startswith("/tasks/"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": request.url.path.rsplit("/", 1)[-1],
+                    "status": status,
+                    "metadata": {"quality_passed": quality_passed},
+                },
+            )
+        return httpx.Response(404, json={})
+
+    return httpx.MockTransport(handler)
+
+
+def test_spawn_executor_dispatches_through_task_server() -> None:
+    """The real executor creates one server task per run and joins the
+    ledger via the server-assigned task id."""
+    created: list[dict] = []
+    executor = spawn_executor(
+        "http://server",
+        role="qa",
+        scope="small",
+        timeout_seconds=5,
+        poll_interval_seconds=0.0,
+        transport=_mock_server(created),
+    )
+    variant = Variant(name="candidate", prompt="", metadata={VARIANT_PROFILE_KEY: "terse"})
+    result = executor(variant, Task(task_id="t1", input="fix the bug"))
+
+    assert result.passed is True
+    assert result.score == 1.0
+    assert result.ledger_task_id == "srv-1"
+    payload = created[0]
+    assert payload["role"] == "qa"
+    assert payload["metadata"]["mode"] == "terse"
+    assert payload["metadata"]["eval_arm"] == "candidate"
+    assert payload["description"] == "fix the bug"
+
+
+def test_spawn_executor_appends_control_addendum_to_description() -> None:
+    """The control arm's addendum rides the description, not the profile."""
+    created: list[dict] = []
+    executor = spawn_executor(
+        "http://server",
+        timeout_seconds=5,
+        poll_interval_seconds=0.0,
+        transport=_mock_server(created),
+    )
+    variant = Variant(name="control", prompt="", metadata={VARIANT_ADDENDUM_KEY: "Keep it brief."})
+    executor(variant, Task(task_id="t1", input="fix the bug"))
+
+    payload = created[0]
+    assert payload["description"] == "fix the bug\n\nKeep it brief."
+    assert "mode" not in payload["metadata"]
+
+
+def test_spawn_executor_failed_task_scores_zero() -> None:
+    created: list[dict] = []
+    executor = spawn_executor(
+        "http://server",
+        timeout_seconds=5,
+        poll_interval_seconds=0.0,
+        transport=_mock_server(created, status="failed", quality_passed=False),
+    )
+    result = executor(Variant(name="baseline", prompt=""), Task(task_id="t1", input="x"))
+    assert result.passed is False
+    assert result.score == 0.0
+    assert result.ledger_task_id == "srv-1"
 
 
 # ---------------------------------------------------------------------------

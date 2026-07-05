@@ -21,7 +21,7 @@ Verdicts are dated. Re-evaluate when the listed condition changes.
 
 ---
 
-## SAP Joule for Developers - SKIP (2026-05-06)
+## SAP Joule for Developers - SKIP (2026-07-05)
 
 "SAP Joule for Developers" is an umbrella for design-time AI baked
 into SAP Build Code, SAP Build Apps, SAP Build Process Automation,
@@ -57,7 +57,7 @@ real demand surfaces, the venue is a new MCP catalog entry under
 `src/bernstein/adapters/`. Cross-reference the same SAP Joule ticket
 above.
 
-## Tessl Framework - PEER (2026-05-06)
+## Tessl Framework - PEER (2026-07-05)
 
 Tessl is a peer of Bernstein, not an adapter target. The `tessl` CLI
 exists, but under the hood it runs `claude-code`, `codex`, or
@@ -72,7 +72,7 @@ adapters execute. Re-evaluate if Tessl ships a first-class agent
 that does inference on its own rather than delegating to
 claude-code/codex/cursor.
 
-## Tabby (TabbyML) - DEFER (2026-05-06)
+## Tabby (TabbyML) - DEFER (2026-07-05)
 
 Tabby is a self-hosted local server (23k+ stars) that exposes
 completion and chat over HTTP. There is no agentic CLI - no
@@ -87,7 +87,7 @@ exception we'd only take on for a project with clear pull. Re-evaluate
 when there is demand from at least three distinct users, or when
 TabbyML ships a true CLI agent that fits the spawn-and-exit model.
 
-## Suna (Kortix) - DEFER (2026-05-06)
+## Suna (Kortix) - DEFER (2026-07-05)
 
 Suna (Kortix, 14k+ stars, Apache 2.0) ships a `kortix` CLI with
 `start / stop / logs / status` subcommands, but it's a generalist
@@ -101,7 +101,7 @@ without giving users a coding-specific capability they don't already
 have. Re-evaluate when Suna positions itself for coding workflows
 specifically, or develops differentiation that OpenHands lacks.
 
-## DeepSeek CLI - DEFER (2026-05-06)
+## DeepSeek CLI - DEFER (2026-07-05)
 
 There are multiple community CLIs in this space (`deepseek-cli`,
 `deep-code`, others) that all wrap DeepSeek API endpoints, but no
@@ -112,11 +112,12 @@ isn't ours.
 
 DeepSeek-V4 has very large reach in cost-sensitive and CN-heavy
 segments, so the demand is real - but the answer for now is to route
-DeepSeek models through `aider` or `ollama`, both of which already
-work. Re-evaluate when DeepSeek ships an official CLI from the
+DeepSeek models through the `openai_agents` runner (served natively
+via the DeepSeek API endpoint), `aider`, or `ollama`, all of which
+already work. Re-evaluate when DeepSeek ships an official CLI from the
 project itself.
 
-## Phind / Pieces / Sweep - SKIP (2026-05-06)
+## Phind / Pieces / Sweep - SKIP (2026-07-05)
 
 All three are IDE-only or web-only. Phind ships a chat surface in
 VS Code; Pieces is an in-IDE memory/snippet tool; Sweep operates as
@@ -128,7 +129,7 @@ the underlying product changes shape - e.g. one of them ships a
 headless `phind exec` / `pieces run` / `sweep run-local` binary
 with non-interactive output.
 
-## Vercel v0 / Lovable / Bolt.new - SKIP (2026-05-06)
+## Vercel v0 / Lovable / Bolt.new - SKIP (2026-07-05)
 
 These are web-only build-an-app surfaces aimed at UI generation, not
 general coding agents. v0 has shipped an MCP server, but no agentic

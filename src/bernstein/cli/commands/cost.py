@@ -1026,7 +1026,41 @@ def cost_cmd(
 # ---------------------------------------------------------------------------
 
 
-def _render_profile_report_human(cons: Console, content: dict[str, Any], sha256: str, artifact: Path) -> None:
+def _profile_comparison_evidence(
+    eval_ab_dir: Path,
+    comparisons: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Link each cross-profile claim to the latest comparison artifact.
+
+    For every (profile_a, profile_b) pair in the report's comparisons,
+    look up the newest ``eval ab`` comparison artifact for that pair in
+    the pair index. Pairs without recorded evidence are omitted; the
+    link is presentation metadata and never enters the report's hashed
+    payload.
+    """
+    from bernstein.eval.ab_comparison import latest_comparison_for_pair
+
+    evidence: dict[str, dict[str, Any]] = {}
+    for comp in comparisons:
+        pair_key = f"{comp['profile_a']} vs {comp['profile_b']}"
+        if pair_key in evidence:
+            continue
+        found = latest_comparison_for_pair(eval_ab_dir, str(comp["profile_a"]), str(comp["profile_b"]))
+        if found is not None:
+            evidence[pair_key] = {
+                "artifact_name": str(found.get("artifact_name", "")),
+                "artifact_sha256": str(found.get("artifact_sha256", "")),
+            }
+    return evidence
+
+
+def _render_profile_report_human(
+    cons: Console,
+    content: dict[str, Any],
+    sha256: str,
+    artifact: Path,
+    evidence: dict[str, dict[str, Any]] | None = None,
+) -> None:
     """Render the profile report as a table plus its verification anchors."""
     from rich.table import Table
 
@@ -1068,6 +1102,9 @@ def _render_profile_report_human(cons: Console, content: dict[str, Any], sha256:
                 f"  {comp['profile_a']} vs {comp['profile_b']} ({comp['role']}/{comp['model']}): "
                 f"${comp['mean_cost_usd_per_task_a']:.4f} vs ${comp['mean_cost_usd_per_task_b']:.4f} per task"
             )
+            linked = (evidence or {}).get(f"{comp['profile_a']} vs {comp['profile_b']}")
+            if linked:
+                cons.print(f"    [dim]eval evidence: {linked['artifact_name']}[/dim]")
     else:
         cons.print(
             f"\n  [dim]insufficient comparable runs (need >= {content['min_comparable_tasks']} "
@@ -1121,6 +1158,14 @@ def _render_profile_report_human(cons: Console, content: dict[str, Any], sha256:
     show_default=True,
     help="Directory the content-addressed report artifact is written to.",
 )
+@click.option(
+    "--eval-ab-dir",
+    "eval_ab_dir",
+    type=str,
+    default=".sdd/reports/eval_ab",
+    show_default=True,
+    help="Directory holding eval ab comparison artifacts; cross-profile claims link the latest one per pair.",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
 def cost_profile_report_cmd(
     last: str | None,
@@ -1129,6 +1174,7 @@ def cost_profile_report_cmd(
     transitions_path: str,
     audit_dir: str,
     reports_dir: str,
+    eval_ab_dir: str,
     as_json: bool,
 ) -> None:
     """Emit a content-addressed per-profile cost report (issue #2245).
@@ -1147,7 +1193,7 @@ def cost_profile_report_cmd(
     from bernstein.core.security.audit_chain import AuditChainStore, record_cost_profile_report
 
     cutoff = _parse_time_range(last) if last else 0.0
-    window_label = last if last else "all"
+    window_label = last or "all"
 
     mdir = Path(metrics_dir)
     task_records = _load_tasks_jsonl(mdir) if mdir.exists() else []
@@ -1184,17 +1230,23 @@ def cost_profile_report_cmd(
             console.print(f"[red]Audit chain append failed:[/red] {exc}")
         raise SystemExit(1) from exc
 
+    # Evidence links live outside ``content`` so the report's hashed
+    # payload (and its byte-identical recomputability) is untouched.
+    comparisons = cast("list[dict[str, Any]]", report.content["comparisons"])
+    evidence = _profile_comparison_evidence(Path(eval_ab_dir), comparisons)
+
     if as_json or is_json():
         print_json(
             {
                 "artifact": str(artifact),
                 "sha256": report.sha256,
                 "content": report.content,
+                "comparison_evidence": evidence,
             }
         )
         return
 
-    _render_profile_report_human(console, report.content, report.sha256, artifact)
+    _render_profile_report_human(console, report.content, report.sha256, artifact, evidence)
 
 
 # ---------------------------------------------------------------------------

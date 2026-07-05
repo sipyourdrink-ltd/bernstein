@@ -263,3 +263,102 @@ class TestProfileReportCmd:
         result = runner.invoke(cost_cmd, ["profile-report", "--help"])
         assert result.exit_code == 0, result.output
         assert "profile-report" in result.output or "profile" in result.output
+
+
+class TestProfileReportEvalEvidence:
+    """Cross-profile claims link the latest eval ab comparison (issue #2247)."""
+
+    def _comparable_ledger(self, sdd: Path) -> None:
+        led = SpendLedger(path=sdd / "cost" / "ledger.jsonl", run_id="r-2")
+        for i in range(MIN_COMPARABLE_TASKS):
+            _record(led, f"c-terse-{i}", "terse", cost=0.10)
+            _record(led, f"c-verbose-{i}", "verbose", cost=0.30)
+
+    def _write_evidence(self, sdd: Path) -> str:
+        """Record a comparison artifact for the terse/verbose pair."""
+        from bernstein.eval.ab_comparison import (
+            append_comparison_index,
+            build_arms,
+            build_comparison_artifact,
+            run_arms,
+            synthetic_arm_executor,
+        )
+        from bernstein.eval.ab_runner import Task
+
+        eval_ledger = sdd / "eval" / "ab" / "ledger.jsonl"
+        plan = build_arms("terse", "verbose")
+        rows = run_arms(
+            plan,
+            [Task(task_id="t1", input="x", expected="terse::x")],
+            executor=synthetic_arm_executor(SpendLedger(path=eval_ledger, run_id="e-1"), run_token="tok"),
+        )
+        artifact = build_comparison_artifact(
+            plan=plan,
+            rows=rows,
+            ledger_path=eval_ledger,
+            suite_sha256="ab" * 32,
+            suite_name="suite.yaml",
+            adapter_versions={"bernstein": "0.0.0"},
+            trials=1,
+        )
+        append_comparison_index(sdd / "reports" / "eval_ab", profile_pair=plan.profile_pair, artifact=artifact)
+        return artifact.sha256
+
+    def _invoke(self, sdd: Path, key_path: Path, *extra: str) -> tuple[int, str]:
+        runner = CliRunner()
+        result = runner.invoke(
+            cost_profile_report_cmd,
+            [
+                "--metrics-dir",
+                str(sdd / "metrics"),
+                "--ledger",
+                str(sdd / "cost" / "ledger.jsonl"),
+                "--transitions",
+                str(sdd / "cost" / "profile_transitions.jsonl"),
+                "--audit-dir",
+                str(sdd / "audit"),
+                "--reports-dir",
+                str(sdd / "reports" / "cost_profiles"),
+                "--eval-ab-dir",
+                str(sdd / "reports" / "eval_ab"),
+                *extra,
+            ],
+            env={"BERNSTEIN_AUDIT_KEY_PATH": str(key_path)},
+        )
+        return result.exit_code, result.output
+
+    def test_json_links_latest_comparison_for_pair(
+        self, sdd: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._comparable_ledger(sdd)
+        sha = self._write_evidence(sdd)
+        key_path = tmp_path / "keys" / "audit.key"
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_path))
+        code, output = self._invoke(sdd, key_path, "--json")
+        assert code == 0, output
+        data = json.loads(output)
+        evidence = data["comparison_evidence"]["terse vs verbose"]
+        assert evidence["artifact_sha256"] == sha
+        assert evidence["artifact_name"] == f"{sha}.json"
+        # The link never enters the hashed report payload.
+        assert "comparison_evidence" not in json.dumps(data["content"])
+
+    def test_human_output_prints_evidence_line(
+        self, sdd: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._comparable_ledger(sdd)
+        sha = self._write_evidence(sdd)
+        key_path = tmp_path / "keys" / "audit.key"
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_path))
+        code, output = self._invoke(sdd, key_path)
+        assert code == 0, output
+        assert "eval evidence" in output
+        assert sha[:16] in output
+
+    def test_no_evidence_when_index_missing(self, sdd: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._comparable_ledger(sdd)
+        key_path = tmp_path / "keys" / "audit.key"
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(key_path))
+        code, output = self._invoke(sdd, key_path, "--json")
+        assert code == 0, output
+        assert json.loads(output)["comparison_evidence"] == {}

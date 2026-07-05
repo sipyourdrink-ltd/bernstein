@@ -13,6 +13,11 @@ Design notes:
     * Companion to ``bernstein.core.quality.ab_test`` (model-vs-model on a
       single live task via httpx). This module covers prompt-vs-prompt
       offline / synthetic eval.
+    * Real runs dispatch through the normal spawn path: the task server
+      creates each run as an ordinary task executed in its own isolated
+      worktree (:func:`spawn_executor`). The spend ledger rows those runs
+      produce are the only source of cost figures - :class:`ArmCost`
+      references them by ledger line hash, never by re-estimation.
     * Benchmark loaders (SWE-bench Pro, Terminal-Bench) are intentionally
       out of scope - see ``feat-swe-bench-pro-terminal-bench-nightly``.
 """
@@ -20,13 +25,19 @@ Design notes:
 from __future__ import annotations
 
 import json
+import logging
 import statistics
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.sanitize import sanitize_log
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -79,6 +90,9 @@ class RunResult:
         duration_ms: Wall-clock duration in milliseconds.
         passed: Whether the task is considered successful (score >= 0.5
             by default; can be overridden by the scorer).
+        ledger_task_id: Join key into the spend ledger - the ``task_id``
+            the run's LLM calls were recorded under. Empty for executors
+            that produce no ledger rows (e.g. :func:`echo_executor`).
     """
 
     variant: str
@@ -87,6 +101,46 @@ class RunResult:
     score: float
     duration_ms: float = 0.0
     passed: bool = False
+    ledger_task_id: str = ""
+
+
+@dataclass(frozen=True)
+class ArmCost:
+    """Ledger-sourced cost figures for one comparison arm.
+
+    Every figure is a sum over concrete spend-ledger rows; the rows are
+    referenced by the SHA-256 of their raw JSONL line bytes so a
+    verifier holding the ledger can resolve each reference and recompute
+    the sums. Nothing here is estimated.
+
+    Attributes:
+        arm: Arm (variant) name the figures belong to.
+        entries: Number of ledger rows referenced.
+        input_tokens: Sum of ``input_tokens`` over the referenced rows.
+        output_tokens: Sum of ``output_tokens`` over the referenced rows.
+        cost_usd: Sum of ``cost_usd`` over the referenced rows, rounded
+            to 6 decimals.
+        ledger_refs: SHA-256 hex digests of the referenced raw ledger
+            lines, in ledger file order.
+    """
+
+    arm: str
+    entries: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    ledger_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a deterministic dict suitable for JSON serialisation."""
+        return {
+            "arm": self.arm,
+            "entries": self.entries,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cost_usd": self.cost_usd,
+            "ledger_refs": list(self.ledger_refs),
+        }
 
 
 @dataclass(frozen=True)
@@ -138,6 +192,9 @@ class Comparison:
         winner: ``"a"``, ``"b"``, or ``"tie"`` based on pass-rate then
             mean-score (5% tolerance band).
         reason: Human-readable explanation.
+        cost_a: Ledger-sourced cost figures for the A side, or ``None``
+            when the runs produced no ledger rows (synthetic executors).
+        cost_b: Ledger-sourced cost figures for the B side.
     """
 
     variant_a: VariantStats
@@ -145,16 +202,28 @@ class Comparison:
     per_task: tuple[TaskDelta, ...]
     winner: str
     reason: str
+    cost_a: ArmCost | None = None
+    cost_b: ArmCost | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a deterministic dict suitable for JSON serialisation."""
-        return {
+        """Return a deterministic dict suitable for JSON serialisation.
+
+        The ``cost_a`` / ``cost_b`` keys appear only when cost figures
+        were attached, so pre-cost consumers keep seeing the original
+        shape byte-for-byte.
+        """
+        out: dict[str, Any] = {
             "variant_a": _stats_to_dict(self.variant_a),
             "variant_b": _stats_to_dict(self.variant_b),
             "per_task": [_delta_to_dict(d) for d in self.per_task],
             "winner": self.winner,
             "reason": self.reason,
         }
+        if self.cost_a is not None:
+            out["cost_a"] = self.cost_a.to_dict()
+        if self.cost_b is not None:
+            out["cost_b"] = self.cost_b.to_dict()
+        return out
 
     def to_json(self, *, indent: int = 2) -> str:
         """Render as a deterministic JSON string."""
@@ -230,6 +299,156 @@ def echo_executor(variant: Variant, task: Task) -> RunResult:
         duration_ms=0.0,
         passed=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Real executor - dispatch through the normal spawn path
+# ---------------------------------------------------------------------------
+
+#: Variant.metadata key naming the response-style profile a run is spawned
+#: under. The spawn path resolves it via ``Task.metadata['mode']`` and
+#: stamps ``response_profile`` into every ledger row the run produces.
+VARIANT_PROFILE_KEY = "response_profile"
+
+#: Variant.metadata key carrying a plain-text addendum appended to the
+#: task description (used by the minimal-control arm, which is not a
+#: named profile).
+VARIANT_ADDENDUM_KEY = "prompt_addendum"
+
+_SPAWN_TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled", "closed"})
+_SPAWN_PASS_STATUSES = frozenset({"done", "closed"})
+
+
+def spawn_executor(
+    server_url: str,
+    *,
+    role: str = "backend",
+    scope: str = "small",
+    timeout_seconds: int = 1800,
+    poll_interval_seconds: float = 5.0,
+    transport: Any = None,
+) -> Executor:
+    """Return an executor that runs each (variant, task) as a real task.
+
+    Each invocation POSTs one task to the task server, so the run goes
+    through the normal spawn path: role resolution, model policy, and an
+    isolated per-task worktree. A variant whose metadata carries
+    :data:`VARIANT_PROFILE_KEY` is spawned with ``metadata['mode']`` set
+    to that profile, so the spawn path renders the profile addendum and
+    stamps ``response_profile`` / ``profile_content_sha256`` into the
+    ledger rows the run produces. A variant carrying
+    :data:`VARIANT_ADDENDUM_KEY` gets that text appended to the task
+    description instead (the minimal-control arm).
+
+    Args:
+        server_url: Base URL of the running task server.
+        role: Agent role assigned to every spawned task.
+        scope: Task scope (``small`` / ``medium`` / ``large``).
+        timeout_seconds: Max seconds to wait for one task to finish.
+        poll_interval_seconds: Seconds between status polls.
+        transport: Optional httpx transport override (tests inject an
+            ``httpx.MockTransport`` here for a zero-network path).
+
+    Returns:
+        An :data:`Executor` whose :class:`RunResult.ledger_task_id` is
+        the server-assigned task id - the join key into the spend
+        ledger.
+    """
+    import httpx  # local import: only the real path needs it
+
+    def _run(variant: Variant, task: Task) -> RunResult:
+        description = str(task.input)
+        addendum = str(variant.metadata.get(VARIANT_ADDENDUM_KEY, "") or "")
+        if addendum:
+            description = f"{description}\n\n{addendum}"
+
+        metadata: dict[str, Any] = {
+            "eval_ab": True,
+            "eval_arm": variant.name,
+            "eval_task_id": task.task_id,
+        }
+        profile = str(variant.metadata.get(VARIANT_PROFILE_KEY, "") or "")
+        if profile:
+            metadata["mode"] = profile
+        payload: dict[str, Any] = {
+            "title": f"[eval-ab:{variant.name}] {description[:80]}",
+            "description": description,
+            "role": role,
+            "scope": scope,
+            "metadata": metadata,
+        }
+        if variant.model:
+            payload["model"] = variant.model
+            metadata["pinned_model"] = True
+
+        start = time.monotonic()
+        with httpx.Client(transport=transport) as client:
+            resp = client.post(f"{server_url}/tasks", json=payload, timeout=10.0)
+            resp.raise_for_status()
+            created: dict[str, Any] = resp.json()
+            server_task_id = str(created.get("id") or "")
+            if not server_task_id:
+                msg = f"task server did not return a task id: {created}"
+                raise RuntimeError(msg)
+            logger.info(
+                "eval ab: spawned arm=%s task=%s as server task %s",
+                sanitize_log(variant.name),
+                sanitize_log(task.task_id),
+                sanitize_log(server_task_id),
+            )
+            task_data = _poll_spawned_task(
+                client,
+                server_url,
+                server_task_id,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+            )
+        duration_ms = (time.monotonic() - start) * 1000.0
+
+        status = str(task_data.get("status", "unknown"))
+        passed = status in _SPAWN_PASS_STATUSES
+        meta: dict[str, Any] = task_data.get("metadata", {}) or {}
+        quality_passed = bool(meta.get("quality_passed", task_data.get("quality_passed", passed)))
+        score = 1.0 if (passed and quality_passed) else 0.0
+        return RunResult(
+            variant=variant.name,
+            task_id=task.task_id,
+            output=task_data,
+            score=score,
+            duration_ms=duration_ms,
+            passed=passed and quality_passed,
+            ledger_task_id=server_task_id,
+        )
+
+    return _run
+
+
+def _poll_spawned_task(
+    client: Any,
+    server_url: str,
+    server_task_id: str,
+    *,
+    timeout_seconds: int,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    """Poll one spawned task until it is terminal or the timeout passes.
+
+    Returns:
+        The final task dict, or ``{"status": "timeout"}`` when the task
+        did not reach a terminal status in time (the caller records the
+        run as not-passed rather than raising, so one stuck arm cannot
+        abort the whole comparison).
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        resp = client.get(f"{server_url}/tasks/{server_task_id}", timeout=10.0)
+        resp.raise_for_status()
+        task_data: dict[str, Any] = resp.json()
+        if str(task_data.get("status", "")) in _SPAWN_TERMINAL_STATUSES:
+            return task_data
+        time.sleep(poll_interval_seconds)
+    logger.warning("eval ab: server task %s timed out after %ss", sanitize_log(server_task_id), timeout_seconds)
+    return {"status": "timeout"}
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +677,9 @@ def _delta_to_dict(d: TaskDelta) -> dict[str, Any]:
 
 
 __all__ = [
+    "VARIANT_ADDENDUM_KEY",
+    "VARIANT_PROFILE_KEY",
+    "ArmCost",
     "Comparison",
     "Executor",
     "RunResult",
@@ -471,4 +693,5 @@ __all__ = [
     "load_tasks_yaml",
     "load_variant_yaml",
     "run_ab",
+    "spawn_executor",
 ]

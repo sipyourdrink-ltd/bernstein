@@ -34,7 +34,9 @@ __all__ = [
     "canonical_entry_bytes",
     "generate_signer_keypair",
     "sign_entry",
+    "sign_payload",
     "verify_entry",
+    "verify_payload",
 ]
 
 
@@ -96,6 +98,36 @@ def generate_signer_keypair() -> tuple[str, str]:
     return _generate_keypair()
 
 
+def sign_payload(payload: bytes, private_key_pem: str) -> str:
+    """Sign an arbitrary canonical payload with an Ed25519 key.
+
+    Shared primitive behind :func:`sign_entry`; also reused by the team
+    manifest signing path (:mod:`bernstein.core.teams.manifest`) so both
+    catalogs verify third-party content through one code path.
+
+    Args:
+        payload: Canonical bytes to sign.
+        private_key_pem: PEM-encoded Ed25519 private key.
+
+    Returns:
+        Base64url-encoded detached signature (single segment).
+
+    Raises:
+        ManifestSignatureError: If the private key is not Ed25519 or
+            cannot be loaded.
+    """
+    from cryptography.hazmat.primitives import serialization
+
+    try:
+        priv = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
+    except (ValueError, TypeError) as exc:
+        raise ManifestSignatureError(f"cannot load private key: {exc}") from exc
+    if not isinstance(priv, Ed25519PrivateKey):
+        raise ManifestSignatureError("private key must be Ed25519")
+    sig = priv.sign(payload)
+    return _b64url_encode(sig)
+
+
 def sign_entry(entry: SkillCatalogEntry, private_key_pem: str) -> str:
     """Sign the canonical entry bytes with the install's Ed25519 key.
 
@@ -111,17 +143,83 @@ def sign_entry(entry: SkillCatalogEntry, private_key_pem: str) -> str:
         ManifestSignatureError: If the private key is not Ed25519 or
             cannot be loaded.
     """
+    return sign_payload(canonical_entry_bytes(entry), private_key_pem)
+
+
+def verify_payload(
+    payload: bytes,
+    signature: str | None,
+    public_key_pem: str | None,
+    *,
+    allow_unverified: bool = False,
+    missing_signature_reason: str = "entry has no signature",
+    missing_key_reason: str = "catalog has no signer_pubkey",
+) -> VerificationOutcome:
+    """Verify a detached Ed25519 signature over an arbitrary payload.
+
+    Shared primitive behind :func:`verify_entry`; also reused by the team
+    manifest verification path.
+
+    Args:
+        payload: Canonical bytes that were signed.
+        signature: Base64url-encoded detached signature, or ``None``.
+        public_key_pem: PEM-encoded Ed25519 public key, or ``None``.
+        allow_unverified: When True, an unsigned or unverifiable payload
+            returns ``verified=False`` but with no exception so the
+            caller can surface a warning instead of aborting.
+        missing_signature_reason: Outcome reason when ``signature`` is None.
+        missing_key_reason: Outcome reason when ``public_key_pem`` is None.
+
+    Returns:
+        :class:`VerificationOutcome` describing the result.
+
+    Raises:
+        ManifestSignatureError: If verification fails and
+            ``allow_unverified`` is False.
+    """
+    if signature is None:
+        outcome = VerificationOutcome(verified=False, reason=missing_signature_reason)
+        if allow_unverified:
+            return outcome
+        raise ManifestSignatureError(outcome.reason)
+    if public_key_pem is None:
+        outcome = VerificationOutcome(verified=False, reason=missing_key_reason)
+        if allow_unverified:
+            return outcome
+        raise ManifestSignatureError(outcome.reason)
+
     from cryptography.hazmat.primitives import serialization
 
     try:
-        priv = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
+        pub = serialization.load_pem_public_key(public_key_pem.encode("ascii"))
     except (ValueError, TypeError) as exc:
-        raise ManifestSignatureError(f"cannot load private key: {exc}") from exc
-    if not isinstance(priv, Ed25519PrivateKey):
-        raise ManifestSignatureError("private key must be Ed25519")
-    payload = canonical_entry_bytes(entry)
-    sig = priv.sign(payload)
-    return _b64url_encode(sig)
+        outcome = VerificationOutcome(verified=False, reason=f"cannot load public key: {exc}")
+        if allow_unverified:
+            return outcome
+        raise ManifestSignatureError(outcome.reason) from exc
+    if not isinstance(pub, Ed25519PublicKey):
+        outcome = VerificationOutcome(verified=False, reason="public key must be Ed25519")
+        if allow_unverified:
+            return outcome
+        raise ManifestSignatureError(outcome.reason)
+
+    try:
+        sig_bytes = _b64url_decode(signature)
+    except (ValueError, base64.binascii.Error) as exc:
+        outcome = VerificationOutcome(verified=False, reason=f"signature is not valid base64url: {exc}")
+        if allow_unverified:
+            return outcome
+        raise ManifestSignatureError(outcome.reason) from exc
+
+    try:
+        pub.verify(sig_bytes, payload)
+    except InvalidSignature:
+        outcome = VerificationOutcome(verified=False, reason="signature does not verify")
+        if allow_unverified:
+            return outcome
+        raise ManifestSignatureError(outcome.reason) from None
+
+    return VerificationOutcome(verified=True)
 
 
 def verify_entry(
@@ -147,50 +245,12 @@ def verify_entry(
         ManifestSignatureError: If verification fails and
             ``allow_unverified`` is False.
     """
-    if entry.signature is None:
-        outcome = VerificationOutcome(verified=False, reason="entry has no signature")
-        if allow_unverified:
-            return outcome
-        raise ManifestSignatureError(outcome.reason)
-    if public_key_pem is None:
-        outcome = VerificationOutcome(verified=False, reason="catalog has no signer_pubkey")
-        if allow_unverified:
-            return outcome
-        raise ManifestSignatureError(outcome.reason)
-
-    from cryptography.hazmat.primitives import serialization
-
-    try:
-        pub = serialization.load_pem_public_key(public_key_pem.encode("ascii"))
-    except (ValueError, TypeError) as exc:
-        outcome = VerificationOutcome(verified=False, reason=f"cannot load public key: {exc}")
-        if allow_unverified:
-            return outcome
-        raise ManifestSignatureError(outcome.reason) from exc
-    if not isinstance(pub, Ed25519PublicKey):
-        outcome = VerificationOutcome(verified=False, reason="public key must be Ed25519")
-        if allow_unverified:
-            return outcome
-        raise ManifestSignatureError(outcome.reason)
-
-    payload = canonical_entry_bytes(entry)
-    try:
-        sig_bytes = _b64url_decode(entry.signature)
-    except (ValueError, base64.binascii.Error) as exc:
-        outcome = VerificationOutcome(verified=False, reason=f"signature is not valid base64url: {exc}")
-        if allow_unverified:
-            return outcome
-        raise ManifestSignatureError(outcome.reason) from exc
-
-    try:
-        pub.verify(sig_bytes, payload)
-    except InvalidSignature:
-        outcome = VerificationOutcome(verified=False, reason="signature does not verify")
-        if allow_unverified:
-            return outcome
-        raise ManifestSignatureError(outcome.reason) from None
-
-    return VerificationOutcome(verified=True)
+    return verify_payload(
+        canonical_entry_bytes(entry),
+        entry.signature,
+        public_key_pem,
+        allow_unverified=allow_unverified,
+    )
 
 
 def attach_signature(entry: SkillCatalogEntry, signature: str) -> SkillCatalogEntry:

@@ -480,6 +480,29 @@ def _sync_and_plan_tasks(
     return backlog_count, manager_task_id, prior_session
 
 
+def _record_team_manifest_lineage(seed: SeedConfig, workdir: Path) -> None:
+    """Anchor a run's team manifest in the audit chain (issue #2248, AC3).
+
+    When the seed was expanded from a ``team_manifest:`` reference, append
+    a ``team.manifest.resolve`` event to ``.sdd/audit`` and pin the
+    manifest in ``teams.lock``, so "which team produced this run" is
+    answerable from the chain. Best-effort by design: lineage recording
+    must never abort a run.
+    """
+    name = getattr(seed, "team_manifest", None)
+    digest = getattr(seed, "team_manifest_digest", None)
+    if not name or not digest:
+        return
+    try:
+        from bernstein.core.teams.audit import record_run_team_manifest
+
+        record_run_team_manifest(workdir, name=name, digest=digest)
+    except Exception as exc:  # lineage anchoring must never crash bootstrap
+        from bernstein.core.security.sanitize import sanitize_log
+
+        logger.warning("team manifest lineage recording failed for %r: %s", sanitize_log(name), exc)
+
+
 def bootstrap_from_seed(
     seed_path: Path,
     workdir: Path,
@@ -548,6 +571,11 @@ def bootstrap_from_seed(
     preflight_checks(seed.cli, port)
     check_config_paths(seed, workdir)
     effective_cells = cells if cells is not None else seed.cells
+
+    # Anchor the resolved team manifest (issue #2248) in the audit chain
+    # and teams.lock so "which team produced this run" is answerable from
+    # the chain.
+    _record_team_manifest_lineage(seed, workdir)
 
     # Persist the resolved seed path so downstream tooling (dashboard,
     # `bernstein status`, debug bundles) can find the real seed file even

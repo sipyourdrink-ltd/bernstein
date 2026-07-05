@@ -143,6 +143,83 @@ def _parse_team(raw: object) -> Literal["auto"] | list[str]:
     raise SeedError(f"team must be 'auto' or a list of role names, got: {raw!r}")
 
 
+def _expand_team_manifest(
+    raw_ref: object,
+    *,
+    raw_team: object,
+    raw_role_policy: object,
+    workdir: Path,
+) -> tuple[list[str], object, str, str]:
+    """Expand a ``team_manifest: <name>[@sha256]`` reference (issue #2248).
+
+    A pure front-end over the existing structures: the manifest is
+    resolved from ``templates/teams/`` (workdir first, then the bundled
+    defaults), expanded to a plain role list plus raw per-role policy
+    dicts, and merged under any seed-level ``role_model_policy`` (seed
+    keys win per role key). The merged mapping then flows through the
+    standard ``_parse_role_model_policy`` validator, so a manifest-driven
+    seed parses to byte-identical structures as the equivalent
+    hand-written one.
+
+    Args:
+        raw_ref: The ``team_manifest`` YAML value.
+        raw_team: The ``team`` YAML value, for the mutual-exclusion check.
+        raw_role_policy: The ``role_model_policy`` YAML value to merge over
+            the expansion.
+        workdir: The seed file's directory; manifest resolution root.
+
+    Returns:
+        ``(team, merged_role_policy, manifest_name, manifest_digest)``
+        where ``merged_role_policy`` is ``None`` when neither the manifest
+        nor the seed declares any policy.
+
+    Raises:
+        SeedError: On a malformed reference or a ``team``/``team_manifest``
+            conflict.
+        TeamManifestNotFoundError: When the manifest does not exist.
+        TeamManifestDigestMismatchError: When an ``@sha256`` pin does not
+            match the resolved manifest (AC4). Both subclass ``SeedError``.
+    """
+    if not isinstance(raw_ref, str) or not raw_ref.strip():
+        raise SeedError(
+            f"team_manifest must be a non-empty string of the form '<name>' or '<name>@<sha256>', got: {raw_ref!r}"
+        )
+    if isinstance(raw_team, list) and raw_team:
+        raise SeedError("team and team_manifest are mutually exclusive; remove one of them")
+
+    # Imported lazily so parsing a seed without a manifest reference does
+    # not pay for the teams package (mirrors the response_style import).
+    from bernstein.core.teams.manifest import (
+        TeamManifestDigestMismatchError,
+        expand_manifest,
+        parse_manifest_ref,
+        resolve_team_manifest,
+    )
+
+    name, pinned = parse_manifest_ref(raw_ref)
+    manifest = resolve_team_manifest(name, workdir=workdir)
+    digest = manifest.digest()
+    if pinned is not None and pinned != digest:
+        raise TeamManifestDigestMismatchError(
+            f"team_manifest {name!r} digest mismatch: pinned {pinned}, resolved {digest}. "
+            "Update the pin to the resolved digest or restore the manifest it was created from."
+        )
+
+    expanded = expand_manifest(manifest)
+    merged: dict[str, object] = {role: dict(policy) for role, policy in expanded.role_model_policy.items()}
+    if raw_role_policy is not None:
+        if not isinstance(raw_role_policy, dict):
+            raise SeedError("role_model_policy must be a mapping of role -> settings")
+        for role, settings in cast("_StrObjDict", raw_role_policy).items():
+            base = merged.get(role)
+            if isinstance(base, dict) and isinstance(settings, dict):
+                merged[role] = {**cast("_StrObjDict", base), **cast("_StrObjDict", settings)}
+            else:
+                merged[role] = settings
+
+    return list(expanded.team), (merged or None), name, digest
+
+
 def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
     """Parse an optional list-of-strings field from YAML.
 
@@ -1739,6 +1816,21 @@ def parse_seed(path: Path) -> SeedConfig:
     budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, data.get("budget")))
     team = _parse_team(data.get("team"))
 
+    # ``team_manifest: <name>[@sha256]`` expands deterministically into the
+    # inline ``team`` + ``role_model_policy`` structures before validation,
+    # so everything downstream of this point sees only the existing shapes.
+    team_manifest_name: str | None = None
+    team_manifest_digest: str | None = None
+    role_policy_raw: object = data.get("role_model_policy")
+    raw_manifest_ref = data.get("team_manifest")
+    if raw_manifest_ref is not None:
+        team, role_policy_raw, team_manifest_name, team_manifest_digest = _expand_team_manifest(
+            raw_manifest_ref,
+            raw_team=data.get("team"),
+            raw_role_policy=role_policy_raw,
+            workdir=path.parent,
+        )
+
     cli = _parse_cli(data)
     max_agents_raw = _parse_max_agents(data)
     model_raw = _parse_model(data)
@@ -1746,7 +1838,7 @@ def parse_seed(path: Path) -> SeedConfig:
 
     constraints = _parse_string_list(data.get("constraints"), "constraints")
     context_files = _parse_string_list(data.get("context_files"), "context_files")
-    role_model_policy = _parse_role_model_policy(data.get("role_model_policy"))
+    role_model_policy = _parse_role_model_policy(role_policy_raw)
 
     # AC4: every declared response_style
     # must be renderable from the mode-profile templates visible from the
@@ -1831,6 +1923,8 @@ def parse_seed(path: Path) -> SeedConfig:
         goal=goal,
         budget_usd=budget_usd,
         team=team,
+        team_manifest=team_manifest_name,
+        team_manifest_digest=team_manifest_digest,
         cli=cli,
         max_agents=max_agents_raw,
         model=model_raw,
