@@ -179,14 +179,13 @@ class TestJanitorPipeline:
     """Integration test for run_janitor with concrete signals."""
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="pre-existing failure outside main CI; tracked in #2227")
     async def test_janitor_passes_on_satisfied_signals(self, tmp_path: Path) -> None:
         _init_git_repo(tmp_path)
         (tmp_path / "output.txt").write_text("result\n")
         await asyncio.to_thread(subprocess.run, ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
         await asyncio.to_thread(
             subprocess.run,
-            ["git", "commit", "-m", "add output"],
+            ["git", "commit", "-m", "T-E2E-001: add output"],
             cwd=tmp_path,
             check=True,
             capture_output=True,
@@ -451,7 +450,6 @@ class TestFullSpawnExecuteVerifyMergePipeline:
         assert task.status == TaskStatus.OPEN
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="pre-existing failure outside main CI; tracked in #2227")
     async def test_async_janitor_integrate_with_spawn_verify(self, tmp_path: Path) -> None:
         """Async janitor pipeline: spawn fake adapter, then run_janitor to confirm."""
         _init_git_repo(tmp_path)
@@ -477,7 +475,7 @@ class TestFullSpawnExecuteVerifyMergePipeline:
         )
         await asyncio.to_thread(
             subprocess.run,
-            ["git", "commit", "-m", "agent: create result.py"],
+            ["git", "commit", "-m", "T-FULL-003: agent: create result.py"],
             cwd=tmp_path,
             check=True,
             capture_output=True,
