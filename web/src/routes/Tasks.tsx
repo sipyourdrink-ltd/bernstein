@@ -57,7 +57,8 @@ type BackendStatus =
   | 'waiting_for_subtasks'
   | 'cancelled'
   | 'orphaned'
-  | 'pending_approval';
+  | 'pending_approval'
+  | 'refused';
 
 interface TaskRow {
   id: string;
@@ -133,6 +134,9 @@ function toUiStatus(s: string | null | undefined): TaskStatus {
       return 'stalled';
     case 'failed':
     case 'cancelled':
+    // Terminal typed refusal (worker completion contract). Rendered in the
+    // attention bucket; server-side counts keep refused separate from failed.
+    case 'refused':
       return 'failed';
     case 'done':
     case 'closed':
