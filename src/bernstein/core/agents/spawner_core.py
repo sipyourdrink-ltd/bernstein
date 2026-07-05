@@ -1800,6 +1800,67 @@ class AgentSpawner:
                 exc,
             )
 
+    def _maybe_record_profile_transition(
+        self,
+        *,
+        task_id: str,
+        session_id: str,
+        prev_profile: str,
+        prev_sha: str,
+        new_profile: str,
+        new_sha: str,
+    ) -> None:
+        """Record a ``profile_transition`` event when a re-spawn changes profile.
+
+        A task re-spawned under a different response-style profile (for
+        example after a role-policy edit between attempts) accumulates
+        ledger entries under two profiles. Per-profile cost attribution
+        must exclude such tasks rather than split their tokens, so the
+        change is recorded to ``.sdd/cost/profile_transitions.jsonl``
+        before the new profile overwrites the stamp on task metadata.
+        First spawns (no previous stamp) and same-profile re-spawns
+        record nothing. Failures are logged and swallowed - attribution
+        metadata must never block the spawn.
+
+        Args:
+            task_id: The task being re-spawned.
+            session_id: The new session's id (recorded as the agent).
+            prev_profile: Profile previously stamped on task metadata
+                (empty on first spawn).
+            prev_sha: Previously stamped addendum hash.
+            new_profile: Profile resolved for this spawn.
+            new_sha: Rendered-addendum hash for this spawn.
+        """
+        if not prev_profile or prev_profile == new_profile:
+            return
+        try:
+            from bernstein.core.cost.profile_attribution import (
+                default_transitions_path,
+                record_profile_transition,
+            )
+
+            record_profile_transition(
+                default_transitions_path(self._workdir / ".sdd"),
+                task_id=task_id,
+                agent_id=session_id,
+                from_profile=prev_profile,
+                to_profile=new_profile,
+                from_sha256=prev_sha,
+                to_sha256=new_sha,
+            )
+            logger.info(
+                "Profile transition recorded for task %s: %s -> %s",
+                task_id,
+                prev_profile,
+                new_profile,
+            )
+        except Exception as exc:  # attribution must never block the spawn
+            logger.warning(
+                "Could not record profile_transition for task %s: %s",
+                task_id,
+                exc,
+            )
+
     def _reap_openclaw(self, session: AgentSession) -> None:
         """Sync logs from the remote bridge for an OpenClaw session."""
         reap_openclaw(session, self._runtime_bridge, self._run_bridge_call)
@@ -2811,6 +2872,14 @@ class AgentSpawner:
         profile_content_sha = addendum_sha256(style_addendum)
         for _t in tasks:
             if isinstance(_t.metadata, dict):
+                self._maybe_record_profile_transition(
+                    task_id=_t.id,
+                    session_id=session_id,
+                    prev_profile=str(_t.metadata.get("response_profile") or ""),
+                    prev_sha=str(_t.metadata.get("profile_content_sha256") or ""),
+                    new_profile=style_resolution.style,
+                    new_sha=profile_content_sha,
+                )
                 _t.metadata["response_profile"] = style_resolution.style
                 _t.metadata["profile_content_sha256"] = profile_content_sha
         logger.info(
