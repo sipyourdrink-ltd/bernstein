@@ -383,6 +383,53 @@ class ScheduleSupervisor:
 
         return receipts
 
+    @staticmethod
+    def _resolve_response_profile(schedule: Schedule) -> tuple[str, str]:
+        """Resolve the schedule's declared response-style profile, if any.
+
+        A schedule can declare
+        ``extra: {response_profile: <verbose|balanced|terse>}``; the profile
+        and the SHA-256 of its rendered addendum are then folded into the
+        projected task identity. Schedules without the key (every pre-change
+        schedule) return ``("", "")`` so their projection stays byte-identical
+        to prior revs. Unknown style names are logged and ignored rather than
+        blocking the fire - config-level typos are rejected earlier by the
+        seed parser.
+
+        The addendum is rendered from the bundled templates (no workdir
+        context exists at supervisor level); the spawn-time ledger entry
+        records the hash of the addendum actually rendered in the run's
+        workdir, which may differ when the operator overrides templates.
+        """
+        raw = schedule.extra.get("response_profile")
+        if not isinstance(raw, str) or not raw:
+            return "", ""
+        from bernstein.core.agents.response_style import (
+            RESPONSE_STYLES,
+            ResponseStyleTemplateError,
+            addendum_sha256,
+            render_style_addendum,
+        )
+
+        if raw not in RESPONSE_STYLES:
+            logger.warning(
+                "Schedule %s declares unknown response_profile %r; ignoring",
+                schedule.id,
+                raw,
+            )
+            return "", ""
+        try:
+            profile_sha = addendum_sha256(render_style_addendum(raw))
+        except ResponseStyleTemplateError as exc:
+            logger.warning(
+                "Schedule %s response_profile %r cannot be rendered (%s); ignoring",
+                schedule.id,
+                raw,
+                exc,
+            )
+            return "", ""
+        return raw, profile_sha
+
     def _fire(
         self,
         schedule: Schedule,
@@ -391,12 +438,15 @@ class ScheduleSupervisor:
         counterfactual: bool,
     ) -> FireReceipt:
         """Build the projection, dispatch the trigger event, and chain it."""
+        response_profile, profile_sha = self._resolve_response_profile(schedule)
         projection = project_schedule_fire(
             schedule_id=schedule.id,
             fire_time=fire_epoch,
             last_state=None,
             goal=schedule.goal,
             scenario_id=schedule.scenario_id,
+            response_profile=response_profile,
+            profile_content_sha256=profile_sha,
         )
 
         prev_chain = self._chain.chain_tail if self._chain is not None else ""

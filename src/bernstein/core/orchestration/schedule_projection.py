@@ -188,6 +188,8 @@ def project_schedule_fire(
     last_state: Mapping[str, Any] | None,
     goal: str = "",
     scenario_id: str = "",
+    response_profile: str = "",
+    profile_content_sha256: str = "",
 ) -> ProjectionResult:
     """Project ``(schedule_id, fire_time, last_state)`` onto a task graph.
 
@@ -210,6 +212,16 @@ def project_schedule_fire(
             contract is honoured by the function signature.
         goal: Free-form goal text from the registered schedule.
         scenario_id: Optional named scenario id.
+        response_profile: Optional response-style profile declared on the
+            schedule. When non-empty it is folded
+            into the task identity seed and the canonical payload, so the
+            profile is an input to the task hash rather than a logged
+            field. Empty (the default, and the state of every pre-change
+            schedule) keeps the seed, payload, and hash byte-identical to
+            prior revs - the fold is deliberately conditional so replay of
+            existing audit chains is unaffected.
+        profile_content_sha256: SHA-256 of the rendered style addendum the
+            profile resolves to; folded alongside ``response_profile``.
 
     Returns:
         A ProjectionResult with the canonical task graph and its hash.
@@ -234,17 +246,21 @@ def project_schedule_fire(
     description = "\n".join(description_lines)
 
     # The task_id MUST be deterministic. Derive it from the canonical
-    # tuple so two operators recompute the same id.
-    task_id_seed = json.dumps(
-        {
-            "schedule_id": schedule_id,
-            "fire_time": fire_time,
-            "state_digest": state_digest,
-            "kind": "root",
-            "rev": SCHEDULE_PROJECTION_REV,
-        },
-        sort_keys=True,
-    ).encode()
+    # tuple so two operators recompute the same id. The response profile
+    # is folded in ONLY when explicitly declared: adding the keys
+    # unconditionally would fork the task identity of every profile-less
+    # schedule against previously recorded audit chains.
+    task_id_seed_obj: dict[str, Any] = {
+        "schedule_id": schedule_id,
+        "fire_time": fire_time,
+        "state_digest": state_digest,
+        "kind": "root",
+        "rev": SCHEDULE_PROJECTION_REV,
+    }
+    if response_profile:
+        task_id_seed_obj["response_profile"] = response_profile
+        task_id_seed_obj["profile_content_sha256"] = profile_content_sha256
+    task_id_seed = json.dumps(task_id_seed_obj, sort_keys=True).encode()
     task_id = "sched-task-" + hashlib.sha256(task_id_seed).hexdigest()[:16]
 
     metadata: tuple[tuple[str, str], ...] = (
@@ -255,6 +271,16 @@ def project_schedule_fire(
     )
     if scenario_id:
         metadata = (*metadata, ("scenario_id", scenario_id))
+    if response_profile:
+        # ``mode`` rides the node metadata so a task created from this node
+        # resolves the same profile at spawn time
+        # (``Task.metadata['mode']`` is the top-priority resolution input).
+        metadata = (
+            *metadata,
+            ("mode", response_profile),
+            ("response_profile", response_profile),
+            ("profile_content_sha256", profile_content_sha256),
+        )
 
     role = "manager"
     title = f"Scheduled goal: {(goal or scenario_id or schedule_id)[:120]}"
@@ -269,7 +295,7 @@ def project_schedule_fire(
     )
 
     nodes = _canonical_nodes([root])
-    canonical_obj = {
+    canonical_obj: dict[str, Any] = {
         "rev": SCHEDULE_PROJECTION_REV,
         "schedule_id": schedule_id,
         "fire_time": fire_time,
@@ -278,6 +304,9 @@ def project_schedule_fire(
         "scenario_id": scenario_id,
         "nodes": [_node_to_dict(n) for n in nodes],
     }
+    if response_profile:
+        canonical_obj["response_profile"] = response_profile
+        canonical_obj["profile_content_sha256"] = profile_content_sha256
     canonical_bytes = json.dumps(
         canonical_obj,
         sort_keys=True,
