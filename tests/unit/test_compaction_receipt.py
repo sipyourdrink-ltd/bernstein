@@ -228,6 +228,32 @@ class TestVerifyCompactionReceipts:
         assert not ok
         assert any("no chain receipt" in err for err in errors)
 
+    def test_task_filter_skips_other_tasks_journal_steps(self, tmp_path: Path) -> None:
+        # One worker journal carrying compactions for two tasks: scoping
+        # verification to T-1 must not flag T-2's (receipt-less) step.
+        receipt_t1 = _receipt(task_id="T-1")
+        receipt_t2 = _receipt(task_id="T-2")
+        chain = _chain(tmp_path)
+        record_compaction_receipt(chain=chain, receipt=receipt_t1)  # T-2 never receipted
+        journal = Journal.open(tmp_path / "journal" / "sess-1")
+        record_compaction_journal_step(journal, receipt_t1)
+        record_compaction_journal_step(journal, receipt_t2)
+
+        ok, errors = verify_compaction_receipts(
+            chain,
+            journal_reader=JournalReader(tmp_path / "journal" / "sess-1"),
+            task_id="T-1",
+        )
+        assert ok, errors
+
+        # Unscoped verification still catches the receipt-less T-2 step.
+        ok_all, errors_all = verify_compaction_receipts(
+            chain,
+            journal_reader=JournalReader(tmp_path / "journal" / "sess-1"),
+        )
+        assert not ok_all
+        assert any("no chain receipt" in err for err in errors_all)
+
     def test_hash_mismatch_fails_verification(self, tmp_path: Path) -> None:
         receipt = _receipt()
         chain = _chain(tmp_path)

@@ -414,6 +414,10 @@ def verify_compaction_receipts(
             errors.extend(f"journal: {err}" for err in journal_result.errors)
         for step in find_compaction_steps(journal_reader):
             call = step.tool_call
+            if task_id is not None and str(call.get("task_id", "")) != task_id:
+                # Receipts were filtered to one task; steps for other
+                # tasks are out of scope for this verification pass.
+                continue
             correlation_id = str(call.get("correlation_id", ""))
             receipt = receipts.get(correlation_id)
             if receipt is None:
