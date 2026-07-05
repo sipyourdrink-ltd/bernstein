@@ -1199,7 +1199,13 @@ class Orchestrator:
         # The server returns tasks matching the requested status; apply the
         # dependency filter here for "open" tasks.
         done_tasks = tasks_by_status["done"]
-        done_ids = {t.id for t in done_tasks}
+        # A dependency is satisfied by any terminal-success status, not just
+        # "done": once a done task's agent is reaped and its branch merged,
+        # the task moves to "closed" (the store soft-archives via status).
+        # Checking "done" alone re-blocked dependents forever after that
+        # transition, so lower-priority independent tasks were claimed ahead
+        # of a high-priority task whose dependency had already completed.
+        done_ids = {t.id for t in done_tasks} | {t.id for t in tasks_by_status.get("closed", [])}
         now = time.time()
         open_tasks = [
             t
@@ -1330,8 +1336,16 @@ class Orchestrator:
             except OSError as exc:
                 logger.debug("Failed to save task graph: %s", exc)
         else:
-            # Fast tick: reuse cached critical path IDs from last normal tick
-            critical_path_ids = getattr(self, "_cached_critical_path_ids", set())
+            # Fast tick: skip the expensive graph analysis, validation and
+            # snapshot persistence, but still recompute the critical path -
+            # it is a cheap O(V+E) traversal and claim ordering depends on
+            # it. The very first tick is always a fast tick (_tick_count is
+            # incremented to 1 before the phase check, and 1 % phase != 0),
+            # so reusing only the cache from the last normal tick left the
+            # first spawn batch without the critical-path priority boost
+            # and served stale boosts to tasks created between normal ticks.
+            critical_path_ids = set(DependencyValidator().critical_path(all_tasks))
+            self._cached_critical_path_ids = critical_path_ids
 
         # 3. Count alive agents, spawn if capacity (capped by graph parallel width)
         # 2b. Rate-limit recovery: restore providers whose throttle window expired.

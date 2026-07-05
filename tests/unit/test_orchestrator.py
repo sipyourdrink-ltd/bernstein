@@ -3228,6 +3228,53 @@ class TestAssignedTaskIdDoubleSpawn:
         assert len(non_dead) == 1
 
 
+class TestCriticalPathBoostFirstBatch:
+    """The critical-path priority boost must feed the very first spawn batch.
+
+    Tick 1 is a fast tick (the tick counter is incremented to 1 before the
+    normal-phase modulo check, and 1 % normal_tick_phase != 0), so the
+    critical path must be recomputed on fast ticks too. Before the fix the
+    first batch saw an empty critical-path cache and ordered a low-priority
+    dependency of a high-priority task behind unrelated fillers.
+    """
+
+    def test_first_tick_claims_critical_path_dependency_first(self, tmp_path: Path) -> None:
+        """With one agent slot, tick 1 must claim the dependency of the P1 task."""
+        # Filler ids sort lexicographically BEFORE the dependency id, so
+        # without the boost the priority tie (all 3s) would break on task id
+        # and a filler would be claimed first.
+        dep = _make_task(id="T-z-dep", title="Dependency", priority=3)
+        blocked = _make_task(id="T-z-blocked", title="Critical path", priority=1)
+        blocked.depends_on = ["T-z-dep"]
+        fillers = [_make_task(id=f"T-a-filler-{i}", title=f"Filler {i}", priority=3) for i in range(3)]
+        all_tasks = [_task_as_dict(t) for t in [dep, blocked, *fillers]]
+
+        claimed_order: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            if request.method == "GET" and url.path == "/tasks":
+                return _tasks_response(url, all_tasks)
+            if request.method == "POST" and url.path.endswith("/claim"):
+                claimed_order.append(url.path.split("/")[2])
+                return httpx.Response(200, json={})
+            return httpx.Response(200, json={})
+
+        config = OrchestratorConfig(
+            max_agents=1,
+            max_tasks_per_agent=1,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            server_url="http://testserver",
+        )
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler), config=config)
+
+        result = orch.tick()
+
+        assert len(result.spawned) == 1
+        assert claimed_order and claimed_order[0] == "T-z-dep"
+
+
 class TestEvolveAutoCommitRuntimeExclusion:
     """_evolve_auto_commit stages all changes then unstages .sdd/runtime/ and .sdd/metrics/."""
 
