@@ -69,6 +69,18 @@ from bernstein.core.server import (
     task_to_response,
 )
 from bernstein.core.task_store import ArchiveRecord, EmptyCompletionError, SnapshotEntry
+from bernstein.core.tasks.contracts import (
+    WORKER_CONTRACT_VERSION as _CONTRACT_VERSION,
+)
+from bernstein.core.tasks.contracts import (
+    ContractViolation,
+    RefusalKind,
+    WorkerCompletion,
+    WorkerRefusal,
+    looks_like_contract_payload,
+    parse_terminal_payload,
+    parse_terminal_payload_text,
+)
 from bernstein.core.telemetry import start_span
 from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
 from bernstein.plugins.manager import HookBlockingError, get_plugin_manager
@@ -1095,16 +1107,137 @@ async def claim_task(
         return task_to_response(task)
 
 
+def _parse_terminal_body(body: TaskCompleteRequest) -> WorkerCompletion | WorkerRefusal | None:
+    """Extract and validate a structured terminal payload from the body.
+
+    Returns ``None`` for legacy prose summaries, which stay accepted
+    unchanged. An explicit ``payload`` object, or a ``result_summary``
+    that is itself a JSON object, is validated against the worker
+    completion contract.
+
+    Raises:
+        ContractViolation: When the structured payload fails validation.
+    """
+    if body.payload is not None:
+        return parse_terminal_payload(body.payload)
+    if looks_like_contract_payload(body.result_summary):
+        return parse_terminal_payload_text(body.result_summary)
+    return None
+
+
+async def _handle_contract_violation(
+    request: Request,
+    task_id: str,
+    violation: ContractViolation,
+    store: TaskStore,
+    sse_bus: SSEBus,
+) -> HTTPException:
+    """Fail a task whose terminal payload violated the contract.
+
+    The task is auto-failed with ``terminal_reason='contract_violation'``
+    so the worker slot is released atomically, mirroring the empty-summary
+    path. Returns the HTTPException for the caller to raise (422 with the
+    schema error path, or 409 when the task is already terminal).
+    """
+    try:
+        failed_task = await store.fail_contract_violation(task_id, violation)
+    except IllegalTransitionError as exc:
+        return HTTPException(status_code=409, detail=str(exc))
+    logger.warning(
+        "task.complete contract_violation: task_id=%s path=%s",
+        sanitize_log(task_id),
+        sanitize_log(violation.path),
+    )
+    sse_bus.publish("task_update", json.dumps({"id": failed_task.id, "status": failed_task.status.value}))
+    get_plugin_manager().fire_task_failed(
+        task_id=failed_task.id,
+        role=failed_task.role,
+        error=f"contract_violation: {violation.path}",
+    )
+    _update_file_health(request, failed_task.id, list(failed_task.owned_files), "failure")
+    return HTTPException(
+        status_code=422,
+        detail={
+            "error": "contract_violation",
+            "message": violation.message,
+            "schema_error_path": violation.path,
+            "contract_version": _CONTRACT_VERSION,
+            "task_id": task_id,
+            "status": failed_task.status.value,
+        },
+    )
+
+
+def _write_refusal_approval_item(request: Request, task: Task, refusal: WorkerRefusal) -> None:
+    """Surface an ``awaiting_operator`` refusal as a pending approval item.
+
+    Writes the same file shape the approvals routes list from
+    ``.sdd/runtime/pending_approvals/``, so the operator sees the question
+    in the existing approvals surface. Best-effort: an unwritable runtime
+    directory must not fail the refusal that already landed.
+    """
+    pending_dir = _get_workdir(request) / ".sdd" / "runtime" / "pending_approvals"
+    item = {
+        "task_id": task.id,
+        "task_title": task.title,
+        "session_id": task.claimed_by_session or "",
+        "diff": "",
+        "test_summary": f"Operator input requested: {refusal.question}",
+    }
+    try:
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        (pending_dir / f"{task.id}.json").write_text(json.dumps(item, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.warning(
+            "Could not write pending approval item for refused task %s: %s",
+            sanitize_log(task.id),
+            exc,
+        )
+
+
+async def _finalize_refusal(
+    request: Request,
+    task: Task,
+    refusal: WorkerRefusal,
+    store: TaskStore,
+    sse_bus: SSEBus,
+) -> TaskResponse:
+    """Post-process a refusal that already landed in the store.
+
+    Routes the refusal kind deterministically: ``scope_exceeded`` feeds
+    the follow-up task machinery (content-addressed ids, so redelivery
+    cannot duplicate the split) and ``awaiting_operator`` surfaces as an
+    operator approval item.
+    """
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+    if refusal.kind is RefusalKind.SCOPE_EXCEEDED:
+        created = await store.create_refusal_follow_ups(task, refusal)
+        for follow_up in created:
+            sse_bus.publish("task_update", json.dumps({"id": follow_up.id, "status": "open"}))
+    elif refusal.kind is RefusalKind.AWAITING_OPERATOR:
+        _write_refusal_approval_item(request, task, refusal)
+    # Evict session from the real-time monitor to free memory
+    _evict_realtime_session(request, task.claimed_by_session)
+    return task_to_response(task)
+
+
 @router.post(
     "/tasks/{task_id}/complete",
     responses={
         404: {"description": "Task not found"},
         409: {"description": "Invalid state transition"},
-        422: {"description": "Empty result_summary - task auto-failed"},
+        422: {"description": "Empty result_summary or contract violation - task auto-failed"},
     },
 )
 async def complete_task(task_id: str, body: TaskCompleteRequest, request: Request) -> TaskResponse:
-    """Mark a task as done with a result summary.
+    """Mark a task as done (or refused) from a worker terminal payload.
+
+    Structured payloads (``body.payload`` or a JSON object embedded in
+    ``result_summary``) are validated against the worker completion
+    contract (#2244): an invalid payload is a typed ``contract_violation``
+    failure carrying the schema error path, and a validated refusal lands
+    the task in the terminal REFUSED state instead of DONE. Legacy prose
+    summaries are accepted unchanged.
 
     If ``result_summary`` is empty the task is auto-transitioned to
     ``FAILED`` with ``reason='completion missing summary'`` and
@@ -1114,6 +1247,8 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
     with start_span("task.complete", {"task.id": task_id}):
         store = _get_store(request)
         sse_bus = _get_sse_bus(request)
+        refusal: WorkerRefusal | None = None
+        result_summary = body.result_summary
         try:
             task = store.get_task(task_id)
             if task is None:
@@ -1127,17 +1262,26 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                     sanitize_log(task_id),
                 )
                 await store.claim_by_id(task_id)
-            # Defect 33: auto-commit the worker's uncommitted work BEFORE
-            # the store transitions the task to done, so the commit message
-            # is visible to the janitor (which reads ``git log`` after
-            # /complete lands).  Failures are swallowed - the orchestrator
-            # will catch a 0-diff task on /complete's branch and trigger
-            # the bounded-reopen path.  Logging contract in
-            # ``_run_auto_commit_pre_complete``.
-            _run_auto_commit_pre_complete(request, task)
-            task = await store.complete(task_id, body.result_summary)
+            structured = _parse_terminal_body(body)
+            if isinstance(structured, WorkerRefusal):
+                refusal = structured
+                task = await store.refuse(task_id, refusal)
+            else:
+                if structured is not None:
+                    result_summary = structured.summary
+                # Defect 33: auto-commit the worker's uncommitted work BEFORE
+                # the store transitions the task to done, so the commit message
+                # is visible to the janitor (which reads ``git log`` after
+                # /complete lands).  Failures are swallowed - the orchestrator
+                # will catch a 0-diff task on /complete's branch and trigger
+                # the bounded-reopen path.  Logging contract in
+                # ``_run_auto_commit_pre_complete``.
+                _run_auto_commit_pre_complete(request, task)
+                task = await store.complete(task_id, result_summary, completion=structured)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except ContractViolation as exc:
+            raise await _handle_contract_violation(request, task_id, exc, store, sse_bus) from None
         except EmptyCompletionError as exc:
             # empty summary is handled inside ``complete()``
             # (task is auto-failed under the lock).  Surface a structured
@@ -1169,11 +1313,13 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             raise HTTPException(status_code=422, detail=detail) from None
         except IllegalTransitionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        if refusal is not None:
+            return await _finalize_refusal(request, task, refusal, store, sse_bus)
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
-        get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=body.result_summary)
+        get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=result_summary)
 
         # Sigstore/Ed25519 attestation for the task completion (fire-and-forget)
-        _try_attest_task_completion(request, task.id, task.role, body.result_summary)
+        _try_attest_task_completion(request, task.id, task.role, result_summary)
 
         # SBOM generation on task completion (fire-and-forget, opt-in via env/state)
         _try_generate_sbom(request)

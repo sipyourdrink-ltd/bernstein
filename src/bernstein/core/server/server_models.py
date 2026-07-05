@@ -268,9 +268,18 @@ class WebhookTaskResponse(BaseModel):
 
 
 class TaskCompleteRequest(BaseModel):
-    """Body for POST /tasks/{task_id}/complete."""
+    """Body for POST /tasks/{task_id}/complete.
 
-    result_summary: str
+    ``result_summary`` is the legacy free-form summary and stays accepted
+    unchanged. ``payload`` carries a structured terminal payload under the
+    worker completion contract (#2244) - either a completion or a typed
+    refusal - and is schema-validated at the API boundary; an invalid
+    payload is a typed ``contract_violation`` failure, never a silent
+    accept. When ``payload`` is provided, ``result_summary`` is ignored.
+    """
+
+    result_summary: str = ""
+    payload: dict[str, Any] | None = None
 
 
 class TaskFailRequest(BaseModel):

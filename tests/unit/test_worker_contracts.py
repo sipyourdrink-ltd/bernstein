@@ -254,6 +254,9 @@ class TestTextPayload:
     def test_looks_like_contract_payload(self) -> None:
         assert looks_like_contract_payload('{"summary": "done"}')
         assert looks_like_contract_payload('  {"kind": "underspecified"}  ')
+        # Truncated JSON is still an attempted payload - it must surface
+        # as a contract violation, not sneak through as prose.
+        assert looks_like_contract_payload('{"summary": "unterminated')
         assert not looks_like_contract_payload("Implemented the parser.")
         assert not looks_like_contract_payload("")
 

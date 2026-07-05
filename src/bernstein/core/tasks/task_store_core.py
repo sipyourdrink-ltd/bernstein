@@ -1627,6 +1627,62 @@ class TaskStore:
         self._audit_contract_outcome(task_id, outcome=outcome)
         return task
 
+    async def create_refusal_follow_ups(self, parent: Task, refusal: WorkerRefusal) -> list[Task]:
+        """Create the deterministic follow-up task set for a scope_exceeded refusal.
+
+        Task ids are content-addressed (see
+        :func:`bernstein.core.tasks.contracts.derive_follow_up_specs`), so
+        the same refusal payload always yields the same follow-up set and a
+        redelivered refusal is a no-op for ids that already exist.
+
+        Args:
+            parent: The refused task the split derives from.
+            refusal: Validated refusal; non-``scope_exceeded`` kinds
+                yield an empty list.
+
+        Returns:
+            The newly created follow-up tasks (existing ids are skipped).
+        """
+        from bernstein.core.tasks.contracts import WORKER_CONTRACT_VERSION, derive_follow_up_specs
+
+        specs = derive_follow_up_specs(parent.id, refusal)
+        created: list[Task] = []
+        async with self._lock:
+            for spec in specs:
+                if spec.task_id in self._tasks:
+                    continue
+                task = Task(
+                    id=spec.task_id,
+                    title=spec.title,
+                    description=spec.description,
+                    role=parent.role,
+                    priority=parent.priority,
+                    scope=parent.scope,
+                    complexity=parent.complexity,
+                    parent_task_id=parent.id,
+                    tenant_id=parent.tenant_id,
+                    cell_id=parent.cell_id,
+                    repo=parent.repo,
+                    batch_eligible=False,
+                    metadata={
+                        "origin": "scope_exceeded_split",
+                        "refused_task_id": parent.id,
+                        "contract_version": WORKER_CONTRACT_VERSION,
+                    },
+                )
+                self._tasks[task.id] = task
+                self._index_add(task)
+                self._parent_index_add(task)
+                await self._append_jsonl(self._task_to_record(task))
+                created.append(task)
+        if created:
+            logger.info(
+                "Refusal split created %d follow-up task(s) for %s",
+                len(created),
+                sanitize_log(parent.id),
+            )
+        return created
+
     def _audit_contract_outcome(self, task_id: str, *, outcome: str, schema_error_path: str = "") -> None:
         """Record a contract-validation outcome in the HMAC-chained audit log.
 

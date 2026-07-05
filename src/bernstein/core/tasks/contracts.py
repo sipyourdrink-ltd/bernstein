@@ -345,10 +345,11 @@ def looks_like_contract_payload(text: str) -> bool:
 
     Used at the API boundary to distinguish a structured payload embedded
     in ``result_summary`` from legacy prose summaries, which continue to
-    be accepted unchanged.
+    be accepted unchanged. Anything that opens as a JSON object is treated
+    as an attempted contract payload, so a truncated JSON document is a
+    contract violation rather than a silently accepted prose summary.
     """
-    stripped = text.strip()
-    return stripped.startswith("{") and stripped.endswith("}")
+    return text.strip().startswith("{")
 
 
 # ---------------------------------------------------------------------------
