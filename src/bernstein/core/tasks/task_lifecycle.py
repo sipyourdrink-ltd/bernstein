@@ -82,6 +82,7 @@ _CLAIM_TERMINAL_STATUSES = frozenset(
         TaskStatus.FAILED,
         TaskStatus.CANCELLED,
         TaskStatus.ABANDONED,
+        TaskStatus.REFUSED,
     }
 )
 

@@ -1730,6 +1730,7 @@ def task_counts(
         orphaned=counts.get("orphaned", 0),
         abandoned=counts.get("abandoned", 0),
         blocked_by_abandon=counts.get("blocked_by_abandon", 0),
+        refused=counts.get("refused", 0),
         total=counts.get("total", 0),
     )
 
