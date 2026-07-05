@@ -1,6 +1,6 @@
 # CLI Reference
 
-Bernstein ships **163 CLI commands** registered in `cli/main.py`. This page is the single-source reference for every flag on every visible command. For driving Bernstein from a script, also read [`cli/task-lifecycle.md`](cli/task-lifecycle.md) and [`cli/replay.md`](cli/replay.md).
+Bernstein ships **164 CLI commands** registered in `cli/main.py`. This page is the single-source reference for every flag on every visible command. For driving Bernstein from a script, also read [`cli/task-lifecycle.md`](cli/task-lifecycle.md) and [`cli/replay.md`](cli/replay.md).
 
 > **Find a command fast:** `Ctrl-F` for the command name. Every entry below cites its source as `cli/<file>:<line>`.
 > **Get rich help in the terminal:** `bernstein --help` (root rich-formatted help) and `bernstein help-all` (the same, exhaustive). Per-command help: `bernstein <command> --help` works on every visible command and group.
@@ -48,7 +48,7 @@ Any global flag may also be set via `bernstein.yaml` (e.g. `budget: 5.00`); the 
 
 ## Commands by category
 
-The 163 commands are organised below by purpose, not alphabetically. Use the table inside each category for quick lookup; the longer per-command entries follow for the highest-traffic commands.
+The 164 commands are organised below by purpose, not alphabetically. Use the table inside each category for quick lookup; the longer per-command entries follow for the highest-traffic commands.
 
 ### Conventions
 
@@ -620,6 +620,7 @@ Multi-project dashboard.
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
+| `bernstein compaction` | Compaction receipt-chain ops (group). | `cli/commands/compaction_cmd.py:32` |
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
 | `bernstein approve-tool` | Approve a tool-call request. | `cli/commands/approval_cmd.py:approve_tool_cmd` |
 | `bernstein reject-tool` | Reject a tool-call request. | `cli/commands/approval_cmd.py:reject_tool_cmd` |
@@ -700,6 +701,22 @@ Multi-project dashboard.
 (`cli/commands/audit_cmd.py:25+`. The `slice` verb is the
 deterministic-subset extractor described in
 [HMAC-chained audit log](../security/audit-log.md#slicing-a-deterministic-subset).)
+
+#### `bernstein compaction`
+
+| Subcommand | Purpose |
+|---|---|
+| `log` | Print a task's compaction receipt chain. `--task ID` (required), `--audit-dir`, `--sdd-dir`, `--json`, `--verify`. |
+
+Every context compaction (proactive threshold or reactive overflow recovery)
+is recorded as a `compaction.receipt` event in the HMAC-chained audit log and
+as a step in the worker's replay journal. `log` prints those receipts
+(trigger, token delta, validator verdicts, retry count, pre/post SHA-256).
+`--verify` re-runs the receipt verification: the HMAC chain must verify and
+every journaled compaction step must have a chain receipt with matching
+hashes; the command exits non-zero otherwise.
+
+(`cli/commands/compaction_cmd.py:32+`.)
 
 #### `bernstein quarantine`
 

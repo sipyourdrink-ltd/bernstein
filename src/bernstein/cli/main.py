@@ -59,6 +59,7 @@ from bernstein.cli.commands.best_of_n_rank_cmd import best_of_n_group
 from bernstein.cli.commands.bom_cmd import bom_group
 from bernstein.cli.commands.bundle_cmd import bundle_group
 from bernstein.cli.commands.citation_cmd import quality_group as citation_quality_group
+from bernstein.cli.commands.compaction_cmd import compaction_group
 from bernstein.cli.commands.consensus_cmd import consensus_group
 from bernstein.cli.commands.criterion_profile_cmd import criterion_profile_group
 from bernstein.cli.commands.decisions_cmd import decisions_group
@@ -996,6 +997,7 @@ cli.add_command(audit_group, "audit")
 cli.add_command(bom_group, "bom")
 cli.add_command(bundle_group, "bundle")
 cli.add_command(compliance_group, "compliance")
+cli.add_command(compaction_group, "compaction")
 cli.add_command(verify_cmd, "verify")
 cli.add_command(chaos_group, "chaos")
 cli.add_command(manifest_group, "manifest")
