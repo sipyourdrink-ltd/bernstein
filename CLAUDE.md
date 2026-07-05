@@ -64,6 +64,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `storage/`                  | Pluggable artifact storage sinks (oai-003) |
 | `substrate/`                | Substrate: register Bernstein into host applications (MCP servers, etc.) |
 | `tasks/`                    | tasks sub-package |
+| `teams/`                    | Named team manifests - pinned bundles of roles, model policies, and response profiles |
 | `telemetry/`                | Opt-in operator observability for Bernstein |
 | `tokens/`                   | tokens sub-package |
 | `trackers/`                 | Tracker adapter subsystem |

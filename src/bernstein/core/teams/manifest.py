@@ -250,9 +250,7 @@ def _parse_role_entry(index: int, raw: object, *, context: str) -> TeamRoleSpec:
     raw_profile = entry.get("response_profile")
     if raw_profile is not None:
         if not isinstance(raw_profile, str) or not raw_profile:
-            raise TeamManifestValidationError(
-                f"{context}: roles[{index}].response_profile must be a non-empty string"
-            )
+            raise TeamManifestValidationError(f"{context}: roles[{index}].response_profile must be a non-empty string")
         response_profile = raw_profile
 
     return TeamRoleSpec(role=role, model_policy=model_policy, response_profile=response_profile)
@@ -287,9 +285,7 @@ def _parse_role_template_digests(raw: object, role_names: set[str], *, context: 
     digests: dict[str, str] = {}
     for role_name, value in cast("dict[str, object]", raw).items():
         if role_name not in role_names:
-            raise TeamManifestValidationError(
-                f"{context}: role_template_digests pins undeclared role {role_name!r}"
-            )
+            raise TeamManifestValidationError(f"{context}: role_template_digests pins undeclared role {role_name!r}")
         if not isinstance(value, str) or not _HEX_DIGEST_RE.match(value):
             raise TeamManifestValidationError(
                 f"{context}: role_template_digests[{role_name!r}] must be a 64-char lowercase hex sha256"
@@ -355,8 +351,7 @@ def load_team_manifest(path: Path) -> TeamManifest:
     if not isinstance(raw_roles, list) or not raw_roles:
         raise TeamManifestValidationError(f"{context}: roles must be a non-empty array of tables")
     roles = tuple(
-        _parse_role_entry(i, raw_role, context=context)
-        for i, raw_role in enumerate(cast("list[object]", raw_roles))
+        _parse_role_entry(i, raw_role, context=context) for i, raw_role in enumerate(cast("list[object]", raw_roles))
     )
     role_names = [r.role for r in roles]
     if len(role_names) != len(set(role_names)):
