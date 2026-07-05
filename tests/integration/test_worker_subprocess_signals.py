@@ -199,8 +199,6 @@ def test_sigterm_forwarded_to_child_and_worker_exits(tmp_path: Path) -> None:
 
 
 @pytest.mark.skip(reason="worker reports 130 instead of child handler exit code; tracked in #2235")
-
-
 def test_sigint_forwarded_to_child(tmp_path: Path) -> None:
     """SIGINT (Ctrl-C) is forwarded - child observes the signal and exits.
 
