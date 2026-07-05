@@ -933,6 +933,12 @@ class AgentSession:
     abort_detail: str = ""
     finish_reason: str = ""
     meta_messages: list[str] = field(default_factory=list[str])  # Operational nudges/hints (T423)
+    # Response-style profile applied at spawn. The profile name and the
+    # SHA-256 of the rendered style addendum are stamped here so the cost
+    # ledger entry written at task completion can attribute spend per
+    # profile without re-resolving config.
+    response_profile: str = ""
+    profile_content_sha256: str = ""
 
 
 class IsolationMode(StrEnum):

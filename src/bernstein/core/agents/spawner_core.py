@@ -30,6 +30,12 @@ from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.in_process_agent import InProcessAgent
+from bernstein.core.agents.response_style import (
+    ResponseStyleTemplateError,
+    addendum_sha256,
+    render_style_addendum,
+    resolve_response_style,
+)
 from bernstein.core.agents.spawn_errors import (
     ModelNotConfiguredError,
     RetryStrategy,
@@ -1745,6 +1751,55 @@ class AgentSpawner:
                 exc,
             )
 
+    def _emit_response_profile_audit(
+        self,
+        *,
+        task_ids: list[str],
+        style: str,
+        source: str,
+        profile_content_sha256: str,
+    ) -> None:
+        """Append a ``task_response_profile`` event to the audit chain.
+
+        Every spawn declares a response-style profile; recording the profile
+        name and the rendered-addendum hash per task keeps the audit trail
+        aligned with the cost ledger entry written at completion. Audit
+        failures (key permission, disk full) never mask the spawn: they are
+        logged and swallowed.
+
+        Args:
+            task_ids: IDs of the tasks in this spawn batch.
+            style: Resolved response style (``verbose``/``balanced``/``terse``).
+            source: Which input supplied the style (resolution provenance).
+            profile_content_sha256: SHA-256 of the rendered style addendum.
+        """
+        try:
+            from bernstein.core.security.audit import (
+                TASK_RESPONSE_PROFILE,
+                AuditLog,
+            )
+
+            audit = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
+            for task_id in task_ids:
+                audit.log(
+                    event_type=TASK_RESPONSE_PROFILE,
+                    actor="spawner",
+                    resource_type="task",
+                    resource_id=task_id,
+                    details={
+                        "task_id": task_id,
+                        "response_profile": style,
+                        "style_source": source,
+                        "profile_content_sha256": profile_content_sha256,
+                    },
+                )
+        except Exception as exc:  # audit must never block the spawn
+            logger.warning(
+                "Could not emit task_response_profile audit event for tasks %s: %s",
+                task_ids,
+                exc,
+            )
+
     def _reap_openclaw(self, session: AgentSession) -> None:
         """Sync logs from the remote bridge for an OpenClaw session."""
         reap_openclaw(session, self._runtime_bridge, self._run_bridge_call)
@@ -2732,6 +2787,46 @@ class AgentSpawner:
         elif self._use_worktrees:
             isolation_mode = IsolationMode.WORKTREE
 
+        # Resolve the per-spawn response-style profile.
+        # Resolution is deterministic (task metadata > role policy > seed
+        # default > "balanced") and the rendered addendum flows to the
+        # adapter via ``system_addendum`` - the rendered prompt itself is
+        # untouched, so a spawn whose resolution lands on the neutral
+        # "balanced" style (empty addendum) is byte-identical to a
+        # pre-change spawn. The profile name and addendum hash are stamped
+        # on the session and task metadata so the completion-time cost
+        # ledger entry and the audit trail can attribute spend per profile.
+        style_resolution = resolve_response_style(
+            task_metadata=task_metadata,
+            role_policy=role_policy,
+            default_policy=self._role_model_policy.get("default") or {},
+        )
+        try:
+            style_addendum = render_style_addendum(style_resolution.style, workdir=self._workdir)
+        except ResponseStyleTemplateError as exc:
+            raise SpawnError(
+                f"Response-style profile {style_resolution.style!r} for role {role!r} "
+                f"(source={style_resolution.source}) cannot be rendered: {exc}"
+            ) from exc
+        profile_content_sha = addendum_sha256(style_addendum)
+        for _t in tasks:
+            if isinstance(_t.metadata, dict):
+                _t.metadata["response_profile"] = style_resolution.style
+                _t.metadata["profile_content_sha256"] = profile_content_sha
+        logger.info(
+            "Response-style profile for role=%s: style=%s source=%s addendum_sha256=%s",
+            role,
+            style_resolution.style,
+            style_resolution.source,
+            profile_content_sha,
+        )
+        self._emit_response_profile_audit(
+            task_ids=[t.id for t in tasks],
+            style=style_resolution.style,
+            source=style_resolution.source,
+            profile_content_sha256=profile_content_sha,
+        )
+
         session = AgentSession(
             id=session_id,
             role=role,
@@ -2743,6 +2838,8 @@ class AgentSpawner:
             isolation=isolation_mode.value,
             token_budget=task_token_budget,
             meta_messages=meta_messages,
+            response_profile=style_resolution.style,
+            profile_content_sha256=profile_content_sha,
         )
 
         # Zero-trust: issue a short-lived, task-scoped JWT for this agent.
@@ -3143,7 +3240,7 @@ class AgentSpawner:
                                 mcp_config=attempt_mcp,
                                 task_scope=max_scope,
                                 budget_multiplier=_budget_mult,
-                                system_addendum="",
+                                system_addendum=style_addendum,
                                 **_extra_spawn_kwargs,
                             )
                         spawn_duration = time.perf_counter() - spawn_start
