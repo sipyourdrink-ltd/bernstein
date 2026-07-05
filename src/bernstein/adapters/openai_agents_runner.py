@@ -2126,7 +2126,7 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
             # never the secret value it resolves to.
             _key_env_name_for_log = manifest.api_key_env
             logger.info(
-                "[DEEPSEEK-DEBUG] pre-call session=%s model=%r base_url=%r api_key_env=%r "
+                "[DEEPSEEK-DEBUG] pre-call session=%s model=%r base_url=%r credential env var=%r "
                 "explicit_model_client=%s tool_source=%r tool_count=%d max_turns=%s",
                 manifest.session_id,
                 manifest.model,

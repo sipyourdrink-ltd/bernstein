@@ -344,7 +344,7 @@ async def _run_judge(
 
     run_kwargs: dict[str, Any] = {} if max_turns is None else {"max_turns": max_turns}
     logger.info(
-        "run_council._run_judge: dispatching judge model=%r base_url=%r (api_key_env=%r) "
+        "run_council._run_judge: dispatching judge model=%r base_url=%r (credential env var=%r) "
         "timeout=%.1fs max_turns=%s over %d candidate output(s) - full judge prompt follows:\n%s",
         model_id,
         judge_member.get("base_url") or "<default>",

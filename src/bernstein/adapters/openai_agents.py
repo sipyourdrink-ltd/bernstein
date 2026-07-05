@@ -488,7 +488,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
         _max_tokens_str = "default:200000" if _max_tokens_val is None else str(_max_tokens_val)
         logger.info(
             "openai_agents spawn_manifest_summary session=%s: model=%s, base_url=%s, "
-            "api_key_env=%s, max_tokens=%s, tool_source=%s, tool_count=%d",
+            "credential env var=%s, max_tokens=%s, tool_source=%s, tool_count=%d",
             session_id,
             manifest.get("model"),
             manifest.get("base_url") or "<default>",
@@ -512,7 +512,7 @@ class OpenAIAgentsAdapter(PluginAdapter):
         # is the log line proving they are absent for this spawn.
         logger.info(
             "[DEEPSEEK-DEBUG] spawn session=%s: model string forwarded verbatim (no "
-            "name mapping) model=%r, base_url=%r, api_key_env=%r (value never logged), "
+            "name mapping) model=%r, base_url=%r, credential env var=%r (value never logged), "
             "extra_headers_configured=False (bernstein sets no HTTP-Referer/X-Title/"
             "any custom header anywhere in this adapter or the runner)",
             session_id,
