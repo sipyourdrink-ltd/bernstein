@@ -214,6 +214,15 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.BLOCKED_BY_ABANDON, TaskStatus.OPEN): _always,
     (TaskStatus.BLOCKED_BY_ABANDON, TaskStatus.CANCELLED): _always,
     (TaskStatus.BLOCKED_BY_ABANDON, TaskStatus.ABANDONED): _always,
+    # Typed refusal outcomes (#2244) - a worker that cannot proceed reports
+    # a contract-validated refusal at the completion boundary. REFUSED is a
+    # terminal state distinct from FAILED so status surfaces can split
+    # "blocked by design" from "broke while trying". OPEN is a legal source
+    # because /complete auto-claims tasks that reverted to open before the
+    # payload is applied.
+    (TaskStatus.OPEN, TaskStatus.REFUSED): _always,
+    (TaskStatus.CLAIMED, TaskStatus.REFUSED): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.REFUSED): _always,
 }
 
 # Precompute terminal statuses (no outbound transitions).

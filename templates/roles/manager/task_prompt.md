@@ -43,11 +43,9 @@ For each task, call `run_command` with this string (adapt title/role/description
 
     TOKEN=$(cat <absolute-token-path-from-auth-section>) && curl -sS -w '\n%{http_code}' -X POST http://127.0.0.1:8052/tasks -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"title": "...", "role": "backend", "description": "...", "priority": 2, "scope": "medium", "complexity": "medium", "owned_files": [...], "completion_signals": [...]}'
 
-## Done signal
+{{INCLUDE completion_contract}}
 
-When all tasks are created, call `run_command` with this string:
-
-    TOKEN=$(cat <absolute-token-path-from-auth-section>) && curl -sS -w '\n%{http_code}' -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/complete -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"result_summary": "{{TASK_TITLE}}: created N tasks"}'
-
-Pass the whole command above to `run_command` as ONE string - never as an argv list -
-and confirm the trailing status code is 2xx before considering the task done.
+Invoke the completion curl the same way as task creation: pass the whole
+command to `run_command` as ONE string (never an argv list), prefix it with
+the `TOKEN=$(cat <absolute-token-path-from-auth-section>) &&` form above, and
+add `-H "Authorization: Bearer $TOKEN"` to the request.

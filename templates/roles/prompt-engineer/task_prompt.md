@@ -22,9 +22,4 @@
 6. Document any new template variables in a comment at the top of the file
 7. Only modify files listed in your task's `owned_files`
 
-## Done signal
-```bash
-curl -s -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/complete \
-  -H "Content-Type: application/json" \
-  -d '{"result_summary": "{{TASK_TITLE}}: <what prompts were created/improved>"}'
-```
+{{INCLUDE completion_contract}}
