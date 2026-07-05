@@ -55,7 +55,6 @@ def _block_real_network(request: pytest.FixtureRequest) -> Iterator[None]:
         yield
 
 
-
 @pytest.fixture(autouse=True)
 def _reap_leaked_timeout_watchdogs():
     """Cancel any timeout-watchdog Timer a spawn test leaves running.
