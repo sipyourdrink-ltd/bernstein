@@ -75,3 +75,22 @@ def _reap_leaked_timeout_watchdogs():
     for thread in threading.enumerate():
         if isinstance(thread, threading.Timer) and thread.name.startswith("timeout-watchdog"):
             thread.cancel()
+
+
+@pytest.fixture(autouse=True)
+def _reset_status_runtime_cache() -> None:
+    """Clear the status-dashboard runtime cache before every test.
+
+    ``bernstein.core.routes.status_dashboard`` memoises ``_runtime_summary``
+    results in module globals (``_runtime_cache`` / ``_runtime_cache_ts``)
+    with a 10s TTL. The cache is keyed on nothing, so every ``create_app``
+    instance in the process shares it: a test that hits ``/status`` or
+    ``/health`` serves its ``restart_count`` / ``memory_mb`` snapshot to any
+    test that runs within the TTL window, hiding that test's own app state.
+    Clearing the globals at setup makes each test read its own state
+    regardless of what ran before it.
+    """
+    status_dashboard = sys.modules.get("bernstein.core.routes.status_dashboard")
+    if status_dashboard is not None:
+        status_dashboard._runtime_cache = {}
+        status_dashboard._runtime_cache_ts = 0.0
