@@ -243,6 +243,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         # Bot-added: drift autofix (regen_contract_drift.py)
         "schedule",
         # Bot-added: drift autofix (regen_contract_drift.py)
+        "compaction",
         "team",
     }
 )
