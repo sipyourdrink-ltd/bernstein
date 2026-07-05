@@ -592,12 +592,21 @@ def _try_compact_and_retry(
         except Exception as _be:
             logger.debug("Budget pre-compaction snapshot failed for %s: %s", task_id, _be)
 
+    # Resolve the audit chain for sensitive-gate events from the run
+    # workdir so gate refusals and redactions land in the operator chain.
+    from bernstein.core.tokens.sensitive_gate import resolve_default_chain
+
+    _gate_workdir = getattr(orch, "_workdir", None)
+    _gate_chain = resolve_default_chain(Path(_gate_workdir)) if _gate_workdir else resolve_default_chain()
+
     try:
         result = pipeline.execute(
             session_id=session.id,
             context_text=description_text,
             tokens_before=tokens_before,
             reason="provider_413",
+            task_id=task_id,
+            audit_chain=_gate_chain,
         )
     except Exception as exc:
         logger.error("Compaction pipeline failed for task %s: %s", task_id, exc)
@@ -613,6 +622,17 @@ def _try_compact_and_retry(
             **_retry_escalation_context(orch),
         )
         return False
+
+    if result.gate_action == "refused":
+        # The sensitive gate found credential-shaped content it could not
+        # safely delimit: nothing was sent to the model and the description
+        # is unchanged. The refusal is already in the audit chain; surface
+        # it to the operator log too.
+        logger.warning(
+            "Compaction for task %s skipped by sensitive gate (rules: %s)",
+            task_id,
+            ", ".join(result.gate_rule_ids),
+        )
 
     # Reconcile post-compaction budget now that we know how many tokens were saved.
     if _budget_mgr is not None:

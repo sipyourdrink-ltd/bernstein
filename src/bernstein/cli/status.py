@@ -409,6 +409,7 @@ def _extract_run_stats(
             ),
             "failed": summary_raw.get("failed", sum(1 for t in tasks if t.get("status") == "failed")),
             "open": summary_raw.get("open", sum(1 for t in tasks if t.get("status") == "open")),
+            "refused": summary_raw.get("refused", sum(1 for t in tasks if t.get("status") == "refused")),
         }
     )
     agents = [AgentInfo.from_dict(a) for a in agents_raw]
@@ -465,7 +466,8 @@ def _render_status_header(con: Console, stats: object, elapsed: float) -> None:
     status_line.append(f"{summary.total} total  ", style="bold")
     status_line.append(f"{summary.done} done  ", style="green")
     status_line.append(f"{summary.in_progress} in progress  ", style="yellow")
-    status_line.append(f"{summary.failed} failed", style="red")
+    status_line.append(f"{summary.failed} failed  ", style="red")
+    status_line.append(f"{summary.refused} refused", style="orange3")
     con.print(status_line)
     if elapsed > 0:
         con.print(Text.assemble(("Elapsed: ", "bold"), (format_duration(elapsed), "dim")))
@@ -625,6 +627,7 @@ def render_status_plain(data: dict[str, Any]) -> str:
             "done": summary_raw.get("done", 0),
             "in_progress": summary_raw.get("in_progress", 0),
             "failed": summary_raw.get("failed", 0),
+            "refused": summary_raw.get("refused", 0),
         }
     )
     agents = [AgentInfo.from_dict(a) for a in agents_raw]

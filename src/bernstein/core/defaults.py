@@ -695,6 +695,17 @@ class CompactionDefaults:
     max_block_age_turns: int = 5
     # Shared token estimator: characters per token for English text.
     chars_per_token: int = 4
+    # Sensitive-content gate over compaction input (bernstein.yaml tuning
+    # section ``compaction``, keys ``sensitive_gate_*``). The gate refuses
+    # to forward credential-shaped content to the LLM summary stage.
+    sensitive_gate_enabled: bool = True
+    # Extra operator-supplied deny patterns (regex strings). Hits are
+    # redacted with a typed placeholder.
+    sensitive_gate_extra_deny: tuple[str, ...] = ()
+    # Allowlist entries: a rule id (``content.aws-access-key``) or a rule
+    # id plus the first 8 hex chars of the span hash
+    # (``content.aws-access-key:1a2b3c4d``). Suppressions are audit-logged.
+    sensitive_gate_allow: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

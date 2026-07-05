@@ -1,8 +1,12 @@
 """Compaction pipeline - structured context compaction with typed hooks.
 
 Implements a stage pipeline:
-    pre-compact hooks → strip media → LLM summary → boundary marker → reinject
-    → post-compact hooks
+    pre-compact hooks → sensitive gate → strip media → LLM summary
+    → boundary marker → reinject → post-compact hooks
+
+The sensitive gate (:mod:`bernstein.core.tokens.sensitive_gate`) redacts
+credential-shaped spans before anything reaches the LLM summary stage and
+refuses the whole compaction when a hit is not safely delimitable.
 
 Each stage is independently testable and optional hooks fail safe with logging.
 """
@@ -15,10 +19,16 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tokens.failed_action_retention import (
     FailedActionBlock,
     split_retained_blocks,
     tag_failed_actions,
+)
+from bernstein.core.tokens.sensitive_gate import (
+    GateConfig,
+    emit_gate_audit,
+    scan_for_sensitive_content,
 )
 
 if TYPE_CHECKING:
@@ -86,6 +96,11 @@ class CompactionResult:
         pre_hook_ok: Whether all pre-compact hooks succeeded.
         post_hook_ok: Whether all post-compact hooks ran (even if some warned).
         reason: Compaction trigger reason.
+        gate_action: Sensitive-gate outcome: ``allow`` (clean input),
+            ``redacted`` (spans replaced before summarization), or
+            ``refused`` (compaction skipped; ``compacted_text`` is the
+            unmodified input and nothing was sent to the model).
+        gate_rule_ids: Deny-rule ids that fired, in span order.
     """
 
     correlation_id: str
@@ -96,6 +111,8 @@ class CompactionResult:
     pre_hook_ok: bool
     post_hook_ok: bool
     reason: str
+    gate_action: str = "allow"
+    gate_rule_ids: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +184,7 @@ class CompactionPipeline:
 
     Each stage is independently testable:
     1. Pre-compact hooks - plugins can modify/observe context before compaction.
+    1.5. Sensitive gate - redact credential-shaped spans or refuse outright.
     2. Strip media - remove images/documents that waste token budget.
     3. LLM summary - generate a compact summary for reinjection.
     4. Boundary marker - caller records the trace marker.
@@ -193,6 +211,9 @@ class CompactionPipeline:
         keep_failed_actions: bool = False,
         retained_failures: Sequence[FailedActionBlock] | None = None,
         current_turn: int = 0,
+        sensitive_gate: bool | None = None,
+        task_id: str | None = None,
+        audit_chain: Any | None = None,
     ) -> CompactionResult:
         """Run the full compaction pipeline.
 
@@ -203,6 +224,14 @@ class CompactionPipeline:
             reason: Why compaction was triggered.
             llm_call: Optional async callable for LLM summary.
             strip_media: Whether to strip media blocks before summarizing.
+            sensitive_gate: Per-call override for the sensitive-content
+                gate; ``None`` follows the ``compaction`` defaults
+                (enabled by default). When the gate refuses, the summary
+                stage is skipped and the input is returned unchanged.
+            task_id: Task id recorded on gate audit events; falls back
+                to *session_id*.
+            audit_chain: Optional ``AuditChainStore`` receiving gate
+                events; resolved from ``./.sdd/audit`` when omitted.
             keep_failed_actions: When ``True`` (Manus harness pattern #5),
                 tagged failure blocks already in *context_text* are carved
                 out and re-appended verbatim after summarisation, and any
@@ -227,6 +256,43 @@ class CompactionPipeline:
             tokens_before,
             reason,
         )
+
+        # Stage 1.5: sensitive-content gate. Credential-shaped spans are
+        # redacted before anything is forwarded to the summary stage;
+        # non-delimitable hits refuse the whole compaction.
+        gate_action = "allow"
+        gate_rule_ids: tuple[str, ...] = ()
+        gate_config = GateConfig.from_defaults()
+        gate_enabled = gate_config.enabled if sensitive_gate is None else sensitive_gate
+        if gate_enabled:
+            decision = scan_for_sensitive_content(working_text, config=gate_config)
+            emit_gate_audit(
+                decision,
+                chain=audit_chain,
+                task_id=task_id,
+                session_id=session_id,
+            )
+            gate_action = decision.action
+            gate_rule_ids = tuple(finding.rule_id for finding in decision.findings)
+            if decision.action == "refused":
+                logger.warning(
+                    "Compaction refused by sensitive gate for session %s (%d findings)",
+                    sanitize_log(session_id),
+                    len(decision.findings),
+                )
+                return CompactionResult(
+                    correlation_id=correlation_id,
+                    tokens_before=tokens_before,
+                    tokens_after=tokens_before,
+                    tokens_saved=0,
+                    compacted_text=context_text,
+                    pre_hook_ok=pre_hook_ok,
+                    post_hook_ok=True,  # No compaction happened; hooks skipped.
+                    reason=reason,
+                    gate_action=gate_action,
+                    gate_rule_ids=gate_rule_ids,
+                )
+            working_text = decision.text
 
         # Stage 1b (Manus #5): carve out tagged failure blocks before media
         # stripping / summary so they survive verbatim. Off by default.
@@ -265,6 +331,8 @@ class CompactionPipeline:
             pre_hook_ok=pre_hook_ok,
             post_hook_ok=False,  # Updated below
             reason=reason,
+            gate_action=gate_action,
+            gate_rule_ids=gate_rule_ids,
         )
 
         # Stage 5: Post-compact hooks

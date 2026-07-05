@@ -51,7 +51,7 @@ class TestStatusColors:
         assert status_color("some_unknown_status") == "white"
 
     def test_all_task_statuses_covered(self) -> None:
-        expected = {"open", "claimed", "in_progress", "done", "failed", "blocked", "cancelled"}
+        expected = {"open", "claimed", "in_progress", "done", "failed", "blocked", "cancelled", "refused"}
         assert set(STATUS_COLORS.keys()) == expected
 
 

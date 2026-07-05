@@ -24,9 +24,4 @@
 - If a conflict is ambiguous, mark the task as failed with a clear explanation rather than guessing
 - If tests fail after resolution, the resolution is wrong. Revisit the conflicting sections
 
-## Done signal
-```bash
-curl -s -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/complete \
-  -H "Content-Type: application/json" \
-  -d '{"result_summary": "{{TASK_TITLE}}: <N files resolved, resolution strategy>"}'
-```
+{{INCLUDE completion_contract}}

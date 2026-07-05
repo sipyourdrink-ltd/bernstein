@@ -726,6 +726,7 @@ bernstein reject-tool  <request_id>
 | Command | Purpose | Source |
 |---|---|---|
 | `bernstein cost` | Spend breakdown by model / task. | `cli/commands/cost.py:540` |
+| `bernstein cost profile-report` | Content-addressed per-profile cost report, appended to the audit chain. | `cli/commands/cost.py` |
 | `bernstein estimate` | Estimate cost before running. | `cli/commands/cost.py:388` |
 | `bernstein token-report` | Token usage breakdown. | `cli/token_cmd.py` |
 
@@ -734,8 +735,24 @@ bernstein reject-tool  <request_id>
 | Flag | Default | Meaning |
 |---|---|---|
 | `--period {today\|week\|month\|all}` | week | Time window. |
-| `--by {model\|role\|task}` | model | Group-by dimension. |
+| `--by {model\|role\|task\|profile\|...}` | model | Group-by dimension. `profile` groups by response-style profile; tasks whose profile changed mid-run appear as an explicit excluded bucket. |
 | `--json` | off | Emit JSON. |
+
+#### `bernstein cost profile-report`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--last {1h\|24h\|7d\|30d}` | whole ledger | Ledger window. |
+| `--ledger PATH` | `.sdd/cost/ledger.jsonl` | Spend ledger to compute from. |
+| `--json` | off | Emit JSON. |
+
+Emits per-profile tasks / output tokens / USD / mean tokens per task plus
+joined verification pass rates. The artifact is canonical JSON named by its
+own SHA-256, embeds the ledger line-hash range it was computed from, and is
+appended to the audit chain, so anyone holding the ledger can recompute it
+byte-identically. Cross-profile savings are only claimed when both profiles
+have at least 5 tasks with the same role and model; otherwise the report
+states "insufficient comparable runs".
 
 #### `bernstein estimate`
 

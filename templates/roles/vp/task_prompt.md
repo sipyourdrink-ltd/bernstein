@@ -21,9 +21,4 @@
 5. Post coordination decisions to the bulletin board so all cells have visibility
 6. If a cell fails the same objective twice, reassign or restructure. Don't retry blindly
 
-## Done signal
-```bash
-curl -s -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/complete \
-  -H "Content-Type: application/json" \
-  -d '{"result_summary": "{{TASK_TITLE}}: <N cells assigned, subsystem breakdown>"}'
-```
+{{INCLUDE completion_contract}}
