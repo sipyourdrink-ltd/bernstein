@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="pre-existing failure outside main CI; tracked in #2227")
 async def test_auto_decomposition(test_client: TestClient, orchestrator_factory, integration_sdd: Path):
     # 1. Create a large task
     test_client.post(
@@ -56,7 +55,7 @@ async def test_auto_decomposition(test_client: TestClient, orchestrator_factory,
                         )
                     test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "decomposed"})
 
-        from tests.integration.conftest import make_proxy_handler
+        from tests.integration.conftest import TERMINAL_SUCCESS_STATUSES, make_proxy_handler
 
         handler = make_proxy_handler(test_client, integration_sdd, on_tasks_fetched=_handle_decompose)
         respx_mock.route().mock(side_effect=handler)
@@ -73,7 +72,7 @@ async def test_auto_decomposition(test_client: TestClient, orchestrator_factory,
             resp = test_client.get("/tasks")
             tasks = resp.json()
             subtasks = [t for t in tasks if "Subtask" in t["title"] and not t["title"].startswith("[CONFLICT]")]
-            if subtasks and len(subtasks) == 2 and all(t["status"] == "done" for t in subtasks):
+            if subtasks and len(subtasks) == 2 and all(t["status"] in TERMINAL_SUCCESS_STATUSES for t in subtasks):
                 break
             await asyncio.sleep(0.5)
 
@@ -82,4 +81,4 @@ async def test_auto_decomposition(test_client: TestClient, orchestrator_factory,
         tasks = resp.json()
         subtasks = [t for t in tasks if "Subtask" in t["title"] and not t["title"].startswith("[CONFLICT]")]
         assert len(subtasks) == 2
-        assert all(t["status"] == "done" for t in subtasks)
+        assert all(t["status"] in TERMINAL_SUCCESS_STATUSES for t in subtasks)
