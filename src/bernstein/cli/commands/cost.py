@@ -1147,7 +1147,7 @@ def cost_profile_report_cmd(
     from bernstein.core.security.audit_chain import AuditChainStore, record_cost_profile_report
 
     cutoff = _parse_time_range(last) if last else 0.0
-    window_label = last if last else "all"
+    window_label = last or "all"
 
     mdir = Path(metrics_dir)
     task_records = _load_tasks_jsonl(mdir) if mdir.exists() else []

@@ -250,7 +250,9 @@ def attribute_by_profile(
             excluded.add(entry)
             continue
         profiles[entry_profile(entry) or UNATTRIBUTED_LABEL].add(entry)
-    return ProfileAttribution(profiles=dict(profiles), excluded=excluded)
+    # Materialize as a plain dict: downstream annotations promise dict
+    # semantics (missing profile -> KeyError), not defaultdict autovivify.
+    return ProfileAttribution(profiles={**profiles}, excluded=excluded)
 
 
 def aggregate_ledger_by_profile(
