@@ -1,0 +1,46 @@
+# Built-in team manifest for Python projects.
+#
+# Mirrors the python quickstart bundle (backend + qa + security) so
+# `team_manifest: python` in bernstein.yaml expands to a working team
+# without hand-writing role policies. Model policies follow the role
+# template defaults under templates/roles/<role>/config.yaml.
+#
+# The manifest digest is the sha256 of the canonical serialization; see
+# src/bernstein/core/teams/manifest.py. Verify with `bernstein team show
+# python`; check pinned role templates with `bernstein team drift`.
+
+name = "python"
+version = "1.0.0"
+
+[coordination]
+parallelism = 3
+review_chain = true
+
+[[roles]]
+role = "backend"
+response_profile = "balanced"
+
+[roles.model_policy]
+model = "sonnet"
+effort = "high"
+
+[[roles]]
+role = "qa"
+response_profile = "terse"
+
+[roles.model_policy]
+model = "sonnet"
+effort = "high"
+
+[[roles]]
+role = "security"
+response_profile = "balanced"
+
+[roles.model_policy]
+model = "opus"
+effort = "max"
+
+[role_template_digests]
+"backend" = "cff30b24c8b0a0f59230d6d8766e1ccaa1926c60aa07faddbf82c9cf3e40b2aa"
+"qa" = "b1e64df5ee685e429fb07c6d521d19dc761bef5bafe60ec95ab17ab4f087d432"
+"security" = "5109ee0ea8afa6eedb4a1cf68fa237c65d34bcf9b15bc1adc5d1e1dfa911b8e4"
