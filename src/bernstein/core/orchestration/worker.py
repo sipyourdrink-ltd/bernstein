@@ -39,6 +39,15 @@ _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
 # session  → write TOOL_ABORT + kill this agent session immediately.
 _TOOL_ABORT_POLICIES = ("contain", "sibling", "session")
 
+# Grace window before forwarding SIGTERM/SIGINT to the child. The child
+# shares the worker's process group, so a group-directed signal (Ctrl-C,
+# ``os.killpg``, the manager's kill paths) is already delivered to the
+# child by the kernel. The worker forwards only when the child is still
+# running after this window, i.e. the signal was addressed to the worker
+# alone and forwarding is the only delivery path.
+_FORWARD_GRACE_S = 0.2
+_FORWARD_POLL_INTERVAL_S = 0.01
+
 
 def _set_proctitle(title: str) -> None:
     """Set the process title for ps / Activity Monitor."""
@@ -324,8 +333,24 @@ def main() -> None:
         )
         monitor_thread.start()
 
-    # 5. Forward signals to child
+    # 5. Forward signals to child.
+    #
+    # Group-directed signals reach the child directly (shared process
+    # group), so re-sending immediately would double-deliver. The second
+    # delivery is not benign: when the child's own handler has already
+    # run and its interpreter is finalising, the default disposition is
+    # restored and the late duplicate kills the child outright, so
+    # ``child.wait()`` reports a signal death (``-N``) instead of the
+    # handler's exit code. Poll for the child's exit through a short
+    # grace window first; forward only if it is still running, which
+    # means the signal was sent to the worker alone and never reached
+    # the child.
     def _forward(signum: int, _frame: object) -> None:
+        deadline = time.monotonic() + _FORWARD_GRACE_S
+        while time.monotonic() < deadline:
+            if child.poll() is not None:
+                return
+            time.sleep(_FORWARD_POLL_INTERVAL_S)
         with contextlib.suppress(OSError):
             child.send_signal(signum)
 
