@@ -220,6 +220,13 @@ class RoleModelPolicyEntry(BaseModel):
     top_k: int | None = None
     max_tokens: int | None = None
     extra_params: dict[str, Any] = Field(default_factory=dict)
+    # Per-role response-style profile applied at spawn
+    # (``bernstein.core.agents.response_style``). Resolution order is
+    # deterministic and documented there: ``Task.metadata['mode']`` > this
+    # entry > the ``role_model_policy.default`` entry > ``"balanced"``.
+    # ``balanced`` renders an empty style addendum, keeping unset-profile
+    # spawns byte-identical to pre-change spawns.
+    response_style: Literal["verbose", "balanced", "terse"] | None = None
     # Optional "council of agents" fan-out/judge override (see
     # ``CouncilConfig``). When set, this role's ENTIRE task run is driven by
     # a task-level council (``bernstein.adapters.council_runner.run_council``)

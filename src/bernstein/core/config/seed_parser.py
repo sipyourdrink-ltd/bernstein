@@ -666,6 +666,15 @@ _ROLE_POLICY_KEYS: tuple[str, ...] = (
 # "unknown keys: max_tokens" (parser/schema divergence fixed here).
 _ROLE_POLICY_INT_KEYS: tuple[str, ...] = ("max_tokens",)
 
+# ``response_style`` declares the per-role response-style profile
+# (``verbose``/``balanced``/``terse``) applied at spawn time (see
+# ``bernstein.core.agents.response_style``). The value is validated against
+# the closed style vocabulary in ``_parse_single_role_policy``; the mapped
+# mode-profile template file is validated for existence in ``parse_seed``
+# so a dangling template reference fails at config-validation time with a
+# typed ``ResponseStyleTemplateError``, not at spawn time.
+_ROLE_POLICY_STYLE_KEY = "response_style"
+
 # ``council`` is parsed and validated separately (its value is a nested
 # mapping, not a scalar string/int like every other role-policy key), so it
 # is carved out of the unknown-keys check in ``_parse_single_role_policy``
@@ -830,11 +839,25 @@ def _parse_single_role_policy(role: str, settings: object) -> dict[str, str | in
     if "cli" in normalized and "provider" not in normalized:
         normalized["provider"] = normalized["cli"]
 
+    raw_style = settings.get(_ROLE_POLICY_STYLE_KEY)
+    if raw_style is not None:
+        from bernstein.core.agents.response_style import RESPONSE_STYLES
+
+        if not isinstance(raw_style, str) or raw_style not in RESPONSE_STYLES:
+            allowed = ", ".join(RESPONSE_STYLES)
+            raise SeedError(
+                f"role_model_policy[{role!r}][{_ROLE_POLICY_STYLE_KEY!r}] must be one of: {allowed} "
+                f"(got {raw_style!r})"
+            )
+        normalized[_ROLE_POLICY_STYLE_KEY] = raw_style
+
     raw_council = settings.get(_ROLE_POLICY_COUNCIL_KEY)
     if raw_council is not None:
         normalized[_ROLE_POLICY_COUNCIL_KEY] = _parse_council(role, raw_council)
 
-    allowed_keys = set(_ROLE_POLICY_KEYS) | set(_ROLE_POLICY_INT_KEYS) | {_ROLE_POLICY_COUNCIL_KEY}
+    allowed_keys = (
+        set(_ROLE_POLICY_KEYS) | set(_ROLE_POLICY_INT_KEYS) | {_ROLE_POLICY_COUNCIL_KEY, _ROLE_POLICY_STYLE_KEY}
+    )
     unknown_keys = sorted(set(settings) - allowed_keys)
     if unknown_keys:
         raise SeedError(f"role_model_policy[{role!r}] has unknown keys: {', '.join(unknown_keys)}")
@@ -1725,6 +1748,28 @@ def parse_seed(path: Path) -> SeedConfig:
     constraints = _parse_string_list(data.get("constraints"), "constraints")
     context_files = _parse_string_list(data.get("context_files"), "context_files")
     role_model_policy = _parse_role_model_policy(data.get("role_model_policy"))
+
+    # AC4: every declared response_style
+    # must be renderable from the mode-profile templates visible from the
+    # seed file's directory. A workdir override directory that lacks the
+    # mapped template file fails here with the typed template error instead
+    # of surfacing as a spawn failure mid-run.
+    if role_model_policy:
+        declared_styles = [
+            str(entry[_ROLE_POLICY_STYLE_KEY])
+            for entry in role_model_policy.values()
+            if _ROLE_POLICY_STYLE_KEY in entry
+        ]
+        if declared_styles:
+            from bernstein.core.agents.response_style import (
+                ResponseStyleTemplateError,
+                validate_style_templates,
+            )
+
+            try:
+                validate_style_templates(declared_styles, workdir=path.parent)
+            except ResponseStyleTemplateError as exc:
+                raise SeedError(f"role_model_policy response_style validation failed: {exc}") from exc
 
     agent_catalog_raw = _parse_optional_str_field(data, "agent_catalog")
     mcp_servers_raw = _parse_mcp_servers(data)
