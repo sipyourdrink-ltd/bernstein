@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+    from pathlib import Path
 
     from bernstein.core.cost.spend_ledger import LedgerEntry, SpendLedger
     from bernstein.core.persistence.journal import Journal, JournalEntry, JournalReader
@@ -505,6 +506,56 @@ def reconcile_with_ledger(
     return (not errors, errors)
 
 
+# ---------------------------------------------------------------------------
+# One-call anchor recording for compaction call sites
+# ---------------------------------------------------------------------------
+
+
+def record_compaction_artifacts(
+    *,
+    receipt: CompactionReceipt,
+    chain: AuditChainStore | None = None,
+    workdir: Path | None = None,
+    spend_ledger: SpendLedger | None = None,
+) -> None:
+    """Anchor *receipt* in every available substrate: chain, journal, ledger.
+
+    Each anchor is recorded independently and best-effort: a failed
+    write is logged, never raised, so receipt emission can never change
+    the behaviour of the compaction path that called it. A missing
+    chain anchor is not silent, though - the run's audit verification
+    (:func:`verify_compaction_receipts`) fails when a journaled
+    compaction has no chain receipt.
+
+    Args:
+        receipt: The receipt to anchor.
+        chain: Audit chain store; skipped when ``None``.
+        workdir: Run workdir; the replay journal step is registered
+            under ``<workdir>/.sdd`` when given.
+        spend_ledger: Per-run spend ledger for the token-delta row.
+    """
+    if chain is not None:
+        try:
+            record_compaction_receipt(chain=chain, receipt=receipt)
+        except Exception as exc:
+            logger.warning("Compaction receipt chain write failed for task %s: %s", receipt.task_id, exc)
+
+    if workdir is not None:
+        try:
+            from bernstein.core.persistence.journal import Journal, agent_journal_dir
+
+            journal = Journal.open(agent_journal_dir(workdir / ".sdd", receipt.worker_id))
+            record_compaction_journal_step(journal, receipt)
+        except Exception as exc:
+            logger.warning("Compaction journal step failed for task %s: %s", receipt.task_id, exc)
+
+    if spend_ledger is not None:
+        try:
+            record_ledger_delta(spend_ledger, receipt)
+        except Exception as exc:
+            logger.warning("Compaction ledger row failed for task %s: %s", receipt.task_id, exc)
+
+
 __all__ = [
     "COMPACTION_STEP_KIND",
     "LEDGER_FEATURE_LABEL",
@@ -515,6 +566,7 @@ __all__ = [
     "load_receipts",
     "receipt_from_details",
     "reconcile_with_ledger",
+    "record_compaction_artifacts",
     "record_compaction_journal_step",
     "record_compaction_receipt",
     "record_ledger_delta",

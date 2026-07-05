@@ -1289,6 +1289,10 @@ class OrchestratorConfig:
     max_crash_retries: int = 2  # Max times to resume in same worktree before escalating
     cross_model_verify: Any | None = None  # CrossModelVerifierConfig | None
     context_degradation: Any | None = None  # ContextDegradationConfig | None - restart agents on quality drop
+    # Proactive compaction lane: {proactive, threshold, max_per_task}.
+    # Resolved by orchestration.proactive_compaction.resolve_compaction_settings;
+    # None keeps the lane off so existing runs are unchanged.
+    compaction: Any | None = None
     force_parallel: bool = False  # Skip complexity advisor - always decompose/parallelize
     plan_mode: bool = False  # When True, tasks start as PLANNED and require approval before execution
     workflow: str | None = None  # "governed" activates governed workflow mode; None = adaptive (default)

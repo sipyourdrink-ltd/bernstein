@@ -16,7 +16,9 @@ like the model asking the operator a clarifying question are explicitly
 
 Out of slice (deferred)
 -----------------------
-- Context-pressure ``/compact`` recovery.
+- Context-pressure ``/compact`` recovery: now handled by the proactive
+  compaction lane (:mod:`bernstein.core.orchestration.proactive_compaction`),
+  which runs in the token-monitor tick and receipts every compaction.
 - ``redacted_thinking`` corruption restart-with-replay.
 - Stuck-class ML classifier.
 - Dashboard surfacing / per-session recovery counters in

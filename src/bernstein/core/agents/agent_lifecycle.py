@@ -654,6 +654,23 @@ def _try_compact_and_retry(
         result.correlation_id,
     )
 
+    # Receipt the compaction (issue #2246): chain event, replay-journal
+    # step, ledger row, and metric point. Recording is best-effort and
+    # never alters the retry behaviour below; a missing receipt is caught
+    # by the run's audit verification instead.
+    if result.gate_action != "refused":
+        try:
+            _record_reactive_compaction_receipt(
+                orch=orch,
+                session=session,
+                task_id=task_id,
+                pre_text=description_text,
+                result=result,
+                chain=_gate_chain,
+            )
+        except Exception as _receipt_exc:
+            logger.warning("Reactive compaction receipt failed for %s: %s", task_id, _receipt_exc)
+
     # Retry the task with compacted description and a nudge meta-message.
     retry_or_fail_task(
         task_id,
@@ -702,6 +719,70 @@ def _try_compact_and_retry(
             logger.debug("WAL write failed for context_overflow_compacted %s", task_id)
 
     return True
+
+
+def _record_reactive_compaction_receipt(
+    *,
+    orch: Any,
+    session: AgentSession,
+    task_id: str,
+    pre_text: str,
+    result: Any,
+    chain: Any,
+) -> None:
+    """Anchor the reactive compaction in chain, journal, ledger, metrics.
+
+    Runs the zero-LLM validators purely for the receipt record - on the
+    reactive path they never gate the retry (the fallback behaviour is
+    unchanged; the verdicts are evidence, not a gate). See
+    :mod:`bernstein.core.tokens.compaction_receipt` for the anchors.
+
+    Args:
+        orch: Orchestrator instance.
+        session: The dead agent session that overflowed.
+        task_id: Task being compact-retried.
+        pre_text: Task description before compaction.
+        result: The ``CompactionResult`` from the pipeline.
+        chain: Audit chain store resolved for this run (may be None).
+    """
+    from bernstein.core.tokens.compaction_receipt import (
+        build_receipt,
+        record_compaction_artifacts,
+    )
+    from bernstein.core.tokens.compaction_validate import run_validators
+
+    receipt = build_receipt(
+        task_id=task_id,
+        worker_id=session.id,
+        trigger="reactive",
+        pre_text=pre_text,
+        post_text=result.compacted_text,
+        tokens_before=result.tokens_before,
+        tokens_after=result.tokens_after,
+        verdicts=run_validators(pre_text, result.compacted_text),
+        retry_count=0,
+        gate_action=result.gate_action,
+        gate_rule_ids=result.gate_rule_ids,
+        correlation_id=result.correlation_id,
+    )
+    _workdir = getattr(orch, "_workdir", None)
+    record_compaction_artifacts(
+        receipt=receipt,
+        chain=chain,
+        workdir=Path(_workdir) if _workdir is not None else None,
+        spend_ledger=getattr(orch, "_spend_ledger", None),
+    )
+    try:
+        get_collector().record_compaction(
+            session.id,
+            result.tokens_before,
+            result.tokens_after,
+            reason="provider_413",
+            trigger="reactive",
+            correlation_id=receipt.correlation_id,
+        )
+    except Exception as exc:
+        logger.debug("Reactive compaction metric write failed for %s: %s", task_id, exc)
 
 
 def _patch_retry_with_compaction(
