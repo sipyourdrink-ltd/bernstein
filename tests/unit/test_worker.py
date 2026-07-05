@@ -10,8 +10,6 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
-import pytest
-
 from bernstein.adapters.base import build_worker_cmd
 
 if TYPE_CHECKING:
@@ -62,7 +60,6 @@ class TestBuildWorkerCmd:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="Shim module loader breaks subprocess imports during decomposition")
 class TestWorkerProcess:
     def test_worker_writes_and_cleans_pid_file(self, tmp_path: Path) -> None:
         """Worker should write PID file on start and remove it on exit."""
