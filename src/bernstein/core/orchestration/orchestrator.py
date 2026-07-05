@@ -127,6 +127,7 @@ from bernstein.core.runtime_state import (
     write_session_replay_metadata,
 )
 from bernstein.core.security.sanitize import sanitize_log
+from bernstein.core.seed import resolve_seed_path
 from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
 from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments
@@ -395,10 +396,20 @@ class Orchestrator:
             if model_policy_yaml.exists():
                 load_model_policy_from_yaml(model_policy_yaml, self._router)
             else:
-                # Fall back to bernstein.yaml model_policy section
-                seed_path = workdir / _BERNSTEIN_YAML
-                if seed_path.exists():
-                    load_model_policy_from_yaml(seed_path, self._router)
+                # Fall back to bernstein.yaml model_policy section. Resolve via
+                # resolve_seed_path() (explicit --seed-path / BERNSTEIN_SEED_PATH
+                # env / workdir default) instead of hardcoding workdir/bernstein.yaml
+                # -- otherwise role_model_policy is silently lost whenever the
+                # real seed lives elsewhere, and agents spawn on the default
+                # model instead of the configured one.
+                _seed_path_for_policy = resolve_seed_path(workdir)
+                logger.info(
+                    "Orchestrator.__init__: resolved seed_path=%s for model_policy fallback (exists=%s)",
+                    _seed_path_for_policy,
+                    _seed_path_for_policy.exists(),
+                )
+                if _seed_path_for_policy.exists():
+                    load_model_policy_from_yaml(_seed_path_for_policy, self._router)
             # Warn on startup if policy leaves no viable providers
             policy_issues = self._router.validate_policy()
             for issue in policy_issues:
@@ -591,7 +602,7 @@ class Orchestrator:
             run_id=run_id,
             sdd_dir=workdir / ".sdd",
         )
-        _seed_path = workdir / _BERNSTEIN_YAML
+        _seed_path = resolve_seed_path(workdir)
         self._replay_metadata = SessionReplayMetadata(
             run_id=run_id,
             started_at=time.time(),
@@ -649,7 +660,7 @@ class Orchestrator:
 
         # Config hot-reload: track bernstein.yaml mtime so mutable config
         # fields (max_agents, budget_usd) are picked up without restart.
-        self._config_path: Path = workdir / _BERNSTEIN_YAML
+        self._config_path: Path = resolve_seed_path(workdir)
         self._config_mtime: float = self._config_path.stat().st_mtime if self._config_path.exists() else 0.0
 
         # Memory leak detection: sampled every few ticks
@@ -4685,7 +4696,7 @@ def _resolve_manager_llm(workdir: Path) -> tuple[str, str]:
 
     provider = "openrouter_free"
     model = "nvidia/nemotron-3-super-120b-a12b"
-    seed_path = workdir / _BERNSTEIN_YAML
+    seed_path = resolve_seed_path(workdir)
     if seed_path.exists():
         with contextlib.suppress(Exception):
             seed = parse_seed(seed_path)
@@ -4926,12 +4937,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8052)
     # The adapter default deliberately falls through to the BERNSTEIN_ADAPTER
-    # env var first.  The bootstrap subprocess launcher sets that var when the
-    # operator passes ``--idle`` / a ``cli`` override / a seed-resolved cli,
-    # which closes the long-standing bug where ``bernstein run --idle`` would
-    # silently spawn Claude (and burn real tokens) because this default was
-    # hardcoded to ``"claude"``.
-    _adapter_env_default = os.environ.get("BERNSTEIN_ADAPTER", "").strip() or "claude"
+    # env var first, with NO further fallback.  Bernstein must never silently
+    # spawn Claude (and burn real tokens) because an adapter was never
+    # configured - the operator must pass ``--adapter``, set
+    # ``BERNSTEIN_ADAPTER``, or configure ``cli`` in the seed. Absence of all
+    # three is a fatal misconfiguration, checked below once the seed-resolved
+    # value (if any) has also been consulted.
+    _adapter_env_default = os.environ.get("BERNSTEIN_ADAPTER", "").strip() or None
     parser.add_argument("--adapter", type=str, default=_adapter_env_default)
     parser.add_argument("--cells", type=int, default=1, help="Number of parallel cells (1=single-cell)")
     # Run-level model override (from ``bernstein run --model``), threaded through
@@ -4942,6 +4954,16 @@ if __name__ == "__main__":
     # non-Claude adapter understands - see _coerce_model_for_non_claude_adapter.
     _model_env_default = os.environ.get("BERNSTEIN_MODEL", "").strip() or None
     parser.add_argument("--model", type=str, default=_model_env_default)
+    # Resolved bernstein.yaml path, threaded through from bootstrap_from_seed()
+    # via _start_spawner()'s --seed-path / BERNSTEIN_SEED_PATH env var. Fixes
+    # the bug where this subprocess independently re-derived
+    # ``workdir / "bernstein.yaml"`` and silently lost role_model_policy (and
+    # every other seed setting) whenever the real seed lived elsewhere.
+    parser.add_argument(
+        "--seed-path",
+        type=str,
+        default=os.environ.get("BERNSTEIN_SEED_PATH", "").strip() or None,
+    )
     args = parser.parse_args()
 
     print(f"[SPAWNER-DEBUG] orchestrator __main__: parsed CLI args={vars(args)!r}", file=sys.stderr, flush=True)
@@ -5035,10 +5057,11 @@ if __name__ == "__main__":
     try:
         # Try to load adapter from seed if available
         adapter_name = args.adapter
-        seed_path = workdir / _BERNSTEIN_YAML
+        seed_path = Path(args.seed_path) if args.seed_path else resolve_seed_path(workdir)
         logger.info(
-            "orchestrator __main__: resolved seed_path=%s (exists=%s)",
+            "orchestrator __main__: resolved seed_path=%s (from --seed-path=%s, exists=%s)",
             seed_path,
+            args.seed_path,
             seed_path.exists(),
         )
         seed: SeedConfig | None = None
@@ -5095,6 +5118,13 @@ if __name__ == "__main__":
                 file=sys.stderr,
                 flush=True,
             )
+
+        if not adapter_name:
+            logger.error(
+                "FATAL: no adapter configured. Bernstein does not default to Claude - "
+                "pass --adapter, set BERNSTEIN_ADAPTER, or configure 'cli' in bernstein.yaml."
+            )
+            sys.exit(1)
 
         # Run-level model: ``--model`` flag (threaded from ``bernstein run
         # --model``) wins, falling back to the seed's resolved model (also
@@ -5544,6 +5574,8 @@ if __name__ == "__main__":
             max_cost_per_agent=seed.max_cost_per_agent if seed else 0.0,
             test_agent=seed.test_agent if seed else TestAgentConfig(),
             cost_autopilot=seed.cost_autopilot if seed else False,
+            judge_model=seed.judge_model if seed else None,
+            judge_provider=seed.judge_provider if seed else None,
         )
 
         if args.cells > 1:

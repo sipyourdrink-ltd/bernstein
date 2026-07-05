@@ -44,6 +44,7 @@ from bernstein.adapters.plugin_sdk import (
     AdapterPluginInfo,
     PluginAdapter,
 )
+from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 
 # --- spawn_for_tasks ---
 
@@ -53,7 +54,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory(pid=100)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -69,7 +70,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory(pid=200)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         tasks = [
             make_task(id="T-001", role="backend"),
@@ -100,9 +101,10 @@ class TestSpawnForTasks:
 
     def test_uses_highest_model_config_in_batch(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
+        adapter.name.return_value = "claude"  # tier-name assertions need a Claude-compatible adapter
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="sonnet")
 
         tasks = [
             make_task(id="T-001", role="backend", complexity=Complexity.LOW),
@@ -113,9 +115,13 @@ class TestSpawnForTasks:
                 complexity=Complexity.HIGH,
             ),
         ]
+        # Routing no longer hardcodes opus for high-stakes tasks; pin the
+        # per-task models so the batch still exercises highest-tier sorting.
+        tasks[0].model = "sonnet"
+        tasks[1].model = "opus"
         session = spawner.spawn_for_tasks(tasks)
 
-        # The high-complexity large-scope task should route to opus
+        # The batch must adopt the highest-tier model across its tasks
         call_kwargs = adapter.spawn.call_args.kwargs
         assert call_kwargs["model_config"].model == "opus"
         assert session.model_config.model == "opus"
@@ -124,7 +130,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task(role="qa")
         session = spawner.spawn_for_tasks([task])
@@ -135,7 +141,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task()
         spawner.spawn_for_tasks([task])
@@ -163,7 +169,7 @@ class TestSpawnForTasks:
             "whenToUse: Periodically\n---\n{{SESSION_ID}}\n"
         )
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
         task = make_task(role="backend")
         spawner.spawn_for_tasks([task])
 
@@ -296,27 +302,31 @@ class TestRenderPrompt:
 
 class TestSelectBatchConfig:
     def test_picks_opus_over_sonnet(self, make_task) -> None:
-        tasks = [
-            make_task(complexity=Complexity.LOW, scope=Scope.SMALL),
-            make_task(complexity=Complexity.HIGH, scope=Scope.LARGE),
-        ]
-        config = _select_batch_config(tasks)
+        # Routing no longer hardcodes tier names for high-stakes tasks; pin
+        # the per-task models so the batch still exercises tier sorting.
+        low = make_task(complexity=Complexity.LOW, scope=Scope.SMALL)
+        low.model = "sonnet"
+        high = make_task(complexity=Complexity.HIGH, scope=Scope.LARGE)
+        high.model = "opus"
+        config = _select_batch_config([low, high])
         assert config.model == "opus"
 
     def test_picks_higher_effort(self, make_task) -> None:
         tasks = [
-            make_task(role="manager"),  # routes to opus max
+            make_task(role="manager"),  # high-stakes role routes to max effort
             make_task(role="manager"),
         ]
-        config = _select_batch_config(tasks)
+        config = _select_batch_config(tasks, default_model="mock-model")
         assert config.effort == "max"
 
     def test_single_task_returns_its_config(self, make_task) -> None:
-        # LOW+SMALL tasks hit the L1 fast-path → cheapest model (haiku/low)
+        # LOW+SMALL tasks classify as L1. With no fast_path.l1_model in
+        # routing.yaml the L1 fast-path is skipped, and with no default_model
+        # supplied either, routing must hard-fail with a clear error instead
+        # of silently defaulting (previously "sonnet").
         task = make_task(complexity=Complexity.LOW, scope=Scope.SMALL)
-        config = _select_batch_config([task])
-        assert config.model == "sonnet"
-        assert config.effort == "normal"
+        with pytest.raises(ModelNotConfiguredError, match="no default_model"):
+            _select_batch_config([task])
 
 
 # --- TierAwareRouter integration ---
@@ -346,7 +356,9 @@ class TestSpawnerWithRouter:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         router = _make_router()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="sonnet"
+        )
 
         task = make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         session = spawner.spawn_for_tasks([task])
@@ -367,7 +379,9 @@ class TestSpawnerWithRouter:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         router = _make_router()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="sonnet"
+        )
 
         task = make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         spawner.spawn_for_tasks([task])
@@ -387,7 +401,9 @@ class TestSpawnerWithRouter:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         router = _make_router()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         session = spawner.spawn_for_tasks([task])
@@ -400,7 +416,9 @@ class TestSpawnerWithRouter:
         adapter = mock_adapter_factory(pid=400)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=None, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=None, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -414,7 +432,9 @@ class TestSpawnerWithRouter:
         templates_dir.mkdir(parents=True)
         # Router with no providers will raise RouterError
         router = TierAwareRouter()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -471,6 +491,7 @@ class TestSpawnerWithRouter:
             tmp_path,
             router=router,
             use_worktrees=False,
+            default_model="sonnet",
         )
         with patch.object(spawner, "_get_adapter_by_name", side_effect=[failing_adapter, backup_adapter]):
             session = spawner.spawn_for_tasks([make_task()])
@@ -610,6 +631,7 @@ class TestSpawnerWithRouter:
             templates_dir,
             tmp_path,
             use_worktrees=False,
+            default_model="mock-model",
         )
 
         task = make_task(role="backend")
@@ -639,6 +661,7 @@ class TestSpawnerWithRouter:
             tmp_path,
             role_model_policy={"backend": {"provider": "codex"}},
             use_worktrees=False,
+            default_model="mock-model",
         )
 
         task = make_task(role="backend")
@@ -661,6 +684,7 @@ class TestSpawnerWithRouter:
             tmp_path,
             use_worktrees=False,
             spawn_rate_limiter=limiter,
+            default_model="mock-model",
         )
 
         spawner.spawn_for_tasks([make_task()])
@@ -845,20 +869,22 @@ class TestProviderOnlyRolePolicyCoercionGuard:
             session = spawner.spawn_for_tasks([task])
         assert session.model_config.model == "MiniMax-Text-01"
 
-    def test_tier_stamp_left_unchanged_when_no_default_model_known(
+    def test_tier_stamp_refused_when_no_default_model_known(
         self, tmp_path: Path, make_task, mock_adapter_factory
     ) -> None:
-        """Consistent with the pre-existing provider_name-is-None coercion
-        branch: with no run-level default_model configured, there is no
-        known non-Claude substitute, so the tier name is left as-is rather
-        than guessing."""
+        """With no run-level default_model configured, there is no known
+        non-Claude substitute for the tier name, so the spawn is refused
+        with a clear error instead of sending e.g. ``-m opus`` to a
+        non-Claude adapter (which the CLI rejects or misbills)."""
         spawner, target_adapter = self._pinned_provider_spawner(tmp_path, mock_adapter_factory, default_model=None)
         task = make_task(role="backend")
         task.model = "opus"
         task.retry_count = 1
-        with patch.object(spawner, "_get_adapter_by_name", return_value=target_adapter):
-            session = spawner.spawn_for_tasks([task])
-        assert session.model_config.model == "opus"
+        with (
+            patch.object(spawner, "_get_adapter_by_name", return_value=target_adapter),
+            pytest.raises(ModelNotConfiguredError, match="unpinned Claude tier name"),
+        ):
+            spawner.spawn_for_tasks([task])
 
 
 # --- _render_prompt with agency_catalog ---
@@ -983,9 +1009,12 @@ class TestSelectBatchConfigExtended:
         assert config.effort == "max"
 
     def test_heuristics_used_when_no_config_yaml(self, tmp_path: Path, make_task) -> None:
+        # High-stakes heuristics resolve to the supplied default_model
+        # (previously a hardcoded "opus") with max effort.
         task = make_task(role="backend", complexity=Complexity.HIGH, scope=Scope.LARGE)
-        config = _select_batch_config([task], templates_dir=tmp_path)
-        assert config.model == "opus"
+        config = _select_batch_config([task], templates_dir=tmp_path, default_model="mock-model")
+        assert config.model == "mock-model"
+        assert config.effort == "max"
 
     def test_task_model_override_respected(self, make_task) -> None:
         task = Task(
@@ -1020,8 +1049,11 @@ class TestSelectBatchConfigExtended:
             model=None,
             effort="max",
         )
-        config = _select_batch_config([task])
+        # An effort-only override needs a default_model to pair with; routing
+        # refuses to guess a model (previously hardcoded "sonnet").
+        config = _select_batch_config([task], default_model="mock-model")
         assert config.effort == "max"
+        assert config.model == "mock-model"
 
     def test_both_model_and_effort_override(self) -> None:
         task = Task(
@@ -1074,13 +1106,23 @@ class TestLoadRoleConfig:
         result = _load_role_config("backend", tmp_path)
         assert result is None
 
-    def test_defaults_when_fields_missing(self, tmp_path: Path) -> None:
+    def test_returns_none_when_default_model_missing(self, tmp_path: Path) -> None:
+        # A config.yaml without default_model no longer resolves to a
+        # hardcoded "sonnet"; role-config routing is skipped entirely so the
+        # other model sources (task/role policy/default_model) apply instead.
         role_dir = tmp_path / "backend"
         role_dir.mkdir()
         (role_dir / "config.yaml").write_text("{}\n")
         result = _load_role_config("backend", tmp_path)
+        assert result is None
+
+    def test_effort_defaults_to_high_when_model_present(self, tmp_path: Path) -> None:
+        role_dir = tmp_path / "backend"
+        role_dir.mkdir()
+        (role_dir / "config.yaml").write_text("default_model: mock-model\n")
+        result = _load_role_config("backend", tmp_path)
         assert result is not None
-        assert result.model == "sonnet"
+        assert result.model == "mock-model"
         assert result.effort == "high"
 
 
@@ -1112,7 +1154,7 @@ class TestWorktreeIntegration:
         worktree_path = tmp_path / ".sdd" / "worktrees" / "session-abc"
         worktree_path.mkdir(parents=True)
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True, default_model="mock-model")
         with patch.object(spawner._worktree_mgr, "create", return_value=worktree_path) as mock_create:
             task = make_task()
             session = spawner.spawn_for_tasks([task])
@@ -1132,7 +1174,7 @@ class TestWorktreeIntegration:
         worktree_path = tmp_path / ".sdd" / "worktrees" / "session-claude-md"
         worktree_path.mkdir(parents=True)
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True, default_model="mock-model")
         with patch.object(spawner._worktree_mgr, "create", return_value=worktree_path):
             task = make_task(
                 id="T-AUDIT-095",
@@ -1156,7 +1198,7 @@ class TestWorktreeIntegration:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True, default_model="mock-model")
         with patch.object(spawner._worktree_mgr, "create", side_effect=WorktreeError("git failed")):
             task = make_task()
             with pytest.raises(SpawnError, match="Cannot create workspace for agent"):
@@ -1166,7 +1208,7 @@ class TestWorktreeIntegration:
         adapter = mock_adapter_factory(pid=400)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task()
         spawner.spawn_for_tasks([task])
@@ -1459,7 +1501,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=700)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Implement JWT authentication")
         spawner.spawn_for_tasks([task])
@@ -1482,7 +1526,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=701)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Review code quality")
         spawner.spawn_for_tasks([task])
@@ -1498,7 +1544,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=702)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=None, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=None, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Write some code")
         spawner.spawn_for_tasks([task])
@@ -1519,7 +1567,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=703)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Implement JWT auth")
         session = spawner.spawn_for_tasks([task])
@@ -1538,7 +1588,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=704)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Write some backend code")
         session = spawner.spawn_for_tasks([task])
@@ -1637,6 +1689,7 @@ class TestSamplingParamsSpawnPath:
             tmp_path,
             use_worktrees=False,
             mcp_config={"temperature": 0.2, "top_k": 40, "api_key_env": "MY_PROXY_KEY"},
+            default_model="mock-model",
         )
 
         spawner.spawn_for_tasks([make_task()])
@@ -1656,7 +1709,7 @@ class TestSamplingParamsSpawnPath:
         adapter = _SamplingCapableAdapter()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         spawner.spawn_for_tasks([make_task()])
 
@@ -1683,7 +1736,9 @@ class TestSamplingParamsSpawnPath:
         adapter = _SamplingCapableAdapter()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, enable_caching=True)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, use_worktrees=False, enable_caching=True, default_model="mock-model"
+        )
 
         spawner.spawn_for_tasks([make_task()])
 
@@ -1696,7 +1751,7 @@ class TestSamplingParamsSpawnPath:
         adapter = mock_adapter_factory(pid=99)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         spawner.spawn_for_tasks([make_task()])
 
@@ -1723,6 +1778,7 @@ class TestSamplingParamsSpawnPath:
                     "api_key_env": "OPENROUTER_API_KEY",
                 }
             },
+            default_model="mock-model",
         )
 
         spawner.spawn_for_tasks([make_task(role="backend")])
@@ -1743,6 +1799,7 @@ class TestSamplingParamsSpawnPath:
             use_worktrees=False,
             mcp_config={"base_url": "http://operator-set/v1"},
             role_model_policy={"backend": {"base_url": "http://role-set/v1"}},
+            default_model="mock-model",
         )
 
         spawner.spawn_for_tasks([make_task(role="backend")])
@@ -1764,7 +1821,7 @@ class TestSamplingParamsSpawnPath:
         adapter = _SamplingCapableAdapter()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         custom = ModeProfile(
             name="deep",
@@ -1804,6 +1861,7 @@ class TestSamplingParamsSpawnPath:
                     "extra_params": {"reasoning_effort": "low"},
                 }
             },
+            default_model="mock-model",
         )
 
         spawner.spawn_for_tasks([make_task(role="backend")])
@@ -1837,6 +1895,7 @@ class TestSamplingParamsSpawnPath:
                     "top_k": 99,
                 }
             },
+            default_model="mock-model",
         )
 
         profile_only_max_tokens = ModeProfile(
@@ -1873,6 +1932,7 @@ class TestSamplingParamsSpawnPath:
             use_worktrees=False,
             mcp_config={"temperature": 0.01},
             role_model_policy={"backend": {"temperature": 0.99}},
+            default_model="mock-model",
         )
 
         spawner.spawn_for_tasks([make_task(role="backend")])
@@ -1926,6 +1986,7 @@ class TestSamplingParamsSpawnPath:
             tmp_path,
             use_worktrees=False,
             role_model_policy={"backend": {"provider": "openai_agents"}},
+            default_model="mock-model",
         )
 
         profile = ModeProfile(name="deep", system_prompt_preamble="", max_tokens=8000)
@@ -1964,6 +2025,7 @@ class TestSamplingParamsSpawnPath:
             tmp_path,
             use_worktrees=False,
             role_model_policy={"backend": {"provider": "openai_agents", "max_tokens": 4096}},
+            default_model="mock-model",
         )
 
         with patch.object(spawner, "_get_adapter_by_name", return_value=spawn_time_adapter):
@@ -2115,6 +2177,7 @@ class TestInlineCouncilForwarding:
             role_model_policy={
                 "backend": {
                     "provider": "openai_agents",
+                    "model": "gpt-5-mini",
                     "council": self._COUNCIL_BLOCK,
                 }
             },

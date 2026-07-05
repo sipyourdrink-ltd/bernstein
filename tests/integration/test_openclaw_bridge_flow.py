@@ -199,6 +199,7 @@ async def test_openclaw_bridge_seed_to_spawner_flow(
             tmp_path,
             use_worktrees=False,
             runtime_bridge=bridge,
+            default_model="mock-model",
         )
 
         session = await asyncio.to_thread(spawner.spawn_for_tasks, [make_task()])

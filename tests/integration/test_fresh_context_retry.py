@@ -182,6 +182,7 @@ def spawner(
         workdir=workdir,
         use_worktrees=False,
         spawn_rate_limiter=rate_limiter,
+        default_model="mock-model",
     )
     # Stub the heavy auth/JWT path - production wires it up but unit-style
     # integration tests don't have an identity store on disk.

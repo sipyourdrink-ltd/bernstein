@@ -212,58 +212,67 @@ class TestCheckOpusOverrideModuleState:
 class TestRouteTaskBudgetAware:
     """Integration test at the `route_task` layer."""
 
-    def test_route_task_downgrades_to_sonnet_near_cap(self) -> None:
-        """audit-102 repro: budget=1.0, spend=0.95, priority=1/architect → sonnet."""
+    # Routing no longer hardcodes opus/sonnet literals: the high-stakes
+    # escalation is max effort on the supplied default_model, and the budget
+    # downgrade drops back to the plain heuristic (high effort).
+
+    def test_route_task_downgrades_near_cap(self) -> None:
+        """audit-102 repro: budget=1.0, spend=0.95, priority=1/architect → downgraded."""
         task = _make_task(role="architect", priority=1)
 
         config = route_task(
             task,
             budget_remaining_usd=0.05,
             budget_aware_routing_enabled=True,
+            default_model="run-default",
         )
 
-        assert config.model == "sonnet"
+        assert config.model == "run-default"
+        assert config.effort == "high"
 
-    def test_route_task_ample_budget_escalates_to_opus(self) -> None:
+    def test_route_task_ample_budget_escalates_to_max_effort(self) -> None:
         task = _make_task(role="architect", priority=1)
 
         config = route_task(
             task,
             budget_remaining_usd=100.0,
             budget_aware_routing_enabled=True,
+            default_model="run-default",
         )
 
-        assert config.model == "opus"
+        assert config.model == "run-default"
         assert config.effort == "max"
 
     def test_route_task_flag_off_always_escalates(self) -> None:
-        """Back-compat: with flag off, tight budget still gives opus."""
+        """Back-compat: with flag off, tight budget still escalates effort."""
         task = _make_task(role="manager")
 
         config = route_task(
             task,
             budget_remaining_usd=0.01,
             budget_aware_routing_enabled=False,
+            default_model="run-default",
         )
 
-        assert config.model == "opus"
+        assert config.effort == "max"
 
     def test_route_task_default_call_unchanged(self) -> None:
-        """route_task() with no budget args preserves legacy behaviour."""
+        """route_task() with no budget args preserves the escalation."""
         task = _make_task(role="manager")
 
-        config = route_task(task)
+        config = route_task(task, default_model="run-default")
 
-        assert config.model == "opus"
+        assert config.model == "run-default"
         assert config.effort == "max"
 
     def test_route_task_uses_module_context_when_no_kwarg(self) -> None:
         task = _make_task(role="security")
         set_budget_context(0.05, enabled=True)
 
-        config = route_task(task)
+        config = route_task(task, default_model="run-default")
 
-        assert config.model == "sonnet"
+        assert config.model == "run-default"
+        assert config.effort == "high"
 
     def test_manager_override_not_downgraded(self) -> None:
         """Manager-specified model wins regardless of budget."""

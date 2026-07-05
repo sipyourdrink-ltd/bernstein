@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
+from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.context import append_decision
 from bernstein.core.context_recommendations import RecommendationEngine
@@ -2139,16 +2140,28 @@ def claim_and_spawn_batches(
         if len(batch) == 1:
             l1_check = classify_task(batch[0])
             if l1_check.level == TaskLevel.L1 and not batch[0].model:
-                l1_cfg = get_l1_model_config()
-                batch[0].model = l1_cfg.model
-                batch[0].effort = l1_cfg.effort
-                logger.info(
-                    "L1 downgrade for task %s -> %s/%s (%s)",
-                    batch[0].id,
-                    l1_cfg.model,
-                    l1_cfg.effort,
-                    l1_check.reason,
-                )
+                try:
+                    l1_cfg = get_l1_model_config()
+                except ModelNotConfiguredError:
+                    # fast_path.l1_model is not configured: skip the L1
+                    # downgrade and let standard routing apply the
+                    # operator-configured default_model (or refuse with a
+                    # clear error if none is configured anywhere).
+                    logger.info(
+                        "Task %s classified L1 but fast_path.l1_model is not configured - skipping L1 downgrade",
+                        batch[0].id,
+                    )
+                    l1_cfg = None
+                if l1_cfg is not None:
+                    batch[0].model = l1_cfg.model
+                    batch[0].effort = l1_cfg.effort
+                    logger.info(
+                        "L1 downgrade for task %s -> %s/%s (%s)",
+                        batch[0].id,
+                        l1_cfg.model,
+                        l1_cfg.effort,
+                        l1_check.reason,
+                    )
 
         # Provider batch: submit eligible low-risk single-task work to
         # OpenAI/Anthropic batch APIs instead of spawning a local CLI agent.
@@ -3351,7 +3364,13 @@ def _has_llm_judge_signal(task: Task) -> bool:
     return any(signal.type == "llm_judge" for signal in task.completion_signals)
 
 
-def _verify_via_janitor(task: Task, workdir: Path, server_url: str | None) -> tuple[bool, list[str]]:
+def _verify_via_janitor(
+    task: Task,
+    workdir: Path,
+    server_url: str | None,
+    judge_model: str | None = None,
+    judge_provider: str | None = None,
+) -> tuple[bool, list[str]]:
     """Run the async ``run_janitor`` pipeline for a single task synchronously.
 
     Translates a ``JanitorResult`` back into the ``(passed, failed_signals)``
@@ -3364,11 +3383,25 @@ def _verify_via_janitor(task: Task, workdir: Path, server_url: str | None) -> tu
         workdir: Project root for signal evaluation and git diff lookups.
         server_url: Optional task-server URL forwarded to ``run_janitor`` for
             fix-task creation.
+        judge_model: Optional operator-configured model for the janitor's
+            llm_judge signal evaluation (from ``bernstein.yaml``'s
+            ``judge_model``). Falls back to the janitor's hardcoded default
+            when unset.
+        judge_provider: Optional operator-configured provider counterpart
+            to ``judge_model``.
 
     Returns:
         Tuple of (all_passed, list_of_failed_signal_descriptions).
     """
-    results = asyncio.run(run_janitor([task], workdir, server_url=server_url))
+    results = asyncio.run(
+        run_janitor(
+            [task],
+            workdir,
+            server_url=server_url,
+            judge_model=judge_model,
+            judge_provider=judge_provider,
+        )
+    )
     if not results:
         # Task had no completion signals (shouldn't reach here in practice).
         return True, []
@@ -3443,7 +3476,10 @@ def _enqueue_alive_exit_janitor_pass(
         reason,
     )
 
-    server_url: str | None = getattr(getattr(orch, "_config", None), "server_url", None)
+    _orch_config = getattr(orch, "_config", None)
+    server_url: str | None = getattr(_orch_config, "server_url", None)
+    judge_model: str | None = getattr(_orch_config, "judge_model", None)
+    judge_provider: str | None = getattr(_orch_config, "judge_provider", None)
     executor = getattr(orch, "_executor", None)
     if executor is None:
         # Defensive: if the orchestrator has no executor we still want a
@@ -3460,7 +3496,14 @@ def _enqueue_alive_exit_janitor_pass(
             return None
 
     if _has_llm_judge_signal(task):
-        return executor.submit(_verify_via_janitor, task, orch._workdir, server_url)
+        return executor.submit(
+            _verify_via_janitor,
+            task,
+            orch._workdir,
+            server_url,
+            judge_model,
+            judge_provider,
+        )
     return executor.submit(verify_task, task, orch._workdir)
 
 

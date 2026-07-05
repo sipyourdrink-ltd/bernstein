@@ -393,6 +393,7 @@ def test_agent_node_dispatches_through_real_spawner(tmp_path: Path) -> None:
         templates_dir=workdir / "templates" / "roles",
         workdir=workdir,
         use_worktrees=False,
+        default_model="mock-model",
     )
 
     spec = _spec_from(

@@ -272,7 +272,7 @@ def _make_minimal_spawner(
     templates_dir: Path,
     tmp_path: Path,
 ) -> AgentSpawner:
-    spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+    spawner = AgentSpawner(adapter, templates_dir, tmp_path, default_model="mock-model")
     spawner._get_adapter_by_name = MagicMock(return_value=adapter)  # pyright: ignore[reportPrivateUsage]
     spawner._infer_adapter_name_for_provider = MagicMock(return_value="test-adapter")  # pyright: ignore[reportPrivateUsage]
     spawner._rate_limit_tracker = None  # pyright: ignore[reportAttributeAccessIssue]

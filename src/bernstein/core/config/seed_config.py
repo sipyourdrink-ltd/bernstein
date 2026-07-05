@@ -385,6 +385,10 @@ class SeedConfig:
     # explicitly and export the matching API key.
     internal_llm_provider: str = "none"
     internal_llm_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    # Janitor LLM-judge model/provider override (falls back to
+    # bernstein.core.quality.janitor.JUDGE_MODEL/JUDGE_PROVIDER when unset).
+    judge_model: str | None = None
+    judge_provider: str | None = None
     model_fallback: ModelFallbackSeedConfig | None = None
     cost_tags: dict[str, str] = field(default_factory=dict)
     cost_autopilot: bool = False

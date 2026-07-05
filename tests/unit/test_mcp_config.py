@@ -210,7 +210,7 @@ class TestSpawnerMcpPassthrough:
         templates_dir.mkdir(parents=True)
         mcp_config = {"mcpServers": {"tavily": {"command": "npx"}}}
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, mcp_config=mcp_config)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, mcp_config=mcp_config, default_model="mock-model")
         spawner.spawn_for_tasks([make_task()])
 
         call_kwargs = adapter.spawn.call_args.kwargs
@@ -221,7 +221,7 @@ class TestSpawnerMcpPassthrough:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, mcp_config=None)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, mcp_config=None, default_model="mock-model")
         spawner.spawn_for_tasks([make_task()])
 
         call_kwargs = adapter.spawn.call_args.kwargs

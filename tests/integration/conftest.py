@@ -274,6 +274,9 @@ def orchestrator_factory(integration_sdd: Path):
             workdir=integration_sdd.parent,
             use_worktrees=use_worktrees,
             spawn_rate_limiter=permissive_rate_limiter,
+            # Routing refuses to spawn unconfigured tasks; integration tasks
+            # are created over the API without models.
+            default_model="mock-model",
         )
         orchestrator = Orchestrator(config, spawner, workdir=integration_sdd.parent)
 

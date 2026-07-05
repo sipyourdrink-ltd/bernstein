@@ -346,7 +346,11 @@ class ProviderBatchManager:
         if router is None:
             return BatchSubmissionResult(handled=False, submitted=False)
 
-        base_config = route_task(task)
+        # Thread the run's default_model into routing so batch-eligible tasks
+        # do not fail with ModelNotConfiguredError when the operator relies on
+        # the run-level model instead of per-task models.
+        _spawner_default_model = getattr(getattr(orch, "_spawner", None), "_default_model", None)
+        base_config = route_task(task, default_model=_spawner_default_model)
         if not base_config.is_batch:
             base_config = ModelConfig(
                 model=base_config.model,

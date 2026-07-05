@@ -1766,6 +1766,8 @@ def parse_seed(path: Path) -> SeedConfig:
 
     internal_llm_provider_raw = _validate_optional_str(data, "internal_llm_provider", "openrouter_free")
     internal_llm_model_raw = _validate_optional_str(data, "internal_llm_model", "nvidia/nemotron-3-super-120b-a12b")
+    judge_model_raw = _parse_optional_str_field(data, "judge_model")
+    judge_provider_raw = _parse_optional_str_field(data, "judge_provider")
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
     cost_tags = _parse_cost_tags(data.get("cost_tags", {}))
     cost_autopilot_raw = _validate_optional_bool(data, "cost_autopilot", False)
@@ -1824,6 +1826,8 @@ def parse_seed(path: Path) -> SeedConfig:
         tenants=tenants,
         internal_llm_provider=internal_llm_provider_raw,
         internal_llm_model=internal_llm_model_raw,
+        judge_model=cast("str | None", judge_model_raw),
+        judge_provider=cast("str | None", judge_provider_raw),
         model_fallback=model_fallback,
         cost_tags=cost_tags,
         cost_autopilot=cost_autopilot_raw,

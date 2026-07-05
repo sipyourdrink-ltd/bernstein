@@ -126,6 +126,25 @@ class ResourceExhaustedError(CategorizedSpawnError):
     retry_strategy = RetryStrategy.RETRY_SAME
 
 
+class ModelNotConfiguredError(CategorizedSpawnError):
+    """A task requires a model but none is configured anywhere.
+
+    Bernstein never silently falls back to a default model (e.g. Claude
+    Sonnet/Opus) - an operator must explicitly configure a model via the
+    task, ``role_model_policy``, an adapter default, or the seed config.
+    Raised at the routing/spawn boundary when every one of those sources is
+    empty, so a run never incurs a surprise bill on an unconfigured model.
+
+    ``CategorizedSpawnError`` subclasses ``RuntimeError``, so the existing
+    spawn-loop callers (``task_lifecycle.py``, ``multi_cell.py``,
+    ``workflow_runner.py``) already catch this at the per-batch spawn
+    boundary and log an error + skip/fail just the affected task(s) instead
+    of crashing the whole orchestrator.
+    """
+
+    retry_strategy = RetryStrategy.RETRY_AFTER_FIX
+
+
 _SPAWN_ERROR_PATTERNS: list[tuple[type[CategorizedSpawnError], str, tuple[str, ...]]] = [
     (AdapterNotInstalledError, "Adapter binary not found", ("not found", "no such file", "command not found")),
     (WorktreeCreationError, "Worktree creation failed", ("worktree", "git worktree")),

@@ -220,13 +220,21 @@ def _build_spawner(
     adapter: MagicMock,
     catalog: CatalogRegistry | None = None,
 ) -> AgentSpawner:
-    """Construct an :class:`AgentSpawner` plumbed exactly like prod (sans worktree)."""
+    """Construct an :class:`AgentSpawner` plumbed exactly like prod (sans worktree).
+
+    ``default_model`` is set explicitly: these tests exercise capability-matrix
+    enforcement, not model routing, but the ``mockcli`` adapter is not
+    Claude-compatible, so an unconfigured model would now correctly raise
+    ``ModelNotConfiguredError`` at the spawn boundary (Bernstein never
+    silently falls back to a Claude tier name for a non-Claude adapter).
+    """
     return AgentSpawner(
         adapter=adapter,
         templates_dir=workdir / "templates" / "roles",
         workdir=workdir,
         catalog=catalog,
         use_worktrees=False,
+        default_model="mock-model",
     )
 
 

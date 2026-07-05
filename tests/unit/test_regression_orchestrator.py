@@ -140,7 +140,7 @@ def _build_orchestrator(
     adp = adapter or _mock_adapter()
     templates_dir = tmp_path / "templates" / "roles"
     templates_dir.mkdir(parents=True)
-    spawner = AgentSpawner(adp, templates_dir, tmp_path)
+    spawner = AgentSpawner(adp, templates_dir, tmp_path, default_model="mock-model")
     client = httpx.Client(transport=transport, base_url="http://testserver")
     return Orchestrator(cfg, spawner, tmp_path, client=client)
 

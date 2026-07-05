@@ -342,7 +342,9 @@ class TestTaskRepoField:
 
         from bernstein.core.spawner import AgentSpawner
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, workspace=ws, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, workspace=ws, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(id="T-100", role="backend")
         # Manually set repo since make_task doesn't support it
@@ -367,7 +369,9 @@ class TestTaskRepoField:
 
         from bernstein.core.spawner import AgentSpawner
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, workspace=ws, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, workspace=ws, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(id="T-101", role="backend")
         task.repo = "nonexistent"
@@ -388,7 +392,7 @@ class TestTaskRepoField:
 
         from bernstein.core.spawner import AgentSpawner
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task(id="T-102", role="backend")
         task.repo = "some-repo"

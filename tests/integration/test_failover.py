@@ -82,7 +82,9 @@ def test_fast_exit_rate_limit_fails_over_to_alternate_provider(tmp_path: Path) -
         log_path=tmp_path / ".sdd" / "runtime" / "gemini.log",
     )
 
-    spawner = AgentSpawner(primary_adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+    spawner = AgentSpawner(
+        primary_adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="sonnet"
+    )
     with patch.object(spawner, "_get_adapter_by_name", side_effect=[primary_adapter, backup_adapter]):
         session = spawner.spawn_for_tasks([_make_task()])
 

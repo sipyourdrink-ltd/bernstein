@@ -759,6 +759,52 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
         except HookBlockingError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        # Validate the requested role against the operator's configured
+        # role_model_policy, when one is configured for this run. This is a
+        # hard 400 (not just a log line) so the calling LLM gets an
+        # immediate, actionable error instead of silently falling back to a
+        # default provider/model at spawn time (see spawner_core.py's
+        # _resolve_role_policy, which is exact-match only against
+        # role_model_policy keys plus the "default" catch-all).
+        #
+        # "auto" is exempted because it is resolved to a concrete role via
+        # classify_role() above, before this check ever runs -- but we still
+        # guard it defensively in case that resolution is ever bypassed.
+        raw_role = effective_body.role
+        seed_config = getattr(request.app.state, "seed_config", None)
+        role_model_policy: dict[str, Any] | None = getattr(seed_config, "role_model_policy", None)
+        if role_model_policy:
+            policy_keys = list(role_model_policy.keys())
+            # "default" is a catch-all config entry, not an assignable role --
+            # never advertise it as a valid choice to the calling LLM.
+            valid_roles = [k for k in policy_keys if k != "default"]
+            if raw_role != "auto" and raw_role not in role_model_policy:
+                logger.warning(
+                    "Rejecting task create: title=%r attempted role=%r is not a valid role. Valid roles=%s",
+                    sanitize_log(str(effective_body.title)),
+                    sanitize_log(str(raw_role)),
+                    valid_roles,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid role '{raw_role}'. Valid roles: "
+                        f"[{', '.join(valid_roles)}]. Use one of these exact strings."
+                    ),
+                )
+            logger.info(
+                "Task created with role=%r matched against role_model_policy keys=%s",
+                sanitize_log(str(raw_role)),
+                policy_keys,
+            )
+        else:
+            logger.info(
+                "Task created with role=%r; no role_model_policy configured on this run "
+                "(seed_config=%s) -- skipping role validation",
+                sanitize_log(str(raw_role)),
+                "present but empty" if seed_config is not None else "absent",
+            )
+
         task = await store.create(effective_body)
         append_assessment_log(
             request.app.state.sdd_dir,

@@ -574,6 +574,14 @@ class BernsteinConfig(BaseModel):
         default="nvidia/nemotron-3-super-120b-a12b",
         description="Model for internal LLM calls.",
     )
+    judge_model: str | None = Field(
+        default=None,
+        description="Model for janitor LLM-judge calls. Falls back to the run's top-level model.",
+    )
+    judge_provider: str | None = Field(
+        default=None,
+        description="Provider for janitor LLM-judge calls. Falls back to the run's adapter provider.",
+    )
 
     # --- Constraints and context ---
     constraints: list[str] = Field(default_factory=list)

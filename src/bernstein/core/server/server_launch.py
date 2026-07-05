@@ -85,12 +85,16 @@ def _clean_stale_runtime(workdir: Path) -> None:
             lock_file.unlink(missing_ok=True)
 
 
-def ensure_sdd(workdir: Path, *, model: str = "opus") -> bool:
+def ensure_sdd(workdir: Path, *, model: str | None = None) -> bool:
     """Create .sdd/ workspace structure if it does not exist.
 
     Args:
         workdir: Project root directory.
-        model: Default model name for the workspace config.
+        model: Default model name for the workspace config. Bernstein has no
+            built-in default - when ``None``, no ``default_model`` line is
+            written and routing must be configured explicitly elsewhere
+            (task/role_model_policy/adapter default) or it will refuse to
+            spawn rather than silently bill Claude Sonnet/Opus.
 
     Returns:
         True if the workspace was newly created, False if it already existed.
@@ -115,12 +119,18 @@ def ensure_sdd(workdir: Path, *, model: str = "opus") -> bool:
     # Write default config if missing
     config_path = workdir / ".sdd" / "config.yaml"
     if not config_path.exists():
+        if model:
+            model_line = f"default_model: {model}\n"
+        else:
+            model_line = ""
+            logger.info(
+                "ensure_sdd: no model configured for %s - omitting default_model from "
+                "config.yaml. Configure one explicitly (role_model_policy/seed/adapter "
+                "default) or task spawning will refuse rather than default to Claude.",
+                workdir,
+            )
         config_path.write_text(
-            "# Bernstein workspace config\n"
-            "server_port: 8052\n"
-            "max_workers: 4\n"
-            f"default_model: {model}\n"
-            "default_effort: max\n"
+            f"# Bernstein workspace config\nserver_port: 8052\nmax_workers: 4\n{model_line}default_effort: max\n"
         )
 
     # .gitignore for runtime dir - ensure session.json is always listed.
@@ -427,7 +437,7 @@ def _inject_manager_task(
         "priority": 1,
         "scope": "large",
         "complexity": "high",
-        "model": seed.model or "opus",
+        "model": seed.model,
         "effort": "max",
     }
 
@@ -486,7 +496,7 @@ def _inject_worker_task(
         "priority": 1,
         "scope": "large",
         "complexity": "high",
-        "model": seed.model or "sonnet",
+        "model": seed.model,
         "effort": "max",
     }
 
@@ -518,6 +528,7 @@ def _start_spawner(
     ab_test: bool = False,
     adapter: str | None = None,
     model: str | None = None,
+    seed_path: Path | None = None,
 ) -> int:
     """Launch the spawner process in the background.
 
@@ -533,6 +544,13 @@ def _start_spawner(
     the CLI's own argv -- can coerce Claude tier names (opus/sonnet/haiku)
     emitted by the heuristic model selector for manager-spawned child tasks
     into a model the resolved non-Claude adapter actually understands.
+
+    ``seed_path`` (the resolved bernstein.yaml the bootstrap process actually
+    parsed) is threaded through the same way. Without it, the orchestrator
+    subprocess independently re-derives ``workdir / "bernstein.yaml"``, which
+    silently loses ``role_model_policy`` (and every other seed setting)
+    whenever the real seed lives at a different path -- agents then spawn
+    with the default model instead of the configured one, with no error.
     """
     pid_path = workdir / ".sdd" / "runtime" / "spawner.pid"
     log_path = workdir / ".sdd" / "runtime" / "spawner.log"
@@ -555,6 +573,9 @@ def _start_spawner(
         env["BERNSTEIN_ADAPTER"] = adapter
     if model:
         env["BERNSTEIN_MODEL"] = model
+    if seed_path:
+        env["BERNSTEIN_SEED_PATH"] = str(seed_path)
+        logger.info("_start_spawner: propagating seed_path=%s via BERNSTEIN_SEED_PATH + --seed-path", seed_path)
 
     argv = [
         sys.executable,
@@ -569,6 +590,8 @@ def _start_spawner(
         argv.extend(["--adapter", adapter])
     if model:
         argv.extend(["--model", model])
+    if seed_path:
+        argv.extend(["--seed-path", str(seed_path)])
 
     log_fh = log_path.open("a")
     proc = subprocess.Popen(

@@ -511,6 +511,7 @@ class TestSpawnerMCPRegistryIntegration:
             tmp_path,
             mcp_config=base_config,
             mcp_registry=registry,
+            default_model="mock-model",
         )
         spawner.spawn_for_tasks([make_task(description="Use web search")])
 
@@ -537,6 +538,7 @@ class TestSpawnerMCPRegistryIntegration:
             tmp_path,
             mcp_config=base_config,
             mcp_registry=None,
+            default_model="mock-model",
         )
         spawner.spawn_for_tasks([make_task()])
 

@@ -636,10 +636,11 @@ class TestHijackerIntegration:
             complexity=Complexity.LOW,
         )
 
-        # Hijack for the task
+        # Hijack for the task; the subject here is free-tier hijacking, so
+        # pin an explicit run default that the trial opportunity supports.
         from bernstein.core.router import route_task
 
-        model_config = route_task(test_task)
+        model_config = route_task(test_task, default_model="sonnet")
         result = hijacker.hijack_for_task(model_config)
 
         assert result is not None

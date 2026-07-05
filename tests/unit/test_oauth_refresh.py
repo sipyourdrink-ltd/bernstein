@@ -41,7 +41,7 @@ def _make_spawner(tmp_path: Path, adapter: MagicMock) -> AgentSpawner:
     backend_dir.mkdir(parents=True)
     (backend_dir / "system_prompt.md").write_text("You are a backend agent.")
 
-    spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+    spawner = AgentSpawner(adapter, templates_dir, tmp_path, default_model="mock-model")
     spawner._get_adapter_by_name = MagicMock(return_value=adapter)
     spawner._infer_adapter_name_for_provider = MagicMock(return_value="test-adapter")
     spawner._router = MagicMock()

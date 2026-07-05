@@ -762,10 +762,14 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
         write_config_snapshot,
     )
     from bernstein.core.runtime_state import hash_file, write_config_state
-    from bernstein.core.seed import SeedError, parse_seed
+    from bernstein.core.seed import SeedError, parse_seed, resolve_seed_path
     from bernstein.core.tenanting import TenantRegistry, ensure_tenant_layout, tenant_registry_from_seed
 
-    seed_path = workdir / "bernstein.yaml"
+    # resolve_seed_path() checks BERNSTEIN_SEED_PATH env first so this reload
+    # picks up the same seed file the bootstrap process actually parsed,
+    # instead of silently falling back to workdir/bernstein.yaml.
+    seed_path = resolve_seed_path(workdir)
+    logger.info("_do_reload_seed_config: resolved seed_path=%s (exists=%s)", seed_path, seed_path.exists())
     sdd_dir = jsonl_path.parent.parent
     previous_snapshot = read_config_snapshot(sdd_dir)
     current_snapshot = load_redacted_config(seed_path if seed_path.exists() else None)
@@ -1116,7 +1120,10 @@ def create_app(
     from bernstein.core.seed import CORSConfig
 
     cors_config = CORSConfig()  # default; overridden after seed_config loads
-    seed_path = workdir / "bernstein.yaml"
+    from bernstein.core.seed import resolve_seed_path
+
+    seed_path = resolve_seed_path(workdir)
+    logger.info("create_app: resolved seed_path=%s (exists=%s)", seed_path, seed_path.exists())
     if seed_path.exists():
         with contextlib.suppress(Exception):
             from bernstein.core.seed import parse_seed

@@ -30,7 +30,11 @@ from bernstein.core.agents.adapter_health import AdapterHealthMonitor
 from bernstein.core.agents.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.agents.heartbeat import HeartbeatMonitor
 from bernstein.core.agents.in_process_agent import InProcessAgent
-from bernstein.core.agents.spawn_errors import RetryStrategy, classify_spawn_error
+from bernstein.core.agents.spawn_errors import (
+    ModelNotConfiguredError,
+    RetryStrategy,
+    classify_spawn_error,
+)
 from bernstein.core.agents.spawn_rate_limiter import SpawnRateLimiter, SpawnRateLimitExceeded
 
 # Import sub-module functions
@@ -2436,11 +2440,17 @@ class AgentSpawner:
         #      based on task complexity, scope, and role templates.
         # ---------------------------------------------------------------
         metrics_dir = self._workdir / ".sdd" / "metrics"
+        # role_model_policy may pin this role's model below; feed that pin to
+        # the heuristic selector as the default so a role-policy-only config
+        # (no run-level default_model) does not fail heuristic routing before
+        # the pin is applied.
+        _policy_preview = self._role_model_policy.get(tasks[0].role) or self._role_model_policy.get("default") or {}
         base_config = _select_batch_config(
             tasks,
             templates_dir=self._templates_dir,
             metrics_dir=metrics_dir if metrics_dir.exists() else None,
             workdir=self._workdir,
+            default_model=self._default_model or _policy_preview.get("model"),
         )
         if model_override:
             base_config = ModelConfig(
@@ -2451,7 +2461,44 @@ class AgentSpawner:
             )
         model_config = base_config
         provider_name: str | None = None
-        role_policy = self._role_model_policy.get(tasks[0].role, {})
+        role_name = tasks[0].role
+        role_policy = self._role_model_policy.get(role_name)
+        role_policy_match = "exact"
+        if role_policy is None:
+            role_policy = self._role_model_policy.get("default")
+            role_policy_match = "default"
+        if role_policy is None:
+            if self._role_model_policy:
+                # role_model_policy IS configured (non-empty) but neither this
+                # role nor a "default" key exists in it - this is an operator
+                # misconfiguration, not "no policy at all". Fail loudly rather
+                # than silently falling through to code-level defaults.
+                role_policy_match = "HARD FAIL"
+                logger.info(
+                    "role_model_policy resolution for role=%r: match=%s, resolved=None, available_keys=%s",
+                    role_name,
+                    role_policy_match,
+                    sorted(self._role_model_policy.keys()),
+                )
+                raise ModelNotConfiguredError(
+                    f"No model configured for role={role_name!r}: role_model_policy is "
+                    f"non-empty but has neither an entry for {role_name!r} nor a 'default' "
+                    f"entry. Available role_model_policy keys: "
+                    f"{sorted(self._role_model_policy.keys())}. Add a role entry or a "
+                    "'default' entry to role_model_policy in the YAML config."
+                )
+            # role_model_policy itself is empty/not configured at all - other
+            # mechanisms downstream (router, adapter defaults, seed config)
+            # may still supply a model, so it's OK to fall through with {}.
+            role_policy = {}
+            role_policy_match = "none"
+        logger.info(
+            "role_model_policy resolution for role=%r: match=%s, resolved=%s, available_keys=%s",
+            role_name,
+            role_policy_match,
+            role_policy,
+            sorted(self._role_model_policy.keys()),
+        )
         # Per-step CLI override (plan-file `cli:` field) wins over role-level
         # role_model_policy.provider, which in turn wins over the default
         # adapter. The string is treated as a provider/adapter identifier and
@@ -3325,11 +3372,15 @@ class AgentSpawner:
         )
 
         metrics_dir = self._workdir / ".sdd" / "metrics"
+        # Same role-policy fallback as the main spawn path: a role-policy-only
+        # config (no run-level default_model) must not fail heuristic routing.
+        _policy_preview = self._role_model_policy.get(tasks[0].role) or self._role_model_policy.get("default") or {}
         model_config = _select_batch_config(
             tasks,
             templates_dir=self._templates_dir,
             metrics_dir=metrics_dir if metrics_dir.exists() else None,
             workdir=self._workdir,
+            default_model=self._default_model or _policy_preview.get("model"),
         )
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"

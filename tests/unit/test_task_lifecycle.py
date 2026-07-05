@@ -694,10 +694,14 @@ def test_verify_via_janitor_runs_run_janitor_for_llm_judge(
         workdir: Path,
         *,
         server_url: str | None = None,
+        judge_model: str | None = None,
+        judge_provider: str | None = None,
     ) -> list[Any]:
         captured["tasks"] = tasks
         captured["workdir"] = workdir
         captured["server_url"] = server_url
+        captured["judge_model"] = judge_model
+        captured["judge_provider"] = judge_provider
         return [
             SimpleNamespace(
                 task_id=tasks[0].id,

@@ -225,7 +225,7 @@ class TestSpawnerReapCompletedAgent:
         adapter = _mock_adapter(pid=999, proc=mock_proc)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         session = spawner.spawn_for_tasks([_make_task(id="T-001")])
         spawner.reap_completed_agent(session)
@@ -240,7 +240,7 @@ class TestSpawnerReapCompletedAgent:
         adapter = _mock_adapter(pid=888, proc=mock_proc)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         session = spawner.spawn_for_tasks([_make_task(id="T-002")])
         spawner.reap_completed_agent(session)
@@ -252,7 +252,7 @@ class TestSpawnerReapCompletedAgent:
         adapter = _mock_adapter(pid=777, proc=None)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         session = spawner.spawn_for_tasks([_make_task(id="T-003")])
         # Should not raise
@@ -283,7 +283,7 @@ class TestSpawnerReapCompletedAgent:
         adapter = _mock_adapter(pid=666, proc=mock_proc)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         session = spawner.spawn_for_tasks([_make_task(id="T-004")])
         spawner.reap_completed_agent(session)

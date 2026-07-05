@@ -549,8 +549,22 @@ def bootstrap_from_seed(
     check_config_paths(seed, workdir)
     effective_cells = cells if cells is not None else seed.cells
 
+    # Persist the resolved seed path so downstream tooling (dashboard,
+    # `bernstein status`, debug bundles) can find the real seed file even
+    # when it doesn't live at the default ``workdir/bernstein.yaml``.
+    _resolved_seed_path = seed_path.resolve()
+    _seed_location_path = workdir / ".sdd" / "runtime" / "seed_location.json"
+    try:
+        _seed_location_path.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+
+        _seed_location_path.write_text(_json.dumps({"seed_path": str(_resolved_seed_path)}))
+        logger.info("bootstrap_from_seed: persisted seed_path=%s to %s", _resolved_seed_path, _seed_location_path)
+    except OSError as exc:
+        logger.warning("bootstrap_from_seed: failed to persist seed_location.json: %s", exc)
+
     # 2. Workspace + catalog + index (silent - errors logged, not printed)
-    ensure_sdd(workdir, model=seed.model or "opus")
+    ensure_sdd(workdir, model=seed.model)
     _clean_stale_runtime(workdir)
     _discover_catalog(workdir)
     _index_codebase_with_timeout(workdir)
@@ -611,9 +625,12 @@ def bootstrap_from_seed(
     from bernstein.core.cost import estimate_run_cost
 
     est_count = backlog_count if backlog_count > 0 else 5
-    est_model = seed.model or "sonnet"
-    low, high = estimate_run_cost(est_count, est_model)
-    console.print(f"  [dim]cost[/dim]    ~${low:.2f}-${high:.2f} ({est_count} tasks, {est_model})")
+    est_model = seed.model
+    if est_model:
+        low, high = estimate_run_cost(est_count, est_model)
+        console.print(f"  [dim]cost[/dim]    ~${low:.2f}-${high:.2f} ({est_count} tasks, {est_model})")
+    else:
+        console.print(f"  [dim]cost[/dim]    unknown (no model configured, {est_count} tasks)")
 
     # 5. Start spawner + watchdog
     # Propagate the resolved adapter (e.g. ``mock`` from ``--idle``) explicitly so
@@ -632,8 +649,15 @@ def bootstrap_from_seed(
         ab_test=ab_test,
         adapter=_resolved_adapter,
         model=getattr(seed, "model", None) or None,
+        seed_path=_resolved_seed_path,
     )
-    _start_watchdog(workdir, port, adapter=_resolved_adapter, model=getattr(seed, "model", None) or None)
+    _start_watchdog(
+        workdir,
+        port,
+        adapter=_resolved_adapter,
+        model=getattr(seed, "model", None) or None,
+        seed_path=_resolved_seed_path,
+    )
     console.print(f"  [dim]agents[/dim]  spawning (max {seed.max_agents})")
 
     result = BootstrapResult(
@@ -658,7 +682,13 @@ def bootstrap_from_seed(
     return result
 
 
-def _start_watchdog(workdir: Path, port: int, adapter: str | None = None, model: str | None = None) -> int:
+def _start_watchdog(
+    workdir: Path,
+    port: int,
+    adapter: str | None = None,
+    model: str | None = None,
+    seed_path: Path | None = None,
+) -> int:
     """Launch the watchdog as a background process.
 
     Args:
@@ -668,6 +698,10 @@ def _start_watchdog(workdir: Path, port: int, adapter: str | None = None, model:
             Threaded through so a watchdog-triggered spawner restart doesn't
             silently drop back to the default ``claude`` adapter.
         model: ``--model`` override to preserve across spawner restarts.
+        seed_path: Resolved bernstein.yaml path to preserve across
+            watchdog-triggered spawner restarts (see ``_restart_spawner``) --
+            otherwise a restarted spawner would re-derive
+            ``workdir / "bernstein.yaml"`` and silently lose config.
 
     Returns:
         PID of the watchdog process.
@@ -687,6 +721,9 @@ def _start_watchdog(workdir: Path, port: int, adapter: str | None = None, model:
         argv.extend(["--adapter", adapter])
     if model:
         argv.extend(["--model", model])
+    if seed_path:
+        argv.extend(["--seed-path", str(seed_path)])
+        logger.info("_start_watchdog: propagating seed_path=%s", seed_path)
 
     log_fh = log_path.open("w")
     proc = subprocess.Popen(
@@ -766,6 +803,7 @@ def run_watchdog(
     poll_s: float = 5.0,
     adapter: str | None = None,
     model: str | None = None,
+    seed_path: Path | None = None,
 ) -> None:
     """Monitor the server and orchestrator, restarting them if they die.
 
@@ -786,6 +824,8 @@ def run_watchdog(
         adapter: Resolved CLI adapter override to preserve across
             watchdog-triggered spawner restarts (see ``_restart_spawner``).
         model: ``--model`` override to preserve across spawner restarts.
+        seed_path: Resolved bernstein.yaml path to preserve across spawner
+            restarts.
     """
     server_pid_path = workdir / ".sdd" / "runtime" / "server.pid"
     spawner_pid_path = workdir / ".sdd" / "runtime" / "spawner.pid"
@@ -824,7 +864,8 @@ def run_watchdog(
             cur_server_pid = _read_pid(server_pid_path)
             if cur_server_pid is None or not _is_alive(cur_server_pid):
                 return -1  # signal: skip restart
-            return _start_spawner(workdir, port, adapter=adapter, model=model)
+            logger.info("_restart_spawner: restarting with seed_path=%s adapter=%s model=%s", seed_path, adapter, model)
+            return _start_spawner(workdir, port, adapter=adapter, model=model, seed_path=seed_path)
 
         spawner_alive_since, spawner_restarts, spawner_give_up_logged = _watchdog_check_process(
             name="Orchestrator",
@@ -1074,7 +1115,7 @@ def _bootstrap_from_goal_impl(
 
     # Initialise workspace
     with Status("[bold]Creating workspace...[/bold]", console=console):
-        created = ensure_sdd(workdir, model=model or "opus")
+        created = ensure_sdd(workdir, model=model)
         if first_run and not (workdir / "bernstein.yaml").exists():
             auto_write_bernstein_yaml(workdir)
         _clean_stale_runtime(workdir)
@@ -1151,10 +1192,16 @@ def _bootstrap_from_goal_impl(
     from bernstein.core.cost import estimate_run_cost
 
     est_task_count = backlog_count if backlog_count > 0 else 5  # default estimate for manager-planned
-    low, high = estimate_run_cost(est_task_count, "sonnet")
-    console.print(
-        f"[bold yellow]Cost estimate:[/bold yellow] ${low:.2f}-${high:.2f} ({est_task_count} task(s), sonnet model)"
-    )
+    if model:
+        low, high = estimate_run_cost(est_task_count, model)
+        console.print(
+            f"[bold yellow]Cost estimate:[/bold yellow] ${low:.2f}-${high:.2f} "
+            f"({est_task_count} task(s), {model} model)"
+        )
+    else:
+        console.print(
+            f"[bold yellow]Cost estimate:[/bold yellow] unknown - no model configured ({est_task_count} task(s))"
+        )
 
     cell_label = f"{cells} cells" if cells > 1 else "single cell"
     # Propagate the resolved cli adapter explicitly so the orchestrator
@@ -1192,6 +1239,12 @@ if __name__ == "__main__":
     _parser.add_argument("--port", type=int, default=8052)
     _parser.add_argument("--adapter", type=str, default=None)
     _parser.add_argument("--model", type=str, default=None)
+    _parser.add_argument(
+        "--seed-path",
+        type=str,
+        default=os.environ.get("BERNSTEIN_SEED_PATH", "").strip() or None,
+        help="Resolved bernstein.yaml path, threaded through from bootstrap_from_seed().",
+    )
     _args = _parser.parse_args()
 
     if _args.watchdog:
@@ -1204,7 +1257,9 @@ if __name__ == "__main__":
                 level=logging.INFO,
                 format="%(asctime)s %(levelname)s %(name)s: %(message)s",
             )
-        run_watchdog(Path.cwd(), _args.port, adapter=_args.adapter, model=_args.model)
+        _watchdog_seed_path = Path(_args.seed_path) if _args.seed_path else None
+        logger.info("watchdog __main__: starting with seed_path=%s", _watchdog_seed_path)
+        run_watchdog(Path.cwd(), _args.port, adapter=_args.adapter, model=_args.model, seed_path=_watchdog_seed_path)
 
 
 # ---------------------------------------------------------------------------

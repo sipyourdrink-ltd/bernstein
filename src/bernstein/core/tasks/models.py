@@ -1326,6 +1326,11 @@ class OrchestratorConfig:
     # Default off; enable once multi-tenant workloads exist.
     fair_scheduling_enabled: bool = False
     cost_autopilot: bool = False  # Wire CostAutopilot when True
+    # Janitor LLM-judge model/provider override, threaded from the seed's
+    # ``judge_model``/``judge_provider`` (bernstein.yaml). None = fall back
+    # to the janitor's hardcoded JUDGE_MODEL/JUDGE_PROVIDER defaults.
+    judge_model: str | None = None
+    judge_provider: str | None = None
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

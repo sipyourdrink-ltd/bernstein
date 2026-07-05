@@ -235,8 +235,15 @@ def _build_orchestrator(
     transport: httpx.MockTransport,
     adapter: CLIAdapter | None = None,
     config: OrchestratorConfig | None = None,
+    default_model: str | None = "mock-model",
 ) -> Orchestrator:
-    """Convenience: wire up orchestrator with mocked transport."""
+    """Convenience: wire up orchestrator with mocked transport.
+
+    ``default_model`` defaults to a mock value because routing now refuses
+    to spawn when no model is configured anywhere; tests here exercise
+    orchestrator scheduling, not model configuration. Pass ``None``
+    explicitly to exercise the unconfigured-model refusal path.
+    """
     cfg = config or OrchestratorConfig(
         max_agents=6,
         poll_interval_s=1,
@@ -247,7 +254,7 @@ def _build_orchestrator(
     adp = adapter or _mock_adapter()
     templates_dir = tmp_path / "templates" / "roles"
     templates_dir.mkdir(parents=True)
-    spawner = AgentSpawner(adp, templates_dir, tmp_path)
+    spawner = AgentSpawner(adp, templates_dir, tmp_path, default_model=default_model)
     client = httpx.Client(transport=_paginated_transport(transport), base_url="http://testserver")
     return Orchestrator(cfg, spawner, tmp_path, client=client)
 
@@ -578,7 +585,7 @@ class TestTickStarvingRolePriority:
             max_tasks_per_agent=1,
             server_url="http://testserver",
         )
-        orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler), config=cfg)
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler), config=cfg, default_model="mock-model")
         be_session = AgentSession(
             id="existing-backend",
             role="backend",

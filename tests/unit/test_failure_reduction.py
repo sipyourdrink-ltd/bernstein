@@ -528,49 +528,52 @@ class TestMaybeRetryProgressiveTimeout:
 
 
 # ---------------------------------------------------------------------------
-# Fix F: route_task legacy function - LARGE and architect/security → opus/max
+# Fix F: route_task legacy function - LARGE and architect/security -> max effort
 # ---------------------------------------------------------------------------
 
 
 class TestRouteTaskLegacyFunction:
-    """The legacy route_task() function should use opus/max for high-stakes routing."""
+    """The legacy route_task() function escalates high-stakes tasks to max
+    effort on the operator-configured default_model; it never hardcodes a
+    Claude tier name."""
 
-    def test_large_scope_routes_to_opus_max(self) -> None:
+    def test_large_scope_routes_to_default_model_max(self) -> None:
         from bernstein.core.router import route_task
 
         task = _make_task(scope="large")
-        cfg = route_task(task)
-        assert cfg.model == "opus"
+        cfg = route_task(task, default_model="run-default")
+        assert cfg.model == "run-default"
         assert cfg.effort == "max"
 
-    def test_architect_role_routes_to_opus_max(self) -> None:
+    def test_architect_role_routes_to_default_model_max(self) -> None:
         from bernstein.core.router import route_task
 
         task = _make_task(role="architect")
-        cfg = route_task(task)
-        assert cfg.model == "opus"
+        cfg = route_task(task, default_model="run-default")
+        assert cfg.model == "run-default"
         assert cfg.effort == "max"
 
-    def test_security_role_routes_to_opus_max(self) -> None:
+    def test_security_role_routes_to_default_model_max(self) -> None:
         from bernstein.core.router import route_task
 
         task = _make_task(role="security")
-        cfg = route_task(task)
-        assert cfg.model == "opus"
+        cfg = route_task(task, default_model="run-default")
+        assert cfg.model == "run-default"
         assert cfg.effort == "max"
 
-    def test_manager_role_routes_to_opus_max(self) -> None:
+    def test_manager_role_routes_to_default_model_max(self) -> None:
         from bernstein.core.router import route_task
 
         task = _make_task(role="manager")
-        cfg = route_task(task)
-        assert cfg.model == "opus"
+        cfg = route_task(task, default_model="run-default")
+        assert cfg.model == "run-default"
         assert cfg.effort == "max"
 
-    def test_medium_scope_backend_uses_sonnet(self) -> None:
+    def test_medium_scope_backend_uses_default_model_high(self) -> None:
         from bernstein.core.router import route_task
 
         task = _make_task(role="backend", scope="medium", complexity="medium")
-        cfg = route_task(task)
-        # Should not escalate to opus for ordinary tasks
-        assert cfg.model in ("sonnet", "haiku")
+        cfg = route_task(task, default_model="run-default")
+        # Should not escalate to max effort for ordinary tasks
+        assert cfg.model == "run-default"
+        assert cfg.effort == "high"

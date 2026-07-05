@@ -420,10 +420,14 @@ class PhasePipelineDefaults:
     """
 
     enabled: bool = False
-    research_model: str = "opus"
-    plan_model: str = "opus"
-    implement_model: str = "sonnet"
-    verify_model: str = "sonnet"
+    # No built-in defaults - Bernstein never silently falls back to a Claude
+    # tier name. These are currently unread by any consumer (dead code); if a
+    # future PhasedRunner reads them, it must treat None as "not configured"
+    # and raise/skip rather than guessing a model.
+    research_model: str | None = None
+    plan_model: str | None = None
+    implement_model: str | None = None
+    verify_model: str | None = None
     artifact_root: str = ".sdd/runtime/phase_artifacts"
     gc_on_task_close: bool = True
     # Mechanical exit-criteria gate (R001..R005) at every phase boundary.
