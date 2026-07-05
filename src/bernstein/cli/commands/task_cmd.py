@@ -132,6 +132,18 @@ def claim_backlog(
     ),
 )
 @click.option(
+    "--mode",
+    "mode",
+    default=None,
+    type=click.Choice(["verbose", "balanced", "terse", "fast", "smart", "deep"]),
+    help=(
+        "Response-style profile for the worker handling this task. Accepts a "
+        "style name (verbose/balanced/terse) or a mode-profile name "
+        "(fast/smart/deep); stamped as metadata['mode'], the top-priority "
+        "input of the spawn-time style resolution."
+    ),
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Print the JSON payload that would be sent without actually calling the API.",
@@ -147,6 +159,7 @@ def add_task(
     complexity: str,
     depends_on: tuple[str, ...],
     criterion_profile: str | None,
+    mode: str | None,
     dry_run: bool,
 ) -> None:
     """Add a task to the running server.
@@ -175,6 +188,9 @@ def add_task(
         except CriterionProfileError as exc:
             raise click.UsageError(f"--criterion-profile {criterion_profile!r}: {exc}") from None
         payload.setdefault("metadata", {})["criterion_profile"] = criterion_profile
+
+    if mode is not None:
+        payload.setdefault("metadata", {})["mode"] = mode
 
     if dry_run:
         if is_json():
