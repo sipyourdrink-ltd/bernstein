@@ -3040,11 +3040,30 @@ def _record_cost_and_convergence(
     so the emitted ``ledger_update:`` line records whether these token counts
     came from an alive-exit /complete sidecar ingestion (``alive_exit``) vs a
     dead-session recovery (``dead_exit``) vs the collector metrics (``""``).
+
+    The response-style profile applied at spawn also
+    rides the ledger entry (``response_profile`` + ``profile_content_sha256``
+    cost tags) so downstream cost analysis can group spend per profile. The
+    session carries the authoritative stamp; when the session is already
+    gone (dead-exit recovery), the copy stamped on ``task.metadata`` at
+    spawn is used instead. Pre-change sessions carry neither, keeping the
+    ledger mutation byte-identical for them.
     """
     agent_id = session.id if session else "unknown"
     model = session.model_config.model if session else "unknown"
     tokens_in = task_m.tokens_prompt if task_m else 0
     tokens_out = task_m.tokens_completion if task_m else 0
+    cost_tags: dict[str, str] = {}
+    if tokens_sidecar_source:
+        cost_tags["tokens_sidecar_source"] = tokens_sidecar_source
+    response_profile = getattr(session, "response_profile", "") if session else ""
+    profile_sha = getattr(session, "profile_content_sha256", "") if session else ""
+    if not response_profile and isinstance(task.metadata, dict):
+        response_profile = str(task.metadata.get("response_profile") or "")
+        profile_sha = str(task.metadata.get("profile_content_sha256") or "")
+    if response_profile:
+        cost_tags["response_profile"] = response_profile
+        cost_tags["profile_content_sha256"] = profile_sha
     orch._cost_tracker.record_cumulative(
         agent_id=agent_id,
         task_id=task.id,
@@ -3053,7 +3072,7 @@ def _record_cost_and_convergence(
         total_output_tokens=tokens_out,
         total_cost_usd=cost_usd if cost_usd > 0 else None,
         tenant_id=task.tenant_id,
-        cost_tags={"tokens_sidecar_source": tokens_sidecar_source} if tokens_sidecar_source else None,
+        cost_tags=cost_tags or None,
     )
     try:
         orch._cost_tracker.save(orch._workdir / ".sdd")

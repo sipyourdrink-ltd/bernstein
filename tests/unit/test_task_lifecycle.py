@@ -1189,3 +1189,66 @@ def test_claim_and_spawn_batches_spawns_claimed_subset_on_partial_claim_failure(
     assert [t.id for t in spawned_batch] == ["T-a"]
     # Task B's claim failure is recorded, but does not block A.
     assert any("T-b" in e for e in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# Response-profile ledger coupling
+# ---------------------------------------------------------------------------
+
+
+def test_record_cost_tags_response_profile_from_session(tmp_path: Path, make_task: Any) -> None:
+    """A task spawned with a terse response profile produces a cost ledger
+    entry carrying response_profile and the rendered-addendum hash."""
+    from bernstein.core.tasks.task_lifecycle import _record_cost_and_convergence
+
+    task = make_task(id="T-style", title="qa task", description="d", status=TaskStatus.DONE)
+    session = _session_for(task.id, exit_code=0)
+    session.response_profile = "terse"
+    session.profile_content_sha256 = "f" * 64
+    orch = _process_orch(tmp_path, session)
+    task_m = SimpleNamespace(tokens_prompt=100, tokens_completion=50)
+
+    _record_cost_and_convergence(orch, task, session, task_m, cost_usd=1.0, janitor_passed=True)
+
+    _, cumulative_kwargs = orch._cost_tracker.record_cumulative.call_args
+    tags = cumulative_kwargs["cost_tags"]
+    assert tags["response_profile"] == "terse"
+    assert tags["profile_content_sha256"] == "f" * 64
+
+
+def test_record_cost_tags_response_profile_from_task_metadata_when_session_lost(
+    tmp_path: Path, make_task: Any
+) -> None:
+    """When the session is already gone (dead-exit recovery), the profile
+    stamped on task metadata at spawn still reaches the ledger entry."""
+    from bernstein.core.tasks.task_lifecycle import _record_cost_and_convergence
+
+    task = make_task(id="T-style-meta", title="t", description="d", status=TaskStatus.DONE)
+    task.metadata["response_profile"] = "verbose"
+    task.metadata["profile_content_sha256"] = "a" * 64
+    session = _session_for("other-task", exit_code=0)
+    orch = _process_orch(tmp_path, session)
+    task_m = SimpleNamespace(tokens_prompt=1, tokens_completion=1)
+
+    _record_cost_and_convergence(orch, task, None, task_m, cost_usd=0.5, janitor_passed=True)
+
+    _, cumulative_kwargs = orch._cost_tracker.record_cumulative.call_args
+    tags = cumulative_kwargs["cost_tags"]
+    assert tags["response_profile"] == "verbose"
+    assert tags["profile_content_sha256"] == "a" * 64
+
+
+def test_record_cost_tags_absent_for_pre_change_sessions(tmp_path: Path, make_task: Any) -> None:
+    """Sessions and tasks with no profile stamped (pre-change state) keep the
+    ledger mutation byte-identical: cost_tags stays None."""
+    from bernstein.core.tasks.task_lifecycle import _record_cost_and_convergence
+
+    task = make_task(id="T-legacy", title="t", description="d", status=TaskStatus.DONE)
+    session = _session_for(task.id, exit_code=0)
+    orch = _process_orch(tmp_path, session)
+    task_m = SimpleNamespace(tokens_prompt=1, tokens_completion=1)
+
+    _record_cost_and_convergence(orch, task, session, task_m, cost_usd=0.5, janitor_passed=True)
+
+    _, cumulative_kwargs = orch._cost_tracker.record_cumulative.call_args
+    assert cumulative_kwargs["cost_tags"] is None
