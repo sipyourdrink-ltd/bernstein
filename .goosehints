@@ -231,6 +231,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 
 | File                      | Purpose |
 |---------------------------|---------|
+| `ab_comparison.py`        | Three-arm profile A/B comparison artifact (issue #2247) |
 | `ab_runner.py`            | A/B runner primitive - deterministic prompt-vs-prompt comparison |
 | `baseline.py`             | Baseline tracking for eval-gated evolution |
 | `calibration.py`          | Calibration log + Brier score for router and judge decisions |
