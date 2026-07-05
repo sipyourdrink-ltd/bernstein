@@ -348,3 +348,7 @@ def test_counts_distinguish_refused_from_failed(client: TestClient) -> None:
     counts = client.get("/tasks/counts").json()
     assert counts["refused"] == before["refused"] + 1
     assert counts["failed"] == before["failed"] + 1
+    # The /status summary (bernstein status / dashboard) exposes the same split.
+    summary = client.get("/status").json()["summary"]
+    assert summary["refused"] == counts["refused"]
+    assert summary["failed"] == counts["failed"]

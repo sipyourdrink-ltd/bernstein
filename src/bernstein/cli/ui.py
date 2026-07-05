@@ -36,6 +36,7 @@ STATUS_COLORS: dict[str, str] = {
     "failed": "red",
     "blocked": "magenta",
     "cancelled": "red",
+    "refused": "orange3",
 }
 
 AGENT_STATUS_COLORS: dict[str, str] = {
@@ -176,6 +177,7 @@ class TaskSummary:
     in_progress: int = 0
     failed: int = 0
     open: int = 0
+    refused: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TaskSummary:
@@ -193,6 +195,7 @@ class TaskSummary:
             in_progress=int(data.get("in_progress", data.get("claimed", 0))),
             failed=int(data.get("failed", 0)),
             open=int(data.get("open", 0)),
+            refused=int(data.get("refused", 0)),
         )
 
 
@@ -583,6 +586,7 @@ def create_summary_table(stats: RunStats) -> Table:
     table.add_row("[green]Done[/green]", f"[green]{s.done}[/green]")
     table.add_row("[yellow]In progress[/yellow]", f"[yellow]{s.in_progress}[/yellow]")
     table.add_row("[red]Failed[/red]", f"[red]{s.failed}[/red]")
+    table.add_row("[orange3]Refused[/orange3]", f"[orange3]{s.refused}[/orange3]")
     table.add_section()
     table.add_row("Active agents", str(len(stats.agents)))
     table.add_row("Elapsed", format_duration(stats.elapsed_seconds))
@@ -610,6 +614,7 @@ def create_summary_plain(stats: RunStats) -> str:
         f"  Done:        {s.done}",
         f"  In progress: {s.in_progress}",
         f"  Failed:      {s.failed}",
+        f"  Refused:     {s.refused}",
         f"Active agents: {len(stats.agents)}",
         f"Elapsed:       {format_duration(stats.elapsed_seconds)}",
     ]

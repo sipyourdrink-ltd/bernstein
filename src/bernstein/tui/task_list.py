@@ -220,6 +220,7 @@ STATUS_COLORS: dict[str, str] = {
     "failed": "red",
     "blocked": "dim",
     "cancelled": "dim",
+    "refused": "orange3",
 }
 
 #: Status dot symbols: filled for active/completed, hollow for pending.
@@ -231,6 +232,7 @@ STATUS_DOTS: dict[str, str] = {
     "failed": "\u25cf",  # ●
     "blocked": "\u25cb",  # ○
     "cancelled": "\u25cb",  # ○
+    "refused": "\u25cf",  # ●
 }
 
 

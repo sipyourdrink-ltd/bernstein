@@ -719,6 +719,61 @@ def _get_lesson_context(role: str, tasks: list[Task], workdir: Path) -> str:
     return lesson_context
 
 
+def _legacy_completion_instructions(tasks: list[Task]) -> str:
+    """Fallback completion instructions when the contract include is absent.
+
+    Mirrors the pre-contract prose: concrete curl commands with
+    --retry-connrefused (not --retry-all-errors) so curl only retries
+    transient connection failures, NOT 4xx errors like 409 Conflict.
+    """
+    completion_cmds = "\n".join(
+        f"curl -s -w '\\n%{{http_code}}' --retry 3 --retry-delay 2 --retry-connrefused "
+        f"-X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
+        f'-H "Content-Type: application/json" '
+        f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
+        for t in tasks
+    )
+    return (
+        f"Complete these tasks. When ALL are done, mark each complete on the task server:\n\n"
+        f"```bash\n{completion_cmds}\n```\n\n"
+        f"**Important:** Only retry on connection refused / network errors. "
+        f"If the server returns HTTP 409 or any other 4xx error, do NOT retry. "
+        f"The task state has changed and retrying will not help. Just exit.\n\n"
+        f"Then exit."
+    )
+
+
+def _render_completion_instructions(tasks: list[Task]) -> str:
+    """Build the terminal-outcome instruction block for the worker prompt.
+
+    Renders the shared ``templates/roles/_includes/completion_contract.md``
+    partial (#2244) so the runtime prompt and the role task templates emit
+    the same schema-enforced completion/refusal instructions. Falls back
+    to the legacy prose-summary instructions when the include is missing
+    (e.g. a stripped install), so spawns never lose the done signal.
+    """
+    from bernstein import _BUNDLED_TEMPLATES_DIR
+
+    include_path = _BUNDLED_TEMPLATES_DIR / "roles" / "_includes" / "completion_contract.md"
+    try:
+        template = include_path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("Completion contract include missing at %s; using legacy instructions", include_path)
+        return _legacy_completion_instructions(tasks)
+
+    ids = [t.id for t in tasks]
+    if len(ids) == 1:
+        header = "Complete this task. When done, report a terminal outcome for it:\n\n"
+        block = template.replace("{{TASK_ID}}", ids[0])
+    else:
+        header = (
+            "Complete these tasks. When ALL are done, report a terminal outcome "
+            "for each of these task ids (one POST per id): " + ", ".join(ids) + "\n\n"
+        )
+        block = template.replace("{{TASK_ID}}", "<task_id>")
+    return f"{header}{block}\nThen exit."
+
+
 def _render_prompt(
     tasks: list[Task],
     templates_dir: Path,
@@ -775,24 +830,9 @@ def _render_prompt(
     project_md = workdir / ".sdd" / "project.md"
     project_context = _read_cached(project_md)
 
-    # Completion instructions with concrete curl commands and retry logic.
-    # Use --retry-connrefused (not --retry-all-errors) so curl only retries
-    # transient connection failures, NOT 4xx errors like 409 Conflict.
-    completion_cmds = "\n".join(
-        f"curl -s -w '\\n%{{http_code}}' --retry 3 --retry-delay 2 --retry-connrefused "
-        f"-X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
-        f'-H "Content-Type: application/json" '
-        f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
-        for t in tasks
-    )
-    instructions = (
-        f"Complete these tasks. When ALL are done, mark each complete on the task server:\n\n"
-        f"```bash\n{completion_cmds}\n```\n\n"
-        f"**Important:** Only retry on connection refused / network errors. "
-        f"If the server returns HTTP 409 or any other 4xx error, do NOT retry. "
-        f"The task state has changed and retrying will not help. Just exit.\n\n"
-        f"Then exit."
-    )
+    # Completion-contract instructions shared with templates/roles via the
+    # single _includes/completion_contract.md partial (#2244).
+    instructions = _render_completion_instructions(tasks)
 
     # Available roles from templates directory
     available_roles = ""

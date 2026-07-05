@@ -32,6 +32,12 @@ _IF_BLOCK_RE = re.compile(r"\{\{#IF\s+(\w+)\}\}(.*?)\{\{/IF\}\}", re.DOTALL)
 _IF_NOT_BLOCK_RE = re.compile(r"\{\{#IF_NOT\s+(\w+)\}\}(.*?)\{\{/IF_NOT\}\}", re.DOTALL)
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 _SHELL_CMD_RE = re.compile(r"!" + "`" + r"([^`]+)" + "`")
+_INCLUDE_RE = re.compile(r"\{\{INCLUDE\s+([\w-]+)\}\}")
+
+# Directory name for shared template partials, looked up next to the
+# template and one level up (e.g. templates/roles/_includes/ for a
+# template at templates/roles/backend/task_prompt.md).
+_INCLUDES_DIRNAME = "_includes"
 
 
 def _resolve_conditionals(template: str, context: dict[str, str]) -> str:
@@ -102,6 +108,45 @@ def _execute_shell_commands(template: str) -> str:
     return _SHELL_CMD_RE.sub(_run_cmd, template)
 
 
+def _resolve_includes(template: str, template_path: Path) -> str:
+    """Expand ``{{INCLUDE name}}`` directives from shared partial files.
+
+    Partials live in an ``_includes/`` directory next to the template's
+    directory or one level up, so all roles can share one instruction
+    block (e.g. ``templates/roles/_includes/completion_contract.md``).
+    Expansion is a single pass - partials cannot include other partials.
+
+    Args:
+        template: Raw template string.
+        template_path: Path of the template being rendered, used to
+            locate the ``_includes`` directory.
+
+    Returns:
+        Template with include directives replaced by partial contents.
+
+    Raises:
+        TemplateError: When a referenced partial does not exist or
+            cannot be read. Failing fast beats silently dropping an
+            instruction block from a worker prompt.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        candidates = (
+            template_path.parent / _INCLUDES_DIRNAME / f"{name}.md",
+            template_path.parent.parent / _INCLUDES_DIRNAME / f"{name}.md",
+        )
+        for candidate in candidates:
+            if candidate.is_file():
+                try:
+                    return candidate.read_text(encoding="utf-8")
+                except OSError as exc:
+                    raise TemplateError(f"Cannot read include {candidate}: {exc}") from exc
+        raise TemplateError(f"Include '{name}' not found near {template_path} (looked in {_INCLUDES_DIRNAME}/)")
+
+    return _INCLUDE_RE.sub(_replace, template)
+
+
 def _substitute_placeholders(template: str, context: dict[str, str]) -> str:
     """Replace {{VAR}} placeholders with values from context.
 
@@ -130,9 +175,10 @@ def render_template(template_path: Path, context: dict[str, str]) -> str:
     """Load a template file and render it with the given context.
 
     Processing order:
-      1. Resolve {{#IF VAR}}...{{/IF}} and {{#IF_NOT VAR}}...{{/IF_NOT}} blocks.
-      2. Execute ``!`command` shell command tokens.
-      3. Substitute remaining {{VAR}} placeholders.
+      1. Expand ``{{INCLUDE name}}`` partials from ``_includes/``.
+      2. Resolve {{#IF VAR}}...{{/IF}} and {{#IF_NOT VAR}}...{{/IF_NOT}} blocks.
+      3. Execute ``!`command` shell command tokens.
+      4. Substitute remaining {{VAR}} placeholders.
 
     Args:
         template_path: Absolute or relative path to the template file.
@@ -154,7 +200,8 @@ def render_template(template_path: Path, context: dict[str, str]) -> str:
     except OSError as exc:
         raise TemplateError(f"Cannot read template {path}: {exc}") from exc
 
-    rendered = _resolve_conditionals(raw, context)
+    rendered = _resolve_includes(raw, path)
+    rendered = _resolve_conditionals(rendered, context)
     rendered = _execute_shell_commands(rendered)
     rendered = _substitute_placeholders(rendered, context)
     return rendered
