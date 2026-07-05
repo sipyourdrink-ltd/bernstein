@@ -482,7 +482,7 @@ class TestCompletionProgressSkipSet:
         assert self._tracker().detect_failure_type(log) == "rate_limit"
 
     def test_assistant_type_prose_with_error_context_does_not_match(self, tmp_path):
-        """"assistant" events carry free-form model narration, not
+        """ "assistant" events carry free-form model narration, not
         structured provider/HTTP data -- healthy narration that happens to
         mention "timeout" alongside an error-context word (e.g. "status")
         must not trip a false-positive throttle."""
@@ -502,6 +502,7 @@ class TestCompletionProgressSkipSet:
             '{"type": "error", "message": "Error code: 429 - rate limit exceeded"}\n'
         )
         assert self._tracker().detect_failure_type(log) == "rate_limit"
+
 
 class TestMaxTurnsDetection:
     """A MaxTurnsExceeded death was never classified by detect_failure_type,
