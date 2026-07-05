@@ -223,7 +223,7 @@ async def _run_candidate(
 
     run_kwargs: dict[str, Any] = {} if max_turns is None else {"max_turns": max_turns}
     logger.info(
-        "run_council._run_candidate: dispatching %s base_url=%r (api_key_env=%r) timeout=%.1fs max_turns=%s",
+        "run_council._run_candidate: dispatching %s base_url=%r (credential env var=%r) timeout=%.1fs max_turns=%s",
         label,
         member.get("base_url") or "<default>",
         member.get("api_key_env") or "<ambient OPENAI_API_KEY>",

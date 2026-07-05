@@ -85,7 +85,7 @@ def _sanitize_path_component(value: str) -> str:
     malformed id degrades to a wrong-but-contained directory name, matching
     this module's observe-only contract.
     """
-    cleaned = str(value).replace("\x00", "").strip()
+    cleaned = value.replace("\x00", "").strip()
     # Normalize backslashes so a Windows-style separator cannot survive as a
     # literal character on POSIX, then keep only the last path component.
     cleaned = PurePosixPath(cleaned.replace("\\", "/")).name
