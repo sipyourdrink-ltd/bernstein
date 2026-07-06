@@ -124,7 +124,7 @@ def test_role_model_policy_routes_roles_to_mixed_adapters_and_records_replay(tmp
             result = orchestrator.tick()
 
     assert len(result.spawned) == 2
-    replay_files = list((tmp_path / ".sdd" / "runs").glob("*/replay.jsonl"))
+    replay_files = list((tmp_path / ".sdd" / "runs").glob("*/journal.jsonl"))
     assert len(replay_files) == 1
     replay_path = replay_files[0]
     assert replay_path.exists()

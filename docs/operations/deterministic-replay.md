@@ -91,38 +91,49 @@ live provider. It is opt-in precisely so the hermetic guarantee stays closed
 unless deliberately disabled; do not set it globally in CI or air-gapped
 contexts.
 
-## Replay-log fingerprint (determinism proof across runs)
+## Canonical event journal (determinism proof across runs)
 
-The orchestrator stamps a `replay.jsonl` execution fingerprint into the run
-metadata, and `bernstein replay <run-id>` prints it in its header. The
-fingerprint hashes a canonical projection of each event - `event` plus the
-decision-relevant payload, with keys sorted and fixed separators - and
-**excludes the wall-clock envelope** (`ts` and `elapsed_s`). Those timing
-fields stay in `replay.jsonl` for the operator timeline; they are skipped only
-in the fingerprint computation.
+Every run records into one always-on Merkle-chained event journal at
+`.sdd/runs/<run_id>/journal.jsonl` (`core/replay/journal.py`). There is no
+on/off gate; `BERNSTEIN_REPLAY_RETENTION=N` bounds how many past run journals
+survive on disk (oldest run directories are pruned). Each event chains as
+`event_hash = H(prev_hash, event_type, payload_hash, monotonic_index)` where
+`payload_hash` covers `event` plus the decision-relevant payload with keys
+sorted and fixed separators, and **excludes the wall-clock envelope** (`ts`,
+`elapsed_s`). The timing fields stay on the row for the operator timeline; they
+are skipped only in the hash.
 
-Because the timing envelope is excluded, two byte-identical executions produce
-the **same** fingerprint even though their timestamps differ, so the value is a
-genuine cross-run identity: a recording and a faithful replay match, and any
-divergence in the decision stream (a different decision output, a reordered
-event, a changed event type) changes the fingerprint.
+The journal **head hash is the run identity**. Because the timing envelope is
+excluded, two byte-identical executions chain to the **same** head even though
+their timestamps differ, so a recording and a faithful replay match, and any
+divergence (a different decision output, a reordered event, a changed event
+type) changes the head at the exact step it happened.
 
-Behaviour change: fingerprints computed before this change hashed the whole
-file (timestamps included), so old recorded fingerprint values are not
-comparable to new ones.
+- `bernstein replay <run-id> --verify` recomputes the chain and reports
+  byte-identity, or the first divergent step index, writing a
+  `divergence_report.json` (`step_index`, `expected_hash`, `actual_hash`) on
+  divergence.
+- `bernstein replay <run-id> --from-step N` rebuilds a deterministic state
+  projection over events `[0, N)`; two invocations are byte-identical.
+
+At run finalization the journal head is sealed into the run's lineage spine
+(`core/lineage/spine.py`), so the replay identity and artifact provenance share
+one root.
 
 > Note: `bernstein verify --determinism` uses a separate fingerprint over the
 > WAL decision stream (`ExecutionFingerprint` in
 > `src/bernstein/core/persistence/wal.py`), which already excludes the WAL
-> entry timestamp. This section covers the `replay.jsonl` fingerprint, the one
+> entry timestamp. This section covers the `journal.jsonl` chain, the one
 > surfaced in run metadata and the `bernstein replay` header.
 
 ## Related
 
 - Source: `src/bernstein/core/orchestration/deterministic.py`
 - Call site: `src/bernstein/core/routing/llm.py` (`call_llm`)
-- Execution fingerprint: `src/bernstein/core/persistence/recorder.py`
-  (`RunRecorder.fingerprint`, `compute_replay_fingerprint`)
+- Canonical event journal: `src/bernstein/core/replay/journal.py`
+  (`EventJournal`, `verify_journal`, `rebuild_state`, `seal_journal_into_spine`)
+- Replay-log readers: `src/bernstein/core/persistence/recorder.py`
+  (`compute_replay_fingerprint`, `load_replay_events`)
 - Sibling subsystem with the same miss contract:
   `src/bernstein/core/replay/gateway.py` (`ReplayMissError`); its replay
   fixtures consume in recorded `seq` order, so duplicate response values cannot
