@@ -1222,3 +1222,8 @@ cli.add_command(trend_scan_group, "trend-scan")
 from bernstein.cli.commands.webhook_cmd import webhook_group  # noqa: E402
 
 cli.add_command(webhook_group, "webhook")
+
+# Typed activity boundary: verify any-modality activity crossings from the journal (#2311).
+from bernstein.cli.commands.activity_cmd import activity_group  # noqa: E402
+
+cli.add_command(activity_group, "activity")

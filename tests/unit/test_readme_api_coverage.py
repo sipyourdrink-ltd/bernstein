@@ -264,6 +264,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "team",
         # Audited webhook-node receipts: signed inbound + outbound (issue #2310)
         "webhook",
+        # Typed activity boundary: verify any-modality activity crossings (issue #2311)
+        "activity",
     }
 )
 
