@@ -76,6 +76,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "mandate",
         # Attested pull-request review receipts (issue #2296)
         "review-receipt",
+        # Signed maker-checker / judge-panel gate adjudications (issue #2294)
+        "gate",
         # Auth
         "auth",
         "login",
