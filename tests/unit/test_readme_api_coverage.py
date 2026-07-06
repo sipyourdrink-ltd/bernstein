@@ -262,6 +262,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "schedule",
         # Bot-added: drift autofix (regen_contract_drift.py)
         "team",
+        # Audited webhook-node receipts: signed inbound + outbound (issue #2310)
+        "webhook",
     }
 )
 

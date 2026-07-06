@@ -225,6 +225,17 @@ EVENT_SCHEDULE_FIRE_PROJECTION = "schedule.fire_projection"
 #: action, and the resume snapshot sha are recorded -- never journal payloads.
 EVENT_ESCALATION_RECEIPT = "escalation.receipt"
 
+#: Issue #2310 -- emitted whenever a webhook-node receipt is anchored in the
+#: webhook-node lineage spine. Inbound receipts bind ``{event_hash,
+#: journal_root}`` for a signed inbound event that spawned a run; outbound
+#: receipts bind ``{result_hash, journal_head}`` for the signed result the
+#: node returned to the calling bus. Mirroring the receipt into the chain lets
+#: an operator prove, from the chain alone, that an otherwise-opaque no-code
+#: flow step ran under a signed inbound event and produced a signed outbound
+#: result. Only hashes and the source label are recorded -- never the webhook
+#: body.
+EVENT_WEBHOOK_NODE_RECEIPT = "webhook_node.receipt"
+
 #: Issue #2309 -- emitted whenever a governance projection (RBAC access check or
 #: per-subject budget check) produces a signed, anchored decision. The event
 #: mirrors the decision's ``{subject, action, verdict, inputs_hash,
@@ -1396,6 +1407,68 @@ def record_escalation_receipt(
     )
 
 
+def record_webhook_node_receipt(
+    *,
+    chain: AuditChainStore,
+    direction: str,
+    event_id: str,
+    source: str,
+    event_hash: str = "",
+    journal_root: str = "",
+    result_hash: str = "",
+    journal_head: str = "",
+    journal_entry_hash: str,
+    actor: str = "webhook_node",
+) -> AuditEvent:
+    """Append a ``webhook_node.receipt`` event into *chain* (#2310).
+
+    Mirrors one webhook-node receipt into the HMAC-chained audit log so an
+    operator can prove, from the chain alone, that a no-code flow step ran under
+    a signed inbound event and returned a signed outbound result. Only hashes
+    and the source label are recorded -- never the webhook body.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        direction: ``inbound`` or ``outbound``.
+        event_id: The Standard Webhooks message id the receipt covers.
+        source: The calling bus / builder label the inbound event came from.
+        event_hash: Content hash of the inbound event (inbound receipts).
+        journal_root: The spawned run's journal root the inbound event anchors
+            to (inbound receipts).
+        result_hash: Content hash of the returned result (outbound receipts).
+        journal_head: The run journal head the outbound result binds to
+            (outbound receipts).
+        journal_entry_hash: The webhook-node spine entry hash anchoring the
+            receipt; a verifier holding the spine can recompute it.
+        actor: Recorded actor; defaults to ``"webhook_node"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    details: dict[str, Any] = {
+        "direction": direction,
+        "event_id": event_id,
+        "source": source,
+        "journal_entry_hash": journal_entry_hash,
+    }
+    if event_hash:
+        details["event_hash"] = event_hash
+    if journal_root:
+        details["journal_root"] = journal_root
+    if result_hash:
+        details["result_hash"] = result_hash
+    if journal_head:
+        details["journal_head"] = journal_head
+    return chain.log_with_prev_digest(
+        event_type=EVENT_WEBHOOK_NODE_RECEIPT,
+        actor=actor,
+        resource_type="webhook_node_receipt",
+        resource_id=event_id,
+        details=details,
+    )
+
+
 def record_governance_decision(
     *,
     chain: AuditChainStore,
@@ -1471,6 +1544,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
+    "EVENT_WEBHOOK_NODE_RECEIPT",
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
@@ -1499,4 +1573,5 @@ __all__ = [
     "record_skill_usage",
     "record_subagent_delegation",
     "record_thread_approval",
+    "record_webhook_node_receipt",
 ]
