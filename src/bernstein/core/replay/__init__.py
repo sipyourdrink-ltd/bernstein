@@ -30,6 +30,12 @@ from bernstein.core.replay.diff import (
     diff_event_logs,
     load_events,
 )
+from bernstein.core.replay.fork import (
+    ForkError,
+    ForkResult,
+    fork_run,
+    record_snapshot_event,
+)
 from bernstein.core.replay.gateway import (
     EVENTS_FILENAME,
     RECORD_ENV_VAR,
@@ -86,16 +92,20 @@ __all__ = [
     "RETENTION_ENV_VAR",
     "DivergenceResult",
     "EventJournal",
+    "ForkError",
+    "ForkResult",
     "GatewayMode",
     "JournalVerifyResult",
     "ReplayGateway",
     "ReplayMissError",
     "diff_event_logs",
+    "fork_run",
     "is_recording_enabled",
     "load_events",
     "locate_run",
     "rebuild_state",
     "record_run",
+    "record_snapshot_event",
     "seal_journal_into_spine",
     "verify_journal",
 ]

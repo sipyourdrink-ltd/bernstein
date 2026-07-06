@@ -82,6 +82,7 @@ The "do work" commands. This is where most operators live.
 | `bernstein undo` | Undo the last operation. | `cli/undo_cmd.py:15` |
 | `bernstein checkpoint` | Save progress for later resume. | `cli/commands/checkpoint_cmd.py:49` |
 | `bernstein wrap-up` | End session with summary + learnings. | `cli/wrap_up_cmd.py` |
+| `bernstein fork --run ID --from-step N` | Rewind a run to journal step N and branch a new run from its content-addressed worktree snapshot. | `cli/commands/fork_cmd.py` |
 
 #### `bernstein run`
 
