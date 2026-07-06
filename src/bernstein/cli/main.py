@@ -1117,6 +1117,11 @@ from bernstein.cli.commands.mandate_cmd import mandate_group  # noqa: E402
 
 cli.add_command(mandate_group, "mandate")
 
+# Attested pull-request review receipts linking issue -> plan -> tool calls -> diff (#2296).
+from bernstein.cli.commands.review_receipt_cmd import review_receipt_group  # noqa: E402
+
+cli.add_command(review_receipt_group, "review-receipt")
+
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
 
