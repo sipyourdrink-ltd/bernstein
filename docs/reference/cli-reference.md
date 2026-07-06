@@ -622,6 +622,8 @@ Multi-project dashboard.
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
+| `bernstein identity` | Install-identity ops (group): fingerprint helpers plus `keydir`. | `cli/commands/identity_cmd.py:identity_group` |
+| `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
 | `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
 | `bernstein compaction` | Compaction receipt-chain ops (group). | `cli/commands/compaction_cmd.py:32` |
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
@@ -629,6 +631,27 @@ Multi-project dashboard.
 | `bernstein reject-tool` | Reject a tool-call request. | `cli/commands/approval_cmd.py:reject_tool_cmd` |
 
 > Task-level `approve` / `reject` are different commands - see [Plan & tasks](#plan--tasks).
+
+#### `bernstein identity`
+
+| Subcommand | Purpose |
+|---|---|
+| `show` | Print the install-rev fingerprint token. |
+| `decode TOKEN` | Confirm a token came from a real install (shape + sentinel check). |
+| `verify TOKEN [--nonce HEX]` | Full HMAC-strength verify when the operator holds the install nonce. |
+| `keydir` | Print the install-identity key directory (JWKS) used to verify outbound HTTP Message Signatures. Mirrors `/.well-known/http-message-signatures-directory`. |
+| `disable` | Print the env line that suppresses every fingerprint emit site. |
+
+Outbound agent-facing requests (A2A card fetch, browser/research rendering)
+carry an RFC 9421 Ed25519 signature keyed to the install-identity thumbprint.
+`BERNSTEIN_HTTP_SIGNING_REQUIRED=1` turns an unsigned outbound path into a hard
+error. `BERNSTEIN_AGENT_CARD_KEY_DIR` overrides the key directory location.
+
+#### `bernstein delegation`
+
+| Subcommand | Purpose |
+|---|---|
+| `verify RUN [--root DIR] [--json]` | Reconstruct the `principal -> orchestrator -> sub-agent` chain for a run from HMAC-chained per-hop receipts and confirm it is intact; exits non-zero on tamper, deleted hop, or a missing chain. |
 
 #### `bernstein login`
 

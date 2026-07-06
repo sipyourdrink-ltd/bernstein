@@ -2,7 +2,7 @@
 
 `bernstein adapters check` answers one question:
 
-> Of the 44 adapters this install declares, which ones are reachable on
+> Of the adapters this install declares, which ones are reachable on
 > this machine, which ones conform to the contract, and which ones are
 > missing binaries or have drifted?
 
