@@ -45,10 +45,14 @@ from pathlib import Path
 from typing import Any, Final
 
 __all__ = [
+    "DEFAULT_ROOT",
     "GENESIS_HMAC",
     "ChainResult",
     "DelegationLedger",
     "DelegationReceipt",
+    "default_ledger",
+    "record_delegation_hop",
+    "verify_run",
     "verify_run_chain",
 ]
 
@@ -57,6 +61,10 @@ __all__ = [
 GENESIS_HMAC: Final[str] = "0" * 64
 
 _SUBDIR: Final[str] = "delegation"
+
+#: Default root for delegation receipts - the same tree as the HMAC-chained
+#: audit log so ``.sdd/audit/delegation/`` sits beside ``.sdd/audit/*.jsonl``.
+DEFAULT_ROOT: Final[Path] = Path(".sdd/audit")
 
 
 @dataclass(frozen=True)
@@ -242,3 +250,57 @@ def verify_run_chain(*, root: Path, run_id: str, key: bytes) -> ChainResult:
 
     valid = not errors and len(receipts) > 0
     return ChainResult(valid=valid, hops=len(receipts), receipts=receipts, errors=errors)
+
+
+# ---------------------------------------------------------------------------
+# Default-resolving convenience helpers (install-anchored key + audit root)
+# ---------------------------------------------------------------------------
+
+
+def _audit_key() -> bytes:
+    """Return the install-scoped audit HMAC key (the delegation chain anchor)."""
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    return load_or_create_audit_key()
+
+
+def default_ledger(root: Path | None = None) -> DelegationLedger:
+    """Return a ledger rooted at the audit tree, keyed by the install audit key.
+
+    Args:
+        root: Optional root override; defaults to :data:`DEFAULT_ROOT`.
+
+    Returns:
+        A :class:`DelegationLedger` chained to the install identity's audit key.
+    """
+    return DelegationLedger(root=root or DEFAULT_ROOT, key=_audit_key())
+
+
+def record_delegation_hop(
+    *,
+    run_id: str,
+    issuer: str,
+    subject: str,
+    audience: str,
+    act: str,
+    root: Path | None = None,
+) -> DelegationReceipt:
+    """Record one delegation hop for ``run_id`` using install-anchored defaults.
+
+    Convenience wrapper the orchestrator calls at each
+    ``principal -> orchestrator -> sub-agent`` handoff.
+    """
+    return default_ledger(root).record_hop(run_id=run_id, issuer=issuer, subject=subject, audience=audience, act=act)
+
+
+def verify_run(run_id: str, *, root: Path | None = None) -> ChainResult:
+    """Verify a run's delegation chain using install-anchored defaults.
+
+    Args:
+        run_id: Run to verify.
+        root: Optional root override; defaults to :data:`DEFAULT_ROOT`.
+
+    Returns:
+        The :class:`ChainResult` from :func:`verify_run_chain`.
+    """
+    return verify_run_chain(root=root or DEFAULT_ROOT, run_id=run_id, key=_audit_key())
