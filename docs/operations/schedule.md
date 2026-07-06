@@ -195,3 +195,81 @@ Not supported (out of scope for #1798; revisit if operators ask):
 Cron evaluation runs in UTC. The host timezone is not part of the
 deterministic contract; keeping evaluation in UTC means two operators
 on different timezones still fire at the same instant.
+
+## Fire as a hash, not a trigger (#2302)
+
+A recurring fire is a pure projection of `(schedule_id, fire_time,
+last_state)` onto a canonical task graph with a deterministic
+`graph_hash`. Two operators with identical state prove they fired the
+byte-identical graph by comparing that one hash - the fire is a hash, not
+a trigger.
+
+Two operator verbs make the projection observable and verifiable without
+running anything:
+
+```bash
+# Print the graph hash a schedule would dispatch at a given instant,
+# WITHOUT firing (no journal row, no receipt, no last_fire_at mutation).
+bernstein schedule show <id> --at 1700000000
+bernstein schedule show <id> --at 2023-11-14T22:13:20+00:00 --json
+
+# Replay every recorded fire and confirm each graph hash reproduces
+# byte-identically from its recorded inputs. Exit 1 on any mismatch.
+bernstein schedule verify
+bernstein schedule verify --json   # for CI gates
+```
+
+`--at` accepts a bare integer epoch or an ISO-8601 timestamp; a naive
+timestamp is read as UTC so the printed hash is host-timezone
+independent.
+
+### Recording
+
+Each dispatched fire (in addition to the #1798 receipt + `schedule.fire`
+chain entry) records, under a per-fire run id derived deterministically
+from `(schedule_id, fire_time)`:
+
+- a `schedule.fire_projection` row in the run **event journal**
+  (`.sdd/runs/sched-fire-<id>/journal.jsonl`) carrying `{schedule_id,
+  fire_time, last_state_hash, graph_hash}`;
+- the canonical graph bytes sealed into the run **lineage spine**
+  (`.sdd/lineage/sched-fire-<id>/spine.jsonl`) with a deterministic
+  `timestamp = fire_time` so replay is byte-identical;
+- optionally, a `schedule.fire_projection` entry in the HMAC audit chain
+  binding the spine entry hash and the trigger input hash.
+
+`schedule verify` walks the journal rows and re-runs the projection from
+each row's persisted inputs, so it re-derives the fire independently of
+the live schedule store.
+
+### Recurrence rules: cron and RFC-5545 RRULE
+
+The recurrence rule that produced the fire instant is folded into the
+projection, so the `graph_hash` distinguishes a daily digest from an
+hourly one. Both forms are accepted and canonicalised (part order,
+`BY*` list order, and case do not perturb the hash):
+
+- cron: `0 9 * * *` or `cron:0 9 * * *`;
+- RRULE: `RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=9` (RFC-5545 subset).
+
+Canonicalisation lives in
+`src/bernstein/core/orchestration/recurrence.py` and adds no runtime
+dependency (the in-tree cron parser plus a small RRULE part parser).
+
+### Webhook and file-change triggers
+
+A webhook or file-change trigger is the same projection with the trigger
+event bound in by hash: the raw event bytes are hashed to
+`trigger_input_hash` (`sha256:<hex>`) and folded into the graph identity,
+so a trigger-driven fire is reproducible from `(schedule, fire_time,
+state, trigger_input_hash)`. The raw event bytes are not retained; only
+their bound hash is, which is what `schedule verify` replays against.
+
+Source:
+
+- `src/bernstein/core/orchestration/recurrence.py` - RRULE / cron
+  canonicalisation.
+- `src/bernstein/core/orchestration/schedule_fire_record.py` - the
+  record + verify boundary (journal + lineage spine).
+- `bernstein.core.security.audit_chain.record_schedule_fire_projection` -
+  the additive `schedule.fire_projection` chain helper.
