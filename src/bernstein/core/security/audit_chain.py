@@ -1530,8 +1530,6 @@ def record_governance_decision(
     )
 
 
-
-
 def record_a2a_message_receipt(
     *,
     chain: AuditChainStore,
@@ -1584,10 +1582,11 @@ def record_a2a_message_receipt(
         resource_id=task_uuid,
         details=details,
     )
+
+
 __all__ = [
-    "EVENT_A2A_MESSAGE_RECEIPT",
-    "record_a2a_message_receipt",
     "AGENT_FRESH_RESTART_ON_RETRY",
+    "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
@@ -1620,6 +1619,7 @@ __all__ = [
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
     "ThreadApprovalDetails",
+    "record_a2a_message_receipt",
     "record_cost_profile_report",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
