@@ -166,6 +166,14 @@ EVENT_OTEL_PROJECTION = "otel.projection"
 #: exactly the recorded step (a tampered ref no longer matches the sha).
 EVENT_FORK_SNAPSHOT = "replay.fork_snapshot"
 
+#: Issue #2294 -- emitted whenever a maker-checker or judge-panel gate produces
+#: a signed adjudication record. The event mirrors the record's hashes and its
+#: journal anchor into the chain so an operator can confirm, from the chain
+#: alone, that a gate verdict bound the claimed inputs, rubric, and panel to a
+#: named journal entry. Only hashes and the anchor are recorded -- never the raw
+#: diff or rubric content.
+EVENT_GATE_ADJUDICATION = "gate.adjudication"
+
 #: Issue #2307 -- emitted for every stateless MCP call. The stateless spec
 #: revision removes the ``initialize`` handshake and ``Mcp-Session-Id``, so any
 #: request can land on any server instance and the protocol no longer provides
@@ -1008,6 +1016,54 @@ def record_fork_snapshot(
     )
 
 
+def record_gate_adjudication(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    inputs_hash: str,
+    rubric_hash: str,
+    panel_config_hash: str,
+    final_verdict: str,
+    journal_entry_hash: str,
+    actor: str = "adjudication",
+) -> AuditEvent:
+    """Append a ``gate.adjudication`` event into *chain*.
+
+    Mirrors a signed maker-checker / judge-panel gate verdict into the HMAC
+    chain: the event binds the inputs, rubric, and panel hashes to the record's
+    journal anchor, so a verifier can confirm from the chain alone that a gate
+    verdict was made against the claimed inputs (AC4). Only hashes and the
+    anchor are recorded -- never the raw diff or rubric content.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose journal the record anchors to.
+        inputs_hash: ``sha256:`` hash of the inputs the panel saw.
+        rubric_hash: ``sha256:`` hash of the rubric the panel applied.
+        panel_config_hash: ``sha256:`` hash of the independent panel config.
+        final_verdict: The aggregated terminal verdict (``pass`` / ``fail``).
+        journal_entry_hash: The lineage-spine anchor over the record bytes.
+        actor: Recorded actor; defaults to ``"adjudication"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_GATE_ADJUDICATION,
+        actor=actor,
+        resource_type="gate_adjudication",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "inputs_hash": inputs_hash,
+            "rubric_hash": rubric_hash,
+            "panel_config_hash": panel_config_hash,
+            "final_verdict": final_verdict,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 def record_mcp_stateless_call(
     *,
     chain: AuditChainStore,
@@ -1067,6 +1123,7 @@ __all__ = [
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_FORK_SNAPSHOT",
+    "EVENT_GATE_ADJUDICATION",
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
     "EVENT_MCP_STATELESS_CALL",
@@ -1090,6 +1147,7 @@ __all__ = [
     "record_cost_profile_report",
     "record_eval_ab_comparison",
     "record_fork_snapshot",
+    "record_gate_adjudication",
     "record_mandate_consent_receipt",
     "record_mandate_revocation",
     "record_mcp_stateless_call",
