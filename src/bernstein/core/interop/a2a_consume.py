@@ -219,6 +219,7 @@ async def fetch_peer_card_http(
     path: str = PEER_CARD_PATH,
     client: httpx.AsyncClient | None = None,
     timeout: float = 10.0,
+    audit_dir: Any = None,
 ) -> SignedCapabilityCard:
     """Fetch a peer's published capability card over HTTP.
 
@@ -226,22 +227,39 @@ async def fetch_peer_card_http(
     :class:`SignedCapabilityCard`. This only fetches and parses; the caller
     passes the result to :func:`consume_peer_card` to verify and gate it.
 
+    The outbound GET is signed with the install-identity Ed25519 key (issue
+    #2305, f15) via an RFC 9421 HTTP Message Signature, and the signature is
+    attested into the HMAC-chained audit log when ``audit_dir`` is given.
+
     Args:
         endpoint: Peer base URL.
         path: Card path on the peer (defaults to the well-known path).
         client: Optional preconfigured ``httpx.AsyncClient``.
         timeout: Request timeout in seconds when no client is supplied.
+        audit_dir: Optional audit directory for signature attestation.
 
     Returns:
         The parsed (but not yet verified) signed card.
     """
     import httpx
 
+    from bernstein.core.identity import http_signing
+
     url = f"{endpoint.rstrip('/')}{path}"
+    # Sign this outbound A2A fetch (f15) with the install identity so the peer
+    # can attest which Bernstein install requested its card. Best-effort:
+    # signing never blocks the fetch unless signing is required by policy.
+    signed_headers = http_signing.sign_outbound(
+        method="GET",
+        url=url,
+        headers={},
+        call_site="a2a.peer_card",
+        audit_dir=audit_dir,
+    )
     owns_client = client is None
     ac = client or httpx.AsyncClient(timeout=timeout)
     try:
-        response = await ac.get(url)
+        response = await ac.get(url, headers=signed_headers)
         response.raise_for_status()
         data: Any = response.json()
     finally:

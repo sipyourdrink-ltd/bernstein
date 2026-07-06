@@ -332,7 +332,7 @@ pip install 'bernstein[openai]'
 
 **Env vars:** `OPENAI_API_KEY` (required), plus optional `OPENAI_BASE_URL`, `OPENAI_ORGANIZATION`, `OPENAI_PROJECT`.
 
-**Best for:** OpenAI plans that benefit from SDK-native tool-use, sandboxed execution (E2B / Modal), or where the Agents SDK event protocol is a better fit than the `codex` CLI. See the [dedicated `openai_agents` doc](openai-agents.md) and the [decision guide](../compare/openai-agents.md) for when to pick `openai_agents` vs `codex` vs `claude`.
+**Best for:** OpenAI plans that benefit from SDK-native tool-use, sandboxed execution (E2B / Modal), or where the Agents SDK event protocol is a better fit than the `codex` CLI. See the [dedicated `openai_agents` doc](openai-agents.md) and the [decision guide](openai-agents-comparison.md) for when to pick `openai_agents` vs `codex` vs `claude`.
 
 ---
 

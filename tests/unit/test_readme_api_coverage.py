@@ -187,6 +187,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "wiki",
         # Install-rev fingerprint operator helpers
         "identity",
+        # Delegation-receipt verification (principal->orchestrator->sub-agent)
+        "delegation",
         # Per-role adapter allow/deny-list inspection (role-adapter-policy group)
         "security",
         # Bughunt 2026-05-13 release wave

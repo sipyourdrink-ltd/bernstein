@@ -207,7 +207,8 @@ def replay_filter_cmd(
     sdd_path = Path(sdd_dir)
     runs_dir = sdd_path / "runs"
 
-    _REPLAY_JSONL = "replay.jsonl"
+    # Canonical per-run event journal filename (issue #2293).
+    _REPLAY_JSONL = "journal.jsonl"
 
     has_filters = any([filter_str, event_type, agent, search])
     is_run_replay = run_id in {"list", "latest"} or (runs_dir / run_id / _REPLAY_JSONL).exists()

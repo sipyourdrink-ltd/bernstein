@@ -114,7 +114,7 @@ from bernstein.core.quality_gate_coalescer import QualityGateCoalescer
 from bernstein.core.quarantine import QuarantineStore
 from bernstein.core.quota_poller import QuotaPoller
 from bernstein.core.rate_limit_tracker import RateLimitTracker
-from bernstein.core.recorder import RunRecorder
+from bernstein.core.replay.journal import EventJournal, seal_journal_into_spine
 from bernstein.core.retrospective import generate_retrospective
 from bernstein.core.router import TierAwareRouter, load_model_policy_from_yaml, load_providers_from_yaml
 from bernstein.core.runbooks import RunbookEngine
@@ -588,14 +588,20 @@ class Orchestrator:
         # agent's prompt.  Populated when a degraded session is evicted.
         self._context_recovery: dict[str, str] = {}
 
-        # Deterministic replay recorder: appends events to
-        # .sdd/runs/{run_id}/replay.jsonl for post-hoc debugging.
-        self._recorder = RunRecorder(run_id=run_id, sdd_dir=workdir / ".sdd")
+        # Canonical Merkle-chained event journal: the single always-on
+        # recorder. Appends every run event to
+        # .sdd/runs/{run_id}/journal.jsonl where the head hash is the run
+        # identity. Records by default (issue #2293); size is bounded by
+        # BERNSTEIN_REPLAY_RETENTION over past runs rather than an on/off
+        # gate.
+        self._recorder = EventJournal(run_id=run_id, sdd_dir=workdir / ".sdd")
 
         # Replay gateway: captures LLM + tool dispatch responses into
         # .sdd/runs/{run_id}/events.jsonl so a run can be re-executed
-        # against recorded fixtures. OFF by default - opt in with
-        # BERNSTEIN_RECORD=1 to avoid bloating .sdd/ for casual runs.
+        # against recorded fixtures. This is the fixture-replay engine, a
+        # distinct concern from the canonical event journal above; it is
+        # OFF by default (opt in with BERNSTEIN_RECORD=1) and writes
+        # nothing on a normal run.
         from bernstein.core.replay import ReplayGateway as _ReplayGateway
 
         self._replay_gateway = _ReplayGateway(
@@ -2371,11 +2377,32 @@ class Orchestrator:
             ticks=self._tick_count,
             fingerprint=self._recorder.fingerprint(),
         )
+        self._seal_journal_into_lineage_spine()
         logger.info(
             "Orchestrator stopped (replay: %s, fingerprint: %s)",
             self._recorder.path,
             self._recorder.fingerprint()[:16] + "...",
         )
+
+    def _seal_journal_into_lineage_spine(self) -> None:
+        """Wire the journal head into the f01 lineage spine (issue #2293).
+
+        Records the finalized journal head into the run's lineage spine so
+        the run's replay identity and its artifact provenance share one
+        root. Failures are logged, never raised: sealing is a provenance
+        aid and must not fail a run that already completed.
+        """
+        try:
+            from bernstein.core.security.audit import load_or_create_audit_key
+
+            seal_journal_into_spine(
+                self._recorder,
+                lineage_root=self._workdir / ".sdd" / "lineage",
+                hmac_key=load_or_create_audit_key(),
+                actor="orchestrator",
+            )
+        except Exception as exc:
+            logger.warning("Failed to seal journal head into lineage spine: %s", sanitize_log(str(exc)))
 
     def _has_active_agents(self) -> bool:
         """Return True if any agents are still alive (not dead)."""

@@ -19,7 +19,7 @@ from bernstein.core.orchestration.deterministic import (
     ReplayMissError,
     _prompt_key,
 )
-from bernstein.core.persistence.recorder import RunRecorder
+from bernstein.core.replay.journal import EventJournal
 
 
 def _write_calls(path: Path, rows: list[dict[str, object]]) -> None:
@@ -133,14 +133,14 @@ def test_non_strict_over_consumption_returns_none(tmp_path: Path) -> None:
 
 
 def _replay_into_replay_log(run_dir: Path, replay_log: Path, n_calls: int) -> str:
-    """Drive a replay that folds each consumed response into ``replay.jsonl``.
+    """Drive a replay that folds each consumed response into the event journal.
 
-    Models the real coupling: an agent's decision (recorded as a replay event)
-    is a function of the LLM response it consumed. Returns the deterministic
-    fingerprint of the resulting decision stream.
+    Models the real coupling: an agent's decision (recorded as a journal event)
+    is a function of the LLM response it consumed. Returns the Merkle head over
+    the resulting decision stream.
     """
     store = DeterministicStore(run_dir, replay=True)
-    rec = RunRecorder(run_id=replay_log.parent.name, sdd_dir=replay_log.parent.parent.parent)
+    rec = EventJournal(run_id=replay_log.parent.name, sdd_dir=replay_log.parent.parent.parent)
     for i in range(n_calls):
         response = store.get_replay("loop-prompt", "sonnet")
         # The decision the agent records depends on the consumed response.
@@ -168,8 +168,8 @@ def test_faithful_replay_and_swapped_replay_differ_in_fingerprint(tmp_path: Path
     )
 
     # Two faithful replays of the same recording -> identical fingerprint.
-    fp_1 = _replay_into_replay_log(run_dir, sdd / "runs" / "faithful-1" / "replay.jsonl", 2)
-    fp_2 = _replay_into_replay_log(run_dir, sdd / "runs" / "faithful-2" / "replay.jsonl", 2)
+    fp_1 = _replay_into_replay_log(run_dir, sdd / "runs" / "faithful-1" / "journal.jsonl", 2)
+    fp_2 = _replay_into_replay_log(run_dir, sdd / "runs" / "faithful-2" / "journal.jsonl", 2)
     assert fp_1 == fp_2
     assert fp_1 != ""
 
@@ -182,7 +182,7 @@ def test_faithful_replay_and_swapped_replay_differ_in_fingerprint(tmp_path: Path
             ("loop-prompt", "sonnet", "A"),
         ],
     )
-    fp_swapped = _replay_into_replay_log(swapped_dir, sdd / "runs" / "swapped-replay" / "replay.jsonl", 2)
+    fp_swapped = _replay_into_replay_log(swapped_dir, sdd / "runs" / "swapped-replay" / "journal.jsonl", 2)
     assert fp_swapped != fp_1, "swapping the same-key response order must change the fingerprint"
 
 

@@ -76,7 +76,7 @@ docstrings only (`Brief`).
 
 | Capability | Docs status | Notes |
 |---|---|---|
-| Agent catalog/discovery | Full | `bernstein agents sync/list/discover/match/showcase` (43 CLI agent adapters) |
+| Agent catalog/discovery | Full | `bernstein agents sync/list/discover/match/showcase` (40+ CLI agent adapters) |
 | GitHub App and CI fix flows | Full | `bernstein ci fix <url>`, `github setup` |
 | Trigger sources (`github`, `slack`, `file_watch`, `webhook`) | Brief | Source adapters available |
 | Plugin hooks (pluggy) | Full | SDK docs in CONTRIBUTING.md |

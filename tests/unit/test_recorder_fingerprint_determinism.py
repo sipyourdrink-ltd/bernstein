@@ -12,10 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bernstein.core.persistence.recorder import (
-    RunRecorder,
-    compute_replay_fingerprint,
-)
+from bernstein.core.persistence.recorder import compute_replay_fingerprint
+from bernstein.core.replay.journal import EventJournal
 
 
 def _write_replay(path: Path, rows: list[dict[str, object]]) -> None:
@@ -101,23 +99,24 @@ def test_fingerprint_insensitive_to_key_order(tmp_path: Path) -> None:
     assert compute_replay_fingerprint(a) == compute_replay_fingerprint(b)
 
 
-def test_recorder_instance_fingerprint_matches_module_function(tmp_path: Path) -> None:
-    """RunRecorder.fingerprint and compute_replay_fingerprint agree."""
-    rec = RunRecorder(run_id="run-x", sdd_dir=tmp_path)
+def test_journal_fingerprint_is_the_merkle_head(tmp_path: Path) -> None:
+    """EventJournal.fingerprint returns the chain head (the run identity)."""
+    rec = EventJournal(run_id="run-x", sdd_dir=tmp_path)
     rec.record("task_claimed", task_id="T-1")
     rec.record("task_completed", task_id="T-1")
 
-    assert rec.fingerprint() == compute_replay_fingerprint(rec.path)
+    assert rec.fingerprint() == rec.head()
+    assert rec.fingerprint() != ""
 
 
-def test_recorder_two_runs_same_decisions_same_fingerprint(tmp_path: Path) -> None:
-    """End-to-end: two RunRecorder runs with identical decisions but real
-    wall-clock differences produce the same fingerprint."""
-    rec_a = RunRecorder(run_id="run-a", sdd_dir=tmp_path)
+def test_journal_two_runs_same_decisions_same_head(tmp_path: Path) -> None:
+    """Two journals with identical decisions but real wall-clock differences
+    chain to the same head, so the head is a cross-run determinism proof."""
+    rec_a = EventJournal(run_id="run-a", sdd_dir=tmp_path)
     rec_a.record("task_claimed", task_id="T-1", agent_id="backend")
     rec_a.record("task_completed", task_id="T-1", files=["src/a.py"])
 
-    rec_b = RunRecorder(run_id="run-b", sdd_dir=tmp_path)
+    rec_b = EventJournal(run_id="run-b", sdd_dir=tmp_path)
     rec_b.record("task_claimed", task_id="T-1", agent_id="backend")
     rec_b.record("task_completed", task_id="T-1", files=["src/a.py"])
 
