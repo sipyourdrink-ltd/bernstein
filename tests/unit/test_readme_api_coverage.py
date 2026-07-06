@@ -72,6 +72,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "skills",
         # Skill usage provenance (issue #2301)
         "skill",
+        # Verifiable spending mandates (issue #2306)
+        "mandate",
         # Auth
         "auth",
         "login",
