@@ -124,6 +124,15 @@ EVENT_SKILL_INSTALL_RECEIPT = "skill.install_receipt"
 #: journal heads rather than from a mutable counter.
 EVENT_SKILL_USAGE = "skill.usage"
 
+#: Issue #2295 -- emitted once per ``bernstein fork --from-step``. The event
+#: pins the fork lineage into the HMAC chain: the parent run id, the fork
+#: step index, the content-addressed snapshot commit sha resumed at that
+#: step, and the new child run id. Because the snapshot sha is the git
+#: commit the child worktree was checked out from, a verifier holding the
+#: parent journal and the snapshot ref can confirm the fork branched from
+#: exactly the recorded step (a tampered ref no longer matches the sha).
+EVENT_FORK_SNAPSHOT = "replay.fork_snapshot"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -675,12 +684,71 @@ def record_skill_usage(
     )
 
 
+@dataclass(frozen=True)
+class ForkSnapshotDetails:
+    """Structured payload for the ``replay.fork_snapshot`` event (#2295)."""
+
+    parent_run_id: str
+    fork_step: int
+    snapshot_sha: str
+    new_run_id: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "parent_run_id": self.parent_run_id,
+            "fork_step": self.fork_step,
+            "snapshot_sha": self.snapshot_sha,
+            "new_run_id": self.new_run_id,
+        }
+
+
+def record_fork_snapshot(
+    *,
+    chain: AuditChainStore,
+    parent_run_id: str,
+    fork_step: int,
+    snapshot_sha: str,
+    new_run_id: str,
+    actor: str = "replay_fork",
+) -> AuditEvent:
+    """Append a ``replay.fork_snapshot`` event into *chain* (#2295).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        parent_run_id: The run that was forked from.
+        fork_step: The journal step index the fork branched at.
+        snapshot_sha: The content-addressed snapshot commit sha the child
+            worktree was resumed from. A verifier holding the parent
+            journal and the snapshot ref can confirm the fork point.
+        new_run_id: The child run id the fork produced.
+        actor: Recorded actor; defaults to ``"replay_fork"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    payload = ForkSnapshotDetails(
+        parent_run_id=parent_run_id,
+        fork_step=fork_step,
+        snapshot_sha=snapshot_sha,
+        new_run_id=new_run_id,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_FORK_SNAPSHOT,
+        actor=actor,
+        resource_type="fork_snapshot",
+        resource_id=snapshot_sha,
+        details=payload,
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_EVAL_AB_COMPARISON",
+    "EVENT_FORK_SNAPSHOT",
     "EVENT_MEMORY_WRITE",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_SKILL_INSTALL_RECEIPT",
@@ -690,11 +758,13 @@ __all__ = [
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
+    "ForkSnapshotDetails",
     "MemoryWriteDetails",
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
     "record_cost_profile_report",
     "record_eval_ab_comparison",
+    "record_fork_snapshot",
     "record_memory_write",
     "record_multimodal_attach",
     "record_sensitive_gate",
