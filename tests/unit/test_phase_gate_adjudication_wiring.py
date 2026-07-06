@@ -88,7 +88,6 @@ def test_factory_returns_runner_with_live_hook(tmp_path: Path) -> None:
 
 def test_wired_runner_writes_lineage_and_adjudication_records(tmp_path: Path) -> None:
     from bernstein.core.orchestration.phase_pipeline import ArtifactStore
-    from bernstein.core.persistence.lineage import LineageReader
 
     sdd = tmp_path / ".sdd"
     runner = build_phased_runner_with_gate_lineage(
@@ -101,15 +100,18 @@ def test_wired_runner_writes_lineage_and_adjudication_records(tmp_path: Path) ->
     results = runner.run(_task())
     assert len(results) == 3
 
-    # A lineage record per boundary (research entry + plan + implement).
-    reader = LineageReader(sdd)
-    records = list(reader.iter_records())
-    assert records, "expected phase-gate lineage records"
-    assert all(r.regulatory_class == "phase_gate" for r in records)
-
-    # The adjudication spine has at least one signed record anchored.
+    # Boundary lineage now routes through the canonical spine (not the v1 WAL):
+    # one phase-gate-tagged entry per fired boundary, on a spine that verifies.
     from bernstein.core.lineage.spine import LineageSpine
 
     spine = LineageSpine(sdd / "lineage", run_id="run-wire", hmac_key=_KEY)
     result = spine.verify()
     assert result.ok, result.errors
+
+    entries = list(spine.iter_entries())
+    gate_entries = [e for e in entries if e.actor.startswith("phase_gate:")]
+    assert gate_entries, "expected phase-gate boundary lineage entries on the spine"
+
+    # The adjudication records are anchored on the same spine.
+    adjudication_entries = [e for e in entries if e.actor == "adjudication"]
+    assert adjudication_entries, "expected signed adjudication records anchored to the spine"

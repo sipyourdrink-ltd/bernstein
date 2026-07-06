@@ -236,6 +236,16 @@ EVENT_ESCALATION_RECEIPT = "escalation.receipt"
 #: body.
 EVENT_WEBHOOK_NODE_RECEIPT = "webhook_node.receipt"
 
+#: Issue #2309 -- emitted whenever a governance projection (RBAC access check or
+#: per-subject budget check) produces a signed, anchored decision. The event
+#: mirrors the decision's ``{subject, action, verdict, inputs_hash,
+#: journal_entry_hash}`` into the chain so an operator can confirm, from the
+#: chain alone, that a governance decision bound the claimed inputs to a named
+#: spine entry. A denied access writes a ``deny`` verdict and a budget breach a
+#: ``refuse`` verdict -- both are signed records, not merely logged. Only hashes,
+#: the verdict, and the anchor are recorded.
+EVENT_GOVERNANCE_DECISION = "governance.decision"
+
 #: Issue #2311 -- emitted whenever a typed activity boundary is crossed under the
 #: deterministic scheduler, mirroring the run journal's ``activity.result`` entry
 #: into the chain. Any agent modality (research, browser/computer-use, data, ops,
@@ -1470,6 +1480,59 @@ def record_webhook_node_receipt(
     )
 
 
+def record_governance_decision(
+    *,
+    chain: AuditChainStore,
+    subject: str,
+    action: str,
+    verdict: str,
+    inputs_hash: str,
+    journal_entry_hash: str,
+    run_id: str,
+    actor: str = "governance",
+) -> AuditEvent:
+    """Append a ``governance.decision`` event into *chain*.
+
+    Mirrors one signed, spine-anchored governance decision into the HMAC-chained
+    audit log so an operator can prove, from the chain alone, that an access or
+    budget decision bound the claimed inputs to a named spine entry. A denied
+    access carries a ``deny`` verdict and a budget breach a ``refuse`` verdict --
+    both are signed records, not merely logged. Only hashes, the verdict, and the
+    anchor are recorded.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        subject: The subject the decision is about (a seat / actor / user id).
+        action: The requested action (a permission string, or ``budget``).
+        verdict: One of ``allow`` / ``deny`` / ``refuse``.
+        inputs_hash: ``sha256:`` hash of the decision's projection inputs.
+        journal_entry_hash: The lineage-spine entry hash anchoring the decision
+            record; a verifier holding the spine can recompute it.
+        run_id: The run whose spine the decision anchors to.
+        actor: Recorded actor; defaults to ``"governance"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_GOVERNANCE_DECISION,
+        actor=actor,
+        resource_type="governance_decision",
+        resource_id=subject,
+        details={
+            "subject": subject,
+            "action": action,
+            "verdict": verdict,
+            "inputs_hash": inputs_hash,
+            "journal_entry_hash": journal_entry_hash,
+            "run_id": run_id,
+        },
+    )
+
+
+
+
 def record_activity_result(
     *,
     chain: AuditChainStore,
@@ -1533,8 +1596,6 @@ def record_activity_result(
             "journal_event_hash": journal_event_hash,
         },
     )
-
-
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_ACTIVITY_RESULT",
@@ -1545,6 +1606,7 @@ __all__ = [
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
+    "EVENT_GOVERNANCE_DECISION",
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
     "EVENT_MCP_STATELESS_CALL",
@@ -1575,6 +1637,7 @@ __all__ = [
     "record_eval_ab_comparison",
     "record_fork_snapshot",
     "record_gate_adjudication",
+    "record_governance_decision",
     "record_mandate_consent_receipt",
     "record_mandate_revocation",
     "record_mcp_stateless_call",
