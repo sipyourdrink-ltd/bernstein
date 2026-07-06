@@ -62,12 +62,17 @@ def test_protocol_runtime_checkable() -> None:
 
 
 def test_capabilities_worktree_shape() -> None:
-    """Worktree backend must expose FILE_RW + EXEC + NETWORK capabilities."""
+    """Worktree backend exposes FILE_RW + EXEC + NETWORK + SNAPSHOT.
+
+    Snapshot support landed for the worktree backend in issue #2295
+    (git-commit snapshot primitive), so SNAPSHOT is now declared. Cloud
+    backends still omit it.
+    """
     backend = WorktreeSandboxBackend()
     assert SandboxCapability.FILE_RW in backend.capabilities
     assert SandboxCapability.EXEC in backend.capabilities
     assert SandboxCapability.NETWORK in backend.capabilities
-    assert SandboxCapability.SNAPSHOT not in backend.capabilities
+    assert SandboxCapability.SNAPSHOT in backend.capabilities
 
 
 def test_exec_result_dataclass_is_frozen() -> None:
@@ -229,10 +234,24 @@ class TestWorktreeConformance(SandboxBackendConformance):
         backend: SandboxBackend,
         manifest: WorkspaceManifest,
     ) -> None:
-        # Worktree backend declares no SNAPSHOT capability, so the
-        # conformance contract requires a skip here.
+        # Backends without SNAPSHOT skip; the worktree backend declares it
+        # (issue #2295) and must round-trip byte-identical contents.
         if SandboxCapability.SNAPSHOT not in backend.capabilities:
             pytest.skip("Backend does not declare SNAPSHOT capability")
-        # Unreachable for worktree; kept for future backends that subclass
-        # this test class without overriding behaviour.
-        raise AssertionError("Worktree backend must not claim SNAPSHOT")
+        session = await backend.create(
+            manifest,
+            options={"repo_root": manifest.root, "run_id": "conf-run", "step_index": 0},
+        )
+        payload = bytes(range(256)) * 2
+        try:
+            await session.write("snap/data.bin", payload)
+            snapshot_id = await session.snapshot()
+            assert snapshot_id
+        finally:
+            await backend.destroy(session)
+
+        resumed = await backend.resume(snapshot_id)
+        try:
+            assert await resumed.read("snap/data.bin") == payload
+        finally:
+            await backend.destroy(resumed)
