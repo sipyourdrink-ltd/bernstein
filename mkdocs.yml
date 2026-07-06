@@ -239,6 +239,15 @@ nav:
       - Air-gap installation: installation/air-gap.md
       - Incident-to-eval synthesis: eval/incident-synthesis.md
       - A/B runner primitive: eval/ab-runner.md
+      - Response-style profiles: operations/response-style-profiles.md
+      - Per-profile cost attribution: operations/profile-cost-attribution.md
+      - Profile A/B harness: operations/profile-ab-harness.md
+      - Role-template compression: operations/template-compression.md
+      - Proactive context compaction: operations/context-compaction.md
+      - Worker completion contracts: operations/worker-contracts.md
+      - Named team manifests: operations/team-manifests.md
+      - Orchestrator holds: operations/HOLDS.md
+      - Per-agent run instrumentation: operations/INSTRUMENTATION.md
       - Verification tracking: operations/verification-tracking.md
       - Deterministic replay: operations/deterministic-replay.md
       - Observability: operations/observability-overview.md

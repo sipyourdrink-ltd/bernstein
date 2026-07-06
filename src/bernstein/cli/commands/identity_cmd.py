@@ -150,6 +150,25 @@ def verify_cmd(token: str, nonce_hex: str | None, version_major: int | None) -> 
     raise SystemExit(_verify_impl(token, nonce_hex=nonce_hex, version_major=version_major))
 
 
+@identity_group.command("keydir")
+def keydir_cmd() -> None:
+    """Print the install-identity key directory (JWKS) as JSON.
+
+    This is the local view of what the server publishes at
+    ``/.well-known/http-message-signatures-directory`` - the Ed25519 public
+    key(s) a verifier uses to validate the HTTP Message Signatures Bernstein
+    places on its outbound agent-facing requests (issue #2305). Each key is
+    advertised under its RFC 7638 thumbprint, which is the ``keyid`` those
+    signatures carry.
+    """
+    import json
+
+    from bernstein.core.identity import http_signing
+
+    keydir = http_signing.build_key_directory(http_signing.default_keystore())
+    click.echo(json.dumps(keydir, indent=2, sort_keys=True))
+
+
 @identity_group.command("disable")
 def disable_cmd() -> None:
     """Print the environment line that suppresses every emit site.

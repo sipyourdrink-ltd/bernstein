@@ -1140,6 +1140,12 @@ cli.add_command(handoff_group, "handoff")
 from bernstein.cli.commands.identity_cmd import identity_group  # noqa: E402
 
 cli.add_command(identity_group, "identity")
+
+# Delegation-receipt verification for the principal->orchestrator->sub-agent
+# chain (issue #2305).
+from bernstein.cli.commands.delegation_cmd import delegation_group  # noqa: E402
+
+cli.add_command(delegation_group, "delegation")
 cli.add_command(analyze_cmd, "analyze")  # issue #768
 
 # Blast-radius scorer (issue #1322): inspect + ad-hoc score a change.
