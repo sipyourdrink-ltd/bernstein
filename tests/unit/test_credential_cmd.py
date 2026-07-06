@@ -158,9 +158,7 @@ def _seed_with_boundary_byte(byte_value: int, *, at_end: bool) -> bytes:
 
 @pytest.mark.parametrize("byte_value", _ASCII_WHITESPACE_BYTES)
 @pytest.mark.parametrize("at_end", [False, True])
-def test_install_key_with_whitespace_boundary_round_trips(
-    tmp_path: Path, byte_value: int, at_end: bool
-) -> None:
+def test_install_key_with_whitespace_boundary_round_trips(tmp_path: Path, byte_value: int, at_end: bool) -> None:
     """A persisted key whose boundary byte is ASCII whitespace loads verbatim.
 
     Regression: the loader must read the raw seed exactly, never ``strip()``
