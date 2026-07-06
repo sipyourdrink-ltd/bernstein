@@ -193,6 +193,16 @@ EVENT_REVIEW_RECEIPT = "review.receipt"
 #: chain entries rather than trusting a session id.
 EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
 
+#: Issue #2299 -- emitted when a stalled worker produces a signed, journal-
+#: anchored escalation receipt. The receipt fixes the exact failure window by
+#: binding the last N journal entries by their Merkle hash; this event mirrors
+#: the receipt's identity into the HMAC-chained audit log so an operator can
+#: prove, from the chain alone, that an escalation was emitted for a run and
+#: worker with a given recommended action and resume fork point. Only
+#: identifiers, the journal head at stall, the window size, the recommended
+#: action, and the resume snapshot sha are recorded -- never journal payloads.
+EVENT_ESCALATION_RECEIPT = "escalation.receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1176,11 +1186,71 @@ def record_mcp_stateless_call(
     )
 
 
+def record_escalation_receipt(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    worker_id: str,
+    stall_reason: str,
+    recommended_action: str,
+    journal_head_at_stall: str,
+    window_size: int,
+    fork_snapshot_sha: str,
+    journal_entry_hash: str,
+    actor: str = "escalation_receipt",
+) -> AuditEvent:
+    """Append an ``escalation.receipt`` event into *chain*.
+
+    Mirrors a signed, spine-anchored stall escalation receipt into the
+    HMAC-chained audit log so an operator can prove, from the chain alone, that
+    an escalation was emitted for a stalled worker -- with which recommended
+    action and which resume fork point -- without ever recording the journal
+    payloads. The bound failure window itself lives in the run journal; this
+    event records only its identity (``journal_head_at_stall`` + ``window_size``)
+    and the receipt's spine anchor.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose journal the receipt anchored.
+        worker_id: The stalled worker the receipt covers.
+        stall_reason: The structured stall reason recorded on the receipt.
+        recommended_action: The deterministic recommended action.
+        journal_head_at_stall: The run journal Merkle head at stall time.
+        window_size: Number of journal entries bound into the failure window.
+        fork_snapshot_sha: The resume fork point's snapshot sha, or empty when
+            the receipt pinned no fork point.
+        journal_entry_hash: The escalation-spine entry hash anchoring the
+            receipt.
+        actor: Recorded actor; defaults to ``"escalation_receipt"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ESCALATION_RECEIPT,
+        actor=actor,
+        resource_type="escalation_receipt",
+        resource_id=journal_entry_hash,
+        details={
+            "run_id": run_id,
+            "worker_id": worker_id,
+            "stall_reason": stall_reason,
+            "recommended_action": recommended_action,
+            "journal_head_at_stall": journal_head_at_stall,
+            "window_size": window_size,
+            "fork_snapshot_sha": fork_snapshot_sha,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
+    "EVENT_ESCALATION_RECEIPT",
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
@@ -1206,6 +1276,7 @@ __all__ = [
     "SkillInstallReceiptDetails",
     "ThreadApprovalDetails",
     "record_cost_profile_report",
+    "record_escalation_receipt",
     "record_eval_ab_comparison",
     "record_fork_snapshot",
     "record_gate_adjudication",
