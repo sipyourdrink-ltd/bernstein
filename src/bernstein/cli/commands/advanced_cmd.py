@@ -1616,6 +1616,86 @@ def _replay_run_impl(
     console.print("[dim]This fingerprint proves the exact sequence of events in this run.[/dim]")
 
 
+def _resolve_journal_path(run_id: str, runs_dir: Path) -> Path:
+    """Resolve a run id (or ``latest``) to its canonical journal path."""
+    if run_id == "latest":
+        run_id = _replay_resolve_latest(runs_dir)
+    return runs_dir / run_id / _REPLAY_JSONL
+
+
+def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
+    """Recompute the journal head and report the first divergent step.
+
+    On an intact journal, reports byte-identity. When a step diverges,
+    writes a ``divergence_report.json`` artifact listing ``(step_index,
+    expected_hash, actual_hash)`` and exits non-zero (issue #2293, AC2).
+    """
+    from bernstein.core.replay.journal import verify_journal
+
+    runs_dir = Path(sdd_dir) / "runs"
+    journal_path = _resolve_journal_path(run_id, runs_dir)
+    if not journal_path.exists():
+        console.print(f"[red]Journal not found:[/red] {journal_path}")
+        raise SystemExit(1)
+
+    result = verify_journal(journal_path)
+    if result.ok:
+        if as_json:
+            console.print_json(json.dumps({"run_id": run_id, "verified": True, "count": result.count}))
+        else:
+            console.print(
+                f"[green]OK[/green] journal for [bold]{run_id}[/bold] is byte-identical ({result.count} steps)"
+            )
+        return
+
+    report = {
+        "run_id": run_id,
+        "step_index": result.divergent_index,
+        "expected_hash": result.expected_hash,
+        "actual_hash": result.actual_hash,
+    }
+    report_path = journal_path.parent / "divergence_report.json"
+    with contextlib.suppress(OSError):
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    if as_json:
+        console.print_json(json.dumps(report))
+    else:
+        console.print(
+            f"[red]DIVERGENCE[/red] first divergent step [bold]{result.divergent_index}[/bold] "
+            f"in run [bold]{run_id}[/bold]"
+        )
+        console.print(f"[dim]expected:[/dim] {result.expected_hash}")
+        console.print(f"[dim]actual:  [/dim] {result.actual_hash}")
+        console.print(f"[dim]Divergence report written to:[/dim] {report_path}")
+    raise SystemExit(1)
+
+
+def _replay_from_step(*, run_id: str, sdd_dir: str, from_step: int, as_json: bool) -> None:
+    """Rebuild deterministic run state by walking the journal to ``from_step``.
+
+    Two independent invocations produce byte-identical output, so the
+    reconstruction is reproducible (issue #2293, AC4).
+    """
+    from bernstein.core.replay.journal import rebuild_state
+
+    runs_dir = Path(sdd_dir) / "runs"
+    journal_path = _resolve_journal_path(run_id, runs_dir)
+    if not journal_path.exists():
+        console.print(f"[red]Journal not found:[/red] {journal_path}")
+        raise SystemExit(1)
+
+    state = rebuild_state(journal_path, from_step=from_step)
+    if as_json:
+        # Sorted keys + no run-id envelope keeps the output byte-stable
+        # across invocations so replay reconstruction is reproducible.
+        console.print(json.dumps(state, sort_keys=True))
+        return
+    console.print(f"[bold]Rebuilt state for {run_id} through step {state['step_count']}[/bold]")
+    console.print(f"[dim]head:[/dim] {state['head_hash']}")
+    console.print(f"[dim]events:[/dim] {', '.join(state['events'])}")
+
+
 @click.command("replay")
 @click.argument("run_id", nargs=-1, required=True)
 @click.option(
@@ -1643,6 +1723,20 @@ def _replay_run_impl(
     default=None,
     help="Append additional hint text to the replayed task description.",
 )
+@click.option(
+    "--verify",
+    "verify",
+    is_flag=True,
+    default=False,
+    help="Recompute the journal head and report the first divergent step.",
+)
+@click.option(
+    "--from-step",
+    "from_step",
+    type=int,
+    default=None,
+    help="Rebuild deterministic run state by walking the journal to step N.",
+)
 def replay_cmd(
     run_id: tuple[str, ...],
     sdd_dir: str,
@@ -1650,11 +1744,13 @@ def replay_cmd(
     limit: int | None,
     model: str | None,
     extra_context: str | None,
+    verify: bool,
+    from_step: int | None,
 ) -> None:
     """Replay a past orchestration run step-by-step.
 
     \b
-    Reads .sdd/runs/{run_id}/replay.jsonl and displays events in a
+    Reads .sdd/runs/{run_id}/journal.jsonl and displays events in a
     Rich table showing timing, event type, agent, task, and details.
 
     \b
@@ -1666,6 +1762,8 @@ def replay_cmd(
       bernstein replay list                       # list available runs
       bernstein replay latest                     # replay most recent run
       bernstein replay 20240315-143022            # replay a specific run
+      bernstein replay <RUN_ID> --verify          # recompute head, find divergence
+      bernstein replay <RUN_ID> --from-step N     # rebuild state to step N
       bernstein replay diff RUN_A RUN_B           # first-divergence finder
       bernstein replay <AGENT_ID>                 # per-step journal view (#1799)
       bernstein replay export <AGENT_ID> -o RECEIPT   # portable receipt (#1799)
@@ -1691,6 +1789,16 @@ def replay_cmd(
             "OR bernstein replay export|publish|verify|diff-journal ...",
         )
         raise SystemExit(2)
+
+    # --verify / --from-step operate on the canonical run event journal
+    # (issue #2293): recompute the Merkle head and locate divergence, or
+    # rebuild a deterministic state projection for a prefix of the run.
+    if verify:
+        _replay_verify_journal(run_id=args[0], sdd_dir=sdd_dir, as_json=as_json)
+        return
+    if from_step is not None:
+        _replay_from_step(run_id=args[0], sdd_dir=sdd_dir, from_step=from_step, as_json=as_json)
+        return
 
     # When an agent journal exists for this id, prefer the per-step view
     # over the run-trace view. The journal directory naming is unambiguous

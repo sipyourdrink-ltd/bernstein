@@ -107,14 +107,16 @@ def load_replay_events(replay_path: Path) -> list[dict[str, Any]]:
 def compute_replay_fingerprint(replay_path: Path) -> str:
     """Compute the deterministic execution fingerprint of a replay log file.
 
-    Hashes the same canonical, timing-excluded projection as
-    :meth:`RunRecorder.fingerprint`, so a recording and a faithful replay -
-    which differ only in their ``ts`` / ``elapsed_s`` envelope - share one
-    fingerprint, while any divergence in the decision stream changes it
-    (issue #1851).
+    Hashes a canonical, timing-excluded projection of each event, so a
+    recording and a faithful replay - which differ only in their ``ts`` /
+    ``elapsed_s`` envelope - share one fingerprint, while any divergence in
+    the decision stream changes it (issue #1851). This is a whole-file
+    rehash used by the ``bernstein replay`` CLI; the canonical per-run
+    identity is the :class:`~bernstein.core.replay.journal.EventJournal`
+    Merkle head.
 
     Args:
-        replay_path: Path to the ``replay.jsonl`` file.
+        replay_path: Path to a per-run event log (``journal.jsonl``).
 
     Returns:
         Hex-encoded SHA-256 hash, or empty string if the file doesn't exist.

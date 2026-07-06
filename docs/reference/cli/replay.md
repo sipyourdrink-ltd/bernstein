@@ -25,17 +25,25 @@ For full re-execution of the **same task** with a (potentially different) model,
 .sdd/
   runs/
     <run_id>/
-      replay.jsonl           # event log (one JSON event per line)
-      session.json           # session metadata (started_at, git_branch, git_sha, config_hash)
+      journal.jsonl          # canonical Merkle-chained event journal (one JSON event per line)
+      metadata.json          # session metadata (started_at, git_branch, git_sha, config_hash)
+      divergence_report.json # written by `replay --verify` when a step diverges
   traces/
     <task_id>-<timestamp>.json  # per-task traces (used by task-trace replay)
 ```
 
-- The run-event log path constant: `_REPLAY_JSONL = "replay.jsonl"` (`cli/commands/advanced_cmd.py:725`).
+- The canonical run-event journal is `journal.jsonl`, written by the always-on `EventJournal` (`core/replay/journal.py`). Each event chains as `H(prev_hash, event_type, payload_hash, monotonic_index)` and the head hash is the run identity.
+- Recording is on by default; `BERNSTEIN_REPLAY_RETENTION=N` bounds how many past run journals survive on disk (oldest run directories are pruned) instead of an on/off gate.
+- At run finalization the journal head is sealed into the run's lineage spine, so the replay identity and artifact provenance share one root.
 - Session metadata is parsed by `read_session_replay_metadata()` from `core/runtime_state.py`.
 - Task traces are loaded by `core.traces.TraceStore` (`cli/commands/replay_filter_cmd.py:108-117`).
 
-The fingerprint shown after every replay is a SHA-256 hash of the canonicalized event sequence (`core.recorder.compute_replay_fingerprint`); identical event streams produce identical fingerprints, which is how you verify two runs really are the same.
+## Verifying and rebuilding from the journal
+
+- `bernstein replay <RUN_ID> --verify` recomputes the journal's Merkle chain and reports byte-identity, or the exact first divergent step index. On divergence it writes `divergence_report.json` (`step_index`, `expected_hash`, `actual_hash`) and exits non-zero. An injected non-deterministic tool result surfaces as a precise hash mismatch rather than a silent drift.
+- `bernstein replay <RUN_ID> --from-step N` rebuilds a deterministic state projection by walking events `[0, N)`. Two independent invocations produce byte-identical output, so the reconstruction is reproducible.
+
+The fingerprint shown after a replay is the Merkle head over the journal's event chain; identical decision streams produce identical heads, which is how you verify two runs really are the same.
 
 ---
 
