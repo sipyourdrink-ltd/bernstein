@@ -165,3 +165,36 @@ class TestSigningRequiredMode:
         assert http_signing.signing_required() is False
         monkeypatch.setenv(http_signing.ENV_SIGNING_REQUIRED, "1")
         assert http_signing.signing_required() is True
+
+    def test_sign_outbound_refuses_egress_when_signing_unavailable_and_required(self, monkeypatch, tmp_path):
+        # A keystore whose signing key cannot be produced.
+        class _BrokenKeystore:
+            def load_or_generate(self):
+                raise PermissionError("key unreadable")
+
+        monkeypatch.setenv(http_signing.ENV_SIGNING_REQUIRED, "1")
+        with pytest.raises(http_signing.UnsignedRequestRefused):
+            http_signing.sign_outbound(
+                method="GET",
+                url="https://peer.example/x",
+                headers={},
+                call_site="test",
+                keystore=_BrokenKeystore(),
+            )
+
+    def test_sign_outbound_is_best_effort_when_not_required(self, monkeypatch):
+        class _BrokenKeystore:
+            def load_or_generate(self):
+                raise PermissionError("key unreadable")
+
+        monkeypatch.delenv(http_signing.ENV_SIGNING_REQUIRED, raising=False)
+        out = http_signing.sign_outbound(
+            method="GET",
+            url="https://peer.example/x",
+            headers={"x": "y"},
+            call_site="test",
+            keystore=_BrokenKeystore(),
+        )
+        # Original headers returned unchanged, no signature, no raise.
+        assert out == {"x": "y"}
+        assert "Signature" not in out
