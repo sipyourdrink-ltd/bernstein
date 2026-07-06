@@ -29,7 +29,9 @@ All commands honour `--scope project` (writes into
 
 No catalog network request is made until a `bernstein skills catalog`
 command runs. The built-in source is the operator-published catalog at
-`https://bernstein.run/skills-catalog.json`.
+`https://bernstein.run/skills-catalog.json`, with a read-only mirror at
+`https://raw.githubusercontent.com/chernistry/bernstein-skills-catalog/main/skills-catalog.json`
+used as a fallback when the primary is unreachable.
 The URL is validated as HTTPS before fetch, and fetched payloads must
 match the signed catalog schema before they are cached or used.
 
