@@ -101,6 +101,15 @@ EVENT_TEMPLATE_COMPRESSION_RECEIPT = "template.compression.receipt"
 #: directory digests.
 EVENT_TEMPLATE_COMPRESSION_RESTORE = "template.compression.restore"
 
+#: Issue #2298 -- emitted whenever a cross-session memory write (or
+#: forget tombstone) is appended to the tamper-evident memory chain. The
+#: event records the memory-chain entry hash, the lineage-spine
+#: ``source_hash`` the record anchors to, the identity scope and
+#: namespace, the actor, the originating run and step, and the entry
+#: kind (``write`` or ``tombstone``) -- never the remembered claim
+#: content. See :mod:`bernstein.core.memory.chain`.
+EVENT_MEMORY_WRITE = "memory.write"
+
 #: Issue #2301 -- emitted once per skill install. The event carries the
 #: skill install receipt: the installed content hash, the authorising
 #: manifest hash, the install id, and the spine anchor (the entry hash of
@@ -114,14 +123,6 @@ EVENT_SKILL_INSTALL_RECEIPT = "skill.install_receipt"
 #: head hash) so a later provenance query can recompute usage from verified
 #: journal heads rather than from a mutable counter.
 EVENT_SKILL_USAGE = "skill.usage"
-#: Issue #2298 -- emitted whenever a cross-session memory write (or
-#: forget tombstone) is appended to the tamper-evident memory chain. The
-#: event records the memory-chain entry hash, the lineage-spine
-#: ``source_hash`` the record anchors to, the identity scope and
-#: namespace, the actor, the originating run and step, and the entry
-#: kind (``write`` or ``tombstone``) -- never the remembered claim
-#: content. See :mod:`bernstein.core.memory.chain`.
-EVENT_MEMORY_WRITE = "memory.write"
 
 
 # ---------------------------------------------------------------------------
@@ -503,59 +504,6 @@ def record_eval_ab_comparison(
 
 
 @dataclass(frozen=True)
-class SkillInstallReceiptDetails:
-    """Structured payload for the ``skill.install_receipt`` event."""
-
-    skill_hash: str
-    manifest_hash: str
-    install_id: str
-    spine_anchor: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "skill_hash": self.skill_hash,
-            "manifest_hash": self.manifest_hash,
-            "install_id": self.install_id,
-            "spine_anchor": self.spine_anchor,
-        }
-
-
-def record_skill_install_receipt(
-    *,
-    chain: AuditChainStore,
-    skill_hash: str,
-    manifest_hash: str,
-    install_id: str,
-    spine_anchor: str,
-    actor: str = "skill_provenance",
-) -> AuditEvent:
-    """Append a ``skill.install_receipt`` event into *chain*.
-
-    Args:
-        chain: The audit chain store accepting the entry.
-        skill_hash: Content hash of the installed skill (``sha256:<hex>``).
-        manifest_hash: SHA-256 of the authorising catalog manifest.
-        install_id: Per-install unique identifier tying this event to the
-            lockfile row and the receipt anchor.
-        spine_anchor: Entry hash of the receipt row in the install lineage
-            spine; a verifier holding the spine can recompute it.
-        actor: Recorded actor; defaults to ``"skill_provenance"``.
-
-    Returns:
-        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
-        in its details payload.
-    """
-    payload = SkillInstallReceiptDetails(
-        skill_hash=skill_hash,
-        manifest_hash=manifest_hash,
-        install_id=install_id,
-        spine_anchor=spine_anchor,
-    ).to_dict()
-    return chain.log_with_prev_digest(
-        event_type=EVENT_SKILL_INSTALL_RECEIPT,
-        actor=actor,
-        resource_type="skill_install_receipt",
-        resource_id=skill_hash,
 class MemoryWriteDetails:
     """Structured payload for the ``memory.write`` event."""
 
@@ -630,6 +578,64 @@ def record_memory_write(
         actor=actor,
         resource_type="memory_write",
         resource_id=entry_hash,
+        details=payload,
+    )
+
+
+@dataclass(frozen=True)
+class SkillInstallReceiptDetails:
+    """Structured payload for the ``skill.install_receipt`` event."""
+
+    skill_hash: str
+    manifest_hash: str
+    install_id: str
+    spine_anchor: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "skill_hash": self.skill_hash,
+            "manifest_hash": self.manifest_hash,
+            "install_id": self.install_id,
+            "spine_anchor": self.spine_anchor,
+        }
+
+
+def record_skill_install_receipt(
+    *,
+    chain: AuditChainStore,
+    skill_hash: str,
+    manifest_hash: str,
+    install_id: str,
+    spine_anchor: str,
+    actor: str = "skill_provenance",
+) -> AuditEvent:
+    """Append a ``skill.install_receipt`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        skill_hash: Content hash of the installed skill (``sha256:<hex>``).
+        manifest_hash: SHA-256 of the authorising catalog manifest.
+        install_id: Per-install unique identifier tying this event to the
+            lockfile row and the receipt anchor.
+        spine_anchor: Entry hash of the receipt row in the install lineage
+            spine; a verifier holding the spine can recompute it.
+        actor: Recorded actor; defaults to ``"skill_provenance"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    payload = SkillInstallReceiptDetails(
+        skill_hash=skill_hash,
+        manifest_hash=manifest_hash,
+        install_id=install_id,
+        spine_anchor=spine_anchor,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SKILL_INSTALL_RECEIPT,
+        actor=actor,
+        resource_type="skill_install_receipt",
+        resource_id=skill_hash,
         details=payload,
     )
 
