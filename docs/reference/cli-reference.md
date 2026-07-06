@@ -624,6 +624,7 @@ Multi-project dashboard.
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
 | `bernstein identity` | Install-identity ops (group): fingerprint helpers plus `keydir`. | `cli/commands/identity_cmd.py:identity_group` |
 | `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
+| `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
 | `bernstein compaction` | Compaction receipt-chain ops (group). | `cli/commands/compaction_cmd.py:32` |
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
 | `bernstein approve-tool` | Approve a tool-call request. | `cli/commands/approval_cmd.py:approve_tool_cmd` |
@@ -726,6 +727,23 @@ error. `BERNSTEIN_AGENT_CARD_KEY_DIR` overrides the key directory location.
 (`cli/commands/audit_cmd.py:25+`. The `slice` verb is the
 deterministic-subset extractor described in
 [HMAC-chained audit log](../security/audit-log.md#slicing-a-deterministic-subset).)
+
+#### `bernstein lineage`
+
+| Subcommand | Purpose |
+|---|---|
+| `verify RUN_ID` | Verify the run's lineage spine: recompute the full Merkle hash chain and every HMAC tag, print the head hash. `--workdir DIR`. Exit 0 = OK, 1 = no entries, 2 = tamper. |
+| `replay RUN_ID` | Walk the run's spine entries in append order (artifact, actor, step, model, content hash, entry hash). `--workdir DIR`, `--limit N`. Exit 1 on an empty run. |
+
+Every adapter artifact write is recorded, without per-adapter opt-in, as
+one Merkle-chained, HMAC-tagged entry in the run's lineage spine under
+`.sdd/lineage/<run_id>/spine.jsonl` (head hash in `spine.head`). The head
+hash is the run's artifact-provenance identity. Recording is gated by
+`BERNSTEIN_LINEAGE_ENABLED` (default on); when enabled it fails closed, so
+a write that cannot be recorded raises rather than dropping provenance.
+`verify` against an empty run reports a distinct `NO ENTRIES` status
+instead of passing trivially. (`cli/commands/lineage_cmd.py`,
+`core/lineage/spine.py`.)
 
 #### `bernstein compaction`
 

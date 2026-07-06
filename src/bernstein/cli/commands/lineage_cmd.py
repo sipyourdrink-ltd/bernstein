@@ -31,6 +31,7 @@ import click
 from rich.table import Table
 
 from bernstein.cli.commands.lineage_export_cmd import lineage_export_cmd
+from bernstein.cli.commands.lineage_replay_cmd import lineage_replay_cmd
 from bernstein.cli.commands.lineage_tracker_audit_cmd import tracker_audit_cmd
 from bernstein.cli.commands.lineage_verify_cmd import lineage_verify_cmd
 from bernstein.cli.helpers import console
@@ -176,6 +177,7 @@ def walk_cmd(target: str, workdir: str, run_id: str | None, limit: int) -> None:
 
 lineage_cmd.add_command(lineage_export_cmd, "export")
 lineage_cmd.add_command(lineage_verify_cmd, "verify")
+lineage_cmd.add_command(lineage_replay_cmd, "replay")
 lineage_cmd.add_command(tracker_audit_cmd, "tracker-audit")
 
 
