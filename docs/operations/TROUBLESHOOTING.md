@@ -66,6 +66,14 @@ claude --version  # should print version info
 - If installed but not on PATH, add its directory: `export PATH="$HOME/.npm-global/bin:$PATH"`.
 - If running inside a virtualenv or container, ensure the binary is available in that environment.
 
+### 2a. Windows: `.cmd`/`.bat` shim not found (nvm-windows)
+
+**Symptom:** `bernstein-worker: command not found: codex` (exit 127) on Windows, even though `where.exe codex` and `python -c "import shutil; print(shutil.which('codex'))"` both resolve `C:\...\codex.cmd`.
+
+**Cause:** Node version managers such as nvm-windows install the Codex/Claude/Gemini CLIs as batch shims (`codex.cmd`), not real `.exe` files. `CreateProcess` (what `subprocess.Popen` calls without a shell) does not consult `PATHEXT` for `argv[0]`, so a bare `codex` never resolves the `.cmd`, and even a full path to a `.cmd` cannot be launched directly.
+
+**Resolution:** Bernstein now resolves the bare name via `shutil.which` and, on Windows, routes a resolved `.cmd`/`.bat` shim through `cmd.exe /c` automatically. Ensure `PATHEXT` is present in your environment (it is passed through to spawned agents). No manual action is needed on current versions; if you see this on an older build, upgrade Bernstein.
+
 ---
 
 ## 3. API Key Not Set
