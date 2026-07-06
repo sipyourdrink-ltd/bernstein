@@ -1531,8 +1531,6 @@ def record_governance_decision(
     )
 
 
-
-
 def record_activity_result(
     *,
     chain: AuditChainStore,
@@ -1596,6 +1594,8 @@ def record_activity_result(
             "journal_event_hash": journal_event_hash,
         },
     )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_ACTIVITY_RESULT",
