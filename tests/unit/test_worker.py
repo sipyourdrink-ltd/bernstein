@@ -234,6 +234,64 @@ class TestWorkerProcess:
         time.sleep(0.2)
         assert not pid_file.exists(), "PID file was not cleaned up"
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signals")
+    def test_worker_cleans_pid_file_when_sigterm_races_startup(self, tmp_path: Path) -> None:
+        """Regression (#2341): SIGTERM at startup must never leak the PID file.
+
+        The worker must install its terminating-signal handler *before* the
+        PID file exists, so no instant passes where the file is present
+        without a cleanup path. Before the fix the handler was installed only
+        after the child spawn; a SIGTERM landing in that window took the
+        default disposition (terminate, no ``finally`` unlink) and leaked the
+        PID file - a phantom ``bernstein ps`` entry and the intermittent
+        cleanup-order failure this test guards.
+
+        Each iteration sends a single SIGTERM the instant the PID file first
+        appears (the widest point of the old window, before ``child_pid`` is
+        even written) and asserts the file is always gone. On the buggy
+        ordering this leaks on a large fraction of iterations; the fixed
+        ordering cleans up every time.
+        """
+        for i in range(24):
+            pid_dir = tmp_path / f"pids-{i}"
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "bernstein.core.orchestration.worker",
+                    "--role",
+                    "test",
+                    "--session",
+                    f"race-{i}",
+                    "--pid-dir",
+                    str(pid_dir),
+                    "--",
+                    "sleep",
+                    "10",
+                ],
+                start_new_session=True,
+            )
+            pid_file = pid_dir / f"race-{i}.json"
+            # Wait only until the PID file first appears - the earliest and
+            # widest point of the startup race window.
+            deadline = time.monotonic() + 5
+            while not pid_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.0005)
+            assert pid_file.exists(), f"iter {i}: PID file never appeared"
+
+            # One group-directed SIGTERM at that instant, exactly as a reaper
+            # would, then assert the worker cleaned up after itself.
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                raise
+            time.sleep(0.2)
+            assert not pid_file.exists(), (
+                f"iter {i}: PID file leaked after SIGTERM at startup (worker exit={proc.returncode})"
+            )
+
     def test_worker_forwards_signals(self, tmp_path: Path) -> None:
         """Worker should forward SIGTERM to child and exit."""
         pid_dir = tmp_path / "pids"

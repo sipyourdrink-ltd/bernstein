@@ -23,7 +23,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Setup minimal logging for the worker
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -123,13 +126,25 @@ def _set_proctitle(title: str) -> None:
         setproctitle.setproctitle(title)
 
 
-def _write_pid_file(pid_dir: Path, session: str, info: dict[str, object]) -> Path:
-    """Write PID metadata JSON file."""
+def _write_pid_file(
+    pid_dir: Path,
+    session: str,
+    info: dict[str, object],
+    on_resolved: Callable[[Path], None] | None = None,
+) -> Path:
+    """Write PID metadata JSON file.
+
+    ``on_resolved`` is invoked with the resolved target path *before* the file
+    is created, so a caller can register the path with its signal handler and
+    guarantee the file can never exist without a cleanup path (#2341).
+    """
     pid_dir.mkdir(parents=True, exist_ok=True)
     pid_file = (pid_dir / f"{session}.json").resolve()
     if not pid_file.is_relative_to(pid_dir.resolve()):
         print(f"bernstein-worker: invalid session id: {session}", file=sys.stderr)
         sys.exit(1)
+    if on_resolved is not None:
+        on_resolved(pid_file)
     pid_file.write_text(json.dumps(info), encoding="utf-8")
     return pid_file
 
@@ -314,7 +329,61 @@ def main() -> None:
 
         emit_command_invoked(name_only=cmd[0])
 
-    # 2. Write PID metadata
+    # 2. Install the terminating-signal handler *before* the PID file exists,
+    # so the file can never outlive an early SIGTERM.
+    #
+    # A reaper keys on the ``child_pid`` marker and sends SIGTERM as soon as
+    # it appears. The handler used to be installed only after the child spawn;
+    # a SIGTERM landing between the PID-file write and that install took the
+    # default disposition - terminate immediately, skipping the ``finally``
+    # unlink - and leaked the PID file. ``bernstein ps`` then reported a
+    # phantom worker and cleanup-order assertions flaked on loaded CI shards
+    # (#2341). Installing here closes the window completely: there is no
+    # instant at which the PID file exists without a cleanup-capable handler.
+    #
+    # Neither the PID file nor the child exists yet, so the handler reads both
+    # through mutable holders that the code below fills in. Until the child
+    # exists the handler just unlinks the PID file (if written) and exits;
+    # once the child exists it forwards the signal with the same grace-window
+    # guard and lets ``main`` reap the child and run the shared cleanup.
+    _pid_file_holder: list[Path] = []
+    _child_holder: list[subprocess.Popen[bytes]] = []
+
+    def _terminate(signum: int, _frame: object) -> None:
+        _running = _child_holder[0] if _child_holder else None
+        if _running is not None:
+            # Group-directed signals reach the child directly (shared process
+            # group), so re-sending immediately would double-deliver. The
+            # second delivery is not benign: when the child's own handler has
+            # already run and its interpreter is finalising, the default
+            # disposition is restored and the late duplicate kills the child
+            # outright, so ``child.wait()`` reports a signal death (``-N``)
+            # instead of the handler's exit code. Poll for the child's exit
+            # through a short grace window first; forward only if it is still
+            # running, i.e. the signal was sent to the worker alone.
+            deadline = time.monotonic() + _FORWARD_GRACE_S
+            while time.monotonic() < deadline:
+                if _running.poll() is not None:
+                    break
+                time.sleep(_FORWARD_POLL_INTERVAL_S)
+            else:
+                with contextlib.suppress(OSError):
+                    _running.send_signal(signum)
+            # Let the normal ``child.wait()`` path in main() reap the child and
+            # run the shared cleanup + ``128 + N`` exit translation.
+            return
+        # No child yet: nothing to forward or wait on. Clean up the PID file
+        # (if it was already written) and exit with the conventional 128 + N.
+        if _pid_file_holder:
+            _pid_file_holder[0].unlink(missing_ok=True)
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _terminate)
+    signal.signal(signal.SIGINT, _terminate)
+
+    # 2b. Write PID metadata. ``on_resolved`` publishes the path to the holder
+    # *before* the file is created, so even a SIGTERM during the write itself
+    # is cleaned up (``unlink(missing_ok=True)`` tolerates the pre-create case).
     pid_file = _write_pid_file(
         Path(args.pid_dir),
         args.session,
@@ -326,9 +395,10 @@ def main() -> None:
             "model": args.model,
             "started_at": time.time(),
         },
+        on_resolved=_pid_file_holder.append,
     )
 
-    # 2b. Touch heartbeat file so the agent starts with a fresh timestamp.
+    # 2c. Touch heartbeat file so the agent starts with a fresh timestamp.
     # Without this, idle recycling can kill agents before their first
     # stream-json event arrives (e.g. Claude Code thinking for 2+ minutes).
     with contextlib.suppress(OSError):
@@ -350,6 +420,10 @@ def main() -> None:
         # into. The Windows cmd.exe /c wrapper also passes each arg as a
         # separate list element, not a concatenated command line.
         child = subprocess.Popen(launch_cmd)  # nosemgrep
+        # Publish the child so the already-installed terminating-signal
+        # handler forwards to it (and lets main() reap it) instead of
+        # unlinking + exiting on its own.
+        _child_holder.append(child)
     except FileNotFoundError as exc:
         # Typed first-run error: the adapter binary is missing from PATH.
         # Callers running this worker as a subprocess can categorise via
@@ -410,31 +484,14 @@ def main() -> None:
         )
         monitor_thread.start()
 
-    # 5. Forward signals to child.
+    # 5. Wait for child, clean up, exit.
     #
-    # Group-directed signals reach the child directly (shared process
-    # group), so re-sending immediately would double-deliver. The second
-    # delivery is not benign: when the child's own handler has already
-    # run and its interpreter is finalising, the default disposition is
-    # restored and the late duplicate kills the child outright, so
-    # ``child.wait()`` reports a signal death (``-N``) instead of the
-    # handler's exit code. Poll for the child's exit through a short
-    # grace window first; forward only if it is still running, which
-    # means the signal was sent to the worker alone and never reached
-    # the child.
-    def _forward(signum: int, _frame: object) -> None:
-        deadline = time.monotonic() + _FORWARD_GRACE_S
-        while time.monotonic() < deadline:
-            if child.poll() is not None:
-                return
-            time.sleep(_FORWARD_POLL_INTERVAL_S)
-        with contextlib.suppress(OSError):
-            child.send_signal(signum)
-
-    signal.signal(signal.SIGTERM, _forward)
-    signal.signal(signal.SIGINT, _forward)
-
-    # 5. Wait for child, clean up, exit
+    # Terminating signals are already handled by ``_terminate`` (installed
+    # before the PID file was even written); now that the child is published
+    # the handler forwards to it and returns here so the shared cleanup below
+    # runs exactly once. ``child.wait()`` is interruptible: a SIGTERM that
+    # arrives here raises nothing - the handler forwards to the child, the
+    # child exits, and ``wait`` returns its code.
     try:
         exit_code = child.wait()
     except Exception:
