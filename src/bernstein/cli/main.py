@@ -1119,6 +1119,10 @@ from bernstein.cli.commands.mandate_cmd import mandate_group  # noqa: E402
 
 cli.add_command(mandate_group, "mandate")
 
+# Attested pull-request review receipts linking issue -> plan -> tool calls -> diff (#2296).
+from bernstein.cli.commands.review_receipt_cmd import review_receipt_group  # noqa: E402
+
+cli.add_command(review_receipt_group, "review-receipt")
 # Signed maker-checker / judge-panel gate adjudications (#2294).
 from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
 
