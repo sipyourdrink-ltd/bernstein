@@ -284,6 +284,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `dependency_graph.py`     | ASCII-art dependency graph renderer for tasks |
 | `diff_folding.py`         | Diff folding - collapsible diff display for large changes |
 | `diff_render.py`          | Word-level diff rendering for Bernstein TUI |
+| `event_stream.py`         | SSE thread consumer for the TUI (issue #2297) |
 | `fallback.py`             | Rich-based fallback display for unsupported terminals (TUI-003) |
 | `help_screen.py`          | Help screen modal for TUI - shortcuts plus discoverability hints |
 | `keybinding_config.py`    | TUI-004: Configurable keybinding system with YAML-based key map |
