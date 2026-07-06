@@ -110,17 +110,31 @@ async def test_path_escape_guard(git_repo: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_snapshot_raises_not_implemented(git_repo: Path) -> None:
+async def test_snapshot_without_run_context_raises(git_repo: Path) -> None:
+    """A worktree session created without run context cannot address a ref.
+
+    Snapshot support landed for the worktree backend in issue #2295, but
+    it still needs a ``run_id``/``step_index`` to pin the commit to a
+    ``refs/bernstein/snapshots/`` ref. Without them, ``snapshot`` raises
+    ``RuntimeError`` (not ``NotImplementedError``: the capability exists,
+    the addressing context does not).
+    """
     backend = WorktreeSandboxBackend()
     manifest = WorkspaceManifest(root=str(git_repo), timeout_seconds=30)
     session = await backend.create(manifest, options={"repo_root": str(git_repo)})
     try:
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(RuntimeError):
             await session.snapshot()
-        with pytest.raises(NotImplementedError):
-            await backend.resume("any-id")
     finally:
         await backend.destroy(session)
+
+
+@pytest.mark.asyncio
+async def test_resume_without_repo_context_raises(git_repo: Path) -> None:
+    """Resume needs a prior ``create`` to know which object store to use."""
+    backend = WorktreeSandboxBackend()
+    with pytest.raises(RuntimeError):
+        await backend.resume("0" * 40)
 
 
 @pytest.mark.asyncio
