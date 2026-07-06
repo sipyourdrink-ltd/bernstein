@@ -78,6 +78,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "review-receipt",
         # Signed maker-checker / judge-panel gate adjudications (issue #2294)
         "gate",
+        # RBAC + budget decisions as verifiable projections (issue #2309)
+        "governance",
         # Auth
         "auth",
         "login",
