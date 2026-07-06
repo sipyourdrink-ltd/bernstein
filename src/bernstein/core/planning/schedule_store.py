@@ -303,6 +303,16 @@ class ScheduleStore:
     def directory(self) -> Path:
         return self._dir
 
+    @property
+    def sdd_dir(self) -> Path:
+        """Return the project ``.sdd`` directory backing this store.
+
+        The fire-record boundary (#2302) writes each fire's journal and
+        lineage-spine entries under this root, so it is surfaced alongside
+        the schedules directory.
+        """
+        return self._sdd_dir
+
     def _path_for(self, schedule_id: str) -> Path:
         return self._dir / f"{schedule_id}.json"
 
