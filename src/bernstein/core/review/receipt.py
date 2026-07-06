@@ -374,7 +374,7 @@ def emit_review_receipt(
         plan_hash=compute_plan_hash(plan),
         journal_head=journal_head,
         diff_hash=compute_diff_hash(diff),
-        findings=tuple(findings),
+        findings=findings,
         verdict=verdict,
         task_id=task_id,
         timestamp=timestamp,

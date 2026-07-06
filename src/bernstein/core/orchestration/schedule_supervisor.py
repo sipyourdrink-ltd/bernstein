@@ -254,11 +254,13 @@ class ScheduleSupervisor:
         audit_writer: Any,
         *,
         catch_up_limit: int = DEFAULT_CATCH_UP_LIMIT,
+        record_fire_projection: bool = True,
     ) -> None:
         self._store = store
         self._dispatch = dispatch
         self._chain = _AuditChainAdapter(audit_writer) if audit_writer is not None else None
         self._catch_up_limit = max(1, catch_up_limit)
+        self._record_fire_projection_enabled = record_fire_projection
         self._receipts_dir = store.directory.parent / "schedule_receipts"
         self._receipts_dir.mkdir(parents=True, exist_ok=True)
         self._last_tick_at = 0.0
@@ -455,6 +457,13 @@ class ScheduleSupervisor:
         chain_digest = self._append_audit(schedule, projection, prev_chain, counterfactual)
 
         if not counterfactual:
+            # #2302: seal the fire projection (with the schedule's recurrence
+            # folded in) into the journal + lineage spine for ``schedule
+            # verify``. This is a distinct surface from the #1798 receipt
+            # ``projection_hash`` above (which stays recurrence-free so
+            # existing receipt chains re-derive byte-identically).
+            recurrence = f"cron:{schedule.cron}" if schedule.cron else ""
+            self._record_fire_projection(schedule, fire_epoch, recurrence)
             event = normalize_schedule_fire(
                 schedule_id=schedule.id,
                 fire_time=float(fire_epoch),
@@ -487,6 +496,33 @@ class ScheduleSupervisor:
         )
         self._persist_receipt(receipt)
         return receipt
+
+    def _record_fire_projection(self, schedule: Schedule, fire_epoch: int, recurrence: str) -> None:
+        """Seal the fire projection into the journal and lineage spine (#2302).
+
+        Each dispatched fire records ``{schedule_id, fire_time,
+        last_state_hash, graph_hash}`` into the run event journal and seals
+        the canonical graph bytes into the lineage spine, so ``schedule
+        verify`` can replay the fire and prove the graph hash reproduces.
+        The recording is provenance, not the dispatch itself: a failure
+        here is logged and swallowed so it never wedges a supervisor tick.
+        """
+        if not self._record_fire_projection_enabled:
+            return
+        try:
+            from bernstein.core.orchestration.schedule_fire_record import record_fire
+
+            record_fire(
+                sdd_dir=self._store.sdd_dir,
+                schedule_id=schedule.id,
+                fire_time=fire_epoch,
+                last_state=None,
+                goal=schedule.goal,
+                scenario_id=schedule.scenario_id,
+                recurrence=recurrence,
+            )
+        except Exception:  # pragma: no cover - defensive: provenance is best-effort here
+            logger.exception("Fire-projection recording failed for schedule %s @ %s", schedule.id, fire_epoch)
 
     def _record_counterfactual(
         self,

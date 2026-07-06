@@ -203,6 +203,18 @@ EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
 #: exposing the native result payload itself.
 EVENT_SUBAGENT_DELEGATION = "subagent.delegation"
 
+#: Issue #2302 -- emitted once per recurring-goal schedule fire projection.
+#: A recurring goal fire is a pure projection of ``(schedule_id, fire_time,
+#: last_state)`` onto a canonical task graph; this event anchors the fire in
+#: the HMAC chain by recording ``{schedule_id, fire_time, last_state_hash,
+#: graph_hash}`` plus the lineage-spine ``journal_entry_hash`` the projection
+#: was sealed into and the ``trigger_input_hash`` for a webhook / file-change
+#: trigger (empty for a plain cron / RRULE fire). A verifier holding the
+#: schedule and the fire time can re-run the projection and confirm the
+#: recorded ``graph_hash`` byte-identically -- the fire is a hash, not a
+#: trigger.
+EVENT_SCHEDULE_FIRE_PROJECTION = "schedule.fire_projection"
+
 #: Issue #2310 -- emitted whenever a webhook-node receipt is anchored in the
 #: webhook-node lineage spine. Inbound receipts bind ``{event_hash,
 #: journal_root}`` for a signed inbound event that spawned a run; outbound
@@ -1256,6 +1268,66 @@ def record_subagent_delegation(
     )
 
 
+def record_schedule_fire_projection(
+    *,
+    chain: AuditChainStore,
+    schedule_id: str,
+    fire_time: int,
+    last_state_hash: str,
+    graph_hash: str,
+    journal_entry_hash: str,
+    trigger_input_hash: str = "",
+    recurrence: str = "",
+    actor: str = "schedule_projection",
+) -> AuditEvent:
+    """Append a ``schedule.fire_projection`` event into *chain* (#2302).
+
+    Anchors one recurring-goal fire in the HMAC chain as a projection:
+    ``(schedule_id, fire_time, last_state_hash)`` are the pure inputs and
+    ``graph_hash`` is the canonical task-graph hash they project onto. A
+    verifier holding the schedule can re-run the projection at ``fire_time``
+    and confirm the recorded ``graph_hash`` byte-identically, so the fire is
+    a hash rather than a trigger. The ``journal_entry_hash`` binds the fire
+    to the lineage-spine entry the projection was sealed into, and
+    ``trigger_input_hash`` binds the exact webhook / file-change event for a
+    trigger-driven fire (empty for a plain cron / RRULE fire).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        schedule_id: Stable schedule identifier.
+        fire_time: Integer Unix epoch of the canonical fire instant.
+        last_state_hash: Digest of the ``last_state`` folded into the
+            projection (``"genesis"`` for the first fire of a schedule).
+        graph_hash: The canonical task-graph hash the inputs project onto.
+        journal_entry_hash: The lineage-spine entry hash the projection was
+            sealed into; a verifier holding the spine can recompute it.
+        trigger_input_hash: For a webhook / file-change trigger, the hash of
+            the trigger event bound into the projection; empty otherwise.
+        recurrence: Canonical recurrence rule (``cron:`` / ``RRULE:``) that
+            produced the fire instant; empty when none was declared.
+        actor: Recorded actor; defaults to ``"schedule_projection"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SCHEDULE_FIRE_PROJECTION,
+        actor=actor,
+        resource_type="schedule_fire_projection",
+        resource_id=schedule_id,
+        details={
+            "schedule_id": schedule_id,
+            "fire_time": fire_time,
+            "last_state_hash": last_state_hash,
+            "graph_hash": graph_hash,
+            "journal_entry_hash": journal_entry_hash,
+            "trigger_input_hash": trigger_input_hash,
+            "recurrence": recurrence,
+        },
+    )
+
+
 def record_webhook_node_receipt(
     *,
     chain: AuditChainStore,
@@ -1333,6 +1405,7 @@ __all__ = [
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
     "EVENT_REVIEW_RECEIPT",
+    "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
     "EVENT_SUBAGENT_DELEGATION",
@@ -1360,6 +1433,7 @@ __all__ = [
     "record_multimodal_attach",
     "record_otel_projection",
     "record_review_receipt",
+    "record_schedule_fire_projection",
     "record_sensitive_gate",
     "record_skill_install_receipt",
     "record_skill_usage",
