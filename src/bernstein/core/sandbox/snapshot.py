@@ -94,7 +94,7 @@ def commit_worktree_snapshot(
     index_fd, index_name = tempfile.mkstemp(prefix="bernstein-snapshot-index-")
     os.close(index_fd)
     scratch_index = Path(index_name)
-    env = dict(os.environ)
+    env = os.environ.copy()
     env["GIT_INDEX_FILE"] = str(scratch_index)
     # Deterministic author/committer identity keeps the commit sha a pure
     # function of the tree + parent, so a byte-identical worktree snapshots
@@ -124,7 +124,7 @@ def commit_worktree_snapshot(
         # 2. Pin the commit to a dedicated ref in the owning repo so the
         #    snapshot survives worktree teardown and git gc.
         ref = snapshot_ref_name(run_id, step_index)
-        _run(["update-ref", ref, sha], repo_root, dict(os.environ))
+        _run(["update-ref", ref, sha], repo_root, os.environ.copy())
     finally:
         try:
             scratch_index.unlink(missing_ok=True)
@@ -157,7 +157,7 @@ def resume_worktree_snapshot(
     _run(
         ["worktree", "add", "--detach", str(dest_path), snapshot_id],
         repo_root,
-        dict(os.environ),
+        os.environ.copy(),
     )
 
 
