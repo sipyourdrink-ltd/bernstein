@@ -236,6 +236,17 @@ EVENT_ESCALATION_RECEIPT = "escalation.receipt"
 #: body.
 EVENT_WEBHOOK_NODE_RECEIPT = "webhook_node.receipt"
 
+#: Issue #2311 -- emitted whenever a typed activity boundary is crossed under the
+#: deterministic scheduler, mirroring the run journal's ``activity.result`` entry
+#: into the chain. Any agent modality (research, browser/computer-use, data, ops,
+#: coding) is dispatched behind a hash-in/hash-out contract; the record binds
+#: ``{kind, artifact_hash, evidence_set_hash, terminal_state, reason_code}`` plus
+#: the anchoring journal index/hash, so an operator can prove -- from the chain
+#: alone -- that a modality-agnostic activity ran with a given evidence set
+#: without the record ever exposing the artifact body or the fetched pages. Only
+#: hashes, the kind, the terminal state, and the reason code are recorded.
+EVENT_ACTIVITY_RESULT = "activity.result"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1459,8 +1470,74 @@ def record_webhook_node_receipt(
     )
 
 
+def record_activity_result(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    stage_id: str,
+    kind: str,
+    artifact_hash: str,
+    evidence_set_hash: str,
+    terminal_state: str,
+    reason_code: str,
+    journal_index: int,
+    journal_event_hash: str,
+    actor: str = "activity",
+) -> AuditEvent:
+    """Append an ``activity.result`` event into *chain* (#2311).
+
+    Mirrors one typed activity boundary crossing into the HMAC-chained audit log
+    so an operator can prove, from the chain alone, that a modality-agnostic
+    activity (research, browser/computer-use, data, ops, coding) ran under the
+    deterministic scheduler with a given evidence set. The ``evidence_set_hash``
+    is a pure function of the observations the activity gathered, so it is
+    replay-invariant; ``artifact_hash`` fixes the (stochastic) result the
+    activity produced, and ``journal_index`` / ``journal_event_hash`` tie both to
+    the exact run-journal entry the activity was anchored at. Only hashes, the
+    kind, the terminal state, and the reason code are recorded -- never the
+    artifact body or the fetched evidence.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose journal the activity was anchored into.
+        stage_id: The scheduler stage id that crossed the boundary.
+        kind: The agent modality (``research`` / ``browser`` / ``data`` /
+            ``ops`` / ``coding``).
+        artifact_hash: SHA-256 of the canonical activity artifact.
+        evidence_set_hash: SHA-256 over the observation set (replay-invariant).
+        terminal_state: The typed terminal state
+            (``completed`` / ``refused`` / ``failed`` / ``timed_out``).
+        reason_code: The machine reason code for the terminal state.
+        journal_index: 0-based journal index of the anchoring entry.
+        journal_event_hash: The anchoring journal entry's Merkle ``event_hash``.
+        actor: Recorded actor; defaults to ``"activity"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ACTIVITY_RESULT,
+        actor=actor,
+        resource_type="activity_result",
+        resource_id=stage_id,
+        details={
+            "run_id": run_id,
+            "stage_id": stage_id,
+            "kind": kind,
+            "artifact_hash": artifact_hash,
+            "evidence_set_hash": evidence_set_hash,
+            "terminal_state": terminal_state,
+            "reason_code": reason_code,
+            "journal_index": journal_index,
+            "journal_event_hash": journal_event_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
+    "EVENT_ACTIVITY_RESULT",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
@@ -1492,6 +1569,7 @@ __all__ = [
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
     "ThreadApprovalDetails",
+    "record_activity_result",
     "record_cost_profile_report",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
