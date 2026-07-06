@@ -126,6 +126,32 @@ one root.
 > entry timestamp. This section covers the `journal.jsonl` chain, the one
 > surfaced in run metadata and the `bernstein replay` header.
 
+## Live thread stream
+
+The TUI and web UI render the run as a live SSE stream that is a hash-anchored
+projection of the same `journal.jsonl` chain, rather than a timer poll of the
+server. Each streamed event carries its journal entry's `event_hash`, so the
+operator's view is an attestable projection of what executed.
+
+- `bernstein thread verify --run <id>` proves the projection equals the
+  executed journal: it recomputes the Merkle chain
+  (`verify_thread_against_journal` in
+  `src/bernstein/core/replay/thread_projection.py`) and confirms every
+  projected event carries the byte-identical entry hash. Exit 1 on divergence
+  (reporting the first divergent step index), exit 2 when the run journal is
+  missing.
+- The projection is a pure function of the journal
+  (`project_journal(path, after_index=...)`), so a dropped-and-reconnected
+  client resumes from `Last-Event-ID` (the monotonic journal index) without
+  missing or duplicating a row.
+- Set `BERNSTEIN_TUI_STREAM=1` to drive the TUI hot path from the stream; unset
+  keeps the polling fallback for constrained terminals. The rendering is
+  unchanged - only the data source is swapped.
+- An approval resolved over the stream is itself a signed record: it is
+  appended to the HMAC audit chain as a `thread.approval` event
+  (`record_thread_approval` in `src/bernstein/core/security/audit_chain.py`)
+  anchored to the exact journal index and entry hash the operator saw.
+
 ## Related
 
 - Source: `src/bernstein/core/orchestration/deterministic.py`
