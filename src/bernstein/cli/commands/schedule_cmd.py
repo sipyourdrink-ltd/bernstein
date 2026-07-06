@@ -167,16 +167,82 @@ def schedule_list(as_json: bool) -> None:
         click.echo(f"{s.id:<24} {s.cron:<24} {s.misfire_policy:<10} {body[:60]}")
 
 
+def _parse_at(value: str) -> int:
+    """Parse an ``--at`` value into an integer Unix epoch (UTC).
+
+    Accepts a bare integer epoch or an ISO-8601 timestamp. A naive
+    timestamp is read as UTC so ``schedule show --at`` is host-timezone
+    independent - the projection contract is UTC-only.
+    """
+    text = value.strip()
+    if text.lstrip("-").isdigit():
+        return int(text)
+    from datetime import UTC, datetime
+
+    normalised = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalised)
+    except ValueError as exc:
+        raise click.BadParameter(f"--at must be an epoch int or ISO-8601 timestamp, got {value!r}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return int(parsed.timestamp())
+
+
 @schedule_group.command("show")
 @click.argument("schedule_id")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON output.")
-def schedule_show(schedule_id: str, as_json: bool) -> None:
-    """Show one schedule's full record."""
+@click.option(
+    "--at",
+    "at_value",
+    default=None,
+    help="Print the graph hash this schedule would dispatch at the given time (epoch or ISO-8601) without firing.",
+)
+def schedule_show(schedule_id: str, as_json: bool, at_value: str | None) -> None:
+    """Show one schedule's full record, or the graph hash it would fire.
+
+    With ``--at <time>`` this prints the deterministic ``graph_hash`` the
+    schedule would dispatch at that instant WITHOUT firing: no receipt, no
+    journal row, no audit-chain entry, no ``last_fire_at`` mutation. The
+    fire is a hash, not a trigger, so the operator can preview and compare
+    it against another host's projection before anything runs.
+    """
     sdd = _sdd_dir()
     schedule = ScheduleStore(sdd).get(schedule_id)
     if schedule is None:
         click.echo(f"error: schedule {schedule_id!r} not found", err=True)
         raise SystemExit(1)
+
+    if at_value is not None:
+        from bernstein.core.orchestration.schedule_projection import project
+
+        fire_time = _parse_at(at_value)
+        recurrence = f"cron:{schedule.cron}" if schedule.cron else ""
+        projection = project(
+            schedule.id,
+            fire_time,
+            None,
+            goal=schedule.goal,
+            scenario_id=schedule.scenario_id,
+            recurrence=recurrence,
+        )
+        if as_json:
+            click.echo(
+                _json.dumps(
+                    {
+                        "schedule_id": schedule.id,
+                        "fire_time": fire_time,
+                        "graph_hash": projection.graph_hash,
+                        "rev": projection.rev,
+                        "recurrence": projection.recurrence,
+                    },
+                    sort_keys=True,
+                    indent=2,
+                )
+            )
+        else:
+            click.echo(projection.graph_hash)
+        return
 
     payload = _schedule_to_public_dict(schedule)
     if as_json:
@@ -261,6 +327,66 @@ def schedule_audit(as_json: bool) -> None:
         click.echo("audit FAILED - the following receipts did not verify:", err=True)
         for failure in report.failures:
             click.echo(f"  - {failure}", err=True)
+        raise SystemExit(1)
+
+
+@schedule_group.command("verify")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON output.")
+def schedule_verify(as_json: bool) -> None:
+    """Replay every recorded fire and confirm its graph hash (verification).
+
+    For each ``schedule.fire_projection`` row recorded in the event journal
+    this re-runs the deterministic projection from the row's persisted
+    inputs and confirms the recomputed ``graph_hash`` equals the recorded
+    one. A divergence names the fire and exits non-zero, so the verb is
+    safe as a CI gate: it proves a past fire is byte-identically
+    reproducible from ``(schedule, fire_time, state)``.
+    """
+    from bernstein.core.orchestration.schedule_fire_record import verify_all_fires
+
+    sdd = _sdd_dir()
+    results = verify_all_fires(sdd)
+
+    if as_json:
+        click.echo(
+            _json.dumps(
+                {
+                    "fires": [
+                        {
+                            "schedule_id": r.schedule_id,
+                            "fire_time": r.fire_time,
+                            "recorded_graph_hash": r.recorded_graph_hash,
+                            "recomputed_graph_hash": r.recomputed_graph_hash,
+                            "match": r.match,
+                            "reason": r.reason,
+                        }
+                        for r in results
+                    ],
+                    "ok": all(r.match for r in results),
+                },
+                sort_keys=True,
+                indent=2,
+            )
+        )
+        raise SystemExit(0 if all(r.match for r in results) else 1)
+
+    if not results:
+        click.echo("(no schedule fires recorded)")
+        return
+
+    click.echo(f"{'FIRE_TIME':<20} {'SCHEDULE':<24} {'GRAPH':<18} STATUS")
+    for r in results:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r.fire_time))
+        graph_short = (r.recorded_graph_hash or "-")[:16]
+        status = "ok" if r.match else "MISMATCH"
+        click.echo(f"{ts:<20} {r.schedule_id:<24} {graph_short:<18} {status}")
+
+    failures = [r for r in results if not r.match]
+    if failures:
+        click.echo("", err=True)
+        click.echo("verify FAILED - the following fires did not reproduce:", err=True)
+        for r in failures:
+            click.echo(f"  - {r.schedule_id}@{r.fire_time}: {r.reason}", err=True)
         raise SystemExit(1)
 
 
