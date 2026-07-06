@@ -134,11 +134,14 @@ class BrowserRenderingBridge:
         data = await browser.scrape("https://example.com", selector=".article")
     """
 
-    def __init__(self, config: BrowserConfig) -> None:
+    def __init__(self, config: BrowserConfig, *, audit_dir: Any = None) -> None:
         """Initialise the browser rendering bridge.
 
         Args:
             config: Browser rendering configuration.
+            audit_dir: Optional audit directory. When set, each outbound
+                request's install-identity signature is attested into the
+                HMAC-chained audit log (issue #2305, f06).
 
         Raises:
             BrowserRenderingError: If required configuration fields are missing.
@@ -148,9 +151,27 @@ class BrowserRenderingBridge:
         if not config.api_token:
             raise BrowserRenderingError("BrowserConfig requires a non-empty api_token")
         self._config = config
+        self._audit_dir = audit_dir
         self._client = httpx.AsyncClient(
             headers=self._build_headers(),
             timeout=httpx.Timeout(float(config.timeout_seconds)),
+        )
+
+    def _sign_outbound(self, api_url: str) -> dict[str, str]:
+        """Return install-identity HTTP Message Signature headers for a POST.
+
+        Signs the outbound browser/research request (f06) so the endpoint can
+        attest which Bernstein install issued it. Best-effort: signing never
+        blocks the request unless signing is required by policy.
+        """
+        from bernstein.core.identity import http_signing
+
+        return http_signing.sign_outbound(
+            method="POST",
+            url=api_url,
+            headers={},
+            call_site="browser.render",
+            audit_dir=self._audit_dir,
         )
 
     @property
@@ -353,8 +374,9 @@ class BrowserRenderingBridge:
             BrowserRenderingError: On HTTP errors or non-success responses.
         """
         api_url = self._api_url(endpoint)
+        signed_headers = self._sign_outbound(api_url)
         try:
-            resp = await self._client.post(api_url, json=payload)
+            resp = await self._client.post(api_url, json=payload, headers=signed_headers)
         except httpx.TimeoutException as exc:
             raise BrowserRenderingError(
                 f"Timeout rendering {url}: {exc}",

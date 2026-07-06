@@ -68,12 +68,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ENV_KEY_DIR",
     "ENV_SIGNING_REQUIRED",
     "SIGNATURE_LABEL",
     "UnsignedRequestRefused",
     "build_key_directory",
+    "default_keystore",
     "install_identity_keyid",
     "record_signature",
+    "sign_outbound",
     "sign_request",
     "signing_required",
     "verify_request",
@@ -87,6 +90,11 @@ _ALG: Final[str] = "ed25519"
 
 #: Environment flag that turns unsigned outbound paths into hard errors.
 ENV_SIGNING_REQUIRED: Final[str] = "BERNSTEIN_HTTP_SIGNING_REQUIRED"
+
+#: Environment override for the install-identity key directory. Shares the
+#: name used by the ``/.well-known/agent.json/keys`` route so the signing key
+#: and the published key directory are always the same keypair.
+ENV_KEY_DIR: Final[str] = "BERNSTEIN_AGENT_CARD_KEY_DIR"
 
 
 class UnsignedRequestRefused(RuntimeError):
@@ -291,6 +299,91 @@ def sign_request(
     out["Signature-Input"] = f"{SIGNATURE_LABEL}={params}"
     out["Signature"] = f"{SIGNATURE_LABEL}=:{sig_b64}:"
     return out
+
+
+def default_keystore() -> AgentCardKeystore:
+    """Return the process install-identity keystore for outbound signing.
+
+    Resolves the key directory from ``BERNSTEIN_AGENT_CARD_KEY_DIR`` (same
+    override the ``/.well-known/agent.json/keys`` route honours) so the
+    outbound signing key and the published key directory are one keypair.
+    """
+    from pathlib import Path
+
+    from bernstein.core.security.agent_card_keystore import (
+        DEFAULT_KEY_DIR,
+        AgentCardKeystore,
+    )
+
+    override = os.environ.get(ENV_KEY_DIR, "").strip()
+    key_dir = Path(override) if override else DEFAULT_KEY_DIR
+    return AgentCardKeystore(key_dir)
+
+
+def sign_outbound(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str] | None = None,
+    call_site: str,
+    keystore: AgentCardKeystore | None = None,
+    audit_dir: Any = None,
+) -> dict[str, str]:
+    """Sign an outbound agent-facing request and attest it, all best-effort.
+
+    This is the single entry point outbound call sites (A2A, browser/research
+    activities) use. It signs with the install identity, records the signature
+    into the HMAC-chained audit log when ``audit_dir`` is given, and returns
+    the augmented headers to merge into the request.
+
+    Signing never blocks egress on its own: a keystore/permission failure is
+    logged and the original headers are returned unchanged - *unless*
+    :func:`signing_required` is set, in which case a signing failure is a hard
+    :class:`UnsignedRequestRefused` (issue #2305 AC5).
+
+    Args:
+        method: HTTP method.
+        url: Absolute target URI.
+        headers: Existing request headers (copied, not mutated).
+        call_site: Symbolic outbound-path name for the audit record.
+        keystore: Optional keystore; defaults to :func:`default_keystore`.
+        audit_dir: Optional audit directory for signature attestation.
+
+    Returns:
+        Headers including the RFC 9421 signature pair (or the originals when
+        signing was skipped and not required).
+    """
+    from bernstein.core.security.sanitize import sanitize_log
+
+    base_headers = dict(headers or {})
+    ks = keystore or default_keystore()
+    try:
+        _private_pem, public_pem = ks.load_or_generate()
+        keyid = install_identity_keyid(public_pem)
+        signed = sign_request(method=method, url=url, headers=base_headers, keystore=ks)
+    except Exception as exc:  # keystore/permission failure
+        if signing_required():
+            raise UnsignedRequestRefused(
+                f"cannot sign outbound request to {sanitize_log(url)} but "
+                f"{ENV_SIGNING_REQUIRED}=1 requires a signature: {exc}"
+            ) from exc
+        logger.warning(
+            "outbound request signing skipped for %s: %s",
+            sanitize_log(url),
+            sanitize_log(str(exc)),
+        )
+        return base_headers
+
+    if audit_dir is not None:
+        record_signature(
+            audit_dir=audit_dir,
+            method=method,
+            url=url,
+            signature_headers=signed,
+            keyid=keyid,
+            call_site=call_site,
+        )
+    return signed
 
 
 # ---------------------------------------------------------------------------
