@@ -345,7 +345,11 @@ def main() -> None:
     # command-not-found diagnostic below.
     launch_cmd = _resolve_launch_cmd(cmd)
     try:
-        child = subprocess.Popen(launch_cmd)
+        # launch_cmd is an argv list (never a shell string) built from the
+        # trusted adapter command; shell=False, so there is no shell to inject
+        # into. The Windows cmd.exe /c wrapper also passes each arg as a
+        # separate list element, not a concatenated command line.
+        child = subprocess.Popen(launch_cmd)  # nosemgrep
     except FileNotFoundError as exc:
         # Typed first-run error: the adapter binary is missing from PATH.
         # Callers running this worker as a subprocess can categorise via

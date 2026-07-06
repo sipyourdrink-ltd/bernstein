@@ -1027,8 +1027,7 @@ def record_artifact_write(
     if not _lineage_enabled():
         return None
     ts = timestamp if timestamp is not None else time.time_ns()
-    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
-    return spine.record(
+    return LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key).record(
         artifact_path=artifact_path,
         content=content,
         actor=actor,
