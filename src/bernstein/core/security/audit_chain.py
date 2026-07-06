@@ -246,6 +246,16 @@ EVENT_WEBHOOK_NODE_RECEIPT = "webhook_node.receipt"
 #: the verdict, and the anchor are recorded.
 EVENT_GOVERNANCE_DECISION = "governance.decision"
 
+#: Issue #2304 -- emitted whenever an A2A message receipt is anchored in the
+#: message-receipt lineage spine. Every inbound/outbound cross-agent message
+#: binds ``{message_hash, peer_card_fingerprint, task_uuid, journal_entry_hash}``
+#: and the A2A task state it carried. Mirroring the receipt into the chain lets
+#: a reviewer prove, from the chain alone, that a cross-agent call happened with
+#: the exact inputs claimed, without trusting either agent's logs. Only hashes,
+#: the peer fingerprint, the task uuid, and the lifecycle state are recorded --
+#: never the message body.
+EVENT_A2A_MESSAGE_RECEIPT = "a2a.message_receipt"
+
 #: Issue #2311 -- emitted whenever a typed activity boundary is crossed under the
 #: deterministic scheduler, mirroring the run journal's ``activity.result`` entry
 #: into the chain. Any agent modality (research, browser/computer-use, data, ops,
@@ -1531,6 +1541,60 @@ def record_governance_decision(
     )
 
 
+def record_a2a_message_receipt(
+    *,
+    chain: AuditChainStore,
+    direction: str,
+    task_uuid: str,
+    state: str,
+    reason_code: str,
+    message_hash: str,
+    peer_card_fingerprint: str,
+    journal_entry_hash: str,
+    actor: str = "a2a_message",
+) -> AuditEvent:
+    """Append an ``a2a.message_receipt`` event into *chain* (#2304).
+
+    Mirrors one A2A message receipt into the HMAC-chained audit log so a
+    reviewer can prove, from the chain alone, that a cross-agent message
+    happened with the exact inputs claimed, without trusting either agent's
+    logs. Only hashes, the peer fingerprint, the task uuid, and the lifecycle
+    state are recorded -- never the message body.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        direction: ``inbound`` or ``outbound``.
+        task_uuid: The A2A task uuid the message belongs to (the trace root).
+        state: The A2A v1.0 task state the message carried.
+        reason_code: The reason code the state maps to on the journal.
+        message_hash: Content hash of the message.
+        peer_card_fingerprint: ``sha256:`` fingerprint of the peer's card key.
+        journal_entry_hash: The message-receipt spine entry hash anchoring the
+            receipt; a verifier holding the spine can recompute it.
+        actor: Recorded actor; defaults to ``"a2a_message"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    details: dict[str, Any] = {
+        "direction": direction,
+        "task_uuid": task_uuid,
+        "state": state,
+        "reason_code": reason_code,
+        "message_hash": message_hash,
+        "peer_card_fingerprint": peer_card_fingerprint,
+        "journal_entry_hash": journal_entry_hash,
+    }
+    return chain.log_with_prev_digest(
+        event_type=EVENT_A2A_MESSAGE_RECEIPT,
+        actor=actor,
+        resource_type="a2a_message_receipt",
+        resource_id=task_uuid,
+        details=details,
+    )
+
+
 
 
 def record_activity_result(
@@ -1598,6 +1662,7 @@ def record_activity_result(
     )
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
+    "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_ACTIVITY_RESULT",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
@@ -1631,6 +1696,7 @@ __all__ = [
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
     "ThreadApprovalDetails",
+    "record_a2a_message_receipt",
     "record_activity_result",
     "record_cost_profile_report",
     "record_escalation_receipt",
