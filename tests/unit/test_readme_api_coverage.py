@@ -85,6 +85,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "eval",
         "estimate",
         "checkpoint",
+        # Fork-from-step on worktree snapshots (issue #2295)
+        "fork",
         "wrap-up",
         "replay",
         "thread",

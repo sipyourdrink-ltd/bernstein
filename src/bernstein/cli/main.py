@@ -66,6 +66,7 @@ from bernstein.cli.commands.decisions_cmd import decisions_group
 from bernstein.cli.commands.desktop_register_cmd import desktop_register_cmd
 from bernstein.cli.commands.export_cmd import export_cmd
 from bernstein.cli.commands.fleet_cmd import fleet_group
+from bernstein.cli.commands.fork_cmd import fork_cmd
 from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
@@ -1003,6 +1004,7 @@ cli.add_command(start)
 cli.add_command(demo)
 cli.add_command(checkpoint_cmd, "checkpoint")
 cli.add_command(resume_cmd, "resume")
+cli.add_command(fork_cmd, "fork")
 cli.add_command(wrap_up, "wrap-up")
 cli.add_command(audit_group, "audit")
 cli.add_command(bom_group, "bom")
