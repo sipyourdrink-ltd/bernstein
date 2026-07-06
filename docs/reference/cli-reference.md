@@ -1148,6 +1148,7 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 | `bernstein workflow` | Workflow mgmt (group). | `cli/workflow_cmd.py:15` |
 | `bernstein replay RUN_ID --verify` / `--from-step N` | Recompute the run journal's Merkle head and report the first divergent step (writes `divergence_report.json`), or rebuild deterministic state to step N. | `cli/commands/advanced_cmd.py` |
 | `bernstein thread verify --run <id>` | Prove the live event stream equals the run journal: recompute the journal's Merkle chain and confirm every streamed event carries the byte-identical entry hash. `--json` for machine output. Exit 1 on divergence, 2 when the run journal is missing. | `cli/commands/thread_cmd.py` |
+| `bernstein webhook verify <event_id>` | Verify an audited webhook node's signed receipts: recompute the inbound event hash and the outbound result hash against the run journal, re-check both Ed25519 signatures offline, and re-anchor both receipts against the webhook-node lineage spine. Exit 1 when no receipt / no outbound yet, 2 on tamper. | `cli/commands/webhook_cmd.py` |
 
 #### `bernstein ab-test`
 

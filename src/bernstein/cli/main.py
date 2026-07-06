@@ -1208,3 +1208,8 @@ cli.add_command(telemetry_group, "telemetry")
 from bernstein.cli.commands.trend_scan_cmd import trend_scan_group  # noqa: E402
 
 cli.add_command(trend_scan_group, "trend-scan")
+
+# Audited webhook-node receipts: signed inbound + outbound webhook events (#2310).
+from bernstein.cli.commands.webhook_cmd import webhook_group  # noqa: E402
+
+cli.add_command(webhook_group, "webhook")
