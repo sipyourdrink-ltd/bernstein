@@ -35,6 +35,7 @@ from bernstein.cli.helpers import (
 )
 from bernstein.cli.mcp_cmd import mcp_server as mcp_server  # re-exported for main.py
 from bernstein.core.runtime_state import read_session_replay_metadata
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.traces import TraceStore, build_replay_task_request, render_replay_diff
 from bernstein.core.visual_config import VisualConfig, resolve_visual_config
 
@@ -1319,6 +1320,225 @@ def trace_reindex_cmd(ctx: click.Context) -> None:
     traces_dir = (ctx.obj or {}).get("traces_dir", ".sdd/traces")
     count = ContentAddressedTraceStore(Path(traces_dir)).reindex()
     console.print(f"[green]Reindex complete:[/green] {count} entries")
+
+
+# ---------------------------------------------------------------------------
+# trace project / verify-projection -- signed OTel span set from the journal
+# ---------------------------------------------------------------------------
+
+#: Default local JSONL store for projected OTLP spans. The projection emits
+#: here even with no OTLP endpoint set (issue #2300, AC5).
+_OTEL_PROJECTION_SUFFIX = ".otel.json"
+
+
+def _journal_path_for_run(root: Path, run_id: str) -> Path:
+    from bernstein.core.replay.journal import JOURNAL_FILENAME
+
+    return root / ".sdd" / "runs" / run_id / JOURNAL_FILENAME
+
+
+def _projection_dest(root: Path, run_id: str) -> Path:
+    return root / ".sdd" / "runs" / run_id / f"projection{_OTEL_PROJECTION_SUFFIX}"
+
+
+@trace_cmd.command("project")
+@click.argument("run_id")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--no-genai-stability",
+    "no_stability",
+    is_flag=True,
+    default=False,
+    help="Omit the (Development-stage) GenAI convention attributes; ids stay journal-anchored.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the signed projection to stdout as JSON instead of writing a file.",
+)
+def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bool) -> None:
+    """Project ``RUN_ID``'s event journal into a signed OTel span set.
+
+    Span ids are derived from journal entry hashes, so two replays export a
+    byte-identical id tree; the set is signed with the install identity. The
+    projection is written to the local JSONL store even with no OTLP endpoint
+    set (issue #2300).
+
+    Exit codes: 0 = written, 1 = no journal / bad input.
+    """
+    from bernstein.cli.commands.credential_cmd import (
+        _load_or_create_install_key,
+        _signing_key_path,
+    )
+    from bernstein.core.observability.otel_projection import (
+        ProjectionError,
+        canonical_projection_bytes,
+        project_spans,
+        projection_to_dict,
+        sign_projection,
+    )
+    from bernstein.core.replay.journal import load_events
+
+    root = Path(workdir).resolve()
+    journal_path = _journal_path_for_run(root, run_id)
+    events = load_events(journal_path)
+    if not events:
+        raise click.ClickException(
+            f"no event journal for run {sanitize_log(run_id)} at {sanitize_log(str(journal_path))}",
+        )
+
+    key = _load_or_create_install_key(_signing_key_path(root))
+    from bernstein.core.security.audit_dsse import keyid_from_public_key
+
+    try:
+        projection = project_spans(
+            events,
+            run_id=run_id,
+            genai_stability=not no_stability,
+            keyid=keyid_from_public_key(key.public_key()),
+        )
+    except ProjectionError as exc:
+        raise click.ClickException(sanitize_log(str(exc))) from exc
+
+    signed = sign_projection(projection, signing_key=key)
+    doc = json.dumps(projection_to_dict(signed), sort_keys=True, indent=2)
+
+    if as_json:
+        click.echo(doc)
+        return
+
+    _record_otel_projection_event(
+        root,
+        run_id=run_id,
+        journal_head=str(events[-1].get("event_hash", "")),
+        trace_id=signed.trace_id,
+        span_count=len(signed.spans),
+        projection_bytes=canonical_projection_bytes(signed),
+    )
+
+    dest = _projection_dest(root, run_id)
+    dest.write_text(doc, encoding="utf-8")
+    console.print(
+        f"[green]OK[/green] -- wrote signed OTel projection {sanitize_log(str(dest))} "
+        f"(trace {signed.trace_id[:16]}, {len(signed.spans)} spans)"
+    )
+
+
+@trace_cmd.command("verify-projection")
+@click.argument("run_id")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--projection",
+    "projection_path",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Projection path (defaults to .sdd/runs/<run>/projection.otel.json).",
+)
+def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str | None) -> None:
+    """Recompute span ids from ``RUN_ID``'s journal and verify the signature.
+
+    Rejects a span whose id was altered or whose journal entry hash is absent
+    from the chain, and confirms the signature chains to the install identity.
+
+    Exit codes: 0 = OK, 1 = bad input, 2 = verification failed.
+    """
+    from bernstein.cli.commands.credential_cmd import (
+        _load_or_create_install_key,
+        _signing_key_path,
+    )
+    from bernstein.core.observability.otel_projection import (
+        ProjectionError,
+        projection_from_dict,
+        verify_projection,
+    )
+    from bernstein.core.replay.journal import load_events
+
+    root = Path(workdir).resolve()
+    events = load_events(_journal_path_for_run(root, run_id))
+    if not events:
+        console.print(f"[red]No event journal for run[/red] {sanitize_log(run_id)}")
+        raise SystemExit(1)
+
+    mpath = Path(projection_path) if projection_path is not None else _projection_dest(root, run_id)
+    if not mpath.exists():
+        console.print(f"[red]No projection at[/red] {sanitize_log(str(mpath))}")
+        raise SystemExit(1)
+
+    try:
+        payload = json.loads(mpath.read_text(encoding="utf-8"))
+        projection = projection_from_dict(payload)
+    except (OSError, ValueError, ProjectionError) as exc:
+        console.print(f"[red]Cannot read projection:[/red] {sanitize_log(str(exc))}")
+        raise SystemExit(1) from exc
+
+    public_key = _load_or_create_install_key(_signing_key_path(root)).public_key()
+    result = verify_projection(projection, events, public_key)
+
+    console.print()
+    console.print(
+        f"[bold]OTel projection[/bold] run={sanitize_log(run_id)} "
+        f"trace={projection.trace_id[:16]} spans={len(projection.spans)}"
+    )
+    if result.ok:
+        console.print("[green]OK[/green] -- span ids recompute from the journal, signature chains to install identity.")
+        raise SystemExit(0)
+    console.print(f"[red]VERIFICATION FAILED[/red] -- {len(result.errors)} error(s):")
+    for err in result.errors:
+        console.print(f"  - {sanitize_log(err)}")
+    raise SystemExit(2)
+
+
+def _record_otel_projection_event(
+    root: Path,
+    *,
+    run_id: str,
+    journal_head: str,
+    trace_id: str,
+    span_count: int,
+    projection_bytes: bytes,
+) -> None:
+    """Best-effort append of an ``otel.projection`` audit-chain event.
+
+    A verifier holding the journal reprojects byte-identically and confirms the
+    exported spans faithfully project the chain. Failure to record must not
+    abort the emit -- the projection file is the primary artifact.
+    """
+    import hashlib
+
+    try:
+        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit_chain import (
+            AuditChainStore,
+            record_otel_projection,
+        )
+
+        chain = AuditChainStore(root / ".sdd" / "audit", key=load_or_create_audit_key())
+        record_otel_projection(
+            chain=chain,
+            run_id=run_id,
+            journal_head=journal_head,
+            trace_id=trace_id,
+            span_count=span_count,
+            projection_sha256=hashlib.sha256(projection_bytes).hexdigest(),
+        )
+    except Exception as exc:  # pragma: no cover - defensive; emit is primary
+        _LOGGER.warning("otel projection audit record failed: %s", sanitize_log(str(exc)))
 
 
 # ---------------------------------------------------------------------------

@@ -315,6 +315,15 @@ A subcommand group; defaults to `bernstein logs tail`.
 | `--as-json` | off | Emit raw JSON. |
 | `--traces-dir DIR` | `.sdd/traces` | Directory containing trace files. |
 
+Subcommands `project RUN_ID` and `verify-projection RUN_ID` emit and verify a
+signed OTel GenAI span set projected from the run event journal. Span ids are
+derived from journal entry hashes (byte-identical across replays), each span
+carries `bernstein.journal.entry_hash`, and the set is signed with the install
+identity. `--no-genai-stability` omits the Development-stage GenAI convention
+attributes while keeping the ids journal-anchored; the local
+`.sdd/runs/<run_id>/projection.otel.json` store emits even with no OTLP endpoint
+set. (`cli/commands/advanced_cmd.py`, `core/observability/otel_projection.py`.)
+
 #### `bernstein slo`
 
 | Flag | Default | Meaning |
