@@ -1595,8 +1595,6 @@ def record_a2a_message_receipt(
     )
 
 
-
-
 def record_activity_result(
     *,
     chain: AuditChainStore,
@@ -1660,6 +1658,8 @@ def record_activity_result(
             "journal_event_hash": journal_event_hash,
         },
     )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
