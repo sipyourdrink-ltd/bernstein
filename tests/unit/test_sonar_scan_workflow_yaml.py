@@ -1,17 +1,29 @@
 """Structural assertions on the SonarQube scan workflow.
 
-These tests pin the contract that the Sonar scan consumes the coverage
-artifact from a successful CI run for the same main commit. The scan
-must not start on the raw push event or on a cancelled CI run before the
-matching CI coverage artifact exists.
+These tests pin two properties of the Sonar scan design:
+
+    * Accurate coverage: the ``workflow_run`` path consumes the coverage
+      artifact from the successful CI run for the same main commit. That
+      path must not start on the raw push event or on a cancelled CI run
+      before the matching CI coverage artifact exists.
+    * Reliability: a daily ``schedule`` backstop lands a scan even when
+      main CI runs keep getting cancelled (CI on main uses
+      cancel-in-progress, so rapid merges cancel most runs before
+      success and the workflow_run gate then skips). The scheduled run
+      has no cancellable upstream and regenerates coverage in-job when no
+      CI artifact is available.
 
 The tests below assert the workflow has:
 
     * a ``workflow_run`` trigger for completed main CI runs,
-    * a job guard that accepts only successful main CI workflow runs,
+    * a ``schedule`` (cron) trigger as a reliability backstop,
+    * a job guard that accepts successful main CI runs, the schedule, and
+      manual dispatch,
     * no direct ``push`` trigger, because that races the CI artifact,
     * a workflow-run artifact download keyed to the triggering CI run,
-    * a thin fallback limited to manual dispatch only.
+    * a thin coverage fallback limited to the schedule/dispatch backstop
+      (never the workflow_run path, which skips rather than reporting a
+      partial coverage number for main).
 
 The tests are cheap; they parse YAML only and do not call the GitHub
 API.
@@ -66,8 +78,46 @@ def test_sonar_scan_keeps_workflow_dispatch(sonar_doc: dict[str, object]) -> Non
     assert "workflow_dispatch" in on_block, "Sonar scan must keep its manual dispatch trigger"
 
 
+def test_sonar_scan_has_scheduled_backstop_that_regenerates_coverage(sonar_doc: dict[str, object]) -> None:
+    """A daily ``schedule`` trigger must land a scan even when workflow_run scans skip.
+
+    CI on main uses cancel-in-progress, so rapid merges cancel most main
+    CI runs before success and the workflow_run gate then skips this scan.
+    The scheduled run has no cancellable upstream, so it must exist and it
+    must be able to produce coverage in-job (the thin fallback runs on the
+    schedule path) rather than depending on a CI artifact that may never
+    have been uploaded.
+    """
+    on_block = sonar_doc.get(True) or sonar_doc.get("on")
+    assert isinstance(on_block, dict)
+    schedule = on_block.get("schedule")
+    assert isinstance(schedule, list) and schedule, "Sonar scan must define a schedule (cron) backstop"
+    crons = [entry.get("cron") for entry in schedule if isinstance(entry, dict)]
+    assert any(isinstance(cron, str) and cron.strip() for cron in crons), "schedule must declare a cron expression"
+
+    # The cron/dispatch backstop must be able to regenerate coverage in-job
+    # so a scan lands even with no upstream CI artifact.
+    jobs = sonar_doc.get("jobs", {})
+    assert isinstance(jobs, dict)
+    scan = jobs.get("scan", {})
+    assert isinstance(scan, dict)
+    steps = scan.get("steps", [])
+    assert isinstance(steps, list) and steps
+
+    fallback_steps = [step for step in steps if isinstance(step, dict) and step.get("name") == "Thin coverage fallback"]
+    assert len(fallback_steps) == 1, "backstop must regenerate coverage via the thin coverage fallback step"
+    fallback_if = str(fallback_steps[0].get("if", ""))
+    assert "github.event_name == 'schedule'" in fallback_if, (
+        "The scheduled backstop must be able to regenerate coverage in-job"
+    )
+    fallback_run = str(fallback_steps[0].get("run", ""))
+    assert "coverage xml" in fallback_run and "coverage.xml" in fallback_run, (
+        "The fallback must produce coverage.xml so the scheduled scan lands a coverage number"
+    )
+
+
 def test_sonar_scan_job_if_accepts_successful_workflow_run_and_dispatch(sonar_doc: dict[str, object]) -> None:
-    """The job-level `if` must accept successful CI runs and manual dispatch."""
+    """The job-level `if` must accept successful CI runs, the schedule, and manual dispatch."""
     jobs = sonar_doc.get("jobs")
     assert isinstance(jobs, dict) and jobs, "Workflow must declare a `jobs:` block"
     scan_job = jobs.get("scan")
@@ -76,6 +126,8 @@ def test_sonar_scan_job_if_accepts_successful_workflow_run_and_dispatch(sonar_do
     assert isinstance(job_if, str)
     flat = " ".join(job_if.split())
     assert "workflow_dispatch" in flat, "Job `if` must accept workflow_dispatch events"
+    # The daily schedule is the reliability backstop; it must not be gated out.
+    assert "schedule" in flat, "Job `if` must accept the scheduled backstop run"
     assert "workflow_run" in flat, "Job `if` must accept workflow_run events from CI"
     assert "github.event.workflow_run.conclusion == 'success'" in flat, (
         "Workflow-run scans must ignore cancelled or failed CI runs that do not produce coverage artifacts"
@@ -107,10 +159,13 @@ def test_sonar_scan_downloads_workflow_run_coverage_artifact(sonar_doc: dict[str
 
 
 def test_sonar_scan_limits_thin_fallback_to_manual_dispatch(sonar_doc: dict[str, object]) -> None:
-    """Thin fallback must not replace missing main CI coverage.
+    """Thin fallback must not replace missing main CI coverage on the accurate path.
 
-    A push or workflow-run scan without the matching CI artifact should
-    skip the scan instead of reporting a partial coverage number.
+    A push or workflow_run scan without the matching CI artifact must
+    skip the scan instead of reporting a partial coverage number. The
+    fallback is allowed only on the schedule/dispatch backstop, where no
+    upstream CI run exists and regenerating coverage in-job is the whole
+    point of landing a daily scan.
     """
     jobs = sonar_doc.get("jobs", {})
     assert isinstance(jobs, dict)
@@ -123,7 +178,10 @@ def test_sonar_scan_limits_thin_fallback_to_manual_dispatch(sonar_doc: dict[str,
     fallback_steps = [step for step in steps if isinstance(step, dict) and step.get("name") == "Thin coverage fallback"]
     assert len(fallback_steps) == 1, f"Found steps: {step_names!r}"
     fallback_if = str(fallback_steps[0].get("if", ""))
+    # Backstop paths (manual dispatch or the daily schedule) may regenerate
+    # coverage; the accurate workflow_run path must never fall back.
     assert "github.event_name == 'workflow_dispatch'" in fallback_if
+    assert "github.event_name == 'schedule'" in fallback_if
     assert "workflow_run" not in fallback_if
 
     sonar_steps = [

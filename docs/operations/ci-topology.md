@@ -72,7 +72,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/soc2-evidence-nightly.yml | soc2-evidence-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
 | .github/workflows/sonar-hotspot-review.yml | SonarQube hotspot review | workflow_dispatch | {"cancel-in-progress": "false", "group": "sonar-hotspot-review"} | 1 |
 | .github/workflows/sonar-pr-comment.yml | SonarQube PR insights comment | pull_request | {"cancel-in-progress": "true", "group": "sonar-pr-comment-${{ github.event.pull_request.number }}"} | 1 |
-| .github/workflows/sonar-scan.yml | SonarQube scan | workflow_dispatch, workflow_run | {"cancel-in-progress": "false", "group": "sonar-scan-${{ github.ref }}"} | 1 |
+| .github/workflows/sonar-scan.yml | SonarQube scan | schedule, workflow_dispatch, workflow_run | {"cancel-in-progress": "false", "group": "sonar-scan-${{ github.ref }}"} | 1 |
 | .github/workflows/sonar-tracker.yml | SonarQube findings tracker | schedule, workflow_dispatch, workflow_run | {"cancel-in-progress": "false", "group": "sonar-tracker"} | 1 |
 | .github/workflows/stale.yml | Stale cleanup | schedule | {"cancel-in-progress": "false", "group": "stale-${{ github.ref }}"} | 1 |
 | .github/workflows/static-analysis-extended.yml | static-analysis (extended) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
