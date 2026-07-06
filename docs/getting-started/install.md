@@ -69,7 +69,7 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
 
 === "Debian / Ubuntu (apt)"
 
-    See the [Linux package guide](install-linux.md) for the GPG key and signed-repo setup.
+    See the [Linux install guide](install-linux.md) for the COPR, Homebrew, pip/uv/pipx, and Docker channels.
 
 === "npm wrapper"
 
@@ -136,7 +136,7 @@ Combine extras with brackets: `pip install 'bernstein[openai,docker,s3]'`.
 bernstein --version
 ```
 
-You should see a version number close to **1.9.3**. Then run the pre-flight check:
+You should see a version number close to **2.16.1**. Then run the pre-flight check:
 
 ```bash
 bernstein doctor
@@ -161,4 +161,4 @@ Now that `bernstein --version` works, head to **[First run](first-run.md)** to t
 
 For platform-specific notes, see also:
 
-- [Linux package install (apt / dnf)](install-linux.md)
+- [Linux install (COPR / Homebrew / pip / Docker)](install-linux.md)

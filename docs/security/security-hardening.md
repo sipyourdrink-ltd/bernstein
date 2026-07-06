@@ -237,7 +237,7 @@ bernstein trace <task-id>           # Per-task policy evaluation detail
 All violations - block and warn - are included in the compliance report:
 
 ```bash
-bernstein admin compliance-report
+bernstein compliance report
 ```
 
 ## Role-based file permissions
@@ -365,11 +365,11 @@ entry. Any insertion, deletion, or modification breaks the chain.
 ### Verify audit log integrity
 
 ```bash
-# Verify the full HMAC chain is intact
-bernstein admin verify-audit-log
+# Verify the full HMAC chain and Merkle tree are intact
+bernstein audit verify
 
-# Check a specific date range
-bernstein admin verify-audit-log --from 2026-01-01 --to 2026-03-31
+# Inspect events from a specific date onward
+bernstein audit query --since 2026-01-01 --limit 500
 ```
 
 ### Export to SIEM
@@ -442,7 +442,10 @@ bernstein stop && bernstein run   # Restart to pick up new secret
 # Override with: export BERNSTEIN_AUDIT_KEY_PATH=/secure/path/audit.key
 KEY_PATH="${BERNSTEIN_AUDIT_KEY_PATH:-${XDG_STATE_HOME:-$HOME/.local/state}/bernstein/audit.key}"
 cp "$KEY_PATH" "${KEY_PATH}.bak"
-bernstein admin rotate-audit-key
+# Write a fresh HMAC key, then move pre-rotation chain files out of the
+# active chain so verification does not fail on the old key.
+openssl rand -hex 32 > "$KEY_PATH"
+bernstein audit archive --corrupt --yes
 ```
 
 ### PII detection
@@ -527,10 +530,11 @@ auth:
   token_expiry_s: 3600
 ```
 
-Generate a token for API access:
+Obtain a session token for API access. Token lifetime is controlled by
+`token_expiry_s` in the `auth` config above:
 
 ```bash
-bernstein auth token --expiry 24h
+bernstein auth login
 ```
 
 Include the token in API requests:
@@ -578,10 +582,12 @@ cluster:
     token_expiry_hours: 24
 ```
 
-Revoke a node token to immediately deny a compromised worker:
+To immediately deny a compromised worker, rotate the shared cluster secret
+and restart the cluster so outstanding node tokens no longer validate:
 
 ```bash
-bernstein admin revoke-node <node-id>
+export BERNSTEIN_CLUSTER_SECRET="$(openssl rand -hex 32)"
+bernstein stop && bernstein run
 ```
 
 ### Dashboard authentication
@@ -655,10 +661,10 @@ Output includes:
 
 ```bash
 # Structured JSON output for ingestion into compliance tooling
-bernstein admin compliance-report --format json > compliance-$(date +%Y%m%d).json
+bernstein compliance report --json-output > compliance-$(date +%Y%m%d).json
 
 # Human-readable summary
-bernstein admin compliance-report
+bernstein compliance report
 ```
 
 The report covers:
@@ -746,4 +752,4 @@ Before deploying Bernstein in a production environment:
 - [ ] Retention policy configured
 - [ ] Dependency scanning enabled
 - [ ] `bernstein doctor --security` passes clean
-- [ ] `bernstein admin compliance-report` reviewed and archived
+- [ ] `bernstein compliance report` reviewed and archived

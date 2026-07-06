@@ -48,6 +48,7 @@ docstrings only (`Brief`).
 | Session analytics | Brief | `bernstein recap` shows session-level stats |
 | Agent activity tracking | Brief | Activity metrics in `metrics/` |
 | Debug bundle | Brief | `bernstein debug`, collects logs/state/config for triage |
+| OTel GenAI span projection | Brief | `bernstein trace project` projects a run journal into signed OTel GenAI spans; `trace verify-projection` recomputes span ids |
 
 ## Safety and governance
 
@@ -71,6 +72,14 @@ docstrings only (`Brief`).
 | Agent run manifest | Brief | Hashable workflow spec for SOC2 evidence |
 | Context degradation detector | Brief | Monitors quality over time, restarts when degraded |
 | Progressive permission prompts | Brief | Per-agent permission levels |
+| Unified lineage spine | Brief | Journal head sealed into a single lineage root at run finalization; artifact provenance and replay identity share one root |
+| Always-on event journal | Brief | Merkle-chained per-run `EventJournal` (`core/replay/journal.py`); head hash is the run identity |
+| Gate adjudication records | Brief | Gate panel decisions are recomputable; `bernstein gate verify` confirms the inputs hash |
+| Review/autofix/escalation/consent/webhook-node receipts | Brief | Signed, journal-anchored receipts; verified offline via `review-receipt verify`, `escalation verify`, `mandate verify`, `webhook verify` |
+| C2PA content credentials | Brief | Artifact lineage projected into signed C2PA credentials (`credential emit/verify`) |
+| Skill install receipts | Brief | Install and usage links recomputable via `skill verify` / `skill provenance` |
+| RBAC/budget/seat projections | Brief | Access and budget verdicts re-derivable via `governance verify` |
+| Native subagent delegation | Brief | Deterministic scheduler delegates leaf execution to native subagents (Claude Code, Codex); schema-validated results anchored as `subagent.delegation` journal entries (`core/agents/subagent_delegation.py`); chain verified via `delegation verify` |
 
 ## Ecosystem and integrations
 
@@ -195,6 +204,21 @@ docstrings only (`Brief`).
 | `bernstein plan ls/show` | Brief | List and inspect archived plans |
 | `bernstein review-responder ...` | Brief | PR review responder (start/status/tick) |
 | `bernstein review --pipeline` | Brief | Review with YAML pipeline DSL |
+| `bernstein fork --run --from-step` | Brief | Fork a run at a journal step into a new isolated run |
+| `bernstein gate verify` | Brief | Recompute a gate panel's inputs hash and confirm the adjudication |
+| `bernstein mandate emit/verify/revoke` | Brief | Bind, prove, and revoke authorized-action mandates |
+| `bernstein governance verify` | Brief | Recompute access and budget verdicts for a run |
+| `bernstein webhook verify` | Brief | Recompute inbound event and outbound webhook-node hashes |
+| `bernstein review-receipt emit/verify` | Brief | Bind and offline-verify PR review receipts (issue + plan + tool calls + diff) |
+| `bernstein escalation show/verify` | Brief | Project and reconstruct escalation receipts from the journal |
+| `bernstein delegation verify` | Brief | Reconstruct and verify a run's delegation chain |
+| `bernstein credential emit/verify` | Brief | Project an artifact's lineage into a signed C2PA credential and verify it |
+| `bernstein skill provenance/verify` | Brief | Recompute a skill's install receipt and usage-provenance graph |
+| `bernstein schedule verify/audit`, `schedule show --at` | Brief | Replay recorded fires, chain-check fire receipts, project a schedule at a time |
+| `bernstein trace project/verify-projection` | Brief | Project a run journal into signed OTel GenAI spans and verify the projection |
+| `bernstein thread verify` | Brief | Prove a streamed TUI thread equals its executed journal |
+| `bernstein memory verify/why/forget` | Brief | Prove authorship, trace origin, and tombstone a memory entry |
+| `bernstein replay --verify/--from-step` | Brief | Recompute the journal head or rebuild state to a step |
 
 ---
 

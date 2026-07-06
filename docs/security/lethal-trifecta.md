@@ -60,7 +60,7 @@ Three properties matter for a reviewer:
   not silently allowed.
 - **Bypass-immune in the policy graph.** The decision lands as
   `DecisionType.IMMUNE` with `bypass_immune=True` in
-  [`policy_engine.py`](../../src/bernstein/core/security/policy_engine.py).
+  [`policy_engine.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/security/policy_engine.py).
   Even with `permission_mode: bypass`, plugin layers cannot override it.
 
 On refusal, two artefacts are persisted:
@@ -94,6 +94,7 @@ case allows.
 | `adapter.claude` | Y | Y | Y |
 | `adapter.clm` | Y | - | Y |
 | `adapter.cloudflare_agents` | Y | Y | Y |
+| `adapter.antigravity` | Y | Y | Y |
 | `adapter.codex` | Y | Y | Y |
 | `adapter.cody` | Y | Y | Y |
 | `adapter.continue_dev` | Y | Y | Y |
@@ -183,7 +184,7 @@ The same matrix gates cross-phase emission. Each pipeline phase
 that emits a `plan`-shaped artefact is refused at the same policy
 boundary, with the same audit surface, that gates the trifecta.
 Implementation: `register_with_capability_matrix` in
-[`phase_schemas.py`](../../src/bernstein/core/orchestration/phase_schemas.py).
+[`phase_schemas.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/orchestration/phase_schemas.py).
 
 ## Why bypass attempts fail
 
@@ -196,7 +197,7 @@ Three classes of bypass have been considered and refused:
 2. **Plugin re-tagging** (a plugin declaring `fs.read_secret` with
    `capabilities: []`) - the registry rejects the per-tool override only
    if a competing declaration is loaded; in any case the
-   [`DecisionType.IMMUNE`](../../src/bernstein/core/security/policy_engine.py)
+   [`DecisionType.IMMUNE`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/security/policy_engine.py)
    layer carries `bypass_immune=True` so plugin-layer ALLOW rules
    cannot override it.
 3. **`permission_mode: bypass`** - `bypass` relaxes medium and high
@@ -233,11 +234,9 @@ meantime. Production deployments should run `enforce`.
 ## Inspecting
 
 ```bash
-# Print the matrix and any violation chains in recorded spawns
+# Print the matrix and any violation chains in recorded spawns.
+# Exits non-zero if any violation exists.
 bernstein audit capabilities
-
-# Non-zero exit if any violation exists
-bernstein audit capabilities --strict
 ```
 
 Refusal manifests live in `.sdd/runtime/spawn_capabilities/`; HMAC

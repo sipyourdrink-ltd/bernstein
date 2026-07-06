@@ -7,7 +7,7 @@ Each entry follows the pattern: symptom, cause, diagnosis, resolution.
 1. [Adapter Not Found](#1-adapter-not-found)
 2. [CLI Binary Not in PATH](#2-cli-binary-not-in-path)
 3. [API Key Not Set](#3-api-key-not-set)
-4. [Rate Limiting / Provider Throttling](#4-rate-limiting--provider-throttling)
+4. [Rate Limiting / Provider Throttling](#4-rate-limiting-provider-throttling)
 5. [Budget Exceeded](#5-budget-exceeded)
 6. [Permission Denied on Agent Spawn](#6-permission-denied-on-agent-spawn)
 7. [Task Server Unreachable](#7-task-server-unreachable)

@@ -16,7 +16,7 @@ boundary.
 
 ## What the residency guard actually enforces
 
-Bernstein's [`OllamaAdapter`](../../src/bernstein/adapters/ollama.py)
+Bernstein's [`OllamaAdapter`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/ollama.py)
 calls `_is_self_hosted_endpoint(base_url)` on every `spawn()`. The
 guard fires when **either** of the following is true:
 
@@ -214,7 +214,7 @@ Three artefacts settle the Article-12 evidence story:
 
 - [`docs/compliance/regulatory-lineage.md`](./regulatory-lineage.md)
   -- regulatory_class taxonomy and lineage v2 schema.
-- [`scripts/build_airgap_wheelhouse.py`](../../scripts/build_airgap_wheelhouse.py)
+- [`scripts/build_airgap_wheelhouse.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/scripts/build_airgap_wheelhouse.py)
   -- offline wheel bundle builder.
-- [`bernstein wheelhouse countersign --help`](../../src/bernstein/cli/commands/wheelhouse_cmd.py)
+- [`bernstein wheelhouse countersign --help`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/cli/commands/wheelhouse_cmd.py)
   -- customer-side countersignature CLI.

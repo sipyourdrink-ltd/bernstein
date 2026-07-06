@@ -119,9 +119,9 @@ agents adds work linearly, not quadratically.
 
 - **Tick Pipeline** (`orchestration/tick_pipeline.py`) - fetch tasks, group by role, compute
   batch assignments using deterministic priority rules
-- **Task Lifecycle** (`orchestration/task_lifecycle.py`) - state machine: OPEN → CLAIMED →
+- **Task Lifecycle** (`core/tasks/task_lifecycle.py`) - state machine: OPEN → CLAIMED →
   IN_PROGRESS → DONE → CLOSED, with retry logic on failure or orphan
-- **Agent Lifecycle** (`orchestration/agent_lifecycle.py`) - heartbeat monitoring, crash
+- **Agent Lifecycle** (`core/agents/agent_lifecycle.py`) - heartbeat monitoring, crash
   detection, stall detection, dead agent reaping
 
 None of these make LLM calls. They apply rules.
@@ -149,7 +149,7 @@ Three places in Bernstein call an LLM, all optional and named:
 | Module | Purpose | When called |
 |--------|---------|-------------|
 | `core/orchestration/manager.py` | Decompose a high-level goal into tasks | Once per goal, if no plan file is provided |
-| `core/orchestration/reviewer.py` | Review completed code for quality | After janitor verification, if `reviewer.enabled: true` |
+| `core/quality/review_pipeline/` | Review completed code for quality | After janitor verification, if `reviewer.enabled: true` |
 | `core/quality/cross_model_verifier.py` | Independent diff verification | For high-stakes tasks, if configured |
 
 *(Resolved via `core.__init__` redirect map - legacy imports `core/manager.py`, `core/reviewer.py`, `core/cross_model_verifier.py` still work via `_CoreRedirectFinder`.)*
@@ -217,10 +217,8 @@ where the LLM-orchestrated predecessor ran 737 tasks over 47 hours with only
 
 ## Further reading
 
-- [ADR-001: Agent Lifecycle Model](decisions/001-agent-lifecycle.md) - Full
+- [ADR-001: Agent Lifecycle Model](../decisions/001-agent-lifecycle.md) - Full
   scoring analysis of hunger vs. pull vs. short-lived models with raw data
-- [ADR-006: No Embedded LLM in the Orchestrator](decisions/006-no-embedded-llm.md) -
+- [ADR-006: No Embedded LLM in the Orchestrator](../decisions/006-no-embedded-llm.md) -
   Formal decision record with rejected alternatives
-- [Architecture Comparison Diagram](compare/deterministic-vs-llm-orchestration.md) -
-  Side-by-side Mermaid diagrams of LLM-based vs. deterministic orchestration
 - [Architecture](ARCHITECTURE.md) - Full system diagram and module breakdown

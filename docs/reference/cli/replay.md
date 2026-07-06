@@ -1,11 +1,15 @@
-# Replay & Replay-Filter
+# Replay
 
-`bernstein replay` re-displays the events from a past orchestration run so you can debug, diff, and reproduce. There are two replay surfaces:
+`bernstein replay` re-displays the events from a past orchestration run so you can debug, diff, and reproduce. It has a single command surface with several subcommands:
 
-1. **`bernstein replay`** *(source: `cli/commands/advanced_cmd.py:876`)* - the original replay, optionally with task-trace re-submission.
-2. **`bernstein replay-filter`** (registered as `replay`'s filter wrapper) *(source: `cli/commands/replay_filter_cmd.py:164`)* - adds `--filter`, `--event-type`, `--agent`, `--search`.
+- **`bernstein replay <RUN_ID>`** - the original replay, optionally with task-trace re-submission.
+- **`bernstein replay diff RUN_A RUN_B`** - localise the first divergence between two recorded runs.
+- **`bernstein replay export <AGENT_ID> -o RECEIPT`** - write a portable per-step receipt.
+- **`bernstein replay publish <AGENT_ID> -o RECEIPT`** - write a redacted receipt for publishing.
+- **`bernstein replay verify <RECEIPT>`** - offline verifier for an exported receipt.
+- **`bernstein replay diff-journal A B`** - per-step divergence finder across two journals.
 
-Both read from the same underlying log on disk; the filter command is a strict superset of the basic command for read-only inspection. The basic command additionally supports **task-trace replay**, which re-creates a new task from a stored task trace and (optionally) compares the replay's `result_summary` against the original via a colour diff.
+All subcommands read from the same underlying journal on disk. The base command additionally supports **task-trace replay**, which re-creates a new task from a stored task trace and (optionally) compares the replay's `result_summary` against the original via a colour diff.
 
 ## What replay does (and doesn't do)
 
@@ -17,7 +21,7 @@ What replay **does not** do:
 - State mutations to remote services (a PR opened, a Slack message sent, a row inserted into your database) are **not** rolled back or repeated.
 - It does not re-create branches or worktrees. The git state is whatever your repo currently is.
 
-For full re-execution of the **same task** with a (potentially different) model, use the task-trace mode: `bernstein replay <task_id> --model opus`. This re-submits the original task description (plus any `--extra-context` you provide) as a new task on the running server and waits for it to finish, then renders a diff between the original and the new `result_summary`. (`cli/commands/advanced_cmd.py:841-873`.)
+For full re-execution of the **same task** with a (potentially different) model, use the task-trace mode: `bernstein replay <task_id> --model opus`. This re-submits the original task description (plus any `--extra-context` you provide) as a new task on the running server and waits for it to finish, then renders a diff between the original and the new `result_summary`. (`cli/commands/advanced_cmd.py`.)
 
 ## Where replay state lives
 
@@ -36,7 +40,7 @@ For full re-execution of the **same task** with a (potentially different) model,
 - Recording is on by default; `BERNSTEIN_REPLAY_RETENTION=N` bounds how many past run journals survive on disk (oldest run directories are pruned) instead of an on/off gate.
 - At run finalization the journal head is sealed into the run's lineage spine, so the replay identity and artifact provenance share one root.
 - Session metadata is parsed by `read_session_replay_metadata()` from `core/runtime_state.py`.
-- Task traces are loaded by `core.traces.TraceStore` (`cli/commands/replay_filter_cmd.py:108-117`).
+- Task traces are loaded by `TraceStore` (`core/observability/traces.py`).
 
 ## Verifying and rebuilding from the journal
 
@@ -51,7 +55,7 @@ The fingerprint shown after a replay is the Merkle head over the journal's event
 
 **Synopsis:** `bernstein replay RUN_ID_OR_TASK_ID [flags]`
 
-**Flags:** *(source: `cli/commands/advanced_cmd.py:876-906`)*
+**Flags:** *(source: `cli/commands/advanced_cmd.py`)*
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -84,65 +88,56 @@ bernstein replay T-abc123 --model opus --extra-context "Make sure tests pass on 
 
 ---
 
-## `bernstein replay-filter`
+## Subcommands
 
-A strict superset of `bernstein replay` for read-only inspection. Adds four orthogonal filters that compose with each other.
+Beyond the base run/task replay, `bernstein replay` exposes subcommands for diffing runs and for exporting and verifying portable receipts.
 
-**Synopsis:** `bernstein replay-filter RUN_ID [flags]`
+### `bernstein replay diff RUN_A RUN_B`
 
-**Flags:** *(source: `cli/commands/replay_filter_cmd.py:164-186`)*
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `RUN_ID` | required | Same as `replay`: run ID, `latest`, `list`, or task ID. |
-| `--sdd-dir PATH` | `.sdd` | Path to the `.sdd` state directory. |
-| `--as-json` | off | Emit raw JSONL. |
-| `--limit N` | none | Show only the first N **filtered** events. |
-| `--filter "k=v,..."` | none | Comma-separated key=value filters; values are regex (case-insensitive). |
-| `--event-type TYPE` | none | Show only events of a specific type. |
-| `--agent ID` | none | Show only events from this agent (substring match). |
-| `--search TEXT` | none | Full-text substring search across all event fields. |
-| `--model NAME` | none | Override model for task-trace replay. |
-| `--extra-context TEXT` | none | Append text to a replayed task description. |
-
-The four filters compose with AND semantics: an event must match every active filter.
-
-**Filter expression syntax (`--filter`):** comma-separated `key=value` pairs. Values are regular expressions, applied case-insensitively against the event field's stringified value. So `--filter "role=backend,status=done"` keeps events whose `role` field matches `backend` AND whose `status` field matches `done`.
+Localises the first divergence between two recorded runs. Walks both event chains in lockstep and reports the first step whose hash differs, so a non-deterministic drift between two runs surfaces as a precise step index rather than a wall of diff.
 
 ```bash
-# Just the agent_spawned events from the latest run
-bernstein replay latest --event-type agent_spawned
-
-# Anything mentioning "fail" in the most recent run, as JSON
-bernstein replay latest --search fail --as-json | jq '.events[]'
-
-# Backend tasks that completed
-bernstein replay latest --filter "role=backend,status=done" --limit 10
-
-# All events from a specific agent session, with full JSON output
-bernstein replay 20260415-143022 --agent backend-abc --as-json
+bernstein replay diff 20260415-143022 20260415-150118
 ```
 
-When `--as-json` is set, the filtered output schema is:
+### `bernstein replay diff-journal A B`
 
-```json
-{
-  "run_id": "<id>",
-  "events": [ /* filtered events, capped to --limit */ ],
-  "total_matched": 42
-}
+Per-step divergence finder across two journals. Like `diff` but operates directly on two journal paths, reporting the first step index where the chains diverge.
+
+### `bernstein replay export <AGENT_ID> -o RECEIPT`
+
+Writes a portable per-step receipt for an agent's journal to the path given by `-o`. The receipt carries the step chain and its head hash so it can be verified offline by another party.
+
+```bash
+bernstein replay export backend-abc -o receipt.json
+```
+
+### `bernstein replay publish <AGENT_ID> -o RECEIPT`
+
+Same as `export`, but produces a redacted receipt suitable for publishing. Sensitive fields are stripped while the head hash still anchors the visible steps.
+
+```bash
+bernstein replay publish backend-abc -o receipt.public.json
+```
+
+### `bernstein replay verify <RECEIPT>`
+
+Offline verifier for an exported or published receipt. Recomputes the receipt's chain and reports byte-identity or the first divergent step. Exits non-zero on mismatch.
+
+```bash
+bernstein replay verify receipt.json
 ```
 
 ---
 
 ## Common use cases
 
-**Reproduce a flaky failure.** Run `bernstein replay-filter latest --event-type task_verification_failed` to see exactly which gate failed and on which agent. The detail column carries the failed signal names; cross-reference with `.sdd/traces/` for the agent's full transcript.
+**Reproduce a flaky failure.** Run `bernstein replay latest` and read the `EVENT` column for `task_verification_failed` rows to see exactly which gate failed and on which agent. The detail column carries the failed signal names; cross-reference with `.sdd/traces/` for the agent's full transcript. For a machine-readable pass, use `bernstein replay latest --as-json | jq '.events[] | select(.event=="task_verification_failed")'`.
 
 **Compare models on the same task.** Find the run where the task succeeded:
 
 ```bash
-bernstein replay-filter latest --search "T-abc123" --event-type task_completed
+bernstein replay latest --as-json | jq '.events[] | select(.event=="task_completed")'
 ```
 
 then re-run with a different model:
@@ -161,7 +156,7 @@ The CLI prints a diff of the two `result_summary` strings.
 
 - Replay does not re-issue HTTP calls. Mocking a remote dependency from the original log is not supported - agents in task-trace replay make **fresh** calls.
 - Side effects to remote services (PRs, messages, webhooks, DB rows) from the original run are **not undone** by replay. There is no "rewind" mode.
-- Run-event replay only re-renders what was recorded. If `recorder.py` (`cli/commands/replay_filter_cmd.py:232`) didn't capture an event class, it will not appear.
+- Run-event replay only re-renders what was recorded. If the `EventJournal` (`core/replay/journal.py`) did not capture an event class, it will not appear.
 - Fingerprints depend on the exact recorder version. A replay log written by an older Bernstein may produce a different fingerprint when re-fingerprinted by a newer build.
 - Task-trace replay submits a **new** task - it does not retroactively re-run the original task in place. The original task's record stays in the archive untouched.
 

@@ -20,14 +20,16 @@ matrix is that tagging plus that check.
 
 ## How capabilities are declared
 
-Every adapter, MCP tool, and hook ships a YAML under
-`templates/capabilities/`:
+Capabilities ship in three aggregate YAML files under
+`templates/capabilities/`: `adapters.yaml` (CLI agent adapters),
+`mcp_tools.yaml` (built-in Bernstein MCP tools), and `surfaces.yaml`
+(generic tool surfaces). Each file is a `tools:` list keyed by `name`:
 
 ```yaml
-# templates/capabilities/github_adapter.yaml
-tool_name: gh.issue_comment
-capabilities: [PRIVATE_DATA, EXTERNAL_COMM]
-source: declared
+# templates/capabilities/adapters.yaml
+tools:
+  - name: adapter.claude
+    capabilities: [private_data, untrusted_input, external_comm]
 ```
 
 `Capability` is one of:
@@ -47,11 +49,9 @@ The matrix is consulted automatically. To check what the runtime
 sees:
 
 ```bash
-# Print the matrix and any agent configs currently violating the rule
+# Print the matrix and any agent configs currently violating the rule.
+# Exits non-zero if any violation exists.
 bernstein audit capabilities
-
-# Non-zero exit if any violation exists
-bernstein audit capabilities --strict
 ```
 
 Sample output:
@@ -74,7 +74,7 @@ from bernstein.core.security.capability_matrix import (
     CapabilityRegistry, Capability,
 )
 
-registry = CapabilityRegistry.from_templates()
+registry = CapabilityRegistry.load_default()
 decision = registry.evaluate_chain([
     "read_file",
     "web_fetch",
@@ -89,7 +89,7 @@ print(decision.reason)
 | Knob | Default | Controls |
 |---|--:|---|
 | `security.lethal_trifecta_enforcement` | `enforce` | `enforce` (deny + audit), `warn` (audit only), `off`. |
-| `templates/capabilities/*.yaml` | shipped for 17 adapters + built-in MCP tools | Capability declarations. |
+| `templates/capabilities/*.yaml` | three files: `adapters.yaml` (19 adapters), `mcp_tools.yaml`, `surfaces.yaml` | Capability declarations. |
 | Default for unknown tools | `frozenset(Capability)` (all three) | Fail-closed. |
 
 The decision lands as a new `DecisionType.IMMUNE` layer in the policy

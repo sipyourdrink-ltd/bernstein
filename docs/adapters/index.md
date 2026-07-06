@@ -14,7 +14,7 @@ bernstein integrations list --json         # stable JSON for CI dashboards
 ```
 
 Per-adapter copy lives in
-[`src/bernstein/adapters/use_cases.py`](../../src/bernstein/adapters/use_cases.py).
+[`src/bernstein/adapters/use_cases.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/use_cases.py).
 That module is the single source of truth - this page links to it so we
 do not maintain two copies of the same list.
 

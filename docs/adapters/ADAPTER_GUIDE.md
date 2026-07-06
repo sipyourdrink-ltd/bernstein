@@ -1,7 +1,7 @@
 # Adapter Selection Guide
 
-Bernstein ships 44 CLI agent adapters in `src/bernstein/adapters/`
-(43 named adapters plus a `generic` catch-all), along with support
+Bernstein ships 45 CLI agent adapters in `src/bernstein/adapters/`
+(44 named adapters plus a `generic` catch-all), along with support
 modules (caching, conformance testing, environment isolation, plugin SDK,
 etc.).
 
@@ -12,7 +12,7 @@ and timeout watchdog with SIGTERM-then-SIGKILL cleanup.
 Source of truth: `src/bernstein/adapters/registry.py`, individual adapter files.
 
 > **Quick pick**: Need the strongest results? → `claude` with `model: opus`.
-> Free tier? → `gemini` or `qwen`. Air-gapped? → `ollama` or `tabby`.
+> Free tier? → `gemini` or `qwen`. Air-gapped? → `ollama`.
 > Multi-provider resilience? → combine `claude` + `codex` + `gemini`.
 
 ### Dual role: agents AND scheduler
@@ -299,7 +299,7 @@ npm install -g @sourcegraph/cody
 
 **Install:**
 ```bash
-curl -fsSL https://github.com/block/goose/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash
 # or via Homebrew
 brew install block/tap/goose
 ```

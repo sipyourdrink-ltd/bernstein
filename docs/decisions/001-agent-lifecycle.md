@@ -1,6 +1,6 @@
 # ADR-001: Agent Lifecycle Model
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-03-22
 **Author**: Bernstein Architecture Team
 **Context**: Bernstein agent orchestration system

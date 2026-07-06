@@ -43,7 +43,7 @@ paths, ...). The helper module `bernstein.core.storage.keys`
 centralises the canonical key layout so no caller hand-constructs a
 path.
 
-[sink]: ../../src/bernstein/core/storage/sink.py
+[sink]: https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/storage/sink.py
 
 ## First-party sinks
 

@@ -47,5 +47,5 @@ Disallow: /
 User-agent: *
 Allow: /
 
-Sitemap: https://sipyourdrink-ltd.github.io/bernstein/sitemap.xml
-Host: https://sipyourdrink-ltd.github.io/bernstein/
+Sitemap: https://bernstein.readthedocs.io/sitemap.xml
+Host: https://bernstein.readthedocs.io/

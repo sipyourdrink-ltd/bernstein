@@ -45,8 +45,7 @@ force-pushes will queue.
 
 ## 3. Install Gemini Code Assist GitHub App
 
-Free tier: 240 review sessions/day (2026). URL:
-<https://github.com/marketplace/gemini-code-assist>.
+Free tier: 240 review sessions/day (2026). Install the Gemini Code Assist app from the GitHub Marketplace.
 
 Steps:
 - **Install** → authorize on `sipyourdrink-ltd/bernstein`.

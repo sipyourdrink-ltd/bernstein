@@ -228,8 +228,8 @@ Kill switch: `BERNSTEIN_DISABLE_IDENTITY=1` short-circuits every
 emit site and returns the fixed sentinel `0000000000000000`.
 
 For the full operator runbook (seed generation, rotation cadence, decode
-utility, discovery via `gh search code`), see
-[install-fingerprint](install-fingerprint.md).
+utility, discovery via `gh search code`), see the install-fingerprint
+operator runbook.
 
 ## Audit log
 

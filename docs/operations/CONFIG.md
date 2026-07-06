@@ -130,8 +130,8 @@ Environment variables are useful in CI and automation. Common variables:
 
 | Variable | Purpose |
 |---|---|
-| `BERNSTEIN_SERVER_HOST` | Server bind address |
-| `BERNSTEIN_SERVER_PORT` | Server port (default runtime is `8052`) |
+| `BERNSTEIN_BIND_HOST` | Server bind address (default `127.0.0.1`) |
+| `BERNSTEIN_PORT` | Server port (default `8052`) |
 | `BERNSTEIN_STORAGE_BACKEND` | Storage backend (`memory`, `postgres`, `redis`) |
 | `BERNSTEIN_DATABASE_URL` | PostgreSQL DSN for `postgres`/`redis` backends |
 | `BERNSTEIN_REDIS_URL` | Redis URL for distributed locking backend |
@@ -188,10 +188,11 @@ Key default groups:
 Three previously-hardcoded ceilings on the `openai_agents` adapter path are
 now tunable, with defaults unchanged so nothing breaks for existing users:
 
-- **`max_turns`** (`AgentDefaults.max_turns`, default `None`) - forwarded to
-  the OpenAI Agents SDK's `Runner.run_sync(..., max_turns=...)` only when
-  set. `None` omits the kwarg entirely, so the SDK's own default (`10`)
-  applies exactly as before. A task that legitimately needs more turns
+- **`max_turns`** (`AgentDefaults.max_turns`, default `30`) - forwarded to
+  the OpenAI Agents SDK's `Runner.run_sync(..., max_turns=...)`. The runner
+  forwards `max_turns=30` by default; set `tuning.agent.max_turns` to `None`
+  to omit the kwarg and fall back to the SDK's own default (`10`).
+  A task that legitimately needs more turns
   before `MaxTurnsExceeded` (large-repo investigation, multi-file
   refactors) can raise this via `tuning.agent.max_turns: 200` or the
   `BERNSTEIN_MAX_TURNS` env var (checked first). `BERNSTEIN_MAX_TURNS` must

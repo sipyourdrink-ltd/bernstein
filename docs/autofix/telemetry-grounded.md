@@ -193,7 +193,7 @@ The `outcome` field is one of:
 | `errored`    | Dispatch hook raised; caught for daemon hygiene. |
 
 The audit shape is identical across sources so the existing
-`bernstein audit replay` tooling consumes it without modification.
+`bernstein audit query` tooling consumes it without modification.
 
 ## Follow-ups
 

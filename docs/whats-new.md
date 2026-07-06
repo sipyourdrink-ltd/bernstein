@@ -49,7 +49,7 @@ steps:
   adapter.
 
 See the [adapter reference](adapters/openai-agents.md) and the
-[decision guide](compare/openai-agents.md) for when to pick
+[decision guide](adapters/openai-agents-comparison.md) for when to pick
 `openai_agents` vs `codex` vs `claude`.
 
 ## Pluggable sandbox backends

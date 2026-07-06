@@ -124,11 +124,11 @@ satisfies them.
 
 For Annex IV (technical documentation) and Article 11 (technical
 documentation obligations), see the healthcare demo:
-[`examples/lineage/healthcare/article12-mapping.md`](../examples/lineage/healthcare/article12-mapping.md).
+[`examples/lineage/healthcare/article12-mapping.md`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/examples/lineage/healthcare/article12-mapping.md).
 
 For the 10-year cold-storage round-trip path used in industrial-machinery
 contexts:
-[`examples/lineage/eu-manufacturer/cold-storage-roundtrip.md`](../examples/lineage/eu-manufacturer/cold-storage-roundtrip.md).
+[`examples/lineage/eu-manufacturer/cold-storage-roundtrip.md`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/examples/lineage/eu-manufacturer/cold-storage-roundtrip.md).
 
 ## Demo bundles
 

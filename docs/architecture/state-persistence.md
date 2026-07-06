@@ -247,7 +247,7 @@ Run-time helpers:
 bernstein doctor
 
 # back up the durable parts (used by `bernstein dr`)
-bernstein dr export .sdd
+bernstein dr backup --to ./backup.tar.gz
 
 # inspect the replay log
 jq -r 'select(.decision_type=="wal_replay_completed") | .inputs' \

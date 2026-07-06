@@ -38,8 +38,8 @@ SAP BTP subaccount + entitlement. There is no free or community tier
 and no "log in with GitHub" path. SAP itself recommends the inverse
 integration (external agents calling Joule via SAP Cloud Connector +
 AI Hub), which belongs in a future MCP/skills ticket, not adapter
-code. Tracking ticket:
-[`.sdd/backlog/open/2026-05-06-new-agent-adapters-sap-joule-and-others.md`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.sdd/backlog/open/2026-05-06-new-agent-adapters-sap-joule-and-others.md).
+code. Tracked in the internal backlog under
+`new-agent-adapters-sap-joule-and-others`.
 
 Re-evaluate when:
 

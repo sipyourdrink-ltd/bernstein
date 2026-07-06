@@ -3,7 +3,7 @@
 > Forward-deployed engineering, with a coding swarm that fits in your `.sdd/`.
 >
 > Bernstein is an open-source multi-agent orchestration platform for AI coding agents.
-> Deterministic scheduling, 41 CLI adapters, pluggable sandbox backends, cloud artifact
+> Deterministic scheduling, 45 CLI adapters, pluggable sandbox backends, cloud artifact
 > storage sinks, progressive-disclosure skill packs, zero vendor lock-in. Apache 2.0 licensed.
 
 ## Forward-deployed engineering use case
@@ -14,17 +14,17 @@ per-agent credential scoping, and an HMAC-signed audit trail -
 running on whichever CLI agents the client already trusts.
 
 ## Core Documentation
-- [Getting Started](https://sipyourdrink-ltd.github.io/bernstein/getting-started.html): Install, configure, run first orchestration in 60 seconds
-- [Architecture & Concepts](https://sipyourdrink-ltd.github.io/bernstein/concepts.html): Task server, agent spawner, janitor verification, worktree isolation
-- [Adapter Reference](https://sipyourdrink-ltd.github.io/bernstein/adapters.html): 41 supported agents - Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Devin Terminal, CLM gateway, and more
-- [API Reference](https://sipyourdrink-ltd.github.io/bernstein/api-reference.html): 120+ REST endpoints for tasks, agents, cost tracking, quality gates
+- [Getting Started](https://bernstein.readthedocs.io/getting-started/install/): Install, configure, run first orchestration in 60 seconds
+- [Architecture & Concepts](https://bernstein.readthedocs.io/architecture/ARCHITECTURE/): Task server, agent spawner, janitor verification, worktree isolation
+- [Adapter Reference](https://bernstein.readthedocs.io/adapters/): 45 supported agents - Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Devin Terminal, CLM gateway, and more
+- [API Reference](https://bernstein.readthedocs.io/reference/openapi-reference/): 120+ REST endpoints for tasks, agents, cost tracking, quality gates
 
 ## Guides
-- [Benchmarks](https://sipyourdrink-ltd.github.io/bernstein/leaderboard.html): SWE-Bench Lite results for solo agents and orchestrated multi-agent runs
-- [Known Limitations](https://sipyourdrink-ltd.github.io/bernstein/limitations.html): Honest constraints and workarounds
+- [Benchmarks](https://bernstein.readthedocs.io/benchmarks/BENCHMARKS/): SWE-Bench Lite results for solo agents and orchestrated multi-agent runs
+- [Known Limitations](https://bernstein.readthedocs.io/reference/KNOWN_LIMITATIONS/): Honest constraints and workarounds
 
 ## Resources
 - [GitHub Repository](https://github.com/sipyourdrink-ltd/bernstein): Source code, issues, discussions
 - [PyPI Package](https://pypi.org/project/bernstein/): pip install bernstein
-- [Blog](https://sipyourdrink-ltd.github.io/bernstein/blog.html): Engineering articles on multi-agent orchestration patterns
+- [Blog](https://bernstein.readthedocs.io/blog/ten-agents-one-release/): Engineering articles on multi-agent orchestration patterns
 - [Author](https://alexchernysh.com): Built by Alex Chernysh ([@alex_chernysh on X](https://x.com/alex_chernysh))

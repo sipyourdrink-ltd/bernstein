@@ -140,7 +140,7 @@ Inspect a specific task:
 ```bash
 bernstein diff <task-id>     # the git diff the agent produced
 bernstein trace <task-id>    # which decisions fired and why
-bernstein logs -a <task-id>  # full agent stdout
+bernstein logs tail -a <task-id>  # full agent stdout
 ```
 
 ---
@@ -206,7 +206,7 @@ will name the agent that's failing.
 ## Stop cleanly
 
 ```bash
-bernstein stop          # graceful drain, default 10s
+bernstein stop          # graceful drain, default 30s
 bernstein stop --force  # hard kill, no drain
 ```
 

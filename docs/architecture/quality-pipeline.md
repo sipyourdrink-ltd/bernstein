@@ -60,7 +60,7 @@ Two LLM-mediated paths exist for ambiguous verification:
 The janitor never blocks merge by itself - it produces results that the
 orchestrator interprets. A failed janitor verification is the first
 escalation trigger consulted by the cascade-router (see
-[Pipeline → cascade-router escalation](#pipeline--cascade-router-escalation)
+[Pipeline → cascade-router escalation](#pipeline-cascade-router-escalation)
 below).
 
 ## Gates

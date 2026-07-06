@@ -86,7 +86,7 @@ When a scenario fails, the harness collects:
 
 - Process logs from both nodes
 - Last 100 audit-log lines
-- The `bernstein cluster status` snapshot
+- The `current_status()` registry snapshot
 
 These are written to `tests/_artifacts/cluster_e2e/<test_name>/`.
 

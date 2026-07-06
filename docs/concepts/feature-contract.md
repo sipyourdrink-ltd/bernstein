@@ -95,5 +95,4 @@ flips back to failing.
 - Source: `src/bernstein/core/planning/feature_contract.py`
 - Audit hook: `src/bernstein/core/security/audit.py`
 - Janitor integration: `src/bernstein/core/quality/janitor.py`
-- CLI: `bernstein contract status`, `bernstein contract verify`
 - PR #997

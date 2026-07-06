@@ -28,11 +28,9 @@ All commands honour `--scope project` (writes into
 ## Catalog sources
 
 No catalog network request is made until a `bernstein skills catalog`
-command runs. The built-in primary source is
-`https://bernstein.run/skills-catalog.json`; on primary 5xx responses the
-fetcher tries the public mirror at
-`https://raw.githubusercontent.com/chernistry/bernstein-skills-catalog/main/skills-catalog.json`.
-Both URLs are validated as HTTPS before fetch, and fetched payloads must
+command runs. The built-in source is the operator-published catalog at
+`https://bernstein.run/skills-catalog.json`.
+The URL is validated as HTTPS before fetch, and fetched payloads must
 match the signed catalog schema before they are cached or used.
 
 ## Manifest schema
@@ -60,7 +58,7 @@ fetch, identical to the MCP catalog schema:
 
 Supported `source.kind` values: `github`, `git`, `npm`, `file`,
 `directory`. Each variant maps onto the existing
-[`plugin_installer`](../../src/bernstein/core/plugins_core/plugin_installer.py)
+[`plugin_installer`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/plugins_core/plugin_installer.py)
 implementation; the catalog does not introduce new download or extract
 logic.
 
@@ -88,7 +86,7 @@ neither self-referential nor sensitive to operator-side flags.
 
 Every install / upgrade / uninstall appends an HMAC-chained event under
 `.sdd/audit/`, reusing
-[`bernstein.core.security.audit.AuditLog`](../../src/bernstein/core/security/audit.py):
+[`bernstein.core.security.audit.AuditLog`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/security/audit.py):
 
 | Event type                 | Payload fields                                                                                                |
 |----------------------------|---------------------------------------------------------------------------------------------------------------|

@@ -1,36 +1,19 @@
-# Installing Bernstein on Linux via APT / YUM
+# Installing Bernstein on Linux
 
-Bernstein publishes signed `.deb` and `.rpm` packages on every release, hosted on GitHub Pages.
-
-> **Heads-up**: packages bundle a self-contained Python virtualenv under `/opt/bernstein/`, so there are no pip or pyproject.toml dependencies to manage.
-
----
-
-## Required: one-time setup
-
-Before adding the repository, configure GPG key verification so apt/dnf can authenticate packages.
-
-### 1. Add the signing key
-
-```bash
-# Download and install the Bernstein GPG public key
-curl -fsSL https://sipyourdrink-ltd.github.io/bernstein/gpg/bernstein-signing-key.gpg \
-  | sudo gpg --dearmor -o /usr/share/keyrings/bernstein-archive-keyring.gpg
-```
+Bernstein installs on Linux through pip/uv/pipx, Homebrew, Fedora COPR, or Docker.
+All of these pull from published artifacts (PyPI, the Homebrew tap, the COPR build, and the
+container registry), so there is nothing to configure by hand.
 
 ---
 
-## Debian / Ubuntu (APT)
+## Recommended: pip / uv / pipx
+
+Any of these installs Bernstein from PyPI. `uv` and `pipx` keep it in an isolated environment.
 
 ```bash
-# Add repository
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/bernstein-archive-keyring.gpg] \
-  https://sipyourdrink-ltd.github.io/bernstein/apt stable main" \
-  | sudo tee /etc/apt/sources.list.d/bernstein.list
-
-# Install
-sudo apt-get update
-sudo apt-get install bernstein
+uv tool install bernstein     # isolated tool environment (recommended)
+pipx install bernstein        # isolated, if you already use pipx
+pip install bernstein         # into the current environment
 ```
 
 ### Verify the installation
@@ -41,9 +24,14 @@ bernstein --version
 
 ---
 
-## Fedora / RHEL via COPR (recommended)
+## Debian / Ubuntu
 
-The easiest way to install on Fedora or RHEL. Targets: Fedora 41, 42 (x86_64, aarch64), EPEL 9, 10.
+There is no APT repository. Use `uv tool install bernstein` or `pipx install bernstein`
+(both shown above), or run the Docker image described below.
+
+---
+
+## Fedora / RHEL via COPR
 
 ```bash
 sudo dnf copr enable alexchernysh/bernstein
@@ -52,57 +40,23 @@ sudo dnf install bernstein
 
 COPR repository: https://copr.fedorainfracloud.org/coprs/alexchernysh/bernstein/
 
-## RHEL / Fedora / CentOS - manual RPM repo (alternative)
+---
+
+## Homebrew (Linux or macOS)
 
 ```bash
-# Add repository
-sudo tee /etc/yum.repos.d/bernstein.repo << 'EOF'
-[bernstein]
-name=Bernstein
-baseurl=https://sipyourdrink-ltd.github.io/bernstein/rpm
-enabled=1
-gpgcheck=1
-gpgkey=https://sipyourdrink-ltd.github.io/bernstein/gpg/bernstein-signing-key.gpg
-EOF
-
-# Install
-sudo dnf install bernstein        # Fedora / RHEL 8+
-# or
-sudo yum install bernstein        # CentOS 7 / older RHEL
+brew install chernistry/homebrew-tap/bernstein
 ```
 
-### Verify the installation
-
-```bash
-bernstein --version
-```
+Bernstein is not in `homebrew-core`; the tap is published from PyPI on each release.
 
 ---
 
-## Direct download (no repository)
-
-Download the latest package directly from [GitHub Releases](https://github.com/sipyourdrink-ltd/bernstein/releases/latest):
+## Docker
 
 ```bash
-# Debian/Ubuntu
-curl -LO https://github.com/sipyourdrink-ltd/bernstein/releases/latest/download/bernstein_amd64.deb
-sudo dpkg -i bernstein_amd64.deb
-
-# RHEL/Fedora
-curl -LO https://github.com/sipyourdrink-ltd/bernstein/releases/latest/download/bernstein-x86_64.rpm
-sudo rpm -i bernstein-x86_64.rpm
-```
-
----
-
-## Verifying package signatures
-
-```bash
-# Verify the GPG signature on a .deb
-gpg --verify bernstein_*.deb.asc
-
-# Verify RPM signature
-rpm -K bernstein-*.rpm
+docker run -v "$(pwd)":/workspace -p 8052:8052 \
+  ghcr.io/sipyourdrink-ltd/bernstein -g "your goal"
 ```
 
 ---
@@ -116,27 +70,3 @@ rpm -K bernstein-*.rpm
 | pip    | `pip install bernstein` |
 | npm    | `npx bernstein-orchestrator` (requires Python 3.12+) |
 | Docker | `docker run -v "$(pwd)":/workspace -p 8052:8052 ghcr.io/sipyourdrink-ltd/bernstein -g "your goal"` |
-
----
-
-## Repository setup (for maintainers)
-
-The `packages` branch of this repository is served via GitHub Pages and acts as both the APT and YUM repository host. The CI workflow `.github/workflows/publish-packages.yml` builds and publishes packages automatically on every `v*` tag.
-
-Required repository secrets:
-
-| Secret | Description |
-|--------|-------------|
-| `GPG_PRIVATE_KEY` | ASCII-armored GPG private key (`gpg --armor --export-secret-keys KEY_ID`) |
-| `GPG_PASSPHRASE`  | Passphrase protecting the private key |
-| `GPG_KEY_ID`      | Key fingerprint (used in rpm macros) |
-
-GitHub Pages must be enabled on the `packages` branch in **Settings → Pages → Source**.
-
-To build packages locally:
-
-```bash
-export GPG_KEY_ID="<your-key-fingerprint>"
-export GPG_PASSPHRASE="<passphrase>"
-./scripts/build_packages.sh
-```

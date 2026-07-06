@@ -22,7 +22,7 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein tunnel start <port> [--provider auto\|cloudflared\|ngrok\|bore\|tailscale]` | One wrapper around four tunnel providers. Also `tunnel list`, `tunnel stop <name>\|--all`. |
 | `bernstein daemon install [--user\|--system] [--command="..."] [--env KEY=VAL]...` | Installs a systemd (Linux) or launchd (macOS) unit for auto-start. Also `daemon start/stop/restart/status/uninstall`. |
 | `bernstein connect <provider>` / `bernstein creds` | Stores and rotates API credentials in the OS keychain. Agents inherit scoped keys per-run. |
-| `bernstein sandbox web-test <task-id> --url <url> --scenarios <yaml>` | Drives a Playwright self-test against the dev server. See [docs/sandbox/playwright-self-test.md](sandbox/playwright-self-test.md). |
+| `bernstein sandbox web-test <task-id> --url <url> --scenarios <yaml>` | Drives a Playwright self-test against the dev server. See [docs/sandbox/playwright-self-test.md](../sandbox/playwright-self-test.md). |
 | `bernstein agents-md` | Generates a canonical AAIF AGENTS.md for the repo and rewrites it into each CLI's native shape (`CLAUDE.md`, `.cursor/rules/*.mdc`, `CONVENTIONS.md`, `.goosehints`). `generate`, `write`, `sync`, `verify`, `diff`. |
 | `bernstein scaffold "<prompt>"` | Bootstraps a project skeleton from a single goal prompt. `--template auto\|python-cli\|...`, `--output <dir>`, `--force`. |
 | `bernstein wiki build` | Renders `WIKI.md` for the current repo from the AST symbol graph. Local, no LLM call, no cloud round-trip. |

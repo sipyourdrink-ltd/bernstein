@@ -39,7 +39,7 @@ Bernstein is a deterministic Python scheduler that runs a crew of CLI coding age
 
 ### at a glance
 
-- **44 CLI agent adapters** in v2.2.x: 41 third-party wrappers, 2 leaf-node delegators, plus a generic `--prompt` wrapper. Source of truth: the [supported agents](#supported-agents) table below.
+- **45 CLI agent adapters**: 42 third-party wrappers, 2 leaf-node delegators, plus a generic `--prompt` wrapper. Source of truth: the [supported agents](#supported-agents) table below.
 - **HMAC-SHA256 audit chain** per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104), one record per scheduling decision, tamper-evident. Operator guide: [docs/security/audit-log.md](docs/security/audit-log.md).
 - **Bearer-token task server** authenticates the manager and every worker. Per-session zero-trust JWT in `.sdd/runtime/agent_tokens/`, legacy `BERNSTEIN_AUTH_TOKEN` fallback, opt-out via `BERNSTEIN_AUTH_DISABLED=1`. Flow + diagnostics: [docs/security/manager-auth.md](docs/security/manager-auth.md).
 - **Signed agent cards** use detached JWS ([RFC 7515 §A.5](https://datatracker.ietf.org/doc/html/rfc7515#appendix-A.5)) over [RFC 8785 (JCS)](https://datatracker.ietf.org/doc/html/rfc8785) canonicalization, with [Ed25519 / EdDSA](https://datatracker.ietf.org/doc/html/rfc8037) keys. Code: [src/bernstein/core/security/agent_card_signer.py](src/bernstein/core/security/agent_card_signer.py).
@@ -165,7 +165,7 @@ Stock workflows shipping in the wheel: `idea-to-pr`, `refactor-with-tests`, `sec
 
 Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
 
-44 CLI agent adapters: 41 third-party wrappers, 2 leaf-node delegators, plus a generic wrapper for anything with `--prompt`.
+45 CLI agent adapters: 42 third-party wrappers, 2 leaf-node delegators, plus a generic wrapper for anything with `--prompt`.
 
 | Agent | Models | Install |
 |-------|--------|---------|
@@ -184,7 +184,7 @@ Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap l
 | [Goose](https://block.github.io/goose/) | Any provider Goose supports | See [Goose docs](https://block.github.io/goose/) |
 | [IaC](https://www.terraform.io/) (Terraform/Pulumi) | Any provider the base agent uses | Built-in |
 | [Junie](https://junie.jetbrains.com) | BYOK (Anthropic, OpenAI, Google, xAI, OpenRouter, Copilot) | `curl -fsSL https://junie.jetbrains.com/install.sh \| bash` |
-| [Kilo](https://kilo.dev) | Kilo-hosted | See [Kilo docs](https://kilo.dev) |
+| [Kilo](https://kilocode.ai) | Kilo-hosted | See [Kilo docs](https://kilocode.ai) |
 | [Kiro](https://kiro.dev) | Kiro-hosted | See [Kiro docs](https://kiro.dev) |
 | [AWS Q Developer](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line.html) | Amazon Q-managed (Claude-backed) | `brew install --cask amazon-q` then `q login` |
 | [Ollama](https://ollama.ai) + Aider | Local models (offline) | `brew install ollama` |
@@ -261,7 +261,7 @@ bernstein cloud run plan.yaml  # execute a plan on Cloudflare
 
 ## capabilities
 
-Bernstein ships parallel execution + worktree isolation + a janitor that gates merges on tests/lint/types, signed lineage records, MCP server mode, an HMAC-SHA256 audit chain, and 44 CLI adapters out of the box. Pluggable sandbox backends (worktree, Docker, [E2B](https://e2b.dev), [Modal](https://modal.com)), pluggable artifact sinks (local, S3, GCS, Azure Blob, R2), progressive-disclosure skill packs, and a [lethal-trifecta capability gate](docs/security/lethal-trifecta.md) round it out.
+Bernstein ships parallel execution + worktree isolation + a janitor that gates merges on tests/lint/types, signed lineage records, MCP server mode, an HMAC-SHA256 audit chain, and 45 CLI adapters out of the box. Pluggable sandbox backends (worktree, Docker, [E2B](https://e2b.dev), [Modal](https://modal.com)), pluggable artifact sinks (local, S3, GCS, Azure Blob, R2), progressive-disclosure skill packs, and a [lethal-trifecta capability gate](docs/security/lethal-trifecta.md) round it out.
 
 Full feature matrix: [docs/reference/FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md). Recent features: [docs/whats-new.md](docs/whats-new.md).
 

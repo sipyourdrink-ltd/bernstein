@@ -14,7 +14,7 @@ the enum, so adding a new adapter is a contract-completion exercise rather
 than a hunt-and-patch across the core.
 
 The enums and the declaration matrix live in
-[`src/bernstein/adapters/_contract.py`](../../src/bernstein/adapters/_contract.py).
+[`src/bernstein/adapters/_contract.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/_contract.py).
 Strategy is **declared**, not probed: Bernstein never runs the CLI at start
 just to discover its capabilities.
 
@@ -183,7 +183,7 @@ The spawn path enforces the capability: requesting any of these keys for an
 adapter that does not declare `SUPPORTS_SAMPLING_PARAMS` raises
 `SamplingParamsRefusal` instead of silently dropping the parameters. See
 `ensure_sampling_params_supported` in
-[`src/bernstein/adapters/plugin_sdk.py`](../../src/bernstein/adapters/plugin_sdk.py).
+[`src/bernstein/adapters/plugin_sdk.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/plugin_sdk.py).
 
 ### Where these values come from
 
@@ -247,7 +247,7 @@ available.
 The builtins never become the default; `gateway` stays the default and any
 value other than `"builtin"` selects it. The builtins enforce these
 properties, each covered by tests in
-[`tests/unit/adapters/test_openai_agents_builtins.py`](../../tests/unit/adapters/test_openai_agents_builtins.py):
+[`tests/unit/adapters/test_openai_agents_builtins.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/tests/unit/adapters/test_openai_agents_builtins.py):
 
 1. **Path confinement** (file tools). Every path argument is resolved against
    the run workdir. Absolute paths and `..` escapes are rejected: the real
@@ -263,4 +263,4 @@ properties, each covered by tests in
    so a run with no MCP gateway stays auditable and replayable.
 
 See `build_builtin_tools` in
-[`src/bernstein/adapters/openai_agents_builtins.py`](../../src/bernstein/adapters/openai_agents_builtins.py).
+[`src/bernstein/adapters/openai_agents_builtins.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/openai_agents_builtins.py).

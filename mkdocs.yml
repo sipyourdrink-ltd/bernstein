@@ -163,6 +163,11 @@ nav:
       - Plans (YAML schema): architecture/plans.md
       - Permission modes: architecture/permission-modes.md
       - Sandbox backends: architecture/sandbox.md
+      - Sandbox backend - Daytona: sandbox/daytona.md
+      - Sandbox backend - Blaxel: sandbox/blaxel.md
+      - Sandbox backend - Runloop: sandbox/runloop.md
+      - Sandbox backend - Vercel: sandbox/vercel.md
+      - Sandbox backend - Playwright self-test: sandbox/playwright-self-test.md
       - Warm pool: architecture/warm-pool.md
       - Adaptive parallelism: architecture/adaptive-parallelism.md
       - Tiered context compaction: architecture/memory_tiers.md
@@ -176,6 +181,7 @@ nav:
       - AST-aware reviewer chunks: concepts/ast-aware-chunking.md
       - Fingerprint memoization: concepts/fingerprint-memoization.md
       - Artifact lineage trail: concepts/artifact-lineage.md
+      - Lineage trail (hub): lineage.md
       - Feature contract: concepts/feature-contract.md
       - Schema validation retry: concepts/schema-validation-retry.md
       - Action cache and replay: concepts/action-cache.md
@@ -198,10 +204,13 @@ nav:
       - Playground (zero-cost dev): gui/playground.md
       - Configuration: gui/configuration.md
       - Troubleshooting: gui/troubleshooting.md
+      - Mobile: gui/mobile.md
   - Adapters & integrations:
+      - Adapters overview: adapters/index.md
       - Adapter guide: adapters/ADAPTER_GUIDE.md
       - Strict output schemas: adapters/schemas.md
       - OpenAI Agents SDK: adapters/openai-agents.md
+      - Gemini CLI: adapters/gemini.md
       - CLM (Cyber Language Model): adapters/clm.md
       - DeepSeek V4 (self-hosted): adapters/deepseek.md
       - Session isolation: adapters/session_isolation.md
@@ -216,6 +225,26 @@ nav:
       - cocoindex-code (MCP catalog): integrations/cocoindex-code.md
       - GitHub Action: integrations/github-action.md
       - GitHub App: integrations/github-app-setup.md
+      - GitLab App: integrations/gitlab-app-setup.md
+      - MCP server: mcp/server.md
+      - MCP client: mcp/client.md
+      - Trackers - contract: trackers/contract.md
+      - Trackers - Linear: trackers/linear.md
+      - Trackers - Jira Data Center: trackers/jira-data-center.md
+      - Trackers - Asana: trackers/asana.md
+      - Trackers - ClickUp: trackers/clickup.md
+      - Trackers - GitHub Projects: trackers/github-projects.md
+      - Trackers - Plane: trackers/plane.md
+      - Trackers - ServiceNow: trackers/servicenow.md
+      - Trackers - webhooks: trackers/webhooks.md
+      - Tracker pipeline: orchestration/tracker-pipeline.md
+      - Host registration - Claude Desktop: substrate/claude-desktop.md
+      - Host registration - Claude Code: substrate/claude-code.md
+      - Host registration - Cursor: substrate/cursor.md
+      - Host registration - Continue: substrate/continue.md
+      - Host registration - Cline: substrate/cline.md
+      - Host registration - Zed: substrate/zed.md
+      - Host registration - Aider: substrate/aider.md
   - Operations:
       - Deployment: operations/DEPLOYMENT.md
       - Deployment guide (long): operations/deployment-guide.md
@@ -255,6 +284,18 @@ nav:
       - LLM watcher (opt-in): observability/llm-watcher.md
       - Per-ticket transcript bundle: observability/ticket-bundle.md
       - Notifications: operations/notifications.md
+      - Run command: operations/run.md
+      - Schedule (recurring goals): operations/schedule.md
+      - Resume: operations/resume.md
+      - Replay: operations/replay.md
+      - Commands overview: operations/commands.md
+      - Doctor: operations/doctor.md
+      - Spending mandates: operations/spending-mandates.md
+      - Stall escalation receipts: operations/stall-escalation.md
+      - Audited webhook node: operations/webhook-node.md
+      - Chat bridges (Slack/Discord/Telegram): operations/chat-bridges.md
+      - Lineage v2: operations/lineage-v2.md
+      - GitLab integration: operations/gitlab.md
       - Cost optimization: operations/cost-optimization.md
       - Performance tuning: operations/performance-tuning.md
       - Autofix daemon: operations/autofix.md
@@ -291,6 +332,26 @@ nav:
       - Known limitations: reference/KNOWN_LIMITATIONS.md
       - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
       - Changelog: CHANGELOG.md
+      - Release notes:
+          - v2.16.1: release-notes/v2.16.1.md
+          - v2.16.0: release-notes/v2.16.0.md
+          - v2.15.0: release-notes/v2.15.0.md
+          - v2.14.1: release-notes/v2.14.1.md
+          - v2.14.0: release-notes/v2.14.0.md
+          - v2.13.0: release-notes/v2.13.0.md
+          - v2.12.0: release-notes/v2.12.0.md
+          - v2.11.0: release-notes/v2.11.0.md
+          - v2.10.0: release-notes/v2.10.0.md
+          - v2.9.0: release-notes/v2.9.0.md
+          - v2.8.5: release-notes/v2.8.5.md
+          - v2.8.2: release-notes/v2.8.2.md
+          - v2.6.0: release-notes/v2.6.0.md
+          - v2.5.1: release-notes/v2.5.1.md
+          - v2.5.0: release-notes/v2.5.0.md
+          - v2.4.0: release-notes/v2.4.0.md
+          - v2.3.1: release-notes/v2.3.1.md
+          - v2.3.0: release-notes/v2.3.0.md
+          - v2.0.0: release-notes/v2.0.0.md
   - Adapter selection:
       - OpenAI Agents vs Codex vs Claude: adapters/openai-agents-comparison.md
   - Blog:
@@ -308,6 +369,7 @@ nav:
       - No embedded LLM: decisions/006-no-embedded-llm.md
       - Pluggy plugin system: decisions/007-pluggy-plugin-system.md
       - Click for CLI: decisions/008-click-for-cli.md
+      - Lineage v1: decisions/009-lineage-v1.md
   - Security:
       - Hardening: security/security-hardening.md
       - Manager → task server auth: security/manager-auth.md
@@ -327,3 +389,9 @@ nav:
 
 docs_dir: docs
 strict: false
+
+# Internal working notes live under docs/_internal/ and are not part of the
+# published documentation set. Excluding them keeps them out of the built
+# site and out of strict link validation.
+exclude_docs: |
+  _internal/

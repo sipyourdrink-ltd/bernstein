@@ -10,7 +10,7 @@ Last updated: 2026-05-10
 
 - Python: project targets Python 3.12+.
 - Task server/API: FastAPI-based local or remote server operation.
-- CLI adapters: 44 total (43 named adapters in `registry.py` plus the `generic` catch-all) in `src/bernstein/adapters/`, including the OpenAI Agents SDK v2 adapter (`openai_agents`), CLM gateway adapter (`clm`), Devin Terminal adapter (`devin_terminal`), JetBrains Junie (`junie`), AWS Q Developer (`q_dev`), and the DeepSeek V4 family routed through the `ollama` adapter.
+- CLI adapters: 45 total (44 named adapters in `registry.py` plus the `generic` catch-all) in `src/bernstein/adapters/`, including the OpenAI Agents SDK v2 adapter (`openai_agents`), CLM gateway adapter (`clm`), Devin Terminal adapter (`devin_terminal`), JetBrains Junie (`junie`), AWS Q Developer (`q_dev`), and the DeepSeek V4 family routed through the `ollama` adapter.
 
 ### Supported CLI agent adapters
 
@@ -39,7 +39,7 @@ Last updated: 2026-05-10
 | `iac` | N/A (Terraform/Pulumi) | No | No |
 | `generic` | Any | Depends on CLI | No |
 
-The full 44-row matrix with cost tier, reasoning grade, and recommended use cases lives in [`ADAPTER_GUIDE.md`](ADAPTER_GUIDE.md).
+The full 45-row matrix with cost tier, reasoning grade, and recommended use cases lives in [`ADAPTER_GUIDE.md`](ADAPTER_GUIDE.md).
 
 ### Support modules
 
@@ -94,7 +94,7 @@ Compatibility details can vary by adapter version and local toolchain.
 
 ## Quality gates
 
-Bernstein v1.8.4 ships an expanded quality gate pipeline in `src/bernstein/core/quality/`:
+Bernstein ships an expanded quality gate pipeline in `src/bernstein/core/quality/`:
 
 - Standard gates: lint, type-check, tests, coverage
 - Architecture conformance (`arch_conformance.py`, `arch_rules.py`)
