@@ -40,6 +40,15 @@ from bernstein.core.lineage.merge import (
     build_merge_entry,
     resolve_policy,
 )
+from bernstein.core.lineage.spine import (
+    SPINE_ENTRY_VERSION,
+    LineageSpine,
+    SpineEntry,
+    SpineStatus,
+    SpineVerifyResult,
+    compute_entry_hash,
+    content_hash_of,
+)
 from bernstein.core.lineage.tips import Fork, TipSet, compute_tips, detect_forks
 from bernstein.core.lineage.tracker_audit import (
     AuditingTrackerAdapter,
@@ -63,6 +72,7 @@ __all__ = [
     "ARTEFACT_KINDS",
     "LINEAGE_ENTRY_VERSION",
     "LINEAGE_V2_ENTRY_VERSION",
+    "SPINE_ENTRY_VERSION",
     "AgentCard",
     "AgentPolicy",
     "AuditingTrackerAdapter",
@@ -74,9 +84,13 @@ __all__ = [
     "LineageConflict",
     "LineageCtx",
     "LineageEntry",
+    "LineageSpine",
     "LineageV2Store",
     "MergePolicy",
     "ParentRef",
+    "SpineEntry",
+    "SpineStatus",
+    "SpineVerifyResult",
     "StewardKey",
     "TipSet",
     "TrackerActor",
@@ -86,7 +100,9 @@ __all__ = [
     "build_merge_entry",
     "canonicalise",
     "compute_child_sha",
+    "compute_entry_hash",
     "compute_tips",
+    "content_hash_of",
     "detect_forks",
     "entry_hash",
     "gate_check",
