@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -47,6 +48,71 @@ _TOOL_ABORT_POLICIES = ("contain", "sibling", "session")
 # alone and forwarding is the only delivery path.
 _FORWARD_GRACE_S = 0.2
 _FORWARD_POLL_INTERVAL_S = 0.01
+
+
+# Windows batch-shim extensions. A ``.cmd``/``.bat`` file is not a PE
+# executable, so ``CreateProcess`` (what ``subprocess.Popen`` calls with a
+# non-shell argv) cannot launch it even with the full path -- it must be
+# routed through ``cmd.exe /c``. Real ``.exe`` targets are launched directly.
+_WINDOWS_SHIM_SUFFIXES = (".cmd", ".bat")
+
+
+def _resolve_launch_cmd(cmd: list[str]) -> list[str]:
+    """Resolve ``cmd[0]`` to a launchable form, cross-platform.
+
+    Two problems this solves, both Windows-only in effect:
+
+    1. ``CreateProcess`` (used by ``subprocess.Popen`` without ``shell=True``)
+       does not consult ``PATHEXT`` for ``argv[0]``. A bare ``"codex"`` never
+       resolves to ``codex.cmd`` and raises ``FileNotFoundError`` even though
+       ``shutil.which("codex")`` finds it. We resolve the bare name to its
+       absolute path via ``shutil.which`` so ``CreateProcess`` gets a concrete
+       target.
+    2. Even with the full path, ``CreateProcess`` cannot execute a
+       ``.cmd``/``.bat`` batch shim (they are not PE binaries). On Windows we
+       wrap those as ``["cmd.exe", "/c", resolved, *rest]``; ``cmd.exe``
+       propagates the child's exit code, so the worker's ``128 + N`` exit
+       translation and signal forwarding keep working on ``child.wait()``.
+
+    Behaviour is a no-op on POSIX for anything that already worked: a bare
+    name that ``shutil.which`` resolves becomes its absolute path (which spawns
+    identically to the bare name once found on ``PATH``), and a name that does
+    not resolve is returned unchanged so the existing ``FileNotFoundError`` ->
+    "command not found" path in :func:`main` still fires. Absolute or
+    path-qualified ``cmd[0]`` values are left untouched.
+
+    Args:
+        cmd: The command argv. Must be non-empty.
+
+    Returns:
+        A new argv list ready to hand to ``subprocess.Popen`` with no shell.
+    """
+    if not cmd:
+        return cmd
+
+    first = cmd[0]
+    rest = cmd[1:]
+
+    # Only resolve a bare program name (no path separator). An operator or
+    # adapter that already passed an absolute/relative path knows what it
+    # wants; do not second-guess it.
+    if os.sep in first or (os.altsep and os.altsep in first):
+        return cmd
+
+    resolved = shutil.which(first)
+    if resolved is None:
+        # Leave the bare name so the caller's FileNotFoundError handler still
+        # produces the "command not found" diagnostic and the 127 exit code.
+        return cmd
+
+    # On Windows, batch shims (.cmd/.bat) cannot be launched by CreateProcess
+    # directly; route them through cmd.exe. Real .exe (and every POSIX target)
+    # spawns fine from its absolute path.
+    if os.name == "nt" and resolved.lower().endswith(_WINDOWS_SHIM_SUFFIXES):
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        return [comspec, "/c", resolved, *rest]
+
+    return [resolved, *rest]
 
 
 def _set_proctitle(title: str) -> None:
@@ -270,9 +336,16 @@ def main() -> None:
         hb_dir.mkdir(parents=True, exist_ok=True)
         (hb_dir / args.session).touch()
 
-    # 3. Spawn child process (inherits our stdout/stderr/stdin)
+    # 3. Spawn child process (inherits our stdout/stderr/stdin).
+    #
+    # Resolve argv[0] first so a bare program name that only exists as a
+    # Windows batch shim (e.g. nvm4w installs codex as codex.cmd) is launched
+    # via its absolute path -- and, for .cmd/.bat, through cmd.exe -- rather
+    # than failing in CreateProcess. ``cmd[0]`` is preserved for the
+    # command-not-found diagnostic below.
+    launch_cmd = _resolve_launch_cmd(cmd)
     try:
-        child = subprocess.Popen(cmd)
+        child = subprocess.Popen(launch_cmd)
     except FileNotFoundError as exc:
         # Typed first-run error: the adapter binary is missing from PATH.
         # Callers running this worker as a subprocess can categorise via

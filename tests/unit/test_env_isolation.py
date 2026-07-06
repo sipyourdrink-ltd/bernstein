@@ -29,6 +29,29 @@ class TestBuildFilteredEnv:
         assert result["HOME"] == "/root"
         assert result["LANG"] == "en_US.UTF-8"
 
+    def test_pathext_in_allowlist(self) -> None:
+        """PATHEXT must be allowlisted so bernstein-worker's shutil.which can
+        recognise .cmd/.bat/.exe shims on Windows (issue #2287).
+
+        nvm-windows installs the Codex/Claude/Gemini CLIs as batch shims
+        (codex.cmd). Without PATHEXT in the spawned env, shutil.which cannot
+        resolve them and the worker exits 127.
+        """
+        assert "PATHEXT" in _BASE_ALLOWLIST
+
+    def test_pathext_passes_through_build_filtered_env(self) -> None:
+        """PATHEXT set in os.environ reaches the filtered agent env."""
+        fake_env = {
+            "PATH": r"C:\nvm4w\nodejs",
+            "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+            "DATABASE_URL": "postgres://user:pass@host/db",
+        }
+        with patch("bernstein.adapters.env_isolation.os.environ", fake_env):
+            result = build_filtered_env()
+        assert result["PATHEXT"] == ".COM;.EXE;.BAT;.CMD"
+        # unrelated secret still stripped
+        assert "DATABASE_URL" not in result
+
     def test_secrets_excluded(self) -> None:
         """Database credentials, CI tokens and unrelated keys are stripped."""
         sensitive = {

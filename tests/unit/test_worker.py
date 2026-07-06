@@ -10,7 +10,10 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
+import pytest
+
 from bernstein.adapters.base import build_worker_cmd
+from bernstein.core.orchestration.worker import _resolve_launch_cmd
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -53,6 +56,121 @@ class TestBuildWorkerCmd:
         )
         assert "--model" in result
         assert result[result.index("--model") + 1] == "gpt-5.4"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_launch_cmd -- cross-platform argv[0] resolution (issue #2287)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLaunchCmd:
+    """argv[0] resolution: bare name -> absolute path, Windows .cmd -> cmd.exe.
+
+    On Windows, ``CreateProcess`` (what ``subprocess.Popen`` calls without a
+    shell) ignores ``PATHEXT`` for ``argv[0]`` and cannot run a ``.cmd``/``.bat``
+    batch shim even by full path. nvm-windows installs the Codex/Claude/Gemini
+    CLIs as ``codex.cmd`` etc., so a bare ``"codex"`` failed with ``exit 127``.
+    These tests simulate Windows via monkeypatch; CI runs on Linux.
+    """
+
+    def test_bare_name_resolves_to_absolute_path_posix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A bare name that shutil.which finds becomes its absolute path."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "posix")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: "/usr/local/bin/codex" if name == "codex" else None,
+        )
+        result = _resolve_launch_cmd(["codex", "exec", "-m", "gpt-5.5"])
+        assert result == ["/usr/local/bin/codex", "exec", "-m", "gpt-5.5"]
+
+    def test_windows_cmd_shim_wrapped_in_cmd_exe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """On nt, a resolved .cmd shim is routed through cmd.exe /c."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        # Windows uses ``\\`` as sep and ``/`` as altsep.
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: r"C:\nvm4w\nodejs\codex.CMD" if name == "codex" else None,
+        )
+        result = _resolve_launch_cmd(["codex", "exec", "-m", "gpt-5.5"])
+        assert result == [
+            r"C:\Windows\System32\cmd.exe",
+            "/c",
+            r"C:\nvm4w\nodejs\codex.CMD",
+            "exec",
+            "-m",
+            "gpt-5.5",
+        ]
+
+    def test_windows_bat_shim_wrapped_in_cmd_exe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A .bat shim is treated like .cmd -- routed through cmd.exe."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: r"C:\tools\agent.bat" if name == "agent" else None,
+        )
+        result = _resolve_launch_cmd(["agent", "--go"])
+        assert result[0] == r"C:\Windows\System32\cmd.exe"
+        assert result[1] == "/c"
+        assert result[2] == r"C:\tools\agent.bat"
+        assert result[3:] == ["--go"]
+
+    def test_windows_real_exe_launched_directly(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A resolved .exe is a PE binary: launch it directly, no cmd.exe."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: r"C:\Python\python.exe" if name == "python" else None,
+        )
+        result = _resolve_launch_cmd(["python", "-c", "pass"])
+        assert result == [r"C:\Python\python.exe", "-c", "pass"]
+
+    def test_already_absolute_path_left_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A path-qualified argv[0] is not re-resolved through shutil.which."""
+
+        def _boom(_name: str) -> str:
+            raise AssertionError("shutil.which must not be called for a path-qualified argv[0]")
+
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "posix")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.shutil.which", _boom)
+        cmd = ["/usr/local/bin/codex", "exec"]
+        assert _resolve_launch_cmd(cmd) == cmd
+
+    def test_unresolved_bare_name_preserved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """shutil.which returning None keeps the original so the caller's
+        FileNotFoundError -> 'command not found' (exit 127) path still fires."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "posix")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda _name: None,
+        )
+        cmd = ["nonexistent_command_xyz", "--flag"]
+        assert _resolve_launch_cmd(cmd) == cmd
+
+    def test_windows_altsep_qualified_path_left_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """On Windows a forward-slash path (altsep) is also treated as
+        qualified and not re-resolved."""
+
+        def _boom(_name: str) -> str:
+            raise AssertionError("shutil.which must not be called for a path-qualified argv[0]")
+
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.shutil.which", _boom)
+        cmd = ["C:/nvm4w/nodejs/codex.cmd", "exec"]
+        assert _resolve_launch_cmd(cmd) == cmd
+
+    def test_empty_cmd_returned_as_is(self) -> None:
+        """Guard: an empty argv is returned unchanged (main() handles it)."""
+        assert _resolve_launch_cmd([]) == []
 
 
 # ---------------------------------------------------------------------------

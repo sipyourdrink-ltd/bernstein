@@ -42,6 +42,12 @@ _BASE_ALLOWLIST: frozenset[str] = frozenset(
         # and exit with code -1 (0xFFFFFFFF) before even starting
         "SYSTEMROOT",
         "WINDIR",
+        # PATHEXT lists the extensions Windows treats as executable
+        # (.EXE;.CMD;.BAT;...). Without it in the spawned env, shutil.which
+        # inside bernstein-worker cannot recognise a batch shim such as
+        # codex.cmd (nvm-windows installs the Codex/Claude/Gemini CLIs as
+        # .cmd), so the worker fails to resolve the binary and exits 127.
+        "PATHEXT",
         "COMSPEC",  # Path to cmd.exe, needed for shell operations
         "APPDATA",
         "LOCALAPPDATA",
