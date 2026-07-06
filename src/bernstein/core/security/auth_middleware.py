@@ -95,6 +95,7 @@ AUTH_PUBLIC_PATHS = frozenset(
         # Agent / protocol discovery
         "/.well-known/agent.json",
         "/.well-known/agent.json/keys",
+        "/.well-known/http-message-signatures-directory",
         "/.well-known/acp.json",
         "/.well-known/mcp-tools",
         "/llms.txt",

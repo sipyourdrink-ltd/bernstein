@@ -64,6 +64,13 @@ from bernstein.core.security.agent_card_signer import (
 
 router = APIRouter()
 
+#: Well-known path publishing the key directory (JWKS) that verifiers fetch to
+#: validate outbound HTTP Message Signatures (issue #2305). The path follows
+#: the Web Bot Auth convention so third-party sites can locate it. The keys
+#: served here are the install-identity keypair - the same keystore used to
+#: sign outbound agent-facing requests - each keyed by its RFC 7638 thumbprint.
+HTTP_SIG_DIRECTORY_PATH = "/.well-known/http-message-signatures-directory"
+
 _AGENT_NAME = "bernstein"
 _AGENT_DESCRIPTION = (
     "Bernstein orchestrates short-lived CLI coding agents (Claude Code, "
@@ -439,3 +446,24 @@ def agent_json_keys() -> dict[str, Any]:
 def llms_txt() -> str:
     """Return a markdown summary of the public API surface."""
     return _render_llms_txt()
+
+
+@router.get(HTTP_SIG_DIRECTORY_PATH, include_in_schema=False)
+def http_message_signatures_directory() -> dict[str, Any]:
+    """Return the key directory (JWKS) for outbound HTTP Message Signatures.
+
+    Verifiers fetch this to validate the RFC 9421 signatures Bernstein places
+    on its outbound agent-facing requests (issue #2305). The published keys
+    are the install-identity keypair - the exact keystore the outbound signer
+    uses - so a signature's ``keyid`` (the install-identity RFC 7638
+    thumbprint) always resolves here. When the install identity rotates the
+    thumbprint changes, so signatures made under a retired key stop verifying
+    against this directory: rotation invalidates old signatures deterministically.
+    """
+    from bernstein.core.identity import http_signing
+
+    keystore = _get_keystore()
+    # Prime the persistent keypair so the directory and the outbound signer
+    # converge on the same on-disk key.
+    _get_signing_keypair()
+    return http_signing.build_key_directory(keystore)
