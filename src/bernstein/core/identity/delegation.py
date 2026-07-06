@@ -192,7 +192,7 @@ class DelegationLedger:
             "prev_hmac": prev_hmac,
         }
         computed = _compute_hmac(self._key, prev_hmac, body)
-        entry = dict(body)
+        entry = body.copy()
         entry["hmac"] = computed
         path = self.receipt_path(run_id)
         with path.open("a", encoding="utf-8", newline="") as fh:

@@ -708,6 +708,27 @@ class CompactionDefaults:
     sensitive_gate_allow: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class MemoryChainDefaults:
+    """Configuration for the tamper-evident memory write chain (issue #2298).
+
+    Used by :mod:`bernstein.core.memory.chain`. The chain is append-only
+    and never deletes; ``retention_days`` is a *reporting* horizon only --
+    it bounds how far back tooling surfaces live (non-tombstoned) facts,
+    never how much of the hash chain is retained, since dropping any row
+    would break verifiability. ``default_scope`` names the identity scope
+    a bare memory write lands in when the caller does not pass one.
+    """
+
+    #: Default identity scope for a memory write when none is supplied.
+    #: One of ``user`` / ``agent`` / ``run`` / ``app``.
+    default_scope: str = "user"
+    #: Reporting horizon in days for surfacing live facts. ``0`` disables
+    #: the horizon (surface every live fact). The full hash chain is
+    #: always retained regardless of this value.
+    retention_days: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Singletons (rebindable via override()/reset())
 # ---------------------------------------------------------------------------
@@ -735,6 +756,7 @@ SCHEMA_RETRY = SchemaRetryDefaults()
 LINEAGE = LineageDefaults()
 REWORK_LEDGER = ReworkLedgerDefaults()
 COMPACTION = CompactionDefaults()
+MEMORY_CHAIN = MemoryChainDefaults()
 SLO = SLODefaults()
 
 # Module-level constant for direct import - preferred when only the
@@ -791,6 +813,7 @@ _SECTION_TO_ATTR: Mapping[str, str] = MappingProxyType(
         "lineage": "LINEAGE",
         "rework_ledger": "REWORK_LEDGER",
         "compaction": "COMPACTION",
+        "memory_chain": "MEMORY_CHAIN",
         "slo": "SLO",
     }
 )
@@ -822,6 +845,7 @@ _ATTR_TO_FACTORY: Mapping[str, type[Any]] = MappingProxyType(
         "LINEAGE": LineageDefaults,
         "REWORK_LEDGER": ReworkLedgerDefaults,
         "COMPACTION": CompactionDefaults,
+        "MEMORY_CHAIN": MemoryChainDefaults,
         "SLO": SLODefaults,
     }
 )

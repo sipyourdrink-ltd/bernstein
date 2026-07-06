@@ -334,7 +334,7 @@ class LineageSpine:
     def _write_head(self, head_hash: str, count: int) -> None:
         body = {"head_hash": head_hash, "count": count}
         head_hmac = _compute_hmac(self._hmac_key, body)
-        payload = {**body, "hmac": head_hmac}
+        payload = body | {"hmac": head_hmac}
         tmp = self.head_path.with_suffix(".head.tmp")
         tmp.write_text(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True),

@@ -935,10 +935,14 @@ bernstein completions --shell zsh > ~/.zsh/completion/_bernstein
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | Memory entries. |
-| `show KEY` | Show a memory entry. |
-| `set KEY VALUE` | Set a memory entry. |
-| `forget KEY` | Delete a memory entry. |
+| `list` | List stored memories. |
+| `add CONTENT` | Add a persistent memory entry. |
+| `remove ID` | Remove a memory entry by id. |
+| `share KEY VALUE --tag TAG` | Publish a cross-task fact. |
+| `query --tag TAG` | List published facts (redacted by default). |
+| `verify --scope SCOPE --namespace NS` | Prove every fact in a scope/namespace chain was written by its actor and never edited; recomputes the hash chain, every HMAC tag, and each `source_hash` anchor against the lineage spine. Exit 0 = OK, 1 = no entries, 2 = tamper. |
+| `why FACT --scope SCOPE --namespace NS` | Return the originating run id and step for a stored fact (only when its `source_hash` resolves to a real lineage-spine entry). |
+| `forget ENTRY_HASH --scope SCOPE --namespace NS` | Append a signed tombstone for a memory-chain entry without deleting it; the original entry and chain stay verifiable. |
 
 #### `bernstein cache`
 

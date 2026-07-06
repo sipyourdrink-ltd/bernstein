@@ -114,6 +114,14 @@ EVENT_SKILL_INSTALL_RECEIPT = "skill.install_receipt"
 #: head hash) so a later provenance query can recompute usage from verified
 #: journal heads rather than from a mutable counter.
 EVENT_SKILL_USAGE = "skill.usage"
+#: Issue #2298 -- emitted whenever a cross-session memory write (or
+#: forget tombstone) is appended to the tamper-evident memory chain. The
+#: event records the memory-chain entry hash, the lineage-spine
+#: ``source_hash`` the record anchors to, the identity scope and
+#: namespace, the actor, the originating run and step, and the entry
+#: kind (``write`` or ``tombstone``) -- never the remembered claim
+#: content. See :mod:`bernstein.core.memory.chain`.
+EVENT_MEMORY_WRITE = "memory.write"
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +556,80 @@ def record_skill_install_receipt(
         actor=actor,
         resource_type="skill_install_receipt",
         resource_id=skill_hash,
+class MemoryWriteDetails:
+    """Structured payload for the ``memory.write`` event."""
+
+    entry_hash: str
+    source_hash: str
+    scope: str
+    namespace: str
+    run_id: str
+    step_id: str
+    kind: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entry_hash": self.entry_hash,
+            "source_hash": self.source_hash,
+            "scope": self.scope,
+            "namespace": self.namespace,
+            "run_id": self.run_id,
+            "step_id": self.step_id,
+            "kind": self.kind,
+        }
+
+
+def record_memory_write(
+    *,
+    chain: AuditChainStore,
+    entry_hash: str,
+    source_hash: str,
+    scope: str,
+    namespace: str,
+    actor: str,
+    run_id: str,
+    step_id: str,
+    kind: str,
+) -> AuditEvent:
+    """Append a ``memory.write`` event into *chain*.
+
+    Mirrors one memory-chain append into the HMAC-chained audit log so an
+    operator can reconstruct, from the audit chain alone, that a fact was
+    written by ``actor`` at a time and anchored to a lineage-spine entry.
+    Only hashes and identifiers are recorded -- never the remembered
+    claim content.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        entry_hash: The memory-chain record's content-addressed entry
+            hash.
+        source_hash: Lineage-spine ``entry_hash`` the record anchors to.
+        scope: Identity scope (``user`` / ``agent`` / ``run`` / ``app``).
+        namespace: Chain key within the scope.
+        actor: Producing agent / actor identifier.
+        run_id: Originating orchestration run id.
+        step_id: Originating step / tool-call id.
+        kind: ``write`` or ``tombstone``.
+
+    Returns:
+        The recorded :class:`AuditEvent`. The event details payload
+        carries every input plus ``prev_chain_digest`` (set to the chain
+        head at write time).
+    """
+    payload = MemoryWriteDetails(
+        entry_hash=entry_hash,
+        source_hash=source_hash,
+        scope=scope,
+        namespace=namespace,
+        run_id=run_id,
+        step_id=step_id,
+        kind=kind,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MEMORY_WRITE,
+        actor=actor,
+        resource_type="memory_write",
+        resource_id=entry_hash,
         details=payload,
     )
 
@@ -593,6 +675,7 @@ __all__ = [
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_EVAL_AB_COMPARISON",
+    "EVENT_MEMORY_WRITE",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
@@ -601,10 +684,12 @@ __all__ = [
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
+    "MemoryWriteDetails",
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
     "record_cost_profile_report",
     "record_eval_ab_comparison",
+    "record_memory_write",
     "record_multimodal_attach",
     "record_sensitive_gate",
     "record_skill_install_receipt",
