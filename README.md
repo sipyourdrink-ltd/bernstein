@@ -279,7 +279,6 @@ Highest-value commands; full list in [docs/operations/commands.md](docs/operatio
 | `bernstein templates compress <role>\|--all` | Operator-gated, one-time LLM compression of role prompt templates: mechanically validated (fenced blocks, headings, URLs, placeholders, completion contract stay byte-equal), originals backed up out of tree by content hash, receipt chained to the audit log. `bernstein templates restore <role>` reverses it byte-identically; savings appear in `bernstein cost --by role`. |
 | `bernstein identity keydir` | Prints the install-identity key directory (JWKS) - the Ed25519 public keys that verify the RFC 9421 HTTP Message Signatures Bernstein places on its outbound agent-facing requests (also served at `/.well-known/http-message-signatures-directory`). Set `BERNSTEIN_HTTP_SIGNING_REQUIRED=1` to refuse unsigned outbound paths. |
 | `bernstein delegation verify <run>` | Reconstructs the `principal -> orchestrator -> sub-agent` delegation chain for a run from HMAC-chained per-hop receipts and confirms it is intact offline; exits non-zero on any tamper or deleted hop. |
-| `bernstein fork --run <id> --from-step N` | Rewinds a run to journal step N and branches a new run from it. The step's worktree state is a content-addressed git commit under `refs/bernstein/snapshots/`; the sha is recorded in the event journal, so a tampered snapshot ref is caught because it no longer matches the journal. Worktree is the supported snapshot backend; cloud sandboxes still decline snapshot. |
 
 ### retrieval & caching: what's actually under the hood
 

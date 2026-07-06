@@ -87,6 +87,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "fork",
         "wrap-up",
         "replay",
+        "thread",
         "diff",
         "dep-impact",
         "changelog",

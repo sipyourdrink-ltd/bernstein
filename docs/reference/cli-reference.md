@@ -1136,6 +1136,7 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 | `bernstein wiki build` | Render `WIKI.md` from the AST symbol graph. | `cli/commands/wiki_cmd.py` |
 | `bernstein workflow` | Workflow mgmt (group). | `cli/workflow_cmd.py:15` |
 | `bernstein replay RUN_ID --verify` / `--from-step N` | Recompute the run journal's Merkle head and report the first divergent step (writes `divergence_report.json`), or rebuild deterministic state to step N. | `cli/commands/advanced_cmd.py` |
+| `bernstein thread verify --run <id>` | Prove the live event stream equals the run journal: recompute the journal's Merkle chain and confirm every streamed event carries the byte-identical entry hash. `--json` for machine output. Exit 1 on divergence, 2 when the run journal is missing. | `cli/commands/thread_cmd.py` |
 
 #### `bernstein ab-test`
 
