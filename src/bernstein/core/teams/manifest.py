@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, cast
 
 from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
 from bernstein.core.config.seed_config import SeedError
+from bernstein.core.orchestration.activity import ActivityKind
 from bernstein.core.skills.catalog.signature import (
     ManifestSignatureError,
     VerificationOutcome,
@@ -73,8 +74,14 @@ _HEX_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _SIGNATURE_KEYS = frozenset({"signature", "signer_pubkey"})
 
 _TOP_LEVEL_KEYS = frozenset({"name", "version", "roles", "coordination", "role_template_digests"}) | _SIGNATURE_KEYS
-_ROLE_KEYS = frozenset({"role", "model_policy", "response_profile"})
+_ROLE_KEYS = frozenset({"role", "model_policy", "response_profile", "agent_kind"})
 _COORDINATION_KEYS = frozenset({"review_chain", "parallelism"})
+
+#: Default agent modality for a role that omits ``agent_kind`` -- the coding
+#: modality the deterministic scheduler is already validated for. Kept as the
+#: string value so a legacy manifest (no ``agent_kind`` key) serializes
+#: byte-identically and its digest is unchanged by the new field (#2311).
+_DEFAULT_AGENT_KIND = ActivityKind.CODING
 
 
 class TeamManifestError(SeedError):
@@ -114,11 +121,18 @@ class TeamRoleSpec:
             seed parser, which the expansion feeds into.
         response_profile: Optional response-style profile name; expands to
             the ``response_style`` role policy key (issue #2243).
+        agent_kind: The agent modality this role runs as behind the typed
+            activity boundary (issue #2311). Defaults to
+            :attr:`~bernstein.core.orchestration.activity.ActivityKind.CODING`,
+            the modality the deterministic scheduler is already validated for;
+            a research / browser / data / ops role declares its modality here so
+            the scheduler dispatches and journals it under the same boundary.
     """
 
     role: str
     model_policy: dict[str, str | int] = field(default_factory=dict)
     response_profile: str | None = None
+    agent_kind: ActivityKind = _DEFAULT_AGENT_KIND
 
 
 @dataclass(frozen=True)
@@ -205,6 +219,10 @@ def canonical_toml(manifest: TeamManifest) -> str:
         role_scalars: dict[str, str | int | bool] = {"role": role.role}
         if role.response_profile is not None:
             role_scalars["response_profile"] = role.response_profile
+        # Emit ``agent_kind`` only when it differs from the default, so a legacy
+        # manifest (coding modality) serializes byte-identically (#2311).
+        if role.agent_kind is not _DEFAULT_AGENT_KIND:
+            role_scalars["agent_kind"] = role.agent_kind.value
         for key in sorted(role_scalars):
             lines.append(f"{key} = {_scalar_toml(role_scalars[key])}")
         if role.model_policy:
@@ -253,7 +271,25 @@ def _parse_role_entry(index: int, raw: object, *, context: str) -> TeamRoleSpec:
             raise TeamManifestValidationError(f"{context}: roles[{index}].response_profile must be a non-empty string")
         response_profile = raw_profile
 
-    return TeamRoleSpec(role=role, model_policy=model_policy, response_profile=response_profile)
+    agent_kind = _DEFAULT_AGENT_KIND
+    raw_kind = entry.get("agent_kind")
+    if raw_kind is not None:
+        if not isinstance(raw_kind, str):
+            raise TeamManifestValidationError(f"{context}: roles[{index}].agent_kind must be a string")
+        try:
+            agent_kind = ActivityKind(raw_kind)
+        except ValueError as exc:
+            valid = ", ".join(sorted(k.value for k in ActivityKind))
+            raise TeamManifestValidationError(
+                f"{context}: roles[{index}].agent_kind {raw_kind!r} is not one of: {valid}"
+            ) from exc
+
+    return TeamRoleSpec(
+        role=role,
+        model_policy=model_policy,
+        response_profile=response_profile,
+        agent_kind=agent_kind,
+    )
 
 
 def _parse_coordination(raw: object, *, context: str) -> TeamCoordination:
