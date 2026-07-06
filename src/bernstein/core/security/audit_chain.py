@@ -193,6 +193,16 @@ EVENT_REVIEW_RECEIPT = "review.receipt"
 #: chain entries rather than trusting a session id.
 EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
 
+#: Issue #2308 -- emitted whenever a deterministic outer-plan node delegates
+#: mechanical execution to a native subagent (Claude Code, Codex, ...). The
+#: event binds the plan-node hash (a pure function of the outer plan, so it is
+#: identical across replays) to the native result's content hash and the run
+#: journal entry the delegation was anchored at. A verifier can prove, from the
+#: chain alone, that the cross-worker DAG crossed a delegation boundary at a
+#: named node and anchored a specific (stochastic) result, without the record
+#: exposing the native result payload itself.
+EVENT_SUBAGENT_DELEGATION = "subagent.delegation"
+
 #: Issue #2309 -- emitted whenever a governance projection (RBAC access check or
 #: per-subject budget check) produces a signed, anchored decision. The event
 #: mirrors the decision's ``{subject, action, verdict, inputs_hash,
@@ -1186,6 +1196,65 @@ def record_mcp_stateless_call(
     )
 
 
+def record_subagent_delegation(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    node_name: str,
+    target: str,
+    node_hash: str,
+    result_content_hash: str,
+    journal_index: int,
+    journal_event_hash: str,
+    tier: str = "interactive",
+    actor: str = "subagent_delegation",
+) -> AuditEvent:
+    """Append a ``subagent.delegation`` event into *chain*.
+
+    Anchors one leaf of a deterministic outer plan that delegated mechanical
+    execution to a native subagent. The ``node_hash`` is a pure function of the
+    outer plan, so it is byte-identical across replays; the
+    ``result_content_hash`` fixes the (stochastic) native result the delegation
+    produced, and ``journal_index`` / ``journal_event_hash`` tie both to the
+    exact run journal entry the delegation was anchored at. A verifier holding
+    the chain can prove the cross-worker DAG crossed this boundary without the
+    record ever exposing the native result payload.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose journal the delegation was anchored into.
+        node_name: The outer-plan node name (the delegation leaf).
+        target: The native subagent target (e.g. ``claude`` or ``codex``).
+        node_hash: The deterministic plan-node hash (replay-invariant).
+        result_content_hash: SHA-256 of the canonical native result payload.
+        journal_index: 0-based journal index of the anchoring entry.
+        journal_event_hash: The anchoring journal entry's Merkle ``event_hash``.
+        tier: Execution tier -- ``batch`` for non-interactive fan-out, else
+            ``interactive``.
+        actor: Recorded actor; defaults to ``"subagent_delegation"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SUBAGENT_DELEGATION,
+        actor=actor,
+        resource_type="subagent_delegation",
+        resource_id=node_name,
+        details={
+            "run_id": run_id,
+            "node_name": node_name,
+            "target": target,
+            "node_hash": node_hash,
+            "result_content_hash": result_content_hash,
+            "journal_index": journal_index,
+            "journal_event_hash": journal_event_hash,
+            "tier": tier,
+        },
+    )
+
+
 def record_governance_decision(
     *,
     chain: AuditChainStore,
@@ -1255,6 +1324,7 @@ __all__ = [
     "EVENT_REVIEW_RECEIPT",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
+    "EVENT_SUBAGENT_DELEGATION",
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
@@ -1282,5 +1352,6 @@ __all__ = [
     "record_sensitive_gate",
     "record_skill_install_receipt",
     "record_skill_usage",
+    "record_subagent_delegation",
     "record_thread_approval",
 ]
