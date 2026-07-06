@@ -1123,6 +1123,10 @@ cli.add_command(mandate_group, "mandate")
 from bernstein.cli.commands.review_receipt_cmd import review_receipt_group  # noqa: E402
 
 cli.add_command(review_receipt_group, "review-receipt")
+# Journal-anchored stall escalation receipts (#2299).
+from bernstein.cli.commands.escalation_cmd import escalation_group  # noqa: E402
+
+cli.add_command(escalation_group, "escalation")
 # Signed maker-checker / judge-panel gate adjudications (#2294).
 from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
 
