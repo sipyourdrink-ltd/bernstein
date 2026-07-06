@@ -101,6 +101,20 @@ EVENT_TEMPLATE_COMPRESSION_RECEIPT = "template.compression.receipt"
 #: directory digests.
 EVENT_TEMPLATE_COMPRESSION_RESTORE = "template.compression.restore"
 
+#: Issue #2301 -- emitted once per skill install. The event carries the
+#: skill install receipt: the installed content hash, the authorising
+#: manifest hash, the install id, and the spine anchor (the entry hash of
+#: the receipt row in the install lineage spine). A verifier holding the
+#: spine can recompute the anchor byte-identically and confirm the install
+#: is chain-attested rather than registry-declared.
+EVENT_SKILL_INSTALL_RECEIPT = "skill.install_receipt"
+
+#: Issue #2301 -- emitted whenever a skill participates in a run. The event
+#: binds the skill's content hash to the run journal head (the run's spine
+#: head hash) so a later provenance query can recompute usage from verified
+#: journal heads rather than from a mutable counter.
+EVENT_SKILL_USAGE = "skill.usage"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -480,6 +494,99 @@ def record_eval_ab_comparison(
     )
 
 
+@dataclass(frozen=True)
+class SkillInstallReceiptDetails:
+    """Structured payload for the ``skill.install_receipt`` event."""
+
+    skill_hash: str
+    manifest_hash: str
+    install_id: str
+    spine_anchor: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "skill_hash": self.skill_hash,
+            "manifest_hash": self.manifest_hash,
+            "install_id": self.install_id,
+            "spine_anchor": self.spine_anchor,
+        }
+
+
+def record_skill_install_receipt(
+    *,
+    chain: AuditChainStore,
+    skill_hash: str,
+    manifest_hash: str,
+    install_id: str,
+    spine_anchor: str,
+    actor: str = "skill_provenance",
+) -> AuditEvent:
+    """Append a ``skill.install_receipt`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        skill_hash: Content hash of the installed skill (``sha256:<hex>``).
+        manifest_hash: SHA-256 of the authorising catalog manifest.
+        install_id: Per-install unique identifier tying this event to the
+            lockfile row and the receipt anchor.
+        spine_anchor: Entry hash of the receipt row in the install lineage
+            spine; a verifier holding the spine can recompute it.
+        actor: Recorded actor; defaults to ``"skill_provenance"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    payload = SkillInstallReceiptDetails(
+        skill_hash=skill_hash,
+        manifest_hash=manifest_hash,
+        install_id=install_id,
+        spine_anchor=spine_anchor,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SKILL_INSTALL_RECEIPT,
+        actor=actor,
+        resource_type="skill_install_receipt",
+        resource_id=skill_hash,
+        details=payload,
+    )
+
+
+def record_skill_usage(
+    *,
+    chain: AuditChainStore,
+    skill_hash: str,
+    run_id: str,
+    journal_head: str,
+    actor: str = "skill_provenance",
+) -> AuditEvent:
+    """Append a ``skill.usage`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        skill_hash: Content hash of the skill that participated in the run.
+        run_id: The run identifier (spine run id).
+        journal_head: The run's journal head (spine head hash) at the moment
+            the skill participated.
+        actor: Recorded actor; defaults to ``"skill_provenance"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SKILL_USAGE,
+        actor=actor,
+        resource_type="skill_usage",
+        resource_id=skill_hash,
+        details={
+            "skill_hash": skill_hash,
+            "run_id": run_id,
+            "journal_head": journal_head,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_COMPACTION_RECEIPT",
@@ -487,14 +594,19 @@ __all__ = [
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_MULTIMODAL_ATTACH",
+    "EVENT_SKILL_INSTALL_RECEIPT",
+    "EVENT_SKILL_USAGE",
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
     "MultimodalAttachDetails",
+    "SkillInstallReceiptDetails",
     "record_cost_profile_report",
     "record_eval_ab_comparison",
     "record_multimodal_attach",
     "record_sensitive_gate",
+    "record_skill_install_receipt",
+    "record_skill_usage",
 ]
