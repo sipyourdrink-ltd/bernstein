@@ -465,7 +465,7 @@ def print_rich_help() -> None:
     opts.add_row("", "--fresh", "ignore saved session, start clean")
     opts.add_row("", "--version", "show version")
     c.print(opts)
-    c.print("\n  [dim]docs:[/dim] https://chernistry.github.io/bernstein/")
+    c.print("\n  [dim]docs:[/dim] https://bernstein.readthedocs.io/en/latest/")
     c.print("  [dim]repo:[/dim] https://github.com/sipyourdrink-ltd/bernstein")
     c.print("  [dim]audit chain:[/dim] docs/security/audit-log.md  (RFC 2104 HMAC-SHA256)\n")
 

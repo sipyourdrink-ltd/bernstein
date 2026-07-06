@@ -722,7 +722,7 @@ def _init_impl(
     console.print("  2. Run [bold]bernstein[/bold] to start the orchestra")
     console.print("")
     console.print(
-        "  See [link=https://chernistry.github.io/bernstein/]docs[/link] "
+        "  See [link=https://bernstein.readthedocs.io/en/latest/]docs[/link] "
         "or [bold]examples/quickstart/[/bold] for a working example."
     )
 
