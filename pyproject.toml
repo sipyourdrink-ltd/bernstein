@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "2.16.0"
+version = "2.16.1"
 description = "Audit-grade multi-agent orchestration for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40 more): HMAC-chained audit log, signed agent cards, per-artefact lineage, air-gap deploy. The orchestrator your compliance team will sign off on."
 readme = "README.md"
 requires-python = ">=3.12"
