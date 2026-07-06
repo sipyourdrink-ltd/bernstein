@@ -185,7 +185,7 @@ class IntentMandate:
         """Return a copy carrying the HMAC signature over the body."""
         return IntentMandate(
             task_id=self.task_id,
-            allowed_tool_calls=tuple(self.allowed_tool_calls),
+            allowed_tool_calls=self.allowed_tool_calls,
             spend_cap_usd=self.spend_cap_usd,
             expires_at=self.expires_at,
             signature=_sign(key, self._body()),
@@ -251,7 +251,7 @@ class CartMandate:
         """Return a copy carrying the HMAC signature over the body."""
         return CartMandate(
             intent_hash=self.intent_hash,
-            tool_calls=tuple(self.tool_calls),
+            tool_calls=self.tool_calls,
             amount_usd=self.amount_usd,
             signature=_sign(key, self._body()),
         )

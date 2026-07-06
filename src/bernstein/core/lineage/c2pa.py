@@ -152,7 +152,7 @@ class SoftBinding:
     blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def to_assertion_data(self) -> dict[str, Any]:
-        return {"alg": self.alg, "blocks": list(self.blocks)}
+        return {"alg": self.alg, "blocks": self.blocks.copy()}
 
 
 @dataclass(slots=True)

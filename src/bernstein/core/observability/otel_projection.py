@@ -225,7 +225,7 @@ class ProjectedSpan:
             "operation": self.operation,
             "entry_hash": self.entry_hash,
             "index": self.index,
-            "attributes": dict(self.attributes),
+            "attributes": self.attributes.copy(),
         }
 
 
@@ -461,7 +461,7 @@ def sign_projection(
         trace_id=projection.trace_id,
         run_head=projection.run_head,
         genai_stability=projection.genai_stability,
-        spans=list(projection.spans),
+        spans=projection.spans.copy(),
         keyid=projection.keyid,
         signature_b64=base64.b64encode(sig).decode("ascii"),
     )
@@ -518,7 +518,7 @@ def verify_projection(
       install identity. Any tampering with a span changes the canonical
       bytes and fails this check.
     """
-    errors: list[str] = list(recompute_span_ids(projection, events))
+    errors: list[str] = recompute_span_ids(projection, events).copy()
 
     if not projection.signature_b64:
         errors.append("projection is unsigned")
@@ -536,7 +536,7 @@ def verify_projection(
         trace_id=projection.trace_id,
         run_head=projection.run_head,
         genai_stability=projection.genai_stability,
-        spans=list(projection.spans),
+        spans=projection.spans.copy(),
         keyid=projection.keyid,
         signature_b64="",
     )
