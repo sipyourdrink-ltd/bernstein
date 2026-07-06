@@ -623,6 +623,7 @@ Multi-project dashboard.
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
 | `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
+| `bernstein credential` | C2PA content credentials projected from the lineage spine (group). | `cli/commands/credential_cmd.py` |
 | `bernstein compaction` | Compaction receipt-chain ops (group). | `cli/commands/compaction_cmd.py:32` |
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
 | `bernstein approve-tool` | Approve a tool-call request. | `cli/commands/approval_cmd.py:approve_tool_cmd` |
@@ -721,6 +722,24 @@ a write that cannot be recorded raises rather than dropping provenance.
 `verify` against an empty run reports a distinct `NO ENTRIES` status
 instead of passing trivially. (`cli/commands/lineage_cmd.py`,
 `core/lineage/spine.py`.)
+
+#### `bernstein credential`
+
+| Subcommand | Purpose |
+|---|---|
+| `emit ARTIFACT --run-id RUN_ID` | Project the artifact's lineage-spine subtree into a signed C2PA 2.2 manifest and write `<artifact>.c2pa.json`. `--workdir DIR`, `--json`. Exit 0 = written, 1 = no lineage / bad input. |
+| `verify ARTIFACT` | Confirm the manifest's hard-binding hash matches the artifact bytes and the signature chains to the install identity. `--workdir DIR`, `--manifest PATH`. Exit 0 = OK, 1 = bad input, 2 = verification failed. |
+
+The manifest is a deterministic projection of the artifact's lineage
+entries: a hard-binding assertion (`c2pa.hash.data`) carries the spine
+entry's content hash and an actions assertion (`c2pa.actions`) records the
+producing model and actor. It is signed with the install-identity Ed25519
+key, so one attestation root covers both who ran the artifact and what was
+produced. With no lineage entry for the artifact there is nothing to
+project, so `emit` fails rather than fabricating an unsigned label.
+Watermark and fingerprint soft-binding layers are pluggable via
+`c2pa.soft-binding`. Two replays of the same run produce byte-identical
+manifests. (`cli/commands/credential_cmd.py`, `core/lineage/c2pa.py`.)
 
 #### `bernstein compaction`
 
