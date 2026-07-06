@@ -157,6 +157,17 @@ EVENT_THREAD_APPROVAL = "thread.approval"
 #: span attribute payloads themselves.
 EVENT_OTEL_PROJECTION = "otel.projection"
 
+#: Issue #2307 -- emitted for every stateless MCP call. The stateless spec
+#: revision removes the ``initialize`` handshake and ``Mcp-Session-Id``, so any
+#: request can land on any server instance and the protocol no longer provides
+#: cross-call ordering. This event anchors the call's continuity in the audit
+#: chain instead of a session store: it records the run id, the MCP method, the
+#: ordered call index, the content-derived W3C trace/span ids, the run journal
+#: head the call was recorded against, and -- on a cache hit -- the content hash
+#: of the producing run. A verifier can recompute the ordering from verified
+#: chain entries rather than trusting a session id.
+EVENT_MCP_STATELESS_CALL = "mcp.stateless_call"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -930,6 +941,58 @@ def record_otel_projection(
     )
 
 
+def record_mcp_stateless_call(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    method: str,
+    call_index: int,
+    trace_id: str,
+    span_id: str,
+    journal_head: str,
+    cache_content_hash: str = "",
+) -> AuditEvent:
+    """Append an ``mcp.stateless_call`` event into *chain*.
+
+    Anchors a stateless MCP call's cross-call continuity in the audit chain
+    rather than a session store: the stateless spec removes the handshake and
+    ``Mcp-Session-Id``, so ordering must live somewhere verifiable. The event
+    binds the call's content-derived W3C trace/span ids to the run journal head
+    it was recorded against, so a verifier recomputes ordering from verified
+    chain entries instead of trusting a session id (AC4).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose journal recorded the call.
+        method: The MCP method (e.g. ``tools/call``).
+        call_index: 0-based ordered index of the call within the run.
+        trace_id: The content-derived W3C trace id (run-scoped).
+        span_id: The content-derived W3C span id (call-scoped).
+        journal_head: The run journal head hash the call was recorded against.
+        cache_content_hash: On a cache hit, the content hash of the producing
+            run's value; empty for a miss (AC5).
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MCP_STATELESS_CALL,
+        actor="mcp_stateless_core",
+        resource_type="mcp_stateless_call",
+        resource_id=span_id,
+        details={
+            "run_id": run_id,
+            "method": method,
+            "call_index": call_index,
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "journal_head": journal_head,
+            "cache_content_hash": cache_content_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_COMPACTION_RECEIPT",
@@ -938,6 +1001,7 @@ __all__ = [
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
+    "EVENT_MCP_STATELESS_CALL",
     "EVENT_MEMORY_WRITE",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
@@ -958,6 +1022,7 @@ __all__ = [
     "record_eval_ab_comparison",
     "record_mandate_consent_receipt",
     "record_mandate_revocation",
+    "record_mcp_stateless_call",
     "record_memory_write",
     "record_multimodal_attach",
     "record_otel_projection",
