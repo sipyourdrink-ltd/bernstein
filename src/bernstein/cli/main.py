@@ -1128,6 +1128,11 @@ from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
 
 cli.add_command(gate_group, "gate")
 
+# RBAC + budget decisions as verifiable projections over the audit chain (#2309).
+from bernstein.cli.commands.governance_cmd import governance_group  # noqa: E402
+
+cli.add_command(governance_group, "governance")
+
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
 
