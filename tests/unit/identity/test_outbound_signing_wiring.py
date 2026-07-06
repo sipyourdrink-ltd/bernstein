@@ -77,3 +77,35 @@ class TestBrowserRenderingSigned:
         keys = {k.lower() for k in captured}
         assert "signature-input" in keys
         assert "signature" in keys
+
+
+class TestSignatureAttestation:
+    @pytest.mark.asyncio
+    async def test_signature_is_recorded_in_audit_chain(self, tmp_path):
+        import httpx
+
+        from bernstein.bridges.browser_rendering import BrowserConfig, BrowserRenderingBridge
+        from bernstein.core.security.audit import AuditLog
+
+        audit_dir = tmp_path / "audit"
+        audit_dir.mkdir()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"success": True, "title": "t", "content": "c"})
+
+        config = BrowserConfig(account_id="acct", api_token="tok")
+        bridge = BrowserRenderingBridge(config, audit_dir=audit_dir)
+        bridge._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            await bridge.render("https://target.example/page")
+        finally:
+            await bridge._client.aclose()
+
+        log = AuditLog(audit_dir=audit_dir)
+        events = log.query(event_type="identity.http_signature")
+        assert len(events) == 1
+        assert events[0].details["call_site"] == "browser.render"
+        assert events[0].details["signature"].startswith("sig1=:")
+        # The chain the attestation lands in verifies.
+        valid, errors = log.verify()
+        assert valid, errors
