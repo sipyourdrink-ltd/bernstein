@@ -482,6 +482,7 @@ See [`operations/cluster-mode.md`](../operations/cluster-mode.md) for the full s
 | `bernstein prompts` | Prompt-template management (group). | `cli/commands/prompts_cmd.py:36` |
 | `bernstein manifest` | Manifest mgmt (group). | `cli/commands/manifest_cmd.py:18` |
 | `bernstein templates` | Project template mgmt (group). | `cli/commands/templates_cmd.py:41` |
+| `bernstein skill` | Skill usage provenance (group): install receipts + provenance graph. | `cli/commands/skill_cmd.py:1` |
 
 #### `bernstein plugins`
 
@@ -501,6 +502,20 @@ Lists plugins in `.bernstein/plugins/<name>/meta.json`.
 | `uninstall NAME` | Remove an installed skill. |
 
 (`cli/commands/skills_cmd.py:13-81`.)
+
+#### `bernstein skill`
+
+Usage-attestation surface for installed skills. Each catalog install anchors a
+lineage receipt in the run's Merkle+HMAC spine; provenance recomputes usage
+from verified journal heads rather than a stored counter.
+
+| Subcommand | Purpose |
+|---|---|
+| `provenance SKILL` | Print the verified runs and artifacts a skill contributed to; the verified-run count is recomputed from journal heads on every call. |
+| `verify SKILL` | Recompute the install receipt and flag a manifest-hash drift between the receipt and the currently installed content. |
+
+`SKILL` is a catalog entry id (resolved via `skills.lock`) or a raw content
+digest. (`cli/commands/skill_cmd.py`.)
 
 #### `bernstein prompts`
 
