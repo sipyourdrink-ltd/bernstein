@@ -70,6 +70,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "agents",
         # Skills (oai-004)
         "skills",
+        # Skill usage provenance (issue #2301)
+        "skill",
         # Auth
         "auth",
         "login",
@@ -176,6 +178,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "compaction",
         "handoff",
         "lineage",
+        "credential",
         "migrate",
         "routine",
         "wheelhouse",

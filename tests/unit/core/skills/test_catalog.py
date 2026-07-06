@@ -396,6 +396,69 @@ def test_install_from_github_fixture_writes_lockfile(
     assert any(r.action == RECEIPT_INSTALL for r in state.receipts)
 
 
+def test_install_anchors_lineage_receipt_in_spine(
+    tmp_path: Path,
+    github_fixture_installer: Callable[..., PluginInstallResult],
+) -> None:
+    """AC1 (issue #2301): install writes a spine-anchored lineage receipt."""
+    from bernstein.core.lineage.spine import LineageSpine
+    from bernstein.core.security.audit import AuditLog, load_or_create_audit_key
+    from bernstein.core.skills.provenance import (
+        INSTALL_RUN_ID,
+        read_install_receipt,
+        verify_install,
+    )
+
+    priv, pub = generate_signer_keypair()
+    expected_digest = _compute_fixture_digest(tmp_path)
+    entry = _make_entry(content_digest=expected_digest)
+    signed = attach_signature(entry, sign_entry(entry, priv))
+    catalog = _make_catalog((signed,), signer_pubkey=pub)
+
+    config = SkillCatalogServiceConfig(workdir=tmp_path)
+    service = SkillCatalogService(
+        config=config,
+        preloaded_catalog=catalog,
+        auditor=SkillCatalogAuditor(audit_dir=tmp_path / ".sdd" / "audit"),
+        plugin_installer=github_fixture_installer,
+    )
+    outcome = service.install("code-review")
+
+    # The receipt exists on disk and its skill_hash is the installed digest.
+    receipt = read_install_receipt(tmp_path, outcome.content_digest)
+    assert receipt is not None
+    assert receipt.skill_hash == outcome.content_digest
+    assert receipt.manifest_hash == outcome.manifest_sha256
+
+    # The install spine verifies (AC1) and a chain event names the anchor.
+    key = load_or_create_audit_key()
+    spine = LineageSpine(tmp_path / ".sdd" / "lineage", run_id=INSTALL_RUN_ID, hmac_key=key)
+    assert spine.verify().ok
+
+    log = AuditLog(tmp_path / ".sdd" / "audit")
+    events = log.query(event_type="skill.install_receipt")
+    assert len(events) == 1
+    assert events[0].details["spine_anchor"] == spine.head_hash()
+
+    # AC5: verify passes when installed manifest matches, fails on drift.
+    ok = verify_install(
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=key,
+        skill_hash=outcome.content_digest,
+        installed_manifest_hash=outcome.manifest_sha256,
+    )
+    assert ok.ok
+    drift = verify_install(
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=key,
+        skill_hash=outcome.content_digest,
+        installed_manifest_hash="d" * 64,
+    )
+    assert not drift.ok
+
+
 def test_install_refuses_content_digest_mismatch(
     tmp_path: Path,
     github_fixture_installer: Callable[..., PluginInstallResult],

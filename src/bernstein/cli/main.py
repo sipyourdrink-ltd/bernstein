@@ -969,6 +969,10 @@ cli.add_command(skills_group)
 from bernstein.cli.commands.skills_catalog_cmd import catalog_group as _skills_catalog_group  # noqa: E402
 
 skills_group.add_command(_skills_catalog_group, "catalog")
+# Skill usage provenance (issue #2301): install receipts + provenance graph.
+from bernstein.cli.commands.skill_cmd import skill_group as _skill_group  # noqa: E402
+
+cli.add_command(_skill_group)
 # Named team manifests (issue #2248): list/show/drift.
 from bernstein.cli.commands.team_cmd import team_group as _team_group  # noqa: E402
 
@@ -1099,6 +1103,11 @@ cli.add_command(secrets_group, "secrets")
 from bernstein.cli.commands.lineage_cmd import lineage_cmd  # noqa: E402
 
 cli.add_command(lineage_cmd, "lineage")
+
+# C2PA content credentials projected from the lineage spine (#2303).
+from bernstein.cli.commands.credential_cmd import credential_group  # noqa: E402
+
+cli.add_command(credential_group, "credential")
 
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
