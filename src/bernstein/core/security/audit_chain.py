@@ -139,6 +139,15 @@ EVENT_MANDATE_CONSENT_RECEIPT = "mandate.consent_receipt"
 #: actions under the mandate are refused.
 EVENT_MANDATE_REVOCATION = "mandate.revocation"
 
+#: Issue #2297 -- emitted when an operator resolves an approval over the
+#: live event stream. The event anchors the decision to the exact run
+#: journal entry the stream projected at decision time (the journal index
+#: and its Merkle ``event_hash``), so a verifier can prove the approval was
+#: made against the executed thread rather than a divergent view. The event
+#: records the run id, the journal index, the entry hash, the decision, the
+#: operator install signature, and the worktree id -- never diff content.
+EVENT_THREAD_APPROVAL = "thread.approval"
+
 #: Issue #2300 -- emitted whenever a signed OTel GenAI span set is projected
 #: from a run's event journal. The event records the run id, the journal head
 #: the projection anchors to, the derived OTLP trace id, the span count, and
@@ -804,6 +813,78 @@ def record_mandate_revocation(
     )
 
 
+@dataclass(frozen=True)
+class ThreadApprovalDetails:
+    """Structured payload for the ``thread.approval`` event."""
+
+    run_id: str
+    journal_index: int
+    event_hash: str
+    decision: str
+    operator_install_id_sig: str
+    worktree_id: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "journal_index": self.journal_index,
+            "event_hash": self.event_hash,
+            "decision": self.decision,
+            "operator_install_id_sig": self.operator_install_id_sig,
+            "worktree_id": self.worktree_id,
+        }
+
+
+def record_thread_approval(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    journal_index: int,
+    event_hash: str,
+    decision: str,
+    operator_install_id_sig: str,
+    worktree_id: str,
+) -> AuditEvent:
+    """Append a ``thread.approval`` event into *chain*.
+
+    An approval issued over the live event stream is itself a signed
+    record: it anchors the operator's decision to the exact run journal
+    entry the stream projected at decision time, so a verifier can prove
+    the approval was made against the executed thread (AC4).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose journal the operator was watching.
+        journal_index: 0-based journal index of the entry under approval.
+        event_hash: The journal entry's Merkle ``event_hash`` -- the chain
+            link that ties the decision to the byte-identical executed row.
+        decision: One of ``approve`` or ``reject``.
+        operator_install_id_sig: Operator install fingerprint signature,
+            recorded as the actor so the approval attributes to a known
+            operator install.
+        worktree_id: Identifier of the worktree the approval is bound to.
+
+    Returns:
+        The recorded :class:`AuditEvent`. The details payload carries every
+        input plus ``prev_chain_digest`` (the chain head at write time).
+    """
+    payload = ThreadApprovalDetails(
+        run_id=run_id,
+        journal_index=journal_index,
+        event_hash=event_hash,
+        decision=decision,
+        operator_install_id_sig=operator_install_id_sig,
+        worktree_id=worktree_id,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_THREAD_APPROVAL,
+        actor=operator_install_id_sig,
+        resource_type="thread_approval",
+        resource_id=run_id,
+        details=payload,
+    )
+
+
 def record_otel_projection(
     *,
     chain: AuditChainStore,
@@ -864,6 +945,7 @@ __all__ = [
     "EVENT_SKILL_USAGE",
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
+    "EVENT_THREAD_APPROVAL",
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
@@ -871,6 +953,7 @@ __all__ = [
     "MemoryWriteDetails",
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
+    "ThreadApprovalDetails",
     "record_cost_profile_report",
     "record_eval_ab_comparison",
     "record_mandate_consent_receipt",
@@ -881,4 +964,5 @@ __all__ = [
     "record_sensitive_gate",
     "record_skill_install_receipt",
     "record_skill_usage",
+    "record_thread_approval",
 ]

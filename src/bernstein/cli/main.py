@@ -900,6 +900,9 @@ from bernstein.gui.cli import gui_group as _gui_group  # noqa: E402
 cli.add_command(_gui_group)
 cli.add_command(trace_cmd, "trace")
 cli.add_command(replay_cmd, "replay")
+from bernstein.cli.commands.thread_cmd import thread_cmd as _thread_cmd  # noqa: E402
+
+cli.add_command(_thread_cmd, "thread")
 cli.add_command(github_group)
 cli.add_command(graph_group, "graph")
 cli.add_command(policy_group, "policy")

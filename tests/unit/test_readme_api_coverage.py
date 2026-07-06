@@ -85,6 +85,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "checkpoint",
         "wrap-up",
         "replay",
+        "thread",
         "diff",
         "dep-impact",
         "changelog",

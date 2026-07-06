@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ from textual.widgets import Static
 
 from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
 from bernstein.tui.command_palette import DEFAULT_PALETTE_COMMANDS, CommandPalette, CommandPaletteScreen, PaletteCommand
+from bernstein.tui.event_stream import JournalStreamConsumer, stream_enabled
 from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
 from bernstein.tui.layout_persistence import LayoutConfig, load_layout, save_layout
 from bernstein.tui.notification_badge import NotificationCenterPanel, NotificationHistory
@@ -254,6 +256,12 @@ class BernsteinApp(App[None]):
         """
         super().__init__()
         self._poll_interval = poll_interval
+        # Issue #2297: when the SSE stream drives the hot path, the timer
+        # poll loop is not started; the journal stream consumer refreshes
+        # reactively instead. The flag keeps a polling fallback for
+        # constrained terminals.
+        self._stream_consumer = JournalStreamConsumer()
+        self._use_stream = stream_enabled()
         self._start_ts = time.time()
         self._action_bar_visible = False
         self._layout = load_layout()
@@ -359,7 +367,12 @@ class BernsteinApp(App[None]):
         self._refresh_session_recorder_panel()
 
         self._load_historical_logs()
-        self.set_interval(self._poll_interval, self.action_refresh)
+        # Issue #2297: the hot path is driven by the audit-chain SSE stream
+        # when enabled; only fall back to the timer poll loop otherwise.
+        if not self._use_stream:
+            self.set_interval(self._poll_interval, self.action_refresh)
+        else:
+            self.run_worker(self._consume_thread_stream(), exclusive=False)
         # TUI-009: prune expired toasts and refresh toast overlay every second
         self.set_interval(1.0, self._tick_toasts)
 
@@ -521,6 +534,34 @@ class BernsteinApp(App[None]):
         # Update timeline if visible
         if self.query_one(_TASK_TIMELINE_SELECTOR, TaskTimeline).display:
             self.run_worker(self._refresh_timeline())
+
+    async def _consume_thread_stream(self) -> None:
+        """Drive the hot path from the audit-chain SSE stream (issue #2297).
+
+        Replaces the timer poll loop: each hash-anchored journal frame that
+        the server projects triggers a single refresh, so the rendered view
+        is an attestable projection of the executed thread rather than a
+        polled snapshot. On a dropped connection the loop reconnects with
+        ``Last-Event-ID`` so it resumes from the last journal index without
+        missing or duplicating an entry (AC5). The rendering path is
+        unchanged - only the data source is swapped.
+        """
+        while True:
+            try:
+                headers = _auth_headers() | self._stream_consumer.reconnect_headers()
+                async with (
+                    httpx.AsyncClient(timeout=None) as client,
+                    client.stream("GET", f"{SERVER_URL}/events", headers=headers) as response,
+                ):
+                    async for block in response.aiter_text():
+                        if not block.strip():
+                            continue
+                        delivered = list(self._stream_consumer.consume(block))
+                        if delivered:
+                            self.action_refresh()
+            except Exception:
+                logger.debug("thread stream disconnected, will reconnect", exc_info=True)
+                await asyncio.sleep(self._poll_interval)
 
     def _apply_task_filter(self) -> None:
         """Apply the current structured task filter to the cached task rows."""
