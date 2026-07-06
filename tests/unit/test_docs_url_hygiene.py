@@ -34,6 +34,5 @@ def test_no_dead_docs_host_in_src() -> None:
     sites = _dead_link_sites()
     assert sites == [], (
         f"shipped source must not link to the retired docs host "
-        f"'{_DEAD_DOCS_HOST}'; use https://bernstein.readthedocs.io/ instead:\n"
-        + "\n".join(sites)
+        f"'{_DEAD_DOCS_HOST}'; use https://bernstein.readthedocs.io/ instead:\n" + "\n".join(sites)
     )
