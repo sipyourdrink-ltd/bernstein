@@ -145,9 +145,157 @@ def make_lineage_hook(
     return _hook
 
 
+# ---------------------------------------------------------------------------
+# Signed adjudication wiring (issue #2294)
+# ---------------------------------------------------------------------------
+
+
+def _gate_panel() -> Any:
+    """Return the deterministic maker-checker panel used for gate boundaries.
+
+    The two roles differ on model + prompt, so the panel is independent by
+    construction (a checker that shares the maker's config would be rejected).
+    """
+    from bernstein.core.quality.adjudication import JudgeConfig, PanelConfig, PanelMode
+
+    return PanelConfig(
+        judges=(
+            JudgeConfig(model="phase_gate.maker", temperature=0.0, prompt_hash="phase_gate.rules"),
+            JudgeConfig(model="phase_gate.checker", temperature=0.0, prompt_hash="phase_gate.exit_criteria"),
+        ),
+        mode=PanelMode.MAKER_CHECKER,
+    )
+
+
+def _gate_verdicts(results: list[GateResult]) -> Any:
+    """Project *results* onto a deterministic maker-checker verdict pair.
+
+    The maker asserts the boundary from the raw rule outcomes; the checker
+    re-derives the same verdict independently. Both FAIL when any rule failed,
+    so the aggregated (checker-veto) verdict mirrors the gate's own decision.
+    """
+    from bernstein.core.orchestration.phase_gates import GateOutcome
+    from bernstein.core.quality.adjudication import JudgeVerdict, Verdict
+
+    panel = _gate_panel()
+    failed = any(r.outcome is GateOutcome.FAIL for r in results)
+    verdict = Verdict.FAIL if failed else Verdict.PASS
+    rationale = _prompt_sha(results)
+    return (
+        JudgeVerdict(config=panel.judges[0], verdict=verdict, rationale_hash=rationale),
+        JudgeVerdict(config=panel.judges[1], verdict=verdict, rationale_hash=rationale),
+    )
+
+
+def make_adjudication_hook(
+    *,
+    lineage_hook: Any,
+    lineage_root: Path,
+    hmac_key: bytes,
+    audit_dir: Path | None = None,
+    run_id: str,
+) -> Any:
+    """Wrap *lineage_hook* so each boundary also writes a signed adjudication record.
+
+    The returned closure first delegates to *lineage_hook* (the WAL lineage
+    emission from :func:`make_lineage_hook`) and then anchors a signed
+    adjudication record -- ``{inputs_hash, rubric_hash, panel_config,
+    per_judge_verdict, final_verdict}`` -- to the run's lineage spine, mirroring
+    it into the HMAC audit chain when *audit_dir* is supplied.
+
+    The gate's inputs are the per-rule ``(rule_id, outcome)`` projection; the
+    rubric is the boundary. Two byte-identical gate runs produce byte-identical
+    adjudication records and anchors (AC5).
+    """
+    from bernstein.core.quality.adjudication import adjudicate
+
+    def _hook(
+        task: Task,
+        phase: Phase,
+        boundary: tuple[Phase, Phase],
+        results: list[GateResult],
+    ) -> None:
+        lineage_hook(task, phase, boundary, results)
+        summary = gate_results_summary(results)
+        rubric = {"boundary": [boundary[0].value, boundary[1].value], "phase": phase.value}
+        panel = _gate_panel()
+        verdicts = _gate_verdicts(results)
+        record = adjudicate(
+            run_id=run_id,
+            lineage_root=lineage_root,
+            hmac_key=hmac_key,
+            inputs=summary,
+            rubric=rubric,
+            panel=panel,
+            judge_verdicts=verdicts,
+            now=0,
+        )
+        if audit_dir is not None:
+            from bernstein.core.security.audit_chain import AuditChainStore, record_gate_adjudication
+
+            chain = AuditChainStore(audit_dir, key=hmac_key)
+            record_gate_adjudication(
+                chain=chain,
+                run_id=run_id,
+                inputs_hash=record.inputs_hash,
+                rubric_hash=record.rubric_hash,
+                panel_config_hash=panel.config_hash(),
+                final_verdict=record.final_verdict.value,
+                journal_entry_hash=record.journal_entry_hash,
+            )
+
+    return _hook
+
+
+def build_phased_runner_with_gate_lineage(
+    *,
+    executor: Any,
+    sdd_dir: Path,
+    hmac_key: bytes,
+    run_id: str | None = None,
+    emit_audit_chain: bool = False,
+    store: Any | None = None,
+) -> Any:
+    """Return a :class:`PhasedRunner` with the gate lineage hook wired live.
+
+    This is the production wiring AC1 requires: it constructs a
+    :class:`bernstein.core.persistence.lineage.LineageWriter`, calls
+    :func:`make_lineage_hook` on it (the live caller that fixes the 0-caller
+    hook), wraps it so each boundary also writes a signed adjudication record,
+    and binds the composite hook to a fresh runner.
+
+    Args:
+        executor: The phase executor callable passed to :class:`PhasedRunner`.
+        sdd_dir: The ``.sdd`` directory root.
+        hmac_key: Audit-chain HMAC key that tags spine and audit entries.
+        run_id: Run identifier for the lineage writer + spine; defaults to a
+            stable ``"phased-<>"``-free value derived from the runner.
+        emit_audit_chain: When True, also mirror each adjudication record into
+            the HMAC audit log under ``sdd_dir/audit``.
+    """
+    from bernstein.core.orchestration.phase_pipeline import PhasedRunner
+    from bernstein.core.persistence.lineage import LineageWriter
+
+    resolved_run_id = run_id or "phase-gates"
+    writer = LineageWriter.for_run(resolved_run_id, sdd_dir)
+    lineage_hook = make_lineage_hook(writer)
+    hook = make_adjudication_hook(
+        lineage_hook=lineage_hook,
+        lineage_root=sdd_dir / "lineage",
+        hmac_key=hmac_key,
+        audit_dir=(sdd_dir / "audit") if emit_audit_chain else None,
+        run_id=resolved_run_id,
+    )
+    if store is not None:
+        return PhasedRunner(executor=executor, gate_lineage_hook=hook, store=store)
+    return PhasedRunner(executor=executor, gate_lineage_hook=hook)
+
+
 __all__ = [
     "PHASE_GATE_REGULATORY_CLASS",
     "build_phase_gate_record",
+    "build_phased_runner_with_gate_lineage",
     "gate_results_summary",
+    "make_adjudication_hook",
     "make_lineage_hook",
 ]
