@@ -1117,6 +1117,11 @@ from bernstein.cli.commands.mandate_cmd import mandate_group  # noqa: E402
 
 cli.add_command(mandate_group, "mandate")
 
+# Signed maker-checker / judge-panel gate adjudications (#2294).
+from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
+
+cli.add_command(gate_group, "gate")
+
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
 

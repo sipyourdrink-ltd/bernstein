@@ -655,6 +655,7 @@ Multi-project dashboard.
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
 | `bernstein approve-tool` | Approve a tool-call request. | `cli/commands/approval_cmd.py:approve_tool_cmd` |
 | `bernstein reject-tool` | Reject a tool-call request. | `cli/commands/approval_cmd.py:reject_tool_cmd` |
+| `bernstein gate verify <run>` | Verify a maker-checker / judge-panel gate's signed adjudication record: recompute `inputs_hash` from `--inputs` and confirm the panel saw exactly those inputs, then confirm the spine anchor still verifies. Exit 1 when no record, 2 on mismatch. | `cli/commands/gate_cmd.py` |
 
 > Task-level `approve` / `reject` are different commands - see [Plan & tasks](#plan--tasks).
 
