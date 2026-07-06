@@ -13,8 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from bernstein.core.lineage.recorder import LineageRecorder
-from bernstein.core.lineage.store import LineageStore
+from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.platform_compat import (
     kill_process_group,
     kill_process_group_graceful,
@@ -958,26 +957,85 @@ class CLIAdapter(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Lineage v1 post-write hook (ADR-009 §11.2)
+# Lineage spine write boundary (issue #2292)
 # ---------------------------------------------------------------------------
+#
+# The spine is the single always-on Merkle+HMAC lineage store. Every
+# adapter artifact write routes through ``record_artifact_write`` -- the
+# one write boundary -- so provenance is captured with no per-adapter
+# opt-in. ``LineageSpine`` is bound at module scope so tests can patch it.
 
-#: Env var that gates the lineage hook. Treated as on by default (soft mode).
-#: Use ``BERNSTEIN_LINEAGE_ENABLED=0`` / ``false`` / ``no`` to disable.
+#: Env var that gates the spine write. ``BERNSTEIN_LINEAGE_ENABLED``
+#: defaults to true and is a *hard* gate: when enabled, a failure to
+#: record fails closed (raises) rather than silently dropping the entry.
+#: Set to ``0`` / ``false`` / ``no`` / ``off`` to disable recording.
 LINEAGE_ENABLED_ENV = "BERNSTEIN_LINEAGE_ENABLED"
 
 
 def _lineage_enabled() -> bool:
-    """Return whether the lineage post-write hook is active.
+    """Return whether the lineage spine write boundary is active.
 
     Default is on; the flag flips off only when the env var is set to a
     recognisable falsey value. Anything else (including missing) keeps the
-    hook live so adapters cannot accidentally drop lineage by forgetting to
-    set the variable.
+    boundary live so adapters cannot accidentally drop lineage by
+    forgetting to set the variable.
     """
     raw = os.environ.get(LINEAGE_ENABLED_ENV)
     if raw is None:
         return True
     return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def record_artifact_write(
+    *,
+    artifact_path: str,
+    content: bytes,
+    actor: str,
+    step_id: str,
+    model: str,
+    lineage_root: Path,
+    run_id: str,
+    hmac_key: bytes,
+    timestamp: int | None = None,
+) -> str | None:
+    """Record one artifact write into the run's lineage spine.
+
+    This is the single write boundary every adapter routes through. It
+    appends exactly one Merkle-chained, HMAC-tagged entry per call.
+
+    Fail-closed gate: when ``BERNSTEIN_LINEAGE_ENABLED`` is truthy (the
+    default), any failure inside the spine propagates -- provenance is a
+    hard requirement, not best-effort. When the gate is disabled the
+    call is a no-op returning ``None`` and the lineage root is never
+    touched.
+
+    Args:
+        artifact_path: Repo-relative POSIX path of the artifact written.
+        content: The bytes that landed on disk.
+        actor: Producing agent / adapter identifier.
+        step_id: Cross-link to the originating step / tool call.
+        model: Model string recorded for provenance.
+        lineage_root: ``.sdd/lineage`` root; per-run dirs live beneath it.
+        run_id: Run identifier keying the spine.
+        hmac_key: Audit-chain HMAC key used to tag entries.
+        timestamp: Optional explicit timestamp; defaults to ``time_ns``.
+            Passed explicitly by deterministic-replay callers.
+
+    Returns:
+        The entry hash on success, ``None`` when the gate is disabled.
+    """
+    if not _lineage_enabled():
+        return None
+    ts = timestamp if timestamp is not None else time.time_ns()
+    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
+    return spine.record(
+        artifact_path=artifact_path,
+        content=content,
+        actor=actor,
+        step_id=step_id,
+        model=model,
+        timestamp=ts,
+    )
 
 
 def post_write_lineage_hook(
@@ -992,38 +1050,30 @@ def post_write_lineage_hook(
     lineage_root: Path,
     operator_hmac_key: bytes,
     artefact_kind: str = "file",
+    run_id: str = "default",
 ) -> str | None:
-    """Record one artefact write to the lineage log.
+    """Deprecated v1 shim -- routes writes through :func:`record_artifact_write`.
 
-    Called by adapters after they have persisted bytes for an artefact.
+    Retained so existing importers keep a stable surface. The v1
+    signature (Ed25519 agent card, JWS private key, artefact kind) is
+    accepted but only the fields the spine records are forwarded: the
+    spine is the single canonical store and no longer signs per-entry
+    JWS. ``span_id`` maps onto the spine ``step_id`` and ``agent_id``
+    onto ``actor``.
 
-    Soft mode (the v1 default): any failure inside the recorder is caught,
-    logged at WARNING level, and the function returns ``None``. Lineage is
-    additive - a recorder bug must never block a successful write from
-    completing.
+    Unlike v1 soft mode, the gate is now fail-closed via
+    :func:`record_artifact_write` when lineage is enabled.
 
     Returns:
-        The entry hash on success, ``None`` when disabled or on caught error.
+        The entry hash on success, ``None`` when the gate is disabled.
     """
-    if not _lineage_enabled():
-        return None
-    try:
-        store = LineageStore(lineage_root)
-        recorder = LineageRecorder(store=store, operator_hmac_key=operator_hmac_key)
-        return recorder.record_write(
-            artefact_path=artefact_path,
-            new_content=new_content,
-            agent_id=agent_id,
-            agent_card=agent_card,
-            private_key_pem=private_key_pem,
-            tool_call_id=tool_call_id,
-            span_id=span_id,
-            artefact_kind=artefact_kind,
-        )
-    except Exception as exc:
-        logger.warning(
-            "lineage post-write hook failed for %s (soft mode - write proceeds): %s",
-            artefact_path,
-            exc,
-        )
-        return None
+    return record_artifact_write(
+        artifact_path=artefact_path,
+        content=new_content,
+        actor=agent_id,
+        step_id=tool_call_id or span_id,
+        model=agent_card.kid,
+        lineage_root=lineage_root,
+        run_id=run_id,
+        hmac_key=operator_hmac_key,
+    )
