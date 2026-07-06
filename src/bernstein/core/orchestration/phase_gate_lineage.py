@@ -1,25 +1,26 @@
 """Per-artifact lineage hook for phase-gate boundary events.
 
 Each phase boundary writes a lineage record so the audit trail becomes
-per-phase, per-rule.  We reuse the existing
-:class:`bernstein.core.persistence.lineage.LineageWriter` rather than
-creating a parallel store - verifying the WAL hash chain
-(``WALReader.verify_chain``) and the audit-log HMAC chain remains a
-single operation.
+per-phase, per-rule. The live wiring
+(:func:`build_phased_runner_with_gate_lineage`) routes that write through
+the canonical always-on :class:`bernstein.core.lineage.spine.LineageSpine`
+boundary - the same single write path every other subsystem uses - so no
+deprecated v1 writer is constructed under ``src/`` (issue #2292 AC4).
 
-Record shape (mapped onto :class:`LineageRecord`)::
+Boundary entry mapped onto :meth:`LineageSpine.record`::
 
-    output_artifact -> .sdd/runtime/phase_artifacts/<task_id>/<phase>.json
-                       (the just-written artefact)
-    inputs          -> empty list; the prior phase's artefact is already
-                       on the lineage chain via its own write event
-    producer        -> AgentRef(agent_id="phase_gate", run_id=task.id)
-    prompt_sha      -> stable hash of "<rule_id>:<outcome>" entries so
-                       two replays of the same evaluation are bit-identical
-    model           -> phase id (used as a free-form tag)
+    artifact_path -> .sdd/runtime/phase_artifacts/<task_id>/<phase>.json
+                     (repo-relative POSIX string)
+    content       -> canonical JSON of the boundary + per-rule outcomes,
+                     so two replays of the same evaluation are bit-identical
+    actor         -> "phase_gate:<phase>"
+    step_id       -> "<from>-><to>" (the boundary tick)
+    model         -> phase id
+    timestamp     -> caller-supplied stable int (default 0)
 
-The ``regulatory_class`` field is set to ``"phase_gate"`` so compliance
-filters can pull every gate event in one query.
+The legacy :func:`make_lineage_hook` (v1 ``LineageWriter``) is retained for
+tests and out-of-tree callers that already hold a writer; it is never
+constructed inside ``src/``.
 """
 
 from __future__ import annotations
@@ -29,11 +30,11 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.persistence.lineage import (
     AgentRef,
     ArtifactRef,
     LineageRecord,
-    LineageWriter,
     hash_file,
 )
 
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 
     from bernstein.core.orchestration.phase_gates import GateResult
     from bernstein.core.orchestration.phase_pipeline import Phase
+    from bernstein.core.persistence.lineage import LineageWriter
     from bernstein.core.tasks.models import Task
 
 
@@ -73,6 +75,48 @@ def _prompt_sha(results: list[GateResult]) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+#: Default phase-artifact runtime root (repo-relative POSIX). Mirrors
+#: ``phase_pipeline._DEFAULT_RUNTIME_ROOT`` without importing the runner.
+_PHASE_ARTIFACT_ROOT = ".sdd/runtime/phase_artifacts"
+
+#: Model tag recorded on the boundary spine entry uses the phase value; the
+#: actor uses this ``phase_gate:`` prefix (unchanged from the v1 hook).
+_PHASE_GATE_ACTOR_PREFIX = "phase_gate"
+
+
+def _boundary_artifact_path(task: Task, phase: Phase) -> str:
+    """Return the repo-relative POSIX phase-artifact path for the boundary.
+
+    ``LineageSpine.record`` rejects absolute paths and traversal, so the
+    path is always relative and already anchored under ``.sdd/``.
+    """
+    return f"{_PHASE_ARTIFACT_ROOT}/{task.id}/{phase.value}.json"
+
+
+def _boundary_content(
+    *,
+    phase: Phase,
+    boundary: tuple[Phase, Phase],
+    results: list[GateResult],
+) -> bytes:
+    """Return deterministic canonical bytes for this boundary evaluation.
+
+    The content is the boundary + the per-rule outcome projection - the
+    same rule/outcome structure ``_prompt_sha`` hashes and
+    :func:`gate_results_summary` renders. We hash the *evaluation* rather
+    than the on-disk artefact file: the artefact bytes are executor-driven
+    and need not be stable, whereas the boundary decision is a pure
+    function of ``(boundary, phase, [(rule_id, outcome)...])`` and reads no
+    wall-clock or randomness, so two identical runs replay byte-identically.
+    """
+    payload = {
+        "boundary": [boundary[0].value, boundary[1].value],
+        "phase": phase.value,
+        "rules": [{"rule_id": r.rule_id, "outcome": r.outcome.value} for r in results],
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def build_phase_gate_record(
@@ -145,6 +189,55 @@ def make_lineage_hook(
     return _hook
 
 
+def make_spine_lineage_hook(
+    spine: LineageSpine,
+    *,
+    timestamp: int = 0,
+    artifact_path_resolver: Callable[[Task, Phase], str] | None = None,
+) -> Any:
+    """Return a boundary lineage hook that writes through *spine*.
+
+    This is the canonical, always-on replacement for the v1
+    :func:`make_lineage_hook`: every boundary routes through the single
+    :meth:`LineageSpine.record` write boundary, so no deprecated v1 writer
+    is constructed under ``src/`` (issue #2292 AC4). The entry mirrors the
+    v1 record's actor (``phase_gate:<phase>``), tick (``<from>-><to>``) and
+    model (phase id).
+
+    Args:
+        spine: The run's lineage spine (the single write boundary).
+        timestamp: Stable integer timestamp recorded on every boundary
+            entry. Defaults to ``0`` so identical fixtures replay
+            byte-identically; a caller may pin a different value.
+        artifact_path_resolver: Optional callable mapping
+            ``(task, phase) -> repo-relative POSIX str`` to override the
+            default ``.sdd/runtime/phase_artifacts/<task_id>/<phase>.json``
+            path. The returned path must be relative (no leading ``/`` or
+            ``..`` segment) or :meth:`LineageSpine.record` rejects it.
+    """
+
+    def _hook(
+        task: Task,
+        phase: Phase,
+        boundary: tuple[Phase, Phase],
+        results: list[GateResult],
+    ) -> None:
+        if artifact_path_resolver is not None:
+            artifact_path = artifact_path_resolver(task, phase)
+        else:
+            artifact_path = _boundary_artifact_path(task, phase)
+        spine.record(
+            artifact_path=artifact_path,
+            content=_boundary_content(phase=phase, boundary=boundary, results=results),
+            actor=f"{_PHASE_GATE_ACTOR_PREFIX}:{phase.value}",
+            step_id=f"{boundary[0].value}->{boundary[1].value}",
+            model=phase.value,
+            timestamp=timestamp,
+        )
+
+    return _hook
+
+
 # ---------------------------------------------------------------------------
 # Signed adjudication wiring (issue #2294)
 # ---------------------------------------------------------------------------
@@ -197,11 +290,11 @@ def make_adjudication_hook(
 ) -> Any:
     """Wrap *lineage_hook* so each boundary also writes a signed adjudication record.
 
-    The returned closure first delegates to *lineage_hook* (the WAL lineage
-    emission from :func:`make_lineage_hook`) and then anchors a signed
-    adjudication record -- ``{inputs_hash, rubric_hash, panel_config,
-    per_judge_verdict, final_verdict}`` -- to the run's lineage spine, mirroring
-    it into the HMAC audit chain when *audit_dir* is supplied.
+    The returned closure first delegates to *lineage_hook* (the per-boundary
+    lineage emission - :func:`make_spine_lineage_hook` in the live wiring) and
+    then anchors a signed adjudication record -- ``{inputs_hash, rubric_hash,
+    panel_config, per_judge_verdict, final_verdict}`` -- to the run's lineage
+    spine, mirroring it into the HMAC audit chain when *audit_dir* is supplied.
 
     The gate's inputs are the per-rule ``(rule_id, outcome)`` projection; the
     rubric is the boundary. Two byte-identical gate runs produce byte-identical
@@ -254,34 +347,41 @@ def build_phased_runner_with_gate_lineage(
     hmac_key: bytes,
     run_id: str | None = None,
     emit_audit_chain: bool = False,
+    boundary_timestamp: int = 0,
     store: Any | None = None,
 ) -> Any:
     """Return a :class:`PhasedRunner` with the gate lineage hook wired live.
 
-    This is the production wiring AC1 requires: it constructs a
-    :class:`bernstein.core.persistence.lineage.LineageWriter`, calls
-    :func:`make_lineage_hook` on it (the live caller that fixes the 0-caller
-    hook), wraps it so each boundary also writes a signed adjudication record,
-    and binds the composite hook to a fresh runner.
+    This is the production wiring AC1 requires. The per-boundary lineage
+    write routes through the canonical always-on
+    :class:`bernstein.core.lineage.spine.LineageSpine` boundary - the same
+    single write path every other subsystem uses - so no deprecated v1
+    writer is constructed (issue #2292 AC4). The spine hook is wrapped by
+    :func:`make_adjudication_hook` exactly as before (issue #2294), so each
+    boundary still emits a signed adjudication record; only the underlying
+    lineage write target changed from the v1 writer to the spine.
 
     Args:
         executor: The phase executor callable passed to :class:`PhasedRunner`.
         sdd_dir: The ``.sdd`` directory root.
         hmac_key: Audit-chain HMAC key that tags spine and audit entries.
-        run_id: Run identifier for the lineage writer + spine; defaults to a
-            stable ``"phased-<>"``-free value derived from the runner.
+        run_id: Run identifier for the lineage spine; defaults to a stable
+            ``"phase-gates"``.
         emit_audit_chain: When True, also mirror each adjudication record into
             the HMAC audit log under ``sdd_dir/audit``.
+        boundary_timestamp: Stable integer timestamp recorded on every
+            boundary spine entry. Defaults to ``0`` so identical fixtures
+            replay byte-identically; pin a different value to override.
     """
     from bernstein.core.orchestration.phase_pipeline import PhasedRunner
-    from bernstein.core.persistence.lineage import LineageWriter
 
     resolved_run_id = run_id or "phase-gates"
-    writer = LineageWriter.for_run(resolved_run_id, sdd_dir)
-    lineage_hook = make_lineage_hook(writer)
+    lineage_root = sdd_dir / "lineage"
+    spine = LineageSpine(lineage_root, run_id=resolved_run_id, hmac_key=hmac_key)
+    lineage_hook = make_spine_lineage_hook(spine, timestamp=boundary_timestamp)
     hook = make_adjudication_hook(
         lineage_hook=lineage_hook,
-        lineage_root=sdd_dir / "lineage",
+        lineage_root=lineage_root,
         hmac_key=hmac_key,
         audit_dir=(sdd_dir / "audit") if emit_audit_chain else None,
         run_id=resolved_run_id,
@@ -298,4 +398,5 @@ __all__ = [
     "gate_results_summary",
     "make_adjudication_hook",
     "make_lineage_hook",
+    "make_spine_lineage_hook",
 ]
