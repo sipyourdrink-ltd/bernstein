@@ -180,6 +180,7 @@ Key default groups:
 | `SpawnDefaults` | `spawn_backoff_base_s`, `spawn_backoff_max_s`, `max_spawn_failures` |
 | `TaskDefaults` | Retry limits, deadline windows |
 | `AgentDefaults` | Heartbeat intervals, max dead agents kept, `max_turns` |
+| `MemoryChainDefaults` | `default_scope` (`user`/`agent`/`run`/`app`), `retention_days` (reporting horizon only; the append-only chain is always retained in full) |
 | `SLODefaults` | `error_budget_min_failures` |
 
 ### 4.1) Agent run-length limits (SDK turns, error budget, wall-clock)

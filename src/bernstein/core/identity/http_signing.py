@@ -295,7 +295,7 @@ def sign_request(
     signature = private_key.sign(base)
     sig_b64 = base64.b64encode(signature).decode("ascii")
 
-    out = dict(headers)
+    out = headers.copy()
     out["Signature-Input"] = f"{SIGNATURE_LABEL}={params}"
     out["Signature"] = f"{SIGNATURE_LABEL}=:{sig_b64}:"
     return out
