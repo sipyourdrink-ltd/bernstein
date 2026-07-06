@@ -1111,6 +1111,11 @@ from bernstein.cli.commands.credential_cmd import credential_group  # noqa: E402
 
 cli.add_command(credential_group, "credential")
 
+# Verifiable spending mandates as journal-anchored consent receipts (#2306).
+from bernstein.cli.commands.mandate_cmd import mandate_group  # noqa: E402
+
+cli.add_command(mandate_group, "mandate")
+
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
 

@@ -124,6 +124,21 @@ EVENT_SKILL_INSTALL_RECEIPT = "skill.install_receipt"
 #: journal heads rather than from a mutable counter.
 EVENT_SKILL_USAGE = "skill.usage"
 
+#: Issue #2306 -- emitted whenever a payment is authorized under a signed
+#: spending mandate. The event carries the consent receipt binding
+#: ``{mandate_hash, authorized_tool_calls_hash, settlement_ref,
+#: journal_entry_hash}`` -- the journal entry hash anchors the receipt in the
+#: mandate lineage spine so a verifier can recompute "this payment was
+#: authorized by this exact intent" offline. Only hashes and the public
+#: settlement reference are recorded -- never a payment credential.
+EVENT_MANDATE_CONSENT_RECEIPT = "mandate.consent_receipt"
+
+#: Issue #2306 -- emitted whenever a spending mandate is revoked. The event
+#: records the revoked mandate hash and reason so an auditor can prove, from
+#: the chain alone, that authority was withdrawn at a time; subsequent
+#: actions under the mandate are refused.
+EVENT_MANDATE_REVOCATION = "mandate.revocation"
+
 #: Issue #2295 -- emitted once per ``bernstein fork --from-step``. The event
 #: pins the fork lineage into the HMAC chain: the parent run id, the fork
 #: step index, the content-addressed snapshot commit sha resumed at that
@@ -685,6 +700,111 @@ def record_skill_usage(
 
 
 @dataclass(frozen=True)
+class MandateConsentReceiptDetails:
+    """Structured payload for the ``mandate.consent_receipt`` event."""
+
+    mandate_hash: str
+    intent_hash: str
+    authorized_tool_calls_hash: str
+    settlement_ref_hash: str
+    journal_entry_hash: str
+    task_id: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mandate_hash": self.mandate_hash,
+            "intent_hash": self.intent_hash,
+            "authorized_tool_calls_hash": self.authorized_tool_calls_hash,
+            "settlement_ref_hash": self.settlement_ref_hash,
+            "journal_entry_hash": self.journal_entry_hash,
+            "task_id": self.task_id,
+        }
+
+
+def record_mandate_consent_receipt(
+    *,
+    chain: AuditChainStore,
+    mandate_hash: str,
+    intent_hash: str,
+    authorized_tool_calls_hash: str,
+    settlement_ref_hash: str,
+    journal_entry_hash: str,
+    task_id: str,
+    actor: str = "payment_mandate",
+) -> AuditEvent:
+    """Append a ``mandate.consent_receipt`` event into *chain*.
+
+    Mirrors one journal-anchored consent receipt into the HMAC-chained audit
+    log so an operator can prove, from the audit chain alone, that a payment
+    was authorized by a specific intent. Only hashes and the settlement
+    reference digest are recorded -- never a payment credential.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        mandate_hash: Content hash of the signed cart mandate.
+        intent_hash: Content hash of the authorising intent mandate.
+        authorized_tool_calls_hash: Content hash of the authorized tool-call
+            set.
+        settlement_ref_hash: Digest of the bound HTTP 402 settlement
+            reference.
+        journal_entry_hash: The lineage-spine entry hash anchoring the
+            receipt; a verifier holding the spine can recompute it.
+        task_id: Task the settlement was attributed to.
+        actor: Recorded actor; defaults to ``"payment_mandate"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    payload = MandateConsentReceiptDetails(
+        mandate_hash=mandate_hash,
+        intent_hash=intent_hash,
+        authorized_tool_calls_hash=authorized_tool_calls_hash,
+        settlement_ref_hash=settlement_ref_hash,
+        journal_entry_hash=journal_entry_hash,
+        task_id=task_id,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MANDATE_CONSENT_RECEIPT,
+        actor=actor,
+        resource_type="mandate_consent_receipt",
+        resource_id=mandate_hash,
+        details=payload,
+    )
+
+
+def record_mandate_revocation(
+    *,
+    chain: AuditChainStore,
+    mandate_hash: str,
+    reason: str,
+    actor: str = "payment_mandate",
+) -> AuditEvent:
+    """Append a ``mandate.revocation`` event into *chain*.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        mandate_hash: The revoked mandate (intent or cart) hash.
+        reason: Human-readable revocation reason.
+        actor: Recorded actor; defaults to ``"payment_mandate"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MANDATE_REVOCATION,
+        actor=actor,
+        resource_type="mandate_revocation",
+        resource_id=mandate_hash,
+        details={
+            "mandate_hash": mandate_hash,
+            "reason": reason,
+        },
+    )
+
+
+@dataclass(frozen=True)
 class ForkSnapshotDetails:
     """Structured payload for the ``replay.fork_snapshot`` event (#2295)."""
 
@@ -749,6 +869,8 @@ __all__ = [
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_FORK_SNAPSHOT",
+    "EVENT_MANDATE_CONSENT_RECEIPT",
+    "EVENT_MANDATE_REVOCATION",
     "EVENT_MEMORY_WRITE",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_SKILL_INSTALL_RECEIPT",
@@ -759,12 +881,15 @@ __all__ = [
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
     "ForkSnapshotDetails",
+    "MandateConsentReceiptDetails",
     "MemoryWriteDetails",
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
     "record_cost_profile_report",
     "record_eval_ab_comparison",
     "record_fork_snapshot",
+    "record_mandate_consent_receipt",
+    "record_mandate_revocation",
     "record_memory_write",
     "record_multimodal_attach",
     "record_sensitive_gate",
