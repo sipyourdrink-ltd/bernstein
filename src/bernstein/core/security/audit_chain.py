@@ -157,6 +157,14 @@ EVENT_THREAD_APPROVAL = "thread.approval"
 #: span attribute payloads themselves.
 EVENT_OTEL_PROJECTION = "otel.projection"
 
+#: Issue #2296 -- emitted whenever a signed pull-request review receipt is
+#: anchored in the review lineage spine. The event mirrors the receipt's four
+#: bound hashes (``issue_hash``, ``plan_hash``, ``journal_head``, ``diff_hash``),
+#: the verdict, and the spine ``journal_entry_hash`` so an operator can prove,
+#: from the audit chain alone, that a review receipt was emitted for a PR
+#: linking issue to diff -- never the diff or issue body itself.
+EVENT_REVIEW_RECEIPT = "review.receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -930,6 +938,58 @@ def record_otel_projection(
     )
 
 
+def record_review_receipt(
+    *,
+    chain: AuditChainStore,
+    pr_url: str,
+    issue_hash: str,
+    plan_hash: str,
+    journal_head: str,
+    diff_hash: str,
+    verdict: str,
+    journal_entry_hash: str,
+    actor: str = "review_receipt",
+) -> AuditEvent:
+    """Append a ``review.receipt`` event into *chain*.
+
+    Mirrors a signed, spine-anchored review receipt into the HMAC-chained audit
+    log so an operator can prove, from the chain alone, that a review receipt
+    binding the issue to the diff was emitted for a PR without operator
+    override. Only hashes, the verdict, and the PR url are recorded -- never the
+    diff or issue body.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        pr_url: The pull request the receipt covers.
+        issue_hash: Content hash of the reviewed issue body.
+        plan_hash: Content hash of the worker's plan.
+        journal_head: The run journal Merkle head (every executed tool call).
+        diff_hash: Content hash of the PR diff.
+        verdict: The review verdict.
+        journal_entry_hash: The review-spine entry hash anchoring the receipt.
+        actor: Recorded actor; defaults to ``"review_receipt"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_REVIEW_RECEIPT,
+        actor=actor,
+        resource_type="review_receipt",
+        resource_id=pr_url,
+        details={
+            "pr_url": pr_url,
+            "issue_hash": issue_hash,
+            "plan_hash": plan_hash,
+            "journal_head": journal_head,
+            "diff_hash": diff_hash,
+            "verdict": verdict,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_COMPACTION_RECEIPT",
@@ -941,6 +1001,7 @@ __all__ = [
     "EVENT_MEMORY_WRITE",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
+    "EVENT_REVIEW_RECEIPT",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
@@ -961,6 +1022,7 @@ __all__ = [
     "record_memory_write",
     "record_multimodal_attach",
     "record_otel_projection",
+    "record_review_receipt",
     "record_sensitive_gate",
     "record_skill_install_receipt",
     "record_skill_usage",
