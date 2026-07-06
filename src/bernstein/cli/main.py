@@ -1100,6 +1100,11 @@ from bernstein.cli.commands.lineage_cmd import lineage_cmd  # noqa: E402
 
 cli.add_command(lineage_cmd, "lineage")
 
+# C2PA content credentials projected from the lineage spine (#2303).
+from bernstein.cli.commands.credential_cmd import credential_group  # noqa: E402
+
+cli.add_command(credential_group, "credential")
+
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
 

@@ -176,6 +176,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "compaction",
         "handoff",
         "lineage",
+        "credential",
         "migrate",
         "routine",
         "wheelhouse",
