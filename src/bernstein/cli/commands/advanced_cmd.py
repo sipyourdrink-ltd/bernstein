@@ -1326,7 +1326,9 @@ def trace_reindex_cmd(ctx: click.Context) -> None:
 # ---------------------------------------------------------------------------
 
 
-_REPLAY_JSONL = "replay.jsonl"
+#: Canonical per-run event journal filename (issue #2293). The old
+#: ``replay.jsonl`` recorder was consolidated into ``journal.jsonl``.
+_REPLAY_JSONL = "journal.jsonl"
 
 
 def _replay_print_header(

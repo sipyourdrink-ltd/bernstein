@@ -321,11 +321,7 @@ def verify_journal(path: Path) -> JournalVerifyResult:
         stored_hash = str(row.get("event_hash", ""))
         stored_prev = str(row.get("prev_hash", ""))
         if stored_prev != prev_hash or stored_hash != expected_hash:
-            reason = (
-                f"step {i}: prev_hash break"
-                if stored_prev != prev_hash
-                else f"step {i}: event_hash mismatch"
-            )
+            reason = f"step {i}: prev_hash break" if stored_prev != prev_hash else f"step {i}: event_hash mismatch"
             return JournalVerifyResult(
                 ok=False,
                 count=len(events),
@@ -337,6 +333,59 @@ def verify_journal(path: Path) -> JournalVerifyResult:
         prev_hash = stored_hash
 
     return JournalVerifyResult(ok=True, count=len(events))
+
+
+def seal_journal_into_spine(
+    journal: EventJournal,
+    *,
+    lineage_root: Path,
+    hmac_key: bytes,
+    actor: str,
+    model: str = "",
+) -> str | None:
+    """Record the journal's head hash into the run's lineage spine.
+
+    Wires the replay identity (the Merkle head) into the f01 lineage
+    spine at run finalization so the run's artifact provenance and its
+    replay identity share one root (AC5). The head is carried as the
+    spine entry's ``step_id`` and the journal file is the recorded
+    artifact, so a verifier holding the spine can pin the exact replay
+    identity of the run.
+
+    Fail-closed with the spine gate: when ``BERNSTEIN_LINEAGE_ENABLED``
+    is disabled this is a no-op returning ``None``.
+
+    Args:
+        journal: The finalized run journal.
+        lineage_root: ``.sdd/lineage`` root; per-run dirs live beneath it.
+        hmac_key: Audit-chain HMAC key used to tag the spine entry.
+        actor: Producing agent / orchestrator identifier.
+        model: Optional model string recorded for provenance.
+
+    Returns:
+        The spine entry hash, or ``None`` when lineage is disabled or the
+        journal is empty.
+    """
+    from bernstein.adapters.base import record_artifact_write
+
+    head = journal.head()
+    if not head:
+        return None
+    try:
+        content = journal.path.read_bytes() if journal.path.exists() else head.encode("utf-8")
+    except OSError:
+        content = head.encode("utf-8")
+    artifact_path = f".sdd/runs/{journal.run_id}/{JOURNAL_FILENAME}"
+    return record_artifact_write(
+        artifact_path=artifact_path,
+        content=content,
+        actor=actor,
+        step_id=f"replay-journal-head:{head}",
+        model=model,
+        lineage_root=lineage_root,
+        run_id=journal.run_id,
+        hmac_key=hmac_key,
+    )
 
 
 def rebuild_state(path: Path, *, from_step: int) -> dict[str, Any]:
@@ -389,5 +438,6 @@ __all__ = [
     "compute_event_hash",
     "load_events",
     "rebuild_state",
+    "seal_journal_into_spine",
     "verify_journal",
 ]
