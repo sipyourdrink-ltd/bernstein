@@ -339,21 +339,19 @@ def verify_all_fires(sdd_dir: Path) -> list[FireVerification]:
     inputs. The list is ordered by ``(fire_time, schedule_id)`` so two
     operators walk their fires in the same order.
     """
-    out: list[FireVerification] = []
-    for row in load_fire_records(sdd_dir):
-        out.append(
-            verify_fire(
-                schedule_id=str(row.get("schedule_id", "")),
-                fire_time=int(row.get("fire_time", 0)),
-                recorded_graph_hash=str(row.get("graph_hash", "")),
-                last_state=None,
-                goal=str(row.get("goal", "")),
-                scenario_id=str(row.get("scenario_id", "")),
-                recurrence=str(row.get("recurrence", "")),
-                trigger_input_hash=str(row.get("trigger_input_hash", "")),
-            )
+    return [
+        verify_fire(
+            schedule_id=str(row.get("schedule_id", "")),
+            fire_time=int(row.get("fire_time", 0)),
+            recorded_graph_hash=str(row.get("graph_hash", "")),
+            last_state=None,
+            goal=str(row.get("goal", "")),
+            scenario_id=str(row.get("scenario_id", "")),
+            recurrence=str(row.get("recurrence", "")),
+            trigger_input_hash=str(row.get("trigger_input_hash", "")),
         )
-    return out
+        for row in load_fire_records(sdd_dir)
+    ]
 
 
 __all__ = [

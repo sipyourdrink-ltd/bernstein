@@ -451,7 +451,7 @@ def receive_inbound_webhook(
     journal_events = (event_hash,)
 
     private_pem, public_pem = load_or_create_node_identity(identity_dir)
-    unsigned = InboundReceipt(
+    payload = InboundReceipt(
         event_id=event_id,
         source=source,
         event_hash=event_hash,
@@ -459,8 +459,7 @@ def receive_inbound_webhook(
         journal_root=journal_root,
         journal_events=journal_events,
         timestamp=timestamp,
-    )
-    payload = unsigned.to_canonical_bytes()
+    ).to_canonical_bytes()
     signature = sign_payload(payload, private_pem)
 
     spine = LineageSpine(lineage_root, run_id=WEBHOOK_NODE_RUN_ID, hmac_key=hmac_key)

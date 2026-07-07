@@ -210,7 +210,7 @@ def canonicalise_recurrence(recurrence: str) -> str:
         return ""
 
     upper = text.upper()
-    if upper.startswith("RRULE:") or (upper.startswith("FREQ=")):
+    if upper.startswith(("RRULE:", "FREQ=")):
         return _canonicalise_rrule(text)
 
     expr = text[len("cron:") :].strip() if text.lower().startswith("cron:") else text

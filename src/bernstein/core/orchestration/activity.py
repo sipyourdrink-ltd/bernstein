@@ -256,7 +256,7 @@ class ActivityResult:
             evidence_set_hash=evidence_set_hash(observations),
             terminal_state=terminal_state,
             reason_code=reason_code,
-            observations=tuple(observations),
+            observations=observations,
         )
 
 
