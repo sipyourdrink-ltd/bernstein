@@ -29,6 +29,7 @@ alwaysApply: false
 | `devops/`                   | devops sub-package |
 | `distribution/`             | Distribution utilities - air-gap wheelhouse build, verify, signing |
 | `errors/`                   | Structured first-run error categorization for Bernstein |
+| `evidence/`                 | Verification evidence bundles (issue #2362) |
 | `fleet/`                    | Fleet dashboard - supervise multiple Bernstein projects in one view |
 | `git/`                      | git sub-package |
 | `grpc_gen/`                 | Generated gRPC stubs - run ``scripts/generate_proto.sh`` to populate |
@@ -317,16 +318,17 @@ alwaysApply: false
 
 ### `src/bernstein/github_app/` - GitHub App integration
 
-| File                   | Purpose |
-|------------------------|---------|
-| `app.py`               | GitHub App authentication: JWT creation and installation token exchange |
-| `check_runs.py`        | GitHub Check Runs API client |
-| `ci_router.py`         | CI failure routing: blame attribution and enriched fix-task generation |
-| `cost_reporter.py`     | PR cost annotation: post agent run cost summaries as GitHub PR comments |
-| `mapper.py`            | Event-to-task conversion: maps GitHub webhook events to Bernstein task payloads |
-| `review_projection.py` | Tracker-comment projection of an attested review receipt (issue #2296) |
-| `slash_commands.py`    | Slash command parser for /bernstein comments on GitHub issues and PRs |
-| `webhooks.py`          | Webhook parsing and HMAC-SHA256 signature verification |
+| File                     | Purpose |
+|--------------------------|---------|
+| `app.py`                 | GitHub App authentication: JWT creation and installation token exchange |
+| `check_runs.py`          | GitHub Check Runs API client |
+| `ci_router.py`           | CI failure routing: blame attribution and enriched fix-task generation |
+| `cost_reporter.py`       | PR cost annotation: post agent run cost summaries as GitHub PR comments |
+| `evidence_projection.py` | Tracker-comment projection of a sealed evidence bundle (issue #2362) |
+| `mapper.py`              | Event-to-task conversion: maps GitHub webhook events to Bernstein task payloads |
+| `review_projection.py`   | Tracker-comment projection of an attested review receipt (issue #2296) |
+| `slash_commands.py`      | Slash command parser for /bernstein comments on GitHub issues and PRs |
+| `webhooks.py`            | Webhook parsing and HMAC-SHA256 signature verification |
 
 ### `src/bernstein/mcp/` - MCP server
 
