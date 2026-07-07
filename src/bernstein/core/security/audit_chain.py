@@ -267,6 +267,17 @@ EVENT_A2A_MESSAGE_RECEIPT = "a2a.message_receipt"
 #: hashes, the kind, the terminal state, and the reason code are recorded.
 EVENT_ACTIVITY_RESULT = "activity.result"
 
+#: Issue #2362 -- emitted once per sealed verification evidence bundle. A
+#: completed task's proof-of-done artefacts (test-runner output, coverage, lint,
+#: optional screenshot / recording) are content-addressed and bound into a
+#: signed bundle anchored in the evidence lineage spine; this event mirrors the
+#: bundle's identity into the HMAC-chained audit log by recording ``{task_id,
+#: bundle_hash, item_count, gate_passed, journal_entry_hash}``. A verifier
+#: holding the stored blobs can recompute the bundle byte-identically and confirm
+#: the evidence is chain-attested rather than merely logged -- never the evidence
+#: bytes themselves.
+EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1660,6 +1671,55 @@ def record_activity_result(
     )
 
 
+def record_evidence_bundle(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    bundle_hash: str,
+    item_count: int,
+    gate_passed: bool,
+    journal_entry_hash: str,
+    actor: str = "evidence_bundle",
+) -> AuditEvent:
+    """Append an ``evidence.bundle`` event into *chain* (#2362).
+
+    Mirrors a signed, spine-anchored verification evidence bundle into the
+    HMAC-chained audit log so an operator can prove, from the chain alone, that a
+    bundle of proof-of-done evidence was sealed for a task. Only the bundle hash,
+    the item count, the gate verdict, and the spine anchor are recorded -- never
+    the evidence bytes (the test-runner output, coverage report, or screenshot).
+    A verifier holding the stored blobs can recompute the bundle byte-identically
+    and confirm the evidence is chain-attested.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task the bundle was sealed for.
+        bundle_hash: ``sha256:`` hash of the canonical bundle binding bytes.
+        item_count: Number of evidence items bound into the bundle.
+        gate_passed: Whether every required producer passed (advisory failures
+            never block).
+        journal_entry_hash: The evidence-spine entry hash anchoring the bundle.
+        actor: Recorded actor; defaults to ``"evidence_bundle"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_EVIDENCE_BUNDLE,
+        actor=actor,
+        resource_type="evidence_bundle",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "bundle_hash": bundle_hash,
+            "item_count": item_count,
+            "gate_passed": gate_passed,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -1669,6 +1729,7 @@ __all__ = [
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_ESCALATION_RECEIPT",
     "EVENT_EVAL_AB_COMPARISON",
+    "EVENT_EVIDENCE_BUNDLE",
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
     "EVENT_GOVERNANCE_DECISION",
@@ -1701,6 +1762,7 @@ __all__ = [
     "record_cost_profile_report",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
+    "record_evidence_bundle",
     "record_fork_snapshot",
     "record_gate_adjudication",
     "record_governance_decision",
