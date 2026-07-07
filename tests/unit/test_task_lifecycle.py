@@ -1250,3 +1250,89 @@ def test_record_cost_tags_absent_for_pre_change_sessions(tmp_path: Path, make_ta
 
     _, cumulative_kwargs = orch._cost_tracker.record_cumulative.call_args
     assert cumulative_kwargs["cost_tags"] is None
+
+
+# ---------------------------------------------------------------------------
+# Evidence auto-seal on completion (issue #2362, AC1)
+# ---------------------------------------------------------------------------
+
+
+def _seal_wiring_orch(tmp_path: Path, session: AgentSession) -> Any:
+    """Process-completion orch stub with a clean-merge spawner for seal tests."""
+    orch = _process_orch(tmp_path, session)
+    worktree = tmp_path / "agent-worktree"
+    worktree.mkdir(exist_ok=True)
+    orch._spawner.get_worktree_path.return_value = worktree
+    orch._spawner.reap_completed_agent.return_value = SimpleNamespace(success=True, conflicting_files=[])
+    return orch
+
+
+def test_completion_seals_evidence_for_task_with_declared_producers(tmp_path: Path, make_task: Any) -> None:
+    """A completing task that declares producers has the evidence gate invoked
+    with the durable workdir before its worktree is reclaimed."""
+    task = make_task(id="T-ev", title="ship it", description="Done.", status=TaskStatus.DONE)
+    task.result_summary = "shipped"
+    task.evidence_producers = [{"name": "tests", "kind": "test", "command": ["true"], "required": True}]
+    session = _session_for(task.id, exit_code=0)
+    orch = _seal_wiring_orch(tmp_path, session)
+    collector = _collector_for(task.id, session.id)
+
+    with (
+        patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector),
+        patch("bernstein.core.tasks.task_lifecycle._get_git_diff_line_count_in_worktree", return_value=7),
+        patch("bernstein.core.tasks.task_lifecycle.append_decision"),
+        patch("bernstein.core.tasks.task_lifecycle.seal_evidence_on_completion") as seal,
+    ):
+        process_completed_tasks(orch, [task], TickResult())
+
+    seal.assert_called_once_with(tmp_path, task)
+    orch._spawner.cleanup_worktree.assert_called_once_with(session.id)
+
+
+def test_completion_untouched_when_task_declares_no_producers(tmp_path: Path, make_task: Any) -> None:
+    """The seal is still invoked, but with an empty producer set it is a no-op
+    (proven by the helper's own tests); the completion path is unchanged."""
+    task = make_task(id="T-plain", title="plain", description="Done.", status=TaskStatus.DONE)
+    task.result_summary = "done"
+    session = _session_for(task.id, exit_code=0)
+    orch = _seal_wiring_orch(tmp_path, session)
+    collector = _collector_for(task.id, session.id)
+
+    with (
+        patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector),
+        patch("bernstein.core.tasks.task_lifecycle._get_git_diff_line_count_in_worktree", return_value=3),
+        patch("bernstein.core.tasks.task_lifecycle.append_decision"),
+    ):
+        result = TickResult()
+        process_completed_tasks(orch, [task], result)
+
+    # No producers declared -> no bundle sealed anywhere under the workdir.
+    assert not (tmp_path / ".sdd" / "evidence").exists()
+    assert result.verified == [task.id]
+
+
+def test_completion_survives_evidence_gate_exception(tmp_path: Path, make_task: Any) -> None:
+    """A raising evidence gate must NOT fail the completion: the task still
+    completes and the worktree is still reclaimed."""
+    task = make_task(id="T-raise", title="raise", description="Done.", status=TaskStatus.DONE)
+    task.result_summary = "done"
+    task.evidence_producers = [{"name": "tests", "kind": "test", "command": ["true"], "required": True}]
+    session = _session_for(task.id, exit_code=0)
+    orch = _seal_wiring_orch(tmp_path, session)
+    collector = _collector_for(task.id, session.id)
+
+    def _boom(**_kwargs: object) -> object:
+        raise RuntimeError("gate blew up")
+
+    with (
+        patch("bernstein.core.tasks.task_lifecycle.get_collector", return_value=collector),
+        patch("bernstein.core.tasks.task_lifecycle._get_git_diff_line_count_in_worktree", return_value=5),
+        patch("bernstein.core.tasks.task_lifecycle.append_decision"),
+        patch("bernstein.core.evidence.completion_gate.run_evidence_gate", _boom),
+    ):
+        result = TickResult()
+        # Must not raise: the real fail-open guard swallows the gate error.
+        process_completed_tasks(orch, [task], result)
+
+    assert result.verified == [task.id]
+    orch._spawner.cleanup_worktree.assert_called_once_with(session.id)

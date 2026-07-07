@@ -31,6 +31,7 @@ from bernstein.core.cross_model_verifier import (
 )
 from bernstein.core.defaults import TASK
 from bernstein.core.effectiveness import EffectivenessScorer
+from bernstein.core.evidence.completion_gate import seal_evidence_on_completion
 from bernstein.core.fast_path import (
     TaskLevel,
     classify_task,
@@ -2923,6 +2924,11 @@ def _reap_and_cleanup_session(
 
     if janitor_passed and not skip_merge and merge_ok:
         _close_completed_task(orch, task)
+        # issue #2362 (AC1): seal a verification-evidence bundle for the task
+        # now that its changes are merged, before the worktree is reclaimed.
+        # No-op when the task declares no producers; fail-open otherwise so a
+        # producer/gate error can never block, delay, or fail the completion.
+        seal_evidence_on_completion(orch._workdir, task)
 
     orch._spawner.cleanup_worktree(session.id)
     return cache_verified, cache_diff_lines
