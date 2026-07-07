@@ -67,7 +67,6 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/review-bot-sweep.yml | Review-bot post-merge sweep | schedule, workflow_dispatch | - | 1 |
 | .github/workflows/sbom-upload.yml | SBOM upload | push, release | {"cancel-in-progress": "false", "group": "sbom-upload-${{ github.ref }}"} | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
-| .github/workflows/scorecard-90d-check.yml | Scorecard 90d MaintainedID re-check | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-90d-check-${{ github.ref }}"} | 2 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/soc2-evidence-nightly.yml | soc2-evidence-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
 | .github/workflows/sonar-hotspot-review.yml | SonarQube hotspot review | workflow_dispatch | {"cancel-in-progress": "false", "group": "sonar-hotspot-review"} | 1 |
@@ -148,7 +147,6 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/review-bot-sweep.yml | sweep: Sweep recently merged PRs for unprocessed bot findings |
 | .github/workflows/sbom-upload.yml | upload: Generate and upload SBOM |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
-| .github/workflows/scorecard-90d-check.yml | age-check: 90-day age gate<br>scorecard-rerun: Scorecard rerun + report |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
 | .github/workflows/soc2-evidence-nightly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
 | .github/workflows/sonar-hotspot-review.yml | review: Apply hotspot review manifest |
@@ -229,7 +227,6 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/review-bot-sweep.yml | sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, LANDING_REPO_PAT |
 | .github/workflows/sbom-upload.yml | workflow: {"contents": "read"} | DT_API_KEY |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
-| .github/workflows/scorecard-90d-check.yml | workflow: {"contents": "read"}<br>age-check: {"contents": "read"}<br>scorecard-rerun: {"actions": "read", "contents": "read", "id-token": "write", "issues": "write", "security-events": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
 | .github/workflows/soc2-evidence-nightly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED |
 | .github/workflows/sonar-hotspot-review.yml | workflow: {"contents": "read"} | SONAR_TOKEN |
@@ -275,7 +272,6 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/pentest.yml | pentest: upload pentest-results-${{ github.run_number }} |
 | .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist |
 | .github/workflows/sbom.yml | sbom: upload sbom |
-| .github/workflows/scorecard-90d-check.yml | scorecard-rerun: upload scorecard-90d-sarif |
 | .github/workflows/scorecard.yml | analysis: upload scorecard-results<br>upload: download scorecard-results |
 | .github/workflows/soc2-evidence-nightly.yml | pack: upload soc2-evidence-${{ github.run_id }} |
 | .github/workflows/sonar-scan.yml | scan: download coverage-report<br>scan: download coverage-report |
