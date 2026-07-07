@@ -473,6 +473,49 @@ def _cost_from_dict(raw: dict[str, object]) -> CostBreakdown:
     )
 
 
+def _candidate_task_ids(wrapup: dict[str, object]) -> list[str]:
+    """Resolve the completed-task ids a wrap-up records, in preference order.
+
+    A singular ``task_id`` wins; otherwise the ``completed_task_ids`` list (the
+    shape the wrap-up writer emits) is used. Absent both, no task is named and
+    no evidence is surfaced.
+    """
+    explicit = wrapup.get("task_id")
+    if isinstance(explicit, str) and explicit:
+        return [explicit]
+    raw = wrapup.get("completed_task_ids")
+    if isinstance(raw, list):
+        return [t for t in raw if isinstance(t, str) and t]  # type: ignore[reportUnknownVariableType]
+    return []
+
+
+def _evidence_summary_for_task(root: Path, task_ids: list[str]) -> EvidenceSummary | None:
+    """Project the first sealed bundle among ``task_ids`` into an EvidenceSummary.
+
+    Reads the sealed bundle off disk (the pointer and counts, never the evidence
+    bytes) so a PR opened for a task that sealed proof-of-done links the bundle.
+    Returns ``None`` when no candidate task has a bundle, so a session without
+    evidence renders a body identical to before (issue #2362, AC3).
+    """
+    from bernstein.core.evidence.bundle import read_evidence_bundle
+
+    for task_id in task_ids:
+        try:
+            bundle = read_evidence_bundle(root, task_id)
+        except OSError:
+            bundle = None
+        if bundle is None:
+            continue
+        return EvidenceSummary(
+            task_id=bundle.task_id,
+            anchor=bundle.journal_entry_hash,
+            passed=bundle.passed_count,
+            failed=bundle.failed_count,
+            gate_passed=bundle.gate_passed,
+        )
+    return None
+
+
 def load_session_summary(
     session_id: str | None,
     *,
@@ -535,6 +578,11 @@ def load_session_summary(
             by_role={},
         )
 
+    # Link the sealed evidence bundle for the completed task the wrap-up names,
+    # if one was sealed at completion (issue #2362, AC3). Absent a bundle the
+    # field stays None and the PR body's Evidence block is omitted entirely.
+    evidence = _evidence_summary_for_task(root, _candidate_task_ids(wrapup))
+
     return SessionSummary(
         session_id=resolved_id,
         goal=goal,
@@ -544,4 +592,5 @@ def load_session_summary(
         diff_stat=diff_stat,
         gates=gates,
         cost=cost,
+        evidence=evidence,
     )
