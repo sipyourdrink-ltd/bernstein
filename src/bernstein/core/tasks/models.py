@@ -359,6 +359,29 @@ def _normalize_attachments(raw: object) -> list[str]:
     return [str(a) for a in raw]
 
 
+def _normalize_evidence_producers(raw: object) -> list[dict[str, Any]]:
+    """Coerce an ``evidence_producers`` payload into a ``list[dict]``.
+
+    Each entry declares one verification-evidence producer (issue #2362):
+    ``{name, kind, command, required}``. Full field validation lives in
+    :func:`bernstein.core.evidence.bundle.parse_producers`; this normaliser only
+    guarantees the field is a list of mappings so a malformed payload fails
+    loudly at task construction rather than at gate time.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        raise TypeError("Task.evidence_producers must be a list of producer specs, got a single mapping")
+    if not isinstance(raw, list | tuple):
+        raise TypeError(f"Task.evidence_producers must be a list, got {type(raw).__name__}")
+    producers: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise TypeError(f"each evidence producer must be a mapping, got {type(entry).__name__}")
+        producers.append({str(k): v for k, v in entry.items()})
+    return producers
+
+
 @dataclass
 class Task:
     """A unit of work for an agent."""
@@ -453,6 +476,13 @@ class Task:
     # that report ``is_multimodal_capable() == False`` MUST refuse spawns
     # carrying a non-empty list before any process is launched.
     attachments: list[str] = field(default_factory=list[str])
+    # Issue #2362: declared verification-evidence producers. Each is a mapping
+    # ``{name, kind, command, required}`` describing a proof-of-done producer
+    # (test command, coverage, lint, optional screenshot/recording) run at gate
+    # time. Required producers gate completion; advisory ones only attach. Empty
+    # list = no evidence bundle is sealed for this task. Parsed by
+    # ``bernstein.core.evidence.bundle.parse_producers``.
+    evidence_producers: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     # Explicit override for compute_max_turns()'s complexity-based auto-computation
     # (see bernstein.core.agents.claude_max_turns.compute_max_turns). When set,
     # this value is used verbatim for the Claude adapter's --max-turns flag,
@@ -559,6 +589,7 @@ class Task:
             parallel_safe=bool(raw.get("parallel_safe", False)),
             story_id=(str(raw["story_id"]) if raw.get("story_id") else None),
             attachments=_normalize_attachments(raw.get("attachments")),
+            evidence_producers=_normalize_evidence_producers(raw.get("evidence_producers")),
             max_turns=(lambda v: None if v is None else int(v))(raw.get("max_turns")),
         )
 
