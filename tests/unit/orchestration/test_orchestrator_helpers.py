@@ -297,12 +297,16 @@ def test_get_pr_diff_stats_swallows_subprocess_exception() -> None:
 def _self_with_diff_stats(stats: dict[str, int]) -> SimpleNamespace:
     """Stub ``self`` carrying the workdir and a canned ``_get_pr_diff_stats``.
 
-    ``_build_pr_body`` resolves ``self._get_pr_diff_stats`` on the instance,
-    so the stub is attached directly to the namespace rather than the class.
+    ``_build_pr_body`` resolves ``self._get_pr_diff_stats`` and
+    ``self._evidence_projection_for_tasks`` on the instance, so both stubs are
+    attached directly to the namespace rather than the class. Evidence linking
+    has its own suite (``test_orchestrator_pr_body_evidence``); here it is a
+    no-op so these tests stay focused on body formatting.
     """
     return SimpleNamespace(
         _workdir=Path("/tmp/repo"),
         _get_pr_diff_stats=lambda _branch: stats,
+        _evidence_projection_for_tasks=lambda _tasks: "",
     )
 
 
