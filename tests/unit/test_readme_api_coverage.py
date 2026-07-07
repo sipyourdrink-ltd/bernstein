@@ -82,6 +82,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "gate",
         # RBAC + budget decisions as verifiable projections (issue #2309)
         "governance",
+        # Content-addressed verification evidence bundles (issue #2362)
+        "evidence",
         # Auth
         "auth",
         "login",

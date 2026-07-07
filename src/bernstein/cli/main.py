@@ -1227,3 +1227,8 @@ cli.add_command(webhook_group, "webhook")
 from bernstein.cli.commands.activity_cmd import activity_group  # noqa: E402
 
 cli.add_command(activity_group, "activity")
+
+# Content-addressed verification evidence bundles: signed proof-of-done per task (#2362).
+from bernstein.cli.commands.evidence_cmd import evidence_group  # noqa: E402
+
+cli.add_command(evidence_group, "evidence")
