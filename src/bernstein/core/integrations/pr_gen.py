@@ -32,6 +32,7 @@ _WRAPUP_GLOB = "*-wrapup.json"
 
 
 __all__ = [
+    "EvidenceSummary",
     "GateResult",
     "SessionSummary",
     "build_pr_body",
@@ -98,6 +99,29 @@ class CostBreakdown:
 
 
 @dataclass(frozen=True)
+class EvidenceSummary:
+    """A sealed evidence bundle surfaced in the PR body (issue #2362).
+
+    The block links the bundle so review happens against sealed proof rather
+    than a rerun-and-hope. It carries only the pointer and counts, never the
+    evidence bytes.
+
+    Attributes:
+        task_id: The task the bundle was sealed for.
+        anchor: The bundle's ``sha256:`` spine anchor (``journal_entry_hash``).
+        passed: Number of producers that passed.
+        failed: Number of producers that failed (advisory failures included).
+        gate_passed: Whether every required producer passed.
+    """
+
+    task_id: str
+    anchor: str
+    passed: int
+    failed: int
+    gate_passed: bool
+
+
+@dataclass(frozen=True)
 class SessionSummary:
     """Everything the PR generator needs from one completed session.
 
@@ -114,6 +138,8 @@ class SessionSummary:
         diff_stat: Output of ``git diff --stat <base>..<branch>``.
         gates: Quality-gate outcomes from the janitor.
         cost: Aggregate cost figures for the session.
+        evidence: Sealed evidence bundle for the task, or ``None`` when the
+            task declared no evidence producers.
     """
 
     session_id: str
@@ -124,6 +150,7 @@ class SessionSummary:
     diff_stat: str = ""
     gates: tuple[GateResult, ...] = ()
     cost: CostBreakdown = field(default_factory=CostBreakdown)
+    evidence: EvidenceSummary | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +303,26 @@ def _format_diff_stat(diff_stat: str) -> str:
     return f"```\n{stripped}\n```"
 
 
+def _format_evidence(evidence: EvidenceSummary) -> str:
+    """Render the sealed-evidence block linking the bundle (issue #2362).
+
+    The block surfaces the gate verdict, the pass/fail counts, the spine
+    anchor prefix, and the offline ``bernstein evidence show`` command, so a
+    reviewer verifies against sealed proof rather than rerunning the checks.
+    """
+    verdict = "✅ pass" if evidence.gate_passed else "❌ fail"
+    anchor = evidence.anchor.split(":", 1)[-1][:16] if evidence.anchor else "unanchored"
+    return "\n".join(
+        [
+            f"- **Gate:** {verdict}",
+            f"- **Producers:** {evidence.passed} passed / {evidence.failed} failed",
+            f"- **Bundle anchor:** `{anchor}`",
+            f"- **Inspect:** `bernstein evidence show {evidence.task_id}`",
+            f"- **Verify offline:** `bernstein evidence verify {evidence.task_id}`",
+        ]
+    )
+
+
 def build_pr_body(session: SessionSummary) -> str:
     """Render the full markdown body for a pull request.
 
@@ -307,6 +354,17 @@ def build_pr_body(session: SessionSummary) -> str:
         "## Verification",
         _format_gates(session.gates),
         "",
+    ]
+    # The evidence block links the sealed bundle so review happens against
+    # sealed proof (issue #2362, AC3). Omitted entirely when the task declared
+    # no evidence producers, so existing PRs are unchanged.
+    if session.evidence is not None:
+        parts += [
+            "## Evidence",
+            _format_evidence(session.evidence),
+            "",
+        ]
+    parts += [
         "## Cost",
         _format_cost(session.cost),
         "",
