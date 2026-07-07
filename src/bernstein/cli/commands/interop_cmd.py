@@ -250,7 +250,7 @@ def verify(
     "--workdir",
     "-w",
     type=click.Path(file_okay=False, path_type=Path),
-    default=Path("."),
+    default=Path(),
     show_default=True,
     help="Project root containing .sdd/.",
 )

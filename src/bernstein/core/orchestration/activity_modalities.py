@@ -368,9 +368,7 @@ def verify_run_activities(
             reason="run journal holds no activity.result entries",
         )
 
-    verdicts: list[StageVerdict] = []
-    for row in rows:
-        verdicts.append(_verify_stage(row, store=store, chain_ok=chain.ok))
+    verdicts: list[StageVerdict] = [_verify_stage(row, store=store, chain_ok=chain.ok) for row in rows]
 
     ok = chain.ok and all(v.ok for v in verdicts)
     return ActivityVerifyResult(

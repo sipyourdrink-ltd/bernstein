@@ -198,7 +198,7 @@ def resolve_role(idp_groups: tuple[str, ...], bindings: RoleBindings) -> str:
             return role
     # A mapped-but-unranked role (operator-defined) still counts; pick the
     # lexicographically-first for determinism.
-    return sorted(roles)[0] if roles else ""
+    return min(roles) if roles else ""
 
 
 def _role_grants(role: str, action: str, bindings: RoleBindings) -> bool:
@@ -349,8 +349,7 @@ def _anchor_decision(
     filename = _record_filename(decision, seq)
     artifact_path = "/".join((*_DECISION_SUBPATH, filename))
 
-    spine = LineageSpine(lineage_root, run_id=decision.run_id, hmac_key=hmac_key)
-    anchor = spine.record(
+    anchor = LineageSpine(lineage_root, run_id=decision.run_id, hmac_key=hmac_key).record(
         artifact_path=artifact_path,
         content=decision.to_canonical_bytes(),
         actor=GOVERNANCE_ACTOR,

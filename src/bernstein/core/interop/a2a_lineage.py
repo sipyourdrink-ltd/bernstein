@@ -656,7 +656,7 @@ def record_a2a_message(
     journal_events = (message_hash,)
 
     private_pem, public_pem = _load_or_create_message_identity(identity_dir)
-    unsigned = A2AMessageReceipt(
+    payload = A2AMessageReceipt(
         task_uuid=task_uuid,
         direction=direction,
         state=state,
@@ -669,8 +669,7 @@ def record_a2a_message(
         journal_root=journal_root,
         journal_events=journal_events,
         timestamp=timestamp,
-    )
-    payload = unsigned.to_canonical_bytes()
+    ).to_canonical_bytes()
     signature = sign_payload(payload, private_pem)
 
     spine = LineageSpine(lineage_root, run_id=A2A_MESSAGE_RECEIPT_RUN_ID, hmac_key=hmac_key)
@@ -972,8 +971,7 @@ def isolate_inbound_task(*, repo_root: Path, task_uuid: str) -> InboundTaskIsola
     from bernstein.core.git.worktree_isolation import validate_worktree_isolation
 
     session_id = inbound_task_session_id(task_uuid)
-    manager = WorktreeManager(repo_root=repo_root)
-    worktree_path = manager.create(session_id)
+    worktree_path = WorktreeManager(repo_root=repo_root).create(session_id)
     result = validate_worktree_isolation(worktree_path, repo_root)
     return InboundTaskIsolation(
         task_uuid=task_uuid,
