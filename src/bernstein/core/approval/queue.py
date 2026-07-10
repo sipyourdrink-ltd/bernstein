@@ -131,13 +131,26 @@ class ApprovalQueue:
         """Return the on-disk directory that backs this queue."""
         return self._base_dir
 
+    def _member_path(self, approval_id: str, suffix: str) -> Path:
+        """Return the queue-member path for *approval_id*, containment-checked.
+
+        The id becomes a filename component; normalise the candidate and
+        require it to stay inside ``base_dir`` so a hostile id (``../``,
+        absolute path) cannot address files outside the queue directory.
+        """
+        base = os.path.realpath(self._base_dir)
+        candidate = os.path.realpath(os.path.join(base, f"{approval_id}{suffix}"))
+        if not candidate.startswith(base + os.sep):
+            raise ValueError("approval id must resolve inside the queue directory")
+        return Path(candidate)
+
     def _pending_path(self, approval_id: str) -> Path:
         """Return the pending-file path for *approval_id*."""
-        return self._base_dir / f"{approval_id}{_PENDING_SUFFIX}"
+        return self._member_path(approval_id, _PENDING_SUFFIX)
 
     def _resolved_path(self, approval_id: str) -> Path:
         """Return the decision-sentinel path for *approval_id*."""
-        return self._base_dir / f"{approval_id}{_RESOLVED_SUFFIX}"
+        return self._member_path(approval_id, _RESOLVED_SUFFIX)
 
     def _load_from_disk(self) -> None:
         """Rehydrate in-memory state from existing JSON files.

@@ -663,8 +663,8 @@ def stamp_checkpoint_retry_metadata(
     the retry proceeds (cold-safe), and the recording error is logged by
     exception type only.
     """
-    stamped = dict(metadata)
-    requested = requested_mode if requested_mode in _VALID_REQUESTED_MODES else str(RetryMode.WARM)
+    stamped = metadata.copy()
+    requested = requested_mode if requested_mode in _VALID_REQUESTED_MODES else RetryMode.WARM
     sdd_dir = Path(workdir) / ".sdd"
 
     checkpoint = latest_checkpoint(sdd_dir, task_id)

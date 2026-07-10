@@ -198,9 +198,7 @@ def parse_provider_availability(section: Mapping[str, object]) -> ProviderAvaila
     if not isinstance(roles_raw, dict):
         raise AvailabilityPolicyError(f"provider_availability.roles must be a mapping, got {type(roles_raw).__name__}")
 
-    policies = {
-        str(role): _parse_role_policy(str(role), raw) for role, raw in cast("dict[str, object]", roles_raw).items()
-    }
+    policies = {role: _parse_role_policy(role, raw) for role, raw in cast("dict[str, object]", roles_raw).items()}
     return ProviderAvailabilityConfig(
         policies=policies,
         probe_ttl_minutes=int(ttl_raw),
@@ -280,7 +278,7 @@ class ProbeCache:
     """
 
     def __init__(self, ttl_seconds: float) -> None:
-        self._ttl_seconds = float(ttl_seconds)
+        self._ttl_seconds = ttl_seconds
         self._entries: dict[str, tuple[float, ProbeResult]] = {}
 
     def get_or_probe(

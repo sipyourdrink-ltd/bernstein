@@ -625,7 +625,7 @@ def _seal_media_credential(
     except (ValueError, TypeError, KeyError, OSError) as exc:  # pragma: no cover - defensive
         # Log only the exception type: this path handles a private key, so
         # even sanitized exception text stays out of the log stream.
-        logger.debug("evidence: media credential projection skipped: %s", type(exc).__name__)
+        logger.debug("evidence: signed media projection skipped, exception type %s", type(exc).__name__)
         return ""
     else:
         return credential.content_hash

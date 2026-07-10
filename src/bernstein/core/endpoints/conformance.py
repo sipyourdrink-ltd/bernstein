@@ -285,6 +285,28 @@ def normalize_base_url(url: str) -> str:
     return url.rstrip("/")
 
 
+def _http_only_opener() -> urllib.request.OpenerDirector:
+    """Build an opener that can only speak http/https.
+
+    Unlike ``urllib.request.urlopen`` (whose default opener also installs
+    ``FileHandler``, ``FTPHandler`` and ``DataHandler``), this opener has no
+    handler for any non-HTTP scheme, so a hostile ``file://`` or ``ftp://``
+    URL cannot be fetched even if scheme validation were bypassed.
+    """
+    opener = urllib.request.OpenerDirector()
+    for handler_cls in (
+        urllib.request.ProxyHandler,
+        urllib.request.UnknownHandler,
+        urllib.request.HTTPHandler,
+        urllib.request.HTTPSHandler,
+        urllib.request.HTTPDefaultErrorHandler,
+        urllib.request.HTTPRedirectHandler,
+        urllib.request.HTTPErrorProcessor,
+    ):
+        opener.add_handler(handler_cls())
+    return opener
+
+
 def _default_transport(
     method: str,
     url: str,
@@ -303,7 +325,7 @@ def _default_transport(
     for name, value in headers.items():
         request.add_header(name, value)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _http_only_opener().open(request, timeout=timeout) as response:
             return int(response.status), response.read()
     except urllib.error.HTTPError as exc:
         return int(exc.code), exc.read()
@@ -380,8 +402,7 @@ def _chat_payload(model: str, prompt: str, **extra: Any) -> dict[str, Any]:
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
-        **extra,
-    }
+    } | extra
 
 
 def _message_of(body: bytes) -> tuple[dict[str, Any] | None, str]:

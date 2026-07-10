@@ -2581,8 +2581,7 @@ class AgentSpawner:
             decision.reason,
             decision.decision_hash,
         )
-        return {
-            **role_policy,
+        return role_policy | {
             "cli": chosen.adapter,
             "provider": chosen.adapter,
             "model": chosen.model,

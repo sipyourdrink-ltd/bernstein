@@ -881,8 +881,7 @@ class BernsteinConfig(BaseModel):
         if isinstance(raw, (int, float)):
             return float(raw)
         # raw is str at this point
-        s = str(raw).strip()
-        s = s.removeprefix("$")
+        s = str(raw).strip().removeprefix("$")
         try:
             return float(s)
         except ValueError:
@@ -1140,7 +1139,7 @@ def _validate_endpoint_certifications(config: BernsteinConfig, *, project_root: 
     from bernstein.core.endpoints.certification import validate_endpoint_assignments
 
     return validate_endpoint_assignments(
-        [(role, name or "", base_url, model) for role, name, base_url, model in assignments],
+        [(role, name, base_url, model) for role, name, base_url, model in assignments],
         workdir=project_root,
     )
 
