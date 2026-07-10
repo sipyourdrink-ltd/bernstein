@@ -278,6 +278,20 @@ EVENT_ACTIVITY_RESULT = "activity.result"
 #: bytes themselves.
 EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
 
+#: Issue #2359 -- emitted once per checkpointed-retry decision. When a failed
+#: task is retried, the scheduler decides warm (resume the recorded native
+#: session), fork (branch off the recorded checkpoint), or cold (restart from
+#: zero) as a pure function of the adapter's declared capability, the
+#: journal-anchored checkpoint reference, and a workspace-hash comparison.
+#: The event mirrors ``{task_id, retry_mode, requested_mode, capability,
+#: checkpoint_event_hash, checkpoint_journal_index, workspace_match,
+#: downgrade_reason, decision_hash, journal_event_hash, journal_entry_hash}``
+#: into the chain, so an operator can prove -- from the chain alone -- whether
+#: a retry continued a session or restarted cold and why. Only identifiers,
+#: hashes, the mode, and the downgrade reason are recorded -- never prompt,
+#: gate output, or session content.
+EVENT_CHECKPOINT_RETRY = "retry.checkpoint_decision"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1720,10 +1734,81 @@ def record_evidence_bundle(
     )
 
 
+def record_checkpoint_retry(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    retry_mode: str,
+    requested_mode: str,
+    capability: str,
+    checkpoint_event_hash: str,
+    checkpoint_journal_index: int,
+    workspace_match: bool,
+    downgrade_reason: str,
+    decision_hash: str,
+    journal_event_hash: str,
+    journal_entry_hash: str,
+    actor: str = "checkpoint_retry",
+) -> AuditEvent:
+    """Append a ``retry.checkpoint_decision`` event into *chain*.
+
+    Mirrors a checkpointed-retry decision (issue #2359) into the HMAC-chained
+    audit log so replay can distinguish warm from cold retries and the retry
+    lineage is inspectable from the chain alone. Only identifiers, hashes, the
+    mode, and the downgrade reason are recorded -- never prompt content, gate
+    output, or provider session state.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The failed task whose retry was decided.
+        retry_mode: Effective mode (``warm`` / ``fork`` / ``cold``).
+        requested_mode: The mode the retry policy asked for.
+        capability: The adapter's declared checkpointed-retry capability
+            (``resume`` / ``fork`` / ``none``).
+        checkpoint_event_hash: Merkle hash of the checkpoint row in the
+            task's event journal (empty when no checkpoint existed).
+        checkpoint_journal_index: 0-based journal index of that row, or -1.
+        workspace_match: Whether the recorded workspace hash matched the
+            live worktree at decision time.
+        downgrade_reason: Why a non-cold request became cold (or a fork
+            became warm); empty when the request was honored.
+        decision_hash: SHA-256 of the canonical decision projection.
+        journal_event_hash: Merkle hash of the decision row appended to the
+            task's event journal.
+        journal_entry_hash: Lineage-spine entry hash anchoring the decision
+            artifact (empty when lineage recording is disabled).
+        actor: Recorded actor; defaults to ``"checkpoint_retry"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CHECKPOINT_RETRY,
+        actor=actor,
+        resource_type="checkpoint_retry",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "retry_mode": retry_mode,
+            "requested_mode": requested_mode,
+            "capability": capability,
+            "checkpoint_event_hash": checkpoint_event_hash,
+            "checkpoint_journal_index": checkpoint_journal_index,
+            "workspace_match": workspace_match,
+            "downgrade_reason": downgrade_reason,
+            "decision_hash": decision_hash,
+            "journal_event_hash": journal_event_hash,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_ACTIVITY_RESULT",
+    "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
@@ -1759,6 +1844,7 @@ __all__ = [
     "ThreadApprovalDetails",
     "record_a2a_message_receipt",
     "record_activity_result",
+    "record_checkpoint_retry",
     "record_cost_profile_report",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
