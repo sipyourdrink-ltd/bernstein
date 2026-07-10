@@ -463,3 +463,27 @@ fields, or OpenClaw `/v1/sandboxes` REST semantics are obsolete. The repo-truth
 production config surface is `bernstein.yaml` + `.sdd/config.yaml` +
 `BERNSTEIN_*` environment variables, and the OpenClaw runtime path is the
 Gateway WebSocket bridge implemented in Bernstein.
+
+## Provider availability (`provider_availability`)
+
+Per-role provider fallback chains with conformance floors. Before dispatch
+the scheduler health-probes the declared chain (probe results cached for
+`probe_ttl_minutes`) and picks the first healthy element; the decision is
+recorded as a routing receipt in the audit chain.
+
+```yaml
+provider_availability:
+  probe_ttl_minutes: 5
+  probes_enabled: true      # false for offline runs
+  roles:
+    developer:
+      conformance_floor: advanced
+      chain:
+        - {adapter: claude, model: opus, conformance: expert}
+        - {adapter: codex, model: gpt-5.2, conformance: advanced}
+```
+
+A chain element whose `conformance` is below the role's
+`conformance_floor` fails config validation. Validate declared chains with
+`bernstein doctor --failover-drill`. Full guide:
+[Provider availability & failover](provider-availability.md).

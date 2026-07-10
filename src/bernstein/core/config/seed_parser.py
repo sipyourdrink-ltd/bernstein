@@ -1025,6 +1025,41 @@ def _parse_model_fallback(raw: object) -> ModelFallbackSeedConfig | None:
     )
 
 
+def _parse_provider_availability(raw: object) -> dict[str, Any] | None:
+    """Parse and validate the optional provider_availability section (#2355).
+
+    The section declares per-role provider fallback chains with conformance
+    floors. Validation happens here so a chain element below its role's
+    floor fails at config load, never at first dispatch. The raw mapping is
+    returned unchanged (the spawner re-parses it into typed policies).
+
+    Args:
+        raw: Raw YAML value for the ``provider_availability`` section.
+
+    Returns:
+        The validated raw mapping, or None when the section is absent.
+
+    Raises:
+        SeedError: If the section is malformed or a fallback element sits
+            below its role's conformance floor.
+    """
+    if raw is None:
+        return None
+    from bernstein.core.routing.provider_availability import (
+        AvailabilityPolicyError,
+        parse_provider_availability,
+    )
+
+    if not isinstance(raw, dict):
+        raise SeedError(f"provider_availability must be a mapping, got: {type(raw).__name__}")
+    section = cast("dict[str, Any]", raw)
+    try:
+        parse_provider_availability(section)
+    except AvailabilityPolicyError as exc:
+        raise SeedError(str(exc)) from exc
+    return section
+
+
 def _parse_tuning(raw: dict[str, object]) -> None:
     """Apply tuning overrides from bernstein.yaml to defaults."""
     from bernstein.core.defaults import override
@@ -1905,6 +1940,7 @@ def parse_seed(path: Path) -> SeedConfig:
     judge_model_raw = _parse_optional_str_field(data, "judge_model")
     judge_provider_raw = _parse_optional_str_field(data, "judge_provider")
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
+    provider_availability = _parse_provider_availability(data.get("provider_availability"))
     cost_tags = _parse_cost_tags(data.get("cost_tags", {}))
     cost_autopilot_raw = _validate_optional_bool(data, "cost_autopilot", False)
     cost_envelopes = _parse_cost_envelopes(data)
@@ -1967,6 +2003,7 @@ def parse_seed(path: Path) -> SeedConfig:
         judge_model=cast("str | None", judge_model_raw),
         judge_provider=cast("str | None", judge_provider_raw),
         model_fallback=model_fallback,
+        provider_availability=provider_availability,
         cost_tags=cost_tags,
         cost_autopilot=cost_autopilot_raw,
         cost_envelopes=cost_envelopes,

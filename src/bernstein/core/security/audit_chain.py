@@ -278,6 +278,15 @@ EVENT_ACTIVITY_RESULT = "activity.result"
 #: bytes themselves.
 EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
 
+#: Issue #2355 -- emitted once per provider-availability routing decision
+#: (dispatch-time failover or doctor failover drill). The event records the
+#: role, the full fallback chain considered, the recorded probe outcomes, the
+#: chosen chain position, the reason the decision fired, and the deterministic
+#: decision hash. A verifier holding the same recorded probe set recomputes
+#: the routing decision byte-identically and checks it against the chain --
+#: two operators replay the same routing.
+EVENT_ROUTING_FAILOVER_RECEIPT = "routing.failover_receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1720,6 +1729,69 @@ def record_evidence_bundle(
     )
 
 
+def record_routing_failover_receipt(
+    *,
+    chain: AuditChainStore,
+    role: str,
+    task_id: str,
+    decision_hash: str,
+    chosen_index: int,
+    reason: str,
+    chain_considered: list[dict[str, Any]],
+    probe_results: list[dict[str, Any]],
+    kind: str = "dispatch",
+    actor: str = "provider_availability",
+) -> AuditEvent:
+    """Append a ``routing.failover_receipt`` event into *chain* (#2355).
+
+    Mirrors one provider-availability routing decision into the HMAC-chained
+    audit log: the per-role fallback chain that was considered, the recorded
+    probe outcomes it was evaluated against, the chosen chain position, the
+    reason the decision fired, and the deterministic decision hash. The
+    decision is a pure function of the chain and the recorded probe set (see
+    :func:`bernstein.core.routing.provider_availability.decide_route`), so a
+    verifier holding this receipt recomputes the decision byte-identically
+    and confirms the dispatched provider was the deterministic choice -- not
+    an operator override and not a race.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        role: The role whose fallback chain was evaluated.
+        task_id: The task being dispatched (empty for drills).
+        decision_hash: ``sha256:`` hash of the canonical decision projection.
+        chosen_index: Selected chain position (``-1`` when no element was
+            healthy and the dispatch was refused).
+        reason: Why the decision fired (``primary_healthy`` | ``failover`` |
+            ``no_healthy_provider``).
+        chain_considered: The declared chain as recorded dicts
+            (``adapter``/``model``/``conformance`` per element).
+        probe_results: Recorded probe outcomes aligned with the chain.
+        kind: ``"dispatch"`` for spawn-time decisions, ``"drill"`` for
+            ``bernstein doctor --failover-drill`` simulations.
+        actor: Recorded actor; defaults to ``"provider_availability"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ROUTING_FAILOVER_RECEIPT,
+        actor=actor,
+        resource_type="routing_receipt",
+        resource_id=task_id or role,
+        details={
+            "role": role,
+            "task_id": task_id,
+            "decision_hash": decision_hash,
+            "chosen_index": chosen_index,
+            "reason": reason,
+            "chain_considered": chain_considered,
+            "probe_results": probe_results,
+            "kind": kind,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -1740,6 +1812,7 @@ __all__ = [
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
     "EVENT_REVIEW_RECEIPT",
+    "EVENT_ROUTING_FAILOVER_RECEIPT",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
@@ -1773,6 +1846,7 @@ __all__ = [
     "record_multimodal_attach",
     "record_otel_projection",
     "record_review_receipt",
+    "record_routing_failover_receipt",
     "record_schedule_fire_projection",
     "record_sensitive_gate",
     "record_skill_install_receipt",

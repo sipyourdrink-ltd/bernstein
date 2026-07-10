@@ -398,6 +398,10 @@ class SeedConfig:
     judge_model: str | None = None
     judge_provider: str | None = None
     model_fallback: ModelFallbackSeedConfig | None = None
+    # Issue #2355: raw ``provider_availability`` section (per-role provider
+    # fallback chains + conformance floors + probe TTL). Validated at parse
+    # time; consumed by the spawner's availability failover path.
+    provider_availability: dict[str, Any] | None = None
     cost_tags: dict[str, str] = field(default_factory=dict)
     cost_autopilot: bool = False
     # Per-quota-envelope budgets (issue #1405). Parsed from the

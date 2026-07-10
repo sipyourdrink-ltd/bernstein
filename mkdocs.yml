@@ -290,6 +290,7 @@ nav:
       - Replay: operations/replay.md
       - Commands overview: operations/commands.md
       - Doctor: operations/doctor.md
+      - Provider availability & failover: operations/provider-availability.md
       - Spending mandates: operations/spending-mandates.md
       - Stall escalation receipts: operations/stall-escalation.md
       - Audited webhook node: operations/webhook-node.md

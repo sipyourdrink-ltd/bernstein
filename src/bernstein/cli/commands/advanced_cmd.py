@@ -544,21 +544,37 @@ def plugins_cmd(workdir: str) -> None:
     default=False,
     help="Print the top curated documentation gaps and exit.",
 )
+@click.option(
+    "--failover-drill",
+    "failover_drill",
+    is_flag=True,
+    default=False,
+    help="Exercise every declared provider fallback chain; exit non-zero on any broken chain.",
+)
 @click.pass_context
-def doctor(ctx: click.Context, as_json: bool, auto_fix: bool, suggest_docs: bool) -> None:
+def doctor(ctx: click.Context, as_json: bool, auto_fix: bool, suggest_docs: bool, failover_drill: bool) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
     \b
-      bernstein doctor                # print diagnostic report
-      bernstein doctor --json         # machine-readable output
-      bernstein doctor --fix          # attempt to auto-fix issues
-      bernstein doctor --suggest-docs # surface top curated documentation gaps
-      bernstein doctor airgap         # battery of checks for an air-gapped run
-      bernstein doctor sonar          # surface SonarQube insights for the project
-      bernstein doctor glitchtip      # surface GlitchTip issue counts and top unresolved
+      bernstein doctor                  # print diagnostic report
+      bernstein doctor --json           # machine-readable output
+      bernstein doctor --fix            # attempt to auto-fix issues
+      bernstein doctor --suggest-docs   # surface top curated documentation gaps
+      bernstein doctor --failover-drill # probe every declared provider fallback chain
+      bernstein doctor airgap           # battery of checks for an air-gapped run
+      bernstein doctor sonar            # surface SonarQube insights for the project
+      bernstein doctor glitchtip        # surface GlitchTip issue counts and top unresolved
     """
     if ctx.invoked_subcommand is not None:
         ctx.obj = {"as_json": as_json, "auto_fix": auto_fix}
+        return
+
+    if failover_drill:
+        from bernstein.cli.commands.doctor.failover_drill import run_failover_drill_cli
+
+        exit_code = run_failover_drill_cli(workdir=Path.cwd(), as_json=as_json)
+        if exit_code:
+            raise SystemExit(exit_code)
         return
 
     if suggest_docs:

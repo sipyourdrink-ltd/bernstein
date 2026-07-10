@@ -1262,3 +1262,22 @@ To invoke any of them, just type the full path (`bernstein task compose ...`) - 
 - [`reference/openapi-reference.md`](openapi-reference.md) - REST + WebSocket + ACP/A2A endpoints.
 - [`reference/FEATURE_MATRIX.md`](FEATURE_MATRIX.md) - capability matrix.
 - [`operations/CONFIG.md`](../operations/CONFIG.md) - every config key Bernstein recognises.
+
+---
+
+## Provider failover drill
+
+#### `bernstein doctor --failover-drill`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--failover-drill` | off | Exercise every fallback chain declared under `provider_availability` in `bernstein.yaml`. |
+| `--json` | off | Machine-readable drill report (for CI). |
+
+Probes every declared chain element and evaluates each chain position as
+the dispatch target under a simulated outage of its predecessors. Exits
+non-zero when any declared chain element is broken, and zero when all are
+healthy. Each drill row carries the deterministic routing-decision hash its
+simulated outage prefix would produce; drill outcomes are mirrored into the
+audit chain when a `.sdd` workspace is present. See
+[Provider availability & failover](../operations/provider-availability.md).
