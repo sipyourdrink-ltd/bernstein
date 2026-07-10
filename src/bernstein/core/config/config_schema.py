@@ -181,6 +181,36 @@ class CouncilConfig(BaseModel):
     timeout: float = 60.0
 
 
+class LocalEndpointProfileSchema(BaseModel):
+    """A named OpenAI-compatible local endpoint profile (issue #2356).
+
+    Declares once, under ``local_endpoints.<name>``, where a local runtime
+    (for example ollama, LM Studio, or an MLX server) is reachable and which
+    model it serves. Role entries reference the profile by name via
+    ``role_model_policy.<role>.endpoint`` and inherit its ``base_url`` /
+    ``model`` / ``api_key_env`` at validation time, so the fleet wiring
+    lives in one place instead of being copy-pasted per role.
+
+    ``api_key_env`` is the NAME of an environment variable, never a literal
+    key -- the same fail-closed semantics as
+    :class:`RoleModelPolicyEntry.api_key_env`. ``engine`` is a free-form
+    runtime label recorded in the certification receipt for provenance.
+
+    Whether the endpoint may carry a merge-critical role is NOT a field
+    here by design: certification is a signed receipt produced by
+    ``bernstein doctor --endpoint`` (see
+    :mod:`bernstein.core.endpoints.certification`), verified at config load.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str
+    model: str
+    api_key_env: str | None = None
+    engine: str | None = None
+    timeout: float = Field(default=120.0, gt=0)
+
+
 class RoleModelPolicyEntry(BaseModel):
     """Per-role model/provider policy.
 
@@ -215,6 +245,13 @@ class RoleModelPolicyEntry(BaseModel):
     effort: str | None = None
     base_url: str | None = None
     api_key_env: str | None = None
+    # Name of a ``local_endpoints`` profile this role runs on (issue #2356).
+    # Mutually exclusive with inline ``base_url``/``model``/``api_key_env``;
+    # the profile's endpoint fields are materialized onto this entry at
+    # validation time so downstream consumers see one resolved shape.
+    # Merge-critical roles referencing a profile are additionally gated on a
+    # verified certification receipt in :func:`load_and_validate`.
+    endpoint: str | None = None
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
@@ -596,6 +633,13 @@ class BernsteinConfig(BaseModel):
 
     # --- Nested configs ---
     quality_gates: QualityGatesSchema | None = None
+    local_endpoints: dict[str, LocalEndpointProfileSchema] | None = Field(
+        default=None,
+        description=(
+            "Named OpenAI-compatible endpoint profiles for local runtimes. "
+            "Referenced from role_model_policy.<role>.endpoint."
+        ),
+    )
     role_model_policy: dict[str, RoleModelPolicyEntry] | None = None
     role_config: dict[str, RoleConfigEntry] | None = None
     model_policy: ModelPolicySchema | None = None
@@ -703,10 +747,49 @@ class BernsteinConfig(BaseModel):
             if self.storage.backend == "redis" and not self.storage.redis_url:
                 errors.append("storage.backend is 'redis' but redis_url is not set.")
 
+        # Local endpoint profile references (issue #2356): resolve
+        # role_model_policy.<role>.endpoint onto the referenced profile's
+        # base_url/model/api_key_env so downstream consumers see one shape.
+        self._resolve_local_endpoint_references(errors)
+
         if errors:
             raise ValueError("Configuration has conflicting settings:\n" + "\n".join(f"  - {e}" for e in errors))
 
         return self
+
+    def _resolve_local_endpoint_references(self, errors: list[str]) -> None:
+        """Materialize ``endpoint`` profile references onto role entries.
+
+        A role entry naming a ``local_endpoints`` profile must not also pin
+        an inline ``base_url``/``model``/``api_key_env``: the profile is the
+        single source of truth for the endpoint, and the certification
+        receipt is keyed on the profile's exact ``(base_url, model)`` pair.
+        """
+        if not self.role_model_policy:
+            return
+        profiles = self.local_endpoints or {}
+        for role, entry in self.role_model_policy.items():
+            if entry.endpoint is None:
+                continue
+            profile = profiles.get(entry.endpoint)
+            if profile is None:
+                known = ", ".join(sorted(profiles)) or "(none defined)"
+                errors.append(
+                    f"role_model_policy.{role}.endpoint references unknown "
+                    f"local_endpoints profile {entry.endpoint!r}. Known profiles: {known}."
+                )
+                continue
+            conflicts = [name for name in ("base_url", "model", "api_key_env") if getattr(entry, name) is not None]
+            if conflicts:
+                errors.append(
+                    f"role_model_policy.{role}: {', '.join(conflicts)} cannot be set inline "
+                    f"together with endpoint={entry.endpoint!r}; the profile pins the "
+                    "certified endpoint. Move overrides into the profile."
+                )
+                continue
+            entry.base_url = profile.base_url
+            entry.model = profile.model
+            entry.api_key_env = profile.api_key_env
 
     def _parse_budget_value(self) -> float | None:
         """Parse the budget field into a numeric value."""
@@ -941,6 +1024,16 @@ def load_and_validate(
     # CFG-001 + CFG-002: Validate with Pydantic
     config = BernsteinConfig.model_validate(data)
 
+    # Issue #2356: gate merge-critical roles on a verified endpoint
+    # certification receipt. Local profiles on low-stakes roles pass
+    # without a receipt (best-effort by policy); a gated role requires a
+    # signed receipt certifying that exact role for that exact endpoint.
+    endpoint_errors = _validate_endpoint_certifications(config, project_root=path.parent)
+    if endpoint_errors:
+        raise ValueError(
+            "Configuration failed the endpoint certification gate:\n" + "\n".join(f"  - {e}" for e in endpoint_errors)
+        )
+
     # CFG-005: Check file paths
     if check_paths:
         path_errors = validate_file_paths(config, project_root=path.parent)
@@ -948,6 +1041,26 @@ def load_and_validate(
             raise ConfigPathError("Config references missing paths:\n" + "\n".join(f"  - {e}" for e in path_errors))
 
     return config
+
+
+def _validate_endpoint_certifications(config: BernsteinConfig, *, project_root: Path) -> list[str]:
+    """Collect certification-gate errors for local endpoint assignments."""
+    policy = config.role_model_policy or {}
+    assignments = [
+        (role, entry.endpoint, entry.base_url or "", entry.model or "")
+        for role, entry in policy.items()
+        if entry.endpoint is not None
+    ]
+    if not assignments:
+        return []
+    # Imported lazily: the endpoints package pulls in signing/lineage
+    # machinery most config loads never touch.
+    from bernstein.core.endpoints.certification import validate_endpoint_assignments
+
+    return validate_endpoint_assignments(
+        [(role, name or "", base_url, model) for role, name, base_url, model in assignments],
+        workdir=project_root,
+    )
 
 
 def export_json_schema(*, indent: int = 2) -> str:

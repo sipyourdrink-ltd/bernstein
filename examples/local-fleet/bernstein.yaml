@@ -1,0 +1,54 @@
+# Mixed fleet: API planner plus certified local workers
+#
+# One API-backed manager plans and reviews; low-stakes workers (lint,
+# test-writing, triage, docstring sweeps) run on a local OpenAI-compatible
+# endpoint (ollama, LM Studio, or an MLX server).
+#
+# Before routing a merge-critical role to a local endpoint, certify it:
+#
+#   bernstein doctor --endpoint http://127.0.0.1:11434/v1 --endpoint-engine ollama
+#
+# The doctor runs a fixed conformance subset (tool calling, patch format
+# fidelity, timeout behavior, context floor) and seals a signed receipt
+# anchored to the audit chain. Config validation gates merge-critical roles
+# on that receipt; the low-stakes roles below run without one.
+#
+# See docs/reference/local-endpoints.md for verified engine/model/RAM
+# combinations.
+
+goal: "Fix lint findings, add missing unit tests, and refresh module docstrings for the sample package."
+
+cli: auto
+max_agents: 5
+internal_llm_provider: none
+
+# Named local endpoint profiles. Point base_url at any OpenAI-compatible
+# endpoint; the model is pinned per profile because certification receipts
+# are keyed on the exact (base_url, model) pair.
+local_endpoints:
+  workhorse:
+    base_url: "${BERNSTEIN_LOCAL_LLM_BASE_URL:-http://127.0.0.1:11434/v1}"
+    model: "${BERNSTEIN_LOCAL_LLM_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}"
+    engine: ollama
+    timeout: 120
+
+role_model_policy:
+  # Merge-critical planning and review stay on an API model.
+  manager:
+    model: gpt-5
+    base_url: "${BERNSTEIN_API_BASE_URL:-https://api.openai.com/v1}"
+    api_key_env: OPENAI_API_KEY
+
+  # Low-stakes local tier: routed to the workhorse profile by preset.
+  linter:
+    endpoint: workhorse
+  test_writer:
+    endpoint: workhorse
+  triage:
+    endpoint: workhorse
+  doc_sweeper:
+    endpoint: workhorse
+
+constraints:
+  - "Keep changes scoped to the sample package"
+  - "pytest for tests"
