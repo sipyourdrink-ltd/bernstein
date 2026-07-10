@@ -148,7 +148,7 @@ def _record_claim_receipt(request: Request, task: Task, claim_path: str) -> None
             task_version=task.version,
             claim_path=claim_path,
         )
-    except Exception as exc:
+    except Exception as exc:  # intentional-broad-except: receipt mirror is best-effort, never blocks the claim
         logger.warning("task.claim receipt append failed: %s", type(exc).__name__)
 
 

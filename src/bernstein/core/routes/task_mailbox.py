@@ -82,8 +82,7 @@ async def post_task_message(task_id: str, body: TaskMessagePost, request: Reques
     Ed25519-signed, and mirrored into the audit chain before the response
     is returned - the response IS the signed journal entry.
     """
-    store = _get_store(request)
-    task = store.get_task(task_id)
+    task = _get_store(request).get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
     _require_task_access(task, request)
@@ -116,7 +115,7 @@ async def post_task_message(task_id: str, body: TaskMessagePost, request: Reques
                 entry_hash=message.entry_hash,
                 redaction_count=message.redaction_count,
             )
-        except Exception as exc:
+        except Exception as exc:  # intentional-broad-except: audit mirror is best-effort, never blocks the post
             logger.warning("task_mailbox: audit chain mirror failed: %s", type(exc).__name__)
 
     _get_sse_bus(request).publish("task_message", json.dumps({"task_id": task_id, "seq": message.seq}))
@@ -142,8 +141,7 @@ def get_task_messages(task_id: str, request: Request, since_seq: int = -1) -> li
     already processed to receive only newer messages. Replaying the same
     journal always reproduces the same delivery order.
     """
-    store = _get_store(request)
-    task = store.get_task(task_id)
+    task = _get_store(request).get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
     _require_task_access(task, request)
