@@ -61,7 +61,6 @@ from bernstein.core.lineage.spine import (
     compute_entry_hash,
     content_hash_of,
 )
-from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:
@@ -624,7 +623,9 @@ def _seal_media_credential(
         signed = sign_manifest(manifest, signing_key=priv)
         credential = store.put(_canonical_bytes(manifest_to_dict(signed)))
     except (ValueError, TypeError, KeyError, OSError) as exc:  # pragma: no cover - defensive
-        logger.debug("evidence: media credential projection skipped: %s", sanitize_log(str(exc)))
+        # Log only the exception type: this path handles a private key, so
+        # even sanitized exception text stays out of the log stream.
+        logger.debug("evidence: media credential projection skipped: %s", type(exc).__name__)
         return ""
     else:
         return credential.content_hash

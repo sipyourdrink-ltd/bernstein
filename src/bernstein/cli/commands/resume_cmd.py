@@ -191,6 +191,7 @@ def resume_cmd(task_id: str, workdir: Path | None, output_json: bool, dry_run: b
         plan = prepare_resume(project_root, task_id)
     except CheckpointMissingError as exc:
         console.print(f"[red]No checkpoint:[/red] {exc}")
+        _hint_work_ledger(project_root, task_id)
         raise SystemExit(EXIT_NO_CHECKPOINT) from None
     except CheckpointCorruptError as exc:
         console.print(f"[red]Corrupt checkpoint for {task_id!r}:[/red] {exc}")
@@ -209,6 +210,35 @@ def resume_cmd(task_id: str, workdir: Path | None, output_json: bool, dry_run: b
     # call from the dashboard / API and stays unit-testable. The CLI
     # signals intent by writing a one-line marker the spawner watches.
     _write_resume_signal(project_root, plan)
+
+
+def _hint_work_ledger(workdir: Path, resume_id: str) -> None:
+    """Point the operator at the durable work ledger when one matches.
+
+    A per-task checkpoint is machine-local; a run whose state was anchored
+    to the work-ledger ref (#2358) resumes on any clone via
+    ``bernstein ledger resume``. When the id the operator passed matches a
+    local or anchored ledger, say so instead of dead-ending.
+    """
+    from bernstein.core.persistence.ledger_git import LedgerGitError, ledger_ref, list_ledger_runs
+    from bernstein.core.persistence.work_ledger import LedgerReader, run_ledger_dir
+
+    try:
+        ledger_ref(resume_id)
+    except LedgerGitError:
+        return
+    has_local = LedgerReader(run_ledger_dir(workdir / ".sdd", resume_id)).exists()
+    has_anchor = False
+    if not has_local:
+        try:
+            has_anchor = resume_id in list_ledger_runs(workdir)
+        except LedgerGitError:
+            has_anchor = False
+    if has_local or has_anchor:
+        console.print(
+            f"[yellow]A durable work ledger exists for {resume_id!r}.[/yellow] "
+            f"Resume the run from its verified chain with: bernstein ledger resume {resume_id}"
+        )
 
 
 def _write_resume_signal(workdir: Path, plan: ResumePlan) -> None:

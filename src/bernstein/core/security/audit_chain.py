@@ -278,6 +278,16 @@ EVENT_ACTIVITY_RESULT = "activity.result"
 #: bytes themselves.
 EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
 
+#: Issue #2358 -- emitted whenever a run's durable work ledger is anchored
+#: to its dedicated git ref (``refs/bernstein/work-ledger/<run-id>``). The
+#: hash-chained ledger is the resumable task-graph state; this event mirrors
+#: each anchor point into the HMAC-chained audit log by recording ``{run_id,
+#: head_hash, entry_count, chunk_count, ref, tree_sha}`` plus the previous
+#: chain digest. A verifier holding the repository can walk the anchored
+#: chain, recompute the head, and confirm the resume point is chain-attested
+#: -- the payloads themselves never enter the audit log.
+EVENT_WORK_LEDGER_ANCHOR = "work_ledger.anchor"
+
 #: Issue #2359 -- emitted once per checkpointed-retry decision. When a failed
 #: task is retried, the scheduler decides warm (resume the recorded native
 #: session), fork (branch off the recorded checkpoint), or cold (restart from
@@ -1734,6 +1744,59 @@ def record_evidence_bundle(
     )
 
 
+def record_work_ledger_anchor(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    head_hash: str,
+    entry_count: int,
+    chunk_count: int,
+    ref: str,
+    tree_sha: str,
+    actor: str = "work_ledger",
+) -> AuditEvent:
+    """Append a ``work_ledger.anchor`` event into *chain* (#2358).
+
+    Mirrors a work-ledger anchor point into the HMAC-chained audit log so an
+    operator can prove, from the chain alone, that a run's resumable task-graph
+    state was anchored at a specific head. Only the run id, the chain head, the
+    entry/chunk counts, the ref name, and the deterministic tree sha are
+    recorded -- never the transition payloads. A verifier holding the repository
+    walks the anchored chain, recomputes the head, and confirms the resume
+    point is chain-attested.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose ledger was anchored.
+        head_hash: Head entry hash of the anchored chain.
+        entry_count: Number of ledger entries anchored.
+        chunk_count: Number of chunk blobs in the anchor tree.
+        ref: The fully-qualified ledger ref that was updated.
+        tree_sha: Deterministic tree sha of the anchor (its identity).
+        actor: Recorded actor; defaults to ``"work_ledger"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_WORK_LEDGER_ANCHOR,
+        actor=actor,
+        resource_type="work_ledger",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "head_hash": head_hash,
+            "entry_count": entry_count,
+            "chunk_count": chunk_count,
+            "ref": ref,
+            "tree_sha": tree_sha,
+        },
+    )
+
+
+
+
 def record_checkpoint_retry(
     *,
     chain: AuditChainStore,
@@ -1802,8 +1865,6 @@ def record_checkpoint_retry(
             "journal_entry_hash": journal_entry_hash,
         },
     )
-
-
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -1833,6 +1894,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
     "EVENT_WEBHOOK_NODE_RECEIPT",
+    "EVENT_WORK_LEDGER_ANCHOR",
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
@@ -1866,4 +1928,5 @@ __all__ = [
     "record_subagent_delegation",
     "record_thread_approval",
     "record_webhook_node_receipt",
+    "record_work_ledger_anchor",
 ]
