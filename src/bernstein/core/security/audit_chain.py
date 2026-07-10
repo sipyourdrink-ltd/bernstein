@@ -278,6 +278,30 @@ EVENT_ACTIVITY_RESULT = "activity.result"
 #: bytes themselves.
 EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
 
+#: Issue #2358 -- emitted whenever a run's durable work ledger is anchored
+#: to its dedicated git ref (``refs/bernstein/work-ledger/<run-id>``). The
+#: hash-chained ledger is the resumable task-graph state; this event mirrors
+#: each anchor point into the HMAC-chained audit log by recording ``{run_id,
+#: head_hash, entry_count, chunk_count, ref, tree_sha}`` plus the previous
+#: chain digest. A verifier holding the repository can walk the anchored
+#: chain, recompute the head, and confirm the resume point is chain-attested
+#: -- the payloads themselves never enter the audit log.
+EVENT_WORK_LEDGER_ANCHOR = "work_ledger.anchor"
+
+#: Issue #2359 -- emitted once per checkpointed-retry decision. When a failed
+#: task is retried, the scheduler decides warm (resume the recorded native
+#: session), fork (branch off the recorded checkpoint), or cold (restart from
+#: zero) as a pure function of the adapter's declared capability, the
+#: journal-anchored checkpoint reference, and a workspace-hash comparison.
+#: The event mirrors ``{task_id, retry_mode, requested_mode, capability,
+#: checkpoint_event_hash, checkpoint_journal_index, workspace_match,
+#: downgrade_reason, decision_hash, journal_event_hash, journal_entry_hash}``
+#: into the chain, so an operator can prove -- from the chain alone -- whether
+#: a retry continued a session or restarted cold and why. Only identifiers,
+#: hashes, the mode, and the downgrade reason are recorded -- never prompt,
+#: gate output, or session content.
+EVENT_CHECKPOINT_RETRY = "retry.checkpoint_decision"
+
 #: Issue #2355 -- emitted once per provider-availability routing decision
 #: (dispatch-time failover or doctor failover drill). The event records the
 #: role, the full fallback chain considered, the recorded probe outcomes, the
@@ -1729,6 +1753,129 @@ def record_evidence_bundle(
     )
 
 
+def record_work_ledger_anchor(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    head_hash: str,
+    entry_count: int,
+    chunk_count: int,
+    ref: str,
+    tree_sha: str,
+    actor: str = "work_ledger",
+) -> AuditEvent:
+    """Append a ``work_ledger.anchor`` event into *chain* (#2358).
+
+    Mirrors a work-ledger anchor point into the HMAC-chained audit log so an
+    operator can prove, from the chain alone, that a run's resumable task-graph
+    state was anchored at a specific head. Only the run id, the chain head, the
+    entry/chunk counts, the ref name, and the deterministic tree sha are
+    recorded -- never the transition payloads. A verifier holding the repository
+    walks the anchored chain, recomputes the head, and confirms the resume
+    point is chain-attested.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose ledger was anchored.
+        head_hash: Head entry hash of the anchored chain.
+        entry_count: Number of ledger entries anchored.
+        chunk_count: Number of chunk blobs in the anchor tree.
+        ref: The fully-qualified ledger ref that was updated.
+        tree_sha: Deterministic tree sha of the anchor (its identity).
+        actor: Recorded actor; defaults to ``"work_ledger"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_WORK_LEDGER_ANCHOR,
+        actor=actor,
+        resource_type="work_ledger",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "head_hash": head_hash,
+            "entry_count": entry_count,
+            "chunk_count": chunk_count,
+            "ref": ref,
+            "tree_sha": tree_sha,
+        },
+    )
+
+
+def record_checkpoint_retry(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    retry_mode: str,
+    requested_mode: str,
+    capability: str,
+    checkpoint_event_hash: str,
+    checkpoint_journal_index: int,
+    workspace_match: bool,
+    downgrade_reason: str,
+    decision_hash: str,
+    journal_event_hash: str,
+    journal_entry_hash: str,
+    actor: str = "checkpoint_retry",
+) -> AuditEvent:
+    """Append a ``retry.checkpoint_decision`` event into *chain*.
+
+    Mirrors a checkpointed-retry decision (issue #2359) into the HMAC-chained
+    audit log so replay can distinguish warm from cold retries and the retry
+    lineage is inspectable from the chain alone. Only identifiers, hashes, the
+    mode, and the downgrade reason are recorded -- never prompt content, gate
+    output, or provider session state.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The failed task whose retry was decided.
+        retry_mode: Effective mode (``warm`` / ``fork`` / ``cold``).
+        requested_mode: The mode the retry policy asked for.
+        capability: The adapter's declared checkpointed-retry capability
+            (``resume`` / ``fork`` / ``none``).
+        checkpoint_event_hash: Merkle hash of the checkpoint row in the
+            task's event journal (empty when no checkpoint existed).
+        checkpoint_journal_index: 0-based journal index of that row, or -1.
+        workspace_match: Whether the recorded workspace hash matched the
+            live worktree at decision time.
+        downgrade_reason: Why a non-cold request became cold (or a fork
+            became warm); empty when the request was honored.
+        decision_hash: SHA-256 of the canonical decision projection.
+        journal_event_hash: Merkle hash of the decision row appended to the
+            task's event journal.
+        journal_entry_hash: Lineage-spine entry hash anchoring the decision
+            artifact (empty when lineage recording is disabled).
+        actor: Recorded actor; defaults to ``"checkpoint_retry"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CHECKPOINT_RETRY,
+        actor=actor,
+        resource_type="checkpoint_retry",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "retry_mode": retry_mode,
+            "requested_mode": requested_mode,
+            "capability": capability,
+            "checkpoint_event_hash": checkpoint_event_hash,
+            "checkpoint_journal_index": checkpoint_journal_index,
+            "workspace_match": workspace_match,
+            "downgrade_reason": downgrade_reason,
+            "decision_hash": decision_hash,
+            "journal_event_hash": journal_event_hash,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+
+
 def record_routing_failover_receipt(
     *,
     chain: AuditChainStore,
@@ -1790,12 +1937,11 @@ def record_routing_failover_receipt(
             "kind": kind,
         },
     )
-
-
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_ACTIVITY_RESULT",
+    "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
@@ -1821,6 +1967,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
     "EVENT_WEBHOOK_NODE_RECEIPT",
+    "EVENT_WORK_LEDGER_ANCHOR",
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
@@ -1832,6 +1979,7 @@ __all__ = [
     "ThreadApprovalDetails",
     "record_a2a_message_receipt",
     "record_activity_result",
+    "record_checkpoint_retry",
     "record_cost_profile_report",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
@@ -1854,4 +2002,5 @@ __all__ = [
     "record_subagent_delegation",
     "record_thread_approval",
     "record_webhook_node_receipt",
+    "record_work_ledger_anchor",
 ]

@@ -147,6 +147,44 @@ class EventJournal:
         self._start_ts: float = time.time()
         self._prune_old_runs()
 
+    @classmethod
+    def resume(cls, run_id: str, sdd_dir: Path) -> EventJournal:
+        """Open a journal whose file may already exist, recovering the tail.
+
+        The plain constructor targets a fresh run: it starts the chain at
+        index 0 / genesis even when the file already has rows, which is
+        correct for the orchestrator's one-journal-per-run lifetime but
+        would break the Merkle chain for journals appended across process
+        boundaries (for example a task's checkpoint journal, which a later
+        retry decision extends from a different process).
+
+        ``resume`` re-verifies the existing chain and continues from its
+        tail. It fails closed: a journal whose chain does not recompute is
+        refused rather than silently extended from a poisoned anchor.
+
+        Args:
+            run_id: Unique identifier for the run.
+            sdd_dir: Path to the ``.sdd`` directory.
+
+        Returns:
+            A journal positioned at the verified chain tail (or at genesis
+            for a missing/empty file).
+
+        Raises:
+            ValueError: The existing chain fails verification.
+        """
+        journal = cls(run_id, sdd_dir)
+        events = load_events(journal.path)
+        if not events:
+            return journal
+        result = verify_journal(journal.path)
+        if not result.ok:
+            msg = f"cannot resume journal {journal.path}: {'; '.join(result.errors) or 'chain verification failed'}"
+            raise ValueError(msg)
+        journal._index = len(events)
+        journal._head = str(events[-1].get("event_hash", ""))
+        return journal
+
     @property
     def run_id(self) -> str:
         """The run identifier this journal is writing to."""

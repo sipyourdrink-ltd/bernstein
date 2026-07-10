@@ -1232,3 +1232,8 @@ cli.add_command(activity_group, "activity")
 from bernstein.cli.commands.evidence_cmd import evidence_group  # noqa: E402
 
 cli.add_command(evidence_group, "evidence")
+
+# Durable work ledger: resumable task-graph state anchored to a git ref (#2358).
+from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
+
+cli.add_command(ledger_group, "ledger")
