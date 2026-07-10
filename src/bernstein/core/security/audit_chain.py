@@ -1795,8 +1795,6 @@ def record_work_ledger_anchor(
     )
 
 
-
-
 def record_checkpoint_retry(
     *,
     chain: AuditChainStore,
@@ -1865,6 +1863,8 @@ def record_checkpoint_retry(
             "journal_entry_hash": journal_entry_hash,
         },
     )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
