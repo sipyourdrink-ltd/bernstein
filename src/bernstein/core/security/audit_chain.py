@@ -1874,8 +1874,6 @@ def record_checkpoint_retry(
     )
 
 
-
-
 def record_routing_failover_receipt(
     *,
     chain: AuditChainStore,
@@ -1937,6 +1935,8 @@ def record_routing_failover_receipt(
             "kind": kind,
         },
     )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
