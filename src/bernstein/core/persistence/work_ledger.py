@@ -398,7 +398,7 @@ def _walk_validated_lines(bucket_path: Path) -> tuple[str, list[str]]:
 
     if pending_torn_line is not None:
         logger.warning(
-            "ledger %s: torn trailing line %d ignored; recovered %d validated entrie(s)",
+            "ledger %s: torn trailing line %d ignored; recovered %d validated entries",
             bucket_path,
             pending_torn_line,
             len(validated),
