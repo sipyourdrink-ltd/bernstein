@@ -87,6 +87,8 @@ from bernstein.core.server.server_models import TaskCompleteRequest as TaskCompl
 from bernstein.core.server.server_models import TaskCountsResponse as TaskCountsResponse
 from bernstein.core.server.server_models import TaskCreate as TaskCreate
 from bernstein.core.server.server_models import TaskFailRequest as TaskFailRequest
+from bernstein.core.server.server_models import TaskMessagePost as TaskMessagePost
+from bernstein.core.server.server_models import TaskMessageResponse as TaskMessageResponse
 from bernstein.core.server.server_models import TaskPatchRequest as TaskPatchRequest
 from bernstein.core.server.server_models import TaskProgressRequest as TaskProgressRequest
 from bernstein.core.server.server_models import TaskResponse as TaskResponse

@@ -1175,6 +1175,26 @@ def create_app(
     application.state.sdd_dir = sdd_dir  # type: ignore[attr-defined]  # .sdd/
     application.state.workdir = workdir  # type: ignore[attr-defined]
 
+    # Worker mailbox + audit chain (#2357). The mailbox journal shares the
+    # audit chain's HMAC key domain so the delivered message log
+    # cross-verifies against the chain. The key stays inside the server's
+    # state dir (self-contained, cwd-independent) but outside the log
+    # directory, mirroring the key/log separation the audit module
+    # documents; an explicit BERNSTEIN_AUDIT_KEY_PATH override still wins
+    # so operators can point every verifier at one key.
+    from bernstein.core.communication.task_mailbox import TaskMailbox
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    _key_override = os.environ.get("BERNSTEIN_AUDIT_KEY_PATH", "")
+    _chain_key = load_or_create_audit_key(Path(_key_override) if _key_override else sdd_dir / "keys" / "audit.key")
+    application.state.audit_chain = AuditChainStore(sdd_dir / "audit", key=_chain_key)  # type: ignore[attr-defined]
+    application.state.task_mailbox = TaskMailbox(  # type: ignore[attr-defined]
+        jsonl_path.parent / "mailbox.jsonl",
+        hmac_key=_chain_key,
+        identity_dir=sdd_dir / "identity",
+    )
+
     # Real-time behavior anomaly monitor - checks file access and output-size on
     # every progress update and writes kill signals for compromised sessions.
     from bernstein.core.behavior_anomaly import RealtimeBehaviorMonitor

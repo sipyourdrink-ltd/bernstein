@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
 from bernstein.core.tasks.task_store import ProgressEntry
@@ -124,7 +124,14 @@ class TaskCreate(BaseModel):
     approval_required: bool = False
     risk_level: str = Field(default="low", max_length=_MAX_SHORT_STR_LEN)
     estimated_minutes: int | None = None
-    depends_on: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LEN)
+    # ``needs`` is the declaration-style alias for the same dependency list
+    # (#2357); both spellings populate ``depends_on`` and the claim API only
+    # offers tasks whose dependencies are complete.
+    depends_on: list[str] = Field(
+        default_factory=list,
+        max_length=_MAX_LIST_LEN,
+        validation_alias=AliasChoices("depends_on", "needs"),
+    )
     parent_task_id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
     depends_on_repo: str | None = Field(default=None, max_length=_MAX_PATH_LEN)
     owned_files: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LEN)
@@ -412,6 +419,38 @@ class BatchClaimResponse(BaseModel):
 
     claimed: list[str]
     failed: list[str]
+
+
+class TaskMessagePost(BaseModel):
+    """Body for POST /tasks/{task_id}/messages (#2357).
+
+    Typed, size-capped worker mailbox payload. ``kind`` must be one of the
+    closed vocabulary (``finding`` / ``artefact_ref`` / ``question``);
+    the byte-strict body cap is enforced by the mailbox chain itself.
+    """
+
+    sender: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    kind: str = Field(min_length=1, max_length=64)
+    body: str = Field(min_length=1, max_length=8192)
+    sender_card_fingerprint: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+
+
+class TaskMessageResponse(BaseModel):
+    """One delivered mailbox message (chain order = delivery order)."""
+
+    seq: int
+    task_id: str
+    sender: str
+    sender_card_fingerprint: str
+    kind: str
+    body: str
+    body_hash: str
+    redaction_count: int
+    timestamp: float
+    prev_entry_hash: str
+    entry_hash: str
+    signature: str
+    signer_public_key_pem: str
 
 
 class BatchCreateRequest(BaseModel):

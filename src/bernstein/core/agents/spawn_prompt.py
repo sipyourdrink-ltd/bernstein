@@ -787,6 +787,7 @@ def _render_prompt(
     meta_messages: list[str] | None = None,
     file_ownership: dict[str, str] | None = None,
     max_turns: int | None = None,
+    mailbox_section: str = "",
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -820,6 +821,12 @@ def _render_prompt(
             MINIMAL). ``None`` means no value was resolvable at
             prompt-build time - the section is skipped, not rendered with
             a placeholder.
+        mailbox_section: Pre-rendered coordination-mailbox section (#2357),
+            produced by
+            :func:`bernstein.core.communication.task_mailbox.render_mailbox_section`
+            from the task's pending messages. A pure projection of the
+            mailbox journal, so every adapter type receives the identical
+            bytes. Empty string means no section is added.
 
     Returns:
         Complete prompt string ready for the CLI adapter.
@@ -939,6 +946,11 @@ def _render_prompt(
                 ),
             )
         )
+    # Coordination mailbox (#2357): typed messages other workers addressed to
+    # these tasks, rendered deterministically from the mailbox journal so two
+    # adapter types receive byte-identical context.
+    if mailbox_section and mailbox_section.strip():
+        named_sections.append(("coordination mailbox", deduplicate_section(mailbox_section)))
     # File ownership warnings: tell agents which files are locked by others
     if file_ownership:
         # Exclude files owned by the current agent
@@ -1212,6 +1224,7 @@ def render_prompt(
     meta_messages: list[str] | None = None,
     file_ownership: dict[str, str] | None = None,
     max_turns: int | None = None,
+    mailbox_section: str = "",
 ) -> str:
     """Public wrapper for compatibility-safe prompt rendering.
 
@@ -1233,6 +1246,7 @@ def render_prompt(
         meta_messages=meta_messages,
         file_ownership=file_ownership,
         max_turns=max_turns,
+        mailbox_section=mailbox_section,
     )
     _observe_cache_locality(rendered, tasks)
     return rendered

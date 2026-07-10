@@ -782,6 +782,7 @@ def _render_prompt(
     token_budget: int = 0,
     meta_messages: list[str] | None = None,
     max_turns: int | None = None,
+    mailbox_section: str = "",
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -969,6 +970,11 @@ def _render_prompt(
                 f"If you define an API endpoint, use consistent naming with existing endpoints.\n"
             )
         )
+    # Coordination mailbox (#2357): typed messages other workers addressed to
+    # these tasks, rendered deterministically from the mailbox journal so
+    # every adapter type receives byte-identical context.
+    if mailbox_section and mailbox_section.strip():
+        sections.append(deduplicate_section(mailbox_section))
     try:
         rec_engine = RecommendationEngine(workdir)
         rec_engine.build()
@@ -1397,6 +1403,31 @@ class AgentSpawner:
         self._shutdown_event = shutdown_event
         for manager in self._worktree_managers.values():
             manager.set_shutdown_event(shutdown_event)
+
+    def _render_mailbox_section(self, tasks: list[Task]) -> str:
+        """Render pending coordination-mailbox messages for *tasks* (#2357).
+
+        A deterministic projection of the task-server mailbox journal at
+        ``.sdd/runtime/mailbox.jsonl``: reading requires no key, the render
+        is a pure function of the journal, and every adapter type receives
+        the identical bytes. Best-effort - a missing or unreadable journal
+        renders nothing and never blocks a spawn.
+        """
+        try:
+            from bernstein.core.communication.task_mailbox import (
+                TaskMailbox,
+                render_mailbox_section,
+            )
+
+            journal = self._workdir / ".sdd" / "runtime" / "mailbox.jsonl"
+            if not journal.is_file():
+                return ""
+            mailbox = TaskMailbox(journal)
+            pending = [message for task in tasks for message in mailbox.pending(task.id)]
+            return render_mailbox_section(pending)
+        except Exception as exc:
+            logger.debug("Mailbox section rendering skipped: %s", type(exc).__name__)
+            return ""
 
     # -- Worktree lifecycle (delegated to spawner_worktree) --------------------
 
@@ -2878,6 +2909,7 @@ class AgentSpawner:
         # Render prompt (catalog system_prompt replaces role template when matched)
         bulletin_summary = self._bulletin.summary() if self._bulletin is not None else ""
         meta_messages = list(tasks[0].meta_messages)
+        mailbox_section = self._render_mailbox_section(tasks)
 
         # Best-effort max_turns resolution for the turn-budget prompt nudge
         # (work/bernstein/m27-nudge-plan.md, Approach C MINIMAL). The
@@ -2968,6 +3000,7 @@ class AgentSpawner:
                 token_budget=task_token_budget,
                 meta_messages=meta_messages,
                 max_turns=_effective_max_turns,
+                mailbox_section=mailbox_section,
             )
 
         agent_source = catalog_agent.source if catalog_agent else "built-in"
@@ -3754,6 +3787,7 @@ class AgentSpawner:
             session_id=session_id,
             meta_messages=meta_messages,
             max_turns=_resume_max_turns,
+            mailbox_section=self._render_mailbox_section(tasks),
         )
         # Prepend crash recovery context
         prompt = resume_header + prompt

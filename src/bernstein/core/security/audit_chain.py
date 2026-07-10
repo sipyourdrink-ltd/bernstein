@@ -278,6 +278,26 @@ EVENT_ACTIVITY_RESULT = "activity.result"
 #: bytes themselves.
 EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
 
+#: Issue #2357 -- emitted whenever the task server accepts a worker mailbox
+#: message (``POST /tasks/{id}/messages``). The event records the mailbox
+#: journal position (``seq``), the message kind, the sender and its card
+#: fingerprint, the body's SHA-256, the mailbox chain ``entry_hash``, and the
+#: DLP redaction count -- never the message body. A verifier holding the
+#: mailbox journal can recompute every entry and prove the delivered log
+#: equals the chain-attested log (see
+#: :func:`bernstein.core.communication.task_mailbox.verify_against_chain`).
+EVENT_TASK_MAILBOX_MESSAGE = "task.mailbox_message"
+
+#: Issue #2357 -- emitted whenever a claim endpoint hands a task to a worker.
+#: The event records the dependency snapshot the claim was granted under: the
+#: task id, its declared ``depends_on`` ids (all terminal by construction --
+#: the claim API refuses otherwise), the claiming session, the post-claim task
+#: version, and which claim path granted it (``next`` / ``by_id`` /
+#: ``batch``). Claims become journal entries on the audit chain, so claim
+#: eligibility is reconstructable offline instead of remaining an in-memory
+#: scheduler decision.
+EVENT_TASK_CLAIM_RECEIPT = "task.claim_receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1720,6 +1740,114 @@ def record_evidence_bundle(
     )
 
 
+def record_task_mailbox_message(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    seq: int,
+    kind: str,
+    sender: str,
+    sender_card_fingerprint: str,
+    body_hash: str,
+    entry_hash: str,
+    redaction_count: int,
+    actor: str = "task_mailbox",
+) -> AuditEvent:
+    """Append a ``task.mailbox_message`` event into *chain* (#2357).
+
+    Mirrors one accepted worker mailbox message into the HMAC-chained audit
+    log so a reviewer can prove, from the chain alone, that a cross-worker
+    message was delivered with the exact payload hash and chain position
+    claimed. Only hashes, the kind, the sender attribution, and the mailbox
+    chain link are recorded -- never the message body.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The recipient task.
+        seq: The message's global position in the mailbox journal.
+        kind: The typed message kind (``finding`` / ``artefact_ref`` /
+            ``question``).
+        sender: The posting worker's identifier.
+        sender_card_fingerprint: ``sha256:`` fingerprint of the sender's
+            agent card key, or ``"unregistered"``.
+        body_hash: ``sha256:`` hash of the stored (post-redaction) body.
+        entry_hash: The mailbox journal's ``hmac-sha256:`` chain tag for
+            this entry; the cross-check anchor.
+        redaction_count: DLP redactions applied on the write path.
+        actor: Recorded actor; defaults to ``"task_mailbox"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TASK_MAILBOX_MESSAGE,
+        actor=actor,
+        resource_type="task_mailbox_message",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "seq": seq,
+            "kind": kind,
+            "sender": sender,
+            "sender_card_fingerprint": sender_card_fingerprint,
+            "body_hash": body_hash,
+            "entry_hash": entry_hash,
+            "redaction_count": redaction_count,
+        },
+    )
+
+
+def record_task_claim_receipt(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    role: str,
+    claimed_by: str,
+    depends_on: list[str],
+    task_version: int,
+    claim_path: str,
+    actor: str = "task_server",
+) -> AuditEvent:
+    """Append a ``task.claim_receipt`` event into *chain* (#2357).
+
+    Records the dependency snapshot a claim was granted under, making every
+    claim a journal entry on the audit chain. Together with the dependency
+    gate (the claim API never offers a task whose ``depends_on`` are not
+    terminal), the chain lets an operator reconstruct claim eligibility
+    offline and prove no worker received a gated task.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The claimed task.
+        role: The task's role lane.
+        claimed_by: The claiming session or agent identifier (may be empty).
+        depends_on: The task's declared dependency ids at claim time.
+        task_version: The task version after the claim transition.
+        claim_path: Which endpoint granted the claim
+            (``next`` / ``by_id`` / ``batch``).
+        actor: Recorded actor; defaults to ``"task_server"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TASK_CLAIM_RECEIPT,
+        actor=actor,
+        resource_type="task_claim",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "role": role,
+            "claimed_by": claimed_by,
+            "depends_on": list(depends_on),
+            "task_version": task_version,
+            "claim_path": claim_path,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -1744,6 +1872,8 @@ __all__ = [
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
     "EVENT_SUBAGENT_DELEGATION",
+    "EVENT_TASK_CLAIM_RECEIPT",
+    "EVENT_TASK_MAILBOX_MESSAGE",
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
@@ -1778,6 +1908,8 @@ __all__ = [
     "record_skill_install_receipt",
     "record_skill_usage",
     "record_subagent_delegation",
+    "record_task_claim_receipt",
+    "record_task_mailbox_message",
     "record_thread_approval",
     "record_webhook_node_receipt",
 ]

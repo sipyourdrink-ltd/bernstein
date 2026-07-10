@@ -125,6 +125,33 @@ def _get_runtime_dir(request: Request) -> Path:
     return request.app.state.runtime_dir  # type: ignore[no-any-return]
 
 
+def _record_claim_receipt(request: Request, task: Task, claim_path: str) -> None:
+    """Mirror a granted claim into the audit chain (#2357).
+
+    Claims become journal entries: the receipt carries the dependency
+    snapshot the claim was granted under, so claim eligibility is
+    reconstructable from the chain alone. Best-effort - a chain append
+    failure never blocks the claim that already happened.
+    """
+    chain = getattr(request.app.state, "audit_chain", None)
+    if chain is None:
+        return
+    from bernstein.core.security.audit_chain import record_task_claim_receipt
+
+    try:
+        record_task_claim_receipt(
+            chain=chain,
+            task_id=task.id,
+            role=task.role,
+            claimed_by=task.claimed_by_session or task.assigned_agent or "",
+            depends_on=list(task.depends_on),
+            task_version=task.version,
+            claim_path=claim_path,
+        )
+    except Exception as exc:
+        logger.warning("task.claim receipt append failed: %s", type(exc).__name__)
+
+
 def _get_workdir(request: Request) -> Path:
     """Return the repository root from application state."""
     return request.app.state.workdir  # type: ignore[no-any-return]
@@ -1010,6 +1037,7 @@ async def next_task(
             sanitize_log(str(parent_session_id)),
         )
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
+    _record_claim_receipt(request, task, "next")
     return task_to_response(task)
 
 
@@ -1041,6 +1069,10 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
                 len(claimed),
                 sanitize_log(str(failed)),
             )
+        for claimed_id in claimed:
+            claimed_task = store.get_task(claimed_id)
+            if claimed_task is not None:
+                _record_claim_receipt(request, claimed_task, "batch")
         return BatchClaimResponse(claimed=claimed, failed=failed)
 
 
@@ -1115,6 +1147,7 @@ async def claim_task(
             task.version,
             sanitize_log(str(claimed_by_session)),
         )
+        _record_claim_receipt(request, task, "by_id")
         return task_to_response(task)
 
 
