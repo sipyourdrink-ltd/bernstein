@@ -278,6 +278,18 @@ EVENT_ACTIVITY_RESULT = "activity.result"
 #: bytes themselves.
 EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
 
+#: Issue #2356 -- emitted once per sealed endpoint certification receipt. A
+#: conformance run against an OpenAI-compatible endpoint (reachability, chat
+#: completion, tool calling, patch format fidelity, timeout behavior, context
+#: floor) is bound into an Ed25519-signed receipt anchored in the
+#: ``endpoint-certification`` lineage spine run; this event mirrors the seal
+#: by recording ``{fingerprint, model, engine, suite_version,
+#: transcript_hash, certified_roles, rejected_roles, journal_entry_hash}`` --
+#: never the endpoint's responses themselves. Config validation gates
+#: merge-critical roles on the receipt, so "certified" is chain-attested
+#: rather than a boolean in config.
+EVENT_ENDPOINT_CERTIFICATION = "endpoint.certification"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1720,6 +1732,64 @@ def record_evidence_bundle(
     )
 
 
+def record_endpoint_certification(
+    *,
+    chain: AuditChainStore,
+    fingerprint: str,
+    model: str,
+    engine: str,
+    suite_version: int,
+    transcript_hash: str,
+    certified_roles: list[str],
+    rejected_roles: list[str],
+    journal_entry_hash: str,
+    actor: str = "endpoint_certification",
+) -> AuditEvent:
+    """Append an ``endpoint.certification`` event into *chain* (#2356).
+
+    Mirrors a sealed endpoint certification receipt into the HMAC-chained
+    audit log so an operator can prove, from the chain alone, that a given
+    OpenAI-compatible endpoint was certified (or rejected) for a set of
+    roles by a specific conformance suite version. Only the endpoint
+    fingerprint, the model/engine labels, the transcript hash, the role
+    verdict summary, and the spine anchor are recorded -- never the
+    endpoint's base URL credentials or its response bodies.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        fingerprint: Stable hex fingerprint of the ``(base_url, model)`` pair.
+        model: Model id the conformance suite ran against.
+        engine: Operator-supplied runtime label (may be empty).
+        suite_version: Conformance suite version that produced the verdicts.
+        transcript_hash: ``sha256:`` hash of the canonical probe transcript.
+        certified_roles: Sorted roles the receipt certifies.
+        rejected_roles: Sorted roles the receipt rejects.
+        journal_entry_hash: The certification spine entry hash anchoring the
+            receipt.
+        actor: Recorded actor; defaults to ``"endpoint_certification"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ENDPOINT_CERTIFICATION,
+        actor=actor,
+        resource_type="endpoint_certification",
+        resource_id=fingerprint,
+        details={
+            "fingerprint": fingerprint,
+            "model": model,
+            "engine": engine,
+            "suite_version": suite_version,
+            "transcript_hash": transcript_hash,
+            "certified_roles": certified_roles,
+            "rejected_roles": rejected_roles,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -1727,6 +1797,7 @@ __all__ = [
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
+    "EVENT_ENDPOINT_CERTIFICATION",
     "EVENT_ESCALATION_RECEIPT",
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_EVIDENCE_BUNDLE",
@@ -1760,6 +1831,7 @@ __all__ = [
     "record_a2a_message_receipt",
     "record_activity_result",
     "record_cost_profile_report",
+    "record_endpoint_certification",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
     "record_evidence_bundle",
