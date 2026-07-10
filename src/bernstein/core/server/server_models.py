@@ -425,13 +425,17 @@ class TaskMessagePost(BaseModel):
     """Body for POST /tasks/{task_id}/messages (#2357).
 
     Typed, size-capped worker mailbox payload. ``kind`` must be one of the
-    closed vocabulary (``finding`` / ``artefact_ref`` / ``question``);
-    the byte-strict body cap is enforced by the mailbox chain itself.
+    closed vocabulary (``finding`` / ``artefact_ref`` / ``question``).
+    The message body is capped by the mailbox chain to 4096 UTF-8 bytes
+    (see ``task_mailbox.MAX_MESSAGE_BODY_BYTES``); the API model mirrors
+    this limit so oversized bodies fail validation up front instead of
+    being rejected downstream. The byte-strict cap remains authoritative
+    in the mailbox for multibyte payloads.
     """
 
     sender: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
     kind: str = Field(min_length=1, max_length=64)
-    body: str = Field(min_length=1, max_length=8192)
+    body: str = Field(min_length=1, max_length=4096)
     sender_card_fingerprint: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
 
 
