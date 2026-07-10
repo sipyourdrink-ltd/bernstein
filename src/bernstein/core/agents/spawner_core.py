@@ -125,6 +125,7 @@ if TYPE_CHECKING:
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.resource_limits import ResourceLimits
+    from bernstein.core.routing.provider_availability import ChainElement, ProbeResult
     from bernstein.core.sandbox.backend import SandboxBackend, SandboxSession
     from bernstein.core.sandbox.manifest import WorkspaceManifest
     from bernstein.core.workspace import Workspace
@@ -1162,6 +1163,8 @@ class AgentSpawner:
         sandbox_options: dict[str, Any] | None = None,
         sandbox_server_port: int | None = None,
         default_model: str | None = None,
+        provider_availability: dict[str, Any] | None = None,
+        availability_prober: Callable[[ChainElement], ProbeResult] | None = None,
     ) -> None:
         self._enable_caching = enable_caching
         # Run-level model (e.g. from ``bernstein run --model``), threaded in by
@@ -1192,6 +1195,22 @@ class AgentSpawner:
         self._catalog = catalog
         self._max_tokens_per_task = max_tokens_per_task or {}
         self._role_model_policy = role_model_policy or {}
+        # Issue #2355: per-role provider fallback chains. Parsed eagerly so a
+        # chain element below its role's conformance floor is rejected here,
+        # at construction/validation time, not at first dispatch. A raised
+        # AvailabilityPolicyError is intentional: a misdeclared chain must
+        # never reach an unattended run.
+        from bernstein.core.routing.provider_availability import (
+            ProbeCache,
+            parse_provider_availability,
+        )
+
+        self._availability_config = (
+            parse_provider_availability(provider_availability) if provider_availability else None
+        )
+        self._availability_prober = availability_prober
+        ttl_minutes = self._availability_config.probe_ttl_minutes if self._availability_config else 5
+        self._availability_probe_cache = ProbeCache(ttl_seconds=ttl_minutes * 60.0)
         self._workspace = workspace
         self._bulletin = bulletin
         self._context_builder = TaskContextBuilder(workdir)
@@ -2468,6 +2487,106 @@ class AgentSpawner:
         ):
             return self._spawn_for_tasks_internal(tasks, model_override=model_override)
 
+    def _apply_provider_availability(
+        self,
+        role_name: str,
+        task_id: str,
+        role_policy: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve the role's provider fallback chain into the role policy (#2355).
+
+        When the role (or ``default``) declares a fallback chain in
+        ``provider_availability``, every chain element is health-probed
+        (results cached for the configured TTL) and the first healthy element
+        wins. The decision is a pure function of the chain and the recorded
+        probe outcomes, and it is mirrored into the HMAC-chained audit log as
+        a routing receipt before the spawn proceeds -- two operators holding
+        the same recorded probe set replay the same routing.
+
+        Args:
+            role_name: Role being dispatched.
+            task_id: Task id recorded on the routing receipt.
+            role_policy: The resolved ``role_model_policy`` entry.
+
+        Returns:
+            The role policy with ``cli``/``provider``/``model`` pinned to the
+            chosen chain element, or the input unchanged when no chain is
+            declared for the role.
+
+        Raises:
+            SpawnError: When no chain element is healthy. The refusal is
+                receipted first so the outage window stays reconstructable.
+        """
+        if self._availability_config is None:
+            return role_policy
+        policy = self._availability_config.policies.get(role_name) or self._availability_config.policies.get("default")
+        if policy is None:
+            return role_policy
+
+        from bernstein.core.routing.provider_availability import binary_path_probe, resolve_route
+
+        decision = resolve_route(
+            policy,
+            cache=self._availability_probe_cache,
+            prober=self._availability_prober or binary_path_probe,
+            probes_enabled=self._availability_config.probes_enabled,
+        )
+        self._emit_routing_failover_receipt(decision, task_id)
+
+        chosen = decision.chosen
+        if chosen is None:
+            raise SpawnError(
+                f"No healthy provider in the fallback chain for role {role_name!r}: "
+                f"all {len(policy.chain)} chain elements failed their health probe "
+                f"(decision {decision.decision_hash}). Run 'bernstein doctor --failover-drill'."
+            )
+        logger.info(
+            "Provider availability for role=%s task=%s: chain position %d (%s/%s), reason=%s, decision=%s",
+            role_name,
+            task_id,
+            decision.chosen_index,
+            chosen.adapter,
+            chosen.model,
+            decision.reason,
+            decision.decision_hash,
+        )
+        return {
+            **role_policy,
+            "cli": chosen.adapter,
+            "provider": chosen.adapter,
+            "model": chosen.model,
+        }
+
+    def _emit_routing_failover_receipt(self, decision: Any, task_id: str) -> None:
+        """Mirror a routing decision into the audit chain (#2355).
+
+        Best-effort by design: the receipt must never mask the routing
+        decision itself (mirrors ``_emit_fresh_restart_on_retry_audit``).
+        """
+        try:
+            from bernstein.core.security.audit_chain import (
+                AuditChainStore,
+                record_routing_failover_receipt,
+            )
+
+            chain = AuditChainStore(self._workdir / ".sdd" / "audit")
+            record_routing_failover_receipt(
+                chain=chain,
+                role=decision.role,
+                task_id=task_id,
+                decision_hash=decision.decision_hash,
+                chosen_index=decision.chosen_index,
+                reason=decision.reason,
+                chain_considered=[element.to_dict() for element in decision.chain],
+                probe_results=[probe.to_dict() for probe in decision.probes],
+            )
+        except Exception as exc:  # audit must never block the routing decision
+            logger.warning(
+                "Could not emit routing.failover_receipt audit event for task %s: %s",
+                task_id,
+                type(exc).__name__,
+            )
+
     def _resolve_routing(
         self,
         tasks: list[Task],
@@ -2684,6 +2803,11 @@ class AgentSpawner:
             role_policy,
             sorted(self._role_model_policy.keys()),
         )
+        # Issue #2355: when the role declares a provider fallback chain, the
+        # chain (evaluated against recorded health probes) decides which
+        # adapter/model this dispatch pins - and the decision is receipted
+        # into the audit chain before the spawn proceeds.
+        role_policy = self._apply_provider_availability(role_name, tasks[0].id, role_policy)
         # Per-step CLI override (plan-file `cli:` field) wins over role-level
         # role_model_policy.provider, which in turn wins over the default
         # adapter. The string is treated as a provider/adapter identifier and

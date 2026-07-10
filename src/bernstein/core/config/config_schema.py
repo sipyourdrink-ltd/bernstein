@@ -513,6 +513,87 @@ class ModelFallbackSchema(BaseModel):
     )
 
 
+class FallbackChainElementSchema(BaseModel):
+    """One (adapter, model) pair in a role's provider fallback chain (#2355)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    adapter: str = Field(..., min_length=1, description="CLI adapter name, e.g. claude, codex, gemini.")
+    model: str = Field(..., min_length=1, description="Model identifier dispatched through that adapter.")
+    conformance: Literal["basic", "advanced", "expert"] = Field(
+        default="basic",
+        description="Declared conformance level, compared against the role's floor.",
+    )
+
+
+class RoleFallbackChainSchema(BaseModel):
+    """Per-role fallback chain plus conformance floor (#2355).
+
+    A chain element whose conformance is below the role's floor is rejected
+    here, at config validation time, so a fallback is never silently less
+    capable than the role requires.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    conformance_floor: Literal["basic", "advanced", "expert"] = Field(
+        default="basic",
+        description="Minimum conformance every chain element must declare.",
+    )
+    chain: list[FallbackChainElementSchema] = Field(
+        ...,
+        min_length=1,
+        description="Ordered fallback chain; the scheduler picks the first healthy element.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_floor(self) -> RoleFallbackChainSchema:
+        """Reject chain elements below the conformance floor."""
+        order = {"basic": 0, "advanced": 1, "expert": 2}
+        floor = order[self.conformance_floor]
+        for idx, element in enumerate(self.chain):
+            if order[element.conformance] < floor:
+                raise ValueError(
+                    f"chain position {idx} ({element.adapter}/{element.model}) declares "
+                    f"conformance {element.conformance!r}, below the role's floor "
+                    f"{self.conformance_floor!r}."
+                )
+        return self
+
+
+class ProviderAvailabilitySchema(BaseModel):
+    """Provider availability policy: per-role fallback chains (#2355).
+
+    Example::
+
+        provider_availability:
+          probe_ttl_minutes: 5
+          probes_enabled: true
+          roles:
+            developer:
+              conformance_floor: advanced
+              chain:
+                - {adapter: claude, model: opus, conformance: expert}
+                - {adapter: codex, model: gpt-5.2, conformance: advanced}
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    probe_ttl_minutes: int = Field(
+        default=5,
+        ge=1,
+        description="How long a provider health-probe result is cached before re-probing.",
+    )
+    probes_enabled: bool = Field(
+        default=True,
+        description="Disable for offline runs; every chain element is then presumed healthy.",
+    )
+    roles: dict[str, RoleFallbackChainSchema] = Field(
+        default_factory=dict,
+        description="Per-role fallback chains keyed by role name.",
+    )
+
+
 class ArchModuleEntry(BaseModel):
     """Boundary definition for one logical module in the architecture conformance config."""
 
@@ -658,6 +739,7 @@ class BernsteinConfig(BaseModel):
     smtp: SmtpSchema | None = None
     mcp_servers: dict[str, Any] | None = None
     model_fallback: ModelFallbackSchema | None = None
+    provider_availability: ProviderAvailabilitySchema | None = None
     arch_conformance: ArchConformanceSchema | None = None
     metrics: dict[str, CustomMetricSchema] | None = Field(
         default=None,

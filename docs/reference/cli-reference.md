@@ -1143,6 +1143,12 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 | `bernstein interop a2a verify-thread --from-thread <task-uuid>` | Prove a cross-agent A2A thread equals the executed actions: for the task uuid, recompute every signed message receipt binding `{message_hash, peer_card_fingerprint, task_uuid, journal_entry_hash}`, re-check each Ed25519 signature offline, verify the message-receipt lineage spine, re-anchor each receipt against it, and confirm every message hash is referenced by the seeded per-task journal. `--json` for machine output. Exit 0 verified, 1 on no thread / mismatch (a tampered receipt, spine, or journal). | `cli/commands/interop_cmd.py` |
 | `bernstein evidence show <task>` | Render the sealed verification evidence bundle for a task: gate verdict, bundle hash, spine anchor, and a per-producer table (kind, required/advisory, pass/fail, exit code, stored size, content hash). `-w/--workdir` sets the project root. Exit 0 when a bundle exists, 1 when there is none. | `cli/commands/evidence_cmd.py` |
 | `bernstein evidence verify <task>` | Recompute a task's evidence bundle offline: check the Ed25519 signature over the canonical binding, verify the evidence lineage spine and the bundle's spine anchor, and re-hash every stored evidence blob (plus each media item's C2PA content credential) against the sealed manifest. Exit 0 verified, 1 no bundle, 2 mismatch (a tampered evidence file, bundle, or spine). `bernstein audit verify` runs the same check across every bundle. | `cli/commands/evidence_cmd.py` |
+| `bernstein ledger verify <run>` | Walk a run's durable work ledger (`.sdd/runtime/ledger/<run-id>/`) and recompute every entry hash against the canonical-JSON contract. A tampered entry is named at its exact position (`entry <seq> (line <n>)`). `--expected-head HASH` additionally pins the tail. `--json` for machine output. Exit 0 verified, 1 no ledger, 2 mismatch. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger anchor <run>` | Verify the run's chain, then publish it -- chunked, with a deterministic tree identity -- to `refs/bernstein/work-ledger/<run-id>` and mirror the anchor into the HMAC audit chain as a `work_ledger.anchor` event. Re-anchoring an extended chain adds a child commit; an identical chain is idempotent. Exit 0 anchored, 1 no ledger, 2 broken chain or git refusal, 3 the anchored chain diverges from the local one. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger fetch <run>` | Pull the anchored ledger ref from a remote (default `origin`) after a clone and materialize it into `.sdd/runtime/ledger/<run-id>/`. Verifies the anchored chain end to end before writing; an existing local chain is only ever fast-forwarded -- a diverged pair is refused with the exact fork entry named. Exit 0 materialized, 1 no anchored ledger on the remote, 2 broken anchored chain, 3 divergence. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger resume <run>` | Resume a run from its work ledger on any clone: verify the chain end to end, rebuild scheduler state by deterministic replay (completed / in-flight / scheduled / failed tasks), record the resume as a new chain entry, and write one resume signal per frontier task for the resume watcher. `--dry-run` prints the plan without recording anything; `--json` for machine output. Exit 0 resumed, 1 no ledger, 2 verification failed (exact entry position reported), 3 two divergent resumes detected and refused. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger runs` | List runs with an anchored work ledger in this repository. `--json` for machine output. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger gc <run>` | Squash the run's anchor history to a single commit, preserving the current anchored tree byte for byte. Superseded chunk blobs become unreachable so a normal `git gc` reclaims them -- the repo-bloat bound for long runs. Exit 0 done, 1 no anchored ledger. | `cli/commands/ledger_cmd.py` |
 
 #### `bernstein ab-test`
 
@@ -1297,3 +1303,20 @@ bernstein doctor --endpoint http://127.0.0.1:11434/v1 --role manager
 
 See [Local endpoints](local-endpoints.md) for profiles, role tiers, and the
 verified-configuration table.
+
+## Provider failover drill
+
+#### `bernstein doctor --failover-drill`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--failover-drill` | off | Exercise every fallback chain declared under `provider_availability` in `bernstein.yaml`. |
+| `--json` | off | Machine-readable drill report (for CI). |
+
+Probes every declared chain element and evaluates each chain position as
+the dispatch target under a simulated outage of its predecessors. Exits
+non-zero when any declared chain element is broken, and zero when all are
+healthy. Each drill row carries the deterministic routing-decision hash its
+simulated outage prefix would produce; drill outcomes are mirrored into the
+audit chain when a `.sdd` workspace is present. See
+[Provider availability & failover](../operations/provider-availability.md).

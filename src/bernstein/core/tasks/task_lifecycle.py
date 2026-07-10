@@ -400,6 +400,52 @@ def _choose_retry_escalation(
     return _escalate_model(current_model), "high"
 
 
+def _stamp_checkpoint_retry_metadata_safe(
+    *,
+    task: Task,
+    retry_metadata: dict[str, Any],
+    workdir: Path | None,
+    reason: str,
+) -> dict[str, Any]:
+    """Stamp the checkpointed-retry decision onto retry metadata, best-effort.
+
+    Issue #2359: every retry carries a deterministic warm/fork/cold decision
+    derived from the failed attempt's journal-anchored checkpoint. The stamp
+    must never break the retry itself: any failure inside the decision path
+    degrades to a plain ``retry_mode="cold"`` stamp (the historical
+    behavior), and callers without a workdir (legacy tests, ad-hoc scripts)
+    get the same cold stamp without touching the decision machinery.
+
+    A task pinned to fresh-context retries (issue #1109,
+    ``agent_restart_between_retries``) is forced cold so the two contracts
+    never fight: the fresh-restart audit trail stays authoritative.
+    """
+    if workdir is None:
+        retry_metadata.setdefault("retry_mode", "cold")
+        return retry_metadata
+    try:
+        from bernstein.core.tasks import checkpoint_retry
+
+        requested = str(retry_metadata.get("retry_policy", "warm"))
+        return checkpoint_retry.stamp_checkpoint_retry_metadata(
+            metadata=retry_metadata,
+            task_id=task.id,
+            workdir=workdir,
+            requested_mode=requested,
+            gate_name=str(task.terminal_reason or "task_failure"),
+            gate_output=reason,
+            force_cold=bool(getattr(task, "agent_restart_between_retries", False)),
+        )
+    except Exception as exc:
+        logger.debug(
+            "checkpoint-retry stamp skipped for task %s (%s); retry proceeds cold",
+            task.id,
+            type(exc).__name__,
+        )
+        retry_metadata.setdefault("retry_mode", "cold")
+        return retry_metadata
+
+
 def _extract_failure_context(
     task: Task,
     workdir: Path | None,
@@ -508,6 +554,12 @@ def maybe_retry_task(
     retry_metadata = dict(task.metadata)
     retry_metadata["budget_multiplier"] = budget_multiplier
     retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
+    retry_metadata = _stamp_checkpoint_retry_metadata_safe(
+        task=task,
+        retry_metadata=retry_metadata,
+        workdir=workdir,
+        reason=failure_context or str(task.terminal_reason or ""),
+    )
 
     payload: dict[str, Any] = {
         "title": new_title,
@@ -1018,6 +1070,12 @@ def retry_or_fail_task(
         retry_metadata = dict(task.metadata)
         retry_metadata["budget_multiplier"] = budget_multiplier
         retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
+        retry_metadata = _stamp_checkpoint_retry_metadata_safe(
+            task=task,
+            retry_metadata=retry_metadata,
+            workdir=workdir,
+            reason=reason,
+        )
 
         # Title and description are passed through verbatim (no prefix
         # mutation).  The retry agent sees the reason via meta_messages.

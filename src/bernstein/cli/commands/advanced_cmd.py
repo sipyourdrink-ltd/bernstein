@@ -582,6 +582,13 @@ def plugins_cmd(workdir: str) -> None:
     multiple=True,
     help="Role(s) to evaluate against --endpoint (repeatable). Defaults to the low-stakes local tier.",
 )
+@click.option(
+    "--failover-drill",
+    "failover_drill",
+    is_flag=True,
+    default=False,
+    help="Exercise every declared provider fallback chain; exit non-zero on any broken chain.",
+)
 @click.pass_context
 def doctor(
     ctx: click.Context,
@@ -594,19 +601,21 @@ def doctor(
     endpoint_api_key_env: str | None,
     endpoint_timeout: float,
     roles: tuple[str, ...],
+    failover_drill: bool,
 ) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
     \b
-      bernstein doctor                # print diagnostic report
-      bernstein doctor --json         # machine-readable output
-      bernstein doctor --fix          # attempt to auto-fix issues
-      bernstein doctor --suggest-docs # surface top curated documentation gaps
+      bernstein doctor                  # print diagnostic report
+      bernstein doctor --json           # machine-readable output
+      bernstein doctor --fix            # attempt to auto-fix issues
+      bernstein doctor --suggest-docs   # surface top curated documentation gaps
       bernstein doctor --endpoint http://127.0.0.1:11434/v1
-                                      # certify a local OpenAI-compatible endpoint per role
-      bernstein doctor airgap         # battery of checks for an air-gapped run
-      bernstein doctor sonar          # surface SonarQube insights for the project
-      bernstein doctor glitchtip      # surface GlitchTip issue counts and top unresolved
+                                        # certify a local OpenAI-compatible endpoint per role
+      bernstein doctor --failover-drill # probe every declared provider fallback chain
+      bernstein doctor airgap           # battery of checks for an air-gapped run
+      bernstein doctor sonar            # surface SonarQube insights for the project
+      bernstein doctor glitchtip        # surface GlitchTip issue counts and top unresolved
     """
     if ctx.invoked_subcommand is not None:
         ctx.obj = {"as_json": as_json, "auto_fix": auto_fix}
@@ -624,6 +633,14 @@ def doctor(
             roles=roles,
             as_json=as_json,
         )
+        if exit_code:
+            raise SystemExit(exit_code)
+        return
+
+    if failover_drill:
+        from bernstein.cli.commands.doctor.failover_drill import run_failover_drill_cli
+
+        exit_code = run_failover_drill_cli(workdir=Path.cwd(), as_json=as_json)
         if exit_code:
             raise SystemExit(exit_code)
         return
