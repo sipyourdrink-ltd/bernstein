@@ -2128,7 +2128,7 @@ def record_task_claim_receipt(
             "task_id": task_id,
             "role": role,
             "claimed_by": claimed_by,
-            "depends_on": list(depends_on),
+            "depends_on": depends_on.copy(),
             "task_version": task_version,
             "claim_path": claim_path,
         },

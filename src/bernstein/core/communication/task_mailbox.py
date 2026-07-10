@@ -289,7 +289,7 @@ class TaskMailbox:
 
     def all_messages(self) -> list[MailboxMessage]:
         """Return every journal entry in chain append order."""
-        return list(self._messages)
+        return self._messages.copy()
 
     def pending(self, task_id: str, since_seq: int = -1) -> list[MailboxMessage]:
         """Return messages addressed to ``task_id`` in chain append order.
@@ -367,20 +367,24 @@ class TaskMailbox:
 
             private_pem, public_pem = _load_or_create_identity(self._identity_dir)
             signed = MailboxMessage(
-                **{
-                    **unsigned.binding(),
-                    "entry_hash": entry_hash,
-                    "signer_public_key_pem": public_pem,
-                },
+                **(
+                    unsigned.binding()
+                    | {
+                        "entry_hash": entry_hash,
+                        "signer_public_key_pem": public_pem,
+                    }
+                ),
             )
             signature = sign_payload(signed.signed_bytes(), private_pem)
             message = MailboxMessage(
-                **{
-                    **unsigned.binding(),
-                    "entry_hash": entry_hash,
-                    "signer_public_key_pem": public_pem,
-                    "signature": signature,
-                },
+                **(
+                    unsigned.binding()
+                    | {
+                        "entry_hash": entry_hash,
+                        "signer_public_key_pem": public_pem,
+                        "signature": signature,
+                    }
+                ),
             )
             self._append(message)
             self._messages.append(message)
@@ -412,7 +416,7 @@ class TaskMailbox:
             raise ValueError("hmac_key required to verify the mailbox chain")
         from bernstein.core.skills.catalog.signature import verify_payload
 
-        problems = list(self._load_problems)
+        problems = self._load_problems.copy()
         prev = MAILBOX_GENESIS
         for index, message in enumerate(self._messages):
             label = f"entry {index}"
