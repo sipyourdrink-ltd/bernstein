@@ -1949,8 +1949,6 @@ def record_routing_failover_receipt(
     )
 
 
-
-
 def record_endpoint_certification(
     *,
     chain: AuditChainStore,
@@ -2007,6 +2005,8 @@ def record_endpoint_certification(
             "journal_entry_hash": journal_entry_hash,
         },
     )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
