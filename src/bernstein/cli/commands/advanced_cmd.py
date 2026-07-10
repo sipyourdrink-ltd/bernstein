@@ -544,8 +544,57 @@ def plugins_cmd(workdir: str) -> None:
     default=False,
     help="Print the top curated documentation gaps and exit.",
 )
+@click.option(
+    "--endpoint",
+    "endpoint",
+    default=None,
+    help="Certify an OpenAI-compatible endpoint (base URL, e.g. http://127.0.0.1:11434/v1).",
+)
+@click.option(
+    "--endpoint-model",
+    "endpoint_model",
+    default=None,
+    help="Model id to certify; defaults to the first entry of the endpoint's /models listing.",
+)
+@click.option(
+    "--endpoint-engine",
+    "endpoint_engine",
+    default="",
+    help="Runtime label recorded in the receipt (e.g. ollama, lmstudio, mlx).",
+)
+@click.option(
+    "--endpoint-api-key-env",
+    "endpoint_api_key_env",
+    default=None,
+    help="NAME of the environment variable holding the endpoint's API key (never the key itself).",
+)
+@click.option(
+    "--endpoint-timeout",
+    "endpoint_timeout",
+    type=float,
+    default=60.0,
+    show_default=True,
+    help="Per-probe response budget in seconds; exceeding it fails the probe.",
+)
+@click.option(
+    "--role",
+    "roles",
+    multiple=True,
+    help="Role(s) to evaluate against --endpoint (repeatable). Defaults to the low-stakes local tier.",
+)
 @click.pass_context
-def doctor(ctx: click.Context, as_json: bool, auto_fix: bool, suggest_docs: bool) -> None:
+def doctor(
+    ctx: click.Context,
+    as_json: bool,
+    auto_fix: bool,
+    suggest_docs: bool,
+    endpoint: str | None,
+    endpoint_model: str | None,
+    endpoint_engine: str,
+    endpoint_api_key_env: str | None,
+    endpoint_timeout: float,
+    roles: tuple[str, ...],
+) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
     \b
@@ -553,12 +602,30 @@ def doctor(ctx: click.Context, as_json: bool, auto_fix: bool, suggest_docs: bool
       bernstein doctor --json         # machine-readable output
       bernstein doctor --fix          # attempt to auto-fix issues
       bernstein doctor --suggest-docs # surface top curated documentation gaps
+      bernstein doctor --endpoint http://127.0.0.1:11434/v1
+                                      # certify a local OpenAI-compatible endpoint per role
       bernstein doctor airgap         # battery of checks for an air-gapped run
       bernstein doctor sonar          # surface SonarQube insights for the project
       bernstein doctor glitchtip      # surface GlitchTip issue counts and top unresolved
     """
     if ctx.invoked_subcommand is not None:
         ctx.obj = {"as_json": as_json, "auto_fix": auto_fix}
+        return
+
+    if endpoint is not None:
+        from bernstein.cli.commands.doctor_cmd import _run_endpoint_certification
+
+        exit_code = _run_endpoint_certification(
+            endpoint=endpoint,
+            model=endpoint_model,
+            engine=endpoint_engine,
+            api_key_env=endpoint_api_key_env,
+            timeout=endpoint_timeout,
+            roles=roles,
+            as_json=as_json,
+        )
+        if exit_code:
+            raise SystemExit(exit_code)
         return
 
     if suggest_docs:

@@ -1262,3 +1262,38 @@ To invoke any of them, just type the full path (`bernstein task compose ...`) - 
 - [`reference/openapi-reference.md`](openapi-reference.md) - REST + WebSocket + ACP/A2A endpoints.
 - [`reference/FEATURE_MATRIX.md`](FEATURE_MATRIX.md) - capability matrix.
 - [`operations/CONFIG.md`](../operations/CONFIG.md) - every config key Bernstein recognises.
+
+---
+
+## Endpoint certification: `bernstein doctor --endpoint`
+
+Certify an OpenAI-compatible endpoint (a local runtime such as ollama, LM
+Studio, or an MLX server) for per-role use. The doctor runs a fixed
+conformance subset -- reachability, chat completion, tool calling, patch
+format fidelity, timeout behavior, context floor -- and prints a
+deterministic certify/reject verdict per role with machine reason codes.
+The result is sealed as a signed receipt under
+`.sdd/endpoints/certifications/`, anchored to the lineage spine, and
+mirrored into the audit chain; config validation gates merge-critical roles
+on it.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--endpoint URL` | - | Base URL of the endpoint to certify (activates this mode). |
+| `--endpoint-model NAME` | first `/models` entry | Model id to certify. |
+| `--endpoint-engine NAME` | empty | Runtime label recorded in the receipt. |
+| `--endpoint-api-key-env NAME` | none | NAME of the env var holding the endpoint key. |
+| `--endpoint-timeout SECONDS` | 60 | Per-probe response budget; exceeding it fails the probe. |
+| `--role ROLE` | low-stakes local tier | Role(s) to evaluate (repeatable). |
+| `--json` | off | Machine-readable transcript, verdicts, and receipt anchor. |
+
+Exit codes: `0` every evaluated role certified, `1` at least one role
+rejected, `2` no model could be resolved.
+
+```bash
+bernstein doctor --endpoint http://127.0.0.1:11434/v1 --endpoint-engine ollama
+bernstein doctor --endpoint http://127.0.0.1:11434/v1 --role manager
+```
+
+See [Local endpoints](local-endpoints.md) for profiles, role tiers, and the
+verified-configuration table.

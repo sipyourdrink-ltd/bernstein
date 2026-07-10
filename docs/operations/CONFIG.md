@@ -20,6 +20,7 @@ All magic numbers, timeouts, and thresholds are centralized in `src/bernstein/co
 - `tasks`
 - `workspace`
 - `role_model_policy`
+- `local_endpoints`
 - `storage`
 - `notify` (webhook/email/desktop notification settings)
 - `network` (IP allowlist)
@@ -463,3 +464,33 @@ fields, or OpenClaw `/v1/sandboxes` REST semantics are obsolete. The repo-truth
 production config surface is `bernstein.yaml` + `.sdd/config.yaml` +
 `BERNSTEIN_*` environment variables, and the OpenClaw runtime path is the
 Gateway WebSocket bridge implemented in Bernstein.
+
+---
+
+## `local_endpoints` - Local-model worker tier
+
+Named OpenAI-compatible endpoint profiles for local runtimes (ollama, LM
+Studio, MLX servers). Role entries reference a profile by name and inherit
+its `base_url`/`model`/`api_key_env`:
+
+```yaml
+local_endpoints:
+  workhorse:
+    base_url: http://127.0.0.1:11434/v1
+    model: qwen2.5-coder:7b-instruct-q4_K_M
+    engine: ollama          # free-form label recorded in the certification receipt
+    timeout: 120            # request timeout in seconds
+    # api_key_env: LOCAL_LLM_API_KEY  # NAME of an env var, never a literal key
+
+role_model_policy:
+  linter:      { endpoint: workhorse }
+  test_writer: { endpoint: workhorse }
+```
+
+Low-stakes roles (`linter`, `test_writer`, `triage`, `doc_sweeper`) run on a
+profile without further ceremony. Every other role is merge-critical and
+requires a signed certification receipt produced by
+`bernstein doctor --endpoint <url>`; an uncertified profile assigned to a
+gated role fails config validation with the exact command to run. See
+[Local endpoints](../reference/local-endpoints.md) for the conformance
+subset, role tiers, and verified configurations.

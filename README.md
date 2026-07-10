@@ -209,6 +209,15 @@ internal_llm_provider: gemini            # or qwen, ollama, codex, goose, ...
 internal_llm_model: gemini-3.1-pro
 ```
 
+Local runtimes (ollama, LM Studio, MLX servers) plug in as a first-class
+worker tier: declare a `local_endpoints` profile, route low-stakes roles
+(lint, test-writing, triage, doc sweeps) to it, and certify the endpoint
+with `bernstein doctor --endpoint <url>`. Certification is a signed,
+audit-chain-anchored receipt -- merge-critical roles refuse an uncertified
+endpoint at config validation. See
+[Local endpoints](docs/reference/local-endpoints.md) and
+[examples/local-fleet](examples/local-fleet).
+
 > [!TIP]
 > Run `bernstein --headless` for CI pipelines. No TUI, structured JSON output, non-zero exit on failure.
 
