@@ -5557,6 +5557,7 @@ if __name__ == "__main__":
             container_config=container_config,
             sandbox=sandbox_config,
             role_model_policy=seed.role_model_policy if seed else None,
+            provider_availability=seed.provider_availability if seed else None,
             runtime_bridge=runtime_bridge,
             resource_limits=agent_rlimits,
             warm_pool=warm_pool,

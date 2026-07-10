@@ -278,6 +278,51 @@ EVENT_ACTIVITY_RESULT = "activity.result"
 #: bytes themselves.
 EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
 
+#: Issue #2358 -- emitted whenever a run's durable work ledger is anchored
+#: to its dedicated git ref (``refs/bernstein/work-ledger/<run-id>``). The
+#: hash-chained ledger is the resumable task-graph state; this event mirrors
+#: each anchor point into the HMAC-chained audit log by recording ``{run_id,
+#: head_hash, entry_count, chunk_count, ref, tree_sha}`` plus the previous
+#: chain digest. A verifier holding the repository can walk the anchored
+#: chain, recompute the head, and confirm the resume point is chain-attested
+#: -- the payloads themselves never enter the audit log.
+EVENT_WORK_LEDGER_ANCHOR = "work_ledger.anchor"
+
+#: Issue #2359 -- emitted once per checkpointed-retry decision. When a failed
+#: task is retried, the scheduler decides warm (resume the recorded native
+#: session), fork (branch off the recorded checkpoint), or cold (restart from
+#: zero) as a pure function of the adapter's declared capability, the
+#: journal-anchored checkpoint reference, and a workspace-hash comparison.
+#: The event mirrors ``{task_id, retry_mode, requested_mode, capability,
+#: checkpoint_event_hash, checkpoint_journal_index, workspace_match,
+#: downgrade_reason, decision_hash, journal_event_hash, journal_entry_hash}``
+#: into the chain, so an operator can prove -- from the chain alone -- whether
+#: a retry continued a session or restarted cold and why. Only identifiers,
+#: hashes, the mode, and the downgrade reason are recorded -- never prompt,
+#: gate output, or session content.
+EVENT_CHECKPOINT_RETRY = "retry.checkpoint_decision"
+
+#: Issue #2355 -- emitted once per provider-availability routing decision
+#: (dispatch-time failover or doctor failover drill). The event records the
+#: role, the full fallback chain considered, the recorded probe outcomes, the
+#: chosen chain position, the reason the decision fired, and the deterministic
+#: decision hash. A verifier holding the same recorded probe set recomputes
+#: the routing decision byte-identically and checks it against the chain --
+#: two operators replay the same routing.
+EVENT_ROUTING_FAILOVER_RECEIPT = "routing.failover_receipt"
+
+#: Issue #2356 -- emitted once per sealed endpoint certification receipt. A
+#: conformance run against an OpenAI-compatible endpoint (reachability, chat
+#: completion, tool calling, patch format fidelity, timeout behavior, context
+#: floor) is bound into an Ed25519-signed receipt anchored in the
+#: ``endpoint-certification`` lineage spine run; this event mirrors the seal
+#: by recording ``{fingerprint, model, engine, suite_version,
+#: transcript_hash, certified_roles, rejected_roles, journal_entry_hash}`` --
+#: never the endpoint's responses themselves. Config validation gates
+#: merge-critical roles on the receipt, so "certified" is chain-attested
+#: rather than a boolean in config.
+EVENT_ENDPOINT_CERTIFICATION = "endpoint.certification"
+
 #: Issue #2357 -- emitted whenever the task server accepts a worker mailbox
 #: message (``POST /tasks/{id}/messages``). The event records the mailbox
 #: journal position (``seq``), the message kind, the sender and its card
@@ -1740,6 +1785,248 @@ def record_evidence_bundle(
     )
 
 
+def record_work_ledger_anchor(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    head_hash: str,
+    entry_count: int,
+    chunk_count: int,
+    ref: str,
+    tree_sha: str,
+    actor: str = "work_ledger",
+) -> AuditEvent:
+    """Append a ``work_ledger.anchor`` event into *chain* (#2358).
+
+    Mirrors a work-ledger anchor point into the HMAC-chained audit log so an
+    operator can prove, from the chain alone, that a run's resumable task-graph
+    state was anchored at a specific head. Only the run id, the chain head, the
+    entry/chunk counts, the ref name, and the deterministic tree sha are
+    recorded -- never the transition payloads. A verifier holding the repository
+    walks the anchored chain, recomputes the head, and confirms the resume
+    point is chain-attested.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose ledger was anchored.
+        head_hash: Head entry hash of the anchored chain.
+        entry_count: Number of ledger entries anchored.
+        chunk_count: Number of chunk blobs in the anchor tree.
+        ref: The fully-qualified ledger ref that was updated.
+        tree_sha: Deterministic tree sha of the anchor (its identity).
+        actor: Recorded actor; defaults to ``"work_ledger"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_WORK_LEDGER_ANCHOR,
+        actor=actor,
+        resource_type="work_ledger",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "head_hash": head_hash,
+            "entry_count": entry_count,
+            "chunk_count": chunk_count,
+            "ref": ref,
+            "tree_sha": tree_sha,
+        },
+    )
+
+
+def record_checkpoint_retry(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    retry_mode: str,
+    requested_mode: str,
+    capability: str,
+    checkpoint_event_hash: str,
+    checkpoint_journal_index: int,
+    workspace_match: bool,
+    downgrade_reason: str,
+    decision_hash: str,
+    journal_event_hash: str,
+    journal_entry_hash: str,
+    actor: str = "checkpoint_retry",
+) -> AuditEvent:
+    """Append a ``retry.checkpoint_decision`` event into *chain*.
+
+    Mirrors a checkpointed-retry decision (issue #2359) into the HMAC-chained
+    audit log so replay can distinguish warm from cold retries and the retry
+    lineage is inspectable from the chain alone. Only identifiers, hashes, the
+    mode, and the downgrade reason are recorded -- never prompt content, gate
+    output, or provider session state.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The failed task whose retry was decided.
+        retry_mode: Effective mode (``warm`` / ``fork`` / ``cold``).
+        requested_mode: The mode the retry policy asked for.
+        capability: The adapter's declared checkpointed-retry capability
+            (``resume`` / ``fork`` / ``none``).
+        checkpoint_event_hash: Merkle hash of the checkpoint row in the
+            task's event journal (empty when no checkpoint existed).
+        checkpoint_journal_index: 0-based journal index of that row, or -1.
+        workspace_match: Whether the recorded workspace hash matched the
+            live worktree at decision time.
+        downgrade_reason: Why a non-cold request became cold (or a fork
+            became warm); empty when the request was honored.
+        decision_hash: SHA-256 of the canonical decision projection.
+        journal_event_hash: Merkle hash of the decision row appended to the
+            task's event journal.
+        journal_entry_hash: Lineage-spine entry hash anchoring the decision
+            artifact (empty when lineage recording is disabled).
+        actor: Recorded actor; defaults to ``"checkpoint_retry"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_CHECKPOINT_RETRY,
+        actor=actor,
+        resource_type="checkpoint_retry",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "retry_mode": retry_mode,
+            "requested_mode": requested_mode,
+            "capability": capability,
+            "checkpoint_event_hash": checkpoint_event_hash,
+            "checkpoint_journal_index": checkpoint_journal_index,
+            "workspace_match": workspace_match,
+            "downgrade_reason": downgrade_reason,
+            "decision_hash": decision_hash,
+            "journal_event_hash": journal_event_hash,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_routing_failover_receipt(
+    *,
+    chain: AuditChainStore,
+    role: str,
+    task_id: str,
+    decision_hash: str,
+    chosen_index: int,
+    reason: str,
+    chain_considered: list[dict[str, Any]],
+    probe_results: list[dict[str, Any]],
+    kind: str = "dispatch",
+    actor: str = "provider_availability",
+) -> AuditEvent:
+    """Append a ``routing.failover_receipt`` event into *chain* (#2355).
+
+    Mirrors one provider-availability routing decision into the HMAC-chained
+    audit log: the per-role fallback chain that was considered, the recorded
+    probe outcomes it was evaluated against, the chosen chain position, the
+    reason the decision fired, and the deterministic decision hash. The
+    decision is a pure function of the chain and the recorded probe set (see
+    :func:`bernstein.core.routing.provider_availability.decide_route`), so a
+    verifier holding this receipt recomputes the decision byte-identically
+    and confirms the dispatched provider was the deterministic choice -- not
+    an operator override and not a race.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        role: The role whose fallback chain was evaluated.
+        task_id: The task being dispatched (empty for drills).
+        decision_hash: ``sha256:`` hash of the canonical decision projection.
+        chosen_index: Selected chain position (``-1`` when no element was
+            healthy and the dispatch was refused).
+        reason: Why the decision fired (``primary_healthy`` | ``failover`` |
+            ``no_healthy_provider``).
+        chain_considered: The declared chain as recorded dicts
+            (``adapter``/``model``/``conformance`` per element).
+        probe_results: Recorded probe outcomes aligned with the chain.
+        kind: ``"dispatch"`` for spawn-time decisions, ``"drill"`` for
+            ``bernstein doctor --failover-drill`` simulations.
+        actor: Recorded actor; defaults to ``"provider_availability"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ROUTING_FAILOVER_RECEIPT,
+        actor=actor,
+        resource_type="routing_receipt",
+        resource_id=task_id or role,
+        details={
+            "role": role,
+            "task_id": task_id,
+            "decision_hash": decision_hash,
+            "chosen_index": chosen_index,
+            "reason": reason,
+            "chain_considered": chain_considered,
+            "probe_results": probe_results,
+            "kind": kind,
+        },
+    )
+
+
+def record_endpoint_certification(
+    *,
+    chain: AuditChainStore,
+    fingerprint: str,
+    model: str,
+    engine: str,
+    suite_version: int,
+    transcript_hash: str,
+    certified_roles: list[str],
+    rejected_roles: list[str],
+    journal_entry_hash: str,
+    actor: str = "endpoint_certification",
+) -> AuditEvent:
+    """Append an ``endpoint.certification`` event into *chain* (#2356).
+
+    Mirrors a sealed endpoint certification receipt into the HMAC-chained
+    audit log so an operator can prove, from the chain alone, that a given
+    OpenAI-compatible endpoint was certified (or rejected) for a set of
+    roles by a specific conformance suite version. Only the endpoint
+    fingerprint, the model/engine labels, the transcript hash, the role
+    verdict summary, and the spine anchor are recorded -- never the
+    endpoint's base URL credentials or its response bodies.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        fingerprint: Stable hex fingerprint of the ``(base_url, model)`` pair.
+        model: Model id the conformance suite ran against.
+        engine: Operator-supplied runtime label (may be empty).
+        suite_version: Conformance suite version that produced the verdicts.
+        transcript_hash: ``sha256:`` hash of the canonical probe transcript.
+        certified_roles: Sorted roles the receipt certifies.
+        rejected_roles: Sorted roles the receipt rejects.
+        journal_entry_hash: The certification spine entry hash anchoring the
+            receipt.
+        actor: Recorded actor; defaults to ``"endpoint_certification"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ENDPOINT_CERTIFICATION,
+        actor=actor,
+        resource_type="endpoint_certification",
+        resource_id=fingerprint,
+        details={
+            "fingerprint": fingerprint,
+            "model": model,
+            "engine": engine,
+            "suite_version": suite_version,
+            "transcript_hash": transcript_hash,
+            "certified_roles": certified_roles,
+            "rejected_roles": rejected_roles,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 def record_task_mailbox_message(
     *,
     chain: AuditChainStore,
@@ -1852,9 +2139,11 @@ __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_ACTIVITY_RESULT",
+    "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
+    "EVENT_ENDPOINT_CERTIFICATION",
     "EVENT_ESCALATION_RECEIPT",
     "EVENT_EVAL_AB_COMPARISON",
     "EVENT_EVIDENCE_BUNDLE",
@@ -1868,6 +2157,7 @@ __all__ = [
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
     "EVENT_REVIEW_RECEIPT",
+    "EVENT_ROUTING_FAILOVER_RECEIPT",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
@@ -1878,6 +2168,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
     "EVENT_WEBHOOK_NODE_RECEIPT",
+    "EVENT_WORK_LEDGER_ANCHOR",
     "AuditChainStore",
     "CostProfileReportDetails",
     "EvalAbComparisonDetails",
@@ -1889,7 +2180,9 @@ __all__ = [
     "ThreadApprovalDetails",
     "record_a2a_message_receipt",
     "record_activity_result",
+    "record_checkpoint_retry",
     "record_cost_profile_report",
+    "record_endpoint_certification",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
     "record_evidence_bundle",
@@ -1903,6 +2196,7 @@ __all__ = [
     "record_multimodal_attach",
     "record_otel_projection",
     "record_review_receipt",
+    "record_routing_failover_receipt",
     "record_schedule_fire_projection",
     "record_sensitive_gate",
     "record_skill_install_receipt",
@@ -1912,4 +2206,5 @@ __all__ = [
     "record_task_mailbox_message",
     "record_thread_approval",
     "record_webhook_node_receipt",
+    "record_work_ledger_anchor",
 ]

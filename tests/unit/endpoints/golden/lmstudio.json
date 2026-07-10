@@ -1,0 +1,95 @@
+{
+  "engine": "LM Studio",
+  "engine_version": "0.3.16",
+  "model": "llama-3.1-8b-instruct-q4_k_m",
+  "ram_budget_gb": 12,
+  "responses": {
+    "models": {
+      "status": 200,
+      "body": {
+        "object": "list",
+        "data": [
+          {"id": "llama-3.1-8b-instruct-q4_k_m", "object": "model", "owned_by": "organization_owner"}
+        ]
+      }
+    },
+    "chat": {
+      "status": 200,
+      "body": {
+        "id": "chatcmpl-a1",
+        "object": "chat.completion",
+        "created": 1736610001,
+        "model": "llama-3.1-8b-instruct-q4_k_m",
+        "choices": [
+          {"index": 0, "message": {"role": "assistant", "content": "ready"}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 14, "completion_tokens": 2, "total_tokens": 16},
+        "stats": {},
+        "system_fingerprint": "llama-3.1-8b-instruct-q4_k_m"
+      }
+    },
+    "tool": {
+      "status": 200,
+      "body": {
+        "id": "chatcmpl-a2",
+        "object": "chat.completion",
+        "created": 1736610002,
+        "model": "llama-3.1-8b-instruct-q4_k_m",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "175316876",
+                  "type": "function",
+                  "function": {
+                    "name": "record_finding",
+                    "arguments": "{\"path\":\"src/app.py\",\"line\":12,\"message\":\"unused import\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {"prompt_tokens": 96, "completion_tokens": 31, "total_tokens": 127}
+      }
+    },
+    "patch": {
+      "status": 200,
+      "body": {
+        "id": "chatcmpl-a3",
+        "object": "chat.completion",
+        "created": 1736610003,
+        "model": "llama-3.1-8b-instruct-q4_k_m",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "--- a/tools/conformance_probe.py\n+++ b/tools/conformance_probe.py\n@@ -1,2 +1,3 @@\n def probe() -> str:\n-    return \"before\"\n+    # conformance reference hunk\n+    return \"after\"\n"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {"prompt_tokens": 118, "completion_tokens": 55, "total_tokens": 173}
+      }
+    },
+    "context": {
+      "status": 200,
+      "body": {
+        "id": "chatcmpl-a4",
+        "object": "chat.completion",
+        "created": 1736610004,
+        "model": "llama-3.1-8b-instruct-q4_k_m",
+        "choices": [
+          {"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 4102, "completion_tokens": 2, "total_tokens": 4104}
+      }
+    }
+  }
+}

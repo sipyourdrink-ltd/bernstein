@@ -84,6 +84,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "governance",
         # Content-addressed verification evidence bundles (issue #2362)
         "evidence",
+        # Durable work ledger: resumable task-graph state (issue #2358)
+        "ledger",
         # Auth
         "auth",
         "login",

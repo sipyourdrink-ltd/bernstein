@@ -1,0 +1,97 @@
+{
+  "engine": "ollama",
+  "engine_version": "0.9.6",
+  "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+  "ram_budget_gb": 8,
+  "responses": {
+    "models": {
+      "status": 200,
+      "body": {
+        "object": "list",
+        "data": [
+          {"id": "qwen2.5-coder:7b-instruct-q4_K_M", "object": "model", "created": 1736600000, "owned_by": "library"}
+        ]
+      }
+    },
+    "chat": {
+      "status": 200,
+      "body": {
+        "id": "chatcmpl-490",
+        "object": "chat.completion",
+        "created": 1736600001,
+        "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+        "system_fingerprint": "fp_ollama",
+        "choices": [
+          {"index": 0, "message": {"role": "assistant", "content": "ready"}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 14, "completion_tokens": 2, "total_tokens": 16}
+      }
+    },
+    "tool": {
+      "status": 200,
+      "body": {
+        "id": "chatcmpl-491",
+        "object": "chat.completion",
+        "created": 1736600002,
+        "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+        "system_fingerprint": "fp_ollama",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "call_r8f2",
+                  "type": "function",
+                  "function": {
+                    "name": "record_finding",
+                    "arguments": "{\"path\": \"src/app.py\", \"line\": 12, \"message\": \"unused import\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {"prompt_tokens": 96, "completion_tokens": 34, "total_tokens": 130}
+      }
+    },
+    "patch": {
+      "status": 200,
+      "body": {
+        "id": "chatcmpl-492",
+        "object": "chat.completion",
+        "created": 1736600003,
+        "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+        "system_fingerprint": "fp_ollama",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "--- a/tools/conformance_probe.py\n+++ b/tools/conformance_probe.py\n@@ -1,2 +1,3 @@\n def probe() -> str:\n-    return \"before\"\n+    # conformance reference hunk\n+    return \"after\"\n"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {"prompt_tokens": 118, "completion_tokens": 52, "total_tokens": 170}
+      }
+    },
+    "context": {
+      "status": 200,
+      "body": {
+        "id": "chatcmpl-493",
+        "object": "chat.completion",
+        "created": 1736600004,
+        "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+        "system_fingerprint": "fp_ollama",
+        "choices": [
+          {"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 4102, "completion_tokens": 2, "total_tokens": 4104}
+      }
+    }
+  }
+}

@@ -53,6 +53,10 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 - Set explicit budgets.
 - Use deterministic completion signals/tests.
 - Monitor early-run behavior and tune config for your environment.
+- Declare per-role fallback chains under `provider_availability` so dispatch
+  probes provider health before spawning and fails over deterministically;
+  run `bernstein doctor --failover-drill` (for example in CI) to find broken
+  chains before an outage does.
 
 ---
 

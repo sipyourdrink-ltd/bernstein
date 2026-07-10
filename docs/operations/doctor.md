@@ -167,3 +167,10 @@ remediation)` dataclass. `category` is one of `installation`,
 | `network:* fail - connection refused`           | check proxy or firewall egress rules                         |
 | `network:* skip - BERNSTEIN_OFFLINE=1`          | expected when air-gapped; clear the env var to re-enable     |
 | `env:docker` with no other CI markers           | host is a vanilla Docker container; include in bug reports   |
+
+## Provider failover drill
+
+`bernstein doctor --failover-drill` exercises every fallback chain declared
+under `provider_availability` in `bernstein.yaml` and exits non-zero when
+any declared chain element is broken. See
+[Provider availability & failover](provider-availability.md).
