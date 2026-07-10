@@ -292,6 +292,7 @@ nav:
       - Doctor: operations/doctor.md
       - Spending mandates: operations/spending-mandates.md
       - Stall escalation receipts: operations/stall-escalation.md
+      - Checkpointed retries: operations/checkpointed-retries.md
       - Audited webhook node: operations/webhook-node.md
       - Chat bridges (Slack/Discord/Telegram): operations/chat-bridges.md
       - Lineage v2: operations/lineage-v2.md
