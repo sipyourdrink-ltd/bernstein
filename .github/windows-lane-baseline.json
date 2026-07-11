@@ -1,0 +1,6 @@
+{
+  "established": false,
+  "note": "Windows lane green history is recorded on a real Windows runner. Flip `established` to true after the readiness gate in docs/operations/merge-gate.md holds (justified skips, N-run green streak on main, no continue-on-error masking, conformance stop/restart green). Until then the lane is advisory: red is surfaced as a warning by scripts/windows_lane_gate.py but does not block the merge queue.",
+  "streak_required": 10,
+  "flip_procedure": "docs/operations/merge-gate.md#windows-lane-promotion-prepared-not-yet-flipped"
+}
