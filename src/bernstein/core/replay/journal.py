@@ -149,18 +149,16 @@ class EventJournal:
             or Path(run_id).is_absolute()
         ):
             raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
-        # Then realpath-containment (the same pattern as core.security
-        # .permissions): resolve symlinks/".." with os.path.realpath and keep
-        # the result only when it stays under the runs root. self._path is the
-        # resolved, contained path, so every downstream file operation uses a
-        # value that has passed the containment check.
-        runs_root = Path(os.path.realpath(self._runs_root))
-        resolved = Path(os.path.realpath(self._runs_root / run_id / JOURNAL_FILENAME))
-        try:
-            resolved.relative_to(runs_root)
-        except ValueError:
-            raise ValueError(f"run_id escapes the journal runs root: {run_id!r}") from None
-        self._path = resolved
+        # Then realpath-containment: normalise symlinks/".." with
+        # os.path.realpath and keep the result only when os.path.commonpath
+        # confirms it stays under the runs root. self._path is the resolved,
+        # contained path, so every downstream file operation uses a value that
+        # has passed the containment check.
+        runs_root = os.path.realpath(self._runs_root)
+        resolved = os.path.realpath(self._runs_root / run_id / JOURNAL_FILENAME)
+        if os.path.commonpath((runs_root, resolved)) != runs_root:
+            raise ValueError(f"run_id escapes the journal runs root: {run_id!r}")
+        self._path = Path(resolved)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0
