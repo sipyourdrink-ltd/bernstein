@@ -151,9 +151,9 @@ def test_retention_prunes_oldest_run_journals(tmp_path: Path) -> None:
 
 
 def test_run_id_traversal_is_refused(tmp_path: Path) -> None:
-    """A run_id that escapes the runs root is refused before any file I/O."""
-    for bad in ("../../etc", "..", "a/../../b"):
-        with pytest.raises(ValueError, match="escapes the journal runs root"):
+    """A run_id that traverses or escapes the runs root is refused before I/O."""
+    for bad in ("../../etc", "..", "a/../../b", "/abs/path", "", ".", "a\\b"):
+        with pytest.raises(ValueError, match="run_id"):
             EventJournal(run_id=bad, sdd_dir=tmp_path)
 
 
