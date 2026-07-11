@@ -35,6 +35,7 @@ byte-identical files and anchors.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -62,9 +63,13 @@ _INSTALL_MODEL = "none"
 _RECEIPT_SUBPATH = (".sdd", "skills", "receipts")
 _USAGE_SUBPATH = (".sdd", "skills", "usage")
 _UPDATE_SUBPATH = (".sdd", "skills", "updates")
+_CONFORMANCE_SUBPATH = (".sdd", "skills", "conformance")
 
 #: Actor recorded on update-receipt spine entries.
 _UPDATE_ACTOR = "bernstein.skill_provenance.update"
+
+#: Actor recorded on conformance-receipt spine entries.
+_CONFORMANCE_ACTOR = "bernstein.skill_provenance.conformance"
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +110,17 @@ def update_receipt_path(workdir: Path, skill_hash: str) -> Path:
     receipt uses.
     """
     return workdir.joinpath(*_UPDATE_SUBPATH, f"{_safe_hash_name(skill_hash)}.json")
+
+
+def conformance_receipt_path(workdir: Path, receipt_id: str) -> Path:
+    """Return the on-disk conformance-receipt path for ``receipt_id``.
+
+    A conformance receipt is content-addressed by its own canonical bytes
+    (``receipt_id`` is ``sha256:<hex>`` over them), so two byte-identical
+    conformance passes select the same file and a tampered pass resolves to a
+    different, receipt-less address.
+    """
+    return workdir.joinpath(*_CONFORMANCE_SUBPATH, f"{_safe_hash_name(receipt_id)}.json")
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +376,130 @@ def read_update_receipt(workdir: Path, skill_hash: str) -> UpdateReceipt | None:
 
 
 # ---------------------------------------------------------------------------
+# ConformanceReceipt (#2369 tail: multi-host live validation)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConformanceReceipt:
+    """The attestable record produced by one multi-host conformance pass.
+
+    A single packaged skill (``skill_hash``) is installed into several agent
+    hosts against one bernstein install, and the skill's documented self-check
+    contract is replayed per host. The receipt binds the shared content
+    address to the ordered per-host pass/fail verdicts, so "the skill works
+    from N agent CLIs against one install" becomes a content-addressed,
+    chain-anchored fact rather than an ephemeral CI log. Strip the spine and
+    it is just a file; anchored, it is a signed attestation a verifier walks
+    back to the shared install receipt.
+
+    Attributes:
+        skill_hash: Content address shared by every host install
+            (``sha256:<hex>``).
+        host_results: ``((host, ok), ...)`` sorted by host name; ``ok`` is the
+            per-host contract verdict.
+        min_hosts: The minimum number of green hosts the pass required.
+        install_id: Per-pass identifier tying the receipt to the audit event.
+        timestamp: Integer timestamp; caller-chosen but stable so identical
+            fixtures anchor byte-identically.
+    """
+
+    skill_hash: str
+    host_results: tuple[tuple[str, bool], ...]
+    min_hosts: int
+    install_id: str
+    timestamp: int
+
+    def to_canonical_bytes(self) -> bytes:
+        """Serialise to canonical JSON bytes (the spine-hashed artifact)."""
+        return json.dumps(
+            {
+                "skill_hash": self.skill_hash,
+                "host_results": [[host, ok] for host, ok in self.host_results],
+                "min_hosts": self.min_hosts,
+                "install_id": self.install_id,
+                "timestamp": self.timestamp,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+
+    def content_id(self) -> str:
+        """Return the content address (``sha256:<hex>``) of the receipt bytes."""
+        return "sha256:" + hashlib.sha256(self.to_canonical_bytes()).hexdigest()
+
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> ConformanceReceipt:
+        """Parse a conformance receipt from its canonical JSON bytes."""
+        row = json.loads(raw)
+        return cls(
+            skill_hash=str(row["skill_hash"]),
+            host_results=tuple((str(host), bool(ok)) for host, ok in row["host_results"]),
+            min_hosts=int(row["min_hosts"]),
+            install_id=str(row["install_id"]),
+            timestamp=int(row["timestamp"]),
+        )
+
+
+def write_conformance_receipt(
+    *,
+    workdir: Path,
+    lineage_root: Path,
+    hmac_key: bytes,
+    receipt: ConformanceReceipt,
+) -> tuple[str, str]:
+    """Write ``receipt`` to disk and anchor it in the install spine.
+
+    The receipt is content-addressed by its own canonical bytes and anchored
+    in the same dedicated install run (``run_id="skills"``) as install and
+    update receipts, so one Merkle-chained spine carries install, update, and
+    conformance history for a packaged skill.
+
+    Args:
+        workdir: Project root; the receipt file lands under
+            ``.sdd/skills/conformance/``.
+        lineage_root: Spine root (``.sdd/lineage``).
+        hmac_key: The audit-chain HMAC key that tags spine entries.
+        receipt: The conformance receipt to record.
+
+    Returns:
+        ``(receipt_id, spine_anchor)`` where ``receipt_id`` is the receipt's
+        content address and ``spine_anchor`` is the spine entry hash over the
+        receipt bytes.
+    """
+    payload = receipt.to_canonical_bytes()
+    receipt_id = receipt.content_id()
+    path = conformance_receipt_path(workdir, receipt_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+
+    spine = LineageSpine(lineage_root, run_id=INSTALL_RUN_ID, hmac_key=hmac_key)
+    artifact_path = "/".join((*_CONFORMANCE_SUBPATH, f"{_safe_hash_name(receipt_id)}.json"))
+    anchor = spine.record(
+        artifact_path=artifact_path,
+        content=payload,
+        actor=_CONFORMANCE_ACTOR,
+        step_id=receipt.install_id,
+        model=_INSTALL_MODEL,
+        timestamp=receipt.timestamp,
+    )
+    return receipt_id, anchor
+
+
+def read_conformance_receipt(workdir: Path, receipt_id: str) -> ConformanceReceipt | None:
+    """Return the conformance receipt keyed by ``receipt_id`` or ``None``."""
+    path = conformance_receipt_path(workdir, receipt_id)
+    if not path.is_file():
+        return None
+    try:
+        return ConformanceReceipt.from_bytes(path.read_bytes())
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        logger.warning("skill provenance: malformed conformance receipt at %s", path)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Usage link (AC2)
 # ---------------------------------------------------------------------------
 
@@ -584,14 +724,17 @@ def verify_install(
 
 __all__ = [
     "INSTALL_RUN_ID",
+    "ConformanceReceipt",
     "InstallReceipt",
     "InstallVerifyResult",
     "ProvenanceGraph",
     "RunProvenance",
     "UpdateReceipt",
     "UsageLink",
+    "conformance_receipt_path",
     "iter_usage_links",
     "provenance_graph",
+    "read_conformance_receipt",
     "read_install_receipt",
     "read_update_receipt",
     "receipt_path",
@@ -599,6 +742,7 @@ __all__ = [
     "update_receipt_path",
     "usage_index_path",
     "verify_install",
+    "write_conformance_receipt",
     "write_install_receipt",
     "write_update_receipt",
 ]

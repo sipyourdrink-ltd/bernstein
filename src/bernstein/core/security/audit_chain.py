@@ -360,6 +360,15 @@ EVENT_PLUGIN_INSTALL_RECEIPT = "plugin.install_receipt"
 #: content addresses an installed tree passed through and in what order.
 EVENT_PLUGIN_UPDATE_RECEIPT = "plugin.update_receipt"
 
+#: Issue #2369 (tail) -- emitted when a packaged skill passes a multi-host
+#: conformance sweep: one skill content address is installed into several
+#: agent hosts against one bernstein install and the skill's documented
+#: self-check contract is replayed per host. The event binds the shared
+#: content address, the per-host pass/fail verdicts, and the lineage-spine
+#: anchor of the conformance receipt, so "the skill works from N agent CLIs
+#: against one install" is chain-verifiable rather than a transient CI log.
+EVENT_PLUGIN_CONFORMANCE_RECEIPT = "plugin.conformance_receipt"
+
 #: Issue #2368 -- emitted for every probe of the nightly adapter conformance
 #: canary. The event binds the probed adapter, the discovered upstream
 #: version, the conformance verdict, and the content hash of the canary
@@ -2365,6 +2374,65 @@ def record_plugin_update_receipt(
     )
 
 
+def record_plugin_conformance_receipt(
+    *,
+    chain: AuditChainStore,
+    skill_hash: str,
+    receipt_id: str,
+    host_results: list[tuple[str, bool]],
+    min_hosts: int,
+    passed_hosts: int,
+    ok: bool,
+    install_id: str,
+    spine_anchor: str,
+    actor: str = "skill_packaging",
+) -> AuditEvent:
+    """Append a ``plugin.conformance_receipt`` event into *chain* (#2369, tail).
+
+    Records one multi-host conformance sweep of a packaged skill: the shared
+    installed content address, the ordered per-host pass/fail verdicts, the
+    content id of the sealed conformance receipt, and its lineage-spine
+    anchor. Together with the receipt file under ``.sdd/skills/conformance/``
+    a verifier can prove -- from the chain alone -- that one skill content
+    address drove ``passed_hosts`` distinct agent hosts against one install
+    and whether the ``min_hosts`` bar was met.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        skill_hash: Content address shared by every host install
+            (``sha256:<hex>``).
+        receipt_id: Content address of the conformance receipt itself.
+        host_results: Ordered ``(host, ok)`` verdicts (sorted by host).
+        min_hosts: Minimum number of green hosts the sweep required.
+        passed_hosts: Number of hosts whose contract passed.
+        ok: Aggregate verdict (all hosts green and at least ``min_hosts``).
+        install_id: Per-sweep identifier tying this event to the receipt.
+        spine_anchor: Entry hash of the receipt row in the install lineage
+            spine; a verifier holding the spine can recompute it.
+        actor: Recorded actor; defaults to ``"skill_packaging"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_PLUGIN_CONFORMANCE_RECEIPT,
+        actor=actor,
+        resource_type="plugin_conformance_receipt",
+        resource_id=receipt_id,
+        details={
+            "skill_hash": skill_hash,
+            "receipt_id": receipt_id,
+            "host_results": [[host, verdict] for host, verdict in host_results],
+            "min_hosts": min_hosts,
+            "passed_hosts": passed_hosts,
+            "ok": ok,
+            "install_id": install_id,
+            "spine_anchor": spine_anchor,
+        },
+    )
+
+
 def record_adapter_canary_receipt(
     *,
     chain: AuditChainStore,
@@ -2933,6 +3001,7 @@ __all__ = [
     "EVENT_MEMORY_WRITE",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
+    "EVENT_PLUGIN_CONFORMANCE_RECEIPT",
     "EVENT_PLUGIN_INSTALL_RECEIPT",
     "EVENT_PLUGIN_UPDATE_RECEIPT",
     "EVENT_PROCESS_REAP_RECEIPT",
@@ -2984,6 +3053,7 @@ __all__ = [
     "record_memory_write",
     "record_multimodal_attach",
     "record_otel_projection",
+    "record_plugin_conformance_receipt",
     "record_plugin_install_receipt",
     "record_plugin_update_receipt",
     "record_process_reap_receipt",
