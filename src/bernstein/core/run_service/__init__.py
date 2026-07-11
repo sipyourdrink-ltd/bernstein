@@ -20,8 +20,10 @@ The pieces:
 * :func:`verify_run` -- offline re-verification of the audit chain, the ledger
   chain, and every continuity boundary.
 
-Off-host execution (the ``ssh`` sandbox backend and hosted sandbox backends)
-is a documented follow-on; this package ships the single-host detached path.
+Off-host execution ships too: :mod:`ssh_runner` runs each task of a detached
+goal on another host over ssh in its own isolated remote git worktree, binding
+that worktree in a signed ``run.ssh_task`` receipt; credentials flow through the
+credential vault only, never the ledger or the receipts.
 """
 
 from __future__ import annotations
@@ -48,6 +50,16 @@ from bernstein.core.run_service.service import (
     RunHandle,
     RunService,
     RunServiceError,
+)
+from bernstein.core.run_service.ssh_runner import (
+    SSHBackendSpec,
+    SSHRunnerError,
+    SSHTaskReceipt,
+    SSHTaskRunner,
+    build_ssh_backend,
+    read_ssh_spec,
+    run_goal_on_ssh,
+    write_ssh_spec,
 )
 from bernstein.core.run_service.supervisor import (
     SupervisorStatus,
@@ -76,13 +88,21 @@ __all__ = [
     "RunServiceError",
     "RunServicePathError",
     "RunVerification",
+    "SSHBackendSpec",
+    "SSHRunnerError",
+    "SSHTaskReceipt",
+    "SSHTaskRunner",
     "SupervisorStatus",
     "advance_run",
+    "build_ssh_backend",
     "goal_digest",
     "prove_continuity",
+    "read_ssh_spec",
+    "run_goal_on_ssh",
     "serve_run",
     "spawn_detached",
     "stop_supervisor",
     "supervisor_status",
     "verify_run",
+    "write_ssh_spec",
 ]
