@@ -233,6 +233,19 @@ class AgentIdentityCard:
     security_schemes: list[SecurityScheme] = field(default_factory=list)
     signatures: list[Signature] = field(default_factory=list)
 
+    # ------------------------------------------------------------------
+    # SPIFFE workload identity (#2363, additive - default empty).
+    # ------------------------------------------------------------------
+    #: SPIFFE ID of the SVID bound to this card
+    #: (``spiffe://<td>/bernstein/<install>/<agent>``), or ``""`` when the
+    #: card has no SPIRE-issued SVID. The binding between this reference and
+    #: the SVID is anchored in the audit chain via ``record_spiffe_svid_binding``
+    #: so it is verifiable after the fact (see
+    #: :mod:`bernstein.core.identity.spiffe.binding`). Covered by the v1.0
+    #: ``card_hash`` (and by signatures) but excluded from the legacy hash so
+    #: existing HMAC anchors stay bit-stable.
+    svid_reference: str = ""
+
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
 
@@ -350,6 +363,8 @@ def _hydrate_card(data: dict[str, Any]) -> AgentIdentityCard:
     payload = {key: data[key] for key in _LEGACY_FIELDS if key in data}
     if "protocol_version" in data:
         payload["protocol_version"] = data["protocol_version"]
+    if "svid_reference" in data:
+        payload["svid_reference"] = data["svid_reference"]
     payload["supported_interfaces"] = [
         InterfaceSpec(**entry) if isinstance(entry, dict) else entry for entry in interfaces_raw
     ]

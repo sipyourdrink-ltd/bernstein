@@ -103,6 +103,7 @@ from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
 from bernstein.cli.migrate_cmd import migrate_cmd
 from bernstein.cli.plan_archive_cmd import plan_ls, plan_show
+from bernstein.cli.plan_compile_cmd import plan_compile
 from bernstein.cli.plan_dag_cmd import plan_dag
 from bernstein.cli.plan_generate_cmd import plan_generate
 from bernstein.cli.plan_validate_cmd import validate_plan
@@ -870,6 +871,7 @@ cli.add_command(approve)
 cli.add_command(reject)
 cli.add_command(pending)
 plan.add_command(plan_generate)
+plan.add_command(plan_compile)
 plan.add_command(plan_ls)
 plan.add_command(plan_show)
 plan.add_command(plan_dag)
@@ -1181,6 +1183,11 @@ from bernstein.cli.commands.identity_cmd import identity_group  # noqa: E402
 
 cli.add_command(identity_group, "identity")
 
+# SPIFFE-compatible workload identity helpers (issue #2363).
+from bernstein.cli.commands.spiffe_cmd import spiffe_group  # noqa: E402
+
+cli.add_command(spiffe_group, "spiffe")
+
 # Delegation-receipt verification for the principal->orchestrator->sub-agent
 # chain (issue #2305).
 from bernstein.cli.commands.delegation_cmd import delegation_group  # noqa: E402
@@ -1241,7 +1248,18 @@ from bernstein.cli.commands.evidence_cmd import evidence_group  # noqa: E402
 
 cli.add_command(evidence_group, "evidence")
 
+# In-process verification gate driven by worker hooks: blocks a failing
+# completion or an out-of-scope write in-session, sealing gate receipts (#2360).
+from bernstein.cli.commands.hook_gate_cmd import hook_gate_group  # noqa: E402
+
+cli.add_command(hook_gate_group, "hook-gate")
+
 # Durable work ledger: resumable task-graph state anchored to a git ref (#2358).
 from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
 
 cli.add_command(ledger_group, "ledger")
+
+# Tournament runs: parallel attempts selected by deterministic evaluators (#2353).
+from bernstein.cli.commands.tournament_cmd import tournament_group  # noqa: E402
+
+cli.add_command(tournament_group, "tournament")
