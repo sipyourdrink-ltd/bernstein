@@ -69,6 +69,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `teams/`                    | Named team manifests - pinned bundles of roles, model policies, and response profiles |
 | `telemetry/`                | Opt-in operator observability for Bernstein |
 | `tokens/`                   | tokens sub-package |
+| `tournament/`               | Tournament runs: parallel attempts selected by deterministic evaluators (#2353) |
 | `trackers/`                 | Tracker adapter subsystem |
 | `trigger_sources/`          | Trigger source adapters - normalize raw events into TriggerEvent |
 | `tunnels/`                  | Tunnel provider abstraction and registry |
