@@ -391,6 +391,38 @@ EVENT_DASHBOARD_TOKEN_GRANT = "dashboard.token_grant"
 #: SVID and that neither has been altered since.
 EVENT_SPIFFE_SVID_BINDING = "spiffe.svid_binding"
 
+#: Issue #2361 -- emitted when an operator approves (or rejects) the
+#: requirement set drafted from a spec, before the deterministic compiler
+#: turns it into a task graph. The event binds the content-addressed
+#: requirement-set hash, the source-spec hash, the requirement count, the
+#: compiled graph hash, and the decision into the HMAC chain. The receipt
+#: is the plan-approval gate for the spec pipeline: a verifier can prove,
+#: from the chain alone, that a given task graph was compiled from a
+#: requirement set the operator signed off on -- no requirement line was
+#: added or altered after approval without breaking the chain.
+EVENT_SPEC_REQUIREMENT_SET = "spec.requirement_set"
+
+#: Issue #2354 -- emitted once per cost-aware dispatch decision. The
+#: deterministic decision (admit/halt under USD caps) is a pure function of a
+#: hash-pinned price table, the spend ledger, and the caps; this event mirrors
+#: the decision's identity into the HMAC chain by recording ``{decision_hash,
+#: run_id, task_id, admit, breached_dimension, projected_overrun_usd,
+#: price_table_hash, ledger_state_hash, policy_hash, journal_entry_hash}``. A
+#: verifier holding the same ledger and price table recomputes the decision
+#: byte-identically and checks it against the chain, so a halt names exactly
+#: why it fired and two operators replay the same budget decision. Only hashes,
+#: the verdict, and the projected overrun are recorded -- never prompt content.
+EVENT_COST_DISPATCH_RECEIPT = "cost.dispatch_receipt"
+
+#: Issue #2353 -- emitted whenever a tournament selects a winning attempt.
+#: The event mirrors the signed selection receipt: the task id, the tournament
+#: receipt hash (spine anchor), the winning attempt hash, the full set of
+#: attempt hashes, and the evaluator names that decided the outcome -- never a
+#: model judgement (there is none in the decision path). A verifier can join a
+#: chain entry to the offline-verifiable receipt and prove which attempt won
+#: and why, without re-running the tournament.
+EVENT_TOURNAMENT_SELECTION = "tournament.selection"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2392,6 +2424,169 @@ def record_dashboard_token_grant(
     )
 
 
+def record_cost_dispatch_receipt(
+    *,
+    chain: AuditChainStore,
+    decision_hash: str,
+    run_id: str,
+    task_id: str,
+    admit: bool,
+    breached_dimension: str,
+    projected_overrun_usd: float,
+    price_table_hash: str,
+    ledger_state_hash: str,
+    policy_hash: str,
+    journal_entry_hash: str,
+    actor: str = "cost_policy",
+) -> AuditEvent:
+    """Append a ``cost.dispatch_receipt`` event into *chain* (#2354).
+
+    Mirrors one deterministic cost-aware dispatch decision into the HMAC chain
+    so an operator can prove, from the chain alone, that a dispatch was admitted
+    or halted under a named policy against a pinned price table and ledger --
+    and, on a halt, exactly which dimension breached and by how much. Only
+    hashes, the verdict, and the projected overrun are recorded; a verifier
+    holding the same ledger and price table recomputes the ``decision_hash``
+    byte-identically.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        decision_hash: Deterministic ``sha256:`` hash pinning the whole
+            decision (the receipt identity).
+        run_id: The run the candidate belonged to.
+        task_id: The task the candidate belonged to.
+        admit: Whether the dispatch was admitted (``False`` == halted).
+        breached_dimension: The first breached cap dimension (``task`` /
+            ``run`` / ``day``), empty when admitted.
+        projected_overrun_usd: USD the breached dimension would exceed its cap
+            by (``0`` when admitted).
+        price_table_hash: Content hash of the pinned price table.
+        ledger_state_hash: Hash over the projected prior spend the decision
+            read from the ledger.
+        policy_hash: Content hash of the caps the decision enforced.
+        journal_entry_hash: Lineage-spine entry hash anchoring the sealed
+            decision bytes; a verifier holding the spine can recompute it.
+        actor: Recorded actor; defaults to ``"cost_policy"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_COST_DISPATCH_RECEIPT,
+        actor=actor,
+        resource_type="cost_dispatch_receipt",
+        resource_id=decision_hash,
+        details={
+            "decision_hash": decision_hash,
+            "run_id": run_id,
+            "task_id": task_id,
+            "admit": admit,
+            "breached_dimension": breached_dimension,
+            "projected_overrun_usd": round(projected_overrun_usd, 6),
+            "price_table_hash": price_table_hash,
+            "ledger_state_hash": ledger_state_hash,
+            "policy_hash": policy_hash,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_tournament_selection(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    receipt_hash: str,
+    winner_hash: str,
+    attempt_hashes: list[str],
+    evaluator_names: list[str],
+    actor: str = "tournament",
+) -> AuditEvent:
+    """Append a ``tournament.selection`` event into *chain* (#2353).
+
+    Mirrors a signed tournament selection receipt into the audit chain. The
+    receipt itself is the offline-verifiable proof of why an attempt won; this
+    entry lets an auditor join the chain to that receipt and confirm the
+    decision was made without a model in the loop. Only hashes and metadata are
+    recorded -- the attempt artefacts live in the tournament lineage spine.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task the tournament ran for.
+        receipt_hash: The tournament receipt's spine anchor (its identity).
+        winner_hash: The winning attempt's content hash.
+        attempt_hashes: Every attempt's content hash (winner + losers).
+        evaluator_names: The scripted evaluators that decided the outcome.
+        actor: Recorded actor; defaults to ``"tournament"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TOURNAMENT_SELECTION,
+        actor=actor,
+        resource_type="tournament",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "receipt_hash": receipt_hash,
+            "winner_hash": winner_hash,
+            "attempt_hashes": list(attempt_hashes),
+            "attempt_count": len(attempt_hashes),
+            "evaluator_names": list(evaluator_names),
+        },
+    )
+
+
+def record_spec_requirement_set(
+    *,
+    chain: AuditChainStore,
+    requirement_set_hash: str,
+    source_hash: str,
+    requirement_count: int,
+    graph_hash: str,
+    decision: str,
+    actor: str = "spec-pipeline",
+) -> AuditEvent:
+    """Append a ``spec.requirement_set`` approval receipt into *chain* (#2361).
+
+    The receipt is the plan-approval gate for the spec pipeline. It binds the
+    content-addressed requirement-set hash, the source-spec hash, the compiled
+    graph hash, and the decision into the HMAC chain so a verifier can prove,
+    from the chain alone, that a task graph was compiled from the exact
+    requirement set the operator approved. Only hashes and metadata are
+    recorded -- never the spec body or the requirement text.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        requirement_set_hash: ``sha256:`` digest over the ordered
+            ``(id, line_hash)`` pairs of the approved requirement set.
+        source_hash: ``sha256:`` digest of the source spec document.
+        requirement_count: Number of requirements in the approved set.
+        graph_hash: ``sha256:`` digest of the compiled task graph.
+        decision: ``approved`` or ``rejected``.
+        actor: Recorded actor; defaults to ``"spec-pipeline"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SPEC_REQUIREMENT_SET,
+        actor=actor,
+        resource_type="requirement_set",
+        resource_id=requirement_set_hash,
+        details={
+            "requirement_set_hash": requirement_set_hash,
+            "source_hash": source_hash,
+            "requirement_count": requirement_count,
+            "graph_hash": graph_hash,
+            "decision": decision,
+        },
+    )
+
+
 def record_spiffe_svid_binding(
     *,
     chain: AuditChainStore,
@@ -2453,6 +2648,7 @@ __all__ = [
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
+    "EVENT_COST_DISPATCH_RECEIPT",
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_DASHBOARD_TOKEN_GRANT",
     "EVENT_ENDPOINT_CERTIFICATION",
@@ -2475,6 +2671,7 @@ __all__ = [
     "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
+    "EVENT_SPEC_REQUIREMENT_SET",
     "EVENT_SPIFFE_SVID_BINDING",
     "EVENT_SUBAGENT_DELEGATION",
     "EVENT_TASK_CLAIM_RECEIPT",
@@ -2482,6 +2679,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
+    "EVENT_TOURNAMENT_SELECTION",
     "EVENT_WEBHOOK_NODE_RECEIPT",
     "EVENT_WORK_LEDGER_ANCHOR",
     "AuditChainStore",
@@ -2497,6 +2695,7 @@ __all__ = [
     "record_activity_result",
     "record_adapter_canary_receipt",
     "record_checkpoint_retry",
+    "record_cost_dispatch_receipt",
     "record_cost_profile_report",
     "record_dashboard_token_grant",
     "record_endpoint_certification",
@@ -2520,11 +2719,13 @@ __all__ = [
     "record_sensitive_gate",
     "record_skill_install_receipt",
     "record_skill_usage",
+    "record_spec_requirement_set",
     "record_spiffe_svid_binding",
     "record_subagent_delegation",
     "record_task_claim_receipt",
     "record_task_mailbox_message",
     "record_thread_approval",
+    "record_tournament_selection",
     "record_webhook_node_receipt",
     "record_work_ledger_anchor",
 ]

@@ -744,3 +744,167 @@ def checkpoint_retry_capability(adapter_name: str) -> CheckpointRetryCapability:
 CHECKPOINT_RETRY_CAPABILITY_MATRIX: dict[str, CheckpointRetryCapability] = {
     name: checkpoint_retry_capability(name) for name in STRATEGY_MATRIX
 }
+
+
+# ---------------------------------------------------------------------------
+# In-process verification-gate capability map (issue #2360)
+# ---------------------------------------------------------------------------
+#
+# An adapter with a *blocking* in-session hook surface can run our completion
+# verification and path allowlist the moment a worker believes it is done,
+# refusing the cheap miss before the turn ends. The scheduler-side evidence
+# gate stays authoritative regardless -- the in-process gate is defence in
+# depth -- so an adapter without such a surface simply degrades to that gate
+# with no policy weakening. Capability is a stronger upstream contract than the
+# event channel alone proves, so it is an explicit declaration.
+
+
+class InProcessGateCapability(StrEnum):
+    """Whether an adapter can enforce a verification gate in-session."""
+
+    #: The adapter exposes a blocking hook surface (a completion gate that can
+    #: refuse to end the turn plus a tool-permission matcher that can refuse an
+    #: out-of-scope write) Bernstein renders its policy into.
+    BLOCKING = "blocking"
+    #: No blocking hook surface; the gate runs scheduler-side only.
+    NONE = "none"
+
+
+#: Registry keys of adapters that drive the Claude Code hook surface (settings
+#: ``hooks`` with PreToolUse permission decisions and a blocking Stop hook).
+#: Both entries are Claude Code driver adapters -- the second (``claude_routine``)
+#: reuses the identical surface in routine/scheduled mode -- so the renderer
+#: handles the family uniformly.
+_IN_PROCESS_GATE_BLOCKING_ADAPTERS: frozenset[str] = frozenset({"claude", "claude_routine"})
+
+
+def in_process_gate_capability(adapter_name: str) -> InProcessGateCapability:
+    """Return the in-process gate capability for ``adapter_name``.
+
+    Accepts a registry key or the session-namespace form (resolved through
+    :data:`_NAMESPACE_ALIASES`). Adapters in the explicit blocking set map to
+    :attr:`InProcessGateCapability.BLOCKING`; every other adapter -- declared or
+    unknown -- degrades to :attr:`InProcessGateCapability.NONE` so an
+    undeclared adapter never claims an in-session enforcement surface it lacks.
+    """
+    key = _NAMESPACE_ALIASES.get(adapter_name, adapter_name)
+    if key in _IN_PROCESS_GATE_BLOCKING_ADAPTERS:
+        return InProcessGateCapability.BLOCKING
+    return InProcessGateCapability.NONE
+
+
+#: Full per-adapter in-process gate capability map, one row per declared
+#: adapter. Derived, never hand-maintained: a new adapter picks up its row from
+#: the strategy matrix it must already declare.
+IN_PROCESS_GATE_CAPABILITY_MATRIX: dict[str, InProcessGateCapability] = {
+    name: in_process_gate_capability(name) for name in STRATEGY_MATRIX
+}
+
+
+# ---------------------------------------------------------------------------
+# Cost-aware scheduling capability maps (issue #2354)
+# ---------------------------------------------------------------------------
+#
+# Cost-aware scheduling routes non-interactive work to a provider's batch
+# surface and schedules cache-window fan-outs. Both are provider contracts an
+# adapter either honours or does not; like the strategy matrix, they are
+# *declared* here as the single source of truth, never probed at runtime, so
+# the scheduler can never route batch work to an adapter that has no batch
+# endpoint or assume a prompt-cache TTL an adapter does not offer. The default
+# on every axis is the conservative one (no batch surface, no cache window),
+# so an undeclared or third-party adapter is never routed unsafely.
+
+
+class BatchDispatchCapability(StrEnum):
+    """Whether an adapter exposes a non-interactive batch dispatch surface."""
+
+    #: The adapter routes through a provider batch endpoint (large discount,
+    #: asynchronous, non-interactive) for batch-eligible work.
+    NATIVE = "native"
+    #: No batch surface; every call is dispatched interactively.
+    NONE = "none"
+
+
+#: Registry keys of adapters whose priced upstream exposes a batch API that
+#: Bernstein dispatches through. Kept explicit: a batch surface is a stronger
+#: provider contract than the interactive path and must be declared, not
+#: inferred from the model string. Conservative by construction -- an adapter
+#: absent here is treated as non-batch.
+_BATCH_CAPABLE_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "claude",
+        "claude_routine",
+        "openai_agents",
+    }
+)
+
+
+def batch_dispatch_capability(adapter_name: str) -> BatchDispatchCapability:
+    """Return the batch-dispatch capability for ``adapter_name``.
+
+    Accepts either a registry key or the session-namespace form (resolved
+    through :data:`_NAMESPACE_ALIASES` first). An adapter in
+    :data:`_BATCH_CAPABLE_ADAPTERS` reports
+    :attr:`BatchDispatchCapability.NATIVE`; every other adapter -- including
+    unknown / third-party adapters -- reports
+    :attr:`BatchDispatchCapability.NONE`, so batch-eligible work is never
+    routed to an adapter that cannot honour it.
+    """
+    key = _NAMESPACE_ALIASES.get(adapter_name, adapter_name)
+    if key in _BATCH_CAPABLE_ADAPTERS:
+        return BatchDispatchCapability.NATIVE
+    return BatchDispatchCapability.NONE
+
+
+#: Full per-adapter batch-dispatch capability map, one row per declared
+#: adapter. Derived from :data:`_BATCH_CAPABLE_ADAPTERS`; a new adapter picks
+#: up its row automatically from the strategy matrix it must already declare.
+BATCH_DISPATCH_CAPABILITY_MATRIX: dict[str, BatchDispatchCapability] = {
+    name: batch_dispatch_capability(name) for name in STRATEGY_MATRIX
+}
+
+
+class CacheWindowCapability(StrEnum):
+    """Whether an adapter honours a prompt-cache TTL window for fan-out."""
+
+    #: The adapter's upstream caches a shared prompt prefix under a short TTL,
+    #: so a single warm-up call primes the cache for a fan-out of workers that
+    #: share the prefix.
+    SUPPORTED = "supported"
+    #: No documented prompt-cache window; fan-out warm-up is a no-op and the
+    #: scheduler must not assume cache hits.
+    NONE = "none"
+
+
+#: Registry keys of adapters whose upstream documents a prompt-cache TTL
+#: window Bernstein can schedule a fan-out inside. Explicit and conservative:
+#: an adapter absent here has no cache window, so the scheduler never issues a
+#: warm-up call expecting hits that will not happen.
+_CACHE_WINDOW_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "claude",
+        "claude_routine",
+    }
+)
+
+
+def cache_window_capability(adapter_name: str) -> CacheWindowCapability:
+    """Return the cache-window capability for ``adapter_name``.
+
+    Accepts either a registry key or the session-namespace form. An adapter in
+    :data:`_CACHE_WINDOW_ADAPTERS` reports
+    :attr:`CacheWindowCapability.SUPPORTED`; every other adapter reports
+    :attr:`CacheWindowCapability.NONE`. Note the capability only says an
+    adapter *can* honour a cache window -- the scheduler still requires an
+    explicit opt-in (conservative default off) before it issues a warm-up.
+    """
+    key = _NAMESPACE_ALIASES.get(adapter_name, adapter_name)
+    if key in _CACHE_WINDOW_ADAPTERS:
+        return CacheWindowCapability.SUPPORTED
+    return CacheWindowCapability.NONE
+
+
+#: Full per-adapter cache-window capability map, one row per declared adapter.
+CACHE_WINDOW_CAPABILITY_MATRIX: dict[str, CacheWindowCapability] = {
+    name: cache_window_capability(name) for name in STRATEGY_MATRIX
+}

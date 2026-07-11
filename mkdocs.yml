@@ -301,6 +301,7 @@ nav:
       - Lineage v2: operations/lineage-v2.md
       - GitLab integration: operations/gitlab.md
       - Cost optimization: operations/cost-optimization.md
+      - Cost-aware scheduling: operations/cost-aware-scheduling.md
       - Performance tuning: operations/performance-tuning.md
       - Autofix daemon: operations/autofix.md
       - Merge queue: operations/merge-queue.md
