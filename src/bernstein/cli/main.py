@@ -1181,6 +1181,11 @@ from bernstein.cli.commands.identity_cmd import identity_group  # noqa: E402
 
 cli.add_command(identity_group, "identity")
 
+# SPIFFE-compatible workload identity helpers (issue #2363).
+from bernstein.cli.commands.spiffe_cmd import spiffe_group  # noqa: E402
+
+cli.add_command(spiffe_group, "spiffe")
+
 # Delegation-receipt verification for the principal->orchestrator->sub-agent
 # chain (issue #2305).
 from bernstein.cli.commands.delegation_cmd import delegation_group  # noqa: E402

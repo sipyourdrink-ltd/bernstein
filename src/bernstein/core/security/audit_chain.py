@@ -380,6 +380,17 @@ EVENT_PROCESS_REAP_RECEIPT = "process.reap_receipt"
 #: grant, every write it authorized, and revocation.
 EVENT_DASHBOARD_TOKEN_GRANT = "dashboard.token_grant"
 
+#: Issue #2363 -- emitted whenever a SPIRE-issued X.509-SVID is bound to an
+#: agent card. The event pins the binding's content hash together with the
+#: derived SPIFFE ID, the install fingerprint, the card hash, and the leaf
+#: SVID's content address -- never the SVID private key. Because the binding's
+#: identity is its content hash and that hash is chained here, the mapping
+#: between platform identity (the SVID) and card identity is reconstructable
+#: and tamper-evident offline: a verifier holding the chain and the install
+#: public key can prove after the fact that a card was bound to exactly this
+#: SVID and that neither has been altered since.
+EVENT_SPIFFE_SVID_BINDING = "spiffe.svid_binding"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2381,6 +2392,59 @@ def record_dashboard_token_grant(
     )
 
 
+def record_spiffe_svid_binding(
+    *,
+    chain: AuditChainStore,
+    agent_id: str,
+    spiffe_id: str,
+    install_id: str,
+    card_hash: str,
+    svid_sha256: str,
+    binding_hash: str,
+    trust_domain: str,
+    actor: str = "workload_identity",
+) -> AuditEvent:
+    """Append a ``spiffe.svid_binding`` event into *chain* (#2363).
+
+    Anchors the mapping between a SPIRE-issued X.509-SVID and an agent card:
+    the derived SPIFFE ID, the install fingerprint the ID derives from, the
+    card hash at binding time, the leaf SVID's content address, and the
+    binding's own content hash. Records identifiers and hashes only -- never
+    the SVID private key -- so the receipt is safe to chain and a verifier
+    holding the chain plus the install public key can prove the binding offline.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        agent_id: The bound agent card's id.
+        spiffe_id: The derived ``spiffe://`` id both card and SVID carry.
+        install_id: The install fingerprint segment the SPIFFE ID derives from.
+        card_hash: The card's ``card_hash`` at binding time.
+        svid_sha256: Content address (``sha256:<hex>``) of the leaf SVID DER.
+        binding_hash: Content address of the binding's canonical identity.
+        trust_domain: The SPIFFE trust domain the id lives in.
+        actor: Recorded actor; defaults to ``"workload_identity"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SPIFFE_SVID_BINDING,
+        actor=actor,
+        resource_type="spiffe_svid_binding",
+        resource_id=spiffe_id,
+        details={
+            "agent_id": agent_id,
+            "spiffe_id": spiffe_id,
+            "install_id": install_id,
+            "card_hash": card_hash,
+            "svid_sha256": svid_sha256,
+            "binding_hash": binding_hash,
+            "trust_domain": trust_domain,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2411,6 +2475,7 @@ __all__ = [
     "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
+    "EVENT_SPIFFE_SVID_BINDING",
     "EVENT_SUBAGENT_DELEGATION",
     "EVENT_TASK_CLAIM_RECEIPT",
     "EVENT_TASK_MAILBOX_MESSAGE",
@@ -2455,6 +2520,7 @@ __all__ = [
     "record_sensitive_gate",
     "record_skill_install_receipt",
     "record_skill_usage",
+    "record_spiffe_svid_binding",
     "record_subagent_delegation",
     "record_task_claim_receipt",
     "record_task_mailbox_message",

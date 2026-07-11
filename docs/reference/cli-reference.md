@@ -1407,3 +1407,52 @@ configured. There is no silent open mode on a routable interface. Use the
 token as `Authorization: Bearer <token>` or in the dashboard login form
 (`POST /dashboard/auth/login`); the session cookie inherits exactly the
 token's principal and scope.
+
+## SPIFFE workload identity: `bernstein spiffe`
+
+Infrastructure teams standardizing on [SPIFFE](https://spiffe.io/) workload
+identity can consume Bernstein workloads directly. The Ed25519 install identity
+and each agent card map onto a deterministic SPIFFE ID; when a SPIRE agent is
+present (optional `bernstein[spiffe]` extra) its X.509-SVID is bound to a card
+by a receipt anchored in the HMAC audit chain. The self-contained Ed25519 path
+stays the default with the extra absent.
+
+SPIFFE ID scheme (deterministic):
+
+```
+spiffe://<trust-domain>/bernstein/<install>/<agent>
+```
+
+- `<trust-domain>`: operator SPIFFE trust domain (validated, lowercase DNS-like).
+- `<install>`: 16-hex fingerprint of the install public key (SHA-256 prefix).
+- `<agent>`: the agent card id.
+
+Two operators deriving the id for the same install and agent obtain the same
+string, and a verifier re-derives it later to check a card-to-SVID binding.
+
+| Subcommand | Purpose |
+|---|---|
+| `id --install-key PEM --agent ID --trust-domain TD` | Derive and print the SPIFFE ID offline (pure, no network). |
+| `verify-binding BINDING.json --install-key PEM --trust-domain TD [--audit-dir DIR]` | Re-derive the id from the install key and verify a card-to-SVID binding; with `--audit-dir`, also check it against its chained `spiffe.svid_binding` receipt. |
+
+```bash
+bernstein spiffe id \
+    --install-key .bernstein/keys/agent-card.ed25519.pub \
+    --agent backend-1 --trust-domain example.org
+# -> spiffe://example.org/bernstein/<install>/backend-1
+
+bernstein spiffe verify-binding binding.json \
+    --install-key .bernstein/keys/agent-card.ed25519.pub \
+    --trust-domain example.org --audit-dir .sdd/audit
+# -> valid (chain-anchored)
+```
+
+The card-to-SVID binding is the receipt: `bind_svid_to_card` records a
+`spiffe.svid_binding` event pinning the binding content hash, the derived
+SPIFFE ID, the install fingerprint, the card hash, and the leaf SVID content
+address -- never the SVID private key. A post-hoc tamper to the binding fails
+`verify-binding` because its recomputed content hash no longer matches the
+chained receipt. SVID material also projects onto the cluster mTLS config, so
+the task server enforces mutual TLS through its existing uvicorn `--ssl` path.
+See [SPIFFE workload identity](spiffe-workload-identity.md) for an example
+SPIRE configuration and threat-model notes.

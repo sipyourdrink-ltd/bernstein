@@ -207,6 +207,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "wiki",
         # Install-rev fingerprint operator helpers
         "identity",
+        # SPIFFE-compatible workload identity helpers (issue #2363)
+        "spiffe",
         # Delegation-receipt verification (principal->orchestrator->sub-agent)
         "delegation",
         # Per-role adapter allow/deny-list inspection (role-adapter-policy group)
