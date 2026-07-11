@@ -122,6 +122,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `goose.py`                  | Goose CLI adapter for Bernstein |
 | `gptme.py`                  | gptme CLI adapter |
 | `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
+| `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
 | `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
 | `junie.py`                  | JetBrains Junie CLI adapter |
 | `kilo.py`                   | Kilo CLI adapter (Stackblitz) |
