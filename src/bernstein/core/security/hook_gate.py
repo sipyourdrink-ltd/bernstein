@@ -169,7 +169,7 @@ def policy_from_task_fields(
     return HookGatePolicy(
         task_id=task_id,
         producers=parse_producers(list(evidence_producers)),
-        path_allowlist=tuple(str(p) for p in owned_files),
+        path_allowlist=tuple(owned_files),
     )
 
 

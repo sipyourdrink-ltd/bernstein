@@ -754,8 +754,9 @@ def _verify_updated_install(
                 f"installed {installed_manifest_hash[:12]}...)"
             ),
         )
-    spine = LineageSpine(workdir / ".sdd" / "lineage", run_id=INSTALL_RUN_ID, hmac_key=hmac_key)
-    spine_result = spine.verify()
+    spine_result = LineageSpine(
+        workdir / ".sdd" / "lineage", run_id=INSTALL_RUN_ID, hmac_key=hmac_key
+    ).verify()
     if not spine_result.ok:
         return InstallVerifyResult(
             ok=False,

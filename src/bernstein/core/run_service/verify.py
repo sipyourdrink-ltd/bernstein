@@ -47,7 +47,7 @@ class RunVerification:
             "ledger_ok": self.ledger_ok,
             "continuity_ok": self.continuity_ok,
             "receipts_seen": self.receipts_seen,
-            "errors": list(self.errors),
+            "errors": self.errors.copy(),
         }
 
 
@@ -102,7 +102,7 @@ def verify_run(root: Path, run_id: str) -> RunVerification:
             if transition in CONTINUITY_TRANSITIONS:
                 from_idx = _hash_index(hashes, str(details.get("from_head", "")))
                 to_idx = _hash_index(hashes, str(details.get("to_head", "")))
-                if from_idx == -2 or to_idx == -2:
+                if -2 in (from_idx, to_idx):
                     continuity_ok = False
                     errors.append(f"continuity: {transition} boundary head is not an ancestor in the chain")
                 elif from_idx > to_idx:

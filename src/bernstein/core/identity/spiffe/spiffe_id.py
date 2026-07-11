@@ -119,7 +119,7 @@ def install_segment(install_public_key_pem: bytes) -> str:
     """
     if not isinstance(install_public_key_pem, (bytes, bytearray)):
         raise SpiffeIdError("install_public_key_pem must be bytes")
-    digest = hashlib.sha256(bytes(install_public_key_pem)).hexdigest()
+    digest = hashlib.sha256(install_public_key_pem).hexdigest()
     return digest[:_INSTALL_SEGMENT_LEN]
 
 

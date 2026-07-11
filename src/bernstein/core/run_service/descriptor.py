@@ -46,7 +46,7 @@ class RunDescriptor:
             "run_id": self.run_id,
             "goal": self.goal,
             "goal_sha256": self.goal_sha256,
-            "task_ids": list(self.task_ids),
+            "task_ids": self.task_ids.copy(),
             "created_ts": self.created_ts,
         }
 

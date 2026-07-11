@@ -163,15 +163,14 @@ class TaskGraph:
         :func:`bernstein.core.planning.plan_schema.validate_plan`. Requirement
         ids are recorded per step so the plan file keeps the lineage anchor.
         """
-        steps: list[dict[str, object]] = []
-        for node in self.nodes:
-            steps.append(
-                {
-                    "title": node.title,
-                    "role": node.role,
-                    "description": "Implements " + ", ".join(node.requirement_ids),
-                }
-            )
+        steps: list[dict[str, object]] = [
+            {
+                "title": node.title,
+                "role": node.role,
+                "description": "Implements " + ", ".join(node.requirement_ids),
+            }
+            for node in self.nodes
+        ]
         return {
             "name": name,
             "description": description or f"Compiled from requirement set {self.requirement_set_hash}",

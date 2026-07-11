@@ -122,7 +122,7 @@ class RunService:
         descriptor = RunDescriptor(
             run_id=run_id,
             goal=goal,
-            task_ids=[str(t) for t in task_ids],
+            task_ids=list(task_ids),
             created_ts=time.time(),
         )
 

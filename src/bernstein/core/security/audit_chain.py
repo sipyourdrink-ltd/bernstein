@@ -2628,9 +2628,9 @@ def record_tournament_selection(
             "task_id": task_id,
             "receipt_hash": receipt_hash,
             "winner_hash": winner_hash,
-            "attempt_hashes": list(attempt_hashes),
+            "attempt_hashes": [*attempt_hashes],
             "attempt_count": len(attempt_hashes),
-            "evaluator_names": list(evaluator_names),
+            "evaluator_names": [*evaluator_names],
         },
     )
 

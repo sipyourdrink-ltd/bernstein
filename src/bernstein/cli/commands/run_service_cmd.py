@@ -113,8 +113,7 @@ def submit_cmd(
         raise SystemExit(EXIT_NO_RUN)
 
     root = _root(workdir)
-    svc = RunService(root)
-    handle = svc.submit(goal, task_ids)
+    handle = RunService(root).submit(goal, task_ids)
     run_id = handle.run_id
 
     pid: int | None = None

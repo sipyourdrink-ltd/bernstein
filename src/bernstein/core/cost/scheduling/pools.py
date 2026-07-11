@@ -47,7 +47,7 @@ def project_pools(entries: Iterable[LedgerEntry]) -> dict[str, float]:
     for entry in entries:
         pool = entry.quota_envelope or DEFAULT_POOL
         totals[pool] += entry.cost_usd
-    return dict(totals)
+    return {**totals}
 
 
 @dataclass(frozen=True, slots=True)

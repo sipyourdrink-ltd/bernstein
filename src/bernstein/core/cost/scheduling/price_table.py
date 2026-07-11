@@ -210,9 +210,9 @@ def load_price_table(
     base_table = base if base is not None else DEFAULT_PRICE_TABLE
     if not models:
         return base_table
-    merged: dict[str, ModelPrice] = dict(base_table.models)
+    merged: dict[str, ModelPrice] = base_table.models.copy()
     for key, raw in models.items():
-        merged[str(key)] = _coerce_rates(raw, key=str(key))
+        merged[key] = _coerce_rates(raw, key=key)
     return PriceTable(
         models=merged,
         as_of=as_of or base_table.as_of,
