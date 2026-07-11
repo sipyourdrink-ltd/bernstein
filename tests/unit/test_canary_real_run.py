@@ -245,21 +245,23 @@ def temp_git_repo(tmp_path: Path) -> Iterator[Path]:
     yield repo
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="git worktree flow uses POSIX semantics")
-def test_worktree_flow_creates_and_tears_down_without_leak(canary: ModuleType, temp_git_repo: Path) -> None:
-    """The real git-worktree flow leaves the repo with no extra worktrees."""
-    before = _count_worktrees(temp_git_repo)
-    canary.flow_git_worktree(repo_root=temp_git_repo)
-    after = _count_worktrees(temp_git_repo)
-    assert after == before, "git-worktree flow leaked a worktree"
+# The git-worktree and subprocess-spawn canary flows drive real POSIX
+# session/worktree semantics end to end; both share one justified
+# class-level skip rather than a marker each.
+@pytest.mark.skipif(sys.platform == "win32", reason="drives real POSIX worktree + session-spawn semantics")
+class TestRealPosixCanaryFlows:
+    def test_worktree_flow_creates_and_tears_down_without_leak(self, canary: ModuleType, temp_git_repo: Path) -> None:
+        """The real git-worktree flow leaves the repo with no extra worktrees."""
+        before = _count_worktrees(temp_git_repo)
+        canary.flow_git_worktree(repo_root=temp_git_repo)
+        after = _count_worktrees(temp_git_repo)
+        assert after == before, "git-worktree flow leaked a worktree"
 
-
-@pytest.mark.skipif(sys.platform == "win32", reason="subprocess spawn flow uses POSIX semantics")
-def test_subprocess_spawn_flow_runs_real_process(canary: ModuleType, tmp_path: Path) -> None:
-    """The spawn flow drives a real subprocess and observes a clean exit."""
-    # Should not raise; returns the reaped exit code (0 for the stub adapter).
-    code = canary.flow_subprocess_spawn(workdir=tmp_path)
-    assert code == 0
+    def test_subprocess_spawn_flow_runs_real_process(self, canary: ModuleType, tmp_path: Path) -> None:
+        """The spawn flow drives a real subprocess and observes a clean exit."""
+        # Should not raise; returns the reaped exit code (0 for the stub adapter).
+        code = canary.flow_subprocess_spawn(workdir=tmp_path)
+        assert code == 0
 
 
 def test_audit_and_lineage_flow_verifies_chain(canary: ModuleType, tmp_path: Path) -> None:

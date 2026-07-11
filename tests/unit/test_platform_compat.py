@@ -98,19 +98,6 @@ class TestKillProcess:
     def test_kill_negative_pid_returns_false(self) -> None:
         assert kill_process(-1) is False
 
-    @pytest.mark.skipif(IS_WINDOWS, reason="SIGKILL not available on Windows")
-    def test_kill_with_sigkill(self) -> None:
-        """SIGKILL should forcefully terminate a process."""
-        proc = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        result = kill_process(proc.pid, signal.SIGKILL)
-        assert result is True
-        proc.wait(timeout=5)
-        assert process_alive(proc.pid) is False
-
 
 # ---------------------------------------------------------------------------
 # kill_process_group
@@ -125,21 +112,6 @@ class TestKillProcessGroup:
 
     def test_kill_group_negative_returns_false(self) -> None:
         assert kill_process_group(-1) is False
-
-    @pytest.mark.skipif(IS_WINDOWS, reason="Process groups not supported on Windows")
-    def test_kill_process_group_terminates_session(self) -> None:
-        """kill_process_group should terminate a process started in its own session."""
-        proc = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        assert process_alive(proc.pid) is True
-        result = kill_process_group(proc.pid, signal.SIGTERM)
-        assert result is True
-        proc.wait(timeout=5)
-        assert process_alive(proc.pid) is False
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +164,17 @@ class TestKillProcessGroupGraceful:
         assert mock_kpg.call_count == 1
         assert mock_kpg.call_args_list[0].args[1] == signal.SIGTERM
 
-    @pytest.mark.skipif(IS_WINDOWS, reason="SIGKILL not available on Windows")
-    def test_escalates_to_sigkill_when_process_survives_term(self) -> None:
-        """If the group never exits, SIGKILL must be sent after the grace period."""
+    def test_escalates_to_force_signal_when_process_survives_term(self) -> None:
+        """If the group never exits, a force-kill must follow the grace period.
+
+        No platform skip: the escalation path is fully mocked at the
+        ``kill_process_group`` / ``process_alive`` boundary, so it runs on
+        the Windows lane too. The force tier is the POSIX ``SIGKILL`` where
+        importable and the numeric ``9`` fallback on Windows (where
+        ``signal.SIGKILL`` does not exist) - keyed off the platform so the
+        assertion holds on both.
+        """
+        force_sig = getattr(signal, "SIGKILL", 9)
         with (
             patch(
                 "bernstein.core.config.platform_compat.kill_process_group",
@@ -207,12 +187,59 @@ class TestKillProcessGroupGraceful:
         ):
             assert kill_process_group_graceful(12345, grace_seconds=0.05, poll_interval=0.01) is True
 
-        # Expect two calls - SIGTERM first, then SIGKILL.
+        # Expect two calls - SIGTERM first, then the platform force signal.
         assert mock_kpg.call_count == 2
         assert mock_kpg.call_args_list[0].args == (12345, signal.SIGTERM)
-        assert mock_kpg.call_args_list[1].args == (12345, signal.SIGKILL)
+        assert mock_kpg.call_args_list[1].args == (12345, force_sig)
 
-    @pytest.mark.skipif(IS_WINDOWS, reason="Requires POSIX process groups + SIGTERM trap")
+
+# ---------------------------------------------------------------------------
+# Real-kernel POSIX reap coverage
+#
+# These three cases spawn a real child process and deliver real signals to a
+# real process group; mocking the kernel boundary would defeat the whole
+# point (they exist to prove SIGKILL is actually delivered, a process group
+# is actually reaped, and a SIGTERM-trapping child is actually escalated).
+# There is no Windows kernel to deliver POSIX signals to, so the *whole
+# group* carries a single justified class-level skip rather than three
+# separate markers. The Windows equivalents of these paths are covered
+# without a runner by test_platform_win_process_branch.py (taskkill / tree
+# termination / reap-receipt projection).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    IS_WINDOWS, reason="Delivers real POSIX signals to a real process group; no Windows kernel equivalent"
+)
+class TestRealKernelPosixReap:
+    """Real-process, real-signal reaps that require a POSIX kernel."""
+
+    def test_kill_with_sigkill(self) -> None:
+        """SIGKILL should forcefully terminate a process."""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        result = kill_process(proc.pid, signal.SIGKILL)
+        assert result is True
+        proc.wait(timeout=5)
+        assert process_alive(proc.pid) is False
+
+    def test_kill_process_group_terminates_session(self) -> None:
+        """kill_process_group should terminate a process started in its own session."""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        assert process_alive(proc.pid) is True
+        result = kill_process_group(proc.pid, signal.SIGTERM)
+        assert result is True
+        proc.wait(timeout=5)
+        assert process_alive(proc.pid) is False
+
     def test_reaps_wedged_process_that_traps_sigterm(self) -> None:
         """End-to-end: a child that traps SIGTERM must still be killed."""
         # Spawn a child that ignores SIGTERM via Python's signal module and

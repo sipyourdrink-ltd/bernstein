@@ -57,7 +57,12 @@ class TestApplyLimits:
         # On POSIX should apply (even if nothing to set), on non-POSIX advisory
         assert isinstance(result, EnforcementResult)
 
-    @pytest.mark.skipif(os.name != "posix", reason="POSIX only")
+
+# Real setrlimit enforcement needs the POSIX ``resource`` module (absent on
+# Windows), so these two cases share one justified class-level skip rather
+# than a marker each.
+@pytest.mark.skipif(os.name != "posix", reason="Real setrlimit enforcement via the POSIX resource module")
+class TestApplyLimitsPosix:
     def test_applies_on_posix(self) -> None:
         limits = ResourceLimits(open_files=4096)
         result = apply_limits(limits)
@@ -65,7 +70,6 @@ class TestApplyLimits:
         # open_files enforcement may or may not succeed depending on system limits
         assert isinstance(result.open_files_enforced, bool)
 
-    @pytest.mark.skipif(os.name != "posix", reason="POSIX only")
     def test_cpu_limit_applied(self) -> None:
         limits = ResourceLimits(cpu_seconds=99999)
         result = apply_limits(limits)

@@ -36,14 +36,22 @@ microsecond operations and there's no IO to slow them down.
 from __future__ import annotations
 
 import shlex
-import sys
+from unittest.mock import patch
 
-import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from bernstein.core.config.platform_compat import shell_quote
 from bernstein.core.workflows.workflow_runner import shell_join
+
+# ``shell_quote`` is platform-aware: on POSIX it delegates to ``shlex.quote``
+# and the ``shlex.split`` round-trip below is the security contract; on
+# Windows it emits ``cmd.exe`` double-quote form that intentionally does NOT
+# round-trip through POSIX ``shlex``. These properties pin the POSIX branch,
+# so they force ``IS_WINDOWS=False`` and therefore run identically on every
+# host (including the Windows lane) instead of skipping there. The Windows
+# branch has its own dedicated contract test below.
+_FORCE_POSIX = patch("bernstein.core.config.platform_compat.IS_WINDOWS", False)
 
 # Characters that survive shlex round-trip without ambiguity. We exclude
 # code points that shlex's POSIX mode treats specially as line
@@ -84,7 +92,7 @@ def test_split_join_round_trip(argv: list[str]) -> None:
     assert shlex.split(joined) == argv
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shlex semantics")
+@_FORCE_POSIX
 @given(token=st.text(_TOKEN_ALPHABET, min_size=0, max_size=32))
 def test_shell_quote_produces_single_token(token: str) -> None:
     """``shlex.split(shell_quote(s))`` always yields ``[s]`` on POSIX.
@@ -99,7 +107,7 @@ def test_shell_quote_produces_single_token(token: str) -> None:
     assert parts == [token]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shlex semantics")
+@_FORCE_POSIX
 @given(
     prefix=st.text(_TOKEN_ALPHABET, min_size=0, max_size=8),
     injection=_INJECTION_CHARS,
@@ -138,7 +146,6 @@ def test_join_idempotent_under_round_trip(argv: list[str]) -> None:
     assert once == twice
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shlex semantics")
 @given(
     argv=st.lists(
         st.text(_TOKEN_ALPHABET, min_size=1, max_size=8)
@@ -166,7 +173,7 @@ def test_argv_with_injection_chars_round_trips(argv: list[str]) -> None:
     assert shlex.split(joined) == argv
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shlex semantics")
+@_FORCE_POSIX
 def test_empty_string_explicit_quoting() -> None:
     """``shell_quote("")`` produces ``"''"`` (not empty).
 
@@ -177,6 +184,27 @@ def test_empty_string_explicit_quoting() -> None:
     quoted = shell_quote("")
     assert quoted == "''"
     assert shlex.split(quoted) == [""]
+
+
+@patch("bernstein.core.config.platform_compat.IS_WINDOWS", True)
+def test_shell_quote_windows_branch_wraps_metacharacters() -> None:
+    """The Windows ``cmd.exe`` branch double-quotes hostile tokens.
+
+    Runs on every host (the Windows branch is pure string logic once
+    ``IS_WINDOWS`` is flipped), so the Windows quoting contract is pinned
+    cross-platform rather than only on a Windows runner:
+
+    * an empty string becomes ``'""'`` (never collapses away);
+    * a token with a shell metacharacter is wrapped in double quotes with
+      interior quotes and percent signs escaped; and
+    * a benign bareword is returned unquoted.
+    """
+    assert shell_quote("") == '""'
+    assert shell_quote("plain") == "plain"
+    quoted = shell_quote('a & b "c" 100%')
+    assert quoted.startswith('"') and quoted.endswith('"')
+    assert '\\"' in quoted
+    assert "%%" in quoted
 
 
 @given(token=st.text(min_size=0, max_size=128))
