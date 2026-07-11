@@ -343,6 +343,16 @@ EVENT_TASK_MAILBOX_MESSAGE = "task.mailbox_message"
 #: scheduler decision.
 EVENT_TASK_CLAIM_RECEIPT = "task.claim_receipt"
 
+#: Issue #2369 -- emitted once per packaged agent-skill / plugin install.
+#: When the bundled ``bernstein-run`` skill (or a plugin checkout a host
+#: performed) lands in an agent host's skill directory, the install writes a
+#: content-addressed receipt anchored in the ``skills`` lineage spine and
+#: mirrors ``{skill_hash, manifest_hash, install_id, spine_anchor, host,
+#: scope, dest}`` into the chain. A verifier recomputes the installed tree's
+#: content address and checks it against the receipt and the spine, so
+#: "installed" is chain-attested rather than a directory listing.
+EVENT_PLUGIN_INSTALL_RECEIPT = "plugin.install_receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2135,6 +2145,60 @@ def record_task_claim_receipt(
     )
 
 
+def record_plugin_install_receipt(
+    *,
+    chain: AuditChainStore,
+    skill_hash: str,
+    manifest_hash: str,
+    install_id: str,
+    spine_anchor: str,
+    host: str,
+    scope: str,
+    dest: str,
+    actor: str = "skill_packaging",
+) -> AuditEvent:
+    """Append a ``plugin.install_receipt`` event into *chain* (#2369).
+
+    Records the packaged agent-skill / plugin install receipt: the installed
+    tree's content address, the manifest hash the receipt binds to, and the
+    lineage-spine anchor of the receipt row. Together with the receipt file
+    under ``.sdd/skills/receipts/`` this lets a verifier prove -- from the
+    chain alone -- which skill content an agent host was driving.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        skill_hash: Content address of the installed tree (``sha256:<hex>``).
+        manifest_hash: SHA-256 of the installed manifest file (``SKILL.md``
+            or the plugin manifest).
+        install_id: Per-install identifier tying this event to the receipt.
+        spine_anchor: Entry hash of the receipt row in the install lineage
+            spine; a verifier holding the spine can recompute it.
+        host: Target agent host (``claude`` / ``codex`` / ... / ``dest``).
+        scope: Install scope (``project`` / ``user`` / ``dest``).
+        dest: Destination directory the tree was installed into.
+        actor: Recorded actor; defaults to ``"skill_packaging"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_PLUGIN_INSTALL_RECEIPT,
+        actor=actor,
+        resource_type="plugin_install_receipt",
+        resource_id=skill_hash,
+        details={
+            "skill_hash": skill_hash,
+            "manifest_hash": manifest_hash,
+            "install_id": install_id,
+            "spine_anchor": spine_anchor,
+            "host": host,
+            "scope": scope,
+            "dest": dest,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2156,6 +2220,7 @@ __all__ = [
     "EVENT_MEMORY_WRITE",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
+    "EVENT_PLUGIN_INSTALL_RECEIPT",
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
@@ -2195,6 +2260,7 @@ __all__ = [
     "record_memory_write",
     "record_multimodal_attach",
     "record_otel_projection",
+    "record_plugin_install_receipt",
     "record_review_receipt",
     "record_routing_failover_receipt",
     "record_schedule_fire_projection",
