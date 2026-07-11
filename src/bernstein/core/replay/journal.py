@@ -42,10 +42,8 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -139,24 +137,30 @@ class EventJournal:
     def __init__(self, run_id: str, sdd_dir: Path) -> None:
         self._run_id = run_id
         self._runs_root = sdd_dir / "runs"
-        # Path-injection guard (py/path-injection). Validate run_id lexically
-        # first: a run_id must be a single, non-traversing path segment. This
-        # check never touches the filesystem, so it has no time-of-check /
-        # time-of-use window -- it rejects every "..", separator, or absolute
-        # run_id before a path is ever built. The realpath-containment check
-        # below is defence in depth for the resolved directory.
+        # Path-injection guard (py/path-injection). First a lexical check that
+        # never touches the filesystem (so it has no time-of-check/time-of-use
+        # window): a run_id must be a single, non-traversing path segment.
         if (
             not run_id
             or run_id in {".", ".."}
             or "/" in run_id
             or "\\" in run_id
             or "\x00" in run_id
-            or os.path.isabs(run_id)
+            or Path(run_id).is_absolute()
         ):
             raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
-        self._path = self._runs_root / run_id / JOURNAL_FILENAME
-        if not self._path.resolve().is_relative_to(self._runs_root.resolve()):
-            raise ValueError(f"run_id escapes the journal runs root: {run_id!r}")
+        # Then realpath-containment (the same pattern as core.security
+        # .permissions): resolve symlinks/".." with os.path.realpath and keep
+        # the result only when it stays under the runs root. self._path is the
+        # resolved, contained path, so every downstream file operation uses a
+        # value that has passed the containment check.
+        runs_root = Path(os.path.realpath(self._runs_root))
+        resolved = Path(os.path.realpath(self._runs_root / run_id / JOURNAL_FILENAME))
+        try:
+            resolved.relative_to(runs_root)
+        except ValueError:
+            raise ValueError(f"run_id escapes the journal runs root: {run_id!r}") from None
+        self._path = resolved
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0
