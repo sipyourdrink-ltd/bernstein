@@ -42,8 +42,23 @@ def render_server_json(version: str) -> str:
     data = json.loads(SERVER_JSON.read_text(encoding="utf-8"))
     data["version"] = version
     for package in data.get("packages", []):
-        package["version"] = version
+        if package.get("registryType") == "oci":
+            # The registry schema forbids a top-level version on OCI
+            # packages; the version rides in the identifier tag instead
+            # (e.g. ghcr.io/owner/image:1.0.0).
+            package["identifier"] = f"{_oci_image_ref(package['identifier'])}:{version}"
+            package.pop("version", None)
+        else:
+            package["version"] = version
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def _oci_image_ref(identifier: str) -> str:
+    """Return *identifier* without its tag, keeping any registry port."""
+    ref, sep, tag = identifier.rpartition(":")
+    if sep and "/" not in tag:
+        return ref
+    return identifier
 
 
 def render_plugin_json(version: str) -> str:

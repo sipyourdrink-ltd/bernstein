@@ -18,8 +18,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein",
-      "version": "3.3.0",
+      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein:3.3.0",
       "transport": {
         "type": "stdio"
       }

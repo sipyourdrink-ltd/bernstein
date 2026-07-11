@@ -15,6 +15,7 @@ These tests pin:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -36,7 +37,10 @@ def test_server_json_version_matches_pyproject() -> None:
     packages = {p["registryType"]: p for p in data["packages"]}
     assert packages["pypi"]["identifier"] == "bernstein"
     assert packages["pypi"]["version"] == version
-    assert packages["oci"]["version"] == version
+    # The registry schema forbids a top-level version on OCI packages;
+    # the version rides in the identifier tag instead.
+    assert "version" not in packages["oci"]
+    assert packages["oci"]["identifier"] == f"ghcr.io/sipyourdrink-ltd/bernstein:{version}"
 
 
 def test_plugin_manifest_version_and_paths() -> None:
@@ -59,6 +63,22 @@ def test_bundled_skill_has_frontmatter_and_stays_ascii() -> None:
     assert "description:" in body
     assert "—" not in body, "em-dash characters are not allowed in shipped skill text"
     assert body.isascii(), "shipped skill text must stay ASCII"
+
+
+def test_render_server_json_retags_oci_identifier_on_version_bump() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "gen_distribution_manifests",
+        _REPO / "scripts" / "gen_distribution_manifests.py",
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    rendered = json.loads(module.render_server_json("9.9.9"))
+    packages = {p["registryType"]: p for p in rendered["packages"]}
+    assert packages["oci"]["identifier"] == "ghcr.io/sipyourdrink-ltd/bernstein:9.9.9"
+    assert "version" not in packages["oci"]
+    assert packages["pypi"]["version"] == "9.9.9"
 
 
 def test_gen_script_check_mode_passes_and_is_idempotent(tmp_path: Path) -> None:
