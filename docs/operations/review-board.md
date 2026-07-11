@@ -164,7 +164,15 @@ action against that exact board state without operator override.
 
 ## Scope and follow-ups
 
-Deferred to a follow-up slice on the same epic:
+The full review cycle - inspect diff, read the evidence bundle, approve, and
+merge - is covered end to end against a journal the live task-lifecycle reap
+seam produces (not only against hand-written fixtures), through the real
+dashboard-auth middleware with a scoped operator principal
+(`tests/unit/test_review_board_live_cycle.py`). The same journal projects
+byte-identically when copied to a detached location, so the live and detached
+surfaces are proven equivalent.
+
+One follow-up remains, and it gates none of the acceptance criteria:
 
 * Moving the board page into the `web/` SPA build once the GUI CI build
   pipeline replaces the committed prebuilt bundle. The page ships here as a
