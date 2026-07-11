@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bernstein_task_handle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "workdir": {"type": "string", "minLength": 1, "maxLength": 4096}
+  }
+}

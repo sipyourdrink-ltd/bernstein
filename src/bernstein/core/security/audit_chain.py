@@ -380,6 +380,16 @@ EVENT_PROCESS_REAP_RECEIPT = "process.reap_receipt"
 #: grant, every write it authorized, and revocation.
 EVENT_DASHBOARD_TOKEN_GRANT = "dashboard.token_grant"
 
+#: Issue #2364 -- emitted whenever an MCP Tasks-extension run handle is minted
+#: for a long-running run. The event carries the handle receipt: the task id,
+#: the run id, the projected status, the run journal head, the embedded
+#: audit-chain head, the receipt hash, the pinned spec revision, and the
+#: ingested W3C trace id (empty when none). A client that polled the handle
+#: can prove offline that the task it watched corresponds to the audited run
+#: by recomputing the receipt hash from the journal and matching the embedded
+#: chain head against this chain.
+EVENT_MCP_TASK_HANDLE = "mcp.task_handle"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2381,6 +2391,62 @@ def record_dashboard_token_grant(
     )
 
 
+def record_mcp_task_handle(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    run_id: str,
+    status: str,
+    journal_head: str,
+    chain_head: str,
+    receipt_hash: str,
+    spec_revision: str,
+    trace_id: str = "",
+    actor: str = "mcp_task_handle",
+) -> AuditEvent:
+    """Append an ``mcp.task_handle`` event into *chain* (#2364).
+
+    Anchors an MCP Tasks-extension run handle in the audit chain. The handle
+    is a pure projection of the run journal; recording its receipt hash, the
+    run journal head, and the embedded chain head means a client that polled
+    the handle can later prove offline that the task it watched corresponds
+    to the audited run: recompute the receipt from the journal and match the
+    embedded chain head against a verified chain.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The Tasks-extension task id.
+        run_id: The run whose journal the handle projects.
+        status: The projected Tasks-extension status.
+        journal_head: The run journal's Merkle head hash.
+        chain_head: The audit-chain head hash embedded in the handle.
+        receipt_hash: The content-addressed digest of the handle.
+        spec_revision: The pinned Tasks-extension revision.
+        trace_id: The ingested W3C trace id, empty when none.
+        actor: Recorded actor; defaults to ``"mcp_task_handle"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MCP_TASK_HANDLE,
+        actor=actor,
+        resource_type="mcp_task_handle",
+        resource_id=run_id,
+        details={
+            "task_id": task_id,
+            "run_id": run_id,
+            "status": status,
+            "journal_head": journal_head,
+            "chain_head": chain_head,
+            "receipt_hash": receipt_hash,
+            "spec_revision": spec_revision,
+            "trace_id": trace_id,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2401,6 +2467,7 @@ __all__ = [
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
     "EVENT_MCP_STATELESS_CALL",
+    "EVENT_MCP_TASK_HANDLE",
     "EVENT_MEMORY_WRITE",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
@@ -2444,6 +2511,7 @@ __all__ = [
     "record_mandate_consent_receipt",
     "record_mandate_revocation",
     "record_mcp_stateless_call",
+    "record_mcp_task_handle",
     "record_memory_write",
     "record_multimodal_attach",
     "record_otel_projection",
