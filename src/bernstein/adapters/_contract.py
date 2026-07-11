@@ -744,3 +744,58 @@ def checkpoint_retry_capability(adapter_name: str) -> CheckpointRetryCapability:
 CHECKPOINT_RETRY_CAPABILITY_MATRIX: dict[str, CheckpointRetryCapability] = {
     name: checkpoint_retry_capability(name) for name in STRATEGY_MATRIX
 }
+
+
+# ---------------------------------------------------------------------------
+# In-process verification-gate capability map (issue #2360)
+# ---------------------------------------------------------------------------
+#
+# An adapter with a *blocking* in-session hook surface can run our completion
+# verification and path allowlist the moment a worker believes it is done,
+# refusing the cheap miss before the turn ends. The scheduler-side evidence
+# gate stays authoritative regardless -- the in-process gate is defence in
+# depth -- so an adapter without such a surface simply degrades to that gate
+# with no policy weakening. Capability is a stronger upstream contract than the
+# event channel alone proves, so it is an explicit declaration.
+
+
+class InProcessGateCapability(StrEnum):
+    """Whether an adapter can enforce a verification gate in-session."""
+
+    #: The adapter exposes a blocking hook surface (a completion gate that can
+    #: refuse to end the turn plus a tool-permission matcher that can refuse an
+    #: out-of-scope write) Bernstein renders its policy into.
+    BLOCKING = "blocking"
+    #: No blocking hook surface; the gate runs scheduler-side only.
+    NONE = "none"
+
+
+#: Registry keys of adapters that drive the Claude Code hook surface (settings
+#: ``hooks`` with PreToolUse permission decisions and a blocking Stop hook).
+#: Both entries are Claude Code driver adapters -- the second (``claude_routine``)
+#: reuses the identical surface in routine/scheduled mode -- so the renderer
+#: handles the family uniformly.
+_IN_PROCESS_GATE_BLOCKING_ADAPTERS: frozenset[str] = frozenset({"claude", "claude_routine"})
+
+
+def in_process_gate_capability(adapter_name: str) -> InProcessGateCapability:
+    """Return the in-process gate capability for ``adapter_name``.
+
+    Accepts a registry key or the session-namespace form (resolved through
+    :data:`_NAMESPACE_ALIASES`). Adapters in the explicit blocking set map to
+    :attr:`InProcessGateCapability.BLOCKING`; every other adapter -- declared or
+    unknown -- degrades to :attr:`InProcessGateCapability.NONE` so an
+    undeclared adapter never claims an in-session enforcement surface it lacks.
+    """
+    key = _NAMESPACE_ALIASES.get(adapter_name, adapter_name)
+    if key in _IN_PROCESS_GATE_BLOCKING_ADAPTERS:
+        return InProcessGateCapability.BLOCKING
+    return InProcessGateCapability.NONE
+
+
+#: Full per-adapter in-process gate capability map, one row per declared
+#: adapter. Derived, never hand-maintained: a new adapter picks up its row from
+#: the strategy matrix it must already declare.
+IN_PROCESS_GATE_CAPABILITY_MATRIX: dict[str, InProcessGateCapability] = {
+    name: in_process_gate_capability(name) for name in STRATEGY_MATRIX
+}

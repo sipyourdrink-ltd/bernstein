@@ -1407,3 +1407,30 @@ configured. There is no silent open mode on a routable interface. Use the
 token as `Authorization: Bearer <token>` or in the dashboard login form
 (`POST /dashboard/auth/login`); the session cookie inherits exactly the
 token's principal and scope.
+
+## In-process verification gate: `bernstein hook-gate`
+
+A gate-capable adapter (Claude Code) wires its worker's `PreToolUse` and `Stop`
+hooks to `bernstein hook-gate check`. The command reads the hook event JSON on
+stdin, loads the task's persisted policy (`.sdd/runtime/hook_gate/<session>.json`,
+written at spawn from the task's `owned_files` and required `evidence_producers`),
+and enforces it in-session:
+
+| Event | Behaviour |
+| --- | --- |
+| `PreToolUse` | A write whose target is outside the task's path allowlist is refused; the refusal is sealed as a gate receipt and the command exits `2` so the tool call never runs. Realpath containment refuses a `..` traversal or an in-scope symlink that resolves outside the worktree. |
+| `Stop` | The task's required verification producers run in-session; the attempt is sealed as a proof-of-done receipt and the command exits `2` when a required check failed, so the worker cannot end its turn on red. |
+
+```bash
+# Invoked by the worker's hook runner, not by hand:
+bernstein hook-gate check --session <id> --event PreToolUse < event.json
+bernstein hook-gate check --session <id> --event Stop < event.json
+```
+
+Trust model: the in-process gate is defence in depth and a cost optimisation.
+The scheduler-side evidence gate stays authoritative and runs regardless. A gate
+receipt IS an evidence bundle (`bernstein evidence show` / `verify`,
+`bernstein audit verify`), so a verifier cannot tell from the schema whether the
+gate fired in-process or scheduler-side. An adapter with no blocking hook surface
+injects no gate hooks and degrades to the scheduler-side gate with no policy
+weakening.

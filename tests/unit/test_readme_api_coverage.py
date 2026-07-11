@@ -84,6 +84,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "governance",
         # Content-addressed verification evidence bundles (issue #2362)
         "evidence",
+        # In-process verification gate driven by worker hooks (issue #2360)
+        "hook-gate",
         # Durable work ledger: resumable task-graph state (issue #2358)
         "ledger",
         # Auth
