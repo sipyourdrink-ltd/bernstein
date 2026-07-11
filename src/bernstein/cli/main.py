@@ -973,6 +973,10 @@ cli.add_command(skills_group)
 from bernstein.cli.commands.skills_catalog_cmd import catalog_group as _skills_catalog_group  # noqa: E402
 
 skills_group.add_command(_skills_catalog_group, "catalog")
+# Packaged agent-skill installs with chain-anchored receipts (issue #2369).
+from bernstein.cli.commands.skills_package_cmd import package_group as _skills_package_group  # noqa: E402
+
+skills_group.add_command(_skills_package_group, "package")
 # Skill usage provenance (issue #2301): install receipts + provenance graph.
 from bernstein.cli.commands.skill_cmd import skill_group as _skill_group  # noqa: E402
 

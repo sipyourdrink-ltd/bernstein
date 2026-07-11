@@ -207,14 +207,29 @@ def _get_dashboard_password() -> str:
     return os.environ.get("BERNSTEIN_DASHBOARD_PASSWORD", "")
 
 
+# Both digests below are recomputed per comparison and never stored, so a
+# per-value random salt would serve no purpose; the fixed salt is domain
+# separation only. The KDF gives compare_digest fixed-length inputs and
+# makes each online guess computationally expensive.
+_PASSWORD_KDF_SALT = b"bernstein-dashboard-password-v1"
+_PASSWORD_KDF_ITERATIONS = 210_000
+
+
+def _password_digest(value: str) -> bytes:
+    """Fixed-length PBKDF2 digest used for constant-time comparison."""
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        value.encode("utf-8"),
+        _PASSWORD_KDF_SALT,
+        _PASSWORD_KDF_ITERATIONS,
+    )
+
+
 def verify_password(provided: str, expected: str) -> bool:
     """Constant-time password comparison."""
     if not expected:
         return False
-    return hmac.compare_digest(
-        hashlib.sha256(provided.encode("utf-8")).digest(),
-        hashlib.sha256(expected.encode("utf-8")).digest(),
-    )
+    return hmac.compare_digest(_password_digest(provided), _password_digest(expected))
 
 
 @dataclass

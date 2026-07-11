@@ -1289,6 +1289,7 @@ def create_app(
     from bernstein.core.routes.plans import router as plans_router
     from bernstein.core.routes.predictive import router as predictive_router
     from bernstein.core.routes.provider_latency import router as provider_latency_router
+    from bernstein.core.routes.review_board import router as review_board_router
     from bernstein.core.routes.sbom import router as sbom_router
     from bernstein.core.routes.session_peek import router as session_peek_router
     from bernstein.core.routes.slo import router as slo_router
@@ -1357,6 +1358,7 @@ def create_app(
         mcp_bot_tools_router,
         session_peek_router,
         orchestrator_holds_router,
+        review_board_router,
     ]
 
     # Fresh per-app router: including route groups mutates the target router,

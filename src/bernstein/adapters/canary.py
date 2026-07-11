@@ -458,7 +458,7 @@ def apply_canary_outcome(
         ``(new_state, should_open_issue)``. The input mapping is not
         mutated.
     """
-    new_state = {name: dict(entry) for name, entry in state.items()}
+    new_state = {name: entry.copy() for name, entry in state.items()}
     if outcome.verdict == "skip":
         return new_state, False
 
@@ -592,7 +592,7 @@ def update_last_green(
     Returns:
         A new mapping; the input is not mutated.
     """
-    new_entries = dict(entries)
+    new_entries = entries.copy()
     if outcome.verdict != "pass" or not outcome.installed_version:
         return new_entries
     new_entries[outcome.adapter] = LastGreenEntry(
@@ -658,7 +658,7 @@ def write_last_green_doc(doc_path: Path, entries: dict[str, LastGreenEntry]) -> 
     text = doc_path.read_text(encoding="utf-8")
     begin = text.find(LAST_GREEN_BEGIN)
     end = text.find(LAST_GREEN_END)
-    if begin == -1 or end == -1 or end < begin:
+    if -1 in (begin, end) or end < begin:
         raise ValueError(f"{doc_path} is missing the last-green table markers")
     head = text[: begin + len(LAST_GREEN_BEGIN)]
     tail = text[end:]

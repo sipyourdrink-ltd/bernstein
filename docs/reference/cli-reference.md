@@ -1322,6 +1322,51 @@ simulated outage prefix would produce; drill outcomes are mirrored into the
 audit chain when a `.sdd` workspace is present. See
 [Provider availability & failover](../operations/provider-availability.md).
 
+## Packaged agent skill: `bernstein skills package`
+
+Bernstein ships a cross-vendor `bernstein-run` skill (open `SKILL.md`
+format) so agent sessions can drive orchestration without a separate
+shell. Installs are receipt-backed: each install anchors a
+content-addressed receipt in the `skills` lineage spine and mirrors a
+`plugin.install_receipt` event into the HMAC audit chain.
+
+#### `bernstein skills package show`
+
+Prints the bundled skill's content address, manifest hash, and the
+supported host list.
+
+#### `bernstein skills package install`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--host NAME` | - | Target host (`claude`, `codex`, `copilot`, `cursor`, `gemini`); selects the host's default skills directory. |
+| `--scope project\|user` | `project` | Install under the project root or the home directory. |
+| `--dest DIR` | - | Explicit destination directory (overrides `--host`/`--scope`). |
+| `--record-only` | off | Anchor a tree the host already installed (e.g. a plugin checkout) without copying. |
+| `--force` | off | Overwrite a destination whose content differs from the bundled skill. |
+| `--workdir DIR` | `.` | Project root where the receipt is anchored. |
+
+Exit codes: `0` installed and anchored, `1` error.
+
+#### `bernstein skills package verify`
+
+Re-hashes the installed tree and proves it against the anchored receipt:
+the recomputed content address selects the receipt, then the install
+spine and the manifest hash are checked. A tampered tree resolves to a
+content address with no receipt, so the verdict is structural.
+
+Exit codes: `0` verified, `1` missing directory, `2` attestation failure.
+
+```bash
+bernstein skills package install --host claude --scope project
+bernstein skills package install --dest ~/.claude/plugins/bernstein --record-only
+bernstein skills package verify --host claude --scope project
+```
+
+See [Agent sessions](../integrations/agent-session.md) for the skill
+body, per-host notes, and the registry listings generated at release
+time.
+
 ## Dashboard authentication: `bernstein auth dashboard-token`
 
 The dashboard (`bernstein gui serve`, `/dashboard` on the task server)

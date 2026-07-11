@@ -38,6 +38,7 @@ ignore_imports =
 name = Adapters are independent of one another
 type = independence
 modules =
+    bernstein.adapters.agy
     bernstein.adapters.aichat
     bernstein.adapters.aider
     bernstein.adapters.amp
