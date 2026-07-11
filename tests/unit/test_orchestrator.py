@@ -6562,3 +6562,122 @@ class TestSelfStopOrderingDrain:
         msg = run_end_lines[-1].getMessage()
         assert "defer_summary" in msg
         assert "T-stuck" in msg, "defer_summary log MUST include the task ids still pending the post-/complete chain"
+
+
+# --- Cost-aware dispatch gate wired into the live spawn loop (#2354) ---
+
+
+class TestCostPolicyDispatchWiring:
+    """The deterministic USD dispatch policy consulted before a real spawn.
+
+    #2354 shipped ``decide_dispatch`` + the dispatch receipt as a pure policy
+    layer, but nothing consulted it inside the live ``bernstein run`` spawn
+    loop, so a run only discovered a USD-cap breach after the fact. These tests
+    drive a real orchestrator tick to the cap and assert the run halts before
+    breaching, sealing a verifiable receipt -- and that a run with no cost
+    policy configured is a clean no-op (fail-open).
+    """
+
+    @staticmethod
+    def _priced_task_dict(task_id: str = "T-cost-1", model: str = "claude-sonnet-5") -> dict[str, object]:
+        """A ready task carrying a priced model so its pre-spawn estimate is a
+        deterministic, positive USD figure (round-trips via Task.from_dict)."""
+        task = _make_task(id=task_id, scope="large", complexity="high")
+        payload = _task_as_dict(task)
+        payload["model"] = model
+        return payload
+
+    def test_run_halts_before_breaching_usd_cap_and_seals_receipt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.core.config.config_schema import CostCapsSchema, CostPolicySchema
+        from bernstein.core.cost.scheduling.receipt import verify_dispatch_receipt
+        from bernstein.core.cost.spend_ledger import CallTags
+        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit_chain import EVENT_COST_DISPATCH_RECEIPT, AuditChainStore
+
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[self._priced_task_dict()])})
+        config = OrchestratorConfig(
+            server_url="http://testserver",
+            poll_interval_s=1,
+            cost_policy=CostPolicySchema(caps=CostCapsSchema(per_run_usd=5.0)),
+        )
+        orch = _build_orchestrator(tmp_path, transport, config=config)
+        # The cap gate runs before claim/spawn; the spawner must never fire.
+        orch._spawner.spawn_for_tasks = MagicMock(
+            side_effect=AssertionError("spawn must not run once the USD cap gate halts")
+        )
+        # Seed prior run spend just under the cap; the projected next dispatch tips it over.
+        orch._spend_ledger.record(
+            tags=CallTags(task_id="T-prev", agent_id="prev", role="backend"),
+            model="claude-sonnet-5",
+            cost_usd=4.5,
+        )
+
+        result = orch.tick()
+
+        assert result.spawned == []
+        assert result.cost_dispatch_halt, "tick must record the halting decision hash"
+        orch._spawner.spawn_for_tasks.assert_not_called()
+
+        # The halt is a receipt that verifies offline, naming its inputs + overrun.
+        verify = verify_dispatch_receipt(
+            workdir=tmp_path,
+            lineage_root=tmp_path / ".sdd" / "lineage",
+            hmac_key=load_or_create_audit_key(),
+            decision_hash=result.cost_dispatch_halt,
+        )
+        assert verify.ok is True
+        assert verify.receipt is not None
+        decision = verify.receipt.decision
+        assert decision.admit is False
+        assert decision.breached_dimension == "run"
+        assert decision.projected_overrun_usd > 0
+        assert decision.price_table_hash.startswith("sha256:")
+
+        # Mirrored into the HMAC audit chain so the halt is chain-provable.
+        chain = AuditChainStore(tmp_path / ".sdd" / "audit", key=load_or_create_audit_key())
+        events = chain.query(event_type=EVENT_COST_DISPATCH_RECEIPT)
+        assert len(events) == 1
+        assert events[0].details["admit"] is False
+        assert events[0].details["breached_dimension"] == "run"
+        assert events[0].details["decision_hash"] == result.cost_dispatch_halt
+
+    def test_no_cost_policy_is_fail_open_no_op(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+        tasks = [_make_task(id="T-1"), _make_task(id="T-2")]
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[_task_as_dict(t) for t in tasks])})
+        # No cost_policy configured -> the gate is a clean no-op.
+        config = OrchestratorConfig(server_url="http://testserver", poll_interval_s=1)
+        orch = _build_orchestrator(tmp_path, transport, config=config)
+
+        result = orch.tick()
+
+        assert result.cost_dispatch_halt is None
+        assert len(result.spawned) == 1  # normal spawn proceeds
+        assert len(result.errors) == 0
+
+    def test_zero_caps_are_fail_open_no_op(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.config.config_schema import CostCapsSchema, CostPolicySchema
+        from bernstein.core.cost.spend_ledger import CallTags
+
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[_task_as_dict(_make_task(id="T-1"))])})
+        # cost_policy present but every cap is 0 (unlimited) -> still a no-op.
+        config = OrchestratorConfig(
+            server_url="http://testserver",
+            poll_interval_s=1,
+            cost_policy=CostPolicySchema(caps=CostCapsSchema()),
+        )
+        orch = _build_orchestrator(tmp_path, transport, config=config)
+        orch._spend_ledger.record(
+            tags=CallTags(task_id="T-prev", agent_id="prev", role="backend"),
+            model="claude-sonnet-5",
+            cost_usd=1000.0,
+        )
+
+        result = orch.tick()
+
+        assert result.cost_dispatch_halt is None
+        assert len(result.spawned) == 1
