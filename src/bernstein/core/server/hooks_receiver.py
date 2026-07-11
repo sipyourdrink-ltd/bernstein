@@ -139,6 +139,10 @@ class HookEventType(Enum):
     PRE_COMPACT = "PreCompact"
     SUBAGENT_START = "SubagentStart"
     SUBAGENT_STOP = "SubagentStop"
+    #: In-process verification-gate decision streamed by the gate hook (#2360).
+    #: Each record links a block/allow decision to the gate receipt it sealed,
+    #: so the sidecar an operator already reads carries the enforcement trail.
+    GATE_DECISION = "GateDecision"
     UNKNOWN = "Unknown"
 
     @classmethod
@@ -245,6 +249,55 @@ def write_hook_event(event: HookEvent, workdir: Path) -> None:
         logger.debug("Failed to write hook event for session %s", event.session_id)
 
 
+def write_gate_decision_event(
+    session_id: str,
+    workdir: Path,
+    *,
+    gate_event: str,
+    blocked: bool,
+    reason: str,
+    receipt_task_id: str,
+) -> None:
+    """Append an in-process gate decision to the session's JSONL sidecar (#2360).
+
+    The gate hook streams every block/allow decision into the same sidecar the
+    orchestrator and monitors already consume, linked to the ``receipt_task_id``
+    of the evidence bundle the decision sealed. This is the event-to-receipt
+    mapping in ingestion: the enforcement trail lives beside the tool-use trail,
+    and a verifier can pull the named receipt from the audit chain.
+
+    Args:
+        session_id: Agent session identifier (validated before any fs access).
+        workdir: Project working directory.
+        gate_event: ``"pretooluse"`` or ``"completion"``.
+        blocked: Whether the action was refused.
+        reason: Human-readable decision reason.
+        receipt_task_id: The task id of the sealed gate receipt.
+
+    Raises:
+        InvalidSessionIdError: If ``session_id`` fails validation or resolves
+            outside the hooks directory.
+    """
+    hooks_dir = workdir / ".sdd" / "runtime" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    sidecar = _safe_child(hooks_dir, session_id, suffix=".jsonl")
+
+    record: dict[str, Any] = {
+        "ts": time.time(),
+        "event": HookEventType.GATE_DECISION.value,
+        "event_type": HookEventType.GATE_DECISION.value,
+        "gate_event": gate_event,
+        "blocked": blocked,
+        "reason": reason,
+        "receipt_task_id": receipt_task_id,
+    }
+    try:
+        with sidecar.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except OSError:
+        logger.debug("Failed to write gate decision for session %s", session_id)
+
+
 def write_stop_marker(session_id: str, workdir: Path) -> None:
     """Write a completion marker when a Stop hook fires.
 
@@ -314,6 +367,14 @@ def process_hook_event(event: HookEvent, workdir: Path) -> dict[str, str]:
         write_stop_marker(event.session_id, workdir)
         logger.info("Hook Stop received for session %s - completion marker written", event.session_id)
         return {"status": "ok", "action": "stop_marker_written"}
+
+    if event.event_type == HookEventType.GATE_DECISION:
+        logger.info(
+            "Hook GateDecision received for session %s: blocked=%s",
+            event.session_id,
+            event.payload.get("blocked"),
+        )
+        return {"status": "ok", "action": "gate_decision_logged"}
 
     if event.event_type == HookEventType.PRE_COMPACT:
         logger.info("Hook PreCompact received for session %s - context pressure detected", event.session_id)

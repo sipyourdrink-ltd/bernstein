@@ -127,3 +127,142 @@ def test_package_group_registered_under_skills() -> None:
 
     skills = cli.commands["skills"]
     assert "package" in skills.commands  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# update
+# ---------------------------------------------------------------------------
+
+
+def _install_from_source(workdir: Path, dest: Path, source: Path) -> None:
+    from bernstein.core.skills.packaging import install_packaged_skill
+
+    install_packaged_skill(
+        workdir=workdir,
+        dest=dest,
+        source=source,
+        hmac_key=_KEY,
+        install_id="agent-plugin-dest-dest",
+        timestamp=100,
+        host="dest",
+        scope="dest",
+    )
+
+
+def _make_skill(root: Path, body: str) -> Path:
+    src = root / f"src-{body}"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "SKILL.md").write_text(f"---\nname: bernstein-run\n---\n{body}\n", encoding="utf-8")
+    return src
+
+
+def test_update_supersedes_prior_install(tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    dest = tmp_path / "skills-dir" / PACKAGED_SKILL_NAME
+    _install_from_source(workdir, dest, _make_skill(tmp_path, "one"))
+
+    result = CliRunner().invoke(
+        package_group,
+        ["update", "--dest", str(dest), "--source", str(_make_skill(tmp_path, "two")), "--workdir", str(workdir)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "updated" in result.output
+    assert "two" in (dest / "SKILL.md").read_text(encoding="utf-8")
+
+    verify = CliRunner().invoke(
+        package_group,
+        ["verify", "--dest", str(dest), "--workdir", str(workdir)],
+    )
+    assert verify.exit_code == 0, verify.output
+
+
+def test_update_already_current_exits_0(tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    dest = tmp_path / "skills-dir" / PACKAGED_SKILL_NAME
+    src = _make_skill(tmp_path, "one")
+    _install_from_source(workdir, dest, src)
+
+    result = CliRunner().invoke(
+        package_group,
+        ["update", "--dest", str(dest), "--source", str(src), "--workdir", str(workdir)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "already current" in result.output
+
+
+def test_update_unattested_tree_errors(tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    dest = tmp_path / "skills-dir" / PACKAGED_SKILL_NAME
+    dest.mkdir(parents=True)
+    (dest / "SKILL.md").write_text("handmade\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        package_group,
+        ["update", "--dest", str(dest), "--source", str(_make_skill(tmp_path, "two")), "--workdir", str(workdir)],
+    )
+    assert result.exit_code == 1
+    assert "attested" in result.output
+
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+
+def test_status_reports_verified_install(tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    result = CliRunner().invoke(
+        package_group,
+        ["install", "--host", "claude", "--scope", "project", "--workdir", str(workdir)],
+    )
+    assert result.exit_code == 0, result.output
+
+    status = CliRunner().invoke(
+        package_group,
+        ["status", "--workdir", str(workdir), "--home", str(tmp_path / "home")],
+    )
+    assert status.exit_code == 0, status.output
+    assert "claude" in status.output
+    assert "OK" in status.output
+
+
+def test_status_flags_tampered_install_with_exit_2(tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    CliRunner().invoke(
+        package_group,
+        ["install", "--host", "claude", "--scope", "project", "--workdir", str(workdir)],
+    )
+    dest = workdir / ".claude" / "skills" / PACKAGED_SKILL_NAME
+    (dest / "SKILL.md").write_text("tampered\n", encoding="utf-8")
+
+    status = CliRunner().invoke(
+        package_group,
+        ["status", "--workdir", str(workdir), "--home", str(tmp_path / "home")],
+    )
+    assert status.exit_code == 2, status.output
+
+
+def test_status_json_lists_installs(tmp_path: Path) -> None:
+    import json
+
+    workdir = _workdir(tmp_path)
+    CliRunner().invoke(
+        package_group,
+        ["install", "--host", "claude", "--scope", "project", "--workdir", str(workdir)],
+    )
+    status = CliRunner().invoke(
+        package_group,
+        ["status", "--json", "--workdir", str(workdir), "--home", str(tmp_path / "home")],
+    )
+    assert status.exit_code == 0, status.output
+    payload = json.loads(status.output)
+    assert any(row["host"] == "claude" and row["verified"] for row in payload["installs"])
+
+
+def test_status_no_installs_exits_0(tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    status = CliRunner().invoke(
+        package_group,
+        ["status", "--workdir", str(workdir), "--home", str(tmp_path / "home")],
+    )
+    assert status.exit_code == 0, status.output

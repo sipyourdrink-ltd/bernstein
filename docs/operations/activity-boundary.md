@@ -81,15 +81,25 @@ A tampered journal entry or a divergent stored blob makes the reconstruction
 diverge, and `verify` exits 2. Exit 0 is a clean verify; exit 1 means the run or
 its activity entries were not found.
 
-## Modalities shipped and deferred
+## Modalities
 
-- **Research** and **browser/computer-use** ship end to end: research
-  content-addresses every fetched page at fetch time; browser records one
-  observation hash per decision step. Both anchor identically to a coding spawn.
-- **Data** and **ops** (deterministic-plan vs side-effecting split, signed
-  input/output artifacts) build on the same substrate -- their side-effecting
-  steps are observations over signed input/output artifacts dispatched through
-  the identical boundary -- and are documented follow-ups.
+- **Research** and **browser/computer-use**: research content-addresses every
+  fetched page at fetch time; browser records one observation hash per decision
+  step. Both anchor identically to a coding spawn.
+- **Data** and **ops**: a world-changing modality adds two guarantees on top of
+  the same substrate.
+  - **Deterministic-plan vs side-effecting split.** The activity records signed
+    inputs, then derives a plan whose `plan_hash` is a byte-identical projection
+    of those inputs and the declared steps, then records signed outputs. A side
+    effect before a plan (or a new input after one) is refused, so the plan is
+    provably the projection the effects were computed from.
+  - **Signed input/output artifacts.** Every input and output is content-addressed
+    and Ed25519-signed with the install key, bound into a `DataOpsReceipt` that is
+    the activity's `artifact`. The receipt's canonical bytes hash to the anchored
+    `artifact_hash` and are stored content-addressed, so `bernstein activity verify`
+    reattaches the receipt offline and re-verifies the plan projection and every
+    signature -- not just the evidence bytes. Strip the store or the journal and
+    the receipt stops verifying, not merely stops logging.
 
 ## See also
 

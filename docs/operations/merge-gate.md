@@ -107,6 +107,62 @@ Note that `pre-merge-autosync` is intentionally NOT in the required-check list. 
 3. Trigger the nightly sweep manually via `gh workflow run nightly-drift-sweep.yml`. Confirm it either no-ops (no drift) or opens a sweep PR labelled `automated`.
 4. Queue two PRs via auto-merge. Confirm GitHub batches them into a single merge-group CI run via the new `merge_group:` trigger.
 
+## Windows-lane promotion (prepared, not yet flipped)
+
+The `Test (windows-latest, ...)` matrix cells run today with
+`continue-on-error: true` on the Windows-only test step in `ci.yml`, so the
+lane is advisory: it reports but never blocks a merge. Acceptance criterion
+3 of the Windows-parity work asks for this lane to become a required check.
+Promotion is a deliberate, reversible operator action that must FOLLOW a
+green streak, not precede it. This section documents the readiness gate and
+the exact steps so the flip is a checklist, not a judgement call.
+
+### Readiness gate (all must hold before flipping)
+
+| Gate | How to check | Why it matters |
+|---|---|---|
+| Platform-reason skips are individually justified | `git grep -nE "skipif.*(win32|IS_WINDOWS|os.name)" tests/` - every remaining marker carries an in-code reason that needs a real POSIX kernel (signal delivery, `chmod 0o000`, `setrlimit`, `shlex`) | A required lane that still skips silently is a gate with holes |
+| Windows lane green for N consecutive main pushes | Inspect the last N `Test (windows-latest, *)` runs on main (recommend N >= 10) | Promotion before a green streak just moves the trunk into a known-red state |
+| No `continue-on-error` masking a real failure | Read the Windows step logs for `##[error]` lines even while the step is green | `continue-on-error` turns a red step green; confirm green means green |
+| Conformance stop/restart passes on Windows | `Test (windows-latest, *)` includes the adapter conformance + reap-receipt suites | AC 2 (stop/restart parity) is the substance of the lane |
+
+### Flip procedure (operator, after the gate holds)
+
+1. Remove the mask on the Windows test step in `.github/workflows/ci.yml`:
+
+   ```yaml
+   - name: Run isolated test suite (Windows)
+     if: runner.os == 'Windows'
+     # DELETE the next line to make the lane blocking:
+     # continue-on-error: true
+     shell: pwsh
+     ...
+   ```
+
+   The same edit applies to the Windows conformance / integration steps in
+   the same job that still carry `continue-on-error: true`.
+
+2. Confirm the Windows contexts are already in the required-check list
+   (they are listed in section 3 above:
+   `Test (windows-latest, Python 3.13)`). If the shard fan-out changed the
+   context name, update section 3 to match the literal job name GitHub
+   reports, or branch protection will wait forever on a context that never
+   arrives.
+
+3. Land the `continue-on-error` removal on main via the normal PR flow and
+   watch one full Windows lane run go green as a *blocking* check.
+
+### Rollback
+
+If the promoted lane starts flapping, restore `continue-on-error: true` on
+the Windows step (single-line revert) and open an issue with the failing
+run URL. Rollback is intentionally a one-line change so a flaky Windows
+runner never wedges the merge queue for the whole team.
+
+> This PR does NOT flip the lane. It documents the gate and the procedure
+> only; the `continue-on-error: true` mask stays in place until the
+> readiness gate above holds on a real Windows runner.
+
 ## Per-PR escape hatches
 
 | Condition | Mechanism |

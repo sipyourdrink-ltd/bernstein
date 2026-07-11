@@ -84,10 +84,14 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "governance",
         # Content-addressed verification evidence bundles (issue #2362)
         "evidence",
+        # In-process verification gate driven by worker hooks (issue #2360)
+        "hook-gate",
         # Durable work ledger: resumable task-graph state (issue #2358)
         "ledger",
         # Detached run service: submit, disconnect, reattach later (issue #2352)
         "run-service",
+        # Tournament runs: parallel attempts selected by deterministic evaluators (issue #2353)
+        "tournament",
         # Auth
         "auth",
         "login",
@@ -209,6 +213,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "wiki",
         # Install-rev fingerprint operator helpers
         "identity",
+        # SPIFFE-compatible workload identity helpers (issue #2363)
+        "spiffe",
         # Delegation-receipt verification (principal->orchestrator->sub-agent)
         "delegation",
         # Per-role adapter allow/deny-list inspection (role-adapter-policy group)

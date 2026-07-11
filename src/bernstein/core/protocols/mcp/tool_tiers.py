@@ -56,6 +56,7 @@ TOOL_TIERS: Final[dict[str, ToolTier]] = {
     "bernstein_run": "core",
     "bernstein_status": "core",
     "bernstein_tasks": "core",
+    "bernstein_task_handle": "core",
     # standard - the typical session: cost, mutation, and skill tools.
     "bernstein_cost": "standard",
     "bernstein_stop": "standard",

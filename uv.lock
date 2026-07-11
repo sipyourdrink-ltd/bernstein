@@ -413,6 +413,9 @@ slack = [
     { name = "aiohttp" },
     { name = "slack-sdk" },
 ]
+spiffe = [
+    { name = "spiffe" },
+]
 telegram = [
     { name = "python-telegram-bot" },
 ]
@@ -517,6 +520,7 @@ requires-dist = [
     { name = "setproctitle", specifier = ">=1.3" },
     { name = "signxml", specifier = ">=4.0" },
     { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3.27" },
+    { name = "spiffe", marker = "extra == 'spiffe'", specifier = ">=0.2" },
     { name = "sse-starlette", marker = "extra == 'gui'", specifier = ">=2.1.0" },
     { name = "starlette", specifier = ">=1.0.1" },
     { name = "syrupy", marker = "extra == 'dev'", specifier = ">=4.6" },
@@ -526,7 +530,7 @@ requires-dist = [
     { name = "watchdog", specifier = ">=4.0" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["dev", "grpc", "k8s", "ml", "graphics", "openai", "docker", "e2b", "modal", "s3", "gcs", "azure", "r2", "telegram", "slack", "discord", "eval", "gui", "otel", "observability"]
+provides-extras = ["dev", "grpc", "k8s", "spiffe", "ml", "graphics", "openai", "docker", "e2b", "modal", "s3", "gcs", "azure", "r2", "telegram", "slack", "discord", "eval", "gui", "otel", "observability"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2919,6 +2923,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pem"
+version = "23.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/86/16c0b6789816f8d53f2f208b5a090c9197da8a6dae4d490554bb1bedbb09/pem-23.1.0.tar.gz", hash = "sha256:06503ff2441a111f853ce4e8b9eb9d5fedb488ebdbf560115d3dd53a1b4afc73", size = 43796, upload-time = "2023-06-21T10:24:40.539Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/97/8299a481ae6c08494b5d53511e6a4746775d8a354c685c69d8796b2ed482/pem-23.1.0-py3-none-any.whl", hash = "sha256:78bbb1e75b737891350cb9499cbba31da5d59545f360f44163c0bc751cad55d3", size = 9195, upload-time = "2023-06-21T10:24:39.164Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4245,6 +4258,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594, upload-time = "2021-05-16T22:03:42.897Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575, upload-time = "2021-05-16T22:03:41.177Z" },
+]
+
+[[package]]
+name = "spiffe"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "grpcio" },
+    { name = "pem" },
+    { name = "protobuf" },
+    { name = "pyasn1" },
+    { name = "pyasn1-modules" },
+    { name = "pyjwt", extra = ["crypto"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/de/cae9d72f760ebc8955382e5f177ad05c39cd2c4e61e78b3f01823f136daa/spiffe-0.3.0.tar.gz", hash = "sha256:b3626ddbb6c4af582f47795d25e4a12c91ede8f3420111b2048be86c3ed6a5b5", size = 40959, upload-time = "2026-06-15T15:21:59.39Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/7a/a8493b3adb864e5e9d16683f77a0f9c8197cc9e97d61c4ce2c78d7a8cc78/spiffe-0.3.0-py3-none-any.whl", hash = "sha256:71f212e36e42ca02542a59df8955e323b2281a2cb9bb68f42e7e5ec1abfd868f", size = 59168, upload-time = "2026-06-15T15:21:58.495Z" },
 ]
 
 [[package]]

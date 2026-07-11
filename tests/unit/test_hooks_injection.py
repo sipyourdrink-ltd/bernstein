@@ -189,3 +189,36 @@ class TestEmbeddedAgentTeamsPin:
 
         assert data["env"]["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] == "false"
         assert data["env"]["MY_UNRELATED_VAR"] == "keep-me"
+
+
+# ---------------------------------------------------------------------------
+# In-process verification-gate hook merge (issue #2360)
+# ---------------------------------------------------------------------------
+
+
+class TestGateHookMerge:
+    """A gate policy installed for a session adds blocking gate hooks."""
+
+    def test_no_policy_leaves_events_unchanged(self, tmp_path: Path) -> None:
+        ClaudeCodeAdapter._inject_hooks_config(tmp_path, "sess-nogate")
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
+        # No PreToolUse hook is injected absent a policy (degrade, AC4).
+        assert "PreToolUse" not in data["hooks"]
+        assert len(data["hooks"]["Stop"]) == 1
+
+    def test_policy_present_injects_gate_hooks(self, tmp_path: Path) -> None:
+        from bernstein.core.security.hook_gate import policy_from_task_fields, write_policy
+
+        policy = policy_from_task_fields("sess-gate", owned_files=["src/**"], evidence_producers=[])
+        write_policy(tmp_path, "sess-gate", policy)
+
+        ClaudeCodeAdapter._inject_hooks_config(tmp_path, "sess-gate")
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
+
+        assert "PreToolUse" in data["hooks"]
+        pre_cmd = data["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        assert "hook-gate" in pre_cmd
+        assert "sess-gate" in pre_cmd
+        # The Stop event now carries both the HTTP monitor hook and the gate.
+        stop_cmds = [h["command"] for entry in data["hooks"]["Stop"] for h in entry["hooks"]]
+        assert any("hook-gate" in c for c in stop_cmds)

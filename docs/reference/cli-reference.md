@@ -170,6 +170,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 |---|---|---|
 | `bernstein plan` | Show the task backlog. | `cli/commands/task_cmd.py:454` |
 | `bernstein plan generate "<goal>"` | Generate a plan YAML. | `cli/plan_generate_cmd.py` |
+| `bernstein plan compile SPEC` | Compile a spec into a gated task graph with requirement-hash lineage. | `cli/plan_compile_cmd.py` |
 | `bernstein plan ls` | List archived plans. | `cli/plan_archive_cmd.py:plan_ls` |
 | `bernstein plan show NAME` | Show a stored plan. | `cli/plan_archive_cmd.py:plan_show` |
 | `bernstein add-task TITLE` | Create a task on the running server. | `cli/commands/task_cmd.py:37` |
@@ -202,6 +203,28 @@ The graph view shows the critical path in bold yellow with a star (`★`) and li
 | `GOAL` | required | Goal description (positional). |
 | `--out FILE` | `plan.yaml` | Output path. |
 | `--model NAME` | auto | Model used to draft the plan. |
+
+#### `bernstein plan compile`
+
+Compile a requirements document into a gated task graph. A three-stage
+pipeline with at most one model call: draft (structured requirement
+extraction), approve (the requirement-set hash is bound into the audit
+chain), and compile (a deterministic, model-free transformation to a task
+graph). Each task node carries the content hashes of the requirement lines it
+implements, so every artefact traces back to spec lines through lineage.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `SPEC` | required | Spec / requirements document (positional). |
+| `--name NAME` | spec stem | Plan name and output slug under `.sdd/spec/`. |
+| `--approve` | off | Record an approval receipt for the requirement set into the audit chain. |
+| `--json` | off | Emit a JSON summary instead of a table. |
+
+Artefacts are written to `.sdd/spec/<name>/` (`requirements.json`,
+`graph.json`, and, with `--approve`, `receipt.json`). The same approved
+requirement set always compiles to a byte-identical graph, so `graph_hash` is
+reproducible; editing one requirement re-plans only the affected node while
+every other node keeps its content-addressed identity.
 
 #### `bernstein add-task`
 
@@ -824,6 +847,8 @@ bernstein reject-tool  <request_id>
 |---|---|---|
 | `bernstein cost` | Spend breakdown by model / task. | `cli/commands/cost.py:540` |
 | `bernstein cost profile-report` | Content-addressed per-profile cost report, appended to the audit chain. | `cli/commands/cost.py` |
+| `bernstein cost policy preflight` | Surface pool exhaustion before a run starts; exits non-zero when a capped pool is (or would be) exhausted. | `cli/commands/cost.py` |
+| `bernstein cost policy verify DECISION_HASH` | Verify a sealed dispatch receipt offline against the lineage spine. | `cli/commands/cost.py` |
 | `bernstein estimate` | Estimate cost before running. | `cli/commands/cost.py:388` |
 
 #### `bernstein cost`
@@ -863,6 +888,32 @@ states "insufficient comparable runs".
 | `--scope {small\|medium\|large}` | none | Task scope. |
 | `--complexity {low\|medium\|high}` | none | Task complexity. |
 | `--metrics-dir DIR` | `.sdd/metrics` | Directory containing historical metrics. |
+
+#### `bernstein cost policy preflight`
+
+Cost-aware scheduling (issue #2354). Projects the spend ledger into named
+pools, compares each against its configured cap plus the planned run spend, and
+exits non-zero when any capped pool is (or would be) exhausted -- so pool
+exhaustion stops a run at the gate, not halfway through. Also reports the
+shipped price-table staleness advisory.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--ledger PATH` | `.sdd/cost/ledger.jsonl` | Rolling spend ledger to project. |
+| `--config PATH` | `bernstein.yaml` | Config holding `cost_policy.pools` caps. |
+| `--plan SPEC` | none | Planned per-pool spend, e.g. `api=2.50,subscription=0`. |
+| `--json` | off | Emit JSON. |
+
+#### `bernstein cost policy verify DECISION_HASH`
+
+Re-derives the decision hash from the stored dispatch receipt (catching a
+forged admit / zeroed overrun) and re-checks the lineage-spine anchor. A
+receipt that no longer recomputes fails exactly like a tampered chain entry.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir DIR` | `.` | Project root holding `.sdd/cost/dispatch` receipts and `.sdd/lineage`. |
+| `--json` | off | Emit JSON. |
 
 ---
 
@@ -1362,10 +1413,45 @@ content address with no receipt, so the verdict is structural.
 
 Exit codes: `0` verified, `1` missing directory, `2` attestation failure.
 
+#### `bernstein skills package update`
+
+Supersedes a previously attested install with new content. Unlike
+`install --force` (which overwrites and anchors an independent install
+receipt), `update` binds the *prior* content address to the new one: the
+update receipt is content-addressed by the new tree, anchored in the same
+`skills` lineage spine, and mirrored into the HMAC chain as a
+`plugin.update_receipt` event. A verifier walks the update receipts newest
+to oldest and lands on the root install, so the supersession history of an
+installed tree is reconstructable offline. A tree that was never anchored
+is refused (run `install` first).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--host NAME` | - | Target host; selects the host's default skills directory. |
+| `--scope project\|user` | `project` | Update under the project root or the home directory. |
+| `--dest DIR` | - | Explicit installed directory (overrides `--host`/`--scope`). |
+| `--source DIR` | bundled skill | Tree to update to. |
+| `--workdir DIR` | `.` | Project root where the receipt is anchored. |
+
+Exit codes: `0` updated or already current, `1` error (missing or
+unattested install).
+
+#### `bernstein skills package status`
+
+Scans the default skill directory for each supported host and scope,
+re-hashes any present tree, and proves it against its anchored install or
+update receipt. `--json` emits the per-install verdicts as JSON; `--home`
+overrides the home directory for user-scoped destinations.
+
+Exit codes: `0` every present install verifies (or none present), `2` at
+least one present install failed verification.
+
 ```bash
 bernstein skills package install --host claude --scope project
 bernstein skills package install --dest ~/.claude/plugins/bernstein --record-only
 bernstein skills package verify --host claude --scope project
+bernstein skills package update --host claude --scope project
+bernstein skills package status
 ```
 
 See [Agent sessions](../integrations/agent-session.md) for the skill
@@ -1412,3 +1498,94 @@ configured. There is no silent open mode on a routable interface. Use the
 token as `Authorization: Bearer <token>` or in the dashboard login form
 (`POST /dashboard/auth/login`); the session cookie inherits exactly the
 token's principal and scope.
+
+## SPIFFE workload identity: `bernstein spiffe`
+
+Infrastructure teams standardizing on [SPIFFE](https://spiffe.io/) workload
+identity can consume Bernstein workloads directly. The Ed25519 install identity
+and each agent card map onto a deterministic SPIFFE ID; when a SPIRE agent is
+present (optional `bernstein[spiffe]` extra) its X.509-SVID is bound to a card
+by a receipt anchored in the HMAC audit chain. The self-contained Ed25519 path
+stays the default with the extra absent.
+
+SPIFFE ID scheme (deterministic):
+
+```
+spiffe://<trust-domain>/bernstein/<install>/<agent>
+```
+
+- `<trust-domain>`: operator SPIFFE trust domain (validated, lowercase DNS-like).
+- `<install>`: 16-hex fingerprint of the install public key (SHA-256 prefix).
+- `<agent>`: the agent card id.
+
+Two operators deriving the id for the same install and agent obtain the same
+string, and a verifier re-derives it later to check a card-to-SVID binding.
+
+| Subcommand | Purpose |
+|---|---|
+| `id --install-key PEM --agent ID --trust-domain TD` | Derive and print the SPIFFE ID offline (pure, no network). |
+| `verify-binding BINDING.json --install-key PEM --trust-domain TD [--audit-dir DIR]` | Re-derive the id from the install key and verify a card-to-SVID binding; with `--audit-dir`, also check it against its chained `spiffe.svid_binding` receipt. |
+
+```bash
+bernstein spiffe id \
+    --install-key .bernstein/keys/agent-card.ed25519.pub \
+    --agent backend-1 --trust-domain example.org
+# -> spiffe://example.org/bernstein/<install>/backend-1
+
+bernstein spiffe verify-binding binding.json \
+    --install-key .bernstein/keys/agent-card.ed25519.pub \
+    --trust-domain example.org --audit-dir .sdd/audit
+# -> valid (chain-anchored)
+```
+
+The card-to-SVID binding is the receipt: `bind_svid_to_card` records a
+`spiffe.svid_binding` event pinning the binding content hash, the derived
+SPIFFE ID, the install fingerprint, the card hash, and the leaf SVID content
+address -- never the SVID private key. A post-hoc tamper to the binding fails
+`verify-binding` because its recomputed content hash no longer matches the
+chained receipt. SVID material also projects onto the cluster mTLS config, so
+the task server enforces mutual TLS through its existing uvicorn `--ssl` path.
+See [SPIFFE workload identity](spiffe-workload-identity.md) for an example
+SPIRE configuration and threat-model notes.
+
+## In-process verification gate: `bernstein hook-gate`
+
+A gate-capable adapter (Claude Code) wires its worker's `PreToolUse` and `Stop`
+hooks to `bernstein hook-gate check`. The command reads the hook event JSON on
+stdin, loads the task's persisted policy (`.sdd/runtime/hook_gate/<session>.json`,
+written at spawn from the task's `owned_files` and required `evidence_producers`),
+and enforces it in-session:
+
+| Event | Behaviour |
+| --- | --- |
+| `PreToolUse` | A write whose target is outside the task's path allowlist is refused; the refusal is sealed as a gate receipt and the command exits `2` so the tool call never runs. Realpath containment refuses a `..` traversal or an in-scope symlink that resolves outside the worktree. |
+| `Stop` | The task's required verification producers run in-session; the attempt is sealed as a proof-of-done receipt and the command exits `2` when a required check failed, so the worker cannot end its turn on red. |
+
+```bash
+# Invoked by the worker's hook runner, not by hand:
+bernstein hook-gate check --session <id> --event PreToolUse < event.json
+bernstein hook-gate check --session <id> --event Stop < event.json
+```
+
+Trust model: the in-process gate is defence in depth and a cost optimisation.
+The scheduler-side evidence gate stays authoritative and runs regardless. A gate
+receipt IS an evidence bundle (`bernstein evidence show` / `verify`,
+`bernstein audit verify`), so a verifier cannot tell from the schema whether the
+gate fired in-process or scheduler-side. An adapter with no blocking hook surface
+injects no gate hooks and degrades to the scheduler-side gate with no policy
+weakening.
+
+## `bernstein tournament`
+
+Tournament runs: parallel attempts selected by deterministic evaluators (#2353).
+
+| Command | Description | Source |
+| --- | --- | --- |
+| `bernstein tournament show <task>` | Render the tournament selection receipt for a task: the winner, the attempt count, the evaluators and tie-break, the spine anchor, and a per-attempt table (rank, attempt hash, score, `chosen`/`sibling` edge). `-w/--workdir` sets the project root. Exit 0 when a receipt exists, 1 when there is none. | `cli/commands/tournament_cmd.py` |
+| `bernstein tournament verify <task>` | Recompute a task's tournament selection offline: replay the deterministic scorer over the recorded evaluator outputs, check exactly one chosen edge over the recorded attempts, verify the Ed25519 signature over the canonical binding, verify the tournament lineage spine, and re-anchor the receipt. A tampered score or a hand-picked winner diverges from the replay and fails. Exit 0 verified, 1 no receipt, 2 mismatch. `bernstein audit verify` runs the same check across every receipt. | `cli/commands/tournament_cmd.py` |
+
+Selection is a pure function of the evaluator outputs (test pass rate, lint
+status, coverage delta, mutation score, arbitrary commands) with a stable
+attempt-hash tie-break, so replaying the run reproduces the identical decision.
+Fan-out is gated on the task's existing per-ticket budget ceiling and aborts
+with a clear error before spawning when projected spend would breach the cap.
