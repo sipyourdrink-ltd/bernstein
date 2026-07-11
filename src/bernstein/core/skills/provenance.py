@@ -61,6 +61,10 @@ _INSTALL_MODEL = "none"
 
 _RECEIPT_SUBPATH = (".sdd", "skills", "receipts")
 _USAGE_SUBPATH = (".sdd", "skills", "usage")
+_UPDATE_SUBPATH = (".sdd", "skills", "updates")
+
+#: Actor recorded on update-receipt spine entries.
+_UPDATE_ACTOR = "bernstein.skill_provenance.update"
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +94,17 @@ def receipt_path(workdir: Path, skill_hash: str) -> Path:
 def usage_index_path(workdir: Path, skill_hash: str) -> Path:
     """Return the usage-index JSONL path for ``skill_hash``."""
     return workdir.joinpath(*_USAGE_SUBPATH, f"{_safe_hash_name(skill_hash)}.jsonl")
+
+
+def update_receipt_path(workdir: Path, skill_hash: str) -> Path:
+    """Return the on-disk update-receipt path for the *new* ``skill_hash``.
+
+    Update receipts are keyed by the content address they *produced*, so the
+    content address recomputed from an installed tree selects exactly the
+    receipt that attests it - the same content-addressed lookup the install
+    receipt uses.
+    """
+    return workdir.joinpath(*_UPDATE_SUBPATH, f"{_safe_hash_name(skill_hash)}.json")
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +150,66 @@ class InstallReceipt:
         """Parse a receipt from its canonical JSON bytes."""
         row = json.loads(raw)
         return cls(
+            skill_hash=str(row["skill_hash"]),
+            manifest_hash=str(row["manifest_hash"]),
+            install_id=str(row["install_id"]),
+            timestamp=int(row["timestamp"]),
+        )
+
+
+# ---------------------------------------------------------------------------
+# UpdateReceipt (#2369 tail)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class UpdateReceipt:
+    """The attestable record produced when an install is superseded.
+
+    An update rewrites an already-attested installed tree. The receipt binds
+    the prior content address to the new one, so the supersession is itself a
+    content-addressed, chain-anchored fact rather than an untracked overwrite.
+    Strip the spine and it is just a file; anchored, it is a link a verifier
+    can walk from the current tree back to the root install.
+
+    Attributes:
+        prior_skill_hash: Content address of the tree being superseded
+            (``sha256:<hex>``).
+        skill_hash: Content address of the new installed tree.
+        manifest_hash: SHA-256 of the new installed manifest file.
+        install_id: Per-install identifier tying this receipt to the install
+            lineage and the audit event.
+        timestamp: Integer timestamp; caller-chosen but stable so identical
+            fixtures anchor byte-identically.
+    """
+
+    prior_skill_hash: str
+    skill_hash: str
+    manifest_hash: str
+    install_id: str
+    timestamp: int
+
+    def to_canonical_bytes(self) -> bytes:
+        """Serialise to canonical JSON bytes (the spine-hashed artifact)."""
+        return json.dumps(
+            {
+                "prior_skill_hash": self.prior_skill_hash,
+                "skill_hash": self.skill_hash,
+                "manifest_hash": self.manifest_hash,
+                "install_id": self.install_id,
+                "timestamp": self.timestamp,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> UpdateReceipt:
+        """Parse an update receipt from its canonical JSON bytes."""
+        row = json.loads(raw)
+        return cls(
+            prior_skill_hash=str(row["prior_skill_hash"]),
             skill_hash=str(row["skill_hash"]),
             manifest_hash=str(row["manifest_hash"]),
             install_id=str(row["install_id"]),
@@ -228,6 +303,59 @@ def read_install_receipt(workdir: Path, skill_hash: str) -> InstallReceipt | Non
         return InstallReceipt.from_bytes(path.read_bytes())
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         logger.warning("skill provenance: malformed install receipt at %s", path)
+        return None
+
+
+def write_update_receipt(
+    *,
+    workdir: Path,
+    lineage_root: Path,
+    hmac_key: bytes,
+    receipt: UpdateReceipt,
+) -> str:
+    """Write ``receipt`` to disk and anchor it in the install spine.
+
+    The update receipt is anchored in the same dedicated install run
+    (``run_id="skills"``) as install receipts, so one Merkle-chained spine
+    carries the full install-and-update history. The returned value is the
+    spine entry hash over the receipt's canonical bytes.
+
+    Args:
+        workdir: Project root; the receipt file lands under
+            ``.sdd/skills/updates/``.
+        lineage_root: Spine root (``.sdd/lineage``).
+        hmac_key: The audit-chain HMAC key that tags spine entries.
+        receipt: The update receipt to record.
+
+    Returns:
+        The spine entry hash anchoring the receipt.
+    """
+    payload = receipt.to_canonical_bytes()
+    path = update_receipt_path(workdir, receipt.skill_hash)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+
+    spine = LineageSpine(lineage_root, run_id=INSTALL_RUN_ID, hmac_key=hmac_key)
+    artifact_path = "/".join((*_UPDATE_SUBPATH, f"{_safe_hash_name(receipt.skill_hash)}.json"))
+    return spine.record(
+        artifact_path=artifact_path,
+        content=payload,
+        actor=_UPDATE_ACTOR,
+        step_id=receipt.install_id,
+        model=_INSTALL_MODEL,
+        timestamp=receipt.timestamp,
+    )
+
+
+def read_update_receipt(workdir: Path, skill_hash: str) -> UpdateReceipt | None:
+    """Return the update receipt keyed by the new ``skill_hash`` or ``None``."""
+    path = update_receipt_path(workdir, skill_hash)
+    if not path.is_file():
+        return None
+    try:
+        return UpdateReceipt.from_bytes(path.read_bytes())
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        logger.warning("skill provenance: malformed update receipt at %s", path)
         return None
 
 
@@ -460,13 +588,17 @@ __all__ = [
     "InstallVerifyResult",
     "ProvenanceGraph",
     "RunProvenance",
+    "UpdateReceipt",
     "UsageLink",
     "iter_usage_links",
     "provenance_graph",
     "read_install_receipt",
+    "read_update_receipt",
     "receipt_path",
     "record_usage",
+    "update_receipt_path",
     "usage_index_path",
     "verify_install",
     "write_install_receipt",
+    "write_update_receipt",
 ]

@@ -143,6 +143,54 @@ error:
 `isError` is not set: a cancel is a client-initiated stop, not a tool failure.
 Cancelling an unknown or already-settled id is a no-op.
 
+## Driving long-running runs from an MCP host (Tasks extension)
+
+A run started over MCP can outlive a single call. Rather than hold a session
+open for the whole run, a host drives it with a **verifiable run handle** it
+polls (MCP Tasks extension, pinned revision `2026-07-28`). The handle is not
+free-standing server state: its status is a pure projection of the run
+journal, and it embeds the run's audit-chain head so the host can later prove
+the task it watched corresponds to the audited run.
+
+1. Start a run with `bernstein_run`; note the returned `task_id` (the run id).
+2. Poll `bernstein_task_handle` with that run id. The tool reprojects the
+   handle from the on-disk run journal and the audit-chain head, so any server
+   instance answers identically and the host holds no session:
+
+   ```json
+   {
+     "taskId": "run-2364",
+     "runId": "run-2364",
+     "status": "completed",
+     "journalHead": "<merkle head of the run journal>",
+     "chainHead": "<audit-chain head embedded at projection time>",
+     "specRevision": "2026-07-28",
+     "receiptHash": "<content-addressed digest of this handle>",
+     "pollToken": "<opaque base64; carries only the run identity>"
+   }
+   ```
+
+   `status` is one of `working`, `input_required`, `completed`, `failed`,
+   `cancelled`. A host without Tasks support polls on an interval (the polling
+   fallback); a host with Tasks support reads the same fields from the task.
+
+3. When the run reaches a terminal status, the handle's embedded `chainHead`
+   verifies against the completed run's audit chain with `bernstein audit
+   verify` (or the offline verifier
+   `bernstein.core.protocols.mcp.tasks_extension.verify_handle_chain_head`).
+   Because `receiptHash` is a deterministic digest over the projected status,
+   the journal head, and the chain head, a forged progress claim fails
+   verification: the handle *is* the proof, not a view onto it.
+
+### Connecting a host trace to the run's artefacts
+
+W3C Trace Context arriving in a request `_meta` (`traceparent` / `tracestate`
+/ `baggage`) is ingested and recorded into the lineage of the artefacts the
+run produces, so a trace from the calling host connects to the run's outputs.
+The ingested `traceparent` is carried as the lineage entry's `step_id`
+cross-link; a verifier holding the lineage spine reads the host trace off the
+artefact's provenance row.
+
 ## Worked example: pointing a host at the server
 
 1. Start the server over the streamable HTTP transport on loopback:

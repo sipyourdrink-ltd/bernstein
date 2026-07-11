@@ -301,6 +301,7 @@ nav:
       - Lineage v2: operations/lineage-v2.md
       - GitLab integration: operations/gitlab.md
       - Cost optimization: operations/cost-optimization.md
+      - Cost-aware scheduling: operations/cost-aware-scheduling.md
       - Performance tuning: operations/performance-tuning.md
       - Autofix daemon: operations/autofix.md
       - Merge queue: operations/merge-queue.md
@@ -331,6 +332,7 @@ nav:
       - MCP catalog: reference/mcp-catalog.md
       - MCP tool tiers: mcp/tool_tiers.md
       - Local endpoints: reference/local-endpoints.md
+      - SPIFFE workload identity: reference/spiffe-workload-identity.md
       - API reference: reference/openapi-reference.md
       - ACP bridge: reference/acp-bridge.md
       - Feature matrix: reference/FEATURE_MATRIX.md

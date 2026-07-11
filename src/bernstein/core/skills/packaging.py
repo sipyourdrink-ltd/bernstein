@@ -38,8 +38,12 @@ from pathlib import Path
 from bernstein.core.skills.provenance import (
     InstallReceipt,
     InstallVerifyResult,
+    UpdateReceipt,
+    read_install_receipt,
+    read_update_receipt,
     verify_install,
     write_install_receipt,
+    write_update_receipt,
 )
 
 logger = logging.getLogger(__name__)
@@ -385,6 +389,292 @@ def _record_chain_event(
 
 
 # ---------------------------------------------------------------------------
+# Receipt-backed update path (#2369 tail)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PackagedUpdateOutcome:
+    """Result of one receipt-backed packaged update."""
+
+    dest: Path
+    prior_skill_hash: str
+    skill_hash: str
+    manifest_hash: str
+    manifest_path: str
+    install_id: str
+    spine_anchor: str
+    changed: bool
+
+
+def _attested_prior(workdir: Path, prior_hash: str) -> bool:
+    """Return True when *prior_hash* resolves to an install or update receipt.
+
+    An update must chain onto a tree we previously anchored, so a
+    hand-placed or otherwise unattested tree is refused: it has no root the
+    supersession could be verified back to.
+    """
+    return read_install_receipt(workdir, prior_hash) is not None or read_update_receipt(workdir, prior_hash) is not None
+
+
+def update_packaged_install(
+    *,
+    workdir: Path,
+    dest: Path,
+    hmac_key: bytes,
+    install_id: str,
+    timestamp: int,
+    source: Path | None = None,
+    host: str = "dest",
+    scope: str = "dest",
+) -> PackagedUpdateOutcome:
+    """Supersede a previously attested install at *dest* with new content.
+
+    Unlike ``install_packaged_skill(..., force=True)`` -- which overwrites and
+    anchors an independent install receipt -- an update binds the *prior*
+    content address to the new one. The update receipt is the artifact: it is
+    content-addressed by the new tree, anchored in the ``skills`` lineage
+    spine, and mirrored into the HMAC chain as a ``plugin.update_receipt``
+    event. Strip the chain and the update is an untracked overwrite; anchored,
+    it is a link a verifier walks from the current tree back to the root
+    install.
+
+    Args:
+        workdir: Project root; receipts land under ``.sdd/skills/``.
+        dest: The installed tree to update in place.
+        hmac_key: Audit-chain HMAC key tagging spine and chain entries.
+        install_id: Per-update identifier recorded in the receipt.
+        timestamp: Integer timestamp recorded in the receipt.
+        source: Tree to install; defaults to the bundled skill.
+        host: Host label recorded in the audit event.
+        scope: Scope label recorded in the audit event.
+
+    Returns:
+        A :class:`PackagedUpdateOutcome`. ``changed`` is False (and no new
+        receipt is written) when the source already matches the installed
+        tree.
+
+    Raises:
+        PackagedInstallError: When *dest* is missing/empty or the tree there
+            is not attested by a prior install or update receipt.
+    """
+    if not dest.is_dir() or not any(dest.iterdir()):
+        raise PackagedInstallError(f"update requires an existing install at {dest}; run install first")
+
+    prior_hash = tree_content_hash(dest)
+    if not _attested_prior(workdir, prior_hash):
+        raise PackagedInstallError(
+            f"tree at {dest} is not attested ({prior_hash[:19]}...); "
+            "run install (or install --record-only) before update"
+        )
+
+    src = source if source is not None else packaged_skill_dir()
+    src_hash = tree_content_hash(src)
+    if src_hash == prior_hash:
+        manifest_path, manifest_hash = manifest_hash_for(dest)
+        return PackagedUpdateOutcome(
+            dest=dest,
+            prior_skill_hash=prior_hash,
+            skill_hash=prior_hash,
+            manifest_hash=manifest_hash,
+            manifest_path=manifest_path,
+            install_id=install_id,
+            spine_anchor="",
+            changed=False,
+        )
+
+    shutil.rmtree(dest)
+    _copy_tree(src, dest)
+    skill_hash = tree_content_hash(dest)
+    manifest_path, manifest_hash = manifest_hash_for(dest)
+
+    receipt = UpdateReceipt(
+        prior_skill_hash=prior_hash,
+        skill_hash=skill_hash,
+        manifest_hash=manifest_hash,
+        install_id=install_id,
+        timestamp=timestamp,
+    )
+    anchor = write_update_receipt(
+        workdir=workdir,
+        lineage_root=workdir / ".sdd" / "lineage",
+        hmac_key=hmac_key,
+        receipt=receipt,
+    )
+    _record_update_chain_event(
+        workdir=workdir,
+        hmac_key=hmac_key,
+        prior_skill_hash=prior_hash,
+        skill_hash=skill_hash,
+        manifest_hash=manifest_hash,
+        install_id=install_id,
+        spine_anchor=anchor,
+        host=host,
+        scope=scope,
+        dest=dest,
+    )
+    return PackagedUpdateOutcome(
+        dest=dest,
+        prior_skill_hash=prior_hash,
+        skill_hash=skill_hash,
+        manifest_hash=manifest_hash,
+        manifest_path=manifest_path,
+        install_id=install_id,
+        spine_anchor=anchor,
+        changed=True,
+    )
+
+
+def _record_update_chain_event(
+    *,
+    workdir: Path,
+    hmac_key: bytes,
+    prior_skill_hash: str,
+    skill_hash: str,
+    manifest_hash: str,
+    install_id: str,
+    spine_anchor: str,
+    host: str,
+    scope: str,
+    dest: Path,
+) -> None:
+    """Mirror the update receipt into the HMAC audit chain."""
+    from bernstein.core.security.audit_chain import (
+        AuditChainStore,
+        record_plugin_update_receipt,
+    )
+
+    chain = AuditChainStore(workdir / ".sdd" / "audit", key=hmac_key)
+    record_plugin_update_receipt(
+        chain=chain,
+        prior_skill_hash=prior_skill_hash,
+        skill_hash=skill_hash,
+        manifest_hash=manifest_hash,
+        install_id=install_id,
+        spine_anchor=spine_anchor,
+        host=host,
+        scope=scope,
+        dest=str(dest),
+    )
+
+
+@dataclass(frozen=True)
+class InstallChainLink:
+    """One node in a resolved install/update lineage.
+
+    ``is_install`` marks the root (an install receipt, ``prior_skill_hash``
+    None); every other link is an update carrying the prior content address.
+    """
+
+    skill_hash: str
+    prior_skill_hash: str | None
+    manifest_hash: str
+    install_id: str
+    timestamp: int
+    is_install: bool
+
+
+def resolve_install_chain(*, workdir: Path, skill_hash: str) -> list[InstallChainLink]:
+    """Walk the install/update lineage for *skill_hash*, newest to root.
+
+    Starting from a content address, follow update receipts back through
+    their ``prior_skill_hash`` links until an install receipt (the root) is
+    reached. The returned list is ordered newest-first and, for an intact
+    lineage, ends in a link with ``is_install`` True. A missing link stops
+    the walk (the lineage is broken); a cycle is guarded against.
+
+    Args:
+        workdir: Project root holding ``.sdd/skills/``.
+        skill_hash: The content address to resolve from.
+
+    Returns:
+        The ordered chain of :class:`InstallChainLink`. Empty when
+        *skill_hash* resolves to neither an update nor an install receipt.
+    """
+    chain: list[InstallChainLink] = []
+    seen: set[str] = set()
+    current: str | None = skill_hash
+    while current is not None and current not in seen:
+        seen.add(current)
+        update = read_update_receipt(workdir, current)
+        if update is not None:
+            chain.append(
+                InstallChainLink(
+                    skill_hash=update.skill_hash,
+                    prior_skill_hash=update.prior_skill_hash,
+                    manifest_hash=update.manifest_hash,
+                    install_id=update.install_id,
+                    timestamp=update.timestamp,
+                    is_install=False,
+                )
+            )
+            current = update.prior_skill_hash
+            continue
+        install = read_install_receipt(workdir, current)
+        if install is not None:
+            chain.append(
+                InstallChainLink(
+                    skill_hash=install.skill_hash,
+                    prior_skill_hash=None,
+                    manifest_hash=install.manifest_hash,
+                    install_id=install.install_id,
+                    timestamp=install.timestamp,
+                    is_install=True,
+                )
+            )
+        break
+    return chain
+
+
+# ---------------------------------------------------------------------------
+# Install discovery (status UX)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DiscoveredInstall:
+    """One candidate packaged-install location for the status surface."""
+
+    host: str
+    scope: str
+    dest: Path
+    exists: bool
+
+
+def discover_installs(
+    *,
+    workdir: Path,
+    home: Path | None = None,
+    hosts: tuple[str, ...] | None = None,
+) -> list[DiscoveredInstall]:
+    """Enumerate every default host/scope install destination.
+
+    For each supported host and both scopes, resolve the default skill
+    directory and record whether a tree is present. Callers verify each
+    present tree against its anchored receipt to render an install status
+    table. The scan is cwd-independent: *workdir* and *home* are the only
+    roots consulted.
+
+    Args:
+        workdir: Project root for ``project``-scoped destinations.
+        home: Home directory for ``user``-scoped destinations; defaults to
+            ``Path.home()``.
+        hosts: Host subset to enumerate; defaults to :func:`supported_hosts`.
+
+    Returns:
+        A list of :class:`DiscoveredInstall`, ordered by host then scope.
+    """
+    selected = hosts if hosts is not None else supported_hosts()
+    found: list[DiscoveredInstall] = []
+    for host in selected:
+        for scope in ("project", "user"):
+            parent = host_skill_parent(host, scope, workdir=workdir, home=home)
+            dest = parent / PACKAGED_SKILL_NAME
+            found.append(DiscoveredInstall(host=host, scope=scope, dest=dest, exists=dest.is_dir()))
+    return found
+
+
+# ---------------------------------------------------------------------------
 # Verify
 # ---------------------------------------------------------------------------
 
@@ -399,9 +689,13 @@ def verify_packaged_install(
 
     The tree at *dest* is re-hashed; the recomputed content address selects
     the receipt, and :func:`bernstein.core.skills.provenance.verify_install`
-    checks the install spine and the manifest hash. A tampered tree resolves
-    to a content address with no receipt - the tamper verdict is structural,
-    not a comparison an attacker can update.
+    checks the install spine and the manifest hash. When no install receipt
+    matches (the tree was produced by an update), the recomputed address is
+    resolved against the update lineage instead: its update receipt must
+    exist, the install spine must verify, the receipt manifest must match the
+    installed content, and the lineage must chain back to a root install. A
+    tampered tree resolves to a content address with neither receipt - the
+    tamper verdict is structural, not a comparison an attacker can update.
 
     Args:
         workdir: Project root holding ``.sdd/``.
@@ -416,25 +710,79 @@ def verify_packaged_install(
         _, manifest_hash = manifest_hash_for(dest)
     except PackagedInstallError as exc:
         return InstallVerifyResult(ok=False, reason=str(exc))
-    return verify_install(
+    result = verify_install(
         workdir=workdir,
         lineage_root=workdir / ".sdd" / "lineage",
         hmac_key=hmac_key,
         skill_hash=skill_hash,
         installed_manifest_hash=manifest_hash,
     )
+    if result.ok or read_install_receipt(workdir, skill_hash) is not None:
+        return result
+    return _verify_updated_install(
+        workdir=workdir,
+        hmac_key=hmac_key,
+        skill_hash=skill_hash,
+        installed_manifest_hash=manifest_hash,
+    )
+
+
+def _verify_updated_install(
+    *,
+    workdir: Path,
+    hmac_key: bytes,
+    skill_hash: str,
+    installed_manifest_hash: str,
+) -> InstallVerifyResult:
+    """Verify a tree whose content address resolves to an update receipt.
+
+    The update receipt's manifest must match the installed content, the
+    install spine must verify, and the lineage must chain back to a root
+    install (an intact ``prior_skill_hash`` walk).
+    """
+    from bernstein.core.lineage.spine import LineageSpine
+    from bernstein.core.skills.provenance import INSTALL_RUN_ID
+
+    update = read_update_receipt(workdir, skill_hash)
+    if update is None:
+        return InstallVerifyResult(ok=False, reason="no install or update receipt found")
+    if update.manifest_hash != installed_manifest_hash:
+        return InstallVerifyResult(
+            ok=False,
+            reason=(
+                f"update receipt manifest hash mismatch (receipt {update.manifest_hash[:12]}..., "
+                f"installed {installed_manifest_hash[:12]}...)"
+            ),
+        )
+    spine = LineageSpine(workdir / ".sdd" / "lineage", run_id=INSTALL_RUN_ID, hmac_key=hmac_key)
+    spine_result = spine.verify()
+    if not spine_result.ok:
+        return InstallVerifyResult(
+            ok=False,
+            reason=f"install spine failed verification ({spine_result.status.value})",
+        )
+    chain = resolve_install_chain(workdir=workdir, skill_hash=skill_hash)
+    if not chain or not chain[-1].is_install:
+        return InstallVerifyResult(ok=False, reason="update lineage does not chain back to a root install")
+    return InstallVerifyResult(ok=True, reason="")
 
 
 __all__ = [
     "PACKAGED_SKILL_NAME",
+    "DiscoveredInstall",
+    "InstallChainLink",
     "PackagedInstallError",
     "PackagedInstallOutcome",
+    "PackagedUpdateOutcome",
+    "discover_installs",
     "host_skill_parent",
     "install_packaged_skill",
     "manifest_hash_for",
     "packaged_asset_root",
     "packaged_skill_dir",
+    "resolve_install_chain",
     "supported_hosts",
     "tree_content_hash",
+    "update_packaged_install",
     "verify_packaged_install",
 ]

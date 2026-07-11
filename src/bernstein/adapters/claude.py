@@ -708,6 +708,22 @@ class ClaudeCodeAdapter(CLIAdapter):
                 {"matcher": "", "hooks": [hook_entry]},
             ]
 
+        # Merge in-process verification-gate hooks when a gate policy was
+        # installed for this session (#2360). The completion gate refuses to end
+        # the turn while required verification fails; the PreToolUse matcher
+        # refuses an out-of-scope write. Absence of a policy leaves the config
+        # unchanged, degrading to the authoritative scheduler-side gate with no
+        # policy weakening. Presence is a plain file check so this stays off the
+        # scheduler/core import surface the adapter contract forbids.
+        gate_policy_path = workdir / ".sdd" / "runtime" / "hook_gate" / f"{session_id}.json"
+        if gate_policy_path.is_file():
+            from bernstein.adapters.hook_gate_render import render_gate_hooks
+
+            gate_hooks = render_gate_hooks("claude", session_id=session_id)
+            if gate_hooks:
+                for event_name, entries in gate_hooks.items():
+                    hooks_config.setdefault(event_name, []).extend(entries)
+
         # Merge with existing settings if present
         existing: dict[str, Any] = {}
         if settings_path.exists():

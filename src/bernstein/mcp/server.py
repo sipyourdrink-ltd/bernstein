@@ -12,6 +12,7 @@ Tools:
     bernstein_run     - start an orchestration run with a goal
     bernstein_status  - get task counts summary
     bernstein_tasks   - list tasks with optional status filter
+    bernstein_task_handle - verifiable Tasks-extension run handle (poll a run)
     bernstein_cost    - get cost summary across all roles
     bernstein_stop    - graceful shutdown (writes SHUTDOWN signal)
     bernstein_approve - approve a pending/blocked task
@@ -252,6 +253,91 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             return json.dumps(cost_summary, indent=2)
         except Exception as exc:
             return _error_response(exc)
+
+
+def _read_audit_chain_head(audit_dir: Path) -> str:
+    """Return the current audit-chain head hash without needing the HMAC key.
+
+    The head is the ``hmac`` field of the last byte-strict-valid record in the
+    newest live log segment. Reading the stored tail (rather than recomputing
+    it) lets a read-only polling tool embed the chain head into a run handle
+    without resolving or creating an operator key.
+    """
+    if not audit_dir.is_dir():
+        return ""
+    segments = sorted(audit_dir.glob("*.jsonl"))
+    if not segments:
+        return ""
+    from bernstein.core.security.audit import _chain_tail_from_bytes  # pyright: ignore[reportPrivateUsage]
+
+    try:
+        raw = segments[-1].read_bytes()
+    except OSError:
+        return ""
+    return _chain_tail_from_bytes(raw) or ""
+
+
+def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
+    """Register the ``bernstein_task_handle`` Tasks-extension polling tool.
+
+    The tool reprojects a verifiable run handle from the on-disk run journal
+    and the audit-chain head, so a stateless MCP client can poll a run it
+    started and retrieve results without holding a session (issue #2364).
+    """
+
+    @mcp.tool()
+    async def bernstein_task_handle(  # pyright: ignore[reportUnusedFunction]
+        run_id: str,
+        workdir: str = ".",
+    ) -> str:
+        """Return a verifiable Tasks-extension handle for a run, by run id.
+
+        The handle's status is a pure projection of the run journal, and it
+        embeds the run's audit-chain head so the client can later verify the
+        task it watched corresponds to the audited run (``bernstein audit
+        verify`` or the offline verifier). Polling is stateless: any server
+        instance reprojects the same handle from the on-disk journal.
+
+        Args:
+            run_id: The run identifier whose journal to project. Must be a
+                plain identifier - path separators and traversal are refused.
+            workdir: Project root directory (default: current directory).
+
+        Returns:
+            JSON of the Tasks-extension task-handle body (``taskId``,
+            ``runId``, ``status``, ``journalHead``, ``chainHead``,
+            ``receiptHash``, ``pollToken``, ...).
+        """
+        err = _validate_or_error("bernstein_task_handle", {"run_id": run_id, "workdir": workdir})
+        if err is not None:
+            return _validation_error_response(err)
+        try:
+            from bernstein.core.protocols.mcp.tasks_extension import RunHandle
+            from bernstein.core.replay.journal import JOURNAL_FILENAME, load_events
+
+            base = Path(workdir).resolve()
+            runs_root = (base / ".sdd" / "runs").resolve()
+            journal_path = (runs_root / run_id / JOURNAL_FILENAME).resolve()
+            # Realpath-containment check (CodeQL): a crafted run_id must not
+            # escape the runs root via ``..`` or an absolute path. A plain run
+            # id resolves to ``<runs_root>/<run_id>/journal.jsonl``; anything
+            # else is refused.
+            if journal_path.parent.parent != runs_root:
+                return _error_response(
+                    ValueError("run_id escapes the runs directory"),
+                    hint="run_id must be a plain run identifier",
+                )
+            events = load_events(journal_path)
+            chain_head = _read_audit_chain_head(base / ".sdd" / "audit")
+            handle = RunHandle.from_journal(
+                task_id=run_id,
+                run_id=run_id,
+                events=events,
+                chain_head=chain_head,
+            )
+            return json.dumps(handle.to_wire(), indent=2)
+        except Exception as exc:
+            return _error_response(exc, hint="Run journal not found")
 
 
 def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
@@ -561,6 +647,7 @@ def create_mcp_server(
     _register_health_tool(mcp)
     _register_query_tools(mcp, server_url)
     _register_action_tools(mcp, server_url)
+    _register_task_handle_tool(mcp)
     _register_skill_tools(mcp)
     # rt-003: scenario <-> Routine bridge tools.
     from bernstein.mcp.routine_tools import register_scenario_tools
