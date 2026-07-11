@@ -1,0 +1,32 @@
+# Docker MCP catalog entry for bernstein (#2369).
+#
+# This file is the submission payload for the Docker MCP catalog
+# (github.com/docker/mcp-registry, servers/bernstein/server.yaml). It is
+# kept in-tree so the catalog entry is generated from the repository that
+# builds the image, not hand-maintained in a fork. See README.md in this
+# directory for the submission flow.
+name: bernstein
+image: ghcr.io/sipyourdrink-ltd/bernstein
+type: server
+meta:
+  category: devops
+  tags:
+    - orchestration
+    - multi-agent
+    - coding-agents
+    - ci
+about:
+  title: Bernstein
+  description: >-
+    Deterministic multi-agent orchestrator for CLI coding agents. Submit a
+    goal; bernstein decomposes it into tasks, spawns agents in parallel git
+    worktrees, verifies output against a Merkle-chained lineage journal and
+    HMAC audit chain, and merges results. The MCP server exposes
+    bernstein_run, bernstein_status, bernstein_tasks, bernstein_cost,
+    bernstein_stop, and bernstein_approve.
+source:
+  project: https://github.com/sipyourdrink-ltd/bernstein
+run:
+  command:
+    - bernstein
+    - mcp
