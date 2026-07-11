@@ -217,6 +217,7 @@ nav:
       - Compatibility: adapters/compatibility.md
       - Deferred adapters: adapter-deferred.md
       - Hook system: integrations/hook-system.md
+      - Agent sessions (skill and plugin): integrations/agent-session.md
       - Plugin SDK: integrations/plugin-sdk.md
       - MCP server injection: integrations/mcp-server-injection.md
       - MCP tool-search lazy loading: protocols/tool-search.md
