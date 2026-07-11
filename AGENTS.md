@@ -57,6 +57,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `review_responder/`         | PR review responder - react to inline review comments on Bernstein PRs |
 | `routes/`                   | FastAPI router modules for the Bernstein task server |
 | `routing/`                  | routing sub-package |
+| `run_service/`              | Detached run service: submit a goal, disconnect, reattach later (#2352) |
 | `sandbox/`                  | Pluggable sandbox backends for agent isolation (oai-002 phase 1) |
 | `security/`                 | security sub-package |
 | `server/`                   | server sub-package - re-exports for backward compatibility |
