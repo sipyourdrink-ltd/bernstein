@@ -9,6 +9,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | Workflow | Name | Triggers | Concurrency | Jobs |
 | --- | --- | --- | --- | --- |
 | .github/workflows/a2a-federation-e2e.yml | a2a-federation-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "a2a-federation-e2e-${{ github.ref }}"} | 1 |
+| .github/workflows/adapter-conformance-canary.yml | Adapter conformance canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "adapter-conformance-canary"} | 1 |
 | .github/workflows/adapter-contract-drift.yml | Adapter contract drift | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "adapter-contract-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/airgap-e2e.yml | Airgap E2E | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "airgap-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/auto-heal.yml | Auto-heal v2 | workflow_call | - | 2 |
@@ -58,7 +59,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-extension.yml | Publish VS Code Extension | push, release | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
-| .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 7 |
+| .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 8 |
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
 | .github/workflows/release-please.yml | Release Please | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-please-${{ github.ref }}"} | 1 |
@@ -89,6 +90,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | Workflow | Checks |
 | --- | --- |
 | .github/workflows/a2a-federation-e2e.yml | a2a-federation-e2e: a2a-federation-e2e (${{ matrix.os }}) |
+| .github/workflows/adapter-conformance-canary.yml | canary: Canary matrix |
 | .github/workflows/adapter-contract-drift.yml | aggregate: Aggregate drift report<br>check: ${{ matrix.adapter }} |
 | .github/workflows/airgap-e2e.yml | airgap-e2e: Airgap E2E (Linux, real cosign + gpg + unshare) |
 | .github/workflows/auto-heal.yml | heal: Apply chosen strategy<br>triage: Triage and classify |
@@ -138,7 +140,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/publish-docker.yml | publish: Build and push image to GHCR |
 | .github/workflows/publish-extension.yml | publish |
 | .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
-| .github/workflows/publish.yml | build: Build<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-npm: Publish npm wrapper<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
+| .github/workflows/publish.yml | build: Build<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs PyPI |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/release-please.yml | release-please |
@@ -169,6 +171,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | Workflow | Permissions | Secrets |
 | --- | --- | --- |
 | .github/workflows/a2a-federation-e2e.yml | workflow: {"contents": "read"} | - |
+| .github/workflows/adapter-conformance-canary.yml | workflow: {"contents": "read"}<br>canary: {"contents": "write", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/adapter-contract-drift.yml | workflow: {"contents": "read"}<br>aggregate: {"contents": "read", "issues": "write"}<br>check: {"contents": "read"} | ADAPTER_CONTRACT_ANTHROPIC_API_KEY, ADAPTER_CONTRACT_GEMINI_API_KEY, ADAPTER_CONTRACT_OPENAI_API_KEY, GITHUB_TOKEN |
 | .github/workflows/airgap-e2e.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/auto-heal.yml | heal: {"attestations": "write", "contents": "write", "id-token": "write", "pull-requests": "write"}<br>triage: {"actions": "read", "contents": "read", "pull-requests": "read"} | GITHUB_TOKEN, GLITCHTIP_DSN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
@@ -218,7 +221,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "write"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
-| .github/workflows/publish.yml | build: {"contents": "read"}<br>github-release: {"contents": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | GITHUB_TOKEN, NPM_TOKEN |
+| .github/workflows/publish.yml | build: {"contents": "read"}<br>github-release: {"contents": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | GITHUB_TOKEN, NPM_TOKEN |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"attestations": "write", "contents": "write", "id-token": "write"} | GITHUB_TOKEN |
 | .github/workflows/release-please.yml | workflow: {"contents": "read"}<br>release-please: {"contents": "write", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN, RELEASE_PLEASE_PAT |
@@ -254,6 +257,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 
 | Workflow | Artifact steps |
 | --- | --- |
+| .github/workflows/adapter-conformance-canary.yml | canary: upload adapter-canary-receipts |
 | .github/workflows/adapter-contract-drift.yml | aggregate: download -<br>check: upload drift-${{ matrix.adapter }} |
 | .github/workflows/bernstein-ci-fix.yml | tier3-shadow: upload tier3-shadow-${{ needs.triage.outputs.short_sha }} |
 | .github/workflows/bernstein-issues-decompose.yml | decompose: download issue-decompose-plan-${{ github.event.issue.number }}<br>plan: upload issue-decompose-plan-${{ github.event.issue.number }} |
