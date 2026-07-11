@@ -140,6 +140,12 @@ class EventJournal:
         self._run_id = run_id
         self._runs_root = sdd_dir / "runs"
         self._path = self._runs_root / run_id / JOURNAL_FILENAME
+        # Realpath-containment guard: a run_id carrying ".." traversal or an
+        # absolute component must never redirect the journal outside the runs
+        # root. Resolve symlinks and refuse an escaping path before any file
+        # I/O touches it (py/path-injection).
+        if not self._path.resolve().is_relative_to(self._runs_root.resolve()):
+            raise ValueError(f"run_id escapes the journal runs root: {run_id!r}")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0
