@@ -27,12 +27,14 @@ from bernstein.cli.helpers import console
 from bernstein.core.skills.packaging import (
     PACKAGED_SKILL_NAME,
     PackagedInstallError,
+    discover_installs,
     host_skill_parent,
     install_packaged_skill,
     manifest_hash_for,
     packaged_skill_dir,
     supported_hosts,
     tree_content_hash,
+    update_packaged_install,
     verify_packaged_install,
 )
 
@@ -228,6 +230,151 @@ def verify_cmd(host: str | None, scope: str, dest: str | None, workdir: str) -> 
         raise SystemExit(0)
     console.print(f"[red]FAILED[/red] -- {result.reason}")
     raise SystemExit(2)
+
+
+@package_group.command("update")
+@click.option(
+    "--host",
+    type=click.Choice(sorted(supported_hosts())),
+    default=None,
+    help="Agent host whose default skills directory is updated in place.",
+)
+@click.option(
+    "--scope",
+    type=click.Choice(["project", "user"]),
+    default="project",
+    show_default=True,
+)
+@click.option(
+    "--dest",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Explicit installed directory (overrides --host/--scope).",
+)
+@click.option(
+    "--source",
+    type=click.Path(file_okay=False, exists=True),
+    default=None,
+    help="Tree to update to (defaults to the bundled skill).",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/ (where the receipt is anchored).",
+)
+def update_cmd(
+    host: str | None,
+    scope: str,
+    dest: str | None,
+    source: str | None,
+    workdir: str,
+) -> None:
+    """Supersede a prior install and anchor a chain-verifiable update receipt.
+
+    The update binds the prior content address to the new one, so the
+    supersession chains back to the root install. Exit codes: 0 = updated or
+    already current, 1 = error (missing or unattested install).
+    """
+    root = Path(workdir).resolve()
+    target, host_label, scope_label = _resolve_dest(host=host, scope=scope, dest=dest, workdir=root)
+    install_id = f"agent-plugin-{host_label}-{scope_label}"
+
+    try:
+        outcome = update_packaged_install(
+            workdir=root,
+            dest=target,
+            source=Path(source) if source is not None else None,
+            hmac_key=_load_hmac_key(),
+            install_id=install_id,
+            timestamp=int(datetime.now(tz=UTC).timestamp()),
+            host=host_label,
+            scope=scope_label,
+        )
+    except PackagedInstallError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if not outcome.changed:
+        console.print(f"[green]already current[/green] {PACKAGED_SKILL_NAME} -> {outcome.dest}")
+        console.print(f"  skill_hash:    {outcome.skill_hash}")
+        return
+
+    console.print(f"[green]updated[/green] {PACKAGED_SKILL_NAME} -> {outcome.dest}")
+    console.print(f"  prior_hash:    {outcome.prior_skill_hash}")
+    console.print(f"  skill_hash:    {outcome.skill_hash}")
+    console.print(f"  manifest:      {outcome.manifest_path}")
+    console.print(f"  manifest_sha:  {outcome.manifest_hash}")
+    console.print(f"  install_id:    {outcome.install_id}")
+    console.print(f"  spine_anchor:  {outcome.spine_anchor}")
+
+
+@package_group.command("status")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the install status as JSON.",
+)
+@click.option(
+    "--home",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Home directory for user-scoped destinations (defaults to the real home).",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+def status_cmd(as_json: bool, home: str | None, workdir: str) -> None:
+    """Verify every default host/scope install and report each verdict.
+
+    Scans the default skill directory for each supported host and scope,
+    re-hashes any present tree, and proves it against its anchored receipt.
+    Exit codes: 0 = every present install verifies (or none present),
+    2 = at least one present install failed verification.
+    """
+    root = Path(workdir).resolve()
+    home_dir = Path(home).resolve() if home is not None else None
+    hmac_key = _load_hmac_key()
+
+    rows: list[dict[str, object]] = []
+    any_failed = False
+    for candidate in discover_installs(workdir=root, home=home_dir):
+        if not candidate.exists:
+            continue
+        result = verify_packaged_install(workdir=root, dest=candidate.dest, hmac_key=hmac_key)
+        if not result.ok:
+            any_failed = True
+        rows.append(
+            {
+                "host": candidate.host,
+                "scope": candidate.scope,
+                "dest": str(candidate.dest),
+                "verified": result.ok,
+                "reason": result.reason,
+            }
+        )
+
+    if as_json:
+        console.print_json(data={"installs": rows})
+        raise SystemExit(2 if any_failed else 0)
+
+    console.print()
+    console.print("[bold]Packaged install status[/bold]")
+    if not rows:
+        console.print("  (no installs found under the scanned host directories)")
+        raise SystemExit(0)
+    for row in rows:
+        mark = "[green]OK[/green]" if row["verified"] else f"[red]FAILED[/red] ({row['reason']})"
+        console.print(f"  {row['host']}/{row['scope']}: {mark} -> {row['dest']}")
+    raise SystemExit(2 if any_failed else 0)
 
 
 __all__ = ["package_group"]

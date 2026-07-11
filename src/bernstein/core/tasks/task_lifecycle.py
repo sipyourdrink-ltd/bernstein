@@ -41,7 +41,11 @@ from bernstein.core.fast_path import (
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.janitor import run_janitor, verify_task
 from bernstein.core.metrics import get_collector
-from bernstein.core.replay.review_board import record_task_merged
+from bernstein.core.replay.review_board import (
+    record_task_diff_captured,
+    record_task_merged,
+    store_task_diff,
+)
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
@@ -2993,8 +2997,45 @@ def _reap_and_cleanup_session(
         # side inference. No-op when the orchestrator has no recorder.
         record_task_merged(getattr(orch, "_recorder", None), task_id=task.id, agent_id=session.id)
 
+    # issue #2365: capture the task diff as a content-addressed review artifact
+    # (the bytes a reviewer inspects on the board) before the worktree is
+    # reclaimed, for merged and unmerged tasks alike. Chained into the run
+    # journal so the diff identity is a journal fact and the board can serve
+    # and verify it against a detached run. Fail-open: never blocks completion.
+    _capture_review_diff(orch, task, session)
+
     orch._spawner.cleanup_worktree(session.id)
     return cache_verified, cache_diff_lines
+
+
+def _capture_review_diff(orch: Any, task: Task, session: AgentSession) -> None:
+    """Store the session worktree's diff as a chained review-board artifact.
+
+    Fail-open: any error (no worktree, git failure, no recorder) leaves the
+    board without a diff for this task rather than disturbing completion.
+    """
+    from pathlib import Path
+
+    try:
+        get_worktree = getattr(orch._spawner, "get_worktree_path", None)
+        if not callable(get_worktree):
+            return
+        worktree = get_worktree(session.id)
+        if worktree is None:
+            return
+        diff_text = _get_git_diff_text_in_worktree(Path(worktree))
+        if not diff_text:
+            return
+        recorder = getattr(orch, "_recorder", None)
+        run_id = getattr(recorder, "run_id", "")
+        if recorder is None or not run_id:
+            return
+        summary = store_task_diff(orch._workdir / ".sdd", run_id, task.id, diff_text)
+        if summary is None:
+            return
+        record_task_diff_captured(recorder, task_id=task.id, summary=summary)
+    except Exception as exc:
+        logger.debug("review diff capture failed for task %s: %s", task.id, exc)
 
 
 def _cleanup_batch_session(orch: Any, session: AgentSession) -> None:
@@ -4050,6 +4091,35 @@ def _get_git_diff_line_count_in_worktree(worktree_path: Path) -> int:
     except Exception as exc:
         logger.debug("_get_git_diff_line_count_in_worktree failed for %s: %s", worktree_path, exc)
         return 0
+
+
+def _get_git_diff_text_in_worktree(worktree_path: Path) -> str:
+    """Return the full ``git diff HEAD`` text for a worktree.
+
+    Args:
+        worktree_path: Path to the git worktree.
+
+    Returns:
+        The unified diff of tracked changes against HEAD, or ``""`` on any
+        error or when there are no tracked changes.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        if result.returncode == 0:
+            return result.stdout
+    except Exception as exc:
+        logger.debug("_get_git_diff_text_in_worktree failed for %s: %s", worktree_path, exc)
+    return ""
 
 
 def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:

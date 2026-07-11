@@ -1417,4 +1417,193 @@ def cost_envelopes_show_cmd(
     console.print(table)
 
 
+# ---------------------------------------------------------------------------
+# `bernstein cost policy` subcommand group (cost-aware scheduling, issue #2354)
+# ---------------------------------------------------------------------------
+
+
+def _read_cost_policy_from_yaml(path: Path) -> dict[str, Any]:
+    """Read the ``cost_policy`` block from bernstein.yaml (best-effort)."""
+    if not path.exists():
+        return {}
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+    policy = data.get("cost_policy") if isinstance(data, dict) else None
+    return policy if isinstance(policy, dict) else {}
+
+
+def _parse_plan_spec(spec: str | None) -> dict[str, float]:
+    """Parse ``pool=usd,pool2=usd`` into a planned per-pool spend map."""
+    planned: dict[str, float] = {}
+    if not spec:
+        return planned
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        pool, _, raw = chunk.partition("=")
+        with contextlib.suppress(ValueError):
+            planned[pool.strip()] = float(raw.strip())
+    return planned
+
+
+@cost_cmd.group("policy")
+def cost_policy_group() -> None:
+    """Cost-aware scheduling: preflight pool caps, verify dispatch receipts (#2354)."""
+
+
+@cost_policy_group.command("preflight")
+@click.option(
+    "--ledger",
+    "ledger_path",
+    type=str,
+    default=".sdd/cost/ledger.jsonl",
+    show_default=True,
+    help="Path to the rolling spend ledger JSONL.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=str,
+    default="bernstein.yaml",
+    show_default=True,
+    help="Path to bernstein.yaml holding ``cost_policy.pools`` caps.",
+)
+@click.option(
+    "--plan",
+    "plan_spec",
+    type=str,
+    default=None,
+    help="Planned per-pool spend for the run, e.g. ``api=2.50,subscription=0``.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def cost_policy_preflight_cmd(
+    ledger_path: str,
+    config_path: str,
+    plan_spec: str | None,
+    as_json: bool,
+) -> None:
+    """Surface pool exhaustion before a run starts (issue #2354, AC5).
+
+    Projects the spend ledger into named pools, compares each against its
+    configured cap plus the planned run spend, and exits non-zero when any
+    capped pool is (or would be) exhausted -- so exhaustion stops a run at the
+    gate, not halfway through. Also reports the shipped price-table staleness
+    advisory.
+    """
+    from datetime import UTC, datetime
+
+    from bernstein.core.cost.scheduling.pools import preflight_pools
+    from bernstein.core.cost.scheduling.price_table import DEFAULT_PRICE_TABLE, price_table_staleness
+    from bernstein.core.cost.spend_ledger import SpendLedger
+
+    policy = _read_cost_policy_from_yaml(Path(config_path))
+    raw_pools = policy.get("pools") if isinstance(policy.get("pools"), dict) else {}
+    caps: dict[str, float] = {}
+    for name, cap in raw_pools.items():
+        with contextlib.suppress(TypeError, ValueError):
+            caps[str(name)] = float(cap)
+    planned = _parse_plan_spec(plan_spec)
+
+    entries = SpendLedger.load_entries(Path(ledger_path))
+    report = preflight_pools(entries=entries, caps=caps, planned_usd_by_pool=planned)
+    staleness = price_table_staleness(DEFAULT_PRICE_TABLE, now_iso=datetime.now(tz=UTC).strftime("%Y-%m-%d"))
+
+    if as_json or is_json():
+        print_json(
+            {
+                "ok": report.ok,
+                "pools": report.to_dict()["pools"],
+                "state_hash": report.state_hash(),
+                "price_table_stale": staleness.stale,
+                "price_table_message": staleness.message,
+            }
+        )
+        raise SystemExit(0 if report.ok else 1)
+
+    if not caps:
+        console.print(
+            "[dim]No pool caps configured. Set ``cost_policy.pools`` in bernstein.yaml "
+            "to enforce per-pool USD ceilings.[/dim]"
+        )
+
+    if caps:
+        from rich.table import Table
+
+        table = Table(title="Cost policy preflight - pool exhaustion", header_style="bold cyan")
+        table.add_column("Pool", min_width=16, no_wrap=True)
+        table.add_column("Spent", justify="right")
+        table.add_column("Planned", justify="right")
+        table.add_column("Projected", justify="right")
+        table.add_column("Cap", justify="right")
+        table.add_column("Status")
+        for pool in report.pools:
+            if pool.already_exhausted:
+                status = "[red]EXHAUSTED (already)[/red]"
+            elif pool.exhausted:
+                status = "[red]EXHAUSTED (by run)[/red]"
+            else:
+                status = "[green]ok[/green]"
+            table.add_row(
+                pool.pool,
+                f"${pool.spent_usd:.4f}",
+                f"${pool.planned_usd:.4f}",
+                f"${pool.projected_usd:.4f}",
+                f"${pool.cap_usd:.4f}" if pool.cap_usd > 0 else "-",
+                status,
+            )
+        console.print(table)
+
+    if staleness.stale:
+        console.print(f"[yellow]price table advisory:[/yellow] {staleness.message}")
+
+    if not report.ok:
+        exhausted = ", ".join(p.pool for p in report.exhausted)
+        console.print(f"[red]Pool(s) exhausted before run start:[/red] {exhausted}")
+        raise SystemExit(1)
+    console.print("[green]All capped pools within budget.[/green]")
+
+
+@cost_policy_group.command("verify")
+@click.argument("decision_hash", type=str)
+@click.option(
+    "--workdir",
+    "workdir",
+    type=str,
+    default=".",
+    show_default=True,
+    help="Project root holding ``.sdd/cost/dispatch`` receipts and ``.sdd/lineage``.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def cost_policy_verify_cmd(decision_hash: str, workdir: str, as_json: bool) -> None:
+    """Verify a dispatch receipt offline against the lineage spine (issue #2354).
+
+    Re-derives the decision hash from the stored receipt bytes (catching a
+    forged admit / zeroed overrun) and re-checks the lineage-spine anchor. A
+    receipt that no longer recomputes fails exactly like a tampered chain entry.
+    """
+    from bernstein.core.cost.scheduling.receipt import verify_dispatch_receipt
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    root = Path(workdir)
+    result = verify_dispatch_receipt(
+        workdir=root,
+        lineage_root=root / ".sdd" / "lineage",
+        hmac_key=load_or_create_audit_key(),
+        decision_hash=decision_hash,
+    )
+    if as_json or is_json():
+        print_json({"ok": result.ok, "reason": result.reason, "decision_hash": decision_hash})
+        raise SystemExit(0 if result.ok else 1)
+    if result.ok:
+        console.print(f"[green]Dispatch receipt verified:[/green] {decision_hash}")
+        return
+    console.print(f"[red]Dispatch receipt verification failed:[/red] {result.reason}")
+    raise SystemExit(1)
+
+
 __all__ = ["cost_cmd", "cost_envelopes_group", "cost_profile_report_cmd", "estimate_cmd"]

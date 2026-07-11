@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.core.replay.journal import (
     EventJournal,
     JournalVerifyResult,
@@ -146,3 +148,16 @@ def test_retention_prunes_oldest_run_journals(tmp_path: Path) -> None:
             j.record("only")
         surviving = sorted(p.name for p in (runs_root / "runs").iterdir() if p.is_dir())
     assert surviving == ["run-02", "run-03"]
+
+
+def test_run_id_traversal_is_refused(tmp_path: Path) -> None:
+    """A run_id that traverses or escapes the runs root is refused before I/O."""
+    for bad in ("../../etc", "..", "a/../../b", "/abs/path", "", ".", "a\\b"):
+        with pytest.raises(ValueError, match="run_id"):
+            EventJournal(run_id=bad, sdd_dir=tmp_path)
+
+
+def test_ordinary_run_id_is_contained(tmp_path: Path) -> None:
+    """A normal run_id builds a journal path inside the runs root."""
+    journal = EventJournal(run_id="run-ok-123", sdd_dir=tmp_path)
+    assert journal.path.resolve().is_relative_to((tmp_path / "runs").resolve())

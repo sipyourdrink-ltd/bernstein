@@ -42,10 +42,8 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +137,29 @@ class EventJournal:
     def __init__(self, run_id: str, sdd_dir: Path) -> None:
         self._run_id = run_id
         self._runs_root = sdd_dir / "runs"
-        self._path = self._runs_root / run_id / JOURNAL_FILENAME
+        # Path-injection guard (py/path-injection). A run_id names one journal
+        # directory and must be a single path segment. First a filesystem-free
+        # lexical check (no time-of-check/time-of-use window) that rejects
+        # traversal, separators, and absolute paths outright.
+        if (
+            not run_id
+            or run_id in {".", ".."}
+            or "/" in run_id
+            or "\\" in run_id
+            or "\x00" in run_id
+            or Path(run_id).is_absolute()
+        ):
+            raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
+        # Pin the directory name to os.path.basename so no directory component
+        # can survive into the path; for a run_id that passed the check above
+        # this is a no-op, but it is the sanitiser the path is built from.
+        safe_run_id = os.path.basename(run_id)
+        self._path = self._runs_root / safe_run_id / JOURNAL_FILENAME
+        # Defence in depth: refuse a resolved path that still escapes the runs
+        # root, e.g. through a symlinked run directory.
+        runs_root_real = os.path.realpath(self._runs_root)
+        if os.path.commonpath((runs_root_real, os.path.realpath(self._path))) != runs_root_real:
+            raise ValueError(f"run_id escapes the journal runs root: {run_id!r}")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0

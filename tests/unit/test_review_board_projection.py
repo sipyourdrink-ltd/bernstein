@@ -15,13 +15,21 @@ from bernstein.core.replay.journal import EventJournal, load_events
 from bernstein.core.replay.review_board import (
     BOARD_COLUMNS,
     BOARD_SCHEMA_VERSION,
+    EVENT_TASK_DIFF_CAPTURED,
     EVENT_TASK_MERGED,
+    EVENT_TASK_REVIEW_DECISION,
+    REVIEW_DECISIONS,
     board_hash,
     canonical_board_bytes,
+    diff_summary,
     list_board_runs,
     project_board,
     project_run,
+    read_task_diff,
+    record_review_decision,
+    record_task_diff_captured,
     record_task_merged,
+    store_task_diff,
 )
 
 if TYPE_CHECKING:
@@ -313,3 +321,273 @@ def test_reap_and_cleanup_skips_merge_receipt_when_merge_skipped(tmp_path: Path,
 
     events = load_events(recorder.path)
     assert [e for e in events if e.get("event") == EVENT_TASK_MERGED] == []
+
+
+# ---------------------------------------------------------------------------
+# Diff capture: a content-addressed, journal-anchored review artifact (#2365)
+# ---------------------------------------------------------------------------
+
+_SAMPLE_DIFF = """diff --git a/src/a.py b/src/a.py
+index 111..222 100644
+--- a/src/a.py
++++ b/src/a.py
+@@ -1,3 +1,4 @@
+ keep
+-old line
++new line
++extra line
+diff --git a/src/b.py b/src/b.py
+index 333..444 100644
+--- a/src/b.py
++++ b/src/b.py
+@@ -10,2 +10,2 @@ def f():
+-    return 1
++    return 2
+"""
+
+
+def test_diff_summary_is_deterministic_and_counts_changes() -> None:
+    """diff_summary is a pure function: same text -> identical hash and stats."""
+    first = diff_summary(_SAMPLE_DIFF)
+    second = diff_summary(_SAMPLE_DIFF)
+    assert first == second
+    assert first["sha256"].startswith("sha256:")
+    assert first["added"] == 3
+    assert first["removed"] == 2
+    assert first["files_changed"] == 2
+    assert first["files"] == ["src/a.py", "src/b.py"]
+
+
+def test_diff_summary_hash_matches_sha256_of_utf8_bytes() -> None:
+    import hashlib
+
+    expected = "sha256:" + hashlib.sha256(_SAMPLE_DIFF.encode("utf-8")).hexdigest()
+    assert diff_summary(_SAMPLE_DIFF)["sha256"] == expected
+
+
+def test_store_and_read_task_diff_roundtrip(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    (sdd / "runs" / "run-d").mkdir(parents=True)
+    summary = store_task_diff(sdd, "run-d", "t-1", _SAMPLE_DIFF)
+    assert summary is not None
+    assert summary["sha256"] == diff_summary(_SAMPLE_DIFF)["sha256"]
+
+    result = read_task_diff(sdd, "run-d", "t-1")
+    assert result is not None
+    text, read_summary = result
+    assert text == _SAMPLE_DIFF
+    assert read_summary["sha256"] == summary["sha256"]
+
+
+def test_store_task_diff_overwrites_with_latest_capture(tmp_path: Path) -> None:
+    """A re-captured task (retry) stores the latest diff bytes."""
+    sdd = tmp_path / ".sdd"
+    (sdd / "runs" / "run-d").mkdir(parents=True)
+    store_task_diff(sdd, "run-d", "t-1", _SAMPLE_DIFF)
+    later = _SAMPLE_DIFF + "diff --git a/c.py b/c.py\n+++ b/c.py\n@@ -0,0 +1 @@\n+added\n"
+    store_task_diff(sdd, "run-d", "t-1", later)
+    result = read_task_diff(sdd, "run-d", "t-1")
+    assert result is not None
+    assert result[0] == later
+
+
+def test_read_task_diff_absent_returns_none(tmp_path: Path) -> None:
+    sdd = tmp_path / ".sdd"
+    (sdd / "runs" / "run-d").mkdir(parents=True)
+    assert read_task_diff(sdd, "run-d", "t-missing") is None
+
+
+def test_store_task_diff_rejects_path_traversal_task_id(tmp_path: Path) -> None:
+    """A task id that escapes the diffs dir is refused (realpath containment)."""
+    sdd = tmp_path / ".sdd"
+    (sdd / "runs" / "run-d").mkdir(parents=True)
+    assert store_task_diff(sdd, "run-d", "../../evil", _SAMPLE_DIFF) is None
+    assert read_task_diff(sdd, "run-d", "../../evil") is None
+    assert not (tmp_path / "evil.diff").exists()
+
+
+def test_fold_diff_captured_attaches_summary_without_moving_column() -> None:
+    summary = diff_summary(_SAMPLE_DIFF)
+    events = [
+        {"event": "task_claimed", "task_id": "t-1", "agent_id": "a", "model": "m"},
+        {"event": "task_completed", "task_id": "t-1"},
+        {
+            "event": EVENT_TASK_DIFF_CAPTURED,
+            "task_id": "t-1",
+            "diff_sha256": summary["sha256"],
+            "diff_added": summary["added"],
+            "diff_removed": summary["removed"],
+            "diff_files": summary["files_changed"],
+        },
+    ]
+    board = project_board(events)
+    card = board["columns"]["needs_review"][0]
+    assert card["diff"]["sha256"] == summary["sha256"]
+    assert card["diff"]["added"] == 3
+    assert card["diff"]["removed"] == 2
+    assert card["diff"]["files"] == 2
+
+
+def test_fold_review_decision_merge_moves_card_to_merged() -> None:
+    events = [
+        {"event": "task_claimed", "task_id": "t-1"},
+        {"event": "task_completed", "task_id": "t-1"},
+        {
+            "event": EVENT_TASK_REVIEW_DECISION,
+            "task_id": "t-1",
+            "decision": "merge",
+            "principal": "operator-olga",
+            "scope": "operator",
+        },
+    ]
+    board = project_board(events)
+    assert board["columns"]["needs_review"] == []
+    card = board["columns"]["merged"][0]
+    assert card["review"]["decision"] == "merge"
+    assert card["review"]["principal"] == "operator-olga"
+
+
+def test_fold_review_decision_approve_annotates_without_moving() -> None:
+    events = [
+        {"event": "task_claimed", "task_id": "t-1"},
+        {"event": "task_completed", "task_id": "t-1"},
+        {
+            "event": EVENT_TASK_REVIEW_DECISION,
+            "task_id": "t-1",
+            "decision": "approve",
+            "principal": "alice",
+            "scope": "operator",
+        },
+    ]
+    board = project_board(events)
+    card = board["columns"]["needs_review"][0]
+    assert card["review"]["decision"] == "approve"
+    assert card["review"]["principal"] == "alice"
+
+
+def test_fold_review_decision_request_changes_annotates() -> None:
+    events = [
+        {"event": "task_claimed", "task_id": "t-1"},
+        {"event": "task_completed", "task_id": "t-1"},
+        {
+            "event": EVENT_TASK_REVIEW_DECISION,
+            "task_id": "t-1",
+            "decision": "request_changes",
+            "principal": "bob",
+            "scope": "operator",
+        },
+    ]
+    board = project_board(events)
+    card = board["columns"]["needs_review"][0]
+    assert card["review"]["decision"] == "request_changes"
+
+
+def test_fold_ignores_unknown_review_decision() -> None:
+    """An unknown decision value is ignored (forward compatibility)."""
+    events = [
+        {"event": "task_claimed", "task_id": "t-1"},
+        {"event": "task_completed", "task_id": "t-1"},
+        {"event": EVENT_TASK_REVIEW_DECISION, "task_id": "t-1", "decision": "nuke", "principal": "x"},
+    ]
+    board = project_board(events)
+    card = board["columns"]["needs_review"][0]
+    assert card["review"] is None
+    assert "merge" not in REVIEW_DECISIONS or card["column"] == "needs_review"
+
+
+def test_projection_byte_identical_with_diff_and_review_events() -> None:
+    """Determinism holds across the new event vocabulary."""
+    summary = diff_summary(_SAMPLE_DIFF)
+    events = [
+        {"event": "run_started", "run_id": "r", "git_branch": "main", "git_sha": "abc"},
+        {"event": "task_claimed", "task_id": "t-1", "agent_id": "a", "model": "m"},
+        {"event": "task_completed", "task_id": "t-1"},
+        {
+            "event": EVENT_TASK_DIFF_CAPTURED,
+            "task_id": "t-1",
+            "diff_sha256": summary["sha256"],
+            "diff_added": summary["added"],
+            "diff_removed": summary["removed"],
+            "diff_files": summary["files_changed"],
+        },
+        {
+            "event": EVENT_TASK_REVIEW_DECISION,
+            "task_id": "t-1",
+            "decision": "approve",
+            "principal": "alice",
+            "scope": "operator",
+        },
+    ]
+    first = project_board(events)
+    second = project_board(list(events))
+    assert canonical_board_bytes(first) == canonical_board_bytes(second)
+    assert board_hash(first) == board_hash(second)
+
+
+def test_record_review_decision_appends_journal_event(tmp_path: Path) -> None:
+    journal = EventJournal("run-rd", tmp_path / ".sdd")
+    journal.record("task_completed", task_id="t-1")
+    record_review_decision(journal, task_id="t-1", decision="approve", principal="alice", scope="operator")
+    events = load_events(journal.path)
+    row = next(e for e in events if e.get("event") == EVENT_TASK_REVIEW_DECISION)
+    assert row["task_id"] == "t-1"
+    assert row["decision"] == "approve"
+    assert row["principal"] == "alice"
+    assert row["scope"] == "operator"
+    assert journal.verify().ok
+
+
+def test_record_task_diff_captured_appends_event(tmp_path: Path) -> None:
+    journal = EventJournal("run-dc", tmp_path / ".sdd")
+    summary = diff_summary(_SAMPLE_DIFF)
+    record_task_diff_captured(journal, task_id="t-1", summary=summary)
+    events = load_events(journal.path)
+    row = next(e for e in events if e.get("event") == EVENT_TASK_DIFF_CAPTURED)
+    assert row["diff_sha256"] == summary["sha256"]
+    assert row["diff_added"] == summary["added"]
+    assert journal.verify().ok
+
+
+def test_record_helpers_tolerate_missing_recorder() -> None:
+    record_review_decision(None, task_id="t", decision="approve", principal="a", scope="operator")
+    record_task_diff_captured(None, task_id="t", summary=diff_summary(_SAMPLE_DIFF))
+
+
+def test_reap_and_cleanup_captures_review_diff(tmp_path: Path, monkeypatch: Any) -> None:
+    """The reap seam captures the worktree diff as a chained review artifact."""
+    from types import SimpleNamespace
+
+    from bernstein.core.tasks import task_lifecycle
+
+    monkeypatch.setattr(task_lifecycle, "_close_completed_task", lambda *_a, **_k: None)
+    monkeypatch.setattr(task_lifecycle, "seal_evidence_on_completion", lambda *_a, **_k: None)
+    monkeypatch.setattr(task_lifecycle, "_get_git_diff_text_in_worktree", lambda _wt: _SAMPLE_DIFF)
+
+    recorder = EventJournal("run-diffseam", tmp_path / ".sdd")
+    merge_result = SimpleNamespace(success=True, conflicting_files=[])
+    spawner = SimpleNamespace(
+        reap_completed_agent=lambda *_a, **_k: merge_result,
+        cleanup_worktree=lambda _sid: None,
+        get_worktree_path=lambda _sid: tmp_path / "wt",
+    )
+    orch = SimpleNamespace(
+        _spawner=spawner,
+        _workdir=tmp_path,
+        _config=SimpleNamespace(ab_test=False),
+        _recorder=recorder,
+    )
+    session = SimpleNamespace(id="sess-1", status="dead", exit_code=0, task_ids=["t-9"])
+    task = SimpleNamespace(id="t-9", metadata={})
+
+    task_lifecycle._reap_and_cleanup_session(
+        orch, task, session, None, janitor_passed=True, skip_merge=False, _completion_data=None, cache_diff_lines=0
+    )
+
+    events = load_events(recorder.path)
+    captured = [e for e in events if e.get("event") == EVENT_TASK_DIFF_CAPTURED]
+    assert len(captured) == 1
+    assert captured[0]["diff_sha256"] == diff_summary(_SAMPLE_DIFF)["sha256"]
+    stored = read_task_diff(tmp_path / ".sdd", "run-diffseam", "t-9")
+    assert stored is not None
+    assert stored[0] == _SAMPLE_DIFF
+    assert recorder.verify().ok

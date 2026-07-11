@@ -486,13 +486,18 @@ class TestIsSignalSupported:
         """A made-up signal name should return False."""
         assert is_signal_supported("SIGFAKE_DOES_NOT_EXIST") is False
 
-    @pytest.mark.skipif(IS_WINDOWS, reason="SIGKILL exists on Unix")
-    def test_sigkill_supported_on_unix(self) -> None:
-        assert is_signal_supported("SIGKILL") is True
+    def test_sigkill_support_matches_platform(self) -> None:
+        """SIGKILL exists on POSIX and is reported unsupported on Windows.
 
-    @pytest.mark.skipif(IS_WINDOWS, reason="SIGUSR1 exists on Unix")
-    def test_sigusr1_supported_on_unix(self) -> None:
-        assert is_signal_supported("SIGUSR1") is True
+        Written as a platform-neutral projection (value keyed off
+        ``IS_WINDOWS``) so it carries no skip marker and runs on the
+        Windows lane too.
+        """
+        assert is_signal_supported("SIGKILL") is (not IS_WINDOWS)
+
+    def test_sigusr1_support_matches_platform(self) -> None:
+        """SIGUSR1 exists on POSIX and is reported unsupported on Windows."""
+        assert is_signal_supported("SIGUSR1") is (not IS_WINDOWS)
 
     @patch("bernstein.core.config.platform_compat.IS_WINDOWS", True)
     def test_sigkill_not_supported_on_windows(self) -> None:
@@ -630,9 +635,14 @@ class TestSkipOnWindows:
 
         assert callable(dummy_test)
 
-    @pytest.mark.skipif(IS_WINDOWS, reason="Only tests skip logic on non-Windows")
-    def test_does_not_skip_on_unix(self) -> None:
-        """On Unix, the decorated test should execute normally."""
+    def test_direct_call_bypasses_marker(self) -> None:
+        """A direct call runs the function on every platform.
+
+        ``skip_on_windows`` only attaches a pytest collection marker; it
+        does not wrap the body. Calling the decorated function directly
+        therefore executes it regardless of platform, so this assertion
+        holds on the Windows lane too and needs no skip marker.
+        """
         executed = False
 
         @skip_on_windows("should not skip")
@@ -641,8 +651,6 @@ class TestSkipOnWindows:
             executed = True
             return True
 
-        # On Unix, the decorator does not prevent execution -
-        # it only adds a pytest marker. Direct calls still work.
         result = inner()
         assert result is True
         assert executed

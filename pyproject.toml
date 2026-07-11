@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.2.0"
+version = "3.3.0"
 description = "Audit-grade multi-agent orchestration for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40 more): HMAC-chained audit log, signed agent cards, per-artefact lineage, air-gap deploy. The orchestrator your compliance team will sign off on."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -172,6 +172,13 @@ dev = [
 ]
 grpc = ["grpcio>=1.68", "grpcio-tools>=1.68", "grpcio-reflection>=1.68", "protobuf>=5.29"]
 k8s = ["kubernetes>=35.0.0"]
+# SPIFFE/SPIRE workload-identity integration
+# (src/bernstein/core/identity/spiffe/workload_api.py). The py-spiffe SDK talks
+# to a running SPIRE agent's Workload API to fetch X.509-SVIDs. Optional so the
+# default self-contained Ed25519 identity path stays dependency-free and works
+# with a truthy regression suite when the extra is absent. Enable with:
+#   pip install 'bernstein[spiffe]'
+spiffe = ["spiffe>=0.2"]
 ml = ["scikit-learn>=1.5"]
 graphics = []  # term-image disabled: caps pillow<11, conflicts with CVE-2026-25990 fix
 # OpenAI Agents SDK v2 integration (src/bernstein/adapters/openai_agents.py).

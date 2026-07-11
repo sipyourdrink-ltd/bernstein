@@ -301,7 +301,9 @@ jobs:
           # compatibility with actions/setup-node's default config.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
+        # Trusted publishing for the npm wrapper needs a registry-side
+        # publisher configuration; token auth stays until that exists.
+        run: | # zizmor: ignore[use-trusted-publishing]
           if [ -z "${NPM_TOKEN:-}" ]; then
             echo "::warning::NPM_TOKEN is not configured; skipping npm wrapper publish"
             exit 0

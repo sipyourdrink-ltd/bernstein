@@ -328,7 +328,12 @@ class DashboardTokenRegistry:
             text = self._path.read_text(encoding="utf-8")
         except OSError as exc:
             # Key/credential-adjacent path: log the exception type only.
-            logger.warning("dashboard tokens: journal unreadable (%s)", type(exc).__name__)
+            # Semgrep FP (logger-credential-disclosure): the format string
+            # names the token journal; no token material is ever logged.
+            logger.warning(  # nosemgrep
+                "dashboard tokens: journal unreadable (%s)",
+                type(exc).__name__,
+            )
             return []
         for line in text.splitlines():
             line = line.strip()
@@ -337,7 +342,12 @@ class DashboardTokenRegistry:
             try:
                 rows.append(DashboardTokenRecord.from_dict(json.loads(line)))
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-                logger.warning("dashboard tokens: skipping malformed journal row (%s)", type(exc).__name__)
+                # Semgrep FP (logger-credential-disclosure): the format string
+                # names the token journal; no token material is ever logged.
+                logger.warning(  # nosemgrep
+                    "dashboard tokens: skipping malformed journal row (%s)",
+                    type(exc).__name__,
+                )
                 continue
         return rows
 
