@@ -172,6 +172,13 @@ dev = [
 ]
 grpc = ["grpcio>=1.68", "grpcio-tools>=1.68", "grpcio-reflection>=1.68", "protobuf>=5.29"]
 k8s = ["kubernetes>=35.0.0"]
+# SPIFFE/SPIRE workload-identity integration
+# (src/bernstein/core/identity/spiffe/workload_api.py). The py-spiffe SDK talks
+# to a running SPIRE agent's Workload API to fetch X.509-SVIDs. Optional so the
+# default self-contained Ed25519 identity path stays dependency-free and works
+# with a truthy regression suite when the extra is absent. Enable with:
+#   pip install 'bernstein[spiffe]'
+spiffe = ["spiffe>=0.2"]
 ml = ["scikit-learn>=1.5"]
 graphics = []  # term-image disabled: caps pillow<11, conflicts with CVE-2026-25990 fix
 # OpenAI Agents SDK v2 integration (src/bernstein/adapters/openai_agents.py).
