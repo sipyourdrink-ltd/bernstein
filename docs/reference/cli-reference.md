@@ -170,6 +170,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 |---|---|---|
 | `bernstein plan` | Show the task backlog. | `cli/commands/task_cmd.py:454` |
 | `bernstein plan generate "<goal>"` | Generate a plan YAML. | `cli/plan_generate_cmd.py` |
+| `bernstein plan compile SPEC` | Compile a spec into a gated task graph with requirement-hash lineage. | `cli/plan_compile_cmd.py` |
 | `bernstein plan ls` | List archived plans. | `cli/plan_archive_cmd.py:plan_ls` |
 | `bernstein plan show NAME` | Show a stored plan. | `cli/plan_archive_cmd.py:plan_show` |
 | `bernstein add-task TITLE` | Create a task on the running server. | `cli/commands/task_cmd.py:37` |
@@ -202,6 +203,28 @@ The graph view shows the critical path in bold yellow with a star (`★`) and li
 | `GOAL` | required | Goal description (positional). |
 | `--out FILE` | `plan.yaml` | Output path. |
 | `--model NAME` | auto | Model used to draft the plan. |
+
+#### `bernstein plan compile`
+
+Compile a requirements document into a gated task graph. A three-stage
+pipeline with at most one model call: draft (structured requirement
+extraction), approve (the requirement-set hash is bound into the audit
+chain), and compile (a deterministic, model-free transformation to a task
+graph). Each task node carries the content hashes of the requirement lines it
+implements, so every artefact traces back to spec lines through lineage.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `SPEC` | required | Spec / requirements document (positional). |
+| `--name NAME` | spec stem | Plan name and output slug under `.sdd/spec/`. |
+| `--approve` | off | Record an approval receipt for the requirement set into the audit chain. |
+| `--json` | off | Emit a JSON summary instead of a table. |
+
+Artefacts are written to `.sdd/spec/<name>/` (`requirements.json`,
+`graph.json`, and, with `--approve`, `receipt.json`). The same approved
+requirement set always compiles to a byte-identical graph, so `graph_hash` is
+reproducible; editing one requirement re-plans only the affected node while
+every other node keeps its content-addressed identity.
 
 #### `bernstein add-task`
 

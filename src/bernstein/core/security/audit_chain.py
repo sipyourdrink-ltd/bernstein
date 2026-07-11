@@ -380,6 +380,17 @@ EVENT_PROCESS_REAP_RECEIPT = "process.reap_receipt"
 #: grant, every write it authorized, and revocation.
 EVENT_DASHBOARD_TOKEN_GRANT = "dashboard.token_grant"
 
+#: Issue #2361 -- emitted when an operator approves (or rejects) the
+#: requirement set drafted from a spec, before the deterministic compiler
+#: turns it into a task graph. The event binds the content-addressed
+#: requirement-set hash, the source-spec hash, the requirement count, the
+#: compiled graph hash, and the decision into the HMAC chain. The receipt
+#: is the plan-approval gate for the spec pipeline: a verifier can prove,
+#: from the chain alone, that a given task graph was compiled from a
+#: requirement set the operator signed off on -- no requirement line was
+#: added or altered after approval without breaking the chain.
+EVENT_SPEC_REQUIREMENT_SET = "spec.requirement_set"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2381,6 +2392,54 @@ def record_dashboard_token_grant(
     )
 
 
+def record_spec_requirement_set(
+    *,
+    chain: AuditChainStore,
+    requirement_set_hash: str,
+    source_hash: str,
+    requirement_count: int,
+    graph_hash: str,
+    decision: str,
+    actor: str = "spec-pipeline",
+) -> AuditEvent:
+    """Append a ``spec.requirement_set`` approval receipt into *chain* (#2361).
+
+    The receipt is the plan-approval gate for the spec pipeline. It binds the
+    content-addressed requirement-set hash, the source-spec hash, the compiled
+    graph hash, and the decision into the HMAC chain so a verifier can prove,
+    from the chain alone, that a task graph was compiled from the exact
+    requirement set the operator approved. Only hashes and metadata are
+    recorded -- never the spec body or the requirement text.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        requirement_set_hash: ``sha256:`` digest over the ordered
+            ``(id, line_hash)`` pairs of the approved requirement set.
+        source_hash: ``sha256:`` digest of the source spec document.
+        requirement_count: Number of requirements in the approved set.
+        graph_hash: ``sha256:`` digest of the compiled task graph.
+        decision: ``approved`` or ``rejected``.
+        actor: Recorded actor; defaults to ``"spec-pipeline"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SPEC_REQUIREMENT_SET,
+        actor=actor,
+        resource_type="requirement_set",
+        resource_id=requirement_set_hash,
+        details={
+            "requirement_set_hash": requirement_set_hash,
+            "source_hash": source_hash,
+            "requirement_count": requirement_count,
+            "graph_hash": graph_hash,
+            "decision": decision,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2411,6 +2470,7 @@ __all__ = [
     "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
+    "EVENT_SPEC_REQUIREMENT_SET",
     "EVENT_SUBAGENT_DELEGATION",
     "EVENT_TASK_CLAIM_RECEIPT",
     "EVENT_TASK_MAILBOX_MESSAGE",
@@ -2455,6 +2515,7 @@ __all__ = [
     "record_sensitive_gate",
     "record_skill_install_receipt",
     "record_skill_usage",
+    "record_spec_requirement_set",
     "record_subagent_delegation",
     "record_task_claim_receipt",
     "record_task_mailbox_message",
