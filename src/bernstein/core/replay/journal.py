@@ -137,9 +137,10 @@ class EventJournal:
     def __init__(self, run_id: str, sdd_dir: Path) -> None:
         self._run_id = run_id
         self._runs_root = sdd_dir / "runs"
-        # Path-injection guard (py/path-injection). First a lexical check that
-        # never touches the filesystem (so it has no time-of-check/time-of-use
-        # window): a run_id must be a single, non-traversing path segment.
+        # Path-injection guard (py/path-injection). A run_id names one journal
+        # directory and must be a single path segment. First a filesystem-free
+        # lexical check (no time-of-check/time-of-use window) that rejects
+        # traversal, separators, and absolute paths outright.
         if (
             not run_id
             or run_id in {".", ".."}
@@ -149,16 +150,16 @@ class EventJournal:
             or Path(run_id).is_absolute()
         ):
             raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
-        # Then realpath-containment: normalise symlinks/".." with
-        # os.path.realpath and keep the result only when os.path.commonpath
-        # confirms it stays under the runs root. self._path is the resolved,
-        # contained path, so every downstream file operation uses a value that
-        # has passed the containment check.
-        runs_root = os.path.realpath(self._runs_root)
-        resolved = os.path.realpath(self._runs_root / run_id / JOURNAL_FILENAME)
-        if os.path.commonpath((runs_root, resolved)) != runs_root:
+        # Pin the directory name to os.path.basename so no directory component
+        # can survive into the path; for a run_id that passed the check above
+        # this is a no-op, but it is the sanitiser the path is built from.
+        safe_run_id = os.path.basename(run_id)
+        self._path = self._runs_root / safe_run_id / JOURNAL_FILENAME
+        # Defence in depth: refuse a resolved path that still escapes the runs
+        # root, e.g. through a symlinked run directory.
+        runs_root_real = os.path.realpath(self._runs_root)
+        if os.path.commonpath((runs_root_real, os.path.realpath(self._path))) != runs_root_real:
             raise ValueError(f"run_id escapes the journal runs root: {run_id!r}")
-        self._path = Path(resolved)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0
