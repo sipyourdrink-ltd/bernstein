@@ -468,6 +468,29 @@ def check_schedule_supervisor() -> dict[str, Any]:
     }
 
 
+def check_price_table_advisory() -> dict[str, Any]:
+    """Warn when the shipped cost-scheduling price table is stale (issue #2354).
+
+    USD budgets are enforced against a hash-pinned price table; provider rates
+    drift between releases, so a table older than the staleness window is a
+    signal to refresh ``cost_policy.pricing`` (or the shipped defaults). This is
+    an advisory only -- it never blocks.
+    """
+    from datetime import UTC, datetime
+
+    from bernstein.core.cost.scheduling.price_table import DEFAULT_PRICE_TABLE, price_table_staleness
+
+    advisory = price_table_staleness(DEFAULT_PRICE_TABLE, now_iso=datetime.now(tz=UTC).strftime("%Y-%m-%d"))
+    return {
+        "name": "Cost price table",
+        "status": _CHECK_WARN if advisory.stale else _CHECK_PASS,
+        "detail": advisory.message,
+        "fix": "Refresh cost_policy.pricing in bernstein.yaml or update the shipped price table"
+        if advisory.stale
+        else "",
+    }
+
+
 def run_all_checks() -> list[dict[str, Any]]:
     """Run all health checks and return results."""
     checks: list[dict[str, Any]] = []
@@ -475,6 +498,7 @@ def run_all_checks() -> list[dict[str, Any]]:
     checks.extend(check_adapters_installed())
     checks.extend(check_adapter_advisories())
     checks.extend(check_canary_last_green())
+    checks.append(check_price_table_advisory())
     checks.extend(check_api_keys())
     checks.extend(
         (
