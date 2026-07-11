@@ -353,6 +353,13 @@ EVENT_TASK_CLAIM_RECEIPT = "task.claim_receipt"
 #: "installed" is chain-attested rather than a directory listing.
 EVENT_PLUGIN_INSTALL_RECEIPT = "plugin.install_receipt"
 
+#: Issue #2369 (tail) -- emitted when a packaged install is superseded by an
+#: update. The event binds ``prior_skill_hash -> skill_hash`` so the
+#: supersession is chain-verifiable: a verifier walks update receipts newest
+#: to oldest and lands on the root ``plugin.install_receipt``, proving which
+#: content addresses an installed tree passed through and in what order.
+EVENT_PLUGIN_UPDATE_RECEIPT = "plugin.update_receipt"
+
 #: Issue #2368 -- emitted for every probe of the nightly adapter conformance
 #: canary. The event binds the probed adapter, the discovered upstream
 #: version, the conformance verdict, and the content hash of the canary
@@ -2226,6 +2233,66 @@ def record_plugin_install_receipt(
     )
 
 
+def record_plugin_update_receipt(
+    *,
+    chain: AuditChainStore,
+    prior_skill_hash: str,
+    skill_hash: str,
+    manifest_hash: str,
+    install_id: str,
+    spine_anchor: str,
+    host: str,
+    scope: str,
+    dest: str,
+    actor: str = "skill_packaging",
+) -> AuditEvent:
+    """Append a ``plugin.update_receipt`` event into *chain* (#2369, tail).
+
+    Records that a previously attested packaged install at *dest* was
+    superseded: the tree that was there (``prior_skill_hash``) was replaced
+    by new content (``skill_hash``). The event binds both addresses plus the
+    lineage-spine anchor of the update-receipt row. A verifier holding the
+    chain walks update receipts from the current content address back through
+    their ``prior_skill_hash`` links until it reaches the root
+    ``plugin.install_receipt`` -- the full supersession history of an
+    installed tree is reconstructable offline.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        prior_skill_hash: Content address of the tree being superseded
+            (``sha256:<hex>``).
+        skill_hash: Content address of the new installed tree.
+        manifest_hash: SHA-256 of the new installed manifest file.
+        install_id: Per-install identifier tying this event to the receipt.
+        spine_anchor: Entry hash of the update-receipt row in the install
+            lineage spine.
+        host: Target agent host (``claude`` / ``codex`` / ... / ``dest``).
+        scope: Install scope (``project`` / ``user`` / ``dest``).
+        dest: Destination directory the tree was updated in place.
+        actor: Recorded actor; defaults to ``"skill_packaging"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_PLUGIN_UPDATE_RECEIPT,
+        actor=actor,
+        resource_type="plugin_update_receipt",
+        resource_id=skill_hash,
+        details={
+            "prior_skill_hash": prior_skill_hash,
+            "skill_hash": skill_hash,
+            "manifest_hash": manifest_hash,
+            "install_id": install_id,
+            "spine_anchor": spine_anchor,
+            "host": host,
+            "scope": scope,
+            "dest": dest,
+        },
+    )
+
+
 def record_adapter_canary_receipt(
     *,
     chain: AuditChainStore,
@@ -2405,6 +2472,7 @@ __all__ = [
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_OTEL_PROJECTION",
     "EVENT_PLUGIN_INSTALL_RECEIPT",
+    "EVENT_PLUGIN_UPDATE_RECEIPT",
     "EVENT_PROCESS_REAP_RECEIPT",
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
@@ -2448,6 +2516,7 @@ __all__ = [
     "record_multimodal_attach",
     "record_otel_projection",
     "record_plugin_install_receipt",
+    "record_plugin_update_receipt",
     "record_process_reap_receipt",
     "record_review_receipt",
     "record_routing_failover_receipt",

@@ -1357,10 +1357,45 @@ content address with no receipt, so the verdict is structural.
 
 Exit codes: `0` verified, `1` missing directory, `2` attestation failure.
 
+#### `bernstein skills package update`
+
+Supersedes a previously attested install with new content. Unlike
+`install --force` (which overwrites and anchors an independent install
+receipt), `update` binds the *prior* content address to the new one: the
+update receipt is content-addressed by the new tree, anchored in the same
+`skills` lineage spine, and mirrored into the HMAC chain as a
+`plugin.update_receipt` event. A verifier walks the update receipts newest
+to oldest and lands on the root install, so the supersession history of an
+installed tree is reconstructable offline. A tree that was never anchored
+is refused (run `install` first).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--host NAME` | - | Target host; selects the host's default skills directory. |
+| `--scope project\|user` | `project` | Update under the project root or the home directory. |
+| `--dest DIR` | - | Explicit installed directory (overrides `--host`/`--scope`). |
+| `--source DIR` | bundled skill | Tree to update to. |
+| `--workdir DIR` | `.` | Project root where the receipt is anchored. |
+
+Exit codes: `0` updated or already current, `1` error (missing or
+unattested install).
+
+#### `bernstein skills package status`
+
+Scans the default skill directory for each supported host and scope,
+re-hashes any present tree, and proves it against its anchored install or
+update receipt. `--json` emits the per-install verdicts as JSON; `--home`
+overrides the home directory for user-scoped destinations.
+
+Exit codes: `0` every present install verifies (or none present), `2` at
+least one present install failed verification.
+
 ```bash
 bernstein skills package install --host claude --scope project
 bernstein skills package install --dest ~/.claude/plugins/bernstein --record-only
 bernstein skills package verify --host claude --scope project
+bernstein skills package update --host claude --scope project
+bernstein skills package status
 ```
 
 See [Agent sessions](../integrations/agent-session.md) for the skill
