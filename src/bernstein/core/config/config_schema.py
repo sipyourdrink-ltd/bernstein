@@ -416,6 +416,77 @@ class BatchSchema(BaseModel):
     eligible: list[str] = Field(default_factory=list)
 
 
+class ModelPriceSchema(BaseModel):
+    """USD rate for one model, per 1 million tokens (issue #2354).
+
+    The scheduling price table lives in config so an operator can override the
+    shipped defaults without a code change. Rates are validated non-negative:
+    a negative USD rate is a misconfiguration that would corrupt every
+    downstream budget decision, so it fails at load time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    input: float = Field(..., ge=0, description="USD per 1M input tokens.")
+    output: float = Field(..., ge=0, description="USD per 1M output tokens.")
+    cache_read: float = Field(default=0.0, ge=0, description="USD per 1M cache-read tokens.")
+    cache_write: float = Field(default=0.0, ge=0, description="USD per 1M cache-write tokens.")
+
+
+class PricingSchema(BaseModel):
+    """Versioned price-table overrides for cost-aware scheduling (#2354)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    as_of: str = Field(default="", description="ISO date (YYYY-MM-DD) the override rates were captured.")
+    revision: int = Field(default=0, ge=0, description="Monotonic price-table revision counter.")
+    models: dict[str, ModelPriceSchema] = Field(
+        default_factory=dict,
+        description="Per-model USD rates; each row overrides / extends the shipped defaults.",
+    )
+
+
+class CostCapsSchema(BaseModel):
+    """USD ceilings enforced before dispatch (#2354). ``0`` means unlimited."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    per_task_usd: float = Field(default=0.0, ge=0, description="Per-task USD ceiling; 0 = unlimited.")
+    per_run_usd: float = Field(default=0.0, ge=0, description="Per-run USD ceiling; 0 = unlimited.")
+    per_day_usd: float = Field(default=0.0, ge=0, description="Per-day USD ceiling; 0 = unlimited.")
+
+
+class CostPolicySchema(BaseModel):
+    """Cost-aware scheduling policy: pricing, USD caps, pools, cache window.
+
+    Issue #2354. USD ceilings and per-pool caps drive deterministic dispatch
+    decisions from the existing spend ledger; the cache-window fan-out opt-in
+    defaults off (conservative) so priming a shared prompt cache is always a
+    deliberate operator choice.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pricing: PricingSchema | None = Field(default=None, description="Price-table overrides.")
+    caps: CostCapsSchema | None = Field(default=None, description="Per-task / run / day USD ceilings.")
+    pools: dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-pool USD caps keyed by pool name (e.g. api, subscription); 0 = unlimited.",
+    )
+    cache_window: bool = Field(
+        default=False,
+        description="Opt in to cache-window fan-out (one warm-up call primes a shared prefix); default off.",
+    )
+
+    @model_validator(mode="after")
+    def _reject_negative_pool_caps(self) -> CostPolicySchema:
+        for pool, cap in self.pools.items():
+            if cap < 0:
+                msg = f"cost_policy.pools[{pool!r}] cap must be >= 0 (0 means unlimited), got {cap}"
+                raise ValueError(msg)
+        return self
+
+
 class TestAgentSchema(BaseModel):
     """Test agent configuration."""
 
@@ -735,6 +806,7 @@ class BernsteinConfig(BaseModel):
     catalogs: list[CatalogEntry] | None = None
     formal_verification: FormalVerificationSchema | None = None
     batch: BatchSchema | None = None
+    cost_policy: CostPolicySchema | None = None
     test_agent: TestAgentSchema | None = None
     smtp: SmtpSchema | None = None
     mcp_servers: dict[str, Any] | None = None

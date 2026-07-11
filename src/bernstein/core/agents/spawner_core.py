@@ -3336,6 +3336,24 @@ class AgentSpawner:
                         "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually"
                     ) from exc
 
+        # Install the in-process verification-gate policy for this session so a
+        # gate-capable adapter (Claude Code) can refuse a failing completion or
+        # an out-of-scope write in-session (#2360). Fail-open: installing the
+        # policy must never block a spawn, and the authoritative scheduler-side
+        # gate runs regardless. The task's owned_files become the write
+        # allowlist and its required evidence_producers the completion check.
+        with suppress(Exception):
+            from bernstein.core.security.hook_gate import policy_from_task_fields, write_policy
+
+            gate_owned: list[str] = []
+            gate_producers: list[dict[str, Any]] = []
+            for gate_task in tasks:
+                gate_owned.extend(getattr(gate_task, "owned_files", []) or [])
+                gate_producers.extend(getattr(gate_task, "evidence_producers", []) or [])
+            gate_policy = policy_from_task_fields(session_id, owned_files=gate_owned, evidence_producers=gate_producers)
+            if gate_policy.is_active:
+                write_policy(spawn_cwd, session_id, gate_policy)
+
         # Build per-task MCP config: auto-detected servers merged with base config
         effective_mcp = self._mcp_config
         if self._mcp_registry is not None:

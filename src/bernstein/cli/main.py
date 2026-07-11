@@ -1243,7 +1243,18 @@ from bernstein.cli.commands.evidence_cmd import evidence_group  # noqa: E402
 
 cli.add_command(evidence_group, "evidence")
 
+# In-process verification gate driven by worker hooks: blocks a failing
+# completion or an out-of-scope write in-session, sealing gate receipts (#2360).
+from bernstein.cli.commands.hook_gate_cmd import hook_gate_group  # noqa: E402
+
+cli.add_command(hook_gate_group, "hook-gate")
+
 # Durable work ledger: resumable task-graph state anchored to a git ref (#2358).
 from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
 
 cli.add_command(ledger_group, "ledger")
+
+# Tournament runs: parallel attempts selected by deterministic evaluators (#2353).
+from bernstein.cli.commands.tournament_cmd import tournament_group  # noqa: E402
+
+cli.add_command(tournament_group, "tournament")
