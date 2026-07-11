@@ -2381,6 +2381,76 @@ def record_dashboard_token_grant(
     )
 
 
+#: Issue #2365 -- emitted for every operator action on the run review board
+#: (approve / request-changes / merge). The signed, principal-named receipt
+#: binds the decision to the projection the operator saw (``projection_hash``)
+#: and the exact journal head it chained onto (``journal_entry_hash``), so a
+#: reviewer can prove from the chain alone that a named principal took the
+#: action against that board state without operator override.
+EVENT_REVIEW_BOARD_ACTION = "review_board.action"
+
+
+def record_review_board_action(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    decision: str,
+    principal: str,
+    scope: str,
+    projection_hash: str,
+    journal_head: str,
+    diff_hash: str,
+    journal_entry_hash: str,
+    actor: str = "review_board",
+) -> AuditEvent:
+    """Append a ``review_board.action`` event into *chain*.
+
+    Mirrors one signed operator board decision into the HMAC-chained audit
+    log. The receipt names the acting principal and binds what was reviewed:
+    the board ``projection_hash`` the operator saw, the run ``journal_head``
+    the decision chained onto, and the reviewed ``diff_hash``. Only hashes,
+    the decision, the principal, and the scope are recorded -- never diff
+    bytes. A verifier holding the run journal can prove the decision row at
+    ``journal_entry_hash`` follows the named head.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the reviewed task belongs to.
+        task_id: The reviewed task.
+        decision: The board action (``approve`` / ``request_changes`` /
+            ``merge``).
+        principal: The acting operator principal (dashboard-auth credential).
+        scope: The scope the action was authorized under.
+        projection_hash: The board projection hash the operator saw.
+        journal_head: The run journal Merkle head the decision chained onto.
+        diff_hash: Content hash of the reviewed task diff (empty when none).
+        journal_entry_hash: The recorded decision row's ``event_hash``.
+        actor: Recorded actor; defaults to ``"review_board"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_REVIEW_BOARD_ACTION,
+        actor=actor,
+        resource_type="review_board_action",
+        resource_id=task_id,
+        details={
+            "run_id": run_id,
+            "task_id": task_id,
+            "decision": decision,
+            "principal": principal,
+            "scope": scope,
+            "projection_hash": projection_hash,
+            "journal_head": journal_head,
+            "diff_hash": diff_hash,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2406,6 +2476,7 @@ __all__ = [
     "EVENT_OTEL_PROJECTION",
     "EVENT_PLUGIN_INSTALL_RECEIPT",
     "EVENT_PROCESS_REAP_RECEIPT",
+    "EVENT_REVIEW_BOARD_ACTION",
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
@@ -2449,6 +2520,7 @@ __all__ = [
     "record_otel_projection",
     "record_plugin_install_receipt",
     "record_process_reap_receipt",
+    "record_review_board_action",
     "record_review_receipt",
     "record_routing_failover_receipt",
     "record_schedule_fire_projection",

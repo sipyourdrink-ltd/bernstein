@@ -29,6 +29,9 @@ Journal event                 Board transition
 ``task_retried``              card moves back to ``queued``
 ``task_completed``            card moves to ``needs_review``
 ``task_merged``               card moves to ``merged``
+``task_diff_captured``        attaches the card's diff summary (no move)
+``task_review_decision``      attaches the operator verdict; ``merge`` moves
+                              the card to ``merged``
 ``run_started``/``completed`` populate the board's run envelope
 ============================  =============================================
 
@@ -37,12 +40,21 @@ an older board renderer. The ``task_merged`` event is recorded by the task
 lifecycle at the moment a verified task's branch lands (see
 :func:`record_task_merged`); journals written before that event existed
 simply project an empty ``merged`` column.
+
+An operator board action (approve / request-changes / merge) is itself a
+journal row (:func:`record_review_decision`), so the reviewer's verdict
+lives in the same Merkle chain the execution does and the board's review
+annotations and ``merged`` column are a projection of it, never board-side
+state. The reviewed diff a card carries (:func:`record_task_diff_captured`)
+is a content hash the served diff bytes are checked against, so what a
+reviewer folded open equals what executed.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -69,10 +81,43 @@ BOARD_COLUMNS = ("queued", "running", "gated", "needs_review", "merged")
 #: :func:`record_task_merged`, projected here into the ``merged`` column.
 EVENT_TASK_MERGED = "task_merged"
 
+#: Journal event recorded when a task's git diff is captured as a
+#: content-addressed review artifact (see :func:`record_task_diff_captured`).
+#: The row carries only the diff's ``sha256`` and line/file counts; the diff
+#: bytes live beside the journal under ``review/diffs/<task_id>.diff`` so the
+#: board can serve them against a detached run and verify them against the
+#: chained hash.
+EVENT_TASK_DIFF_CAPTURED = "task_diff_captured"
+
+#: Journal event recorded for every operator board action (approve /
+#: request-changes / merge). The decision is a row in the run journal - the
+#: same Merkle chain the execution lives in - so a reviewer's verdict chains
+#: onto the exact journal head it was made against (see
+#: :func:`record_review_decision`). The signed, principal-named receipt is
+#: mirrored onto the audit chain by the action endpoint.
+EVENT_TASK_REVIEW_DECISION = "task_review_decision"
+
+#: Board action an operator can take on a card. ``merge`` moves the card into
+#: the ``merged`` column; ``approve`` / ``request_changes`` annotate the card
+#: in place (a human verdict the scheduler consumes out of band). Any other
+#: value is ignored by the fold (forward compatibility).
+REVIEW_DECISION_APPROVE = "approve"
+REVIEW_DECISION_REQUEST_CHANGES = "request_changes"
+REVIEW_DECISION_MERGE = "merge"
+REVIEW_DECISIONS = (REVIEW_DECISION_APPROVE, REVIEW_DECISION_REQUEST_CHANGES, REVIEW_DECISION_MERGE)
+
+#: Per-run directory (under ``runs/<run_id>/``) holding captured task diffs.
+REVIEW_DIFF_SUBDIR = "review/diffs"
+
 
 # ---------------------------------------------------------------------------
 # Pure fold: journal events -> canonical board state
 # ---------------------------------------------------------------------------
+
+
+def _as_int(value: Any) -> int:
+    """Coerce a journal field to ``int`` (0 on anything non-numeric)."""
+    return int(value) if isinstance(value, (int, float)) else 0
 
 
 def _new_card(task_id: str) -> dict[str, Any]:
@@ -84,6 +129,8 @@ def _new_card(task_id: str) -> dict[str, Any]:
         "attempts": 0,
         "gate_failures": [],
         "cost_usd": None,
+        "diff": None,
+        "review": None,
         "last_event_index": 0,
     }
 
@@ -144,6 +191,33 @@ def _fold_event(cards: dict[str, dict[str, Any]], run: dict[str, Any], index: in
         card["column"] = "merged"
         agent_id = row.get("agent_id")
         card["agent_id"] = str(agent_id) if isinstance(agent_id, str) and agent_id else card["agent_id"]
+    elif event == EVENT_TASK_DIFF_CAPTURED:
+        if card is None:
+            card = cards[task_id] = _new_card(task_id)
+        card["diff"] = {
+            "sha256": str(row.get("diff_sha256", "")),
+            "added": _as_int(row.get("diff_added")),
+            "removed": _as_int(row.get("diff_removed")),
+            "files": _as_int(row.get("diff_files")),
+        }
+    elif event == EVENT_TASK_REVIEW_DECISION:
+        decision = row.get("decision")
+        if decision not in REVIEW_DECISIONS:
+            # Unknown decision value: ignore (forward compatibility).
+            return
+        if card is None:
+            card = cards[task_id] = _new_card(task_id)
+        principal = row.get("principal")
+        scope = row.get("scope")
+        note = row.get("note")
+        card["review"] = {
+            "decision": str(decision),
+            "principal": str(principal) if isinstance(principal, str) and principal else "",
+            "scope": str(scope) if isinstance(scope, str) and scope else "",
+            "note": str(note) if isinstance(note, str) and note else "",
+        }
+        if decision == REVIEW_DECISION_MERGE:
+            card["column"] = "merged"
     else:
         # Unknown / non-task event: ignore (forward compatibility).
         return
@@ -317,15 +391,184 @@ def record_task_merged(recorder: EventJournal | None, *, task_id: str, agent_id:
     recorder.record(EVENT_TASK_MERGED, task_id=task_id, agent_id=agent_id)
 
 
+# ---------------------------------------------------------------------------
+# Diff artifact: the bytes the reviewer inspects, content-addressed + chained
+# ---------------------------------------------------------------------------
+
+#: Match a unified-diff file header (``diff --git a/<x> b/<y>``); the ``b``
+#: side is the reviewed file path.
+_DIFF_GIT_RE = re.compile(r"^diff --git a/(?P<a>.+?) b/(?P<b>.+)$")
+
+
+def diff_summary(diff_text: str) -> dict[str, Any]:
+    """Return a deterministic summary of a unified diff.
+
+    Pure function of the diff bytes: the ``sha256`` is the content hash the
+    board chains and later verifies the served diff against, so two operators
+    holding the same diff derive the same identity.
+
+    Args:
+        diff_text: A unified (``git diff``) text blob.
+
+    Returns:
+        ``{"sha256": "sha256:<hex>", "added": int, "removed": int,
+        "files": [paths...], "files_changed": int}``.
+    """
+    added = 0
+    removed = 0
+    files: list[str] = []
+    for line in diff_text.splitlines():
+        match = _DIFF_GIT_RE.match(line)
+        if match is not None:
+            files.append(match.group("b"))
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    digest = hashlib.sha256(diff_text.encode("utf-8")).hexdigest()
+    return {
+        "sha256": f"sha256:{digest}",
+        "added": added,
+        "removed": removed,
+        "files": files,
+        "files_changed": len(files),
+    }
+
+
+def _contained_diff_path(sdd_dir: Path, run_id: str, task_id: str) -> Path | None:
+    """Resolve ``runs/<run_id>/review/diffs/<task_id>.diff`` inside the run.
+
+    Returns ``None`` when the resolved path escapes the per-run diffs
+    directory (defence in depth against a crafted ``task_id`` / ``run_id``;
+    the route also slug-validates both before calling in).
+    """
+    diffs_root = (sdd_dir / "runs" / run_id / REVIEW_DIFF_SUBDIR).resolve()
+    candidate = (diffs_root / f"{task_id}.diff").resolve()
+    if candidate != diffs_root and not candidate.is_relative_to(diffs_root):
+        return None
+    if candidate.parent != diffs_root:
+        return None
+    return candidate
+
+
+def store_task_diff(sdd_dir: Path, run_id: str, task_id: str, diff_text: str) -> dict[str, Any] | None:
+    """Persist a captured task diff beside the run journal, return its summary.
+
+    The diff is written under ``runs/<run_id>/review/diffs/<task_id>.diff`` so
+    it travels with the run (a detached copy carries the diff a reviewer
+    inspects) and the board can verify the served bytes against the
+    journal-chained ``sha256``. The write overwrites any prior capture, so a
+    retried task's latest diff is what the board serves. Returns ``None`` when
+    the ``task_id`` would escape the diffs directory.
+    """
+    path = _contained_diff_path(sdd_dir, run_id, task_id)
+    if path is None:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(diff_text, encoding="utf-8")
+    return diff_summary(diff_text)
+
+
+def read_task_diff(sdd_dir: Path, run_id: str, task_id: str) -> tuple[str, dict[str, Any]] | None:
+    """Return a captured task diff and its fresh summary, or ``None``.
+
+    The summary is recomputed from the stored bytes so a caller can compare
+    its ``sha256`` to the journal-recorded hash and prove the served diff is
+    the one that was captured.
+    """
+    path = _contained_diff_path(sdd_dir, run_id, task_id)
+    if path is None or not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    return text, diff_summary(text)
+
+
+def record_task_diff_captured(recorder: EventJournal | None, *, task_id: str, summary: Mapping[str, Any]) -> None:
+    """Record a ``task_diff_captured`` event into the run journal.
+
+    Chains the diff's identity (``sha256`` plus line/file counts) into the
+    run journal so the board's diff summary is a journal fact and the served
+    diff bytes are verifiable against the chain. ``None`` *recorder* is a
+    no-op for detached callers and minimal test harnesses. Only the hash and
+    counts are recorded - never the diff bytes or file paths.
+
+    Args:
+        recorder: The run's :class:`EventJournal` (or ``None``).
+        task_id: The task whose diff was captured.
+        summary: A :func:`diff_summary` result.
+    """
+    if recorder is None:
+        return
+    recorder.record(
+        EVENT_TASK_DIFF_CAPTURED,
+        task_id=task_id,
+        diff_sha256=str(summary.get("sha256", "")),
+        diff_added=_as_int(summary.get("added")),
+        diff_removed=_as_int(summary.get("removed")),
+        diff_files=_as_int(summary.get("files_changed")),
+    )
+
+
+def record_review_decision(
+    recorder: EventJournal | None,
+    *,
+    task_id: str,
+    decision: str,
+    principal: str,
+    scope: str,
+    note: str = "",
+) -> None:
+    """Record a ``task_review_decision`` event into the run journal.
+
+    The operator's board verdict becomes a row in the same Merkle chain the
+    execution lives in, so it chains onto the exact journal head it was made
+    against and the board's ``merged`` column (and review annotations)
+    project from a journal fact, not from board-side state. ``None``
+    *recorder* is a no-op.
+
+    Args:
+        recorder: The run's :class:`EventJournal` (or ``None``).
+        task_id: The reviewed task.
+        decision: One of :data:`REVIEW_DECISIONS`.
+        principal: The acting operator principal (from the dashboard-auth
+            credential).
+        scope: The credential scope the action was authorized under.
+        note: Optional operator note (for example a request-changes reason).
+    """
+    if recorder is None:
+        return
+    recorder.record(
+        EVENT_TASK_REVIEW_DECISION,
+        task_id=task_id,
+        decision=decision,
+        principal=principal,
+        scope=scope,
+        note=note,
+    )
+
+
 __all__ = [
     "BOARD_COLUMNS",
     "BOARD_SCHEMA_VERSION",
+    "EVENT_TASK_DIFF_CAPTURED",
     "EVENT_TASK_MERGED",
+    "EVENT_TASK_REVIEW_DECISION",
+    "REVIEW_DECISIONS",
+    "REVIEW_DECISION_APPROVE",
+    "REVIEW_DECISION_MERGE",
+    "REVIEW_DECISION_REQUEST_CHANGES",
+    "REVIEW_DIFF_SUBDIR",
     "BoardProjection",
     "board_hash",
     "canonical_board_bytes",
+    "diff_summary",
     "list_board_runs",
     "project_board",
     "project_run",
+    "read_task_diff",
+    "record_review_decision",
+    "record_task_diff_captured",
     "record_task_merged",
+    "store_task_diff",
 ]
