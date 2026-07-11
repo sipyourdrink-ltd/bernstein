@@ -1,0 +1,11 @@
+{
+  "adapters": {
+    "agy": {
+      "binary": "agy",
+      "receipt_sha256": "006fb946868db1d68aee03a2530b21981aec240fbf6e1ae663c272eb63e66a53",
+      "recorded_at": "2026-07-11T05:57:23Z",
+      "version": "1.0.0"
+    }
+  },
+  "schema_version": 1
+}

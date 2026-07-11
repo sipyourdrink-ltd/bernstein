@@ -343,6 +343,14 @@ EVENT_TASK_MAILBOX_MESSAGE = "task.mailbox_message"
 #: scheduler decision.
 EVENT_TASK_CLAIM_RECEIPT = "task.claim_receipt"
 
+#: Issue #2368 -- emitted for every probe of the nightly adapter conformance
+#: canary. The event binds the probed adapter, the discovered upstream
+#: version, the conformance verdict, and the content hash of the canary
+#: receipt into the HMAC chain, so a canary finding (and the last-green
+#: table row it attests) is reconstructable and tamper-evident offline
+#: rather than living only in a CI log.
+EVENT_ADAPTER_CANARY_RECEIPT = "adapter.canary_receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2135,10 +2143,62 @@ def record_task_claim_receipt(
     )
 
 
+def record_adapter_canary_receipt(
+    *,
+    chain: AuditChainStore,
+    adapter: str,
+    binary: str,
+    installed_version: str | None,
+    verdict: str,
+    receipt_sha256: str,
+    failures: list[str],
+    actor: str = "adapter_canary",
+) -> AuditEvent:
+    """Append an ``adapter.canary_receipt`` event into *chain* (#2368).
+
+    Mirrors one canary probe into the HMAC chain: the probed adapter, the
+    upstream version discovered on the runner, the conformance verdict,
+    and the content hash of the sealed canary receipt. A verifier holding
+    the receipt file can recompute its hash and check it against the
+    chain, so a canary finding (and the last-green table row it attests)
+    cannot be forged by editing the artifact.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        adapter: Adapter registry key probed.
+        binary: Binary name the probe resolved.
+        installed_version: Parsed upstream version, or ``None`` when
+            unknown.
+        verdict: ``pass`` / ``fail`` / ``skip``.
+        receipt_sha256: Content hash of the canonical receipt bytes.
+        failures: Conformance failure lines (empty unless ``fail``).
+        actor: Recorded actor; defaults to ``"adapter_canary"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest``
+        embedded in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADAPTER_CANARY_RECEIPT,
+        actor=actor,
+        resource_type="adapter_canary",
+        resource_id=adapter,
+        details={
+            "adapter": adapter,
+            "binary": binary,
+            "installed_version": installed_version,
+            "verdict": verdict,
+            "receipt_sha256": receipt_sha256,
+            "failures": failures.copy(),
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_ACTIVITY_RESULT",
+    "EVENT_ADAPTER_CANARY_RECEIPT",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
@@ -2180,6 +2240,7 @@ __all__ = [
     "ThreadApprovalDetails",
     "record_a2a_message_receipt",
     "record_activity_result",
+    "record_adapter_canary_receipt",
     "record_checkpoint_retry",
     "record_cost_profile_report",
     "record_endpoint_certification",
