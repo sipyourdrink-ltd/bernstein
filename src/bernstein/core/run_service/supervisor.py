@@ -132,13 +132,23 @@ def serve_run(root: Path, run_id: str, *, per_task_delay: float = 0.0) -> Ledger
     ``daemon_restarted`` continuity receipt is recorded before resuming so the
     restart boundary is chain-attested. On a clean finish the run is closed and
     a ``completed`` receipt is written.
+
+    When the run has an ssh backend sidecar (written at submit time), each task
+    is executed on the ssh backend in its own isolated remote worktree via an
+    :class:`~bernstein.core.run_service.ssh_runner.SSHTaskRunner`; otherwise the
+    single-host advance loop runs. Either way the ledger is authoritative, so a
+    killed supervisor resumes from the tip with zero lost completed tasks.
     """
+    from bernstein.core.run_service.ssh_runner import SSHTaskRunner, read_ssh_spec
+
     root = Path(root)
     svc = RunService(root)
     state = svc.project(run_id)
     if state.completed_tasks or state.in_flight_tasks:
         svc.daemon_restart(run_id)
-    advance_run(root, run_id, per_task_delay=per_task_delay)
+    spec = read_ssh_spec(root, run_id)
+    task_runner = SSHTaskRunner(spec, root, run_id) if spec is not None else None
+    advance_run(root, run_id, per_task_delay=per_task_delay, task_runner=task_runner)
     svc.complete(run_id)
     return svc.project(run_id)
 

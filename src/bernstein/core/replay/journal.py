@@ -39,6 +39,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -150,9 +151,15 @@ class EventJournal:
             or Path(run_id).is_absolute()
         ):
             raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
+        # Positive allowlist: a run_id must be a strict identifier. This is the
+        # barrier the path is built from; combined with the blocklist above it
+        # leaves no attacker-controlled character able to reach the filesystem
+        # sink below.
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+            raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
         # Pin the directory name to os.path.basename so no directory component
-        # can survive into the path; for a run_id that passed the check above
-        # this is a no-op, but it is the sanitiser the path is built from.
+        # can survive into the path; for a run_id that passed the checks above
+        # this is a no-op, but it keeps the path derivation explicit.
         safe_run_id = os.path.basename(run_id)
         self._path = self._runs_root / safe_run_id / JOURNAL_FILENAME
         # Defence in depth: refuse a resolved path that still escapes the runs
