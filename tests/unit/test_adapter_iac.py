@@ -354,7 +354,7 @@ class TestIaCIsAlive:
 class TestIaCKill:
     def test_calls_killpg_with_pid_as_pgid(self) -> None:
         adapter = IaCAdapter()
-        with patch("bernstein.adapters.base.kill_process_group_graceful") as mock_killpg:
+        with patch("bernstein.adapters.base.reap_process_group") as mock_killpg:
             adapter.kill(555)
         mock_killpg.assert_called_once_with(555)
 

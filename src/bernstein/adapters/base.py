@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.platform_compat import (
     kill_process_group,
-    kill_process_group_graceful,
     process_alive,
+    reap_process_group,
 )
 from bernstein.core.resource_limits import ResourceLimits, make_preexec_fn
 
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from bernstein.core.config.platform_compat import ProcessReapReceipt
     from bernstein.core.lineage.identity import AgentCard
     from bernstein.core.models import AbortReason, ApiTierInfo, ModelConfig
 
@@ -719,20 +720,27 @@ class CLIAdapter(ABC):
         """Check if the agent process is still running."""
         return process_alive(pid)
 
-    def kill(self, pid: int) -> None:
+    def kill(self, pid: int) -> ProcessReapReceipt:
         """Terminate the agent process and its entire process group.
 
-        Processes are spawned with ``start_new_session=True``, so the PID
-        equals the PGID.  Using the PID directly avoids ``os.getpgid()``
-        failing when the wrapper process has already exited - this prevents
-        orphan child processes from accumulating.
+        Processes are spawned with process-group isolation (POSIX
+        ``start_new_session=True``), so the PID equals the PGID.  Using the
+        PID directly avoids ``os.getpgid()`` failing when the wrapper
+        process has already exited - this prevents orphan child processes
+        from accumulating.  On Windows the same PID anchors a process-tree
+        termination instead.
 
-        Sends SIGTERM first, polls for exit for a short grace period, then
-        escalates to SIGKILL if the group is still alive.  Without this
-        escalation, agents that trap SIGTERM survive reap paths (wall-clock
-        timeout and stale heartbeat) - see prior audit.
+        Sends a graceful stop first, polls for exit for a short grace
+        period, then escalates to a force-kill if the group is still alive.
+        Without this escalation, agents that trap SIGTERM survive reap
+        paths (wall-clock timeout and stale heartbeat) - see prior audit.
+
+        Returns:
+            A :class:`~bernstein.core.config.platform_compat.ProcessReapReceipt`
+            describing how the reap was performed, so callers can mirror it
+            into the audit chain.
         """
-        kill_process_group_graceful(pid)
+        return reap_process_group(pid)
 
     @abstractmethod
     def name(self) -> str:

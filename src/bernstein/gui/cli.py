@@ -154,6 +154,59 @@ def _stop_tunnel(name: str) -> None:
     reg.destroy(name)
 
 
+def _enforce_dashboard_posture(host: str, workdir: Path) -> None:
+    """Apply the dashboard startup posture for a bind on *host* (#2366).
+
+    Non-loopback binds refuse to start until dashboard auth is configured
+    (a scoped token or a password) - there is no silent open mode on a
+    routable interface. Unconfigured loopback binds get an operator token
+    issued into the signed token journal and printed once.
+
+    Raises:
+        SystemExit: On an unconfigured non-loopback bind.
+    """
+    import time
+
+    from bernstein.core.security.audit_chain import AuditChainStore, record_dashboard_token_grant
+    from bernstein.core.server.dashboard_tokens import (
+        SCOPE_OPERATOR,
+        DashboardTokenRegistry,
+        resolve_dashboard_hmac_key,
+        resolve_dashboard_posture,
+    )
+
+    sdd_dir = workdir / ".sdd"
+    key = resolve_dashboard_hmac_key(sdd_dir)
+    registry = DashboardTokenRegistry(sdd_dir / "auth" / "dashboard_tokens.jsonl", hmac_key=key)
+    configured = bool(os.environ.get("BERNSTEIN_DASHBOARD_PASSWORD", "")) or registry.has_tokens()
+
+    posture = resolve_dashboard_posture(host, auth_configured=configured)
+    if posture == "refuse":
+        raise SystemExit(
+            f"Refusing to bind the dashboard on non-loopback host {host!r} without auth configured.\n"
+            "Issue a scoped credential first:\n"
+            "  bernstein auth dashboard-token issue --principal <you> --scope operator\n"
+            "or set BERNSTEIN_DASHBOARD_PASSWORD, then re-run."
+        )
+    if posture == "generate":
+        raw, record = registry.issue(principal="local-operator", scope=SCOPE_OPERATOR, now=int(time.time()))
+        record_dashboard_token_grant(
+            chain=AuditChainStore(sdd_dir / "audit", key=key),
+            grant="issue",
+            token_id=record.token_id,
+            token_sha256=record.token_sha256,
+            principal=record.principal,
+            scope=record.scope,
+        )
+        click.echo("Dashboard token (operator scope, printed once - the journal keeps only its digest):")
+        click.echo(f"  Token: {raw}")
+        click.echo("  Use it as `Authorization: Bearer <token>` or in the dashboard login form.")
+        return
+    click.echo(
+        "Dashboard auth: configured (scoped token or password). Manage tokens with `bernstein auth dashboard-token`."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Click surface
 # ---------------------------------------------------------------------------
@@ -231,6 +284,11 @@ def serve(
     from fastapi import FastAPI
 
     from bernstein.gui import mount, pwa
+
+    # Startup posture (#2366): non-loopback binds refuse to start without
+    # dashboard auth configured; unconfigured loopback binds get a scoped
+    # operator token issued and printed once.
+    _enforce_dashboard_posture(host, Path.cwd())
 
     if minimal:
         app = FastAPI(title="Bernstein", description="Operator GUI (minimal)")

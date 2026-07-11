@@ -252,6 +252,8 @@ bernstein gui serve --minimal     # skip the full /api/v1/* surface
 
 The Vite bundle is committed under `src/bernstein/gui/static/`, so wheel installs work without a Node toolchain. Surface tour + per-task drawer: [docs/web-ui.md](docs/web-ui.md).
 
+The dashboard requires a credential: on a loopback bind an operator token is issued and printed at startup; a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; every grant and write authorization is a signed governance record (`bernstein governance verify dashboard-auth`).
+
 ## how it works
 
 Bernstein runs a four-stage pipeline per goal:

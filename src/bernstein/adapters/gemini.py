@@ -56,6 +56,7 @@ from bernstein.adapters.base import (
 )
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+from bernstein.core.platform_compat import process_group_popen_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +284,7 @@ class GeminiAdapter(CLIAdapter):
                     env=env,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
-                    start_new_session=True,
+                    **process_group_popen_kwargs(),
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError(

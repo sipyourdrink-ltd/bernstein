@@ -18,6 +18,7 @@ from typing import Any
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+from bernstein.core.platform_compat import process_group_popen_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ class CodexAdapter(CLIAdapter):
                     env=env,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
-                    start_new_session=True,
+                    **process_group_popen_kwargs(),
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError("codex not found in PATH. Install it with: npm install -g @openai/codex") from exc

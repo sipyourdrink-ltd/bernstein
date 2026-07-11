@@ -135,3 +135,60 @@ class TestValidateIsolation:
     def test_skip_hardlink_check(self, worktree_path: Path, repo_root: Path) -> None:
         result = validate_worktree_isolation(worktree_path, repo_root, check_hardlinks=False)
         assert result.passed
+
+
+# ---------------------------------------------------------------------------
+# NTFS junction handling (issue #2367)
+# ---------------------------------------------------------------------------
+
+
+class TestJunctionDetection:
+    """Junctions must be treated like symlinks by the isolation checks.
+
+    On Windows, ``Path.is_symlink()`` is False for NTFS junctions, so a
+    junction from the worktree's ``.sdd/`` into the parent repo would
+    bypass a symlink-only check.  The checks route through the platform
+    layer's ``is_filesystem_link``, which also detects junctions.
+    """
+
+    def test_junction_sdd_flagged(
+        self,
+        worktree_path: Path,
+        repo_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sdd = worktree_path / ".sdd"
+        sdd.mkdir()
+
+        import bernstein.core.git.worktree_isolation as wi
+
+        monkeypatch.setattr(wi, "is_filesystem_link", lambda p: Path(p) == sdd)
+        violations = check_sdd_not_shared(worktree_path, repo_root)
+        assert len(violations) == 1
+
+    def test_junction_entry_into_parent_sdd_flagged(
+        self,
+        worktree_path: Path,
+        repo_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        entry = worktree_path / "state"
+        entry.mkdir()
+
+        import bernstein.core.git.worktree_isolation as wi
+
+        monkeypatch.setattr(wi, "is_filesystem_link", lambda p: Path(p) == entry)
+        monkeypatch.setattr(
+            wi,
+            "_resolve_link_target",
+            lambda p: (repo_root / ".sdd" / "state").resolve(),
+        )
+        violations = check_symlinks_read_only(worktree_path, repo_root)
+        assert len(violations) == 1
+        assert "mutable state" in violations[0]
+
+    def test_plain_dirs_still_pass(self, worktree_path: Path, repo_root: Path) -> None:
+        (worktree_path / ".sdd").mkdir()
+        (worktree_path / "src").mkdir()
+        result = validate_worktree_isolation(worktree_path, repo_root)
+        assert result.passed
