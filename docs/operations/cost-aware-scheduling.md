@@ -77,6 +77,27 @@ A forged receipt (an `admit` flipped from `false` to `true`, an overrun zeroed)
 recomputes to a different decision hash and fails verification exactly like a
 tampered chain entry.
 
+### Live enforcement in the run loop
+
+The ceilings are enforced inside the live `bernstein run` spawn loop, not only
+in preflight. On every tick the orchestrator costs the batches it is about to
+spawn from their pre-spawn estimates and consults the policy **before** any
+agent is claimed or spawned. When the projected next dispatch would breach a
+cap, the tick holds every spawn and seals the halt receipt described above, so
+the run stops **before** the cap is breached rather than discovering the
+overrun after the fact.
+
+The gate is conservative at both ends:
+
+- **Fail-open on config-absent.** With no `cost_policy` block -- or with every
+  cap left at `0` (unlimited) -- the gate is a clean no-op and never touches the
+  ledger, so a run with no cost policy behaves exactly as before.
+- **Fail-closed on breach.** With a positive cap configured, a projected breach
+  halts the tick. Candidates are evaluated in dispatch order and the spend a
+  candidate would commit is folded into the projection for the candidates behind
+  it, so a batch of small dispatches that only *together* breach still halts on
+  the exact candidate that tips a dimension over.
+
 ## Pool accounting and pre-run exhaustion
 
 Usage is attributed to named pools (the ledger's `quota_envelope` column, e.g.

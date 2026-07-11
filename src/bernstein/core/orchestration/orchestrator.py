@@ -1097,6 +1097,99 @@ class Orchestrator:
             self._last_budget_action = result.action
         return result
 
+    def _evaluate_cost_policy_dispatch(
+        self,
+        batches: list[list[Task]],
+        cost_estimates: dict[str, float],
+    ) -> Any | None:
+        """Halt this tick's spawns before a USD cap is breached (#2354).
+
+        Consults the deterministic USD dispatch policy
+        (:func:`~bernstein.core.cost.scheduling.dispatch_gate.evaluate_run_dispatch`)
+        with the batches about to spawn, costed from ``cost_estimates`` and the
+        run's persisted spend ledger. Behaviour:
+
+        * **Fail-open (no-op)** when no ``cost_policy`` -- or no positive cap --
+          is configured: returns ``None`` without touching the ledger, so an
+          absent or disabled price policy never blocks a dispatch.
+        * **Fail-closed** when the projected next dispatch would breach a cap:
+          the halting :class:`DispatchDecision` is sealed into the lineage spine
+          and mirrored into the HMAC audit chain as a verifiable receipt, and
+          returned so the caller blocks the spawn.
+
+        Args:
+            batches: Role-grouped batches about to be claimed/spawned this tick.
+            cost_estimates: ``task_id -> estimated_cost_usd`` from this tick.
+
+        Returns:
+            The halting ``DispatchDecision`` (spawns must be blocked), or
+            ``None`` to proceed.
+        """
+        from bernstein.core.cost.scheduling.dispatch_gate import (
+            build_dispatch_candidates,
+            evaluate_run_dispatch,
+            resolve_cost_caps,
+            resolve_price_table,
+        )
+
+        caps = resolve_cost_caps(getattr(self._config, "cost_policy", None))
+        if caps is None or not batches:
+            return None  # fail-open: nothing to enforce
+
+        from bernstein.core.cost.spend_ledger import SpendLedger
+
+        now_ts = time.time()
+        day_key = datetime.now(UTC).strftime("%Y-%m-%d")
+        price_table = resolve_price_table(getattr(self._config, "cost_policy", None))
+        candidates = build_dispatch_candidates(
+            batches,
+            cost_estimates=cost_estimates,
+            run_id=self._run_id,
+            day_key=day_key,
+        )
+        entries = SpendLedger.load_entries(self._spend_ledger.path)
+        outcome = evaluate_run_dispatch(
+            candidates=candidates,
+            entries=entries,
+            caps=caps,
+            price_table_hash=price_table.content_hash(),
+            now_ts=now_ts,
+        )
+        if outcome.halt is None:
+            return None  # admitted: within every configured cap
+
+        self._seal_cost_dispatch_halt(outcome.halt, timestamp=int(now_ts))
+        return outcome.halt
+
+    def _seal_cost_dispatch_halt(self, decision: Any, *, timestamp: int) -> None:
+        """Seal a cost-policy halt into the lineage spine + audit chain (#2354).
+
+        The halt receipt is the proof, not a decoration: sealing failures are
+        logged and swallowed so a missing key or IO error never crashes the run
+        (the spawn is still blocked). Only the exception type is logged on this
+        path because it touches the audit HMAC key.
+        """
+        try:
+            from bernstein.core.cost.scheduling.receipt import build_dispatch_receipt
+            from bernstein.core.security.audit import load_or_create_audit_key
+            from bernstein.core.security.audit_chain import AuditChainStore
+
+            hmac_key = load_or_create_audit_key()
+            chain = AuditChainStore(self._workdir / ".sdd" / "audit", key=hmac_key)
+            build_dispatch_receipt(
+                decision=decision,
+                workdir=self._workdir,
+                lineage_root=self._workdir / ".sdd" / "lineage",
+                hmac_key=hmac_key,
+                timestamp=timestamp,
+                chain=chain,
+            )
+        except Exception as exc:
+            # Sealing is a provenance aid; a failure must never crash the run
+            # (the spawn is still held). Log only the exception type: this path
+            # touches the audit HMAC key.
+            logger.warning("cost: failed to seal dispatch halt receipt: %s", type(exc).__name__)
+
     # -- Core tick -----------------------------------------------------------
 
     def tick(self) -> TickResult:
@@ -1482,6 +1575,11 @@ class Orchestrator:
                 for _task in itertools.chain.from_iterable(batches):
                     if not _task.model or _task.model == _ap_override.from_model:
                         _task.model = _ap_override.to_model
+        # Cost-aware dispatch gate (#2354): consult the deterministic USD cost
+        # policy before claiming/spawning. When a configured cap would be
+        # breached by the next dispatch, the tick halts with a sealed,
+        # offline-verifiable receipt; no policy (or no cap) is a clean no-op.
+        cost_dispatch_halt = self._evaluate_cost_policy_dispatch(batches, cost_estimates)
         if self._config.dry_run:
             for batch in batches:
                 for task in batch:
@@ -1493,6 +1591,30 @@ class Orchestrator:
                         task.effort,
                     )
                     result.dry_run_planned.append((task.role, task.title, task.model, task.effort))
+        elif cost_dispatch_halt is not None:
+            # Fail-closed: the next dispatch would breach a configured USD cap.
+            # The halting decision is already sealed into the lineage spine +
+            # audit chain; hold every spawn this tick so the run stops before
+            # the cap is breached (issue #2354, AC1).
+            logger.warning(
+                "Cost policy HALT: next dispatch would breach the %s USD cap by $%.4f (run=%s); "
+                "holding spawns. Dispatch receipt %s",
+                cost_dispatch_halt.breached_dimension,
+                cost_dispatch_halt.projected_overrun_usd,
+                self._run_id,
+                cost_dispatch_halt.decision_hash,
+            )
+            self._notify(
+                "cost.dispatch.halt",
+                "Cost policy halt",
+                f"Next dispatch would breach the {cost_dispatch_halt.breached_dimension} USD cap by "
+                f"${cost_dispatch_halt.projected_overrun_usd:.4f}; spawns held. "
+                f"Dispatch receipt {cost_dispatch_halt.decision_hash}.",
+                breached_dimension=cost_dispatch_halt.breached_dimension,
+                projected_overrun_usd=round(cost_dispatch_halt.projected_overrun_usd, 6),
+                decision_hash=cost_dispatch_halt.decision_hash,
+            )
+            result.cost_dispatch_halt = cost_dispatch_halt.decision_hash
         elif budget_decision is not None and budget_decision.action == BudgetAction.ABORT:
             _bs = self._cost_tracker.status()
             logger.warning(
@@ -4766,6 +4888,10 @@ class TickResult:
         self.errors: list[str] = []
         # Populated when dry_run=True: (role, title, model, effort) tuples
         self.dry_run_planned: list[tuple[str, str, str | None, str | None]] = []
+        # Set to the halting decision hash when the cost-aware dispatch policy
+        # (issue #2354) refused this tick's spawns before a USD cap was
+        # breached; None when no cost policy fired.
+        self.cost_dispatch_halt: str | None = None
 
 
 def _resolve_manager_llm(workdir: Path) -> tuple[str, str]:
@@ -5659,6 +5785,7 @@ if __name__ == "__main__":
             cost_autopilot=seed.cost_autopilot if seed else False,
             judge_model=seed.judge_model if seed else None,
             judge_provider=seed.judge_provider if seed else None,
+            cost_policy=getattr(seed, "cost_policy", None) if seed else None,
         )
 
         if args.cells > 1:

@@ -1341,6 +1341,11 @@ class OrchestratorConfig:
     cost_anomaly: CostAnomalyConfig = field(default_factory=CostAnomalyConfig)
     batch: BatchConfig = field(default_factory=BatchConfig)
     max_cost_per_agent: float = 0.0  # Hard per-agent spend cap (0 = unlimited)
+    # Cost-aware scheduling policy (issue #2354): USD caps + price-table
+    # overrides consulted before each dispatch. ``None`` (the default) leaves
+    # the deterministic USD dispatch gate a no-op (fail-open). Typed ``Any`` to
+    # avoid importing the pydantic config schema into the task models module.
+    cost_policy: Any | None = None
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
     convergence: ConvergenceGuardConfig = field(default_factory=ConvergenceGuardConfig)
     ci_autofix: CIAutofixConfig = field(default_factory=CIAutofixConfig)

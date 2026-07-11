@@ -14,8 +14,10 @@ never rebuilds scheduler state, it replays the ledger.
 * ``verify``  - re-verify the audit chain, ledger chain, and every continuity
   boundary offline.
 
-Off-host execution (the ``ssh`` sandbox backend and hosted sandbox backends)
-is a documented follow-on; see docs/reference/KNOWN_LIMITATIONS.md.
+``submit --backend ssh`` runs each task off-host on the ssh sandbox backend in
+its own isolated remote worktree; the non-secret connection descriptor is
+persisted beside the run and credentials are resolved from the credential vault
+at execution time (never the ledger or the receipts).
 """
 
 from __future__ import annotations
@@ -31,11 +33,13 @@ from bernstein.cli.helpers import console
 from bernstein.core.run_service import (
     RunService,
     RunServiceError,
+    SSHBackendSpec,
     serve_run,
     spawn_detached,
     stop_supervisor,
     supervisor_status,
     verify_run,
+    write_ssh_spec,
 )
 from bernstein.core.run_service.paths import list_run_ids
 
@@ -63,6 +67,42 @@ _JSON_OPTION = click.option(
 
 def _root(workdir: Path | None) -> Path:
     return (workdir or Path.cwd()).resolve()
+
+
+def _build_ssh_spec(
+    host: str | None,
+    path: str | None,
+    user: str | None,
+    port: int,
+    identity: str | None,
+    repo: str | None,
+    base_branch: str,
+    secrets: tuple[str, ...],
+) -> SSHBackendSpec:
+    """Build an :class:`SSHBackendSpec` from the ``--ssh-*`` flags.
+
+    Exits with :data:`EXIT_NO_RUN` and a message on missing/malformed input.
+    """
+    if not host or not path:
+        console.print("[red]--backend ssh requires --ssh-host and --ssh-path.[/red]")
+        raise SystemExit(EXIT_NO_RUN)
+    secret_env: list[tuple[str, str]] = []
+    for item in secrets:
+        env_name, sep, provider_id = item.partition("=")
+        if not sep or not env_name or not provider_id:
+            console.print(f"[red]--ssh-secret must be ENV=PROVIDER, got {item!r}.[/red]")
+            raise SystemExit(EXIT_NO_RUN)
+        secret_env.append((env_name, provider_id))
+    return SSHBackendSpec(
+        host=host,
+        remote_root=path,
+        user=user,
+        port=port,
+        identity_file=identity,
+        repo_src=repo,
+        base_branch=base_branch,
+        secret_env=tuple(secret_env),
+    )
 
 
 @click.group("run-service")
@@ -93,6 +133,36 @@ def run_service_group() -> None:
     show_default=True,
     help="Seconds to dwell per task (makes off-terminal progress observable).",
 )
+@click.option(
+    "--backend",
+    type=click.Choice(["local", "ssh"]),
+    default="local",
+    show_default=True,
+    help="Execution backend for the run's tasks.",
+)
+@click.option("--ssh-host", default=None, help="ssh host (required for --backend ssh).")
+@click.option(
+    "--ssh-path",
+    default=None,
+    help="Absolute remote dir under which per-task worktrees are provisioned (required for --backend ssh).",
+)
+@click.option("--ssh-user", default=None, help="Remote ssh user (optional).")
+@click.option("--ssh-port", type=int, default=22, show_default=True, help="Remote ssh port.")
+@click.option("--ssh-identity", default=None, help="Path to the ssh private key (optional).")
+@click.option("--ssh-repo", default=None, help="Remote repo path to git-worktree each task from (optional).")
+@click.option(
+    "--ssh-base-branch",
+    default="main",
+    show_default=True,
+    help="Base ref each per-task worktree branch is cut from.",
+)
+@click.option(
+    "--ssh-secret",
+    "ssh_secrets",
+    multiple=True,
+    metavar="ENV=PROVIDER",
+    help="Inject vault credential PROVIDER into remote env var ENV, vault-only (repeatable).",
+)
 def submit_cmd(
     goal: str,
     tasks: tuple[str, ...],
@@ -100,12 +170,26 @@ def submit_cmd(
     output_json: bool,
     foreground: bool,
     per_task_delay: float,
+    backend: str,
+    ssh_host: str | None,
+    ssh_path: str | None,
+    ssh_user: str | None,
+    ssh_port: int,
+    ssh_identity: str | None,
+    ssh_repo: str | None,
+    ssh_base_branch: str,
+    ssh_secrets: tuple[str, ...],
 ) -> None:
     """Open a run for GOAL and start advancing it.
 
     Provide the decomposed task graph with one or more ``--task`` ids. Without
     ``--foreground`` a detached supervisor is spawned that survives this
     terminal; reattach later with ``bernstein run-service attach <run-id>``.
+
+    ``--backend ssh`` runs each task off-host in its own isolated remote
+    worktree; pass ``--ssh-host`` and ``--ssh-path``, optionally ``--ssh-repo``
+    to git-worktree from, and ``--ssh-secret ENV=PROVIDER`` to inject a vault
+    credential into the remote environment (resolved from the vault only).
     """
     task_ids = list(tasks)
     if not task_ids:
@@ -113,8 +197,15 @@ def submit_cmd(
         raise SystemExit(EXIT_NO_RUN)
 
     root = _root(workdir)
+    ssh_spec = (
+        _build_ssh_spec(ssh_host, ssh_path, ssh_user, ssh_port, ssh_identity, ssh_repo, ssh_base_branch, ssh_secrets)
+        if backend == "ssh"
+        else None
+    )
     handle = RunService(root).submit(goal, task_ids)
     run_id = handle.run_id
+    if ssh_spec is not None:
+        write_ssh_spec(root, run_id, ssh_spec)
 
     pid: int | None = None
     if foreground:
@@ -130,6 +221,7 @@ def submit_cmd(
                     "ledger_head": handle.ledger_head,
                     "task_count": len(task_ids),
                     "detached": not foreground,
+                    "backend": backend,
                     "pid": pid,
                 }
             )
@@ -143,6 +235,8 @@ def submit_cmd(
             expand=False,
         )
     )
+    if ssh_spec is not None:
+        console.print(f"[dim]Executing each task on the ssh backend ({ssh_spec.host}).[/dim]")
     if foreground:
         console.print("[green]Ran in the foreground to completion.[/green]")
     else:

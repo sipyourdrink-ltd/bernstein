@@ -459,6 +459,16 @@ EVENT_COST_DISPATCH_RECEIPT = "cost.dispatch_receipt"
 #: and why, without re-running the tournament.
 EVENT_TOURNAMENT_SELECTION = "tournament.selection"
 
+#: Issue #2352 (AC4) -- emitted once per detached-run task executed on the ssh
+#: sandbox backend. The receipt binds the run and task ids, the remote host, the
+#: isolated remote worktree the task ran in, the task's exit code, a digest of
+#: the per-task isolation marker written into that worktree, and the work-ledger
+#: head at execution time. Only non-secret identifiers and hashes are recorded
+#: -- never goal text, task payloads, or injected credentials -- so an auditor
+#: can prove from the chain alone that each task of a goal ran in its own
+#: worktree across the ssh boundary (distinct worktree per task, none lost).
+EVENT_RUN_SSH_TASK = "run.ssh_task"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2908,6 +2918,64 @@ def record_review_board_action(
     )
 
 
+def record_run_ssh_task(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    host: str,
+    worktree: str,
+    exit_code: int,
+    worktree_digest: str,
+    ledger_head: str,
+    backend_name: str = "ssh",
+    actor: str = "run_service_ssh",
+) -> AuditEvent:
+    """Append a ``run.ssh_task`` execution receipt into *chain* (#2352, AC4).
+
+    Records one detached-run task executed on the ssh sandbox backend. The
+    receipt binds the isolated remote worktree the task ran in and the
+    work-ledger head at execution time, so an offline verifier can prove from
+    the chain alone that each task of a goal ran in its own worktree across the
+    ssh boundary. Only non-secret identifiers and content hashes are recorded --
+    never goal text, task payloads, or the credentials injected into the remote
+    environment (those flow through the credential vault, never the chain).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The detached run the task belongs to.
+        task_id: The task that executed.
+        host: The ssh host the task ran on (hostname only, never a secret).
+        worktree: Absolute POSIX path of the isolated remote worktree.
+        exit_code: The remote task command's exit code.
+        worktree_digest: ``sha256:`` digest of the per-task isolation marker
+            written into ``worktree`` (proves the marker landed in that tree).
+        ledger_head: Work-ledger head entry hash at execution time.
+        backend_name: The sandbox backend name; defaults to ``"ssh"``.
+        actor: Recorded actor; defaults to ``"run_service_ssh"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RUN_SSH_TASK,
+        actor=actor,
+        resource_type="run_ssh_task",
+        resource_id=task_id,
+        details={
+            "run_id": run_id,
+            "task_id": task_id,
+            "backend": backend_name,
+            "host": host,
+            "worktree": worktree,
+            "exit_code": exit_code,
+            "worktree_digest": worktree_digest,
+            "ledger_head": ledger_head,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2940,6 +3008,7 @@ __all__ = [
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
     "EVENT_RUN_LIFECYCLE",
+    "EVENT_RUN_SSH_TASK",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
@@ -2991,6 +3060,7 @@ __all__ = [
     "record_review_receipt",
     "record_routing_failover_receipt",
     "record_run_lifecycle",
+    "record_run_ssh_task",
     "record_schedule_fire_projection",
     "record_sensitive_gate",
     "record_skill_install_receipt",
