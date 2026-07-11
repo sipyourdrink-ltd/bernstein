@@ -314,7 +314,7 @@ def review_board_action(
             journal_entry_hash=journal_entry_hash,
         )
         audit_event_hash = event.hmac
-    except Exception as exc:
+    except Exception as exc:  # intentional-broad-except
         # Audit mirror is best-effort: the chained journal receipt already
         # stands and is the board's source of truth; the audit entry is a
         # convenience projection. Log the type only (audit-key-adjacent path).
