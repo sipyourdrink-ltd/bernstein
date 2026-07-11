@@ -74,6 +74,7 @@ _CLI_REDIRECT_MAP: dict[str, str] = {
     "init_wizard_cmd": "bernstein.cli.commands.init_wizard_cmd",
     "lazy_loader": "bernstein.cli.utils.lazy_loader",
     "leaderboard": "bernstein.cli.display.leaderboard",
+    "ledger_cmd": "bernstein.cli.commands.ledger_cmd",
     "logs_group_cmd": "bernstein.cli.commands.logs_group_cmd",
     "maintenance_cmd": "bernstein.cli.commands.maintenance_cmd",
     "man_page": "bernstein.cli.utils.man_page",

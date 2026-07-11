@@ -19,7 +19,7 @@ graph TD
     TL["Task Lifecycle\n(claim, spawn, complete)"]
     AL["Agent Lifecycle\n(heartbeat, crash, reap)"]
     Spawner["Spawner\n(build prompt, select adapter,\nlaunch in git worktree)"]
-    Claude["Claude Adapter\n(and 17 more)"]
+    Claude["Claude Adapter\n(and 44 more)"]
     Codex["Codex Adapter"]
     Gemini["Gemini Adapter"]
     WT1["git worktree\n+ role prompt"]
@@ -56,7 +56,7 @@ Runtime state (`.sdd/runtime/`) is ephemeral - PIDs, logs, signals. Never commit
 
 ## Package structure
 
-Since v1.6, `core/` is organized into 35 sub-packages rather than flat files. Top-level modules like `core/server.py` and `core/orchestrator.py` still exist but are **thin re-export shims** - the real implementation lives in the corresponding sub-package. This keeps import paths stable while allowing each subsystem to grow independently.
+Since v1.6, `core/` is organized into 55 sub-packages rather than flat files. Top-level modules like `core/server.py` and `core/orchestrator.py` still exist but are **thin re-export shims** - the real implementation lives in the corresponding sub-package. This keeps import paths stable while allowing each subsystem to grow independently.
 
 | Sub-package | Responsibility |
 |-------------|----------------|
@@ -119,7 +119,7 @@ See [`architecture/model-routing.md`](model-routing.md) for cascade behaviour.
 
 Verifies task completion via concrete signals: file exists, glob matches, tests pass, file contains expected content. Moves tasks from `claimed/` to `done/` or `failed/` based on signal results. Does not trust agent claims - verifies them.
 
-### Reviewer (`core/quality/reviewer.py`)
+### Reviewer (`core/quality/review_pipeline/`)
 
 LLM-powered quality review of completed work. Runs after the janitor. Can push corrections back into the queue if the produced code doesn't meet quality standards. Separate concern from janitor: janitor checks signals, reviewer checks quality.
 
@@ -150,7 +150,7 @@ Tracks per-agent token consumption in real time. Detects runaway token growth an
 | `core/agents/agent_lifecycle.py` | Heartbeat monitoring, stall detection, crash reaping |
 | `core/security/approval.py` | Configurable approval gates between janitor verification and merge |
 | `core/quality/ci_fix.py` | Parse failing CI logs, create fix tasks, route to responsible agent |
-| `core/protocols/cluster.py` | Multi-node coordination: node registration, heartbeats, topology |
+| `core/protocols/cluster/cluster.py` | Multi-node coordination: node registration, heartbeats, topology |
 | `core/persistence/file_locks.py` | File-level locking for concurrent agent safety |
 | `core/git/git_basic.py` | Git operations: run, status, staging, committing |
 | `core/git/git_ops.py` | Centralized git write operations for Bernstein |
@@ -282,13 +282,13 @@ Bernstein can execute agents on Cloudflare's edge infrastructure in addition to 
 - **D1AnalyticsClient** (`core/cost/d1_analytics.py`) - usage metering and billing
 - **VectorizeSemanticCache** (`core/memory/vectorize_cache.py`) - semantic LLM response caching
 
-The cloud bridges implement the same `RuntimeBridge` interface as local execution, so the orchestrator remains agnostic to where agents run. See the [Cloudflare Overview](cloudflare-overview.md) for architecture diagrams and setup instructions.
+The cloud bridges implement the same `RuntimeBridge` interface as local execution, so the orchestrator remains agnostic to where agents run. See the [Cloudflare Overview](../cloudflare/cloudflare-overview.md) for architecture diagrams and setup instructions.
 
 ---
 
 ## What to read next
 
-- **[Getting Started](../getting-started/GETTING_STARTED.md)** - install, init, run, monitor
+- **[Getting Started](../getting-started/install.md)** - install, init, run, monitor
 - **[Feature Matrix](../reference/FEATURE_MATRIX.md)** - shipped vs. partial vs. roadmap
 - **[Benchmarks](../benchmarks/BENCHMARKS.md)** - performance baseline and methodology
 - **[Sandbox backends](sandbox.md)** - pluggable `SandboxBackend` protocol (1.9.x)

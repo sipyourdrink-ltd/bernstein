@@ -96,6 +96,7 @@ def _make_spawner(tmp_path: Path, adapter: CLIAdapter | None = None) -> AgentSpa
         adapter=adapter,
         templates_dir=tmp_path / "templates",
         workdir=tmp_path,
+        default_model="mock-model",
     )
 
 

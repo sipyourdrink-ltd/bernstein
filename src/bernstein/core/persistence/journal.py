@@ -11,8 +11,32 @@ Each step of an agent run is hashed with::
             "prompt":      <full prompt text the adapter received | null>,
             "tool_call":   <serialised tool invocation dict | null>,
             "tool_result": <serialised tool result dict       | null>,
+            "effort":      <reasoning effort e.g. "low"|"high"|"max" | absent>,
         })
     )
+
+Journal record schema versioning (effort dimension)
+---------------------------------------------------
+The reasoning-effort level a request was routed at changes the model's
+output, so replaying a step at a different effort must surface as hash
+divergence, not as a silent mismatch. ``effort`` is therefore folded into
+the step hash. To keep every pre-existing journal valid, ``effort`` is
+back-compat versioned by **omission**:
+
+* ``effort=None`` (the sentinel for "unknown / not recorded") means the
+  ``effort`` key is left **out** of the canonical document entirely. The
+  bytes are then byte-identical to a pre-effort record, so every journal
+  written before this change re-verifies unchanged - a missing effort never
+  fails an old record.
+* A non-``None`` ``effort`` adds ``"effort": <value>`` to the document, so
+  two runs that differ only in effort produce different step hashes and a
+  cross-effort replay is caught as divergence.
+
+The persisted row carries an explicit ``schema_version`` (see
+:data:`JOURNAL_SCHEMA_VERSION`) so an operator can tell effort-aware rows
+apart from legacy rows. ``schema_version`` is metadata only and is **never**
+part of the hash, exactly like ``ts`` - so adding it does not invalidate any
+existing chain.
 
 Canonical encoding contract (load-bearing)
 ------------------------------------------
@@ -99,6 +123,13 @@ logger = logging.getLogger(__name__)
 #: Genesis ``prev_hash`` for the first step of a fresh chain.
 GENESIS_HASH = "0" * 64
 
+#: Journal record schema version. Bumped from an implicit ``1`` to ``2`` when
+#: the reasoning-``effort`` dimension was folded into the step hash. Persisted
+#: as row metadata only (never hashed), so bumping it does not invalidate any
+#: existing chain. Rows written before this change have no ``schema_version``
+#: field and are read as version ``1``.
+JOURNAL_SCHEMA_VERSION = 2
+
 #: Default bucket filename. Replays span at most one bucket today; the
 #: layout is shaped so a future compaction pass can add ``<n>.jsonl`` rolling
 #: files without breaking the reader.
@@ -135,12 +166,20 @@ def canonical_step_payload(
     prompt: str | None,
     tool_call: Any,
     tool_result: Any,
+    effort: str | None = None,
 ) -> bytes:
     """Return the canonical UTF-8 bytes that the step hash is taken over.
 
     See the module docstring for the contract; this function is the
     single source of truth. The output is what a third-party verifier
     would produce when re-deriving the hash by hand.
+
+    ``effort`` is back-compat versioned by omission: when ``None`` (the
+    sentinel for a legacy / unrecorded effort) the ``effort`` key is left out
+    of the document, yielding bytes byte-identical to a pre-effort record so
+    old journals re-verify unchanged. A non-``None`` ``effort`` adds an
+    ``"effort"`` key, so a step routed at a different effort hashes
+    differently and a cross-effort replay is caught as divergence.
     """
     document: dict[str, Any] = {
         "prev_hash": prev_hash,
@@ -150,6 +189,10 @@ def canonical_step_payload(
         "tool_call": tool_call,
         "tool_result": tool_result,
     }
+    # Sentinel-by-omission: only a recorded (non-None) effort enters the hash,
+    # so every pre-effort record continues to verify byte-for-byte.
+    if effort is not None:
+        document["effort"] = effort
     return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
@@ -161,6 +204,7 @@ def compute_step_hash(
     prompt: str | None,
     tool_call: Any,
     tool_result: Any,
+    effort: str | None = None,
 ) -> str:
     """Return the SHA-256 hex digest of the canonical step payload."""
     payload = canonical_step_payload(
@@ -170,6 +214,7 @@ def compute_step_hash(
         prompt=prompt,
         tool_call=tool_call,
         tool_result=tool_result,
+        effort=effort,
     )
     return hashlib.sha256(payload).hexdigest()
 
@@ -199,10 +244,18 @@ class JournalEntry:
     step_hash: str
     ts: float
     blob_refs: list[str] = field(default_factory=list)
+    #: Reasoning effort this step was routed at ("low"|"medium"|"high"|"max"),
+    #: or ``None`` for a legacy row that predates the effort dimension. Folded
+    #: into ``step_hash`` only when non-``None`` (see ``canonical_step_payload``).
+    effort: str | None = None
+    #: Row schema version. ``1`` for legacy rows (no ``schema_version`` field
+    #: on disk), :data:`JOURNAL_SCHEMA_VERSION` for effort-aware rows. Metadata
+    #: only - never hashed.
+    schema_version: int = JOURNAL_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly representation."""
-        return {
+        row: dict[str, Any] = {
             "seq": self.seq,
             "prev_hash": self.prev_hash,
             "input_hash": self.input_hash,
@@ -213,11 +266,22 @@ class JournalEntry:
             "step_hash": self.step_hash,
             "ts": self.ts,
             "blob_refs": self.blob_refs.copy(),
+            "schema_version": self.schema_version,
         }
+        # Only serialise ``effort`` when recorded, so a None-effort row stays
+        # byte-shaped like a legacy row apart from the (unhashed) metadata.
+        if self.effort is not None:
+            row["effort"] = self.effort
+        return row
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> JournalEntry:
-        """Build an entry from a deserialised dict row."""
+        """Build an entry from a deserialised dict row.
+
+        A legacy row (no ``schema_version`` / ``effort``) is read as
+        ``schema_version=1`` with ``effort=None``, so it re-verifies against
+        the pre-effort canonical payload unchanged.
+        """
         return cls(
             seq=int(raw["seq"]),
             prev_hash=str(raw["prev_hash"]),
@@ -229,6 +293,8 @@ class JournalEntry:
             step_hash=str(raw["step_hash"]),
             ts=float(raw.get("ts", 0.0)),
             blob_refs=list(raw.get("blob_refs") or []),
+            effort=raw.get("effort"),
+            schema_version=int(raw.get("schema_version", 1)),
         )
 
 
@@ -364,6 +430,9 @@ def _validate_chain_for_recovery(bucket_path: Path) -> tuple[str, int]:
                 prompt=row.get("prompt"),
                 tool_call=row.get("tool_call"),
                 tool_result=row.get("tool_result"),
+                # Legacy rows have no ``effort`` key: ``get`` returns None,
+                # so the recomputed hash matches the pre-effort payload.
+                effort=row.get("effort"),
             )
             stored_hash = str(row.get("step_hash", ""))
             if recomputed != stored_hash:
@@ -468,8 +537,15 @@ class Journal:
         tool_call: Any = None,
         tool_result: Any = None,
         blob_refs: list[str] | None = None,
+        effort: str | None = None,
     ) -> JournalEntry:
         """Append a new step to the chain and return the persisted entry.
+
+        ``effort`` records the reasoning effort the step was routed at. When
+        ``None`` (default) the row is byte-identical to a pre-effort record,
+        so existing callers that never pass it keep producing legacy-shaped
+        hashes; a recorded effort changes the step hash so a cross-effort
+        replay is caught as divergence.
 
         Raises:
             JournalError: If the journal is closed or the file write fails.
@@ -488,6 +564,7 @@ class Journal:
                 prompt=prompt,
                 tool_call=tool_call,
                 tool_result=tool_result,
+                effort=effort,
             )
             entry = JournalEntry(
                 seq=seq,
@@ -500,6 +577,7 @@ class Journal:
                 step_hash=step_hash,
                 ts=time.time(),
                 blob_refs=list(blob_refs or []),
+                effort=effort,
             )
             line = json.dumps(entry.to_dict(), sort_keys=True, separators=(",", ":"))
             try:
@@ -693,6 +771,9 @@ class JournalReader:
                     prompt=row.get("prompt"),
                     tool_call=row.get("tool_call"),
                     tool_result=row.get("tool_result"),
+                    # Legacy rows lack ``effort`` (get -> None), matching the
+                    # pre-effort payload so old chains verify unchanged.
+                    effort=row.get("effort"),
                 )
                 stored_hash = str(row.get("step_hash", ""))
                 if recomputed != stored_hash:
@@ -734,6 +815,7 @@ __all__ = [
     "AUDIT_EVENT_REPLAY_PUBLISH",
     "AUDIT_EVENT_REPLAY_STEP",
     "GENESIS_HASH",
+    "JOURNAL_SCHEMA_VERSION",
     "Journal",
     "JournalEntry",
     "JournalError",

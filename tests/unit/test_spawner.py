@@ -44,6 +44,7 @@ from bernstein.adapters.plugin_sdk import (
     AdapterPluginInfo,
     PluginAdapter,
 )
+from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 
 # --- spawn_for_tasks ---
 
@@ -53,7 +54,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory(pid=100)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -69,7 +70,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory(pid=200)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         tasks = [
             make_task(id="T-001", role="backend"),
@@ -100,9 +101,10 @@ class TestSpawnForTasks:
 
     def test_uses_highest_model_config_in_batch(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
+        adapter.name.return_value = "claude"  # tier-name assertions need a Claude-compatible adapter
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="sonnet")
 
         tasks = [
             make_task(id="T-001", role="backend", complexity=Complexity.LOW),
@@ -113,9 +115,13 @@ class TestSpawnForTasks:
                 complexity=Complexity.HIGH,
             ),
         ]
+        # Routing no longer hardcodes opus for high-stakes tasks; pin the
+        # per-task models so the batch still exercises highest-tier sorting.
+        tasks[0].model = "sonnet"
+        tasks[1].model = "opus"
         session = spawner.spawn_for_tasks(tasks)
 
-        # The high-complexity large-scope task should route to opus
+        # The batch must adopt the highest-tier model across its tasks
         call_kwargs = adapter.spawn.call_args.kwargs
         assert call_kwargs["model_config"].model == "opus"
         assert session.model_config.model == "opus"
@@ -124,7 +130,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task(role="qa")
         session = spawner.spawn_for_tasks([task])
@@ -135,7 +141,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task()
         spawner.spawn_for_tasks([task])
@@ -163,7 +169,7 @@ class TestSpawnForTasks:
             "whenToUse: Periodically\n---\n{{SESSION_ID}}\n"
         )
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
         task = make_task(role="backend")
         spawner.spawn_for_tasks([task])
 
@@ -296,27 +302,31 @@ class TestRenderPrompt:
 
 class TestSelectBatchConfig:
     def test_picks_opus_over_sonnet(self, make_task) -> None:
-        tasks = [
-            make_task(complexity=Complexity.LOW, scope=Scope.SMALL),
-            make_task(complexity=Complexity.HIGH, scope=Scope.LARGE),
-        ]
-        config = _select_batch_config(tasks)
+        # Routing no longer hardcodes tier names for high-stakes tasks; pin
+        # the per-task models so the batch still exercises tier sorting.
+        low = make_task(complexity=Complexity.LOW, scope=Scope.SMALL)
+        low.model = "sonnet"
+        high = make_task(complexity=Complexity.HIGH, scope=Scope.LARGE)
+        high.model = "opus"
+        config = _select_batch_config([low, high])
         assert config.model == "opus"
 
     def test_picks_higher_effort(self, make_task) -> None:
         tasks = [
-            make_task(role="manager"),  # routes to opus max
+            make_task(role="manager"),  # high-stakes role routes to max effort
             make_task(role="manager"),
         ]
-        config = _select_batch_config(tasks)
+        config = _select_batch_config(tasks, default_model="mock-model")
         assert config.effort == "max"
 
     def test_single_task_returns_its_config(self, make_task) -> None:
-        # LOW+SMALL tasks hit the L1 fast-path → cheapest model (haiku/low)
+        # LOW+SMALL tasks classify as L1. With no fast_path.l1_model in
+        # routing.yaml the L1 fast-path is skipped, and with no default_model
+        # supplied either, routing must hard-fail with a clear error instead
+        # of silently defaulting (previously "sonnet").
         task = make_task(complexity=Complexity.LOW, scope=Scope.SMALL)
-        config = _select_batch_config([task])
-        assert config.model == "sonnet"
-        assert config.effort == "normal"
+        with pytest.raises(ModelNotConfiguredError, match="no default_model"):
+            _select_batch_config([task])
 
 
 # --- TierAwareRouter integration ---
@@ -346,13 +356,38 @@ class TestSpawnerWithRouter:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         router = _make_router()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="sonnet"
+        )
 
         task = make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         session = spawner.spawn_for_tasks([task])
 
         assert session.provider == "test_provider"
         assert session.pid == 300
+
+    def test_router_selection_is_logged(
+        self, tmp_path: Path, make_task, mock_adapter_factory, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Logging gap: a successful router decision (provider + model chosen
+        for a task) was silent -- only the skip/fallback paths logged. Assert
+        the routing decision (inputs: role; output: provider/model) is
+        visible from the log alone."""
+        caplog.set_level("INFO", logger="bernstein.core.agents.spawner_core")  # actual module for the alias
+        adapter = mock_adapter_factory(pid=300)
+        adapter.name.return_value = "claude"
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        router = _make_router()
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="sonnet"
+        )
+
+        task = make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
+        spawner.spawn_for_tasks([task])
+
+        messages = [r.message for r in caplog.records]
+        assert any("Router selected provider" in m and "provider=test_provider" in m for m in messages), messages
 
     def test_router_skipped_for_non_claude_adapter(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         """Router is skipped when adapter is not Claude-compatible (e.g. qwen, gemini).
@@ -366,7 +401,9 @@ class TestSpawnerWithRouter:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         router = _make_router()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         session = spawner.spawn_for_tasks([task])
@@ -379,7 +416,9 @@ class TestSpawnerWithRouter:
         adapter = mock_adapter_factory(pid=400)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=None, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=None, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -393,7 +432,9 @@ class TestSpawnerWithRouter:
         templates_dir.mkdir(parents=True)
         # Router with no providers will raise RouterError
         router = TierAwareRouter()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, router=router, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -450,6 +491,7 @@ class TestSpawnerWithRouter:
             tmp_path,
             router=router,
             use_worktrees=False,
+            default_model="sonnet",
         )
         with patch.object(spawner, "_get_adapter_by_name", side_effect=[failing_adapter, backup_adapter]):
             session = spawner.spawn_for_tasks([make_task()])
@@ -499,6 +541,79 @@ class TestSpawnerWithRouter:
         assert session.model_config.model == "openai/gpt-5.4-mini"
         assert session.pid == 777
 
+    def _pinned_spawner(self, tmp_path: Path, mock_adapter_factory) -> tuple[AgentSpawner, Any]:
+        """Spawner with a role_model_policy-pinned backend model (bug-10 harness)."""
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        pinned_adapter = mock_adapter_factory(pid=888)
+        pinned_adapter.name.return_value = "openai_agents"
+        # The real ``openai_agents`` adapter declares SUPPORTS_SAMPLING_PARAMS
+        # (see OpenAIAgentsAdapter.plugin_info in src/bernstein/adapters/
+        # openai_agents.py). _primary_adapter_supports_sampling now probes the
+        # REAL registry-resolved adapter class for an uncached, non-primary
+        # provider name (max-tokens-config fix) - so this mock must declare
+        # the same capability its claimed identity has, or the mode-profile
+        # sampling fold's default temperature gets refused by this mock at
+        # spawn time even though the real adapter it stands in for would
+        # honour it.
+        # ``plugin_info`` is not part of CLIAdapter's spec (it's a
+        # PluginAdapter-only method), so it must be assigned directly rather
+        # than via ``.plugin_info.return_value = ...`` (attribute access
+        # first, which the spec would reject).
+        pinned_adapter.plugin_info = MagicMock(
+            return_value=AdapterPluginInfo(
+                name="openai_agents",
+                version="1.0.0",
+                capabilities=(AdapterCapability.SUPPORTS_SAMPLING_PARAMS,),
+            )
+        )
+        spawner = AgentSpawner(
+            mock_adapter_factory(pid=123),
+            templates_dir,
+            tmp_path,
+            role_model_policy={"backend": {"provider": "openai_agents", "model": "MiniMax-M3"}},
+            use_worktrees=False,
+        )
+        return spawner, pinned_adapter
+
+    def test_retry_tier_stamp_does_not_override_operator_model(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Regression (run-9 attempt-8): retry escalation stamped task.model="opus",
+        which shadowed the operator-pinned MiniMax-M3 and produced a spawn with
+        model=opus against the MiniMax endpoint (400 "unknown model 'opus'").
+        A tier-named task.model is an escalation label, not an operator pin."""
+        spawner, pinned_adapter = self._pinned_spawner(tmp_path, mock_adapter_factory)
+        task = make_task(role="backend")
+        task.model = "opus"
+        task.retry_count = 1
+        with patch.object(spawner, "_get_adapter_by_name", return_value=pinned_adapter):
+            session = spawner.spawn_for_tasks([task])
+        assert session.model_config.model == "MiniMax-M3"
+
+    def test_pinned_tier_model_still_wins_over_role_policy(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """metadata["pinned_model"] marks a tier name as a genuine pin (ab-test)."""
+        spawner, pinned_adapter = self._pinned_spawner(tmp_path, mock_adapter_factory)
+        task = make_task(role="backend")
+        task.model = "opus"
+        task.metadata = {"pinned_model": True}
+        with patch.object(spawner, "_get_adapter_by_name", return_value=pinned_adapter):
+            session = spawner.spawn_for_tasks([task])
+        assert session.model_config.model != "MiniMax-M3"
+
+    def test_non_tier_task_model_still_wins_over_role_policy(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """A concrete (non-tier) task.model is a genuine pin and beats role policy."""
+        spawner, pinned_adapter = self._pinned_spawner(tmp_path, mock_adapter_factory)
+        task = make_task(role="backend")
+        task.model = "MiniMax-M2.7-highspeed"
+        with patch.object(spawner, "_get_adapter_by_name", return_value=pinned_adapter):
+            session = spawner.spawn_for_tasks([task])
+        assert session.model_config.model != "MiniMax-M3"
+
     def test_per_step_cli_overrides_default_adapter(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         """Task.cli (per-step `cli:` from plan YAML) drives adapter selection,
         winning over the spawner's default adapter when no role policy is set."""
@@ -516,6 +631,7 @@ class TestSpawnerWithRouter:
             templates_dir,
             tmp_path,
             use_worktrees=False,
+            default_model="mock-model",
         )
 
         task = make_task(role="backend")
@@ -545,6 +661,7 @@ class TestSpawnerWithRouter:
             tmp_path,
             role_model_policy={"backend": {"provider": "codex"}},
             use_worktrees=False,
+            default_model="mock-model",
         )
 
         task = make_task(role="backend")
@@ -567,6 +684,7 @@ class TestSpawnerWithRouter:
             tmp_path,
             use_worktrees=False,
             spawn_rate_limiter=limiter,
+            default_model="mock-model",
         )
 
         spawner.spawn_for_tasks([make_task()])
@@ -692,6 +810,83 @@ class TestNonClaudeAdapterModelCoercionGuard:
         assert session.model_config.model == "opus"
 
 
+# --- Provider-only role_model_policy coercion (issue: role_policy pins a
+# provider but no model; tier-stamped model still leaked through because
+# ``provider_name`` was non-None, which short-circuited the coercion guard
+# above -- the guard's ``provider_name is None`` condition assumed the only
+# way to get a non-Claude adapter was via ``self._adapter`` itself) ---
+
+
+class TestProviderOnlyRolePolicyCoercionGuard:
+    def _pinned_provider_spawner(
+        self, tmp_path: Path, mock_adapter_factory, *, default_model: str | None
+    ) -> tuple[AgentSpawner, Any]:
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        default_adapter = mock_adapter_factory(pid=1)
+        default_adapter.name.return_value = "claude"
+        target_adapter = mock_adapter_factory(pid=2)
+        target_adapter.name.return_value = "qwen"
+        spawner = AgentSpawner(
+            default_adapter,
+            templates_dir,
+            tmp_path,
+            role_model_policy={"backend": {"provider": "qwen"}},
+            use_worktrees=False,
+            default_model=default_model,
+        )
+        return spawner, target_adapter
+
+    def test_tier_stamp_coerced_when_role_policy_pins_provider_only(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Regression: role_model_policy sets {provider: qwen} with no
+        model. A retry-escalated tier name ("opus") on task.model must not
+        reach the qwen adapter literally - it should coerce to the run's
+        default_model, same as the self._adapter-is-qwen case already
+        covered by TestNonClaudeAdapterModelCoercionGuard."""
+        spawner, target_adapter = self._pinned_provider_spawner(
+            tmp_path, mock_adapter_factory, default_model="MiniMax-M3"
+        )
+        task = make_task(role="backend")
+        task.model = "opus"
+        task.retry_count = 1
+        with patch.object(spawner, "_get_adapter_by_name", return_value=target_adapter):
+            session = spawner.spawn_for_tasks([task])
+        assert session.model_config.model == "MiniMax-M3"
+
+    def test_genuine_pin_left_untouched_when_role_policy_pins_provider_only(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """A genuine (non-tier-name) task.model pin must survive even when
+        role_model_policy only pins a provider."""
+        spawner, target_adapter = self._pinned_provider_spawner(
+            tmp_path, mock_adapter_factory, default_model="MiniMax-M3"
+        )
+        task = make_task(role="backend")
+        task.model = "MiniMax-Text-01"
+        with patch.object(spawner, "_get_adapter_by_name", return_value=target_adapter):
+            session = spawner.spawn_for_tasks([task])
+        assert session.model_config.model == "MiniMax-Text-01"
+
+    def test_tier_stamp_refused_when_no_default_model_known(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """With no run-level default_model configured, there is no known
+        non-Claude substitute for the tier name, so the spawn is refused
+        with a clear error instead of sending e.g. ``-m opus`` to a
+        non-Claude adapter (which the CLI rejects or misbills)."""
+        spawner, target_adapter = self._pinned_provider_spawner(tmp_path, mock_adapter_factory, default_model=None)
+        task = make_task(role="backend")
+        task.model = "opus"
+        task.retry_count = 1
+        with (
+            patch.object(spawner, "_get_adapter_by_name", return_value=target_adapter),
+            pytest.raises(ModelNotConfiguredError, match="unpinned Claude tier name"),
+        ):
+            spawner.spawn_for_tasks([task])
+
+
 # --- _render_prompt with agency_catalog ---
 
 
@@ -814,9 +1009,12 @@ class TestSelectBatchConfigExtended:
         assert config.effort == "max"
 
     def test_heuristics_used_when_no_config_yaml(self, tmp_path: Path, make_task) -> None:
+        # High-stakes heuristics resolve to the supplied default_model
+        # (previously a hardcoded "opus") with max effort.
         task = make_task(role="backend", complexity=Complexity.HIGH, scope=Scope.LARGE)
-        config = _select_batch_config([task], templates_dir=tmp_path)
-        assert config.model == "opus"
+        config = _select_batch_config([task], templates_dir=tmp_path, default_model="mock-model")
+        assert config.model == "mock-model"
+        assert config.effort == "max"
 
     def test_task_model_override_respected(self, make_task) -> None:
         task = Task(
@@ -851,8 +1049,11 @@ class TestSelectBatchConfigExtended:
             model=None,
             effort="max",
         )
-        config = _select_batch_config([task])
+        # An effort-only override needs a default_model to pair with; routing
+        # refuses to guess a model (previously hardcoded "sonnet").
+        config = _select_batch_config([task], default_model="mock-model")
         assert config.effort == "max"
+        assert config.model == "mock-model"
 
     def test_both_model_and_effort_override(self) -> None:
         task = Task(
@@ -905,13 +1106,23 @@ class TestLoadRoleConfig:
         result = _load_role_config("backend", tmp_path)
         assert result is None
 
-    def test_defaults_when_fields_missing(self, tmp_path: Path) -> None:
+    def test_returns_none_when_default_model_missing(self, tmp_path: Path) -> None:
+        # A config.yaml without default_model no longer resolves to a
+        # hardcoded "sonnet"; role-config routing is skipped entirely so the
+        # other model sources (task/role policy/default_model) apply instead.
         role_dir = tmp_path / "backend"
         role_dir.mkdir()
         (role_dir / "config.yaml").write_text("{}\n")
         result = _load_role_config("backend", tmp_path)
+        assert result is None
+
+    def test_effort_defaults_to_high_when_model_present(self, tmp_path: Path) -> None:
+        role_dir = tmp_path / "backend"
+        role_dir.mkdir()
+        (role_dir / "config.yaml").write_text("default_model: mock-model\n")
+        result = _load_role_config("backend", tmp_path)
         assert result is not None
-        assert result.model == "sonnet"
+        assert result.model == "mock-model"
         assert result.effort == "high"
 
 
@@ -943,7 +1154,7 @@ class TestWorktreeIntegration:
         worktree_path = tmp_path / ".sdd" / "worktrees" / "session-abc"
         worktree_path.mkdir(parents=True)
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True, default_model="mock-model")
         with patch.object(spawner._worktree_mgr, "create", return_value=worktree_path) as mock_create:
             task = make_task()
             session = spawner.spawn_for_tasks([task])
@@ -963,7 +1174,7 @@ class TestWorktreeIntegration:
         worktree_path = tmp_path / ".sdd" / "worktrees" / "session-claude-md"
         worktree_path.mkdir(parents=True)
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True, default_model="mock-model")
         with patch.object(spawner._worktree_mgr, "create", return_value=worktree_path):
             task = make_task(
                 id="T-AUDIT-095",
@@ -987,7 +1198,7 @@ class TestWorktreeIntegration:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True, default_model="mock-model")
         with patch.object(spawner._worktree_mgr, "create", side_effect=WorktreeError("git failed")):
             task = make_task()
             with pytest.raises(SpawnError, match="Cannot create workspace for agent"):
@@ -997,7 +1208,7 @@ class TestWorktreeIntegration:
         adapter = mock_adapter_factory(pid=400)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         task = make_task()
         spawner.spawn_for_tasks([task])
@@ -1017,7 +1228,13 @@ class TestWorktreeIntegration:
         mock_proc = MagicMock()
         spawner._procs[session.id] = mock_proc
 
+        # The default-branch merge guard requires the checked-out target to be
+        # a non-default branch (real agent runs land on a feature branch, not
+        # main/master).  Pin the resolvers so the merge is allowed to proceed
+        # and we still verify the reap -> merge -> cleanup wiring.
         with (
+            patch("bernstein.core.git_ops.current_branch", return_value="feat/work"),
+            patch("bernstein.core.git_ops.resolve_default_branch", return_value="main"),
             patch.object(spawner, "_merge_worktree_branch") as mock_merge,
             patch.object(spawner._worktree_mgr, "cleanup") as mock_cleanup,
         ):
@@ -1284,7 +1501,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=700)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Implement JWT authentication")
         spawner.spawn_for_tasks([task])
@@ -1307,7 +1526,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=701)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Review code quality")
         spawner.spawn_for_tasks([task])
@@ -1323,7 +1544,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=702)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=None, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=None, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Write some code")
         spawner.spawn_for_tasks([task])
@@ -1344,7 +1567,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=703)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Implement JWT auth")
         session = spawner.spawn_for_tasks([task])
@@ -1363,7 +1588,9 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=704)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False, default_model="mock-model"
+        )
 
         task = make_task(role="backend", description="Write some backend code")
         session = spawner.spawn_for_tasks([task])
@@ -1440,6 +1667,7 @@ class _SamplingCapableAdapter(PluginAdapter):
         task_scope: str = "medium",
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
+        multimodal_context: Any | None = None,
     ) -> SpawnResult:
         self.seen_mcp_config = mcp_config
         return SpawnResult(pid=4242, log_path=workdir / "stub.log")
@@ -1461,6 +1689,7 @@ class TestSamplingParamsSpawnPath:
             tmp_path,
             use_worktrees=False,
             mcp_config={"temperature": 0.2, "top_k": 40, "api_key_env": "MY_PROXY_KEY"},
+            default_model="mock-model",
         )
 
         spawner.spawn_for_tasks([make_task()])
@@ -1480,7 +1709,36 @@ class TestSamplingParamsSpawnPath:
         adapter = _SamplingCapableAdapter()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
+
+        spawner.spawn_for_tasks([make_task()])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["heartbeat_dir"] == str(tmp_path / ".sdd" / "runtime" / "heartbeats")
+
+    def test_heartbeat_dir_injected_through_caching_adapter_wrapper(self, tmp_path: Path, make_task) -> None:
+        """Regression for bug #11: caching must not swallow heartbeat_dir injection.
+
+        Production always spawns with ``enable_caching=True`` (see
+        ``orchestrator.py``'s ``AgentSpawner`` construction), which wraps
+        every adapter - including the primary one - in ``CachingAdapter``.
+        ``CachingAdapter`` did not forward the ``consumes_heartbeat_dir``
+        capability flag, so ``_mcp_config_for_adapter``'s
+        ``getattr(adapter, "consumes_heartbeat_dir", False)`` gate silently
+        evaluated to ``False`` for every openai_agents spawn, and no
+        ``heartbeat_dir`` key ever reached the manifest. Workers then wrote
+        heartbeats into the worktree while the ``HeartbeatMonitor`` polled
+        the orchestrator root, killing every worker at the 120s stale
+        threshold (746 ``no_heartbeat`` SHUTDOWNs in one 40-minute run).
+        This test spawns through a caching-wrapped adapter and asserts the
+        manifest the adapter receives still contains ``heartbeat_dir``.
+        """
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter, templates_dir, tmp_path, use_worktrees=False, enable_caching=True, default_model="mock-model"
+        )
 
         spawner.spawn_for_tasks([make_task()])
 
@@ -1493,8 +1751,586 @@ class TestSamplingParamsSpawnPath:
         adapter = mock_adapter_factory(pid=99)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
 
         spawner.spawn_for_tasks([make_task()])
 
         assert adapter.spawn.call_args.kwargs["mcp_config"] is None
+
+    def test_role_policy_base_url_and_api_key_env_reach_adapter(self, tmp_path: Path, make_task) -> None:
+        """Per-role base_url/api_key_env must land in the adapter mcp_config.
+
+        This is the Feature 1 wiring: role_model_policy endpoint overrides
+        flow through the spawn path into the same slots the adapter manifest
+        reads, exactly the way model/provider do today.
+        """
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            role_model_policy={
+                "backend": {
+                    "base_url": "http://localhost:8000/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                }
+            },
+            default_model="mock-model",
+        )
+
+        spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["base_url"] == "http://localhost:8000/v1"
+        assert adapter.seen_mcp_config["api_key_env"] == "OPENROUTER_API_KEY"
+
+    def test_operator_mcp_config_wins_over_role_policy_endpoint(self, tmp_path: Path, make_task) -> None:
+        """An explicit mcp_config value must not be replaced by role policy."""
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            mcp_config={"base_url": "http://operator-set/v1"},
+            role_model_policy={"backend": {"base_url": "http://role-set/v1"}},
+            default_model="mock-model",
+        )
+
+        spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["base_url"] == "http://operator-set/v1"
+
+    def test_mode_profile_sampling_params_reach_adapter(self, tmp_path: Path, make_task) -> None:
+        """Feature 2 wiring: a ModeProfile's sampling params reach the adapter.
+
+        A profile carrying explicit sampling params is returned by the
+        resolver; the spawn path must fold those params into the adapter
+        mcp_config when the target adapter declares
+        SUPPORTS_SAMPLING_PARAMS. Patching the resolver keeps the test
+        independent of the bundled YAML profiles.
+        """
+        from bernstein.core.routing.mode_profile import ModeProfile
+
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
+
+        custom = ModeProfile(
+            name="deep",
+            system_prompt_preamble="",
+            temperature=0.35,
+            top_p=0.8,
+            top_k=25,
+            max_tokens=1234,
+        )
+        with patch("bernstein.core.agents.spawner_prompt.select_mode", return_value=custom):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["temperature"] == pytest.approx(0.35)
+        assert adapter.seen_mcp_config["top_p"] == pytest.approx(0.8)
+        assert adapter.seen_mcp_config["top_k"] == 25
+        assert adapter.seen_mcp_config["max_tokens"] == 1234
+
+    def test_role_policy_sampling_params_reach_adapter(self, tmp_path: Path, make_task) -> None:
+        """PR3: RoleModelPolicyEntry.temperature/top_p/top_k/max_tokens/
+        extra_params must reach the adapter mcp_config, same as the
+        base_url/api_key_env endpoint override already proven above."""
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            role_model_policy={
+                "backend": {
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "top_k": 40,
+                    "max_tokens": 4096,
+                    "extra_params": {"reasoning_effort": "low"},
+                }
+            },
+            default_model="mock-model",
+        )
+
+        spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["temperature"] == pytest.approx(0.2)
+        assert adapter.seen_mcp_config["top_p"] == pytest.approx(0.9)
+        assert adapter.seen_mcp_config["top_k"] == 40
+        assert adapter.seen_mcp_config["max_tokens"] == 4096
+        assert adapter.seen_mcp_config["extra_params"] == {"reasoning_effort": "low"}
+
+    def test_role_policy_sampling_params_take_precedence_over_mode_profile(self, tmp_path: Path, make_task) -> None:
+        """PR3: when both a role_model_policy sampling field and a
+        ModeProfile sampling field are set for the same role/key, the
+        role-policy value must win - matching the docstring's stated
+        precedence order (operator mcp_config > role policy > mode profile).
+        """
+        from bernstein.core.routing.mode_profile import ModeProfile
+
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            role_model_policy={
+                "backend": {
+                    "temperature": 0.9,
+                    "top_k": 99,
+                }
+            },
+            default_model="mock-model",
+        )
+
+        profile_only_max_tokens = ModeProfile(
+            name="deep",
+            system_prompt_preamble="",
+            temperature=0.1,
+            top_p=0.5,
+            top_k=10,
+            max_tokens=500,
+        )
+        with patch("bernstein.core.agents.spawner_prompt.select_mode", return_value=profile_only_max_tokens):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        # Role policy wins for temperature and top_k (set on both sources).
+        assert adapter.seen_mcp_config["temperature"] == pytest.approx(0.9)
+        assert adapter.seen_mcp_config["top_k"] == 99
+        # top_p and max_tokens are only on the mode profile, so they still
+        # flow through unopposed.
+        assert adapter.seen_mcp_config["top_p"] == pytest.approx(0.5)
+        assert adapter.seen_mcp_config["max_tokens"] == 500
+
+    def test_operator_mcp_config_wins_over_role_policy_sampling(self, tmp_path: Path, make_task) -> None:
+        """An explicit mcp_config sampling value must not be replaced by
+        role_model_policy - same rule as the endpoint-override test above,
+        extended to the PR3 sampling fields."""
+        adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            mcp_config={"temperature": 0.01},
+            role_model_policy={"backend": {"temperature": 0.99}},
+            default_model="mock-model",
+        )
+
+        spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert adapter.seen_mcp_config is not None
+        assert adapter.seen_mcp_config["temperature"] == pytest.approx(0.01)
+
+    def test_mode_profile_max_tokens_reaches_manifest_for_openai_agents_role_with_claude_primary(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Regression (D2 OpenRouter KILL-NOTE, max-tokens-config fix):
+        ``_apply_sampling_overrides``'s mode-profile fold used to gate on
+        ``_primary_adapter_supports_sampling(model_config)`` called with no
+        provider context, which always resolved to the run's PRIMARY
+        adapter (e.g. ``claude`` from ``cli: auto``). A role pinned to a
+        DIFFERENT provider via ``role_model_policy.<role>.provider`` (e.g.
+        ``openai_agents``, which DOES declare SUPPORTS_SAMPLING_PARAMS) never
+        got the mode profile's max_tokens folded in when the primary adapter
+        didn't declare the capability - so bernstein's much larger default
+        max_tokens reached the runner manifest instead, 400ing on models
+        with a smaller completion cap (e.g. deepseek/deepseek-chat on
+        OpenRouter: 163840-token cap; KILL-NOTE
+        work/bernstein/proofs/d2/openrouter/KILL-NOTE.md).
+
+        This test pins a primary adapter named "claude" (a bare CLIAdapter
+        mock with no ``plugin_info``/SUPPORTS_SAMPLING_PARAMS) alongside a
+        role_model_policy provider override of "openai_agents" (the real,
+        registry-resolvable adapter class, which DOES declare the
+        capability) and asserts the resolved ModeProfile's max_tokens
+        reaches the adapter's mcp_config even though the primary adapter
+        cannot honour it.
+        """
+        from bernstein.core.routing.mode_profile import ModeProfile
+
+        primary_adapter = mock_adapter_factory(pid=1)
+        primary_adapter.name.return_value = "claude"
+
+        # Stands in for the real openai_agents adapter at actual spawn time;
+        # the capability GATE itself probes the real registry-resolved
+        # OpenAIAgentsAdapter class (uncached, non-primary provider path),
+        # not this mock - this mock only needs to declare the same
+        # capability so the post-fold ensure_sampling_params_supported()
+        # check at the real spawn site doesn't refuse the call.
+        spawn_time_adapter = _SamplingCapableAdapter()
+
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            primary_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            role_model_policy={"backend": {"provider": "openai_agents"}},
+            default_model="mock-model",
+        )
+
+        profile = ModeProfile(name="deep", system_prompt_preamble="", max_tokens=8000)
+        with (
+            patch("bernstein.core.agents.spawner_prompt.select_mode", return_value=profile),
+            patch.object(spawner, "_get_adapter_by_name", return_value=spawn_time_adapter),
+        ):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert spawn_time_adapter.seen_mcp_config is not None
+        assert spawn_time_adapter.seen_mcp_config["max_tokens"] == 8000
+
+    def test_role_policy_max_tokens_reaches_manifest_with_claude_primary(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Companion to the mode-profile regression above: an EXPLICIT
+        role_model_policy.<role>.max_tokens must reach the manifest for an
+        openai_agents-provider role even when the primary adapter is
+        claude. Unlike the mode-profile fold, this path is unconditional in
+        ``_apply_sampling_overrides`` (explicit operator config always
+        forwards), but the seed-parser half of the KILL-NOTE fix
+        (``_ROLE_POLICY_KEYS``) is what makes this value reach
+        ``AgentSpawner.role_model_policy`` at all from a real seed file -
+        this test pins the spawner-side half of that same end-to-end path.
+        """
+        primary_adapter = mock_adapter_factory(pid=1)
+        primary_adapter.name.return_value = "claude"
+
+        spawn_time_adapter = _SamplingCapableAdapter()
+
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            primary_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            role_model_policy={"backend": {"provider": "openai_agents", "max_tokens": 4096}},
+            default_model="mock-model",
+        )
+
+        with patch.object(spawner, "_get_adapter_by_name", return_value=spawn_time_adapter):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert spawn_time_adapter.seen_mcp_config is not None
+        assert spawn_time_adapter.seen_mcp_config["max_tokens"] == 4096
+
+
+class TestInlineCouncilForwarding:
+    """An inline ``role_model_policy.<role>.council`` block must reach the
+    runner manifest with the exact payload the ``model: councils/<name>.yaml``
+    file convention produces - previously the inline block parsed and
+    validated but was silently dropped on the spawn path."""
+
+    _COUNCIL_BLOCK: dict[str, Any] = {
+        "candidates": [
+            {"model": "gpt-5-mini"},
+            {"model": "gpt-5"},
+        ],
+        "judge": {"model": "gpt-5"},
+        "timeout": 45.0,
+    }
+
+    def _spawn_and_capture(
+        self,
+        tmp_path: Path,
+        make_task,
+        mock_adapter_factory,
+        role_policy: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Spawn one backend task pinned to openai_agents and return the
+        mcp_config the spawn-time adapter received."""
+        primary_adapter = mock_adapter_factory(pid=1)
+        primary_adapter.name.return_value = "claude"
+        spawn_time_adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            primary_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            role_model_policy={"backend": role_policy},
+        )
+        with patch.object(spawner, "_get_adapter_by_name", return_value=spawn_time_adapter):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+        assert spawn_time_adapter.seen_mcp_config is not None
+        return spawn_time_adapter.seen_mcp_config
+
+    def _build_manifest(self, tmp_path: Path, mcp_config: dict[str, Any]) -> dict[str, Any]:
+        from types import SimpleNamespace
+
+        from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
+
+        return OpenAIAgentsAdapter._build_manifest(
+            prompt="do the task",
+            workdir=tmp_path,
+            model_config=SimpleNamespace(model="gpt-5-mini", effort="high", max_tokens=200_000),
+            session_id="sess-council",
+            mcp_config=mcp_config,
+            timeout_seconds=60,
+            task_scope="medium",
+            budget_multiplier=1.0,
+            system_addendum="",
+        )
+
+    def test_inline_council_round_trips_to_manifest_like_council_file(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Round trip: a seed-parsed inline council block must land in the
+        runner manifest and resolve through ``_load_council_config`` to the
+        exact same dict an equivalent ``councils/*.yaml`` file produces."""
+        import yaml
+
+        from bernstein.adapters.openai_agents_runner import (
+            RunnerManifest,
+            _load_council_config,
+        )
+        from bernstein.core.config.seed_parser import _parse_single_role_policy
+
+        role_policy = _parse_single_role_policy(
+            "backend",
+            {
+                "provider": "openai_agents",
+                "model": "gpt-5-mini",
+                "council": self._COUNCIL_BLOCK,
+            },
+        )
+        mcp_config = self._spawn_and_capture(tmp_path, make_task, mock_adapter_factory, role_policy)
+        assert mcp_config["council"] == self._COUNCIL_BLOCK
+
+        manifest = self._build_manifest(tmp_path, mcp_config)
+        assert manifest["council"] == self._COUNCIL_BLOCK
+
+        # File convention: the same block written as councils/roundtrip.yaml
+        # and referenced via ``model:`` must resolve to an identical config.
+        councils_dir = tmp_path / ".bernstein" / "councils"
+        councils_dir.mkdir(parents=True)
+        (councils_dir / "roundtrip.yaml").write_text(
+            yaml.safe_dump(self._COUNCIL_BLOCK),
+            encoding="utf-8",
+        )
+        file_manifest = RunnerManifest(
+            session_id="sess-file",
+            prompt="do the task",
+            workdir=str(tmp_path),
+            model="councils/roundtrip.yaml",
+        )
+        file_council = _load_council_config(file_manifest)
+        inline_council = _load_council_config(RunnerManifest.from_dict(manifest))
+        assert inline_council == file_council == self._COUNCIL_BLOCK
+
+    def test_no_council_in_role_policy_leaves_manifest_unchanged(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Regression: a role policy without a council block must not put a
+        ``council`` key anywhere on the spawn path."""
+        from bernstein.adapters.openai_agents_runner import RunnerManifest
+
+        role_policy: dict[str, Any] = {"provider": "openai_agents", "model": "gpt-5-mini"}
+        mcp_config = self._spawn_and_capture(tmp_path, make_task, mock_adapter_factory, role_policy)
+        assert "council" not in mcp_config
+
+        manifest = self._build_manifest(tmp_path, mcp_config)
+        assert "council" not in manifest
+        assert RunnerManifest.from_dict(manifest).council is None
+
+    def test_operator_mcp_config_council_wins_over_role_policy(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """An explicit mcp_config council must not be replaced by the
+        role-policy block - same precedence rule as the sampling fields."""
+        operator_council: dict[str, Any] = {
+            "candidates": [{"model": "gpt-5"}],
+            "judge": {"model": "gpt-5"},
+        }
+        primary_adapter = mock_adapter_factory(pid=1)
+        primary_adapter.name.return_value = "claude"
+        spawn_time_adapter = _SamplingCapableAdapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            primary_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            mcp_config={"council": operator_council},
+            role_model_policy={
+                "backend": {
+                    "provider": "openai_agents",
+                    "model": "gpt-5-mini",
+                    "council": self._COUNCIL_BLOCK,
+                }
+            },
+        )
+        with patch.object(spawner, "_get_adapter_by_name", return_value=spawn_time_adapter):
+            spawner.spawn_for_tasks([make_task(role="backend")])
+        assert spawn_time_adapter.seen_mcp_config is not None
+        assert spawn_time_adapter.seen_mcp_config["council"] == operator_council
+
+
+# --- Error-aware spawn-failure extraction (D2 MiniMax masking bug) ---
+#
+# Ground truth: work/bernstein/proofs/d2/minimax/FAIL-NOTE.md. A real
+# openai_agents runner died on a 400 BadRequestError ("does not support max
+# tokens > 196608"), but the fast-exit probe reported only the log's LAST
+# LINE - a benign, unrelated SDK tracing warning
+# ("OPENAI_API_KEY is not set, skipping trace export") - across 7 run
+# attempts, hiding the real root cause that sat further up in the log.
+
+
+class TestExtractErrorAwareReason:
+    """Regression tests for spawner_core.extract_error_aware_reason()."""
+
+    def _minimax_style_log(self) -> str:
+        """Build a fake runner log matching the D2 MiniMax incident shape:
+        a multi-line BadRequestError traceback buried mid-log, followed by
+        an unrelated benign warning as the actual last line."""
+        return "\n".join(
+            [
+                "[runner] booting openai_agents session abc123",
+                "[runner] loading manifest",
+                "Traceback (most recent call last):",
+                '  File "openai_agents_runner.py", line 274, in run',
+                "    response = client.responses.create(**kwargs)",
+                '  File "openai/_client.py", line 812, in create',
+                "    raise self._make_status_error_from_response(response)",
+                "openai.BadRequestError: Error code: 400 - {'error': {'message': "
+                '"invalid params, model[MiniMax-M2.7-highspeed] does not support '
+                "max tokens > 196608 (2013)\", 'type': 'bad_request_error'}}",
+                "",
+                "OPENAI_API_KEY is not set, skipping trace export",
+            ]
+        )
+
+    def test_extracts_traceback_not_last_line(self) -> None:
+        """The extracted reason must surface the real 400/BadRequestError,
+        not the benign tracing warning that happens to be the last line."""
+        from bernstein.core.agents.spawner_core import extract_error_aware_reason
+
+        log_text = self._minimax_style_log()
+        reason = extract_error_aware_reason(log_text)
+
+        assert "400" in reason
+        assert "BadRequestError" in reason
+        # This is the exact defect being fixed: naive last-line extraction
+        # would return ONLY the benign warning below, masking the real error.
+        assert reason != "OPENAI_API_KEY is not set, skipping trace export"
+        assert reason.strip() != "OPENAI_API_KEY is not set, skipping trace export"
+
+    def test_extracts_full_traceback_block(self) -> None:
+        """The full traceback (not just the exception's final line) is returned."""
+        from bernstein.core.agents.spawner_core import extract_error_aware_reason
+
+        reason = extract_error_aware_reason(self._minimax_style_log())
+
+        assert "Traceback (most recent call last):" in reason
+        assert "openai_agents_runner.py" in reason
+
+    def test_error_level_line_without_traceback(self) -> None:
+        """A log with no traceback but an ERROR-level line still surfaces
+        that line (and what follows) instead of an unrelated last line."""
+        from bernstein.core.agents.spawner_core import extract_error_aware_reason
+
+        log_text = "\n".join(
+            [
+                "[runner] starting",
+                "ERROR: connection refused to provider endpoint (500)",
+                "[runner] cleaning up",
+                "OPENAI_API_KEY is not set, skipping trace export",
+            ]
+        )
+        reason = extract_error_aware_reason(log_text)
+
+        assert "connection refused" in reason
+        assert "500" in reason
+
+    def test_falls_back_to_last_lines_when_no_error_pattern(self) -> None:
+        """When nothing in the log looks like an error, fall back to the
+        last N lines - but clearly labeled as a fallback."""
+        from bernstein.core.agents.spawner_core import extract_error_aware_reason
+
+        log_text = "\n".join(f"benign startup line {i}" for i in range(20))
+        reason = extract_error_aware_reason(log_text)
+
+        assert "no error pattern found" in reason
+        assert "benign startup line 19" in reason
+
+    def test_caps_extracted_text_length(self) -> None:
+        """The extracted text is capped, even for a pathologically long
+        traceback, to keep a single log line bounded."""
+        from bernstein.core.agents.spawner_core import extract_error_aware_reason
+
+        long_body = "\n".join(f"    frame {i} irrelevant noise" for i in range(2000))
+        log_text = f"Traceback (most recent call last):\n{long_body}\nValueError: boom"
+        reason = extract_error_aware_reason(log_text, max_chars=500)
+
+        assert len(reason) <= 500
+
+
+class TestDiagnoseSpawnFailure:
+    """Regression tests for spawner_core._diagnose_spawn_failure()."""
+
+    def test_reads_runner_session_log_and_surfaces_real_error(self, tmp_path: Path) -> None:
+        """End-to-end: given the on-disk per-session log an openai_agents
+        adapter actually writes to (<spawn_cwd>/.sdd/runtime/<session_id>.log),
+        the diagnosed reason must contain the real error, not the benign
+        last-line warning the raw exception message embeds."""
+        from bernstein.core.agents.spawner_core import _diagnose_spawn_failure
+
+        session_id = "backend-minimax-abc123"
+        runtime_dir = tmp_path / ".sdd" / "runtime"
+        runtime_dir.mkdir(parents=True)
+        log_path = runtime_dir / f"{session_id}.log"
+        log_path.write_text(
+            "\n".join(
+                [
+                    "[runner] booting openai_agents session",
+                    "Traceback (most recent call last):",
+                    '  File "openai_agents_runner.py", line 274, in run',
+                    "    response = client.responses.create(**kwargs)",
+                    "openai.BadRequestError: Error code: 400 - does not support max tokens > 196608",
+                    "",
+                    "OPENAI_API_KEY is not set, skipping trace export",
+                ]
+            )
+        )
+
+        # The exception the fast-exit probe would have raised - its message
+        # embeds ONLY the log's last line (the bug being fixed).
+        exc = SpawnError("openai_agents exited early with code 1: OPENAI_API_KEY is not set, skipping trace export")
+
+        reason = _diagnose_spawn_failure(session_id, tmp_path, "openai_agents", exc)
+
+        assert "400" in reason
+        assert "BadRequestError" in reason
+        assert reason != "OPENAI_API_KEY is not set, skipping trace export"
+
+    def test_falls_back_to_exception_string_when_no_log_found(self, tmp_path: Path) -> None:
+        """When no per-session log file exists on disk, fall back to
+        str(exc) rather than raising or returning an empty reason."""
+        from bernstein.core.agents.spawner_core import _diagnose_spawn_failure
+
+        exc = SpawnError("adapter exited early with code 1: some message")
+        reason = _diagnose_spawn_failure("no-such-session", tmp_path, "openai_agents", exc)
+
+        assert reason == str(exc)

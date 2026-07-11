@@ -28,8 +28,13 @@ def test_task_serialization_includes_max_output_tokens():
     assert task_default.max_output_tokens is None
 
 
-def test_agent_lifecycle_detects_max_output_tokens_finish_reason():
+def test_agent_lifecycle_detects_max_output_tokens_finish_reason(tmp_path):
     orch = MagicMock()
+    # Real workdir Path so the orphan-liveness probe (which stats
+    # heartbeat/log/git files under _workdir) sees genuinely-missing files and
+    # returns no fresh signal, instead of a MagicMock path whose stat() mtime
+    # cannot be compared against the grace window.
+    orch._workdir = tmp_path
     session = AgentSession(
         id="A1",
         role="backend",

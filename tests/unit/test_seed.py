@@ -117,6 +117,73 @@ class TestParseSeedValid:
         cfg = parse_seed(seed_file)
         assert cfg.role_model_policy == {"backend": {"provider": "codex", "model": "gpt-5.4-mini", "effort": "high"}}
 
+    def test_role_model_policy_parses_base_url_and_api_key_env(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n'
+            "role_model_policy:\n"
+            "  backend:\n"
+            "    provider: openai_agents\n"
+            "    model: gpt-5\n"
+            "    base_url: http://localhost:8000/v1\n"
+            "    api_key_env: OPENROUTER_API_KEY\n"
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.role_model_policy is not None
+        entry = cfg.role_model_policy["backend"]
+        assert entry["base_url"] == "http://localhost:8000/v1"
+        assert entry["api_key_env"] == "OPENROUTER_API_KEY"
+
+    def test_role_model_policy_rejects_non_credential_api_key_env(self, seed_file: Path) -> None:
+        # Fail-closed: a credential-shaped but unrelated host secret name
+        # (e.g. GITHUB_TOKEN) must be rejected at parse time so a
+        # repo-carried config cannot forward it to an arbitrary endpoint.
+        # The rejection must come from the credential allowlist, not from an
+        # "unknown keys" path (which is why the message names the allowlist).
+        seed_file.write_text('goal: "T"\nrole_model_policy:\n  backend:\n    api_key_env: GITHUB_TOKEN\n')
+        with pytest.raises(SeedError, match="allowed credential variable name"):
+            parse_seed(seed_file)
+
+    def test_role_model_policy_parses_response_style(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nrole_model_policy:\n  backend:\n    model: gpt-5\n    response_style: terse\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.role_model_policy is not None
+        assert cfg.role_model_policy["backend"]["response_style"] == "terse"
+
+    def test_role_model_policy_rejects_unknown_response_style(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\nrole_model_policy:\n  backend:\n    model: gpt-5\n    response_style: shouty\n'
+        )
+        with pytest.raises(SeedError, match="response_style"):
+            parse_seed(seed_file)
+
+    def test_response_style_with_missing_template_fails_validation(self, seed_file: Path) -> None:
+        # AC4 (#2243): a style whose mapped mode-profile template file is
+        # missing from the workdir override directory fails config
+        # validation with the typed template error, not at spawn time.
+        from bernstein.core.agents.response_style import ResponseStyleTemplateError
+
+        profiles = seed_file.parent / "templates" / "mode_profiles"
+        profiles.mkdir(parents=True)
+        (profiles / "deep.yaml").write_text(
+            "name: deep\nsystem_prompt_preamble: |\n  Deep preamble.\n",
+            encoding="utf-8",
+        )
+        seed_file.write_text('goal: "T"\nrole_model_policy:\n  backend:\n    model: gpt-5\n    response_style: terse\n')
+        with pytest.raises(SeedError, match="fast.yaml") as excinfo:
+            parse_seed(seed_file)
+        assert isinstance(excinfo.value, ResponseStyleTemplateError) or isinstance(
+            excinfo.value.__cause__, ResponseStyleTemplateError
+        )
+
+    def test_response_style_with_bundled_templates_passes_validation(self, seed_file: Path) -> None:
+        # No workdir override dir -> bundled templates satisfy validation.
+        seed_file.write_text(
+            'goal: "T"\nrole_model_policy:\n  default:\n    model: gpt-5\n    response_style: verbose\n'
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.role_model_policy is not None
+        assert cfg.role_model_policy["default"]["response_style"] == "verbose"
+
     def test_batch_config_parsed(self, seed_file: Path) -> None:
         seed_file.write_text('goal: "T"\nbatch:\n  enabled: true\n  eligible: [docs, style, tests]\n')
         cfg = parse_seed(seed_file)
@@ -658,3 +725,36 @@ class TestQualityGatesBenchmarkParsing:
         seed_file.write_text('goal: "Test"\nquality_gates:\n  benchmark: "enabled"\n')
         with pytest.raises(SeedError, match="benchmark must be a mapping"):
             parse_seed(seed_file)
+
+
+# ---------------------------------------------------------------------------
+# resolve_seed_path
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSeedPathWorkdirFallback:
+    """The workdir fallback must honour the documented contract of returning
+    a resolved, absolute path -- matching the explicit-path and
+    BERNSTEIN_SEED_PATH branches."""
+
+    def test_fallback_returns_absolute_resolved_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.config.seed import resolve_seed_path
+
+        monkeypatch.delenv("BERNSTEIN_SEED_PATH", raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        resolved = resolve_seed_path(Path("."))
+
+        assert resolved.is_absolute()
+        assert resolved == (tmp_path / "bernstein.yaml").resolve()
+
+    def test_fallback_normalizes_dot_segments(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.config.seed import resolve_seed_path
+
+        monkeypatch.delenv("BERNSTEIN_SEED_PATH", raising=False)
+        (tmp_path / "sub").mkdir()
+
+        resolved = resolve_seed_path(tmp_path / "sub" / "..")
+
+        assert resolved.is_absolute()
+        assert resolved == (tmp_path / "bernstein.yaml").resolve()

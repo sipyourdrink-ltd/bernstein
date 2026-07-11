@@ -13,8 +13,8 @@
     "agents": "^0.17.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250410.0",
-    "typescript": "^6.0.0",
+    "@cloudflare/workers-types": "^5.0.0",
+    "typescript": "^7.0.0",
     "wrangler": "^4.14.4"
   }
 }

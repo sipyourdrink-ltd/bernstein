@@ -22,7 +22,7 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein tunnel start <port> [--provider auto\|cloudflared\|ngrok\|bore\|tailscale]` | One wrapper around four tunnel providers. Also `tunnel list`, `tunnel stop <name>\|--all`. |
 | `bernstein daemon install [--user\|--system] [--command="..."] [--env KEY=VAL]...` | Installs a systemd (Linux) or launchd (macOS) unit for auto-start. Also `daemon start/stop/restart/status/uninstall`. |
 | `bernstein connect <provider>` / `bernstein creds` | Stores and rotates API credentials in the OS keychain. Agents inherit scoped keys per-run. |
-| `bernstein sandbox web-test <task-id> --url <url> --scenarios <yaml>` | Drives a Playwright self-test against the dev server. See [docs/sandbox/playwright-self-test.md](sandbox/playwright-self-test.md). |
+| `bernstein sandbox web-test <task-id> --url <url> --scenarios <yaml>` | Drives a Playwright self-test against the dev server. See [docs/sandbox/playwright-self-test.md](../sandbox/playwright-self-test.md). |
 | `bernstein agents-md` | Generates a canonical AAIF AGENTS.md for the repo and rewrites it into each CLI's native shape (`CLAUDE.md`, `.cursor/rules/*.mdc`, `CONVENTIONS.md`, `.goosehints`). `generate`, `write`, `sync`, `verify`, `diff`. |
 | `bernstein scaffold "<prompt>"` | Bootstraps a project skeleton from a single goal prompt. `--template auto\|python-cli\|...`, `--output <dir>`, `--force`. |
 | `bernstein wiki build` | Renders `WIKI.md` for the current repo from the AST symbol graph. Local, no LLM call, no cloud round-trip. |
@@ -30,6 +30,7 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein compare <spec> --adapters claude,codex[,...]` | Side-by-side adapter A/B in isolated per-adapter worktrees. Up to four adapters, deterministic seed, unified diff against baseline. See [docs/operations/compare.md](compare.md). |
 | `bernstein recipes list / show / run` | First-class workflow library. Parameterised recipes live in `templates/recipes/*.yaml`. See [docs/operations/recipes.md](recipes.md). |
 | `bernstein resume <task-id>` | Pick up a task from its last `checkpoint.json` instead of restarting. See [docs/operations/resume.md](resume.md). |
+| `bernstein fork --run <id> --from-step N` | Rewind a run to journal step N and branch a new run from its content-addressed worktree snapshot. The snapshot sha is recorded in the event journal, so a tampered snapshot ref is detected. See [docs/operations/fork-from-step.md](fork-from-step.md). |
 | `bernstein worktrees list / gc` | Inspect and reap orphan worktrees. Four-state classifier (`active` / `orphan` / `stale` / `corrupt`). See [docs/operations/worktrees.md](worktrees.md). |
 | `bernstein telemetry on / off / status / export` | Opt-in operator telemetry. Default off; honours `DO_NOT_TRACK` and `BERNSTEIN_TELEMETRY=0`. See [docs/telemetry.md](../telemetry.md). |
 | `bernstein doctor extended` | Extended pre-flight on top of `bernstein doctor`: adapter conformance, network reachability, and CI integration probes. See [docs/operations/doctor.md](doctor.md). |

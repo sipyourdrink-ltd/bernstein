@@ -11,14 +11,17 @@ import asyncio
 import contextlib
 import logging
 import math
+import os
 import re
 import time
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
+from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.context import append_decision
 from bernstein.core.context_recommendations import RecommendationEngine
@@ -28,6 +31,7 @@ from bernstein.core.cross_model_verifier import (
 )
 from bernstein.core.defaults import TASK
 from bernstein.core.effectiveness import EffectivenessScorer
+from bernstein.core.evidence.completion_gate import seal_evidence_on_completion
 from bernstein.core.fast_path import (
     TaskLevel,
     classify_task,
@@ -37,9 +41,11 @@ from bernstein.core.fast_path import (
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.janitor import run_janitor, verify_task
 from bernstein.core.metrics import get_collector
+from bernstein.core.replay.review_board import record_task_merged
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
+from bernstein.core.tasks.auto_spawn_guard import AutoSpawnGuard, meta_task_kind
 from bernstein.core.tasks.lifecycle import transition_agent
 from bernstein.core.tasks.models import (
     AgentSession,
@@ -64,6 +70,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _XL_ROLES = frozenset({"architect", "security", "manager"})
+
+# Bug 1 (2026-07-02, fix/claim-conflict-churn): bounds for the claim-conflict
+# recovery loop in ``_claim_task_with_conflict_retry`` / ``claim_and_spawn_batches``.
+# See that function's docstring for the full root-cause writeup.
+_CLAIM_CONFLICT_MAX_ATTEMPTS = 5  # hard cap on re-fetch+retry attempts within one episode
+_CLAIM_CONFLICT_BACKOFF_BASE_S = 5.0  # first cross-tick backoff after an exhausted episode
+_CLAIM_CONFLICT_BACKOFF_MAX_S = 300.0  # cap so a permanently-stuck task backs off at most 5 min
+_CLAIM_TERMINAL_STATUSES = frozenset(
+    {
+        TaskStatus.DONE,
+        TaskStatus.CLOSED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+        TaskStatus.ABANDONED,
+        TaskStatus.REFUSED,
+    }
+)
+
+# Bug 2 (2026-07-02, fix/claim-conflict-churn): hard retry ceiling applied to
+# EVERY task lineage in ``retry_or_fail_task`` (meta-tasks additionally go
+# through AutoSpawnGuard's ancestry/dedupe/cap checks (see below) and
+# normally never reach this ceiling at all). Evidence
+# (work/bernstein/proofs/d2/claim-loop-evidence/d2-minimax-final-snap.tar,
+# tasks.jsonl) showed "Add test for hello subcommand" and "Commit changes on
+# feature branch" each respawn 3x (retry_count 0, 1, 2) inside one 12-minute
+# run with zero forward progress -- the prior effective limit
+# (min(task.max_retries=3, dynamic_limit=3) = 3) allowed up to 4 total
+# attempts per lineage before permanent failure. Capping the retry ceiling to
+# 2 (3 total attempts) cuts one full churn cycle off every structurally-dead
+# task lineage, regardless of what ``task.max_retries`` or the
+# reason-derived ``dynamic_limit`` would otherwise allow.
+_MAX_REGULAR_TASK_RETRIES = 2
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +401,52 @@ def _choose_retry_escalation(
     return _escalate_model(current_model), "high"
 
 
+def _stamp_checkpoint_retry_metadata_safe(
+    *,
+    task: Task,
+    retry_metadata: dict[str, Any],
+    workdir: Path | None,
+    reason: str,
+) -> dict[str, Any]:
+    """Stamp the checkpointed-retry decision onto retry metadata, best-effort.
+
+    Issue #2359: every retry carries a deterministic warm/fork/cold decision
+    derived from the failed attempt's journal-anchored checkpoint. The stamp
+    must never break the retry itself: any failure inside the decision path
+    degrades to a plain ``retry_mode="cold"`` stamp (the historical
+    behavior), and callers without a workdir (legacy tests, ad-hoc scripts)
+    get the same cold stamp without touching the decision machinery.
+
+    A task pinned to fresh-context retries (issue #1109,
+    ``agent_restart_between_retries``) is forced cold so the two contracts
+    never fight: the fresh-restart audit trail stays authoritative.
+    """
+    if workdir is None:
+        retry_metadata.setdefault("retry_mode", "cold")
+        return retry_metadata
+    try:
+        from bernstein.core.tasks import checkpoint_retry
+
+        requested = str(retry_metadata.get("retry_policy", "warm"))
+        return checkpoint_retry.stamp_checkpoint_retry_metadata(
+            metadata=retry_metadata,
+            task_id=task.id,
+            workdir=workdir,
+            requested_mode=requested,
+            gate_name=str(task.terminal_reason or "task_failure"),
+            gate_output=reason,
+            force_cold=bool(getattr(task, "agent_restart_between_retries", False)),
+        )
+    except Exception as exc:
+        logger.debug(
+            "checkpoint-retry stamp skipped for task %s (%s); retry proceeds cold",
+            task.id,
+            type(exc).__name__,
+        )
+        retry_metadata.setdefault("retry_mode", "cold")
+        return retry_metadata
+
+
 def _extract_failure_context(
     task: Task,
     workdir: Path | None,
@@ -471,6 +555,12 @@ def maybe_retry_task(
     retry_metadata = dict(task.metadata)
     retry_metadata["budget_multiplier"] = budget_multiplier
     retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
+    retry_metadata = _stamp_checkpoint_retry_metadata_safe(
+        task=task,
+        retry_metadata=retry_metadata,
+        workdir=workdir,
+        reason=failure_context or str(task.terminal_reason or ""),
+    )
 
     payload: dict[str, Any] = {
         "title": new_title,
@@ -491,7 +581,16 @@ def maybe_retry_task(
         "metadata": retry_metadata,
         "meta_messages": list(task.meta_messages),
         "max_output_tokens": task.max_output_tokens,
+        # Carry forward the explicit max_turns override (if any) so a retry
+        # spawn doesn't silently fall back to complexity-based auto-computation.
+        "max_turns": task.max_turns,
     }
+    logger.info(
+        "maybe_retry_task: carrying max_turns=%r forward from task %s to retry %d",
+        task.max_turns,
+        task.id,
+        next_retry,
+    )
 
     try:
         resp = client.post(f"{server_url}/tasks", json=payload)
@@ -532,13 +631,72 @@ _TRANSIENT_MARKERS = (
 )
 _FATAL_MARKERS = ("syntaxerror", "syntax error", "fatal")
 
+# Match markers on token boundaries, not as bare substrings. The numeric
+# HTTP-status markers ("503", "429", ...) are short digit runs that alias
+# by chance inside opaque identifiers embedded in a failure reason - e.g. a
+# terminal reason carrying "correlation=compact-a1503f2b" contains "503"
+# and would otherwise be misclassified as a transient failure and granted a
+# retry budget it must never get. ``\b`` anchors each marker between word
+# and non-word characters, so "HTTP 503" / "429 Too Many Requests" / "rate
+# limit" still match while a hex run like "a1503f2b" does not.
+_TRANSIENT_MARKER_RE = re.compile("|".join(rf"\b{re.escape(m)}\b" for m in _TRANSIENT_MARKERS))
+_FATAL_MARKER_RE = re.compile("|".join(rf"\b{re.escape(m)}\b" for m in _FATAL_MARKERS))
+
+
+_META_TASK_OPEN_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.PLANNED,
+        TaskStatus.OPEN,
+        TaskStatus.CLAIMED,
+        TaskStatus.IN_PROGRESS,
+        TaskStatus.WAITING_FOR_SUBTASKS,
+        TaskStatus.PENDING_APPROVAL,
+    }
+)
+
+
+def _collect_open_meta_task_titles(
+    tasks_snapshot: dict[str, list[Task]] | None,
+    *,
+    exclude_task_id: str,
+) -> list[str]:
+    """Titles of currently open/claimed auto-spawned meta-tasks, for AutoSpawnGuard dedupe.
+
+    Mirrors the open-status set ``orchestrator_evolve._create_upgrade_tasks``
+    uses at the meta-task creation site, so the retry path's dedupe view is
+    consistent with the creation-time dedupe view. ``exclude_task_id`` omits
+    the task currently being retried/failed (it is about to leave these
+    statuses regardless of the guard's decision).
+    """
+    if not tasks_snapshot:
+        return []
+    titles: list[str] = []
+    seen_ids: set[str] = set()
+    for bucket in tasks_snapshot.values():
+        for candidate in bucket:
+            if candidate.id == exclude_task_id or candidate.id in seen_ids:
+                continue
+            if getattr(candidate, "status", None) not in _META_TASK_OPEN_STATUSES:
+                continue
+            if meta_task_kind(candidate.title) is None:
+                continue
+            seen_ids.add(candidate.id)
+            titles.append(candidate.title)
+    return titles
+
 
 def _dynamic_retry_limit(reason: str, default_max: int) -> int:
-    """Determine the retry limit based on failure reason keywords."""
+    """Determine the retry limit based on failure reason keywords.
+
+    Markers are matched on token boundaries (see ``_TRANSIENT_MARKER_RE``) so
+    an opaque identifier embedded in the reason - such as a compaction
+    ``correlation=compact-<hex>`` - cannot alias a numeric HTTP-status marker
+    and wrongly promote a terminal failure to a transient (retryable) one.
+    """
     reason_lower = reason.lower()
-    if any(k in reason_lower for k in _TRANSIENT_MARKERS):
+    if _TRANSIENT_MARKER_RE.search(reason_lower):
         return 3
-    if any(k in reason_lower for k in _FATAL_MARKERS):
+    if _FATAL_MARKER_RE.search(reason_lower):
         return 0
     return default_max
 
@@ -657,6 +815,8 @@ def retry_or_fail_task(
     retried_task_ids: set[str],
     tasks_snapshot: dict[str, list[Task]] | None = None,
     workdir: Path | None = None,
+    role_model_policy: dict[str, dict[str, Any]] | None = None,
+    default_adapter_name: str | None = None,
 ) -> None:
     """Re-queue a task for retry, or fail it permanently if max retries reached.
 
@@ -683,6 +843,19 @@ def retry_or_fail_task(
             Queue under ``<workdir>/.sdd/runtime/dlq.jsonl``.
             Callers without a workdir (e.g. ad-hoc scripts or legacy tests)
             fall back to the historical behaviour of plain failure.
+        role_model_policy: Optional ``AgentSpawner.role_model_policy`` snapshot.
+            When the retrying task's role has a non-Claude ``provider``/``model``
+            pinned here, retry escalation stamps ``effort``/``max_output_tokens``
+            only and leaves ``model`` alone instead of stamping a Claude tier
+            name ("opus"/"sonnet") that is meaningless to that adapter. Callers
+            that omit this (e.g. legacy tests, ad-hoc scripts) get the
+            historical Claude-tier-name-always behavior, which is correct for
+            Claude-only runs and was never wrong until a non-Claude adapter
+            entered the picture.
+        default_adapter_name: The spawner's default adapter name (e.g.
+            ``AgentSpawner.default_adapter_name``), used as the fallback
+            Claude-compatibility check when the retrying role has no
+            role_model_policy entry of its own.
     """
     base = server_url
     dynamic_limit = _dynamic_retry_limit(reason, max_task_retries)
@@ -718,7 +891,81 @@ def retry_or_fail_task(
     # source of truth is ``task.retry_count`` (typed field).
     retry_count = task.retry_count
     per_task_limit = task.max_retries if task.max_retries > 0 else max_task_retries
-    effective_limit = min(per_task_limit, dynamic_limit)
+    # Bug 2 hard ceiling (see _MAX_REGULAR_TASK_RETRIES docstring above):
+    # applies to every lineage regardless of task.max_retries or the
+    # reason-derived dynamic_limit, so a structurally-dead task (e.g. its
+    # agent keeps dying for an environment reason no retry can fix) burns at
+    # most 2 retries before permanent failure instead of riding whatever
+    # higher ceiling those other two knobs would otherwise allow.
+    effective_limit = min(per_task_limit, dynamic_limit, _MAX_REGULAR_TASK_RETRIES)
+    _original_task_id = task.metadata.get("original_task_id", task.id) if isinstance(task.metadata, dict) else task.id
+    logger.info(
+        "retry_or_fail_task decision inputs: task=%s original_task_id=%s retry_count=%d "
+        "per_task_limit=%d dynamic_limit=%d hard_cap=%d -> effective_limit=%d reason=%r",
+        task_id,
+        _original_task_id,
+        retry_count,
+        per_task_limit,
+        dynamic_limit,
+        _MAX_REGULAR_TASK_RETRIES,
+        effective_limit,
+        reason,
+    )
+
+    # Auto-spawn guard: this generic retry path is a SECOND spawn site for
+    # auto-spawned meta-tasks (e.g. an evolution-loop "Upgrade: ..." proposal
+    # or a watchdog "Watchdog triage: ..." task) - it recreates a brand-new
+    # open task row with the same title whenever the meta-task's own agent
+    # dies, completely bypassing the AutoSpawnGuard that
+    # ``orchestrator_evolve._create_upgrade_tasks`` / the watchdog's
+    # ``_create_triage_task`` consult at CREATION time. Left unguarded, a
+    # meta-task that structurally cannot succeed (e.g. the environment
+    # defect it exists to work around) gets re-spawned via retry up to
+    # ``max_retries`` times with zero forward progress - the exact
+    # "9 Upgrade: Improve task success rate" rows seen in
+    # work/bernstein/proofs/d2/minimax/sdd-snapshot/runtime/tasks.jsonl,
+    # where 2 of the 3 real-lineage recreations went through THIS function,
+    # never through the guarded creation site, so the guard's dedupe/cap
+    # counter never even saw them.
+    #
+    # Retrying a meta-task is itself an auto-spawn "about" that same
+    # meta-task, so ``source_title=task.title`` deterministically computes
+    # ancestry depth 2 (the source title already carries a
+    # ``META_TASK_PREFIXES`` prefix) -- refused by the depth<=1 cap. Net
+    # effect: a meta-task gets its normal first attempt, but a failed
+    # meta-task is routed straight to permanent-fail/DLQ instead of being
+    # resurrected under a new task id.
+    meta_kind = meta_task_kind(task.title)
+    if meta_kind is not None and retry_count < effective_limit:
+        if workdir is not None:
+            existing_open_titles = _collect_open_meta_task_titles(tasks_snapshot, exclude_task_id=task.id)
+            guard = AutoSpawnGuard(workdir)
+            decision = guard.evaluate(
+                kind=f"retry:{meta_kind.rstrip(':')}",
+                title=task.title,
+                source_title=task.title,
+                existing_open_titles=existing_open_titles,
+            )
+            if not decision.allowed:
+                logger.info(
+                    "Refusing to re-spawn meta-task %s (title=%r) via retry: auto-spawn guard reason=%s "
+                    "ancestry_depth=%d current_count=%d cap=%d - routing to permanent failure instead of "
+                    "creating a new task row",
+                    task_id,
+                    task.title,
+                    decision.reason,
+                    decision.ancestry_depth,
+                    decision.current_count,
+                    decision.cap,
+                )
+                retry_count = effective_limit  # force the permanent-fail/DLQ branch below
+        else:
+            logger.info(
+                "Auto-spawn guard skipped for retry of meta-task %s (title=%r): no workdir supplied "
+                "(legacy/ad-hoc caller) - falling back to historical unguarded retry behaviour",
+                task_id,
+                task.title,
+            )
 
     if retry_count < effective_limit:
         # Escalate model on retry: large/architect/security always opus/max;
@@ -726,15 +973,68 @@ def retry_or_fail_task(
         from bernstein.core.tasks.models import Scope as _Scope
 
         _high_stakes_roles = ("architect", "security")
+
+        # Historically this block stamped a Claude tier name ("opus"/
+        # "sonnet") onto the retried task.model unconditionally - correct
+        # for Claude-only runs, but for a role pinned to a non-Claude
+        # provider/model (role_model_policy) or running against a
+        # non-Claude default adapter, a tier name is meaningless and gets
+        # spawned literally (e.g. `qwen -m opus`, the run-9 attempt-8 class
+        # of bug: retry stamped model="opus" against a MiniMax endpoint).
+        # Determine Claude-compatibility for the retrying role BEFORE
+        # choosing retry_model so the escalation itself never produces a
+        # value that has to be coerced/papered over downstream in
+        # spawner_core.py. Callers that don't pass role_model_policy /
+        # default_adapter_name (legacy tests, ad-hoc scripts) get
+        # ``adapter_for_role is None`` -> treated as Claude-compatible,
+        # i.e. today's historical behavior, unchanged.
+        role_policy_entry = role_model_policy.get(task.role, {}) if isinstance(role_model_policy, dict) else {}
+        pinned_model = role_policy_entry.get("model") if isinstance(role_policy_entry, dict) else None
+        adapter_for_role = (
+            role_policy_entry.get("provider") if isinstance(role_policy_entry, dict) else None
+        ) or default_adapter_name
+        adapter_is_claude_compatible = True
+        if isinstance(adapter_for_role, str) and adapter_for_role:
+            from bernstein.core.bandit_router import BanditRouter
+
+            adapter_is_claude_compatible = BanditRouter.router_applicable(adapter_for_role)
+        logger.info(
+            "Retry escalation adapter check for task %s (role=%s): "
+            "role_policy_provider=%r role_policy_model=%r default_adapter_name=%r "
+            "-> adapter_for_role=%r claude_compatible=%s",
+            task_id,
+            task.role,
+            role_policy_entry.get("provider"),
+            pinned_model,
+            default_adapter_name,
+            adapter_for_role,
+            adapter_is_claude_compatible,
+        )
+
         if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:
-            retry_model = "opus"
+            retry_model = "opus" if adapter_is_claude_compatible else (pinned_model or task.model)
             retry_effort = "max"
         elif retry_count >= 1:
-            retry_model = "opus"
+            retry_model = "opus" if adapter_is_claude_compatible else (pinned_model or task.model)
             retry_effort = "high"
         else:
-            retry_model = task.model or "sonnet"
+            retry_model = (task.model or "sonnet") if adapter_is_claude_compatible else (pinned_model or task.model)
             retry_effort = task.effort or "high"
+
+        logger.info(
+            "Retry model decision for task %s (role=%s, retry_count=%s, scope=%s): "
+            "model=%r effort=%r (claude_compatible=%s, pinned_model=%r, prior_task_model=%r, reason=%r)",
+            task_id,
+            task.role,
+            retry_count,
+            task.scope,
+            retry_model,
+            retry_effort,
+            adapter_is_claude_compatible,
+            pinned_model,
+            task.model,
+            reason,
+        )
 
         # Max output tokens escalation (T415)
         new_max_output_tokens = task.max_output_tokens
@@ -771,6 +1071,12 @@ def retry_or_fail_task(
         retry_metadata = dict(task.metadata)
         retry_metadata["budget_multiplier"] = budget_multiplier
         retry_metadata.setdefault("original_task_id", task.metadata.get("original_task_id", task.id))
+        retry_metadata = _stamp_checkpoint_retry_metadata_safe(
+            task=task,
+            retry_metadata=retry_metadata,
+            workdir=workdir,
+            reason=reason,
+        )
 
         # Title and description are passed through verbatim (no prefix
         # mutation).  The retry agent sees the reason via meta_messages.
@@ -793,15 +1099,26 @@ def retry_or_fail_task(
             "retry_count": retry_count + 1,
             "max_retries": task.max_retries,
             "retry_delay_s": task.retry_delay_s,
+            # Carry forward the explicit max_turns override (if any) so the
+            # retry spawn doesn't silently fall back to complexity-based
+            # auto-computation in compute_max_turns().
+            "max_turns": task.max_turns,
         }
+        logger.info(
+            "retry_or_fail_task: carrying max_turns=%r forward from task %s to retry %d",
+            task.max_turns,
+            task_id,
+            retry_count + 1,
+        )
         # Preserve completion signals on retry
         if task.completion_signals:
             task_body["completion_signals"] = [{"type": s.type, "value": s.value} for s in task.completion_signals]
         try:
             client.post(f"{base}/tasks", json=task_body).raise_for_status()
             logger.info(
-                "Retrying task %s (attempt %d/%d): %s",
+                "retry_or_fail_task verdict=retry task=%s original_task_id=%s attempt=%d/%d reason=%r",
                 task_id,
+                _original_task_id,
                 retry_count + 1,
                 effective_limit,
                 reason,
@@ -826,6 +1143,14 @@ def retry_or_fail_task(
         # retry budget exhausted - move to Dead Letter Queue
         # before marking the task failed so permanently-failed work is not
         # silently dropped.
+        logger.info(
+            "retry_or_fail_task verdict=permanent_fail task=%s original_task_id=%s attempt=%d/%d reason=%r",
+            task_id,
+            _original_task_id,
+            retry_count + 1,
+            effective_limit,
+            reason,
+        )
         _enqueue_dlq_if_workdir(
             workdir=workdir,
             task=task,
@@ -1250,6 +1575,205 @@ def _apply_fair_scheduling(orch: Any, batches: list[list[Task]]) -> list[list[Ta
     return ordered
 
 
+def _refetch_task_for_claim_conflict(client: httpx.Client, base: str, task_id: str) -> Task | None:
+    """Re-GET a single task after a claim 409 to discover its current state.
+
+    Returns ``None`` if the task no longer exists (404) or the re-fetch
+    itself fails -- callers must treat that as "stop claiming, move on"
+    rather than retry against data we no longer trust.
+    """
+    try:
+        resp = client.get(f"{base}/tasks/{task_id}")
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return Task.from_dict(resp.json())
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "claim-conflict re-GET of task %s failed: %s -- treating as unclaimable this attempt",
+            task_id,
+            exc,
+        )
+        return None
+    except (KeyError, ValueError, TypeError) as exc:
+        # A 2xx response whose body is missing/malformed (not a well-formed
+        # task dict) is a re-fetch failure just like an HTTP error: we no
+        # longer trust the data, so stop claiming and move on rather than
+        # crashing the whole tick.
+        logger.warning(
+            "claim-conflict re-GET of task %s returned an unparseable body: %s -- treating as unclaimable this attempt",
+            task_id,
+            exc,
+        )
+        return None
+
+
+def _claim_task_with_conflict_retry(
+    orch: Any,
+    task: Task,
+    base: str,
+    session_id: str | None,
+) -> tuple[httpx.Response | None, str | None]:
+    """POST ``/tasks/{id}/claim``, recovering from stale-version 409s instead of looping forever.
+
+    Root cause (Bug 1, 2026-07-02, evidence in
+    ``work/bernstein/proofs/d2/claim-loop-evidence``): the original call site
+    sent one CAS claim attempt and, on 409, gave up for the current tick --
+    but ``batches`` is recomputed fresh every tick from ``fetch_all_tasks``,
+    and if the task's server-side state never actually changes (e.g. a
+    dependency check or a stale file-ownership lock from a dead agent keeps
+    failing the claim for a reason that has nothing to do with the version),
+    the exact same stale ``expected_version`` gets resubmitted every tick,
+    forever. Server log evidence: 144 consecutive identical
+    ``POST /tasks/109ba3616f03/claim?expected_version=1`` -> 409 responses
+    from one session against one task across an entire run, with the worker
+    for that task never spawning.
+
+    On every 409 this now:
+      1. Re-GETs the task to discover its CURRENT version/status.
+      2. If the task is gone (404) or has reached a terminal status
+         (done/closed/failed/cancelled/abandoned) -> stop; there is nothing
+         left to claim.
+      3. If another session now holds a non-open claim on it -> stop and
+         move on; retrying cannot help.
+      4. Otherwise (still OPEN) -> retry with the freshly observed version,
+         whether or not it actually moved -- a same-version 409 means some
+         OTHER precondition (role mismatch, unmet dependency, file-ownership
+         overlap) is blocking the claim, and that also deserves a few
+         bounded retries rather than an infinite tight loop.
+    Retries within one call are capped at ``_CLAIM_CONFLICT_MAX_ATTEMPTS``.
+
+    Every attempt is logged at INFO with task_id, version sent, response
+    code, the current version/status discovered on re-fetch, and the
+    decision taken -- so a repeat of this bug shows up as readable log
+    lines instead of a silent multi-hundred-line loop.
+
+    Returns:
+        ``(response, None)`` on a successful (non-409) response -- caller
+        must still check ``response.status_code`` for 404/5xx as before.
+        ``(last_response, reason)`` when claiming this task was abandoned.
+    """
+    attempts = 0
+    current_task = task
+    resp: httpx.Response | None = None
+    while True:
+        attempts += 1
+        params: dict[str, Any] = {"expected_version": current_task.version}
+        if session_id is not None:
+            params["claimed_by_session"] = session_id
+        resp = orch._client.post(f"{base}/tasks/{current_task.id}/claim", params=params)
+        logger.info(
+            "claim attempt %d/%d task=%s sent_version=%s -> HTTP %d",
+            attempts,
+            _CLAIM_CONFLICT_MAX_ATTEMPTS,
+            current_task.id,
+            current_task.version,
+            resp.status_code,
+        )
+        if resp.status_code != 409:
+            if attempts > 1:
+                logger.info(
+                    "claim conflict for task %s resolved after %d attempt(s)",
+                    current_task.id,
+                    attempts,
+                )
+            return resp, None
+
+        if attempts >= _CLAIM_CONFLICT_MAX_ATTEMPTS:
+            logger.warning(
+                "claim conflict cap reached for task %s after %d attempts (last sent version=%s, "
+                "detail=%r) -- giving up on this task this episode",
+                current_task.id,
+                attempts,
+                current_task.version,
+                resp.text[:300] if resp is not None else None,
+            )
+            return resp, f"CAS conflict, gave up after {attempts} attempts"
+
+        refreshed = _refetch_task_for_claim_conflict(orch._client, base, current_task.id)
+        if refreshed is None:
+            logger.info(
+                "claim conflict for task %s: re-GET found task gone (404 or fetch error) -- stopping, nothing to claim",
+                current_task.id,
+            )
+            return resp, "task no longer exists or unfetchable"
+
+        if refreshed.status in _CLAIM_TERMINAL_STATUSES:
+            logger.info(
+                "claim conflict for task %s: re-fetch shows terminal status=%s -- stopping, work is done",
+                current_task.id,
+                refreshed.status.value,
+            )
+            return resp, f"task reached terminal status {refreshed.status.value}"
+
+        if refreshed.status != TaskStatus.OPEN:
+            other_session = refreshed.claimed_by_session
+            if other_session is not None and other_session != session_id:
+                logger.info(
+                    "claim conflict for task %s: now held by a different session %s (status=%s) -- "
+                    "moving on, not retrying",
+                    current_task.id,
+                    other_session,
+                    refreshed.status.value,
+                )
+                return resp, f"claimed by another session {other_session}"
+            logger.info(
+                "claim conflict for task %s: status=%s (not open, no foreign session to blame) -- "
+                "stopping this episode",
+                current_task.id,
+                refreshed.status.value,
+            )
+            return resp, f"task not open (status={refreshed.status.value})"
+
+        # Still OPEN. Whether or not the version actually moved, retry with
+        # the freshest known version rather than resubmitting stale data.
+        logger.info(
+            "claim conflict for task %s: re-fetch shows status=OPEN, version %s -> %s -- retrying (attempt %d/%d)",
+            current_task.id,
+            current_task.version,
+            refreshed.version,
+            attempts + 1,
+            _CLAIM_CONFLICT_MAX_ATTEMPTS,
+        )
+        current_task = refreshed
+        task.version = refreshed.version  # keep caller's Task object in sync
+        time.sleep(min(0.05 * (2 ** (attempts - 1)), 0.5))
+
+
+def _claim_conflict_backoff_active(orch: Any, task_id: str) -> bool:
+    """True if ``task_id`` is still within its cross-tick claim-conflict backoff window."""
+    state: dict[str, tuple[int, float]] = getattr(orch, "_claim_conflict_state", None) or {}
+    _episode_count, backoff_until = state.get(task_id, (0, 0.0))
+    return time.time() < backoff_until
+
+
+def _record_claim_conflict_episode(orch: Any, task_id: str) -> None:
+    """Record one exhausted claim-conflict episode and set the next backoff window."""
+    if not hasattr(orch, "_claim_conflict_state") or not isinstance(orch._claim_conflict_state, dict):
+        orch._claim_conflict_state = {}
+    episode_count, _ = orch._claim_conflict_state.get(task_id, (0, 0.0))
+    episode_count += 1
+    backoff_s = min(
+        _CLAIM_CONFLICT_BACKOFF_BASE_S * (2 ** (episode_count - 1)),
+        _CLAIM_CONFLICT_BACKOFF_MAX_S,
+    )
+    backoff_until = time.time() + backoff_s
+    orch._claim_conflict_state[task_id] = (episode_count, backoff_until)
+    logger.warning(
+        "claim-conflict episode %d for task %s -- backing off %.1fs before the next attempt",
+        episode_count,
+        task_id,
+        backoff_s,
+    )
+
+
+def _clear_claim_conflict_state(orch: Any, task_id: str) -> None:
+    """Drop claim-conflict bookkeeping for a task once it claims successfully."""
+    state = getattr(orch, "_claim_conflict_state", None)
+    if isinstance(state, dict):
+        state.pop(task_id, None)
+
+
 def claim_and_spawn_batches(
     orch: Any,  # Orchestrator instance (avoids circular import)
     batches: list[list[Task]],
@@ -1557,27 +2081,49 @@ def claim_and_spawn_batches(
         # Claim tasks BEFORE spawning to prevent duplicate agents.
         # Pass expected_version for CAS (compare-and-swap) to prevent two
         # distributed nodes from claiming the same task simultaneously.
-        # Abort on server errors (5xx), CAS conflicts (409), or transport failures.
+        # Abort on server errors (5xx), CAS conflicts (409, with bounded
+        # re-fetch-and-retry -- see _claim_task_with_conflict_retry), or
+        # transport failures.
+        #
+        # Bug 1b (2026-07-02, claim-then-never-spawn deadlock): a
+        # multi-task batch used to be all-or-nothing -- if task N claimed
+        # successfully but a LATER task in the same batch failed to claim,
+        # the whole batch aborted via `continue`, leaving the already
+        # server-side-claimed earlier task(s) claimed with no agent spawned
+        # and no failure recorded. Evidence
+        # (work/bernstein/proofs/d2/claude/attempt4-meridian-fixed/FAIL-NOTE.md):
+        # duplicate-titled task pairs (created by an unrelated upstream
+        # double-execution bug) meant one twin claimed fine while its
+        # sibling's claim was rejected by the file-ownership-overlap check
+        # (surfaced generically as a 409, misread as a version race); the
+        # claimed twin then sat blocking the dependency graph for the full
+        # 15-minute stale-claim-reaper window with `agents=0 spawned=0`.
+        # Fix: track which tasks actually claimed and shrink ``batch`` to
+        # that subset before spawning, instead of discarding the whole
+        # batch -- a claimed task with no path to a worker is a worse
+        # failure mode than a partially-sized agent batch. Tasks that never
+        # claimed stay open and are retried (bounded, backed off) on a
+        # later tick via the same claim-conflict machinery above.
         claim_failed = False
+        claimed_tasks: list[Task] = []
         _orch_session_id: str | None = getattr(orch, "session_id", None)
         for task in batch:
-            try:
-                _claim_params: dict[str, Any] = {"expected_version": task.version}
-                if _orch_session_id is not None:
-                    _claim_params["claimed_by_session"] = _orch_session_id
-                resp = orch._client.post(
-                    f"{base}/tasks/{task.id}/claim",
-                    params=_claim_params,
+            if _claim_conflict_backoff_active(orch, task.id):
+                logger.debug(
+                    "Skipping claim for task %s: still within claim-conflict backoff window",
+                    task.id,
                 )
-                if resp.status_code == 409:
-                    logger.info(
-                        "CAS conflict claiming task %s (version %d) -- another node claimed it",
-                        task.id,
-                        task.version,
-                    )
-                    result.errors.append(f"claim:{task.id}: CAS conflict (version {task.version})")
+                result.errors.append(f"claim:{task.id}: in claim-conflict backoff")
+                claim_failed = True
+                break
+            try:
+                resp, conflict_reason = _claim_task_with_conflict_retry(orch, task, base, _orch_session_id)
+                if conflict_reason is not None:
+                    _record_claim_conflict_episode(orch, task.id)
+                    result.errors.append(f"claim:{task.id}: {conflict_reason}")
                     claim_failed = True
                     break
+                assert resp is not None  # conflict_reason is None only on a real response
                 if resp.status_code >= 500:
                     logger.error(
                         "Server error %d claiming task %s -- aborting spawn",
@@ -1587,6 +2133,8 @@ def claim_and_spawn_batches(
                     result.errors.append(f"claim:{task.id}: server error {resp.status_code}")
                     claim_failed = True
                     break
+                _clear_claim_conflict_state(orch, task.id)
+                claimed_tasks.append(task)
             except httpx.TransportError as exc:
                 logger.error(
                     "Server unreachable claiming task %s: %s -- aborting spawn",
@@ -1597,7 +2145,18 @@ def claim_and_spawn_batches(
                 claim_failed = True
                 break
         if claim_failed:
-            continue
+            if not claimed_tasks:
+                continue
+            logger.warning(
+                "Partial batch-claim failure: %d/%d task(s) claimed before the failure "
+                "(%s) -- spawning for the claimed subset %s instead of leaving them "
+                "claimed with no agent (claim-then-never-spawn deadlock)",
+                len(claimed_tasks),
+                len(batch),
+                result.errors[-1] if result.errors else "unknown reason",
+                [t.id for t in claimed_tasks],
+            )
+            batch = claimed_tasks
 
         # Response cache: if a functionally identical task was already completed,
         # return the cached result without spawning an agent (20-40% savings target).
@@ -1659,16 +2218,28 @@ def claim_and_spawn_batches(
         if len(batch) == 1:
             l1_check = classify_task(batch[0])
             if l1_check.level == TaskLevel.L1 and not batch[0].model:
-                l1_cfg = get_l1_model_config()
-                batch[0].model = l1_cfg.model
-                batch[0].effort = l1_cfg.effort
-                logger.info(
-                    "L1 downgrade for task %s -> %s/%s (%s)",
-                    batch[0].id,
-                    l1_cfg.model,
-                    l1_cfg.effort,
-                    l1_check.reason,
-                )
+                try:
+                    l1_cfg = get_l1_model_config()
+                except ModelNotConfiguredError:
+                    # fast_path.l1_model is not configured: skip the L1
+                    # downgrade and let standard routing apply the
+                    # operator-configured default_model (or refuse with a
+                    # clear error if none is configured anywhere).
+                    logger.info(
+                        "Task %s classified L1 but fast_path.l1_model is not configured - skipping L1 downgrade",
+                        batch[0].id,
+                    )
+                    l1_cfg = None
+                if l1_cfg is not None:
+                    batch[0].model = l1_cfg.model
+                    batch[0].effort = l1_cfg.effort
+                    logger.info(
+                        "L1 downgrade for task %s -> %s/%s (%s)",
+                        batch[0].id,
+                        l1_cfg.model,
+                        l1_cfg.effort,
+                        l1_check.reason,
+                    )
 
         # Provider batch: submit eligible low-risk single-task work to
         # OpenAI/Anthropic batch APIs instead of spawning a local CLI agent.
@@ -2303,7 +2874,14 @@ def _evaluate_approval_gate(
             _create_approval_pr(orch, task, session, completion_data)
             return True
     except Exception:
-        logger.exception("Approval gate failed for task %s -- defaulting to auto-merge", task.id)
+        logger.exception(
+            "approval_decision: task=%s session=%s decision=held FAIL-CLOSED (outer exception) -- "
+            "exception raised in approval-gate evaluation flow (gate check or pre-gate step such as "
+            "_resolve_approval_workflow); holding for approval, NOT auto-merging",
+            task.id,
+            session.id,
+        )
+        return True
     return False
 
 
@@ -2359,11 +2937,11 @@ def _create_approval_pr(
     pr_url = orch._approval_gate.create_pr(
         task,
         worktree_path=worktree_path,
-        _session_id=session.id,
+        session_id=session.id,
         labels=orch._config.pr_labels,
         _role=session.role,
-        _model=session.model_config.model,
-        _cost_usd=cost_usd,
+        model=session.model_config.model,
+        cost_usd=cost_usd,
         test_summary=test_summary,
     )
     if pr_url:
@@ -2405,6 +2983,15 @@ def _reap_and_cleanup_session(
 
     if janitor_passed and not skip_merge and merge_ok:
         _close_completed_task(orch, task)
+        # issue #2362 (AC1): seal a verification-evidence bundle for the task
+        # now that its changes are merged, before the worktree is reclaimed.
+        # No-op when the task declares no producers; fail-open otherwise so a
+        # producer/gate error can never block, delay, or fail the completion.
+        seal_evidence_on_completion(orch._workdir, task)
+        # issue #2365: chain the merge decision into the run journal so the
+        # review board's merged column is a projection of the journal, not a
+        # side inference. No-op when the orchestrator has no recorder.
+        record_task_merged(getattr(orch, "_recorder", None), task_id=task.id, agent_id=session.id)
 
     orch._spawner.cleanup_worktree(session.id)
     return cache_verified, cache_diff_lines
@@ -2532,12 +3119,38 @@ def _record_cost_and_convergence(
     task_m: Any,
     cost_usd: float,
     janitor_passed: bool,
+    tokens_sidecar_source: str = "",
 ) -> None:
-    """Record cost tracking, convergence, and completion budget."""
+    """Record cost tracking, convergence, and completion budget.
+
+    ``tokens_sidecar_source`` (item 31, 2026-07-02) rides the ledger mutation
+    so the emitted ``ledger_update:`` line records whether these token counts
+    came from an alive-exit /complete sidecar ingestion (``alive_exit``) vs a
+    dead-session recovery (``dead_exit``) vs the collector metrics (``""``).
+
+    The response-style profile applied at spawn also
+    rides the ledger entry (``response_profile`` + ``profile_content_sha256``
+    cost tags) so downstream cost analysis can group spend per profile. The
+    session carries the authoritative stamp; when the session is already
+    gone (dead-exit recovery), the copy stamped on ``task.metadata`` at
+    spawn is used instead. Pre-change sessions carry neither, keeping the
+    ledger mutation byte-identical for them.
+    """
     agent_id = session.id if session else "unknown"
     model = session.model_config.model if session else "unknown"
     tokens_in = task_m.tokens_prompt if task_m else 0
     tokens_out = task_m.tokens_completion if task_m else 0
+    cost_tags: dict[str, str] = {}
+    if tokens_sidecar_source:
+        cost_tags["tokens_sidecar_source"] = tokens_sidecar_source
+    response_profile = getattr(session, "response_profile", "") if session else ""
+    profile_sha = getattr(session, "profile_content_sha256", "") if session else ""
+    if not response_profile and isinstance(task.metadata, dict):
+        response_profile = str(task.metadata.get("response_profile") or "")
+        profile_sha = str(task.metadata.get("profile_content_sha256") or "")
+    if response_profile:
+        cost_tags["response_profile"] = response_profile
+        cost_tags["profile_content_sha256"] = profile_sha
     orch._cost_tracker.record_cumulative(
         agent_id=agent_id,
         task_id=task.id,
@@ -2546,6 +3159,7 @@ def _record_cost_and_convergence(
         total_output_tokens=tokens_out,
         total_cost_usd=cost_usd if cost_usd > 0 else None,
         tenant_id=task.tenant_id,
+        cost_tags=cost_tags or None,
     )
     try:
         orch._cost_tracker.save(orch._workdir / ".sdd")
@@ -2583,9 +3197,99 @@ def _record_completion_metrics(
     collector = get_collector(orch._workdir / ".sdd" / "metrics")
     task_m = collector.task_metrics.get(task.id)
     cost_usd = task_m.cost_usd if task_m else 0.0
+    tokens_prompt = task_m.tokens_prompt if task_m else 0
+    tokens_completion = task_m.tokens_completion if task_m else 0
+    cost_source = "collector.task_metrics"
 
-    _record_cost_and_convergence(orch, task, session, task_m, cost_usd, janitor_passed)
-    collector.complete_task(task.id, success=janitor_passed, janitor_passed=janitor_passed, cost_usd=cost_usd)
+    # D2 canary-host-99d0eac0 (2026-07-03): ``task_m.cost_usd`` is populated
+    # by nothing on the normal-completion path - the live-cost loop
+    # (orchestrator._record_live_costs) feeds CostTracker only and never
+    # writes back into collector.task_metrics - so normally-completed tasks
+    # with REAL spend (e.g. canary qa task 325c200e1985, whose .tokens
+    # sidecar carried 51,880/1,401 tokens) recorded ``cost_usd: 0.0`` in
+    # ``.sdd/metrics/tasks.jsonl``. The runner writes its priced usage to
+    # the orchestrator-root ``.tokens`` sidecar BEFORE its process exits
+    # (including on exception paths since the MaxTurnsExceeded fix), so at
+    # completion time the sidecar is ground truth for what the session
+    # actually spent - reading it here also closes the race where the
+    # sidecar lands after the live-cost loop's last tick. Prefer it
+    # whenever it knows more than the (typically zero) collector figure.
+    # Lazy import: agent_lifecycle imports this module at its top, so a
+    # top-level import here would be circular.
+    # Bug 14 (D2 minimax attempt-e938bd33, 2026-07-02): when the agent died
+    # BEFORE the completion sweep processed its task (MaxTurnsExceeded fires
+    # a nonzero exit and the reaper drops the session from _agents /
+    # _task_to_session), _find_session_for_task returns None here, the
+    # sidecar branch below never ran, and the metrics row recorded $0
+    # (task 7bb98dc57345: sidecar carried 54,003/1,026 tokens ~ $0.0116,
+    # row said cost_usd=0.0, model=null). The sidecar file itself survives
+    # (keyed by agent id at .sdd/runtime/<agent_id>.tokens), and
+    # task.assigned_agent still names the dead agent, so reconstruct a
+    # minimal session-shaped shim (id + model from the collector's
+    # AgentMetrics, recorded at spawn) and read the sidecar anyway.
+    sidecar_session: Any = session
+    if session is None and getattr(task, "assigned_agent", None):
+        agent_id = task.assigned_agent
+        agent_m = collector.agent_metrics.get(agent_id) if hasattr(collector, "agent_metrics") else None
+        dead_model = getattr(agent_m, "model", "") or ""
+        sidecar_session = SimpleNamespace(
+            id=agent_id,
+            model_config=SimpleNamespace(model=dead_model),
+        )
+        logger.info(
+            "completion_cost_fallback: task_id=%s session gone (agent reaped before "
+            "completion sweep) - reading sidecar via task.assigned_agent=%s model=%r",
+            task.id,
+            agent_id,
+            dead_model,
+        )
+    if sidecar_session is not None:
+        from bernstein.core.agents.agent_lifecycle import _read_runner_cost_usd
+
+        sidecar_cost, sidecar_in, sidecar_out = _read_runner_cost_usd(orch._workdir, sidecar_session, task.id)
+        if sidecar_cost > cost_usd or (cost_usd <= 0.0 and (sidecar_in > 0 or sidecar_out > 0)):
+            cost_usd = sidecar_cost
+            tokens_prompt = sidecar_in
+            tokens_completion = sidecar_out
+            cost_source = "tokens_sidecar" if session is not None else "tokens_sidecar_dead_session"
+            if task_m is not None:
+                # Reconcile the in-memory record too: retrospective.py's
+                # cost-aggregation fallback reads collector._task_metrics
+                # directly, and _record_cost_and_convergence below reads
+                # task_m.tokens_prompt/tokens_completion for CostTracker.
+                task_m.cost_usd = cost_usd
+                task_m.tokens_prompt = sidecar_in
+                task_m.tokens_completion = sidecar_out
+                task_m.tokens_used = sidecar_in + sidecar_out
+    logger.info(
+        "completion_cost_source: task_id=%s agent_id=%s source=%s cost_usd=%.6f tokens_prompt=%d tokens_completion=%d",
+        task.id,
+        session.id if session else getattr(sidecar_session, "id", "none") if sidecar_session else "none",
+        cost_source,
+        cost_usd,
+        tokens_prompt,
+        tokens_completion,
+    )
+
+    # item 31 (2026-07-02): classify the ledger ingestion origin so the
+    # alive-exit /complete path is distinguishable from an orphan/dead-exit
+    # recovery in the ledger_update: log line. cost_source is already the
+    # authoritative selector chosen above.
+    if cost_source == "tokens_sidecar":
+        tokens_sidecar_source = "alive_exit"
+    elif cost_source == "tokens_sidecar_dead_session":
+        tokens_sidecar_source = "dead_exit"
+    else:
+        tokens_sidecar_source = ""
+
+    _record_cost_and_convergence(orch, task, session, task_m, cost_usd, janitor_passed, tokens_sidecar_source)
+    collector.complete_task(
+        task.id,
+        success=janitor_passed,
+        janitor_passed=janitor_passed,
+        cost_usd=cost_usd,
+        tokens_used=tokens_prompt + tokens_completion,
+    )
 
     if session is not None:
         collector.complete_agent_task(session.id, success=janitor_passed)
@@ -2737,6 +3441,11 @@ def _record_evolution_completion(
                 janitor_passed=janitor_passed,
                 model=session.model_config.model if session else None,
                 provider=session.provider if session else None,
+                # task_m was reconciled with the runner's .tokens sidecar in
+                # _record_completion_metrics, so these carry the real token
+                # counts into .sdd/metrics/tasks.jsonl alongside cost_usd.
+                tokens_prompt=task_m.tokens_prompt if task_m else 0,
+                tokens_completion=task_m.tokens_completion if task_m else 0,
             )
         except Exception as exc:
             logger.warning("Evolution record_task_completion failed: %s", exc)
@@ -2761,7 +3470,13 @@ def _has_llm_judge_signal(task: Task) -> bool:
     return any(signal.type == "llm_judge" for signal in task.completion_signals)
 
 
-def _verify_via_janitor(task: Task, workdir: Path, server_url: str | None) -> tuple[bool, list[str]]:
+def _verify_via_janitor(
+    task: Task,
+    workdir: Path,
+    server_url: str | None,
+    judge_model: str | None = None,
+    judge_provider: str | None = None,
+) -> tuple[bool, list[str]]:
     """Run the async ``run_janitor`` pipeline for a single task synchronously.
 
     Translates a ``JanitorResult`` back into the ``(passed, failed_signals)``
@@ -2774,17 +3489,146 @@ def _verify_via_janitor(task: Task, workdir: Path, server_url: str | None) -> tu
         workdir: Project root for signal evaluation and git diff lookups.
         server_url: Optional task-server URL forwarded to ``run_janitor`` for
             fix-task creation.
+        judge_model: Optional operator-configured model for the janitor's
+            llm_judge signal evaluation (from ``bernstein.yaml``'s
+            ``judge_model``). Falls back to the janitor's hardcoded default
+            when unset.
+        judge_provider: Optional operator-configured provider counterpart
+            to ``judge_model``.
 
     Returns:
         Tuple of (all_passed, list_of_failed_signal_descriptions).
     """
-    results = asyncio.run(run_janitor([task], workdir, server_url=server_url))
+    results = asyncio.run(
+        run_janitor(
+            [task],
+            workdir,
+            server_url=server_url,
+            judge_model=judge_model,
+            judge_provider=judge_provider,
+        )
+    )
     if not results:
         # Task had no completion signals (shouldn't reach here in practice).
         return True, []
     janitor_result = results[0]
     failed_descs = [desc for desc, passed, _ in janitor_result.signal_results if not passed]
     return janitor_result.passed, failed_descs
+
+
+def _enqueue_alive_exit_janitor_pass(
+    orch: Any,
+    task: Task,
+    *,
+    reason: str,
+) -> concurrent.futures.Future[tuple[bool, list[str]]] | None:
+    """Enqueue a janitor pass for a task whose worker exited via /complete.
+
+    Mirrors the dead-exit scheduling in
+    ``bernstein.core.agents.agent_lifecycle.handle_orphaned_task``: that path
+    runs ``verify_task`` synchronously, then issues ``POST /complete`` or
+    ``retry_or_fail_task``. The alive-exit path has been wired through
+    ``process_completed_tasks`` + ``_process_single_completed_task`` for
+    months, but in practice it can be skipped when the orchestrator
+    self-stops before the next tick (item 30 defect evidence:
+    attempt-83808a8a - backend/qa tasks had ``metrics/tasks.jsonl`` rows
+    missing because ``_apply_janitor_verdict_action`` was never invoked).
+    This helper makes the enqueue observable and reachable from callers
+    outside the orchestrator's main tick (drain, retry, manual invocations).
+
+    Log shape mirrors the dead-exit path: every enqueue emits ``janitor:
+    enqueued pass task=... session=... role=... reason=...`` at INFO so a
+    silent no-op in the tick loop is impossible to overlook.
+
+    Args:
+        orch: Orchestrator instance (or any object exposing ``_executor``
+            and ``_processed_done_tasks``).
+        task: The just-done task whose worker exited via ``/complete``.
+        reason: Short string describing WHY the janitor pass is being
+            scheduled (e.g. ``"alive_exit_tick"``, ``"alive_exit_drain"``).
+
+    Returns:
+        The future tracking the verify_task result, or None if the
+        task has no completion signals (a no-op enqueue; a subsequent
+        process_completed_tasks iteration can still process it as
+        auto-verified).
+    """
+    if not task.completion_signals:
+        logger.info(
+            "janitor: enqueued pass task=%s session=%s role=%s reason=%s "
+            "no_completion_signals=true (will be marked verified by default)",
+            task.id,
+            getattr(orch, "_task_to_session", {}).get(task.id, "<none>"),
+            task.role,
+            reason,
+        )
+        return None
+
+    session_id = None
+    try:
+        _find_session = getattr(orch, "_find_session_for_task", None)
+        if callable(_find_session):
+            sess = _find_session(task.id)
+            if sess is not None:
+                session_id = sess.id
+    except Exception:
+        session_id = None
+
+    logger.info(
+        "janitor: enqueued pass task=%s session=%s role=%s reason=%s",
+        task.id,
+        session_id or "<none>",
+        task.role,
+        reason,
+    )
+
+    _orch_config = getattr(orch, "_config", None)
+    server_url: str | None = getattr(_orch_config, "server_url", None)
+    judge_model: str | None = getattr(_orch_config, "judge_model", None)
+    judge_provider: str | None = getattr(_orch_config, "judge_provider", None)
+    executor = getattr(orch, "_executor", None)
+    if executor is None:
+        # Defensive: if the orchestrator has no executor we still want a
+        # synchronous verify so the task does not silently vanish.
+        try:
+            return _JanitorSyncFuture(verify_task(task, orch._workdir))
+        except Exception as exc:  # pragma: no cover - defensive only
+            logger.warning(
+                "janitor: sync-verify failed for task=%s reason=%s exc=%s",
+                task.id,
+                reason,
+                exc,
+            )
+            return None
+
+    if _has_llm_judge_signal(task):
+        return executor.submit(
+            _verify_via_janitor,
+            task,
+            orch._workdir,
+            server_url,
+            judge_model,
+            judge_provider,
+        )
+    return executor.submit(verify_task, task, orch._workdir)
+
+
+class _JanitorSyncFuture:
+    """Backport of ``concurrent.futures.Future``-like used when no executor exists.
+
+    Holds a pre-computed verify_task result and exposes ``result()`` /
+    ``done()`` to look like a Future, so the rest of the pipeline can
+    treat it uniformly.
+    """
+
+    def __init__(self, value: tuple[bool, list[str]]) -> None:
+        self._value = value
+
+    def result(self, timeout: float | None = None) -> tuple[bool, list[str]]:
+        return self._value
+
+    def done(self) -> bool:
+        return True
 
 
 def process_completed_tasks(
@@ -2821,18 +3665,23 @@ def process_completed_tasks(
     if not new_tasks:
         return
 
-    server_url: str | None = getattr(orch._config, "server_url", None)
-
     # Fan-out: submit verification calls in parallel. llm_judge signals need
     # the async run_janitor pipeline; everything else uses verify_task.
+    #
+    # DEFECT 30 FIX: previously the alive-exit janitor enqueue was implicit
+    # in the executor.submit() call below; an ops decision (premature
+    # self-stop predicate fires BEFORE this iteration can append a row
+    # to .sdd/metrics/tasks.jsonl, the orchestrator exits, and the worker
+    # task vanishes from janitor's view). The explicit
+    # ``_enqueue_alive_exit_janitor_pass`` helper now both logs the
+    # enqueue (so a silent no-op is impossible) and exposes a reusable
+    # janitor pass entrypoint that drain and retry paths can call outside
+    # the orchestrator tick.
     verify_futures: dict[str, concurrent.futures.Future[tuple[bool, list[str]]]] = {}
     for task in new_tasks:
-        if not task.completion_signals:
-            continue
-        if _has_llm_judge_signal(task):
-            verify_futures[task.id] = orch._executor.submit(_verify_via_janitor, task, orch._workdir, server_url)
-        else:
-            verify_futures[task.id] = orch._executor.submit(verify_task, task, orch._workdir)
+        future = _enqueue_alive_exit_janitor_pass(orch, task, reason="alive_exit_tick")
+        if future is not None:
+            verify_futures[task.id] = future
 
     # Fan-in: collect results then run sequential post-verification steps.
     for task in new_tasks:
@@ -2873,6 +3722,27 @@ def _process_single_completed_task(
     cache_verified = False
     cache_diff_lines = 0
     qg_result: Any = None
+
+    # DEFECT 30 FIX: the alive-exit /complete path runs the janitor+verdict
+    # action here. Log at INFO so a silent no-op in the orchestrator tick
+    # is impossible to overlook (attempt-83808a8a had zero janitor
+    # log lines because the tick exited before this ever ran).
+    _proc_session = None
+    try:
+        _find_session = getattr(orch, "_find_session_for_task", None)
+        if callable(_find_session):
+            _proc_session = _find_session(task.id)
+    except Exception:
+        _proc_session = None
+    _proc_session_id = _proc_session.id if _proc_session is not None else "<none>"
+    _proc_alive = bool(_proc_session is not None and _proc_session.status != "dead")
+    logger.info(
+        "janitor: alive-exit pass starting task=%s session=%s alive_session=%s role=%s",
+        task.id,
+        _proc_session_id,
+        _proc_alive,
+        task.role,
+    )
 
     janitor_passed = _resolve_janitor_result(task, verify_futures, result)
 
@@ -2934,6 +3804,116 @@ def _process_single_completed_task(
             logger.warning("append_decision failed for task %s: %s", task.id, exc)
 
     _record_evolution_completion(orch, task, session, task_m, cost_usd, janitor_passed)
+
+    _apply_janitor_verdict_action(orch, task, janitor_passed)
+
+
+_JANITOR_REOPEN_MAX_DEFAULT = 2
+
+
+def _janitor_reopen_max() -> int:
+    """Max janitor-reopen cycles per task (env BERNSTEIN_JANITOR_REOPEN_MAX, default 2)."""
+    raw = os.environ.get("BERNSTEIN_JANITOR_REOPEN_MAX", "")
+    try:
+        value = int(raw) if raw else _JANITOR_REOPEN_MAX_DEFAULT
+    except ValueError:
+        logger.warning(
+            "janitor_verdict_action: invalid BERNSTEIN_JANITOR_REOPEN_MAX=%r, using default %d",
+            raw,
+            _JANITOR_REOPEN_MAX_DEFAULT,
+        )
+        return _JANITOR_REOPEN_MAX_DEFAULT
+    return max(0, value)
+
+
+def _apply_janitor_verdict_action(orch: Any, task: Task, janitor_passed: bool) -> None:
+    """Act on the janitor verdict for a completed task.
+
+    A task the janitor FAILed must not stay silently ``done``:
+
+    * If the task's janitor-reopen budget (default 2 cycles, override via
+      ``BERNSTEIN_JANITOR_REOPEN_MAX``) is not exhausted, the task is
+      reopened under the SAME id via ``POST /tasks/{id}/reopen`` and will
+      be re-claimed by the normal scheduling path (AutoSpawnGuard and the
+      retry machinery are untouched - no new task is created).
+    * Otherwise it is permanently failed via ``POST /tasks/{id}/fail``.
+
+    Every decision is logged as ``janitor_verdict_action: ...`` with its
+    inputs so a silent no-op is impossible.
+
+    Args:
+        orch: Orchestrator instance.
+        task: The completed task whose janitor verdict was just resolved.
+        janitor_passed: Final janitor + verification-gate verdict.
+    """
+    if janitor_passed:
+        logger.debug("janitor_verdict_action: task=%s verdict=PASS action=none", task.id)
+        return
+
+    server_url: str | None = getattr(orch._config, "server_url", None)
+    if not server_url:
+        logger.warning(
+            "janitor_verdict_action: task=%s verdict=FAIL action=skip reason=no_server_url",
+            task.id,
+        )
+        return
+
+    max_cycles = _janitor_reopen_max()
+    prior_cycles = int(task.metadata.get("janitor_reopen_count", 0) or 0)
+
+    if prior_cycles < max_cycles:
+        cycle = prior_cycles + 1
+        try:
+            resp = orch._client.post(
+                f"{server_url}/tasks/{task.id}/reopen",
+                json={"reason": f"janitor verification failed (reopen cycle {cycle}/{max_cycles})"},
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "janitor_verdict_action: task=%s verdict=FAIL action=reopen cycle=%d/%d FAILED: %s",
+                task.id,
+                cycle,
+                max_cycles,
+                exc,
+            )
+            return
+        # Allow the re-completed task to be janitor-verified again on the
+        # next completion instead of being skipped as already-processed.
+        try:
+            orch._processed_done_tasks.pop(task.id, None)
+        except Exception:  # pragma: no cover - defensive, dict-like expected
+            logger.debug("janitor_verdict_action: could not clear processed marker for %s", task.id)
+        logger.info(
+            "janitor_verdict_action: task=%s verdict=FAIL action=reopen cycle=%d/%d",
+            task.id,
+            cycle,
+            max_cycles,
+        )
+    else:
+        try:
+            resp = orch._client.post(
+                f"{server_url}/tasks/{task.id}/fail",
+                json={
+                    "reason": (
+                        f"reopen_budget_exhausted: janitor verification failed after "
+                        f"{prior_cycles} reopen cycle(s) (max {max_cycles})"
+                    )
+                },
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "janitor_verdict_action: task=%s verdict=FAIL action=permanent_fail "
+                "reason=reopen_budget_exhausted FAILED: %s",
+                task.id,
+                exc,
+            )
+            return
+        logger.info(
+            "janitor_verdict_action: task=%s verdict=FAIL action=permanent_fail reason=reopen_budget_exhausted",
+            task.id,
+        )
 
 
 # ---------------------------------------------------------------------------

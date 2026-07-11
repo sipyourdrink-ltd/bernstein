@@ -95,6 +95,7 @@ def _make_spawner(tmp_path: Path, adapter: CLIAdapter, bridge: RuntimeBridge) ->
         tmp_path,
         use_worktrees=False,
         runtime_bridge=bridge,
+        default_model="mock-model",
     )
 
 
@@ -207,6 +208,7 @@ def test_bridge_refuses_sampling_params(
         use_worktrees=False,
         runtime_bridge=bridge,
         mcp_config={"temperature": 0.2, "base_url": "http://localhost:8000/v1"},
+        default_model="mock-model",
     )
 
     with pytest.raises(SamplingParamsRefusal, match="temperature"):

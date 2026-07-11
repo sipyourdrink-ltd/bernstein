@@ -141,6 +141,33 @@ class TestSpawnCommandArgs:
         )
         assert cmd[cmd.index("--max-turns") + 1] == expected_turns
 
+    def test_explicit_max_turns_used_verbatim(self, tmp_path: Path) -> None:
+        """A positive explicit_max_turns bypasses scope/effort math and is used as-is."""
+        adapter = ClaudeCodeAdapter()
+        cmd = adapter._build_command(
+            ModelConfig(model="sonnet", effort="high"),
+            None,
+            "do something",
+            explicit_max_turns=7,
+        )
+        assert cmd[cmd.index("--max-turns") + 1] == "7"
+
+    @pytest.mark.parametrize("bad_value", [0, -1, -100])
+    def test_explicit_max_turns_non_positive_rejected(self, tmp_path: Path, bad_value: int) -> None:
+        """0/negative explicit_max_turns must not reach the Claude CLI as --max-turns.
+
+        Without this guard, a caller-supplied 0 or negative value sailed
+        through verbatim to the CLI flag instead of failing fast.
+        """
+        adapter = ClaudeCodeAdapter()
+        with pytest.raises(ValueError, match="positive integer"):
+            adapter._build_command(
+                ModelConfig(model="sonnet", effort="high"),
+                None,
+                "do something",
+                explicit_max_turns=bad_value,
+            )
+
     def test_fixed_flags_always_present(self, tmp_path: Path) -> None:
         cmd, _, __ = self._spawn(tmp_path)
         assert "--permission-mode" in cmd
@@ -365,22 +392,28 @@ class TestIsAlive:
 class TestKill:
     """kill() terminates both the claude process and the wrapper process."""
 
-    def test_calls_kill_process_group_on_claude_process(self) -> None:
+    def test_calls_reap_on_claude_process(self) -> None:
         adapter = ClaudeCodeAdapter()
         ClaudeCodeAdapter._procs[50] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[50] = 51
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg:
+        with (
+            patch("bernstein.adapters.claude.reap_process_group") as mock_reap,
+            patch("bernstein.adapters.claude.kill_process_group_graceful"),
+        ):
             adapter.kill(50)
 
-        mock_kpg.assert_any_call(50)
+        mock_reap.assert_called_once_with(50)
 
     def test_kills_wrapper_process(self) -> None:
         adapter = ClaudeCodeAdapter()
         ClaudeCodeAdapter._procs[60] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[60] = 61
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg:
+        with (
+            patch("bernstein.adapters.claude.reap_process_group"),
+            patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg,
+        ):
             adapter.kill(60)
 
         mock_kpg.assert_any_call(61)
@@ -390,7 +423,10 @@ class TestKill:
         ClaudeCodeAdapter._procs[70] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[70] = 71
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful"):
+        with (
+            patch("bernstein.adapters.claude.reap_process_group"),
+            patch("bernstein.adapters.claude.kill_process_group_graceful"),
+        ):
             adapter.kill(70)
 
         assert 70 not in ClaudeCodeAdapter._procs
@@ -402,7 +438,10 @@ class TestKill:
         ClaudeCodeAdapter._procs[80] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[80] = 81
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful", return_value=False):
+        with (
+            patch("bernstein.adapters.claude.reap_process_group"),
+            patch("bernstein.adapters.claude.kill_process_group_graceful", return_value=False),
+        ):
             adapter.kill(80)  # must not raise
 
     def test_handles_failed_wrapper_kill(self) -> None:
@@ -411,13 +450,13 @@ class TestKill:
         ClaudeCodeAdapter._procs[90] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[90] = 91
 
-        # kill_process_group_graceful succeeds for main pid (90), fails for wrapper (91)
-        def _kpg_side_effect(pgid: int) -> bool:
-            return pgid != 91
-
-        with patch(
-            "bernstein.adapters.claude.kill_process_group_graceful",
-            side_effect=_kpg_side_effect,
+        # Wrapper kill fails for wrapper pid (91); primary reap succeeds.
+        with (
+            patch("bernstein.adapters.claude.reap_process_group"),
+            patch(
+                "bernstein.adapters.claude.kill_process_group_graceful",
+                return_value=False,
+            ),
         ):
             adapter.kill(90)  # must not raise
 
@@ -427,11 +466,15 @@ class TestKill:
         ClaudeCodeAdapter._procs[100] = MagicMock()
         # _wrapper_pids intentionally not set for pid 100
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg:
+        with (
+            patch("bernstein.adapters.claude.reap_process_group") as mock_reap,
+            patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg,
+        ):
             adapter.kill(100)
 
-        # Only the main process group is killed, no wrapper
-        mock_kpg.assert_called_once_with(100)
+        # Only the main process group is reaped, no wrapper kill
+        mock_reap.assert_called_once_with(100)
+        mock_kpg.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -796,3 +839,134 @@ class TestBuildCommandSystemAddendum:
         cmd = self._build(system_addendum=addendum)
         idx = cmd.index("--append-system-prompt")
         assert cmd[idx + 1] == addendum
+
+
+# ---------------------------------------------------------------------------
+# Context-compaction policy (recorded in the replay fingerprint)
+# ---------------------------------------------------------------------------
+
+
+class TestCompactionPolicy:
+    """apply_compaction_policy requests best-effort suppression + records policy.
+
+    The load-bearing replay guarantee is that the compaction policy state is
+    recorded in the step fingerprint, so a compaction-driven divergence is
+    detected and attributable. In deterministic-record / hermetic-replay mode
+    the adapter additionally emits a best-effort request to suppress the CLI's
+    client-side auto-compaction. These tests pin that policy and the recorded
+    policy flag.
+    """
+
+    def test_suppression_env_var_is_the_recognized_cli_name(self) -> None:
+        # The suppression request must target the CLI's recognized
+        # auto-compaction variable, not an invented name that no consumer
+        # honours (which would make the request a silent no-op).
+        from bernstein.adapters.claude import _DISABLE_COMPACTION_ENV
+
+        assert _DISABLE_COMPACTION_ENV == "DISABLE_AUTO_COMPACT"
+
+    def test_default_mode_leaves_env_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.adapters.claude import (
+            _DISABLE_COMPACTION_ENV,
+            apply_compaction_policy,
+        )
+
+        monkeypatch.delenv("BERNSTEIN_DETERMINISTIC_SEED", raising=False)
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        env: dict[str, str] = {}
+        disabled = apply_compaction_policy(env)
+        assert disabled is False
+        assert _DISABLE_COMPACTION_ENV not in env
+
+    def test_record_mode_requests_suppression(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.adapters.claude import (
+            _DISABLE_COMPACTION_ENV,
+            apply_compaction_policy,
+        )
+
+        monkeypatch.setenv("BERNSTEIN_DETERMINISTIC_SEED", "42")
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        env: dict[str, str] = {}
+        disabled = apply_compaction_policy(env)
+        assert disabled is True
+        assert env[_DISABLE_COMPACTION_ENV] == "1"
+
+    def test_replay_mode_requests_suppression(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.adapters.claude import (
+            _DISABLE_COMPACTION_ENV,
+            apply_compaction_policy,
+        )
+
+        monkeypatch.delenv("BERNSTEIN_DETERMINISTIC_SEED", raising=False)
+        monkeypatch.setenv("BERNSTEIN_REPLAY_RUN_ID", "run-123")
+        env: dict[str, str] = {}
+        disabled = apply_compaction_policy(env)
+        assert disabled is True
+        assert env[_DISABLE_COMPACTION_ENV] == "1"
+
+    def test_spawn_records_compaction_disabled_in_deterministic_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BERNSTEIN_DETERMINISTIC_SEED", "7")
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1200)
+        wrapper_mock = _make_popen_mock(pid=1201)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]):
+            adapter.spawn(
+                prompt="p",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-det",
+            )
+
+        sidecar = tmp_path / ".sdd" / "runtime" / "compaction" / "sess-det.json"
+        assert sidecar.exists()
+        payload = json.loads(sidecar.read_text())
+        assert payload["compaction_enabled"] is False
+
+    def test_spawn_records_compaction_enabled_outside_deterministic_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("BERNSTEIN_DETERMINISTIC_SEED", raising=False)
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1300)
+        wrapper_mock = _make_popen_mock(pid=1301)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]):
+            adapter.spawn(
+                prompt="p",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-live",
+            )
+
+        sidecar = tmp_path / ".sdd" / "runtime" / "compaction" / "sess-live.json"
+        assert sidecar.exists()
+        payload = json.loads(sidecar.read_text())
+        assert payload["compaction_enabled"] is True
+
+    def test_spawn_forwards_disable_flag_to_process_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The policy must affect the built REQUEST: the disable var has to land
+        # in the child process env the CLI runs with, not just the sidecar.
+        from bernstein.adapters.claude import _DISABLE_COMPACTION_ENV
+
+        monkeypatch.setenv("BERNSTEIN_DETERMINISTIC_SEED", "9")
+        monkeypatch.delenv("BERNSTEIN_REPLAY_RUN_ID", raising=False)
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1400)
+        wrapper_mock = _make_popen_mock(pid=1401)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]) as popen:
+            adapter.spawn(
+                prompt="p",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-env",
+            )
+
+        child_env = popen.call_args_list[0].kwargs.get("env")
+        assert child_env is not None
+        assert child_env.get(_DISABLE_COMPACTION_ENV) == "1"

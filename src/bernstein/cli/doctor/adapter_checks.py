@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 # Kept in sync with src/bernstein/adapters/*.py. The mapping is exposed
 # publicly so callers can override or extend it.
 ADAPTER_BINARIES: dict[str, str] = {
+    "agy": "agy",
     "aichat": "aichat",
     "aider": "aider",
     "amp": "amp",

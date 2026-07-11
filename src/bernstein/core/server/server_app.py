@@ -321,6 +321,7 @@ def task_to_response(task: Task) -> TaskResponse:
         terminal_reason=task.terminal_reason,
         max_output_tokens=task.max_output_tokens,
         meta_messages=list(task.meta_messages),
+        max_turns=task.max_turns,
     )
 
 
@@ -761,10 +762,14 @@ def _do_reload_seed_config(workdir: Path, jsonl_path: Path, application: Any) ->
         write_config_snapshot,
     )
     from bernstein.core.runtime_state import hash_file, write_config_state
-    from bernstein.core.seed import SeedError, parse_seed
+    from bernstein.core.seed import SeedError, parse_seed, resolve_seed_path
     from bernstein.core.tenanting import TenantRegistry, ensure_tenant_layout, tenant_registry_from_seed
 
-    seed_path = workdir / "bernstein.yaml"
+    # resolve_seed_path() checks BERNSTEIN_SEED_PATH env first so this reload
+    # picks up the same seed file the bootstrap process actually parsed,
+    # instead of silently falling back to workdir/bernstein.yaml.
+    seed_path = resolve_seed_path(workdir)
+    logger.info("_do_reload_seed_config: resolved seed_path=%s (exists=%s)", seed_path, seed_path.exists())
     sdd_dir = jsonl_path.parent.parent
     previous_snapshot = read_config_snapshot(sdd_dir)
     current_snapshot = load_redacted_config(seed_path if seed_path.exists() else None)
@@ -1101,6 +1106,36 @@ def create_app(
         expected_resource=expected_resource,
     )
 
+    # Dashboard auth (#2366) - scoped sessions / tokens for the /dashboard
+    # surface. Added AFTER the SSO middleware so it sees the request first:
+    # a validated dashboard credential stamps
+    # ``request.state.dashboard_principal``, which the SSO layer honours for
+    # dashboard paths. The audit-chain key and store are constructed here
+    # (shared with the mailbox block below) because every dashboard authz
+    # decision is anchored in the ``dashboard-auth`` lineage run and mirrored
+    # onto the chain with the acting principal attached.
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.server.dashboard_auth import DashboardAuthMiddleware, DashboardAuthState
+    from bernstein.core.server.dashboard_tokens import (
+        DashboardGovernance,
+        DashboardTokenRegistry,
+        resolve_dashboard_hmac_key,
+    )
+
+    _chain_key = resolve_dashboard_hmac_key(sdd_dir)
+    _audit_chain = AuditChainStore(sdd_dir / "audit", key=_chain_key)
+
+    dashboard_auth_state = DashboardAuthState(
+        token_registry=DashboardTokenRegistry(sdd_dir / "auth" / "dashboard_tokens.jsonl", hmac_key=_chain_key),
+        governance=DashboardGovernance(
+            sdd_dir / "lineage",
+            hmac_key=_chain_key,
+            audit_chain=_audit_chain,
+        ),
+    )
+    application.add_middleware(DashboardAuthMiddleware, state=dashboard_auth_state)
+    application.state.dashboard_auth_state = dashboard_auth_state  # type: ignore[attr-defined]
+
     # Per-endpoint request rate limiting - reads buckets from app.state.seed_config.
     application.add_middleware(RequestRateLimitMiddleware)
 
@@ -1115,7 +1150,10 @@ def create_app(
     from bernstein.core.seed import CORSConfig
 
     cors_config = CORSConfig()  # default; overridden after seed_config loads
-    seed_path = workdir / "bernstein.yaml"
+    from bernstein.core.seed import resolve_seed_path
+
+    seed_path = resolve_seed_path(workdir)
+    logger.info("create_app: resolved seed_path=%s (exists=%s)", seed_path, seed_path.exists())
     if seed_path.exists():
         with contextlib.suppress(Exception):
             from bernstein.core.seed import parse_seed
@@ -1167,6 +1205,22 @@ def create_app(
     application.state.sdd_dir = sdd_dir  # type: ignore[attr-defined]  # .sdd/
     application.state.workdir = workdir  # type: ignore[attr-defined]
 
+    # Worker mailbox + audit chain (#2357). The mailbox journal shares the
+    # audit chain's HMAC key domain so the delivered message log
+    # cross-verifies against the chain. The key stays inside the server's
+    # state dir (self-contained, cwd-independent) but outside the log
+    # directory, mirroring the key/log separation the audit module
+    # documents; an explicit BERNSTEIN_AUDIT_KEY_PATH override still wins
+    # so operators can point every verifier at one key.
+    from bernstein.core.communication.task_mailbox import TaskMailbox
+
+    application.state.audit_chain = _audit_chain  # type: ignore[attr-defined]
+    application.state.task_mailbox = TaskMailbox(  # type: ignore[attr-defined]
+        jsonl_path.parent / "mailbox.jsonl",
+        hmac_key=_chain_key,
+        identity_dir=sdd_dir / "identity",
+    )
+
     # Real-time behavior anomaly monitor - checks file access and output-size on
     # every progress update and writes kill signals for compromised sessions.
     from bernstein.core.behavior_anomaly import RealtimeBehaviorMonitor
@@ -1212,7 +1266,7 @@ def create_app(
     # is matched before /tasks/{task_id}.
     from bernstein.core.routes.acp import router as acp_router
     from bernstein.core.routes.agent_comparison import router as agent_comparison_router
-    from bernstein.core.routes.api_v1 import router as api_v1_router
+    from bernstein.core.routes.api_v1 import build_router as build_api_v1_router
     from bernstein.core.routes.approvals import router as approvals_router
     from bernstein.core.routes.audit_log import router as audit_log_router
     from bernstein.core.routes.batch_ops import router as batch_ops_router
@@ -1230,10 +1284,12 @@ def create_app(
     from bernstein.core.routes.hooks import router as hooks_router
     from bernstein.core.routes.identities import router as identities_router
     from bernstein.core.routes.mcp_bot_tools import router as mcp_bot_tools_router
+    from bernstein.core.routes.orchestrator_holds import router as orchestrator_holds_router
     from bernstein.core.routes.paginated_tasks import router as paginated_tasks_router
     from bernstein.core.routes.plans import router as plans_router
     from bernstein.core.routes.predictive import router as predictive_router
     from bernstein.core.routes.provider_latency import router as provider_latency_router
+    from bernstein.core.routes.review_board import router as review_board_router
     from bernstein.core.routes.sbom import router as sbom_router
     from bernstein.core.routes.session_peek import router as session_peek_router
     from bernstein.core.routes.slo import router as slo_router
@@ -1301,7 +1357,15 @@ def create_app(
         well_known_router,
         mcp_bot_tools_router,
         session_peek_router,
+        orchestrator_holds_router,
+        review_board_router,
     ]
+
+    # Fresh per-app router: including route groups mutates the target router,
+    # so reusing the module-level instance would grow it by a full copy of
+    # the v1 route set on every create_app call (unbounded route/memory
+    # growth in app-per-test suites, ending in RecursionError at startup).
+    api_v1_router = build_api_v1_router()
 
     for r in all_routers:
         application.include_router(r)

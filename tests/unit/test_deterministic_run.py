@@ -7,10 +7,12 @@ These are pure logic tests - no server, no agents, no IO.
 
 from __future__ import annotations
 
+import pytest
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.router import route_task
 from bernstein.core.tick_pipeline import group_by_role
 
+from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.knowledge.task_graph import TaskGraph
 
 # ---------------------------------------------------------------------------
@@ -258,54 +260,66 @@ class TestRoleAssignmentDeterministic:
 
 
 class TestModelSelectionDeterministic:
-    """route_task produces the same ModelConfig every time (no randomness)."""
+    """route_task produces the same ModelConfig every time (no randomness).
 
-    def test_critical_priority_always_opus(self) -> None:
-        """Priority-1 tasks always route to opus/max."""
+    Routing has no built-in model fallback: high-stakes escalation lands on
+    the operator-configured default_model at max effort, and routing with no
+    default at all deterministically refuses with ModelNotConfiguredError.
+    """
+
+    def test_critical_priority_always_default_model_max(self) -> None:
+        """Priority-1 tasks always route to default_model/max."""
         task = _t(id="T-crit", priority=1, role="backend")
         for _ in range(10):
-            cfg = route_task(task)
-            assert cfg.model == "opus"
+            cfg = route_task(task, default_model="run-default")
+            assert cfg.model == "run-default"
             assert cfg.effort == "max"
 
-    def test_manager_role_always_opus(self) -> None:
-        """Manager role always routes to opus/max."""
+    def test_manager_role_always_default_model_max(self) -> None:
+        """Manager role always routes to default_model/max."""
         task = _t(id="T-mgr", role="manager")
         for _ in range(10):
-            cfg = route_task(task)
-            assert cfg.model == "opus"
+            cfg = route_task(task, default_model="run-default")
+            assert cfg.model == "run-default"
             assert cfg.effort == "max"
 
-    def test_security_role_always_opus(self) -> None:
-        """Security role always routes to opus/max."""
+    def test_security_role_always_default_model_max(self) -> None:
+        """Security role always routes to default_model/max."""
         task = _t(id="T-sec", role="security")
         for _ in range(10):
-            cfg = route_task(task)
-            assert cfg.model == "opus"
+            cfg = route_task(task, default_model="run-default")
+            assert cfg.model == "run-default"
             assert cfg.effort == "max"
 
-    def test_large_scope_always_opus(self) -> None:
-        """Large-scope tasks always route to opus/max."""
+    def test_large_scope_always_default_model_max(self) -> None:
+        """Large-scope tasks always route to default_model/max."""
         task = _t(id="T-large", scope=Scope.LARGE, role="backend")
         for _ in range(10):
-            cfg = route_task(task)
-            assert cfg.model == "opus"
+            cfg = route_task(task, default_model="run-default")
+            assert cfg.model == "run-default"
             assert cfg.effort == "max"
 
     def test_high_complexity_heuristic_fallback(self) -> None:
-        """High complexity (no bandit) falls back to sonnet/high deterministically."""
+        """High complexity (no bandit) falls back to default_model/high deterministically."""
         task = _t(id="T-hi", complexity=Complexity.HIGH, role="backend", priority=2)
         for _ in range(10):
-            cfg = route_task(task)
-            assert cfg.model == "sonnet"
+            cfg = route_task(task, default_model="run-default")
+            assert cfg.model == "run-default"
             assert cfg.effort == "high"
+
+    def test_no_model_configured_always_refuses(self) -> None:
+        """With no task model and no default_model, routing refuses every time."""
+        task = _t(id="T-none", role="backend", priority=2, complexity=Complexity.MEDIUM)
+        for _ in range(10):
+            with pytest.raises(ModelNotConfiguredError, match="Refusing to guess"):
+                route_task(task)
 
     def test_default_route_deterministic(self) -> None:
         """Default routing (medium complexity, normal priority) is stable."""
         task = _t(id="T-default", role="backend", priority=2, complexity=Complexity.MEDIUM)
-        reference = route_task(task)
+        reference = route_task(task, default_model="run-default")
         for _ in range(9):
-            cfg = route_task(task)
+            cfg = route_task(task, default_model="run-default")
             assert cfg.model == reference.model
             assert cfg.effort == reference.effort
 
@@ -327,8 +341,12 @@ class TestModelSelectionDeterministic:
             _t(id="T-e", role="security", complexity=Complexity.HIGH),
         ]
 
-        reference = [(route_task(t).model, route_task(t).effort) for t in tasks]
+        def _route(t: Task) -> tuple[str, str]:
+            cfg = route_task(t, default_model="run-default")
+            return (cfg.model, cfg.effort)
+
+        reference = [_route(t) for t in tasks]
 
         for run in range(9):
-            configs = [(route_task(t).model, route_task(t).effort) for t in tasks]
+            configs = [_route(t) for t in tasks]
             assert configs == reference, f"Run {run + 2}: model configs diverged: {configs} vs {reference}"

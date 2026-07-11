@@ -96,7 +96,7 @@ jobs:
       failed_jobs: ${{ steps.scope.outputs.failed_jobs }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
       - name: Extract failure metadata
@@ -223,7 +223,7 @@ jobs:
       result: ${{ steps.open-pr.outputs.result || steps.oversized-result.outputs.result || steps.no-changes-result.outputs.result }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
       # persist-credentials kept: this job pushes back to git (auto-heal branch).
@@ -431,7 +431,7 @@ jobs:
       OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
       - name: Checkout main (trusted ref)
@@ -455,9 +455,9 @@ jobs:
           fi
           git -c advice.detachedHead=false checkout "$HEAD_SHA"
       - name: Set up Python via uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
-          version: "0.11.26"
+          version: "0.11.28"
       - name: Capture failing log tail
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -517,7 +517,7 @@ jobs:
       issues: write
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7

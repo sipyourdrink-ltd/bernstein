@@ -356,6 +356,11 @@ def _walk_journal_bytes(payload: bytes) -> tuple[str, int, list[str]]:
             prompt=row.get("prompt"),
             tool_call=row.get("tool_call"),
             tool_result=row.get("tool_result"),
+            # Legacy rows lack ``effort`` (get -> None), so the recomputed
+            # hash matches the pre-effort payload and old chains verify
+            # unchanged; effort-bearing rows fold effort into the hash so an
+            # offline verifier reproduces the same step_hash the writer did.
+            effort=row.get("effort"),
         )
         stored_hash = str(row.get("step_hash", ""))
         if recomputed != stored_hash:

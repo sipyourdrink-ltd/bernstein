@@ -63,13 +63,16 @@ logger = logging.getLogger(__name__)
 #: change to layout, file names, or hash inputs.
 SCHEMA_VERSION: str = "1.0.0"
 
-#: Supported standards at MVP. Only ``ai-act`` has a fleshed-out
-#: control map. DORA and FINOS AIGF are tracked under #1316 and will
-#: be added once their clause maps are reviewed by subject-matter
-#: experts; emitting TODO-only bundles would mislead operators.
-Standard = Literal["ai-act"]
+#: Supported standards. ``ai-act`` maps the EU AI Act Article 12/13/15
+#: clauses; ``owasp-asi`` and ``owasp-skills`` map the OWASP Top 10 for
+#: Agentic Applications (ASI01-ASI10) and the Agentic Skills Top 10
+#: (AST01-AST10) onto the same audit-chain artefacts. DORA and FINOS
+#: AIGF are tracked under #1316 and are not selectable until their
+#: clause maps are reviewed by subject-matter experts; emitting
+#: TODO-only bundles would mislead operators.
+Standard = Literal["ai-act", "owasp-asi", "owasp-skills"]
 
-SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act",)
+SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills")
 
 #: Fixed mtime for every entry in the produced zip - required for
 #: byte-deterministic output. Zip cannot store dates before 1980.
@@ -152,6 +155,17 @@ _STANDARD_MAPS: dict[str, dict[str, Any]] = {
     },
 }
 
+# The OWASP ASI / AST maps live in dedicated modules (one control class per
+# module) and are registered here so ``build_evidence_pack`` reads them the
+# same way it reads ``ai-act``. Registration is a plain assignment - the
+# modules only depend on stdlib, so importing them at module load is cheap
+# and side-effect free.
+from bernstein.compliance import owasp_asi as _owasp_asi  # noqa: E402
+from bernstein.compliance import owasp_skills as _owasp_skills  # noqa: E402
+
+_STANDARD_MAPS[_owasp_asi.STANDARD_ID] = _owasp_asi.control_map()
+_STANDARD_MAPS[_owasp_skills.STANDARD_ID] = _owasp_skills.control_map()
+
 
 # ---------------------------------------------------------------------------
 # Result type
@@ -171,6 +185,7 @@ class EvidencePack:
         lineage_count: Number of lineage entries captured.
         cost_count: Number of cost snapshots captured.
         controls_mapped: How many controls have ``status == "mapped"``.
+        controls_partial: How many controls have ``status == "partial"``.
         controls_todo: How many controls remain TODO for the standard.
         archive_path: On-disk path to the written zip (``None`` for dry-run).
         sha256: SHA-256 of the produced zip bytes.
@@ -184,6 +199,7 @@ class EvidencePack:
     lineage_count: int
     cost_count: int
     controls_mapped: int
+    controls_partial: int
     controls_todo: int
     archive_path: Path | None
     sha256: str
@@ -200,6 +216,7 @@ class EvidencePack:
             "lineage_count": self.lineage_count,
             "cost_count": self.cost_count,
             "controls_mapped": self.controls_mapped,
+            "controls_partial": self.controls_partial,
             "controls_todo": self.controls_todo,
             "sha256": self.sha256,
         }
@@ -597,6 +614,7 @@ def build_evidence_pack(
 
     controls = mapping["controls"]
     controls_mapped = sum(1 for c in controls if c.get("status") == "mapped")
+    controls_partial = sum(1 for c in controls if c.get("status") == "partial")
     controls_todo = sum(1 for c in controls if c.get("status") == "todo")
 
     bundle_id = _bundle_id(standard, since, task)
@@ -611,6 +629,7 @@ def build_evidence_pack(
         "lineage_count": len(lineage_entries),
         "cost_count": len(cost_entries),
         "controls_mapped": controls_mapped,
+        "controls_partial": controls_partial,
         "controls_todo": controls_todo,
         "generated_at_utc": "1970-01-01T00:00:00+00:00",  # deterministic, see note below
         "artefacts": dict(sorted(artefact_hashes.items())),
@@ -645,6 +664,7 @@ def build_evidence_pack(
         lineage_count=len(lineage_entries),
         cost_count=len(cost_entries),
         controls_mapped=controls_mapped,
+        controls_partial=controls_partial,
         controls_todo=controls_todo,
         archive_path=archive_path,
         sha256=archive_sha256,

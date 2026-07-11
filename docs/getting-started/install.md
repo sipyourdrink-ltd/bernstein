@@ -16,6 +16,25 @@ to follow the [first-run walkthrough](first-run.md).
 
 That's it. You do **not** need a CLI coding agent installed yet - that comes in the first-run page.
 
+### Supported platforms
+
+| Platform | Status | Process management |
+|----------|--------|--------------------|
+| Linux | Supported | POSIX process groups; graceful stop with force-kill escalation |
+| macOS | Supported | POSIX process groups; graceful stop with force-kill escalation |
+| Windows | Supported | Native process-tree termination (no POSIX signals required); `.cmd`/`.bat` adapter shims resolved automatically |
+
+Windows notes:
+
+- Worktree directory sharing via symlinks (`node_modules`, `.venv`) requires
+  Developer Mode or Administrator privileges; without it, agents fall back to
+  per-worktree installs.
+- Deep worktree paths are handled with extended-length path support; no
+  registry changes are needed.
+- Forced agent stops are recorded in the audit chain with the same receipt
+  format on every platform, so run histories verify identically across
+  mixed-OS teams.
+
 ---
 
 ## Recommended: `uv tool install`
@@ -69,7 +88,7 @@ irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
 
 === "Debian / Ubuntu (apt)"
 
-    See the [Linux package guide](install-linux.md) for the GPG key and signed-repo setup.
+    See the [Linux install guide](install-linux.md) for the COPR, Homebrew, pip/uv/pipx, and Docker channels.
 
 === "npm wrapper"
 
@@ -136,7 +155,7 @@ Combine extras with brackets: `pip install 'bernstein[openai,docker,s3]'`.
 bernstein --version
 ```
 
-You should see a version number close to **1.9.3**. Then run the pre-flight check:
+You should see a version number close to **2.16.1**. Then run the pre-flight check:
 
 ```bash
 bernstein doctor
@@ -161,4 +180,4 @@ Now that `bernstein --version` works, head to **[First run](first-run.md)** to t
 
 For platform-specific notes, see also:
 
-- [Linux package install (apt / dnf)](install-linux.md)
+- [Linux install (COPR / Homebrew / pip / Docker)](install-linux.md)

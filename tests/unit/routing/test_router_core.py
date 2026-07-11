@@ -640,72 +640,93 @@ class TestRouteTaskSelection:
         assert cfg.model == "haiku"
         assert cfg.effort == "low"
 
-    def test_high_stakes_role_routes_opus(self) -> None:
-        cfg = route_task(_task(role="security"))
-        assert cfg.model == "opus"
+    # Routing no longer hardcodes Claude tier names: high-stakes tasks
+    # escalate to max effort on the operator-supplied default_model, and
+    # unconfigured tasks refuse instead of guessing.
+
+    def test_high_stakes_role_routes_default_model_max(self) -> None:
+        cfg = route_task(_task(role="security"), default_model="run-default")
+        assert cfg.model == "run-default"
         assert cfg.effort == "max"
 
-    def test_architect_role_routes_opus(self) -> None:
-        assert route_task(_task(role="architect")).model == "opus"
+    def test_architect_role_routes_default_model(self) -> None:
+        assert route_task(_task(role="architect"), default_model="run-default").model == "run-default"
 
-    def test_large_scope_routes_opus(self) -> None:
-        cfg = route_task(_task(scope=Scope.LARGE))
-        assert cfg.model == "opus"
+    def test_large_scope_routes_default_model(self) -> None:
+        cfg = route_task(_task(scope=Scope.LARGE), default_model="run-default")
+        assert cfg.model == "run-default"
+        assert cfg.effort == "max"
 
-    def test_critical_priority_routes_opus(self) -> None:
-        cfg = route_task(_task(priority=1))
-        assert cfg.model == "opus"
+    def test_critical_priority_routes_default_model(self) -> None:
+        cfg = route_task(_task(priority=1), default_model="run-default")
+        assert cfg.model == "run-default"
+        assert cfg.effort == "max"
 
-    def test_plain_medium_backend_routes_sonnet(self) -> None:
-        cfg = route_task(_task(role="backend", complexity=Complexity.MEDIUM, scope=Scope.MEDIUM, priority=2))
-        assert cfg.model == "sonnet"
+    def test_plain_medium_backend_routes_default_model_high(self) -> None:
+        cfg = route_task(
+            _task(role="backend", complexity=Complexity.MEDIUM, scope=Scope.MEDIUM, priority=2),
+            default_model="run-default",
+        )
+        assert cfg.model == "run-default"
         assert cfg.effort == "high"
 
-    def test_high_complexity_heuristic_routes_sonnet(self) -> None:
-        cfg = route_task(_task(role="backend", complexity=Complexity.HIGH, scope=Scope.MEDIUM, priority=2))
-        assert cfg.model == "sonnet"
+    def test_high_complexity_heuristic_routes_default_model(self) -> None:
+        cfg = route_task(
+            _task(role="backend", complexity=Complexity.HIGH, scope=Scope.MEDIUM, priority=2),
+            default_model="run-default",
+        )
+        assert cfg.model == "run-default"
 
     def test_batch_eligible_sets_is_batch(self) -> None:
-        cfg = route_task(_task(batch_eligible=True))
+        cfg = route_task(_task(batch_eligible=True), default_model="run-default")
         assert cfg.is_batch is True
 
     def test_critical_batch_not_batched(self) -> None:
         # priority=1 is never routed to batch even if eligible.
-        cfg = route_task(_task(priority=1, batch_eligible=True))
+        cfg = route_task(_task(priority=1, batch_eligible=True), default_model="run-default")
         assert cfg.is_batch is False
 
 
 class TestRouteTaskBudgetAware:
-    def test_budget_downgrade_skips_opus_for_high_stakes(self) -> None:
-        # Low remaining budget -> high-stakes task lands on sonnet.
+    # The high-stakes escalation now expresses as max effort on the
+    # default_model (no hardcoded opus); the budget downgrade drops the
+    # escalation back to the plain heuristic (high effort).
+
+    def test_budget_downgrade_skips_escalation_for_high_stakes(self) -> None:
+        # Low remaining budget -> high-stakes task keeps the plain heuristic.
         cfg = route_task(
             _task(role="security"),
             budget_remaining_usd=1.0,
             budget_aware_routing_enabled=True,
+            default_model="run-default",
         )
-        assert cfg.model == "sonnet"
+        assert cfg.model == "run-default"
+        assert cfg.effort == "high"
 
-    def test_ample_budget_keeps_opus(self) -> None:
+    def test_ample_budget_keeps_premium_effort(self) -> None:
         cfg = route_task(
             _task(role="security"),
             budget_remaining_usd=100.0,
             budget_aware_routing_enabled=True,
+            default_model="run-default",
         )
-        assert cfg.model == "opus"
+        assert cfg.effort == "max"
 
-    def test_disabled_budget_routing_keeps_opus(self) -> None:
+    def test_disabled_budget_routing_keeps_premium_effort(self) -> None:
         cfg = route_task(
             _task(role="security"),
             budget_remaining_usd=0.5,
             budget_aware_routing_enabled=False,
+            default_model="run-default",
         )
-        assert cfg.model == "opus"
+        assert cfg.effort == "max"
 
     def test_module_context_drives_downgrade(self) -> None:
         # When kwargs are omitted, set_budget_context state applies.
         set_budget_context(1.0, enabled=True)
-        cfg = route_task(_task(role="manager"))
-        assert cfg.model == "sonnet"
+        cfg = route_task(_task(role="manager"), default_model="run-default")
+        assert cfg.model == "run-default"
+        assert cfg.effort == "high"
 
     def test_check_opus_override_returns_none_for_plain_task(self) -> None:
         assert _check_opus_override(_task(role="backend", priority=2, scope=Scope.MEDIUM)) is None
@@ -726,7 +747,7 @@ class TestRouterMisc:
         state = RouterState(preferred_tier=Tier.STANDARD)
         r = TierAwareRouter(state=state)
         r.register_provider(_provider("p", tier=Tier.STANDARD))
-        decisions = r.route_batch([_task(), _task(), _task()])
+        decisions = r.route_batch([_task(model="sonnet"), _task(model="sonnet"), _task(model="sonnet")])
         assert len(decisions) == 3
         assert all(d.provider == "p" for d in decisions)
 

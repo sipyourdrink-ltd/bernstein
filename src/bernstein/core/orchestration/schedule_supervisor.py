@@ -254,11 +254,13 @@ class ScheduleSupervisor:
         audit_writer: Any,
         *,
         catch_up_limit: int = DEFAULT_CATCH_UP_LIMIT,
+        record_fire_projection: bool = True,
     ) -> None:
         self._store = store
         self._dispatch = dispatch
         self._chain = _AuditChainAdapter(audit_writer) if audit_writer is not None else None
         self._catch_up_limit = max(1, catch_up_limit)
+        self._record_fire_projection_enabled = record_fire_projection
         self._receipts_dir = store.directory.parent / "schedule_receipts"
         self._receipts_dir.mkdir(parents=True, exist_ok=True)
         self._last_tick_at = 0.0
@@ -383,6 +385,55 @@ class ScheduleSupervisor:
 
         return receipts
 
+    @staticmethod
+    def _resolve_response_profile(schedule: Schedule) -> tuple[str, str]:
+        """Resolve the schedule's declared response-style profile, if any.
+
+        A schedule can declare
+        ``extra: {response_profile: <verbose|balanced|terse>}``; the profile
+        and the SHA-256 of its rendered addendum are then folded into the
+        projected task identity. Schedules without the key (every pre-change
+        schedule) return ``("", "")`` so their projection stays byte-identical
+        to prior revs. Unknown style names are logged and ignored rather than
+        blocking the fire - config-level typos are rejected earlier by the
+        seed parser.
+
+        The addendum is rendered from the bundled templates (no workdir
+        context exists at supervisor level); the spawn-time ledger entry
+        records the hash of the addendum actually rendered in the run's
+        workdir, which may differ when the operator overrides templates.
+        """
+        raw = schedule.extra.get("response_profile")
+        if not isinstance(raw, str) or not raw:
+            return "", ""
+        from bernstein.core.agents.response_style import (
+            RESPONSE_STYLES,
+            ResponseStyleTemplateError,
+            addendum_sha256,
+            render_style_addendum,
+        )
+
+        if raw not in RESPONSE_STYLES:
+            from bernstein.core.security.sanitize import sanitize_log
+
+            logger.warning(
+                "Schedule %s declares unknown response_profile %r; ignoring",
+                schedule.id,
+                sanitize_log(raw),
+            )
+            return "", ""
+        try:
+            profile_sha = addendum_sha256(render_style_addendum(raw))
+        except ResponseStyleTemplateError as exc:
+            logger.warning(
+                "Schedule %s response_profile %r cannot be rendered (%s); ignoring",
+                schedule.id,
+                raw,
+                exc,
+            )
+            return "", ""
+        return raw, profile_sha
+
     def _fire(
         self,
         schedule: Schedule,
@@ -391,18 +442,28 @@ class ScheduleSupervisor:
         counterfactual: bool,
     ) -> FireReceipt:
         """Build the projection, dispatch the trigger event, and chain it."""
+        response_profile, profile_sha = self._resolve_response_profile(schedule)
         projection = project_schedule_fire(
             schedule_id=schedule.id,
             fire_time=fire_epoch,
             last_state=None,
             goal=schedule.goal,
             scenario_id=schedule.scenario_id,
+            response_profile=response_profile,
+            profile_content_sha256=profile_sha,
         )
 
         prev_chain = self._chain.chain_tail if self._chain is not None else ""
         chain_digest = self._append_audit(schedule, projection, prev_chain, counterfactual)
 
         if not counterfactual:
+            # #2302: seal the fire projection (with the schedule's recurrence
+            # folded in) into the journal + lineage spine for ``schedule
+            # verify``. This is a distinct surface from the #1798 receipt
+            # ``projection_hash`` above (which stays recurrence-free so
+            # existing receipt chains re-derive byte-identically).
+            recurrence = f"cron:{schedule.cron}" if schedule.cron else ""
+            self._record_fire_projection(schedule, fire_epoch, recurrence)
             event = normalize_schedule_fire(
                 schedule_id=schedule.id,
                 fire_time=float(fire_epoch),
@@ -435,6 +496,33 @@ class ScheduleSupervisor:
         )
         self._persist_receipt(receipt)
         return receipt
+
+    def _record_fire_projection(self, schedule: Schedule, fire_epoch: int, recurrence: str) -> None:
+        """Seal the fire projection into the journal and lineage spine (#2302).
+
+        Each dispatched fire records ``{schedule_id, fire_time,
+        last_state_hash, graph_hash}`` into the run event journal and seals
+        the canonical graph bytes into the lineage spine, so ``schedule
+        verify`` can replay the fire and prove the graph hash reproduces.
+        The recording is provenance, not the dispatch itself: a failure
+        here is logged and swallowed so it never wedges a supervisor tick.
+        """
+        if not self._record_fire_projection_enabled:
+            return
+        try:
+            from bernstein.core.orchestration.schedule_fire_record import record_fire
+
+            record_fire(
+                sdd_dir=self._store.sdd_dir,
+                schedule_id=schedule.id,
+                fire_time=fire_epoch,
+                last_state=None,
+                goal=schedule.goal,
+                scenario_id=schedule.scenario_id,
+                recurrence=recurrence,
+            )
+        except Exception:  # pragma: no cover - defensive: provenance is best-effort here
+            logger.exception("Fire-projection recording failed for schedule %s @ %s", schedule.id, fire_epoch)
 
     def _record_counterfactual(
         self,

@@ -40,9 +40,4 @@ curl -s -X POST http://127.0.0.1:8052/bulletin \
   -d '{"agent_id": "{{AGENT_ID}}", "type": "finding", "content": "<what you created or discovered>"}'
 ```
 
-## Done signal
-```bash
-curl -s -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/complete \
-  -H "Content-Type: application/json" \
-  -d '{"result_summary": "{{TASK_TITLE}}: <what was implemented>"}'
-```
+{{INCLUDE completion_contract}}

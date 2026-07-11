@@ -24,6 +24,7 @@ from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.errors import TaskDomainError
 from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_agent, transition_task
 from bernstein.core.tasks.models import (
@@ -42,6 +43,8 @@ from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    from bernstein.core.tasks.contracts import ContractViolation, WorkerCompletion, WorkerRefusal
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,9 @@ class TaskRecord(TypedDict):
     max_output_tokens: NotRequired[int | None]
     meta_messages: NotRequired[list[str]]
     metadata: NotRequired[dict[str, Any]]
+    # Explicit compute_max_turns() override (see claude_max_turns.py). Optional
+    # for backward compat with records written before this field existed.
+    max_turns: NotRequired[int | None]
 
 
 class ArchiveRecord(TypedDict):
@@ -194,6 +200,7 @@ class TaskCreateRequest(Protocol):
     retry_delay_s: float | None
     terminal_reason: str | None
     max_output_tokens: int | None
+    max_turns: int | None
 
     @property
     def meta_messages(self) -> Sequence[str] | None: ...
@@ -819,6 +826,7 @@ class TaskStore:
             "max_output_tokens": task.max_output_tokens,
             "meta_messages": list(task.meta_messages),
             "metadata": dict(task.metadata),
+            "max_turns": task.max_turns,
         }
 
     # -- public API ---------------------------------------------------------
@@ -860,15 +868,21 @@ class TaskStore:
         return dfs(new_task.id)
 
     def _dependencies_satisfied(self, task: Task) -> bool:
-        done_ids = {done_task.id for done_task in self._by_status[TaskStatus.DONE].values()}
+        # A dependency is satisfied by either terminal-success status: tasks
+        # move from "done" to "closed" once their agent is reaped and its
+        # branch merged (the store soft-archives via status). Accepting only
+        # "done" here rejected claims of dependents whose dependency had
+        # already completed and been closed.
+        completed_tasks = list(self._by_status[TaskStatus.DONE].values()) + list(
+            self._by_status[TaskStatus.CLOSED].values()
+        )
+        done_ids = {done_task.id for done_task in completed_tasks}
         if not all(dep in done_ids for dep in task.depends_on):
             return False
         if task.depends_on_repo is None:
             return True
         if not task.depends_on:
-            return any(
-                done_task.repo == task.depends_on_repo for done_task in self._by_status[TaskStatus.DONE].values()
-            )
+            return any(done_task.repo == task.depends_on_repo for done_task in completed_tasks)
         return all(
             (self._tasks.get(dep_id) is not None and self._tasks[dep_id].repo == task.depends_on_repo)
             for dep_id in task.depends_on
@@ -913,6 +927,12 @@ class TaskStore:
         max_retries_raw = getattr(req, "max_retries", None)
         retry_delay_raw = getattr(req, "retry_delay_s", None)
         meta_messages_raw = getattr(req, "meta_messages", None)
+        max_turns_raw = getattr(req, "max_turns", None)
+        logger.info(
+            "TaskStore.create: max_turns=%r for title=%r (None => auto-computed at spawn time)",
+            max_turns_raw,
+            sanitize_log(req.title),
+        )
 
         task = Task(
             id=uuid.uuid4().hex[:12],
@@ -950,6 +970,7 @@ class TaskStore:
             terminal_reason=getattr(req, "terminal_reason", None),
             max_output_tokens=getattr(req, "max_output_tokens", None),
             meta_messages=list(meta_messages_raw) if meta_messages_raw is not None else [],
+            max_turns=int(max_turns_raw) if max_turns_raw is not None else None,
         )
         async with self._lock:
             if task.depends_on:
@@ -1353,12 +1374,22 @@ class TaskStore:
                 claimed.append(task_id)
         return claimed, failed
 
-    async def complete(self, task_id: str, result_summary: str) -> Task:
+    async def complete(
+        self,
+        task_id: str,
+        result_summary: str,
+        *,
+        completion: WorkerCompletion | None = None,
+    ) -> Task:
         """Mark a task as done.
 
         Args:
             task_id: Task identifier.
             result_summary: Non-empty summary of what was done (diff or log reference).
+            completion: Optional contract-validated completion payload
+                (#2244). When provided, the payload, contract version, and
+                validation outcome are persisted in ``task.metadata`` and
+                recorded as an HMAC-chained audit event.
 
         Returns:
             The updated Task.
@@ -1388,6 +1419,7 @@ class TaskStore:
                     TaskStatus.FAILED,
                     TaskStatus.CANCELLED,
                     TaskStatus.CLOSED,
+                    TaskStatus.REFUSED,
                 ):
                     raise EmptyCompletionError(task_id, task)
                 self._index_remove(task)
@@ -1413,6 +1445,12 @@ class TaskStore:
             self._index_remove(task)
             transition_task(task, TaskStatus.DONE, actor="task_store", reason="complete")
             task.result_summary = result_summary
+            if completion is not None:
+                from bernstein.core.tasks.contracts import WORKER_CONTRACT_VERSION
+
+                task.metadata["worker_completion"] = completion.to_dict()
+                task.metadata["contract_version"] = WORKER_CONTRACT_VERSION
+                task.metadata["contract_validation"] = "valid"
             task.completed_at = time.time()
             task.version += 1
             self._index_add(task)
@@ -1420,7 +1458,9 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             await self._complete_parent_if_ready(task.parent_task_id)
-            return task
+        if completion is not None:
+            self._audit_contract_outcome(task_id, outcome="valid")
+        return task
 
     async def close(self, task_id: str) -> Task:
         """Mark a verified task as closed (terminal success state).
@@ -1468,12 +1508,14 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             return task
 
-    async def fail(self, task_id: str, reason: str) -> Task:
+    async def fail(self, task_id: str, reason: str, *, terminal_reason: str | None = None) -> Task:
         """Mark a task as failed.
 
         Args:
             task_id: Task identifier.
             reason: Why it failed.
+            terminal_reason: Optional machine-readable failure class
+                (e.g. ``"contract_violation"``) persisted on the task.
 
         Returns:
             The updated Task.
@@ -1488,12 +1530,230 @@ class TaskStore:
             self._index_remove(task)
             transition_task(task, TaskStatus.FAILED, actor="task_store", reason=reason)
             task.result_summary = reason
+            if terminal_reason is not None:
+                task.terminal_reason = terminal_reason
             task.completed_at = time.time()
             task.version += 1
             self._index_add(task)
             completed_at = task.completed_at
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
+            return task
+
+    async def fail_contract_violation(self, task_id: str, violation: ContractViolation) -> Task:
+        """Fail a task whose terminal payload violated the completion contract.
+
+        Distinct from a plain :meth:`fail` in that the contract version,
+        validation outcome, and schema error path are persisted in
+        ``task.metadata`` and recorded as an HMAC-chained audit event, so
+        chain verification covers "this task's terminal payload was
+        rejected against contract vX" (#2244).
+
+        Args:
+            task_id: Task identifier.
+            violation: The schema violation raised by the contract parser.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+            IllegalTransitionError: If the task cannot transition to FAILED.
+        """
+        from bernstein.core.tasks.contracts import WORKER_CONTRACT_VERSION
+
+        reason = f"contract_violation: {violation.path}: {violation.message}"
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            transition_task(task, TaskStatus.FAILED, actor="task_store", reason=reason)
+            task.result_summary = reason
+            task.terminal_reason = "contract_violation"
+            task.metadata["contract_version"] = WORKER_CONTRACT_VERSION
+            task.metadata["contract_validation"] = "violation"
+            task.metadata["contract_error_path"] = violation.path
+            task.completed_at = time.time()
+            task.version += 1
+            self._index_add(task)
+            completed_at = task.completed_at
+            await self._append_jsonl(self._task_to_record(task))
+            await self._append_archive(task, completed_at)
+        self._audit_contract_outcome(task_id, outcome="violation", schema_error_path=violation.path)
+        return task
+
+    async def refuse(self, task_id: str, refusal: WorkerRefusal) -> Task:
+        """Mark *task_id* as :class:`TaskStatus.REFUSED` with a typed refusal.
+
+        Distinct from :meth:`fail`: REFUSED is the terminal state for a
+        worker that reported - via the completion contract (#2244) - that
+        the task cannot proceed as specified. The validated refusal
+        payload, contract version, and validation outcome are persisted
+        on the task record and recorded as an HMAC-chained audit event.
+
+        Args:
+            task_id: Task identifier.
+            refusal: The validated refusal payload.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+            IllegalTransitionError: If the current status cannot
+                transition to REFUSED (e.g. already terminal).
+        """
+        from bernstein.core.tasks.contracts import WORKER_CONTRACT_VERSION
+
+        outcome = f"refused:{refusal.kind.value}"
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            transition_task(task, TaskStatus.REFUSED, actor="task_store", reason=refusal.detail)
+            task.result_summary = refusal.detail
+            task.terminal_reason = outcome
+            task.metadata["refusal"] = refusal.to_dict()
+            task.metadata["contract_version"] = WORKER_CONTRACT_VERSION
+            task.metadata["contract_validation"] = outcome
+            task.completed_at = time.time()
+            task.version += 1
+            self._index_add(task)
+            completed_at = task.completed_at
+            await self._append_jsonl(self._task_to_record(task))
+            await self._append_archive(task, completed_at)
+        self._audit_contract_outcome(task_id, outcome=outcome)
+        return task
+
+    async def create_refusal_follow_ups(self, parent: Task, refusal: WorkerRefusal) -> list[Task]:
+        """Create the deterministic follow-up task set for a scope_exceeded refusal.
+
+        Task ids are content-addressed (see
+        :func:`bernstein.core.tasks.contracts.derive_follow_up_specs`), so
+        the same refusal payload always yields the same follow-up set and a
+        redelivered refusal is a no-op for ids that already exist.
+
+        Args:
+            parent: The refused task the split derives from.
+            refusal: Validated refusal; non-``scope_exceeded`` kinds
+                yield an empty list.
+
+        Returns:
+            The newly created follow-up tasks (existing ids are skipped).
+        """
+        from bernstein.core.tasks.contracts import WORKER_CONTRACT_VERSION, derive_follow_up_specs
+
+        specs = derive_follow_up_specs(parent.id, refusal)
+        created: list[Task] = []
+        async with self._lock:
+            for spec in specs:
+                if spec.task_id in self._tasks:
+                    continue
+                task = Task(
+                    id=spec.task_id,
+                    title=spec.title,
+                    description=spec.description,
+                    role=parent.role,
+                    priority=parent.priority,
+                    scope=parent.scope,
+                    complexity=parent.complexity,
+                    parent_task_id=parent.id,
+                    tenant_id=parent.tenant_id,
+                    cell_id=parent.cell_id,
+                    repo=parent.repo,
+                    batch_eligible=False,
+                    metadata={
+                        "origin": "scope_exceeded_split",
+                        "refused_task_id": parent.id,
+                        "contract_version": WORKER_CONTRACT_VERSION,
+                    },
+                )
+                self._tasks[task.id] = task
+                self._index_add(task)
+                self._parent_index_add(task)
+                await self._append_jsonl(self._task_to_record(task))
+                created.append(task)
+        if created:
+            logger.info(
+                "Refusal split created %d follow-up task(s) for %s",
+                len(created),
+                sanitize_log(parent.id),
+            )
+        return created
+
+    def _audit_contract_outcome(self, task_id: str, *, outcome: str, schema_error_path: str = "") -> None:
+        """Record a contract-validation outcome in the HMAC-chained audit log.
+
+        Best-effort: audit is additive, so a missing or failing audit log
+        never blocks the task mutation that already happened.
+        """
+        from bernstein.core.tasks.contracts import WORKER_CONTRACT_VERSION
+        from bernstein.core.tasks.lifecycle import get_audit_log
+
+        audit = get_audit_log()
+        if audit is None:
+            return
+        details: dict[str, Any] = {
+            "contract_version": WORKER_CONTRACT_VERSION,
+            "outcome": outcome,
+        }
+        if schema_error_path:
+            details["schema_error_path"] = schema_error_path
+        try:
+            audit.log(
+                event_type="task.contract_validation",
+                actor="task_store",
+                resource_type="task",
+                resource_id=task_id,
+                details=details,
+            )
+        except OSError as exc:
+            logger.warning("Contract audit event write failed for %s: %s", sanitize_log(task_id), exc)
+
+    async def reopen(self, task_id: str, reason: str) -> Task:
+        """Reopen a done task that failed janitor verification.
+
+        Transitions DONE -> OPEN so the SAME task (same id) is re-claimed and
+        re-attempted - no new task is created. Increments
+        ``metadata['janitor_reopen_count']`` so the orchestrator can bound the
+        number of reopen cycles before permanent failure.
+
+        Args:
+            task_id: Task identifier.
+            reason: Why the task is being reopened (e.g. failed janitor signals).
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+            IllegalTransitionError: If the task is not in DONE status.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            transition_task(task, TaskStatus.OPEN, actor="task_store", reason=reason)
+            reopen_count = int(task.metadata.get("janitor_reopen_count", 0) or 0) + 1
+            task.metadata["janitor_reopen_count"] = reopen_count
+            task.claimed_at = None
+            task.claimed_by_session = None
+            task.assigned_agent = None
+            task.completed_at = None
+            task.result_summary = None
+            task.priority = 0
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            logger.info(
+                "task.reopen: task_id=%s reopen_count=%d reason=%s",
+                sanitize_log(task_id),
+                reopen_count,
+                sanitize_log(reason),
+            )
             return task
 
     async def abandon(
@@ -2038,7 +2298,7 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
-            terminal = {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+            terminal = {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.REFUSED}
             if task.status in terminal:
                 raise ValueError(
                     f"Task '{task_id}' is in terminal state '{task.status.value}' and cannot be force-claimed"
@@ -2126,7 +2386,7 @@ class TaskStore:
             and (not check_open_deps or self._dependencies_satisfied(t))
         ]
 
-        if offset is None and limit is None:
+        if offset is limit is None:
             return filtered
 
         start = max(0, offset) if offset is not None else 0
@@ -2216,8 +2476,6 @@ class TaskStore:
                 try:
                     transition_agent(agent, status, actor="heartbeat", reason=f"agent {agent_id} self-report")
                 except IllegalTransitionError:
-                    from bernstein.core.sanitize import sanitize_log
-
                     logger.warning(
                         "Ignoring illegal heartbeat transition %s -> %s for %s",
                         sanitize_log(str(agent.status)),
@@ -2274,6 +2532,7 @@ class TaskStore:
             "claimed": len(self._by_status.get(TaskStatus.CLAIMED, {})),
             "done": len(self._by_status.get(TaskStatus.DONE, {})),
             "failed": len(self._by_status.get(TaskStatus.FAILED, {})),
+            "refused": len(self._by_status.get(TaskStatus.REFUSED, {})),
             "per_role": per_role,
             "total_cost_usd": round(total_cost, 4),
         }
@@ -2331,7 +2590,7 @@ class TaskStore:
             List of tasks that completed within the grace window, newest first.
         """
         cutoff = time.time() - grace_ms / 1000.0
-        terminal = {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        terminal = {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.REFUSED}
         result: list[Task] = []
         for status in terminal:
             for task in self._by_status.get(status, {}).values():

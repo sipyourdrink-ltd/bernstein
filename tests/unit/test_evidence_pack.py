@@ -120,11 +120,13 @@ def sdd_dir(tmp_path: Path) -> Path:
 
 class TestStandardMap:
     def test_supported_standards_constant(self) -> None:
-        # Only ai-act ships with a reviewed control map at MVP. DORA
-        # and FINOS AIGF are tracked under #1316 and must not be
-        # selectable from the CLI until their clause mappings are
+        # ai-act plus the two OWASP agentic-security catalogues ship with
+        # reviewed control maps. DORA and FINOS AIGF remain tracked under
+        # #1316 and must NOT be selectable until their clause mappings are
         # validated; emitting TODO-only bundles would mislead operators.
-        assert set(SUPPORTED_STANDARDS) == {"ai-act"}
+        assert set(SUPPORTED_STANDARDS) == {"ai-act", "owasp-asi", "owasp-skills"}
+        assert "dora" not in SUPPORTED_STANDARDS
+        assert "finos-aigf" not in SUPPORTED_STANDARDS
 
     def test_ai_act_has_real_controls(self) -> None:
         mapping = get_standard_map("ai-act")
@@ -189,6 +191,7 @@ class TestBuildEvidencePack:
         assert pack.lineage_count == 2
         assert pack.cost_count == 2
         assert pack.controls_mapped >= 5
+        assert pack.controls_partial == 0  # ai-act is fully mapped, no partials
         assert pack.controls_todo == 0  # ai-act is real
 
     def test_task_scoping_filters_events(self, sdd_dir: Path) -> None:

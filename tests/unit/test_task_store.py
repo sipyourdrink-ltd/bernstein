@@ -151,6 +151,30 @@ async def test_list_tasks_filters_open_tasks_by_completed_dependencies(tmp_path:
 
 
 @pytest.mark.anyio
+async def test_closed_dependency_still_satisfies_dependents(tmp_path: Path) -> None:
+    """A dependency that moved done -> closed keeps its dependents claimable.
+
+    Done tasks transition to closed once their agent is reaped and its branch
+    merged (soft-archive via status). Dependents must stay visible in the
+    open listing and remain claimable after that transition.
+    """
+    store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")
+
+    dependency = await store.create(_task_request(title="dependency"))
+    blocked = await store.create(_task_request(title="blocked", depends_on=[dependency.id]))
+
+    await store.claim_by_id(dependency.id, expected_version=dependency.version)
+    await store.complete(dependency.id, "done")
+    await store.close(dependency.id)
+
+    open_ids = {task.id for task in store.list_tasks(status="open")}
+    assert blocked.id in open_ids
+
+    claimed = await store.claim_by_id(blocked.id, expected_version=blocked.version)
+    assert claimed.status == TaskStatus.CLAIMED
+
+
+@pytest.mark.anyio
 async def test_status_summary_reports_counts_by_status(tmp_path: Path) -> None:
     """status_summary aggregates task counts and per-role breakdowns."""
     store = TaskStore(tmp_path / "runtime" / "tasks.jsonl")

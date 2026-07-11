@@ -257,6 +257,38 @@ def block_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -
     client.post(f"{base_url}/tasks/{task_id}/block", json={"reason": reason}).raise_for_status()
 
 
+def fetch_active_holds(client: httpx.Client, base_url: str) -> list[dict[str, Any]]:
+    """GET /orchestrator/holds and return the active hold list.
+
+    Used by the orchestrator's quiescence check (``orchestrator.py``) to
+    decide whether to skip a self-stop even when ``open_tasks == 0`` and
+    ``active_agents == 0`` - see ``bernstein.core.orchestration.holds`` for
+    the hold/release registry this reads from.
+
+    Args:
+        client: httpx client.
+        base_url: Server base URL.
+
+    Returns:
+        List of hold dicts (``{id, reason, created_at, ttl_seconds,
+        expires_at}``). Empty list on any error - a hold-fetch failure must
+        never itself block the orchestrator's quiescence decision; it just
+        means holds are treated as absent for this tick.
+    """
+    try:
+        resp = client.get(f"{base_url}/orchestrator/holds")
+        resp.raise_for_status()
+        body = resp.json()
+        holds = cast("list[dict[str, Any]]", body.get("holds", []))
+        logger.debug("fetch_active_holds: %d active hold(s)", len(holds))
+        return holds
+    except Exception as exc:  # intentional-broad-except: must never block the tick loop
+        logger.warning(
+            "fetch_active_holds: failed to fetch holds from %s (%s) - treating as no active holds", base_url, exc
+        )
+        return []
+
+
 def close_task(client: httpx.Client, base_url: str, task_id: str) -> None:
     """POST /tasks/{task_id}/close to mark a verified task as closed.
 

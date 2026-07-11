@@ -4,11 +4,11 @@ How to run Bernstein in different environments. Each section is self-contained w
 
 **Jump to:**
 - [Local development](#local-development)
-- [CI/CD - GitHub Actions](#cicd--github-actions)
-- [CI/CD - GitLab CI](#cicd--gitlab-ci)
+- [CI/CD - GitHub Actions](#cicd-github-actions)
+- [CI/CD - GitLab CI](#cicd-gitlab-ci)
 - [Docker single-host](#docker-single-host)
 - [Docker Compose cluster](#docker-compose-cluster)
-- [Kubernetes / Helm](#kubernetes--helm)
+- [Kubernetes / Helm](#kubernetes-helm)
 - [Cloudflare cloud deployment](#cloudflare-cloud-deployment)
 - [Team shared server (bare metal)](#team-shared-server)
 - [Environment variable reference](#environment-variables)
@@ -37,7 +37,7 @@ How to run Bernstein in different environments. Each section is self-contained w
 uv pip install bernstein
 
 # Or install from source
-git clone https://github.com/bernstein-ai/bernstein
+git clone https://github.com/sipyourdrink-ltd/bernstein
 cd bernstein
 uv pip install -e .
 
@@ -180,13 +180,13 @@ jobs:
         run: bernstein report --format markdown >> $GITHUB_STEP_SUMMARY
 ```
 
-### Using the official GitHub Action
+### Running Bernstein from a workflow
 
-If the Bernstein GitHub Action is available in the marketplace:
+Install Bernstein with `pip` and invoke the CLI directly in a run step:
 
 ```yaml
 # .github/workflows/bernstein-action.yml
-name: Bernstein (Action)
+name: Bernstein
 on:
   push:
     branches: [main]
@@ -196,12 +196,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: bernstein-ai/bernstein-action@v1
+      - uses: actions/setup-python@v5
         with:
-          plan: plans/ci-tasks.yaml
-          max-agents: 2
-          budget: 5.00
-          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          python-version: "3.12"
+      - name: Install Bernstein
+        run: pip install bernstein
+      - name: Run plan
+        run: bernstein run plans/ci-tasks.yaml --max-agents 2 --budget 5.00
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
 See `docs/integrations/github-action.md` for the full parameter reference.
@@ -689,7 +692,7 @@ bernstein cloud run "Add OAuth2 authentication" --max-agents 5 --budget 25.00
 | `CLOUDFLARE_API_TOKEN` | API token with Workers, R2, D1, Vectorize permissions |
 | `BERNSTEIN_CLOUD_API_KEY` | API key for bernstein.run hosted service |
 
-For the full Cloudflare setup guide including R2 buckets, D1 databases, and Vectorize indexes, see the [Cloudflare Setup](cloudflare-setup.md) documentation.
+For the full Cloudflare setup guide including R2 buckets, D1 databases, and Vectorize indexes, see the [Cloudflare Setup](../cloudflare/cloudflare-setup.md) documentation.
 
 ---
 
@@ -726,7 +729,7 @@ User=bernstein
 Group=bernstein
 WorkingDirectory=/opt/bernstein/workspace
 
-ExecStart=/opt/bernstein/venv/bin/bernstein conduct
+ExecStart=/opt/bernstein/venv/bin/bernstein start
 ExecStop=/opt/bernstein/venv/bin/bernstein stop --hard
 
 Restart=on-failure
@@ -825,7 +828,7 @@ Type=simple
 User=bernstein
 WorkingDirectory=/opt/bernstein/projects/%i
 EnvironmentFile=/etc/bernstein/%i.env
-ExecStart=/opt/bernstein/venv/bin/bernstein conduct
+ExecStart=/opt/bernstein/venv/bin/bernstein start
 
 [Install]
 WantedBy=multi-user.target
@@ -913,7 +916,7 @@ pip install bernstein==2.1.0 --target /opt/bernstein/v2.1.0
 
 # 2. Start the new server on a staging port
 BERNSTEIN_PORT=8053 BERNSTEIN_SDD_DIR=.sdd-green \
-  /opt/bernstein/v2.1.0/bin/bernstein conduct &
+  /opt/bernstein/v2.1.0/bin/bernstein start &
 
 # 3. Verify it is healthy
 curl http://127.0.0.1:8053/status

@@ -14,7 +14,7 @@ bernstein integrations list --json         # stable JSON for CI dashboards
 ```
 
 Per-adapter copy lives in
-[`src/bernstein/adapters/use_cases.py`](../../src/bernstein/adapters/use_cases.py).
+[`src/bernstein/adapters/use_cases.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/use_cases.py).
 That module is the single source of truth - this page links to it so we
 do not maintain two copies of the same list.
 
@@ -43,7 +43,9 @@ These are the most exercised adapters in the test matrix.
 - `codex` - OpenAI Codex CLI.
 - `cursor` - Cursor Agent CLI.
 - `aider` - Aider pair-programming CLI.
-- `gemini` - Google Gemini CLI.
+- `gemini` - Google Gemini CLI (enterprise / API-key lane).
+- `agy` - Antigravity CLI, successor for the non-enterprise Gemini path
+  (see [`agy.md`](agy.md) for the lane split).
 - `copilot` - GitHub Copilot CLI.
 - `goose` - Block Goose.
 

@@ -252,6 +252,9 @@ def wrap_up(do_stop: bool, timeout: int) -> None:
         learnings=learnings,
         next_session_brief=next_session_brief,
         git_diff_stat=git_diff_stat,
+        # Record completed task ids so the PR-open path can link each task's
+        # sealed verification-evidence bundle (issue #2362, AC3).
+        completed_task_ids=[str(t.get("id")) for t in done_tasks if t.get("id")],
     )
 
     # 7. Save to .sdd/sessions/<timestamp>-wrapup.json

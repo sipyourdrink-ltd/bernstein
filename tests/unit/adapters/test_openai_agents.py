@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,20 +17,23 @@ from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
 from bernstein.adapters import openai_agents as adapter_module
 from bernstein.adapters import openai_agents_runner as runner_module
-from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
+from bernstein.adapters.openai_agents import TOOL_SOURCE_ENV_VAR, OpenAIAgentsAdapter
 from bernstein.adapters.openai_agents_runner import (
     EXIT_GENERIC,
     EXIT_MANIFEST_ERROR,
     EXIT_OK,
     EXIT_RATE_LIMIT,
     EXIT_SDK_MISSING,
+    MAX_TURNS_ENV_VAR,
     RunnerManifest,
+    _append_tokens_sidecar,
     _build_agent_kwargs,
     _build_model_settings_kwargs,
-    _build_run_config,
     _is_rate_limit,
     _resolve_client_kwargs,
     _resolve_heartbeat_dir,
+    _resolve_max_turns,
+    _resolve_tokens_sidecar_path,
     _start_heartbeat,
     emit_event,
     load_manifest,
@@ -229,6 +234,127 @@ class TestSpawnCommand:
         assert manifest["sandbox_provider"] == "e2b"
         assert manifest["tools"] == [{"name": "file_read"}]
 
+    def test_manifest_tool_source_defaults_to_gateway(self, tmp_path: Path) -> None:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1104)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-tsg",
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-tsg.manifest.json").read_text(),
+        )
+        assert manifest["tool_source"] == "gateway"
+
+    def test_manifest_carries_builtin_tool_source(self, tmp_path: Path) -> None:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1105)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-tsb",
+                mcp_config={"tool_source": "builtin"},
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-tsb.manifest.json").read_text(),
+        )
+        assert manifest["tool_source"] == "builtin"
+
+    def test_env_var_enables_builtin_tool_source(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """BERNSTEIN_OPENAI_AGENTS_TOOL_SOURCE=builtin flips the default."""
+        monkeypatch.setenv(TOOL_SOURCE_ENV_VAR, "builtin")
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1106)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-tse",
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-tse.manifest.json").read_text(),
+        )
+        assert manifest["tool_source"] == "builtin"
+
+    def test_env_var_applies_when_mcp_config_lacks_tool_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(TOOL_SOURCE_ENV_VAR, "builtin")
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1107)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-tsf",
+                mcp_config={"sandbox_provider": "e2b"},
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-tsf.manifest.json").read_text(),
+        )
+        assert manifest["tool_source"] == "builtin"
+
+    def test_explicit_mcp_config_tool_source_wins_over_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit mcp_config tool_source beats the env var."""
+        monkeypatch.setenv(TOOL_SOURCE_ENV_VAR, "builtin")
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1108)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-tsx",
+                mcp_config={"tool_source": "gateway"},
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-tsx.manifest.json").read_text(),
+        )
+        assert manifest["tool_source"] == "gateway"
+
+    def test_non_builtin_env_value_keeps_gateway(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(TOOL_SOURCE_ENV_VAR, "gateway")
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1109)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id="oai-tsy",
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-tsy.manifest.json").read_text(),
+        )
+        assert manifest["tool_source"] == "gateway"
+
     def test_manifest_includes_sampling_overrides(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()
         proc_mock = _make_popen_mock(pid=1007)
@@ -245,6 +371,7 @@ class TestSpawnCommand:
                     "temperature": 0.2,
                     "top_p": 0.9,
                     "top_k": 40,
+                    "max_tokens": 1234,
                     "base_url": "http://localhost:8000/v1",
                     "api_key_env": "OPENROUTER_API_KEY",
                 },
@@ -255,8 +382,31 @@ class TestSpawnCommand:
         assert manifest["temperature"] == pytest.approx(0.2)
         assert manifest["top_p"] == pytest.approx(0.9)
         assert manifest["top_k"] == 40
+        # mode-profile max_tokens must reach the manifest, not be overwritten
+        # by the model_config fallback (regression: the override was dropped).
+        assert manifest["max_tokens"] == 1234
         assert manifest["base_url"] == "http://localhost:8000/v1"
         assert manifest["api_key_env"] == "OPENROUTER_API_KEY"
+
+    def test_manifest_max_tokens_falls_back_to_model_config(self, tmp_path: Path) -> None:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1017)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="run tests",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high", max_tokens=4096),
+                session_id="oai-s6b",
+                mcp_config={"temperature": 0.2},
+            )
+        manifest = json.loads(
+            (tmp_path / ".sdd" / "runtime" / "oai-s6b.manifest.json").read_text(),
+        )
+        # No mcp_config max_tokens -> model_config value is the fallback.
+        assert manifest["max_tokens"] == 4096
 
     def test_manifest_omits_absent_sampling_fields(self, tmp_path: Path) -> None:
         adapter = OpenAIAgentsAdapter()
@@ -738,6 +888,29 @@ class TestRunnerManifest:
         assert manifest.base_url == "http://localhost:8000/v1"
         assert manifest.api_key_env == "OPENROUTER_API_KEY"
 
+    def test_tool_source_defaults_to_gateway(self) -> None:
+        manifest = RunnerManifest.from_dict(
+            {
+                "session_id": "s1",
+                "prompt": "hi",
+                "workdir": "/workspace",
+                "model": "gpt-5-mini",
+            },
+        )
+        assert manifest.tool_source == "gateway"
+
+    def test_tool_source_parses_builtin(self) -> None:
+        manifest = RunnerManifest.from_dict(
+            {
+                "session_id": "s1",
+                "prompt": "hi",
+                "workdir": "/workspace",
+                "model": "gpt-5-mini",
+                "tool_source": "builtin",
+            },
+        )
+        assert manifest.tool_source == "builtin"
+
 
 # ---------------------------------------------------------------------------
 # Runner helpers
@@ -771,22 +944,173 @@ class TestRunnerHelpers:
         assert "instructions" not in kwargs
         assert "tools" not in kwargs
 
-    def test_build_run_config_copies_mcp_servers(self) -> None:
+    def test_build_agent_kwargs_omits_gateway_tools_for_builtin_source(self) -> None:
+        # When builtins are selected the gateway descriptors are not attached
+        # here; the runner constructs SDK builtins later in ``_run_session``.
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            tools=[{"name": "file_read"}],
+            tool_source="builtin",
+        )
+        kwargs = _build_agent_kwargs(manifest)
+        assert "tools" not in kwargs
+
+    def test_build_agent_kwargs_keeps_gateway_tools_by_default(self) -> None:
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            tools=[{"name": "file_read"}],
+        )
+        kwargs = _build_agent_kwargs(manifest)
+        assert kwargs["tools"] == [{"name": "file_read"}]
+
+    def test_run_sync_not_called_with_dict_run_config(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Regression: a plain-dict ``run_config`` crashes the SDK.
+
+        ``agents.run`` accesses ``run_config.session_input_callback`` on
+        whatever is passed, so handing it a dict raised AttributeError on
+        every spawn. The runner must not pass ``run_config`` at all unless
+        it is a real ``agents.RunConfig`` instance.
+        """
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
         manifest = RunnerManifest(
             session_id="s",
             prompt="p",
             workdir="/abs",
-            model="gpt-5",
+            model="MiniMax-M3",
             sandbox_provider="e2b",
             mcp_servers={"bernstein": {"command": "python"}},
         )
-        cfg = _build_run_config(manifest)
-        assert cfg["sandbox_provider"] == "e2b"
-        assert cfg["workdir"] == "/abs"
-        assert cfg["mcp_servers"] == {"bernstein": {"command": "python"}}
-        # Defensive copy - mutating the output must not mutate manifest state.
-        cfg["mcp_servers"]["other"] = {"command": "x"}
-        assert "other" not in manifest.mcp_servers
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        _, kwargs = fake_runner.run_sync.call_args
+        assert not isinstance(kwargs.get("run_config"), dict), (
+            "run_config must never be a plain dict - the SDK requires a real agents.RunConfig instance"
+        )
+        assert "run_config" not in kwargs
+
+    def test_resolve_max_turns_defaults_to_30(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bug 13: the SDK default of 10 killed builtin-tool workflows - the
+        shipped default is now 30 (tuning.agent.max_turns)."""
+        from bernstein.core import defaults as core_defaults
+
+        monkeypatch.delenv(MAX_TURNS_ENV_VAR, raising=False)
+        core_defaults.reset()
+        assert _resolve_max_turns() == 30
+
+    def test_resolve_max_turns_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        assert _resolve_max_turns() == 200
+
+    def test_resolve_max_turns_tuning_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core import defaults as core_defaults
+
+        monkeypatch.delenv(MAX_TURNS_ENV_VAR, raising=False)
+        core_defaults.override("agent", {"max_turns": 80})
+        try:
+            assert _resolve_max_turns() == 80
+        finally:
+            core_defaults.reset()
+
+    def test_resolve_max_turns_env_beats_tuning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core import defaults as core_defaults
+
+        core_defaults.override("agent", {"max_turns": 80})
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        try:
+            assert _resolve_max_turns() == 200
+        finally:
+            core_defaults.reset()
+
+    def test_resolve_max_turns_unparseable_env_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core import defaults as core_defaults
+
+        core_defaults.reset()
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "notanumber")
+        assert _resolve_max_turns() == 30
+
+    def test_resolve_max_turns_zero_env_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A 0 max_turns would fail every run on turn one - reject, don't forward."""
+        from bernstein.core import defaults as core_defaults
+
+        core_defaults.reset()
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "0")
+        assert _resolve_max_turns() == 30
+
+    def test_resolve_max_turns_negative_env_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core import defaults as core_defaults
+
+        core_defaults.reset()
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "-5")
+        assert _resolve_max_turns() == 30
+
+    def test_resolve_max_turns_negative_env_falls_back_to_tuning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A non-positive env value falls through to tuning.agent.max_turns, not just None."""
+        from bernstein.core import defaults as core_defaults
+
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "-5")
+        core_defaults.override("agent", {"max_turns": 80})
+        try:
+            assert _resolve_max_turns() == 80
+        finally:
+            core_defaults.reset()
+
+    def test_log_max_turns_exceeded_reports_turns_and_completed_work(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Bug 13: hitting the cap must WARN with the configured cap, turns
+        actually used, and whether the agent had already POSTed /complete."""
+        from types import SimpleNamespace
+
+        from bernstein.adapters.openai_agents_runner import _log_max_turns_exceeded
+
+        run_data = SimpleNamespace(
+            raw_responses=[SimpleNamespace(usage=None) for _ in range(10)],
+            new_items=[
+                SimpleNamespace(
+                    raw_item=SimpleNamespace(
+                        arguments='{"command": "curl -X POST http://localhost:8052/tasks/abc/complete"}'
+                    )
+                )
+            ],
+        )
+        exc = RuntimeError("Max turns (10) exceeded")
+        exc.run_data = run_data  # type: ignore[attr-defined]
+
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents_runner"):
+            _log_max_turns_exceeded(exc, 10)
+
+        assert any(
+            "max_turns=10" in rec.getMessage()
+            and "turns_used=10" in rec.getMessage()
+            and "work_already_completed=yes" in rec.getMessage()
+            for rec in caplog.records
+        ), f"missing/incomplete MaxTurns warning: {[r.getMessage() for r in caplog.records]}"
+
+    def test_log_max_turns_exceeded_handles_missing_run_data(self, caplog: pytest.LogCaptureFixture) -> None:
+        """No run_data on the exception must still produce a WARNING with
+        unknowns, never a crash."""
+        from bernstein.adapters.openai_agents_runner import _log_max_turns_exceeded
+
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents_runner"):
+            _log_max_turns_exceeded(RuntimeError("Max turns (30) exceeded"), None)
+
+        assert any(
+            "max_turns=SDK-default" in rec.getMessage()
+            and "turns_used=unknown" in rec.getMessage()
+            and "work_already_completed=unknown" in rec.getMessage()
+            for rec in caplog.records
+        )
 
     def test_build_model_settings_kwargs_empty_when_absent(self) -> None:
         manifest = RunnerManifest(
@@ -813,6 +1137,52 @@ class TestRunnerHelpers:
         # top_k travels via extra_args - the OpenAI API has no first-class
         # top_k field but OpenAI-compatible endpoints accept it.
         assert kwargs["extra_args"] == {"top_k": 40}
+
+    def test_build_model_settings_kwargs_omits_max_tokens_without_sdk(self) -> None:
+        # Without an SDK class to probe, max_tokens is not forwarded so the
+        # runner never passes a kwarg the installed SDK might reject.
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            max_tokens=4096,
+        )
+        assert "max_tokens" not in _build_model_settings_kwargs(manifest)
+
+    def test_build_model_settings_kwargs_forwards_max_tokens_when_sdk_accepts(self) -> None:
+        import dataclasses
+
+        @dataclasses.dataclass
+        class _FakeModelSettings:
+            max_tokens: int | None = None
+
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            max_tokens=4096,
+        )
+        kwargs = _build_model_settings_kwargs(manifest, model_settings_cls=_FakeModelSettings)
+        assert kwargs["max_tokens"] == 4096
+
+    def test_build_model_settings_kwargs_skips_max_tokens_when_sdk_lacks_field(self) -> None:
+        import dataclasses
+
+        @dataclasses.dataclass
+        class _FakeModelSettingsNoMax:
+            temperature: float | None = None
+
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model="gpt-5",
+            max_tokens=4096,
+        )
+        kwargs = _build_model_settings_kwargs(manifest, model_settings_cls=_FakeModelSettingsNoMax)
+        assert "max_tokens" not in kwargs
 
     def test_resolve_client_kwargs_empty_by_default(self) -> None:
         manifest = RunnerManifest(
@@ -953,9 +1323,30 @@ class _FakeUsage:
 
 
 class _FakeResult:
-    def __init__(self, summary: str = "done", usage: _FakeUsage | None = None) -> None:
+    def __init__(
+        self,
+        summary: str = "done",
+        usage: _FakeUsage | None = None,
+        raw_responses: list[Any] | None = None,
+    ) -> None:
         self.final_output = summary
         self.usage = usage
+        self.raw_responses = raw_responses if raw_responses is not None else []
+
+
+class _FakeRawResponseUsage:
+    """Mimics ``agents.usage.Usage`` as embedded on ``ModelResponse.usage``."""
+
+    def __init__(self, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+class _FakeRawResponse:
+    """Mimics ``agents.items.ModelResponse`` - the ``result.raw_responses`` element."""
+
+    def __init__(self, input_tokens: int, output_tokens: int) -> None:
+        self.usage = _FakeRawResponseUsage(input_tokens, output_tokens)
 
 
 class TestRunnerRun:
@@ -991,19 +1382,67 @@ class TestRunnerRun:
         assert usage_event["output_tokens"] == 20
         assert usage_event["tool_calls"] == 1
 
-    def test_run_without_usage_still_emits_completion(
+    def test_run_forwards_max_turns_30_by_default(
         self,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
+        """Bug 13: unset BERNSTEIN_MAX_TURNS / tuning -> the shipped default
+        of 30 is forwarded (the SDK's own default of 10 killed builtin-tool
+        workflows mid-flight)."""
+        from bernstein.core import defaults as core_defaults
+
+        monkeypatch.delenv(MAX_TURNS_ENV_VAR, raising=False)
+        core_defaults.reset()
+        fake_agent = MagicMock()
         fake_runner = MagicMock()
-        fake_runner.run_sync.return_value = _FakeResult(summary="ok", usage=None)
-        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
         with patch.dict(sys.modules, {"agents": fake_sdk}):
             rc = run(self._manifest())
         assert rc == EXIT_OK
+        _, kwargs = fake_runner.run_sync.call_args
+        assert kwargs["max_turns"] == 30
+
+    def test_run_forwards_max_turns_from_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(self._manifest())
+        assert rc == EXIT_OK
+        _, kwargs = fake_runner.run_sync.call_args
+        assert kwargs["max_turns"] == 200
+
+    def test_run_without_usage_still_emits_completion(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """``result.usage`` is None AND there is no ``raw_responses`` fallback data:
+        a usage_missing event fires (not a silently dropped usage event) and a
+        WARNING is logged - see the raw_responses-fallback tests below for the
+        bug-13-followup fallback path itself."""
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok", usage=None)
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        with caplog.at_level(logging.WARNING):
+            with patch.dict(sys.modules, {"agents": fake_sdk}):
+                rc = run(self._manifest())
+        assert rc == EXIT_OK
         events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
         assert any(e["type"] == "completion" for e in events)
-        assert not any(e["type"] == "usage" for e in events)
+        usage_event = next(e for e in events if e["type"] == "usage")
+        assert usage_event["input_tokens"] == 0
+        assert usage_event["output_tokens"] == 0
+        assert usage_event["usage_missing"] is True
+        assert any("no usage data" in rec.message for rec in caplog.records)
 
     def test_run_emits_sdk_missing_when_import_fails(
         self,
@@ -1122,6 +1561,91 @@ class TestRunnerRun:
         )
         assert fake_agent_cls.call_args.kwargs["model_settings"] is settings_sentinel
 
+    def test_run_attaches_builtin_tools_when_tool_source_builtin(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir=str(tmp_path),
+            model="gpt-5-mini",
+            tools=[{"name": "gateway_tool"}],
+            tool_source="builtin",
+        )
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        # Identity decorator so the wrapped function object flows through.
+        fake_sdk = MagicMock(
+            Agent=fake_agent_cls,
+            Runner=fake_runner,
+            function_tool=lambda fn: fn,
+        )
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        # Builtins replace the gateway descriptors entirely. Under the bare
+        # local path (``unix_local``) ``run_command`` is withheld: only the
+        # three workdir-confined file tools are attached.
+        attached = fake_agent_cls.call_args.kwargs["tools"]
+        assert [t.__name__ for t in attached] == ["read_file", "write_file", "list_dir"]
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        assert any(e["type"] == "progress" and e.get("tool_source") == "builtin" for e in events)
+
+    def test_run_attaches_run_command_under_os_sandbox_provider(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir=str(tmp_path),
+            model="gpt-5-mini",
+            tool_source="builtin",
+            sandbox_provider="docker",
+        )
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(
+            Agent=fake_agent_cls,
+            Runner=fake_runner,
+            function_tool=lambda fn: fn,
+        )
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        # An OS sandbox provides real filesystem confinement, so run_command
+        # is exposed alongside the file tools.
+        attached = fake_agent_cls.call_args.kwargs["tools"]
+        assert [t.__name__ for t in attached] == [
+            "read_file",
+            "write_file",
+            "list_dir",
+            "run_command",
+        ]
+        capsys.readouterr()
+
+    def test_run_uses_gateway_tools_by_default(self, tmp_path: Path) -> None:
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir=str(tmp_path),
+            model="gpt-5-mini",
+            tools=[{"name": "gateway_tool"}],
+        )
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=fake_agent_cls, Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        assert fake_agent_cls.call_args.kwargs["tools"] == [{"name": "gateway_tool"}]
+
     def test_run_skips_model_settings_when_no_params(self) -> None:
         fake_agent_cls = MagicMock()
         fake_runner = MagicMock()
@@ -1196,6 +1720,108 @@ class TestRunnerRun:
         with patch.dict(sys.modules, {"agents": fake_sdk}):
             run(self._manifest())
         fake_sdk.set_default_openai_client.assert_not_called()
+
+    def test_run_builds_explicit_model_for_slash_containing_id_with_base_url(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """D1 openrouter fix: OpenRouter model ids like 'deepseek/deepseek-chat'
+        contain a vendor/model slash. Passed as a bare string, the SDK's
+        ``MultiProvider`` (the default ``RunConfig.model_provider``) parses
+        everything before the first '/' as an SDK provider prefix and raises
+        ``UserError: Unknown prefix: deepseek`` before any tool call
+        (agents/models/multi_provider.py:154-173,221 in the installed SDK).
+        The fix must build an explicit ``OpenAIChatCompletionsModel`` bound
+        to the manifest's endpoint client and hand THAT to ``Agent(model=...)``
+        instead - never the bare string - since the SDK never re-resolves
+        (and never prefix-parses) a model that is already a ``Model``
+        instance (agents/run_internal/turn_preparation.py:126-135)."""
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir="/workspace",
+            model="deepseek/deepseek-chat",
+            base_url="https://openrouter.ai/api/v1",
+            api_key_env="OPENROUTER_API_KEY",
+        )
+        client_sentinel = object()
+        explicit_model_sentinel = object()
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_chat_model_cls = MagicMock(return_value=explicit_model_sentinel)
+        fake_sdk = MagicMock(
+            Agent=fake_agent_cls,
+            Runner=fake_runner,
+            OpenAIChatCompletionsModel=fake_chat_model_cls,
+        )
+        fake_openai = MagicMock(AsyncOpenAI=MagicMock(return_value=client_sentinel))
+        with (
+            patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
+            patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True),
+            caplog.at_level("INFO"),
+        ):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        # The SDK's own prefix-parsing path (a bare model string handed to
+        # MultiProvider) must never be exercised: the Agent is built with
+        # the pre-resolved Model instance, not "deepseek/deepseek-chat".
+        fake_chat_model_cls.assert_called_once_with(
+            model="deepseek/deepseek-chat",
+            openai_client=client_sentinel,
+        )
+        assert fake_agent_cls.call_args.kwargs["model"] is explicit_model_sentinel
+        assert any(
+            "deepseek/deepseek-chat" in rec.message and "https://openrouter.ai/api/v1" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_run_uses_bare_model_string_without_base_url(self) -> None:
+        """No ``base_url`` override: existing behavior (bare model string,
+        resolved by whatever ``model_provider`` the SDK defaults to) is
+        unchanged - the runner must not construct an explicit
+        ``OpenAIChatCompletionsModel`` when there is no custom endpoint."""
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=fake_agent_cls, Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(self._manifest())
+        assert rc == EXIT_OK
+        assert fake_agent_cls.call_args.kwargs["model"] == "gpt-5-mini"
+        fake_sdk.OpenAIChatCompletionsModel.assert_not_called()
+
+    def test_run_builds_explicit_model_even_without_slash_when_base_url_set(self) -> None:
+        """A custom endpoint always gets an explicit Model, slash or not -
+        the manifest's model id is still whatever the endpoint expects, and
+        relying on the SDK's default-client wiring alone previously left
+        model resolution to MultiProvider, which is only safe for ids the
+        SDK's built-in prefixes happen to tolerate."""
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir="/workspace",
+            model="gpt-5-mini",
+            base_url="http://localhost:8000/v1",
+            api_key_env="OPENROUTER_API_KEY",
+        )
+        client_sentinel = object()
+        fake_agent_cls = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=fake_agent_cls, Runner=fake_runner)
+        fake_openai = MagicMock(AsyncOpenAI=MagicMock(return_value=client_sentinel))
+        with (
+            patch.dict(sys.modules, {"agents": fake_sdk, "openai": fake_openai}),
+            patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-proxy"}, clear=True),
+        ):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        fake_sdk.OpenAIChatCompletionsModel.assert_called_once_with(
+            model="gpt-5-mini",
+            openai_client=client_sentinel,
+        )
+        assert fake_agent_cls.call_args.kwargs["model"] is fake_sdk.OpenAIChatCompletionsModel.return_value
 
     def test_run_fails_loudly_when_api_key_env_var_missing(
         self,
@@ -1419,3 +2045,585 @@ class TestPricing:
 class TestModuleSurface:
     def test_module_exports_adapter_class(self) -> None:
         assert hasattr(adapter_module, "OpenAIAgentsAdapter")
+
+
+# ---------------------------------------------------------------------------
+# Manifest-carried control knobs (allow_run_command / max_turns)
+# ---------------------------------------------------------------------------
+
+
+class TestManifestControlKnobs:
+    """Control env vars are filtered from the runner env; they must ride the manifest."""
+
+    def _spawn_and_read_manifest(
+        self,
+        tmp_path: Path,
+        *,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        adapter = OpenAIAgentsAdapter()
+        proc_mock = _make_popen_mock(pid=1200)
+        with patch(
+            "bernstein.adapters.openai_agents.subprocess.Popen",
+            return_value=proc_mock,
+        ):
+            adapter.spawn(
+                prompt="do work",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5", effort="high"),
+                session_id=session_id,
+                mcp_config=mcp_config,
+            )
+        return json.loads((tmp_path / ".sdd" / "runtime" / f"{session_id}.manifest.json").read_text())
+
+    def test_allow_run_command_from_parent_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", "1")
+        manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-arc1")
+        assert manifest["allow_run_command"] is True
+
+    def test_allow_run_command_false_when_env_unset(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-arc2")
+        assert manifest["allow_run_command"] is False
+
+    def test_explicit_mcp_config_allow_run_command_wins_over_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", "1")
+        manifest = self._spawn_and_read_manifest(
+            tmp_path, session_id="oai-arc3", mcp_config={"allow_run_command": False}
+        )
+        assert manifest["allow_run_command"] is False
+
+    def test_max_turns_from_mcp_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-mt1", mcp_config={"max_turns": 40})
+        assert manifest["max_turns"] == 40
+
+    def test_max_turns_from_parent_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "77")
+        manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-mt2")
+        assert manifest["max_turns"] == 77
+
+    def test_rejected_allow_run_command_override_is_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A non-bool mcp_config allow_run_command must fall back to the env
+        default AND leave a WARNING diagnostic -- a silently-dropped override
+        was previously undiagnosable from logs alone."""
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents"):
+            manifest = self._spawn_and_read_manifest(
+                tmp_path, session_id="oai-arc4", mcp_config={"allow_run_command": "yes"}
+            )
+        assert manifest["allow_run_command"] is False
+        assert "allow_run_command='yes' must be a bool" in caplog.text
+
+    def test_valid_allow_run_command_override_is_not_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.delenv("BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND", raising=False)
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents"):
+            self._spawn_and_read_manifest(tmp_path, session_id="oai-arc5", mcp_config={"allow_run_command": True})
+        assert "allow_run_command" not in caplog.text
+
+    def test_rejected_max_turns_override_is_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A non-positive / wrong-type mcp_config max_turns must fall back to
+        env/tuning resolution AND leave a WARNING diagnostic, matching the
+        runner-side _resolve_max_turns rejection logging."""
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "77")
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents"):
+            manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-mt3", mcp_config={"max_turns": 0})
+        assert manifest["max_turns"] == 77
+        assert "max_turns=0 must be a positive int" in caplog.text
+
+    def test_rejected_bool_max_turns_override_is_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """bool is an int subclass; ``True`` must be rejected (and logged),
+        not treated as max_turns=1."""
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "77")
+        with caplog.at_level("WARNING", logger="bernstein.adapters.openai_agents"):
+            manifest = self._spawn_and_read_manifest(tmp_path, session_id="oai-mt4", mcp_config={"max_turns": True})
+        assert manifest["max_turns"] == 77
+        assert "max_turns=True must be a positive int" in caplog.text
+
+    def test_runner_manifest_parses_control_knobs(self) -> None:
+        manifest = RunnerManifest.from_dict(
+            {
+                "session_id": "s",
+                "prompt": "p",
+                "workdir": "/abs",
+                "model": "MiniMax-M3",
+                "allow_run_command": True,
+                "max_turns": 40,
+            }
+        )
+        assert manifest.allow_run_command is True
+        assert manifest.max_turns == 40
+
+    def test_runner_manifest_defaults_to_none(self) -> None:
+        manifest = RunnerManifest.from_dict({"session_id": "s", "prompt": "p", "workdir": "/abs", "model": "gpt-5"})
+        assert manifest.allow_run_command is None
+        assert manifest.max_turns is None
+
+    def test_resolve_max_turns_manifest_wins_over_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        assert _resolve_max_turns(40) == 40
+
+    def test_resolve_max_turns_invalid_manifest_falls_back_to_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(MAX_TURNS_ENV_VAR, "200")
+        assert _resolve_max_turns(0) == 200
+
+    def test_run_forwards_manifest_max_turns_to_run_sync(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.delenv(MAX_TURNS_ENV_VAR, raising=False)
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/abs",
+            model="MiniMax-M3",
+            max_turns=40,
+        )
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+        _, kwargs = fake_runner.run_sync.call_args
+        assert kwargs["max_turns"] == 40
+
+
+# ---------------------------------------------------------------------------
+# Bug 13: cost metering on the openai_agents path.
+#
+# Root cause: the runner captured SDK usage and emitted a bare "usage" event
+# to its own stdout/log, but never priced it and never wrote the ``.tokens``
+# sidecar file (``<orchestrator-root>/.sdd/runtime/<session_id>.tokens``)
+# that ``TokenGrowthMonitor.read_tokens()`` tails to populate
+# ``AgentSession.tokens_used``. The orchestrator's live cost loop
+# (``Orchestrator._record_live_costs``) skips any session whose
+# ``tokens_used`` is 0, so the session's spend never reached CostTracker at
+# all - a 45-minute MiniMax-M3 run recorded ``spent_usd: 0.0`` with an empty
+# ``usages`` list. These tests pin: (1) a fake SDK usage payload flows
+# through to a correctly priced + aggregated "usage" event and a populated
+# tokens sidecar, and (2) an unrecognized model is priced at an explicit $0
+# with a WARNING logged and its tokens still counted, not dropped.
+# ---------------------------------------------------------------------------
+
+
+class TestBug13CostMetering:
+    def _manifest(
+        self, *, model: str, heartbeat_dir: str | None = None, session_id: str = "sess-bug13"
+    ) -> RunnerManifest:
+        return RunnerManifest(
+            session_id=session_id,
+            prompt="hello",
+            workdir="/workspace",
+            model=model,
+            heartbeat_dir=heartbeat_dir,
+        )
+
+    def test_priced_model_usage_flows_to_usage_event_and_sidecar(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A fake SDK usage payload for a priced model computes a nonzero
+        cost, emits it on the "usage" event, and lands in the .tokens
+        sidecar the orchestrator's live cost loop actually reads."""
+        heartbeat_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
+        # Uses the model from the actual bug-13 incident (MiniMax-M3) rather
+        # than a "gpt-5" family name: several gpt-5* keys are substrings of
+        # each other in MODEL_COSTS_PER_1M_TOKENS insertion order (a
+        # pre-existing, separate issue from bug 13), which would make this
+        # test's expected cost depend on dict iteration order.
+        manifest = self._manifest(model="MiniMax-M3", heartbeat_dir=str(heartbeat_dir))
+
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(
+            summary="ok",
+            usage=_FakeUsage(input_tokens=10_000, output_tokens=2_000, tool_calls=3),
+        )
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        usage_event = next(e for e in events if e["type"] == "usage")
+        assert usage_event["input_tokens"] == 10_000
+        assert usage_event["output_tokens"] == 2_000
+        assert usage_event["model"] == "MiniMax-M3"
+        assert usage_event["priced"] is True
+        # minimax-m3: $0.30/$1.20 per 1M -> (10000/1e6)*0.3 + (2000/1e6)*1.2
+        expected_cost = (10_000 / 1_000_000.0) * 0.3 + (2_000 / 1_000_000.0) * 1.2
+        assert usage_event["cost_usd"] == pytest.approx(expected_cost)
+        assert usage_event["cost_usd"] > 0.0
+        assert usage_event["running_total_usd"] == pytest.approx(expected_cost)
+
+        # The bug-13 fix: the tokens sidecar must exist and carry the same
+        # counts, at the orchestrator-root path (heartbeat_dir's parent),
+        # NOT under the per-session worktree.
+        sidecar = heartbeat_dir.parent / f"{manifest.session_id}.tokens"
+        assert sidecar.exists()
+        record = json.loads(sidecar.read_text().strip().splitlines()[-1])
+        assert record["in"] == 10_000
+        assert record["out"] == 2_000
+        assert "ts" in record
+
+    def test_unpriced_model_logs_warning_and_meters_zero_without_dropping_tokens(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A model with no pricing-table entry must not vanish from cost
+        totals: cost is an explicit $0, a WARNING is logged, and the token
+        counts still flow through to the usage event and the sidecar."""
+        heartbeat_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
+        manifest = self._manifest(model="totally-unknown-model-xyz", heartbeat_dir=str(heartbeat_dir))
+
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(
+            summary="ok",
+            usage=_FakeUsage(input_tokens=5_000, output_tokens=1_000, tool_calls=0),
+        )
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
+        with caplog.at_level("WARNING"):
+            with patch.dict(sys.modules, {"agents": fake_sdk}):
+                rc = run(manifest)
+        assert rc == EXIT_OK
+
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        usage_event = next(e for e in events if e["type"] == "usage")
+        # Tokens are still visible even though the model is unpriced.
+        assert usage_event["input_tokens"] == 5_000
+        assert usage_event["output_tokens"] == 1_000
+        assert usage_event["priced"] is False
+        assert usage_event["cost_usd"] == 0.0
+        assert usage_event["running_total_usd"] == 0.0
+
+        assert any(
+            "no pricing-table entry" in rec.message and "totally-unknown-model-xyz" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "WARNING"
+        )
+
+        sidecar = heartbeat_dir.parent / f"{manifest.session_id}.tokens"
+        assert sidecar.exists()
+        record = json.loads(sidecar.read_text().strip().splitlines()[-1])
+        assert record["in"] == 5_000
+        assert record["out"] == 1_000
+
+    def test_none_usage_falls_back_to_raw_responses(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Bug-13 follow-up (2026-07-02): a real MiniMax-M2.7-highspeed run
+        proved ``result.usage`` is None on some providers (in fact, the
+        installed SDK's ``RunResult`` never has a ``usage`` attribute at
+        all). Usage must be recovered by summing ``result.raw_responses``
+        (each a fake ``agents.items.ModelResponse`` carrying its own
+        ``usage``), priced correctly, and written to the sidecar exactly as
+        the primary path does."""
+        heartbeat_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
+        manifest = self._manifest(model="MiniMax-M3", heartbeat_dir=str(heartbeat_dir))
+
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(
+            summary="ok",
+            usage=None,
+            raw_responses=[
+                _FakeRawResponse(input_tokens=3_000, output_tokens=500),
+                _FakeRawResponse(input_tokens=2_000, output_tokens=300),
+            ],
+        )
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_OK
+
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        usage_event = next(e for e in events if e["type"] == "usage")
+        assert usage_event["input_tokens"] == 5_000
+        assert usage_event["output_tokens"] == 800
+        assert usage_event["priced"] is True
+        assert "usage_missing" not in usage_event
+        expected_cost = (5_000 / 1_000_000.0) * 0.3 + (800 / 1_000_000.0) * 1.2
+        assert usage_event["cost_usd"] == pytest.approx(expected_cost)
+
+        sidecar = heartbeat_dir.parent / f"{manifest.session_id}.tokens"
+        assert sidecar.exists()
+        record = json.loads(sidecar.read_text().strip().splitlines()[-1])
+        assert record["in"] == 5_000
+        assert record["out"] == 800
+
+    def test_none_usage_and_empty_raw_responses_emits_usage_missing_no_sidecar(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Both ``result.usage`` and the ``raw_responses`` fallback yield
+        nothing: a WARNING naming the model must fire, a usage event with
+        ``usage_missing: true`` must be emitted, and NOTHING may be written
+        to the cost sidecar (no fabricated tokens/cost)."""
+        heartbeat_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
+        manifest = self._manifest(model="MiniMax-M2.7-highspeed", heartbeat_dir=str(heartbeat_dir))
+
+        fake_agent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(
+            summary="ok",
+            usage=None,
+            raw_responses=[_FakeRawResponse(input_tokens=0, output_tokens=0)],
+        )
+        fake_sdk = MagicMock(Agent=MagicMock(return_value=fake_agent), Runner=fake_runner)
+        with caplog.at_level(logging.WARNING):
+            with patch.dict(sys.modules, {"agents": fake_sdk}):
+                rc = run(manifest)
+        assert rc == EXIT_OK
+
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        usage_event = next(e for e in events if e["type"] == "usage")
+        assert usage_event["input_tokens"] == 0
+        assert usage_event["output_tokens"] == 0
+        assert usage_event["usage_missing"] is True
+        assert "cost_usd" not in usage_event
+
+        assert any(
+            "no usage data" in rec.message and "MiniMax-M2.7-highspeed" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "WARNING"
+        )
+
+        sidecar = heartbeat_dir.parent / f"{manifest.session_id}.tokens"
+        assert not sidecar.exists()
+
+    def test_resolve_tokens_sidecar_path_uses_heartbeat_dir_parent(self, tmp_path: Path) -> None:
+        heartbeat_dir = tmp_path / "orchestrator-root" / ".sdd" / "runtime" / "heartbeats"
+        manifest = self._manifest(model="gpt-5", heartbeat_dir=str(heartbeat_dir), session_id="s1")
+        path = _resolve_tokens_sidecar_path(manifest)
+        assert path == heartbeat_dir.parent / "s1.tokens"
+
+    def test_resolve_tokens_sidecar_path_falls_back_to_workdir(self, tmp_path: Path) -> None:
+        manifest = RunnerManifest(
+            session_id="s2",
+            prompt="p",
+            workdir=str(tmp_path / "worktree"),
+            model="gpt-5",
+        )
+        path = _resolve_tokens_sidecar_path(manifest)
+        assert path == tmp_path / "worktree" / ".sdd" / "runtime" / "s2.tokens"
+
+    def test_append_tokens_sidecar_skips_zero_usage(self, tmp_path: Path) -> None:
+        sidecar = tmp_path / "s3.tokens"
+        _append_tokens_sidecar(sidecar, 0, 0)
+        assert not sidecar.exists()
+
+    def test_append_tokens_sidecar_survives_unwritable_path(self, caplog: pytest.LogCaptureFixture) -> None:
+        # A path under a location that cannot be created (root-owned or
+        # already a file) must log a warning, never raise - a sidecar
+        # failure must not fail the run.
+        unwritable = Path("/this/path/should/not/be/creatable/by/tests") / "s4.tokens"
+        with caplog.at_level("WARNING"):
+            _append_tokens_sidecar(unwritable, 10, 10)
+        assert any("failed to write tokens sidecar" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# D2 MiniMax attempt-3 regression (2026-07-03): usage extraction must be
+# reachable on exception paths. Six backend agents each burned 10 real
+# MiniMax turns, died on MaxTurnsExceeded, and emitted ZERO usage events -
+# the run's cost file read `spent_usd: 0.0, usages: []` despite real spend,
+# because the extraction block lived only after the try/except around
+# Runner.run_sync. These tests pin: (1) an exception carrying partial run
+# data (exc.run_data.raw_responses) still prices and sidecars the real
+# usage; (2) an exception with no run data still emits the usage_missing
+# marker (downstream sees "unknown", never a silent zero); (3) the
+# rate-limit exception branch behaves the same way.
+# ---------------------------------------------------------------------------
+
+
+class _FakeRunData:
+    """Mimics ``agents.exceptions.RunErrorDetails`` as carried on
+    ``AgentsException.run_data`` - same ``raw_responses`` shape as a
+    successful ``RunResult``."""
+
+    def __init__(self, raw_responses: list[Any]) -> None:
+        self.raw_responses = raw_responses
+
+
+class _FakeMaxTurnsExceeded(Exception):
+    """Stands in for ``agents.exceptions.MaxTurnsExceeded``: an SDK
+    exception that carries the partial run's state on ``run_data``."""
+
+    def __init__(self, message: str, run_data: Any = None) -> None:
+        super().__init__(message)
+        self.run_data = run_data
+
+
+class TestUsageOnExceptionPaths:
+    def _manifest(self, *, heartbeat_dir: str, session_id: str = "sess-exc") -> RunnerManifest:
+        return RunnerManifest(
+            session_id=session_id,
+            prompt="hello",
+            workdir="/workspace",
+            model="MiniMax-M3",
+            heartbeat_dir=heartbeat_dir,
+        )
+
+    def test_max_turns_exceeded_with_run_data_prices_and_sidecars_partial_usage(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The exact D2 MiniMax attempt-3 shape: run_sync raises
+        MaxTurnsExceeded after real billable turns. The partial usage on
+        exc.run_data.raw_responses must be priced, emitted as a usage
+        event, and written to the .tokens sidecar - AND the error event +
+        EXIT_GENERIC contract must be preserved."""
+        heartbeat_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
+        manifest = self._manifest(heartbeat_dir=str(heartbeat_dir))
+
+        exc = _FakeMaxTurnsExceeded(
+            "Max turns (10) exceeded",
+            run_data=_FakeRunData(
+                raw_responses=[
+                    _FakeRawResponse(input_tokens=5_000, output_tokens=700),
+                    _FakeRawResponse(input_tokens=6_000, output_tokens=900),
+                ],
+            ),
+        )
+        fake_runner = MagicMock()
+        fake_runner.run_sync.side_effect = exc
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        with caplog.at_level(logging.INFO):
+            with patch.dict(sys.modules, {"agents": fake_sdk}):
+                rc = run(manifest)
+        assert rc == EXIT_GENERIC
+
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        # The error contract is unchanged...
+        error_event = next(e for e in events if e["type"] == "error")
+        assert error_event["kind"] == "runtime"
+        assert "Max turns" in error_event["message"]
+        # ...but a real usage event now precedes it.
+        usage_event = next(e for e in events if e["type"] == "usage")
+        assert usage_event["input_tokens"] == 11_000
+        assert usage_event["output_tokens"] == 1_600
+        assert usage_event["priced"] is True
+        expected_cost = (11_000 / 1_000_000.0) * 0.3 + (1_600 / 1_000_000.0) * 1.2
+        assert usage_event["cost_usd"] == pytest.approx(expected_cost)
+        assert usage_event["cost_usd"] > 0.0
+        assert usage_event["usage_source"] == "_FakeMaxTurnsExceeded.run_data"
+        # Usage event must be emitted before the error event (extraction
+        # happens before the early return).
+        assert events.index(usage_event) < events.index(error_event)
+        # No completion event on the exception path.
+        assert not any(e["type"] == "completion" for e in events)
+
+        # The sidecar carries the recovered partial usage.
+        sidecar = heartbeat_dir.parent / f"{manifest.session_id}.tokens"
+        assert sidecar.exists()
+        record = json.loads(sidecar.read_text().strip().splitlines()[-1])
+        assert record["in"] == 11_000
+        assert record["out"] == 1_600
+
+        # The INFO line names what was recovered and from where.
+        assert any(
+            "llm_call" in rec.message and "_FakeMaxTurnsExceeded.run_data" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "INFO"
+        )
+
+    def test_exception_without_run_data_emits_usage_missing_marker(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A plain exception with no run_data: no fabricated tokens, no
+        sidecar, but a usage_missing event fires so downstream can tell
+        "unknown" from "zero"."""
+        heartbeat_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
+        manifest = self._manifest(heartbeat_dir=str(heartbeat_dir))
+
+        fake_runner = MagicMock()
+        fake_runner.run_sync.side_effect = RuntimeError("something else")
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        with caplog.at_level(logging.WARNING):
+            with patch.dict(sys.modules, {"agents": fake_sdk}):
+                rc = run(manifest)
+        assert rc == EXIT_GENERIC
+
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        usage_event = next(e for e in events if e["type"] == "usage")
+        assert usage_event["input_tokens"] == 0
+        assert usage_event["output_tokens"] == 0
+        assert usage_event["usage_missing"] is True
+        assert usage_event["usage_source"] == "RuntimeError.run_data"
+        assert "cost_usd" not in usage_event
+        assert any(e["type"] == "error" and e["kind"] == "runtime" for e in events)
+
+        sidecar = heartbeat_dir.parent / f"{manifest.session_id}.tokens"
+        assert not sidecar.exists()
+
+        assert any("no usage data" in rec.message for rec in caplog.records if rec.levelname == "WARNING")
+
+    def test_rate_limit_exception_with_run_data_recovers_usage_and_keeps_exit_code(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A rate-limit abort mid-run still recovers the spend already
+        incurred and still returns EXIT_RATE_LIMIT."""
+        heartbeat_dir = tmp_path / ".sdd" / "runtime" / "heartbeats"
+        manifest = self._manifest(heartbeat_dir=str(heartbeat_dir))
+
+        exc = _FakeMaxTurnsExceeded(
+            "HTTP 429 rate limit",
+            run_data=_FakeRunData(raw_responses=[_FakeRawResponse(input_tokens=2_000, output_tokens=300)]),
+        )
+        fake_runner = MagicMock()
+        fake_runner.run_sync.side_effect = exc
+        fake_sdk = MagicMock(Agent=MagicMock(), Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            rc = run(manifest)
+        assert rc == EXIT_RATE_LIMIT
+
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        assert any(e["type"] == "error" and e["kind"] == "rate_limit" for e in events)
+        usage_event = next(e for e in events if e["type"] == "usage")
+        assert usage_event["input_tokens"] == 2_000
+        assert usage_event["output_tokens"] == 300
+        assert usage_event["cost_usd"] > 0.0
+
+        sidecar = heartbeat_dir.parent / f"{manifest.session_id}.tokens"
+        assert sidecar.exists()

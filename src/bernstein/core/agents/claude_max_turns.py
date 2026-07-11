@@ -95,6 +95,7 @@ def compute_max_turns(
     timeout_s: int = 1800,
     min_turns: int = 5,
     max_turns_cap: int = 200,
+    explicit_max_turns: int | None = None,
 ) -> MaxTurnsConfig:
     """Compute optimal max_turns based on complexity, model, and timeout.
 
@@ -109,10 +110,61 @@ def compute_max_turns(
         timeout_s: Task timeout in seconds.
         min_turns: Absolute minimum turns.
         max_turns_cap: Absolute maximum turns.
+        explicit_max_turns: When set (e.g. from ``TaskCreate.max_turns``), bypasses
+            all complexity/model/timeout math below but is still clamped to the
+            absolute ``[min_turns, max_turns_cap]`` bounds. This lets API callers
+            take exact control over agent turn budgets within those bounds.
+
+            Validation layering for explicit max_turns (single story):
+
+            1. API boundary: ``TaskCreate.max_turns`` (``server_models.py``)
+               rejects out-of-range values with a 422 (``ge=1, le=10_000``).
+            2. Resolution (here): callers that resolve a turn budget through
+               this function get the explicit value clamped to the same
+               absolute bounds as computed values.
+            3. Adapter (``claude.py`` ``_build_command``): last-resort
+               rejection of non-positive values arriving via paths that
+               bypass both, e.g. ``Task`` records deserialized from disk.
 
     Returns:
-        MaxTurnsConfig with the computed value and reasoning.
+        MaxTurnsConfig with the computed (or explicit) value and reasoning.
     """
+    if explicit_max_turns is not None:
+        # min_turns/max_turns_cap are documented as ABSOLUTE bounds (see the
+        # Args docstring above) - the explicit-override path must not be able
+        # to defeat them. Clamp the same way the computed path does below
+        # (`max(min_turns, min(turns, max_turns_cap))`) so a caller-supplied
+        # 100000 can't blow the cost ceiling and a caller-supplied 0/negative
+        # can't break the agent's first turn.
+        clamped_max_turns = max(min_turns, min(explicit_max_turns, max_turns_cap))
+        if clamped_max_turns != explicit_max_turns:
+            logger.warning(
+                "max_turns=%s (explicit override clamped to %s; absolute bounds are min_turns=%s, max_turns_cap=%s)",
+                explicit_max_turns,
+                clamped_max_turns,
+                min_turns,
+                max_turns_cap,
+            )
+        else:
+            logger.info("max_turns=%s (explicit)", explicit_max_turns)
+        return MaxTurnsConfig(
+            max_turns=clamped_max_turns,
+            complexity=complexity,
+            model=model,
+            timeout_s=timeout_s,
+            turns_per_minute=_TURNS_PER_MINUTE.get(_classify_model_tier(model), DEFAULT_TURNS_PER_MINUTE),
+            constrained_by_timeout=False,
+            reasoning=(
+                f"Explicit max_turns={explicit_max_turns} supplied by caller; complexity-based computation "
+                f"bypassed, clamped to absolute bounds [{min_turns}, {max_turns_cap}] -> {clamped_max_turns}."
+                if clamped_max_turns != explicit_max_turns
+                else (
+                    f"Explicit max_turns={explicit_max_turns} supplied by caller; "
+                    "complexity-based computation bypassed."
+                )
+            ),
+        )
+
     base = _BASE_TURNS.get(complexity, _BASE_TURNS["medium"])
 
     tier = _classify_model_tier(model)

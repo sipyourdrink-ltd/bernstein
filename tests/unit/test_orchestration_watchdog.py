@@ -128,6 +128,32 @@ def test_tick_auto_answers_safety_prompt(tmp_path: Path) -> None:
     assert events[0]["recovery_id"] == events[1]["recovery_id"] == recovery.recovery_id
 
 
+def test_tick_logs_probe_conclusion_and_summary(tmp_path: Path, caplog) -> None:
+    """Logging gap: the watchdog's per-session probe decision (which prompt
+    kind was classified, and why auto-answer did or didn't fire) was only
+    visible via the audit JSONL for skipped model-questions -- successful
+    safety-prompt probes and the tick-level summary were invisible in logs.
+    Assert both the per-probe INFO line and the tick-summary INFO line."""
+    caplog.set_level("INFO", logger="bernstein.core.orchestration.watchdog")
+    captured: list[tuple[str, str]] = []
+    snapshot = SessionSnapshot(
+        session_id="s1",
+        recent_output="some agent log\nContinue? [y/N]",
+        is_paused=True,
+        approved_prompt_classes=frozenset({"safety"}),
+    )
+    audit = tmp_path / "watchdog.jsonl"
+    env = {FEATURE_FLAG_ENV: "1"}
+
+    tick([snapshot], _record_calls(captured), audit, env=env)
+
+    messages = [r.message for r in caplog.records]
+    probe_lines = [m for m in messages if "watchdog probe" in m]
+    assert any("session=s1" in m and "classified=safety" in m for m in probe_lines), probe_lines
+    assert any("watchdog recovery SUCCEEDED" in m and "session=s1" in m for m in messages), messages
+    assert any("watchdog tick complete" in m for m in messages), messages
+
+
 def test_tick_skips_session_without_safety_approval(tmp_path: Path) -> None:
     captured: list[tuple[str, str]] = []
     snapshot = SessionSnapshot(
@@ -308,3 +334,30 @@ def test_tick_audit_recovery_id_is_unique_per_session(tmp_path: Path) -> None:
         by_id.setdefault(str(ev["recovery_id"]), []).append(str(ev["event"]))
     for rid, evs in by_id.items():
         assert evs == ["watchdog.recover.detected", "watchdog.recover.succeeded"], rid
+
+
+def test_tick_probe_info_log_omits_raw_output_tail(tmp_path: Path, caplog) -> None:
+    """The raw agent-stdout tail can contain secrets or file contents; the
+    per-probe INFO line must carry only the classifier verdict. The raw tail
+    is available at DEBUG only, for deep debugging."""
+    caplog.set_level("DEBUG", logger="bernstein.core.orchestration.watchdog")
+    sentinel = "sk-live-DO-NOT-PERSIST-1234"
+    captured: list[tuple[str, str]] = []
+    # The sentinel is the LAST line: exactly what ``_last_line`` extracts
+    # and what the old INFO probe line persisted on every paused tick.
+    snapshot = SessionSnapshot(
+        session_id="s1",
+        recent_output=f"Continue? [y/N]\ntoken {sentinel}",
+        is_paused=True,
+        approved_prompt_classes=frozenset({"safety"}),
+    )
+    audit = tmp_path / "watchdog.jsonl"
+    env = {FEATURE_FLAG_ENV: "1"}
+
+    tick([snapshot], _record_calls(captured), audit, env=env)
+
+    info_messages = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+    assert any("watchdog probe" in m and "session=s1" in m for m in info_messages), info_messages
+    assert not any(sentinel in m for m in info_messages), info_messages
+    debug_messages = [r.getMessage() for r in caplog.records if r.levelname == "DEBUG"]
+    assert any("watchdog probe raw tail" in m and sentinel in m for m in debug_messages), debug_messages

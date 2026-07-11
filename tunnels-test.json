@@ -1,0 +1,32 @@
+{
+  "tunnels": [
+    {
+      "name": "cloudflared-bf7e68d1",
+      "provider": "cloudflared",
+      "port": 8052,
+      "public_url": "https://fake-cloudflared.example.com",
+      "pid": 41001
+    },
+    {
+      "name": "cloudflared-e2668e08",
+      "provider": "cloudflared",
+      "port": 8052,
+      "public_url": "https://fake-cloudflared.example.com",
+      "pid": 41001
+    },
+    {
+      "name": "cloudflared-aaf5bf4a",
+      "provider": "cloudflared",
+      "port": 8052,
+      "public_url": "https://fake-cloudflared.example.com",
+      "pid": 41001
+    },
+    {
+      "name": "cloudflared-c7a533f8",
+      "provider": "cloudflared",
+      "port": 8052,
+      "public_url": "https://fake-cloudflared.example.com",
+      "pid": 41001
+    }
+  ]
+}

@@ -313,7 +313,13 @@ def _load_or_create_install_key(path: Path) -> Any:
 
     if path.exists():
         try:
-            raw = path.read_bytes().strip()
+            # Read the seed exactly as written: the create path below persists
+            # the raw 32-byte private seed with no trailing delimiter, so the
+            # bytes on disk ARE the key. Do NOT strip(): a random Ed25519 seed
+            # ends (or starts) with an ASCII-whitespace byte (0x09, 0x0a, 0x0b,
+            # 0x0c, 0x0d, 0x20) ~4.7% of the time, and strip() would silently
+            # drop it, corrupting a valid key into a "not 32 raw bytes" error.
+            raw = path.read_bytes()
         except OSError as exc:
             raise click.ClickException(f"cannot read signing key {path}: {exc}") from exc
         if len(raw) != 32:

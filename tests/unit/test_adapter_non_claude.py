@@ -359,7 +359,7 @@ class TestQwenAdapterSpawn:
         inner = _inner_cmd(popen.call_args.args[0])
         assert inner[0] == "qwen"
 
-    def test_yolo_flag_always_present(self, tmp_path: Path) -> None:
+    def test_approval_mode_flag_always_present(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=302)
         settings_mock = _make_llm_settings()
@@ -374,7 +374,9 @@ class TestQwenAdapterSpawn:
                 session_id="q2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "-y" in inner
+        assert "--approval-mode" in inner
+        assert inner[inner.index("--approval-mode") + 1] == "yolo"
+        assert "-y" not in inner
 
     def test_default_provider_maps_sonnet_to_qwen_plus(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -678,7 +680,7 @@ class TestKill:
 
     def test_calls_killpg(self, adapter_factory: Callable[[], CLIAdapter]) -> None:
         adapter = adapter_factory()
-        with patch("bernstein.adapters.base.kill_process_group_graceful") as mock_killpg:
+        with patch("bernstein.adapters.base.reap_process_group") as mock_killpg:
             adapter.kill(555)
         # PID is used directly as PGID (start_new_session=True); the helper
         # performs the SIGTERM→poll→SIGKILL escalation required by audit-011.
@@ -686,7 +688,7 @@ class TestKill:
 
     def test_does_not_raise_on_oserror(self, adapter_factory: Callable[[], CLIAdapter]) -> None:
         adapter = adapter_factory()
-        with patch("bernstein.adapters.base.kill_process_group_graceful", return_value=False):
+        with patch("bernstein.adapters.base.reap_process_group", return_value=False):
             adapter.kill(556)  # must not raise
 
 

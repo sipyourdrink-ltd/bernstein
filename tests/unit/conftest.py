@@ -53,3 +53,44 @@ def _block_real_network(request: pytest.FixtureRequest) -> Iterator[None]:
         return
     with block_network():
         yield
+
+
+@pytest.fixture(autouse=True)
+def _reap_leaked_timeout_watchdogs():
+    """Cancel any timeout-watchdog Timer a spawn test leaves running.
+
+    ``CLIAdapter._start_timeout_watchdog`` starts a ``threading.Timer`` that
+    production code cancels when the agent is reaped. Adapter unit tests
+    routinely discard the ``SpawnResult`` (they only assert on the manifest
+    or log), so each spawn leaks a live Timer that sleeps for the full
+    timeout. Across a shard's worth of adapter tests these accumulate until
+    the process can no longer start new threads
+    (``RuntimeError: can't start new thread``), which flakes an unrelated
+    later test in the same shard. Cancel any that survive a test so worker
+    threads never pile up.
+    """
+    yield
+    import threading
+
+    for thread in threading.enumerate():
+        if isinstance(thread, threading.Timer) and thread.name.startswith("timeout-watchdog"):
+            thread.cancel()
+
+
+@pytest.fixture(autouse=True)
+def _reset_status_runtime_cache() -> None:
+    """Clear the status-dashboard runtime cache before every test.
+
+    ``bernstein.core.routes.status_dashboard`` memoises ``_runtime_summary``
+    results in module globals (``_runtime_cache`` / ``_runtime_cache_ts``)
+    with a 10s TTL. The cache is keyed on nothing, so every ``create_app``
+    instance in the process shares it: a test that hits ``/status`` or
+    ``/health`` serves its ``restart_count`` / ``memory_mb`` snapshot to any
+    test that runs within the TTL window, hiding that test's own app state.
+    Clearing the globals at setup makes each test read its own state
+    regardless of what ran before it.
+    """
+    status_dashboard = sys.modules.get("bernstein.core.routes.status_dashboard")
+    if status_dashboard is not None:
+        status_dashboard._runtime_cache = {}
+        status_dashboard._runtime_cache_ts = 0.0

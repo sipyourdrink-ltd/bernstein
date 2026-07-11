@@ -18,6 +18,7 @@
   "id": "task-001",
   "max_output_tokens": null,
   "max_retries": 3,
+  "max_turns": null,
   "meta_messages": [],
   "metadata": {},
   "model": null,

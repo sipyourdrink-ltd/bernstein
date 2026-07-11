@@ -123,12 +123,19 @@ class CatalogStatus:
 
 @dataclass(frozen=True)
 class SkillCatalogServiceConfig:
-    """Config knobs for :class:`SkillCatalogService`."""
+    """Config knobs for :class:`SkillCatalogService`.
+
+    Attributes:
+        audit_key_path: Optional override for the audit HMAC key file. Used
+            to anchor install receipts in the lineage spine; tests pass an
+            isolated path so the receipt spine does not depend on XDG state.
+    """
 
     workdir: Path
     scope: InstallScope = InstallScope.PROJECT
     home: Path | None = None
     check_interval_seconds: int = DEFAULT_CHECK_INTERVAL_SECONDS
+    audit_key_path: Path | None = None
 
 
 class SkillCatalogService:
@@ -346,6 +353,16 @@ class SkillCatalogService:
             from_chain_head=prev_chain_digest,
         )
 
+        # Anchor an install receipt in the lineage spine (issue #2301). The
+        # receipt's canonical bytes are the spine-hashed artifact, so its
+        # anchor is a chain-verifiable identity for the install; a matching
+        # audit-chain event ties the anchor into the HMAC audit log.
+        self._emit_install_receipt(
+            skill_hash=install_result.content_digest,
+            manifest_hash=manifest_sha,
+            install_id=install_id,
+        )
+
         return InstallOutcome(
             entry_id=entry.id,
             name=entry.name,
@@ -359,6 +376,63 @@ class SkillCatalogService:
             verified=outcome.verified,
             verification_reason=outcome.reason,
         )
+
+    @property
+    def lineage_root(self) -> Path:
+        """Root of the per-run lineage spine store (``.sdd/lineage``)."""
+        return self._config.workdir / ".sdd" / "lineage"
+
+    def _emit_install_receipt(
+        self,
+        *,
+        skill_hash: str,
+        manifest_hash: str,
+        install_id: str,
+    ) -> None:
+        """Write the install receipt to the spine and the audit chain.
+
+        Never raises into the install path: a spine or audit-chain hiccup
+        must not leave the operator's skill directory half-installed. The
+        failure is logged and the content-hash pinning in the lockfile still
+        stands (issue #2301).
+        """
+        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit_chain import (
+            AuditChainStore,
+            record_skill_install_receipt,
+        )
+        from bernstein.core.skills.provenance import (
+            InstallReceipt,
+            write_install_receipt,
+        )
+
+        try:
+            hmac_key = load_or_create_audit_key(self._config.audit_key_path)
+            # ``skill_hash`` is the skill's content digest (BLAKE2b hex from
+            # the lifecycle layer); it is an opaque content-address here.
+            receipt = InstallReceipt(
+                skill_hash=skill_hash,
+                manifest_hash=manifest_hash,
+                install_id=install_id,
+                timestamp=int(datetime.now(tz=UTC).timestamp()),
+            )
+            anchor = write_install_receipt(
+                workdir=self._config.workdir,
+                lineage_root=self.lineage_root,
+                hmac_key=hmac_key,
+                receipt=receipt,
+            )
+            audit_dir = self._config.workdir / ".sdd" / "audit"
+            chain = AuditChainStore(audit_dir, key=hmac_key)
+            record_skill_install_receipt(
+                chain=chain,
+                skill_hash=skill_hash,
+                manifest_hash=manifest_hash,
+                install_id=install_id,
+                spine_anchor=anchor,
+            )
+        except Exception as exc:
+            logger.warning("skill install receipt emission failed for %s: %s", skill_hash, exc)
 
     def upgrade(
         self,

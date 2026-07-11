@@ -106,7 +106,7 @@ jobs:
       idempotent_skip: ${{ steps.idempotency.outputs.skip }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
 
@@ -149,7 +149,7 @@ jobs:
         # SHA-pinned action vendors a pinned uv release, so the toolchain
         # is reproducible without an unpinned `pip install` step
         # (Scorecard pinned-dependencies).
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
           python-version: "3.13"
@@ -294,7 +294,7 @@ jobs:
       outcome: ${{ steps.outcome.outputs.outcome }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
 
@@ -326,7 +326,7 @@ jobs:
           git -c advice.detachedHead=false checkout "$HEAD_SHA"
 
       - name: Install uv (provides Python via .python-version)
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
 

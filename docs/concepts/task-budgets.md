@@ -76,5 +76,5 @@ Two Prometheus surfaces land on `/metrics`:
 - Cursor Glass arbitration pause: <https://cursor.com/changelog>
   (April 2 2026)
 
-[format]: ../../src/bernstein/core/cost/budget_countdown.py
-[gracefully]: ../../src/bernstein/core/cost/budget_countdown.py
+[format]: https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/cost/budget_countdown.py
+[gracefully]: https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/cost/budget_countdown.py

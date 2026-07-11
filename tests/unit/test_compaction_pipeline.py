@@ -170,6 +170,106 @@ class TestCompactionPipeline:
         assert result.pre_hook_ok is False
 
 
+class TestSensitiveGateIntegration:
+    """The pipeline refuses to forward credential-shaped content to the LLM."""
+
+    PEM_BLOCK = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIEowIBAAKCAQEA7bq7wmiCPDlKcQXn3pg9qF4mUJVjcMZLxQ2R8aTnW1sBvKd0\n"
+        "-----END RSA PRIVATE KEY-----"
+    )
+
+    def test_pem_block_never_reaches_summary_boundary(self) -> None:
+        """Acceptance: fixture PEM content is absent from the outbound payload."""
+        pipeline = CompactionPipeline(plugin_manager=None)
+        context = f"# Notes\nkey file contents:\n{self.PEM_BLOCK}\nmore notes"
+        summary_mock = MagicMock(return_value="[summary]")
+        with patch(
+            "bernstein.core.tokens.compaction_pipeline.summarize_context",
+            summary_mock,
+        ):
+            result = pipeline.execute(
+                session_id="s-gate-1",
+                context_text=context,
+                tokens_before=500,
+            )
+        assert result.gate_action == "redacted"
+        summary_mock.assert_called_once()
+        outbound_text = summary_mock.call_args.args[0]
+        assert "PRIVATE KEY" not in outbound_text
+        assert "MIIEowIBAAKCAQEA" not in outbound_text
+        assert "[REDACTED:content.pem-private-key:" in outbound_text
+
+    def test_refusal_skips_summary_and_keeps_original(self) -> None:
+        pipeline = CompactionPipeline(plugin_manager=None)
+        context = "$ cat .env\nAWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCyEXAMPLEKEY\n"
+        summary_mock = MagicMock(return_value="[summary]")
+        with patch(
+            "bernstein.core.tokens.compaction_pipeline.summarize_context",
+            summary_mock,
+        ):
+            result = pipeline.execute(
+                session_id="s-gate-2",
+                context_text=context,
+                tokens_before=500,
+            )
+        summary_mock.assert_not_called()
+        assert result.gate_action == "refused"
+        assert result.compacted_text == context
+        assert result.tokens_saved == 0
+
+    def test_gate_can_be_disabled_per_call(self) -> None:
+        pipeline = CompactionPipeline(plugin_manager=None)
+        summary_mock = MagicMock(return_value="[summary]")
+        with patch(
+            "bernstein.core.tokens.compaction_pipeline.summarize_context",
+            summary_mock,
+        ):
+            result = pipeline.execute(
+                session_id="s-gate-3",
+                context_text=f"x\n{self.PEM_BLOCK}\ny",
+                tokens_before=500,
+                sensitive_gate=False,
+            )
+        assert result.gate_action == "allow"
+        assert "PRIVATE KEY" in summary_mock.call_args.args[0]
+
+    def test_gate_events_land_in_injected_audit_chain(self, tmp_path: object) -> None:
+        from pathlib import Path
+
+        from bernstein.core.security.audit_chain import (
+            EVENT_COMPACTION_SENSITIVE_GATE,
+            AuditChainStore,
+        )
+
+        chain = AuditChainStore(Path(str(tmp_path)) / "audit", key=b"k" * 32)
+        pipeline = CompactionPipeline(plugin_manager=None)
+        result = pipeline.execute(
+            session_id="s-gate-4",
+            context_text=f"x\n{self.PEM_BLOCK}\ny",
+            tokens_before=500,
+            task_id="task-42",
+            audit_chain=chain,
+        )
+        assert result.gate_action == "redacted"
+        events = chain.query(event_type=EVENT_COMPACTION_SENSITIVE_GATE)
+        assert len(events) == 1
+        assert events[0].details["task_id"] == "task-42"
+        assert events[0].details["action"] == "redacted"
+        ok, errors = chain.verify()
+        assert ok, errors
+
+    def test_gate_result_defaults_to_allow_for_clean_context(self) -> None:
+        pipeline = CompactionPipeline(plugin_manager=None)
+        result = pipeline.execute(
+            session_id="s-gate-5",
+            context_text="# Header\nnormal notes\n",
+            tokens_before=100,
+        )
+        assert result.gate_action == "allow"
+        assert result.gate_rule_ids == ()
+
+
 class TestPayloads:
     def test_pre_compact_payload_fields(self) -> None:
         payload = PreCompactPayload(

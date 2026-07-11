@@ -169,8 +169,32 @@ class TestAdapterContract:
         assert callable(adapter.detect_tier)
 
     def test_spawn_signature_matches_base(self, name: str, factory: Any) -> None:
+        """Every base parameter must be untouched; adapter-specific extras
+        must be keyword-only with a default.
+
+        The spawner threads optional capabilities (e.g. ``explicit_max_turns``)
+        to adapters by inspecting ``spawn()`` signatures, so adapters may
+        extend the base contract - but only in a way that keeps every
+        base-shaped call site working unchanged.
+        """
         adapter = factory()
-        assert inspect.signature(type(adapter).spawn) == inspect.signature(CLIAdapter.spawn)
+        base_sig = inspect.signature(CLIAdapter.spawn)
+        adapter_sig = inspect.signature(type(adapter).spawn)
+        assert adapter_sig.return_annotation == base_sig.return_annotation, (
+            f"{name}.spawn() changed the return annotation"
+        )
+        for pname, param in base_sig.parameters.items():
+            assert pname in adapter_sig.parameters, f"{name}.spawn() is missing base parameter {pname!r}"
+            assert adapter_sig.parameters[pname] == param, f"{name}.spawn() altered base parameter {pname!r}"
+        for pname, param in adapter_sig.parameters.items():
+            if pname in base_sig.parameters:
+                continue
+            assert param.kind is inspect.Parameter.KEYWORD_ONLY, (
+                f"{name}.spawn() extra parameter {pname!r} must be keyword-only"
+            )
+            assert param.default is not inspect.Parameter.empty, (
+                f"{name}.spawn() extra parameter {pname!r} must have a default"
+            )
 
     def test_spawn_returns_spawn_result(self, name: str, factory: Any, tmp_path: Path) -> None:
         adapter = factory()
@@ -199,12 +223,12 @@ class TestAdapterContract:
 
     def test_kill_does_not_raise(self, name: str, factory: Any) -> None:
         adapter = factory()
-        with patch("bernstein.adapters.base.kill_process_group_graceful"):
+        with patch("bernstein.adapters.base.reap_process_group"):
             adapter.kill(999)  # must not raise
 
     def test_kill_suppresses_oserror(self, name: str, factory: Any) -> None:
         adapter = factory()
-        with patch("bernstein.adapters.base.kill_process_group_graceful", return_value=False):
+        with patch("bernstein.adapters.base.reap_process_group", return_value=False):
             adapter.kill(99999)  # must not raise
 
     def test_detect_tier_returns_none_or_api_tier_info(self, name: str, factory: Any) -> None:

@@ -1,16 +1,29 @@
 name: SonarQube scan
 
-# Runs after main CI succeeds or on manual dispatch.
+# Runs after main CI succeeds, on a daily schedule, or on manual dispatch.
 #
-# The workflow consumes the coverage-report artifact from the same CI run
-# that triggered it. It intentionally does not run directly on push:
-# push-time scans can start before CI uploads coverage.xml and then report
-# a partial fallback coverage number for main.
+# The workflow_run path consumes the coverage-report artifact from the same CI
+# run that triggered it, so it reports accurate main coverage. It intentionally
+# does not run directly on push: push-time scans can start before CI uploads
+# coverage.xml and then report a partial fallback coverage number for main.
+#
+# The daily schedule is a reliability backstop. CI on main uses
+# cancel-in-progress: true, so under a rapid-merge cadence most main CI runs are
+# cancelled by the next push and never reach success; the workflow_run gate then
+# short-circuits this scan to skipped on the majority of pushes. The scheduled
+# run has no cancellable upstream: it resolves the most recent successful main
+# CI run and pulls its coverage artifact, and if none is available it regenerates
+# coverage in-job, so a scan lands at least daily even when workflow_run scans
+# keep skipping. This also keeps the downstream tracker, which chains on a
+# successful scan, from starving.
 on:  # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["CI"]
     branches: [main]
     types: [completed]
+  schedule:
+    # Daily backstop at 04:17 UTC. Off the hour to avoid the top-of-hour rush.
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -26,17 +39,18 @@ jobs:
     name: SonarQube scan
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Run after main CI succeeds or on manual dispatch.
+    # Run after main CI succeeds, on the daily schedule, or on manual dispatch.
     # SONAR_HOST_URL must be configured as a repo variable.
     if: >-
       ${{ vars.SONAR_HOST_URL != '' &&
           (github.event_name == 'workflow_dispatch' ||
+           github.event_name == 'schedule' ||
            (github.event_name == 'workflow_run' &&
             github.event.workflow_run.conclusion == 'success' &&
             github.event.workflow_run.head_branch == 'main')) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
         with:
           egress-policy: audit
           disable-sudo: true
@@ -49,10 +63,10 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
 
-      # Manual dispatch has no upstream run id, so resolve the most recent
-      # successful main CI run and pull its coverage-report artifact.
-      - name: Resolve latest successful CI run (workflow_dispatch)
-        if: github.event_name == 'workflow_dispatch'
+      # Schedule and manual dispatch have no upstream run id, so resolve the
+      # most recent successful main CI run and pull its coverage-report artifact.
+      - name: Resolve latest successful CI run (schedule/dispatch)
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         id: ci_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -69,7 +83,7 @@ jobs:
             echo "Found successful CI run: $run_id"
             echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::No successful CI run found on main; scanning without coverage"
+            echo "::warning::No successful CI run found on main; will regenerate coverage in-job"
           fi
 
       - name: Download coverage artifact (workflow_run)
@@ -81,9 +95,9 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download coverage artifact (workflow_dispatch)
-        if: github.event_name == 'workflow_dispatch' && steps.ci_run.outputs.run_id != ''
-        continue-on-error: true  # manual bootstrap may not have a usable artifact
+      - name: Download coverage artifact (schedule/dispatch)
+        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && steps.ci_run.outputs.run_id != ''
+        continue-on-error: true  # the resolved run's artifact may be past retention
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: coverage-report
@@ -103,16 +117,19 @@ jobs:
           fi
 
       - name: Set up uv for fallback
-        if: github.event_name == 'workflow_dispatch' && steps.coverage_check.outputs.missing == 'true'
+        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && steps.coverage_check.outputs.missing == 'true'
         uses: ./.github/actions/bootstrap
 
-      # Thin coverage fallback is manual-dispatch only. Automatic main
-      # scans without a CI coverage artifact skip the Sonar upload instead
-      # of sending a partial fallback coverage report.
+      # Thin coverage fallback runs on the schedule/dispatch backstop only. It
+      # regenerates a coverage report in-job so the daily scan always lands a
+      # coverage number even when no CI coverage artifact is available (fresh
+      # repo, artifact past retention, or no successful CI run yet). Automatic
+      # workflow_run scans without the matching CI artifact skip the Sonar upload
+      # instead of sending a partial fallback coverage report for main.
       - name: Thin coverage fallback
-        if: github.event_name == 'workflow_dispatch' && steps.coverage_check.outputs.missing == 'true'
+        if: (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && steps.coverage_check.outputs.missing == 'true'
         timeout-minutes: 10
-        continue-on-error: true  # manual bootstrap should not fail before the scan step
+        continue-on-error: true  # backstop should not fail before the scan step
         run: |
           set +e
           uv sync --group dev --no-progress 2>&1 | tail -20 || true

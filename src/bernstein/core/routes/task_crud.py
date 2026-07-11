@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import subprocess
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -27,6 +29,7 @@ from bernstein.core.eu_ai_act import (
 from bernstein.core.lifecycle import IllegalTransitionError
 from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
+from bernstein.core.security.sanitize import sanitize_log
 
 # Import Pydantic models from server - this works because server.py's
 # __getattr__ defers the `app` creation, so the module body (class defs)
@@ -58,6 +61,7 @@ from bernstein.core.server import (
     TaskFailRequest,
     TaskPatchRequest,
     TaskProgressRequest,
+    TaskReopenRequest,
     TaskResponse,
     TaskSelfCreate,
     TaskStore,
@@ -66,6 +70,18 @@ from bernstein.core.server import (
     task_to_response,
 )
 from bernstein.core.task_store import ArchiveRecord, EmptyCompletionError, SnapshotEntry
+from bernstein.core.tasks.contracts import (
+    WORKER_CONTRACT_VERSION as _CONTRACT_VERSION,
+)
+from bernstein.core.tasks.contracts import (
+    ContractViolation,
+    RefusalKind,
+    WorkerCompletion,
+    WorkerRefusal,
+    looks_like_contract_payload,
+    parse_terminal_payload,
+    parse_terminal_payload_text,
+)
 from bernstein.core.telemetry import start_span
 from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
 from bernstein.plugins.manager import HookBlockingError, get_plugin_manager
@@ -107,6 +123,38 @@ def _get_direct_channel(request: Request) -> DirectChannel:
 
 def _get_runtime_dir(request: Request) -> Path:
     return request.app.state.runtime_dir  # type: ignore[no-any-return]
+
+
+def _record_claim_receipt(request: Request, task: Task, claim_path: str) -> None:
+    """Mirror a granted claim into the audit chain (#2357).
+
+    Claims become journal entries: the receipt carries the dependency
+    snapshot the claim was granted under, so claim eligibility is
+    reconstructable from the chain alone. Best-effort - a chain append
+    failure never blocks the claim that already happened.
+    """
+    chain = getattr(request.app.state, "audit_chain", None)
+    if chain is None:
+        return
+    from bernstein.core.security.audit_chain import record_task_claim_receipt
+
+    try:
+        record_task_claim_receipt(
+            chain=chain,
+            task_id=task.id,
+            role=task.role,
+            claimed_by=task.claimed_by_session or task.assigned_agent or "",
+            depends_on=list(task.depends_on),
+            task_version=task.version,
+            claim_path=claim_path,
+        )
+    except Exception as exc:  # intentional-broad-except: receipt mirror is best-effort, never blocks the claim
+        logger.warning("task.claim receipt append failed: %s", type(exc).__name__)
+
+
+def _get_workdir(request: Request) -> Path:
+    """Return the repository root from application state."""
+    return request.app.state.workdir  # type: ignore[no-any-return]
 
 
 def _get_gate_report_path(request: Request, task_id: str) -> Path:
@@ -198,6 +246,320 @@ def _evict_realtime_session(request: Request, session_id: str | None) -> None:
             monitor.evict_session(session_id)
 
 
+# ---------------------------------------------------------------------------
+# Auto-commit pre-/complete hook (defect 33)
+# ---------------------------------------------------------------------------
+#
+# Workers were previously expected to ``git commit`` before POSTing
+# /complete (the prompt contract landed in 59fdc178/88611aab).  This hook
+# moves the obligation from "remember to commit" to "the route commits for
+# you" so a worker that forgets still has its work delivered.  Failures are
+# swallowed: the orchestrator's janitor still observes a 0-diff task on
+# /complete's branch and can FAIL it, which the bounded-reopen path
+# (test_janitor_reopen) handles.  See defect 33 in the scoreboard.
+
+_AUTO_COMMIT_DENY_DIR_PREFIXES: tuple[str, ...] = (
+    ".sdd/",
+    "attestations/",
+    "auth/",
+)
+_AUTO_COMMIT_DENY_EXACT: tuple[str, ...] = (
+    "bernstein.yaml",
+    ".claude/mcp.json",
+)
+_AUTO_COMMIT_DENY_GLOBS: tuple[str, ...] = (".env", ".env.*")
+
+
+def _is_auto_commit_denied(path: str) -> bool:
+    """Return True when *path* matches the auto-commit deny list.
+
+    Rules:
+      * Path starts with any prefix in ``_AUTO_COMMIT_DENY_DIR_PREFIXES``
+        (matched against forward-slash separators).
+      * Path equals any exact entry in ``_AUTO_COMMIT_DENY_EXACT``.
+      * Path matches any glob in ``_AUTO_COMMIT_DENY_GLOBS`` (.env,
+        .env.<anything>).
+    """
+    p = path.replace("\\", "/")
+    if p in _AUTO_COMMIT_DENY_EXACT:
+        return True
+    for prefix in _AUTO_COMMIT_DENY_DIR_PREFIXES:
+        if p.startswith(prefix):
+            return True
+    base = os.path.basename(p)
+    for glob in _AUTO_COMMIT_DENY_GLOBS:
+        if glob.endswith(".*"):
+            stem = glob[:-2]
+            # Match against the basename as well as the full path so a
+            # nested dotenv variant (e.g. ``config/.env.local``) stays
+            # denied -- the full-path checks alone only cover repo-root
+            # ``.env.*`` files.
+            if p == stem or p.startswith(stem + ".") or base == stem or base.startswith(stem + "."):
+                return True
+        # Exact basename/path match rather than substring containment --
+        # substring containment (``glob in p``) would also match unrelated
+        # paths that merely contain ".env" somewhere, e.g. ".envrc" or
+        # "config.envelope.json", silently excluding legitimate files from
+        # auto-commit.
+        elif glob in (p, base):
+            return True
+    return False
+
+
+def _is_salvage_branch(branch_name: str | None) -> bool:
+    """Return True when *branch_name* is a salvage/graveyard branch.
+
+    The existing convention (bernstein.core.git.salvage) uses
+    ``salvage/<session-id>`` branches.  We also defend against any branch
+    containing ``bernstein-salvage`` as a backstop in case future tooling
+    changes the prefix.
+    """
+    if not branch_name:
+        return False
+    if branch_name.startswith("salvage/"):
+        return True
+    return "bernstein-salvage" in branch_name
+
+
+def _run_auto_commit_pre_complete(
+    request: Request,
+    task: Task,
+) -> None:
+    """Auto-commit any uncommitted changes in the worker's worktree.
+
+    Runs AFTER the worker reports done via /complete, BEFORE the task
+    transitions to done in the store.  Operates only on the worker's
+    primary worktree (``.sdd/worktrees/<session-id>``) and on the
+    worker's ``agent/<session-id>`` branch.  Salvage / graveyard
+    branches are skipped.
+
+    Logging contract (house rule 2 - full logging, never silent):
+
+      * ``auto_commit_pre_complete: task=<id> session=<s> reason=already_committed``
+      * ``auto_commit_pre_complete: task=<id> session=<s> reason=skipped_salvage_branch branch=<name>``
+      * ``auto_commit_pre_complete: task=<id> session=<s> reason=nothing_to_commit``
+      * ``auto_commit_pre_complete: task=<id> session=<s> files=<list> reason=uncommitted_changes_at_complete``
+      * ``auto_commit_pre_complete_failed: task=<id> session=<s> error=<msg> files=<list>`` (WARN)
+
+    All errors are swallowed (fail-open) so the orchestrator's lifecycle
+    machinery still observes a /complete - see spec step 6.
+    """
+    session_id = task.claimed_by_session
+    if not session_id:
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=None reason=no_session",
+            sanitize_log(str(task.id)),
+        )
+        return
+
+    workdir = _get_workdir(request)
+    worktree_path = workdir / ".sdd" / "worktrees" / session_id
+
+    if not worktree_path.exists() or not worktree_path.is_dir():
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s reason=no_worktree path=%s",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(worktree_path)),
+        )
+        return
+
+    branch_name: str | None = None
+    try:
+        branch_proc = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if branch_proc.returncode == 0:
+            branch_name = branch_proc.stdout.strip() or None
+    except Exception as exc:  # pragma: no cover  # intentional-broad-except: branch lookup is best-effort
+        logger.debug(
+            "auto_commit_pre_complete: task=%s session=%s branch_lookup_error=%s",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
+        )
+
+    if _is_salvage_branch(branch_name):
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s reason=skipped_salvage_branch branch=%s",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(branch_name or ""),
+        )
+        return
+
+    try:
+        already = subprocess.run(
+            ["git", "log", "-50", f"--grep={task.id}", "--fixed-strings"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if already.returncode == 0 and already.stdout.strip():
+            logger.info(
+                "auto_commit_pre_complete: task=%s session=%s reason=already_committed",
+                sanitize_log(str(task.id)),
+                sanitize_log(str(session_id)),
+            )
+            return
+    except Exception as exc:  # intentional-broad-except: already-committed check is best-effort
+        logger.warning(
+            "auto_commit_pre_complete_failed: task=%s session=%s error=%s stage=already_committed_check",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
+        )
+
+    files_to_commit: list[str] = []
+    try:
+        merge_base_proc = subprocess.run(
+            ["git", "merge-base", "HEAD", "origin/main"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if merge_base_proc.returncode == 0 and merge_base_proc.stdout.strip():
+            base = merge_base_proc.stdout.strip().splitlines()[0]
+            diff_proc = subprocess.run(
+                ["git", "diff", "--name-only", f"{base}..HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            if diff_proc.returncode == 0:
+                files_to_commit.extend(line.strip() for line in diff_proc.stdout.splitlines() if line.strip())
+
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if status_proc.returncode == 0:
+            for line in status_proc.stdout.splitlines():
+                if len(line) < 4:
+                    continue
+                path = line[3:].strip()
+                if " -> " in path:
+                    path = path.split(" -> ", 1)[1].strip()
+                if path and not _is_auto_commit_denied(path):
+                    files_to_commit.append(path)
+    except Exception as exc:  # intentional-broad-except: file enumeration is best-effort
+        logger.warning(
+            "auto_commit_pre_complete_failed: task=%s session=%s error=%s stage=file_enumeration",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
+        )
+        return
+
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for p in files_to_commit:
+        if p not in seen:
+            seen.add(p)
+            deduped.append(p)
+    files_to_commit = deduped
+
+    if not files_to_commit:
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s reason=nothing_to_commit",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+        )
+        return
+
+    try:
+        commit_set = [p for p in files_to_commit if not _is_auto_commit_denied(p)]
+        if not commit_set:
+            logger.info(
+                "auto_commit_pre_complete: task=%s session=%s reason=nothing_to_commit (deny-list excluded all)",
+                sanitize_log(str(task.id)),
+                sanitize_log(str(session_id)),
+            )
+            return
+
+        add_proc = subprocess.run(
+            ["git", "add", "--", *commit_set],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if add_proc.returncode != 0:
+            logger.warning(
+                "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s stage=git_add",
+                sanitize_log(str(task.id)),
+                sanitize_log(str(session_id)),
+                sanitize_log((add_proc.stderr or add_proc.stdout or "").strip()[:500]),
+                sanitize_log(str(commit_set)),
+            )
+            return
+
+        commit_message = f"auto: {task.id} pre-/complete"
+        commit_proc = subprocess.run(
+            ["git", "commit", "-m", commit_message],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        if commit_proc.returncode != 0:
+            stderr = (commit_proc.stderr or commit_proc.stdout or "").strip()
+            if "nothing to commit" in stderr or "no changes added" in stderr:
+                logger.info(
+                    "auto_commit_pre_complete: task=%s session=%s reason=already_committed (raced-during-stage)",
+                    sanitize_log(str(task.id)),
+                    sanitize_log(str(session_id)),
+                )
+                return
+            logger.warning(
+                "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s stage=git_commit",
+                sanitize_log(str(task.id)),
+                sanitize_log(str(session_id)),
+                sanitize_log(stderr[:500]),
+                sanitize_log(str(commit_set)),
+            )
+            return
+
+        logger.info(
+            "auto_commit_pre_complete: task=%s session=%s files=%s reason=uncommitted_changes_at_complete",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(commit_set)),
+        )
+    except Exception as exc:  # intentional-broad-except: auto-commit is best-effort, never blocks completion
+        logger.warning(
+            "auto_commit_pre_complete_failed: task=%s session=%s error=%s files=%s",
+            sanitize_log(str(task.id)),
+            sanitize_log(str(session_id)),
+            sanitize_log(str(exc)),
+            sanitize_log(str(files_to_commit)),
+        )
+
+
 def _try_check_realtime_anomaly(
     request: Request,
     task_id: str,
@@ -235,16 +597,14 @@ def _try_check_realtime_anomaly(
         for signal in signals:
             logger.warning(
                 "Realtime anomaly [%s] agent=%s task=%s: %s",
-                signal.rule,
-                signal.agent_id,
-                signal.task_id,
-                signal.message,
+                sanitize_log(str(signal.rule)),
+                sanitize_log(str(signal.agent_id)),
+                sanitize_log(str(signal.task_id)),
+                sanitize_log(str(signal.message)),
             )
     # intentional-broad-except: best-effort anomaly probe must never break the
     # progress route; surface modes include AttributeError on partial wiring.
     except Exception:
-        from bernstein.core.sanitize import sanitize_log
-
         logger.debug("Realtime behavior check failed for task %s", sanitize_log(task_id), exc_info=True)
 
 
@@ -288,15 +648,13 @@ def _try_attest_task_completion(
         method = "Ed25519 fallback" if record.fallback_used else "Sigstore/Rekor"
         logger.info(
             "Task %s attested via %s: bundle=%s",
-            task_id,
-            method,
-            record.bundle_path,
+            sanitize_log(task_id),
+            sanitize_log(method),
+            sanitize_log(str(record.bundle_path)),
         )
     # intentional-broad-except: attestation is opt-in telemetry (Sigstore HTTP,
     # Ed25519 key IO, Rekor rate limits); must never break the task route.
     except Exception:
-        from bernstein.core.sanitize import sanitize_log
-
         logger.warning("Attestation failed for task %s (non-fatal)", sanitize_log(task_id), exc_info=True)
 
 
@@ -451,6 +809,52 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
         except HookBlockingError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        # Validate the requested role against the operator's configured
+        # role_model_policy, when one is configured for this run. This is a
+        # hard 400 (not just a log line) so the calling LLM gets an
+        # immediate, actionable error instead of silently falling back to a
+        # default provider/model at spawn time (see spawner_core.py's
+        # _resolve_role_policy, which is exact-match only against
+        # role_model_policy keys plus the "default" catch-all).
+        #
+        # "auto" is exempted because it is resolved to a concrete role via
+        # classify_role() above, before this check ever runs -- but we still
+        # guard it defensively in case that resolution is ever bypassed.
+        raw_role = effective_body.role
+        seed_config = getattr(request.app.state, "seed_config", None)
+        role_model_policy: dict[str, Any] | None = getattr(seed_config, "role_model_policy", None)
+        if role_model_policy:
+            policy_keys = list(role_model_policy.keys())
+            # "default" is a catch-all config entry, not an assignable role --
+            # never advertise it as a valid choice to the calling LLM.
+            valid_roles = [k for k in policy_keys if k != "default"]
+            if raw_role != "auto" and raw_role not in role_model_policy:
+                logger.warning(
+                    "Rejecting task create: title=%r attempted role=%r is not a valid role. Valid roles=%s",
+                    sanitize_log(str(effective_body.title)),
+                    sanitize_log(str(raw_role)),
+                    valid_roles,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid role '{raw_role}'. Valid roles: "
+                        f"[{', '.join(valid_roles)}]. Use one of these exact strings."
+                    ),
+                )
+            logger.info(
+                "Task created with role=%r matched against role_model_policy keys=%s",
+                sanitize_log(str(raw_role)),
+                policy_keys,
+            )
+        else:
+            logger.info(
+                "Task created with role=%r; no role_model_policy configured on this run "
+                "(seed_config=%s) -- skipping role validation",
+                sanitize_log(str(raw_role)),
+                "present but empty" if seed_config is not None else "absent",
+            )
+
         task = await store.create(effective_body)
         append_assessment_log(
             request.app.state.sdd_dir,
@@ -509,7 +913,7 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
                 description=effective.description,
             )
         except HookBlockingError:
-            logger.warning("Pre-create hook blocked task '%s' - skipping", effective.title)
+            logger.warning("Pre-create hook blocked task '%s' - skipping", sanitize_log(str(effective.title)))
             continue
 
         prepared.append(effective)
@@ -626,7 +1030,14 @@ async def next_task(
         parent_session_id=parent_session_id,
     )
     if task is None:
+        logger.info(
+            "task.next 404: role=%s claimed_by_session=%s parent_session_id=%s no open tasks",
+            sanitize_log(role),
+            sanitize_log(str(claimed_by_session)),
+            sanitize_log(str(parent_session_id)),
+        )
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
+    _record_claim_receipt(request, task, "next")
     return task_to_response(task)
 
 
@@ -650,6 +1061,18 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
             claimed_by_session=body.claimed_by_session,
             tenant_id=tenant_id,
         )
+        if failed:
+            logger.warning(
+                "task.claim_batch partial failure: agent_id=%s requested=%d claimed=%d failed=%s",
+                sanitize_log(body.agent_id),
+                len(body.task_ids),
+                len(claimed),
+                sanitize_log(str(failed)),
+            )
+        for claimed_id in claimed:
+            claimed_task = store.get_task(claimed_id)
+            if claimed_task is not None:
+                _record_claim_receipt(request, claimed_task, "batch")
         return BatchClaimResponse(claimed=claimed, failed=failed)
 
 
@@ -688,17 +1111,158 @@ async def claim_task(
             if task is None:
                 raise KeyError
             _require_task_access(task, request)
+            pre_claim_status = task.status.value
+            pre_claim_version = task.version
             task = await store.claim_by_id(
                 task_id,
                 expected_version=expected_version,
                 claimed_by_session=claimed_by_session,
             )
         except KeyError:
+            logger.warning(
+                "task.claim 404: task_id=%s not found (claimed_by_session=%s)",
+                sanitize_log(task_id),
+                sanitize_log(str(claimed_by_session)),
+            )
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
         except ValueError as exc:
+            # This is the single most important line for diagnosing claim-conflict
+            # churn: log expected vs. actual version/status so a retry storm is
+            # visible from the server log alone, without needing client-side traces.
+            logger.warning(
+                "task.claim 409: task_id=%s expected_version=%s actual_version=%s "
+                "pre_claim_status=%s claimed_by_session=%s reason=%s",
+                sanitize_log(task_id),
+                sanitize_log(str(expected_version)),
+                pre_claim_version,
+                pre_claim_status,
+                sanitize_log(str(claimed_by_session)),
+                sanitize_log(str(exc)),
+            )
             raise HTTPException(status_code=409, detail=str(exc)) from None
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "claimed"}))
+        logger.info(
+            "task.claim ok: task_id=%s new_version=%s claimed_by_session=%s",
+            sanitize_log(task.id),
+            task.version,
+            sanitize_log(str(claimed_by_session)),
+        )
+        _record_claim_receipt(request, task, "by_id")
         return task_to_response(task)
+
+
+def _parse_terminal_body(body: TaskCompleteRequest) -> WorkerCompletion | WorkerRefusal | None:
+    """Extract and validate a structured terminal payload from the body.
+
+    Returns ``None`` for legacy prose summaries, which stay accepted
+    unchanged. An explicit ``payload`` object, or a ``result_summary``
+    that is itself a JSON object, is validated against the worker
+    completion contract.
+
+    Raises:
+        ContractViolation: When the structured payload fails validation.
+    """
+    if body.payload is not None:
+        return parse_terminal_payload(body.payload)
+    if looks_like_contract_payload(body.result_summary):
+        return parse_terminal_payload_text(body.result_summary)
+    return None
+
+
+async def _handle_contract_violation(
+    request: Request,
+    task_id: str,
+    violation: ContractViolation,
+    store: TaskStore,
+    sse_bus: SSEBus,
+) -> HTTPException:
+    """Fail a task whose terminal payload violated the contract.
+
+    The task is auto-failed with ``terminal_reason='contract_violation'``
+    so the worker slot is released atomically, mirroring the empty-summary
+    path. Returns the HTTPException for the caller to raise (422 with the
+    schema error path, or 409 when the task is already terminal).
+    """
+    try:
+        failed_task = await store.fail_contract_violation(task_id, violation)
+    except IllegalTransitionError as exc:
+        return HTTPException(status_code=409, detail=str(exc))
+    logger.warning(
+        "task.complete contract_violation: task_id=%s path=%s",
+        sanitize_log(task_id),
+        sanitize_log(violation.path),
+    )
+    sse_bus.publish("task_update", json.dumps({"id": failed_task.id, "status": failed_task.status.value}))
+    get_plugin_manager().fire_task_failed(
+        task_id=failed_task.id,
+        role=failed_task.role,
+        error=f"contract_violation: {violation.path}",
+    )
+    _update_file_health(request, failed_task.id, list(failed_task.owned_files), "failure")
+    return HTTPException(
+        status_code=422,
+        detail={
+            "error": "contract_violation",
+            "message": violation.message,
+            "schema_error_path": violation.path,
+            "contract_version": _CONTRACT_VERSION,
+            "task_id": task_id,
+            "status": failed_task.status.value,
+        },
+    )
+
+
+def _write_refusal_approval_item(request: Request, task: Task, refusal: WorkerRefusal) -> None:
+    """Surface an ``awaiting_operator`` refusal as a pending approval item.
+
+    Writes the same file shape the approvals routes list from
+    ``.sdd/runtime/pending_approvals/``, so the operator sees the question
+    in the existing approvals surface. Best-effort: an unwritable runtime
+    directory must not fail the refusal that already landed.
+    """
+    pending_dir = _get_workdir(request) / ".sdd" / "runtime" / "pending_approvals"
+    item = {
+        "task_id": task.id,
+        "task_title": task.title,
+        "session_id": task.claimed_by_session or "",
+        "diff": "",
+        "test_summary": f"Operator input requested: {refusal.question}",
+    }
+    try:
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        (pending_dir / f"{task.id}.json").write_text(json.dumps(item, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.warning(
+            "Could not write pending approval item for refused task %s: %s",
+            sanitize_log(task.id),
+            exc,
+        )
+
+
+async def _finalize_refusal(
+    request: Request,
+    task: Task,
+    refusal: WorkerRefusal,
+    store: TaskStore,
+    sse_bus: SSEBus,
+) -> TaskResponse:
+    """Post-process a refusal that already landed in the store.
+
+    Routes the refusal kind deterministically: ``scope_exceeded`` feeds
+    the follow-up task machinery (content-addressed ids, so redelivery
+    cannot duplicate the split) and ``awaiting_operator`` surfaces as an
+    operator approval item.
+    """
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+    if refusal.kind is RefusalKind.SCOPE_EXCEEDED:
+        created = await store.create_refusal_follow_ups(task, refusal)
+        for follow_up in created:
+            sse_bus.publish("task_update", json.dumps({"id": follow_up.id, "status": "open"}))
+    elif refusal.kind is RefusalKind.AWAITING_OPERATOR:
+        _write_refusal_approval_item(request, task, refusal)
+    # Evict session from the real-time monitor to free memory
+    _evict_realtime_session(request, task.claimed_by_session)
+    return task_to_response(task)
 
 
 @router.post(
@@ -706,11 +1270,18 @@ async def claim_task(
     responses={
         404: {"description": "Task not found"},
         409: {"description": "Invalid state transition"},
-        422: {"description": "Empty result_summary - task auto-failed"},
+        422: {"description": "Empty result_summary or contract violation - task auto-failed"},
     },
 )
 async def complete_task(task_id: str, body: TaskCompleteRequest, request: Request) -> TaskResponse:
-    """Mark a task as done with a result summary.
+    """Mark a task as done (or refused) from a worker terminal payload.
+
+    Structured payloads (``body.payload`` or a JSON object embedded in
+    ``result_summary``) are validated against the worker completion
+    contract (#2244): an invalid payload is a typed ``contract_violation``
+    failure carrying the schema error path, and a validated refusal lands
+    the task in the terminal REFUSED state instead of DONE. Legacy prose
+    summaries are accepted unchanged.
 
     If ``result_summary`` is empty the task is auto-transitioned to
     ``FAILED`` with ``reason='completion missing summary'`` and
@@ -720,6 +1291,8 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
     with start_span("task.complete", {"task.id": task_id}):
         store = _get_store(request)
         sse_bus = _get_sse_bus(request)
+        refusal: WorkerRefusal | None = None
+        result_summary = body.result_summary
         try:
             task = store.get_task(task_id)
             if task is None:
@@ -728,10 +1301,31 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             # Auto-claim if task reverted to "open" (e.g. after orchestrator
             # restart reconciliation).  Prevents agents from looping on 409.
             if task.status.value == "open":
+                logger.info(
+                    "task.complete auto-claim: task_id=%s reverted to open, re-claiming before complete",
+                    sanitize_log(task_id),
+                )
                 await store.claim_by_id(task_id)
-            task = await store.complete(task_id, body.result_summary)
+            structured = _parse_terminal_body(body)
+            if isinstance(structured, WorkerRefusal):
+                refusal = structured
+                task = await store.refuse(task_id, refusal)
+            else:
+                if structured is not None:
+                    result_summary = structured.summary
+                # Defect 33: auto-commit the worker's uncommitted work BEFORE
+                # the store transitions the task to done, so the commit message
+                # is visible to the janitor (which reads ``git log`` after
+                # /complete lands).  Failures are swallowed - the orchestrator
+                # will catch a 0-diff task on /complete's branch and trigger
+                # the bounded-reopen path.  Logging contract in
+                # ``_run_auto_commit_pre_complete``.
+                _run_auto_commit_pre_complete(request, task)
+                task = await store.complete(task_id, result_summary, completion=structured)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except ContractViolation as exc:
+            raise await _handle_contract_violation(request, task_id, exc, store, sse_bus) from None
         except EmptyCompletionError as exc:
             # empty summary is handled inside ``complete()``
             # (task is auto-failed under the lock).  Surface a structured
@@ -763,11 +1357,13 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             raise HTTPException(status_code=422, detail=detail) from None
         except IllegalTransitionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        if refusal is not None:
+            return await _finalize_refusal(request, task, refusal, store, sse_bus)
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
-        get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=body.result_summary)
+        get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=result_summary)
 
         # Sigstore/Ed25519 attestation for the task completion (fire-and-forget)
-        _try_attest_task_completion(request, task.id, task.role, body.result_summary)
+        _try_attest_task_completion(request, task.id, task.role, result_summary)
 
         # SBOM generation on task completion (fire-and-forget, opt-in via env/state)
         _try_generate_sbom(request)
@@ -798,6 +1394,12 @@ async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, requ
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
+        logger.warning(
+            "task.wait_for_subtasks 409: task_id=%s current_status=%s reason=%s",
+            sanitize_log(task_id),
+            existing_task.status.value if existing_task is not None else "unknown",
+            sanitize_log(str(exc)),
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
     return task_to_response(task)
@@ -818,11 +1420,21 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
         _require_task_access(existing_task, request)
         # Auto-claim if task reverted to "open" (same rationale as /complete).
         if existing_task.status.value == "open":
+            logger.info(
+                "task.fail auto-claim: task_id=%s reverted to open, re-claiming before fail",
+                sanitize_log(task_id),
+            )
             await store.claim_by_id(task_id)
         task = await store.fail(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
+        logger.warning(
+            "task.fail 409: task_id=%s current_status=%s reason=%s",
+            sanitize_log(task_id),
+            existing_task.status.value if existing_task is not None else "unknown",
+            sanitize_log(str(exc)),
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "failed"}))
     get_plugin_manager().fire_task_failed(task_id=task.id, role=task.role, error=body.reason)
@@ -830,6 +1442,45 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
     # Update per-file health scores with failure outcome (fire-and-forget)
     _update_file_health(request, task.id, list(task.owned_files), "failure")
 
+    return task_to_response(task)
+
+
+@router.post(
+    "/tasks/{task_id}/reopen",
+    responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
+)
+async def reopen_task(task_id: str, body: TaskReopenRequest, request: Request) -> TaskResponse:
+    """Reopen a done task that failed janitor verification (same task id).
+
+    Transitions DONE -> OPEN and increments
+    ``metadata['janitor_reopen_count']``. The orchestrator enforces the
+    reopen budget; this endpoint only performs the state transition.
+    """
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+    try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
+        task = await store.reopen(task_id, body.reason)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except IllegalTransitionError as exc:
+        logger.warning(
+            "task.reopen 409: task_id=%s current_status=%s reason=%s",
+            sanitize_log(task_id),
+            existing_task.status.value if existing_task is not None else "unknown",
+            sanitize_log(str(exc)),
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    logger.info(
+        "task.reopen: task_id=%s reopen_count=%s reason=%s",
+        sanitize_log(task_id),
+        task.metadata.get("janitor_reopen_count"),
+        sanitize_log(str(body.reason)),
+    )
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "open"}))
     return task_to_response(task)
 
 
@@ -850,6 +1501,12 @@ async def close_task(task_id: str, request: Request) -> TaskResponse:
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
+        logger.warning(
+            "task.close 409: task_id=%s current_status=%s reason=%s",
+            sanitize_log(task_id),
+            existing_task.status.value if existing_task is not None else "unknown",
+            sanitize_log(str(exc)),
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "closed"}))
     return task_to_response(task)
@@ -891,6 +1548,12 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except ValueError as exc:
+        logger.warning(
+            "task.cancel 409: task_id=%s current_status=%s reason=%s",
+            sanitize_log(task_id),
+            existing_task.status.value if existing_task is not None else "unknown",
+            sanitize_log(str(exc)),
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
     # Publish an SSE event for every cancelled task (root + descendants) so
@@ -921,6 +1584,12 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except IllegalTransitionError as exc:
+        logger.warning(
+            "task.block 409: task_id=%s current_status=%s reason=%s",
+            sanitize_log(task_id),
+            existing_task.status.value if existing_task is not None else "unknown",
+            sanitize_log(str(exc)),
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "blocked"}))
     return task_to_response(task)
@@ -1251,6 +1920,7 @@ def task_counts(
         orphaned=counts.get("orphaned", 0),
         abandoned=counts.get("abandoned", 0),
         blocked_by_abandon=counts.get("blocked_by_abandon", 0),
+        refused=counts.get("refused", 0),
         total=counts.get("total", 0),
     )
 

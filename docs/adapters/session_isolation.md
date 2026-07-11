@@ -27,7 +27,7 @@ session_id  = UUID built from the first 16 digest bytes, with the RFC 4122
 
 HMAC is used here purely as a keyed, well-defined mixing function with a
 fixed namespace string; it is not a security boundary. The recipe lives in
-[`src/bernstein/adapters/session_id.py`](../../src/bernstein/adapters/session_id.py)
+[`src/bernstein/adapters/session_id.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/session_id.py)
 and is versioned through `DERIVE_RECIPE_VERSION` so any future change to the
 recipe is explicit.
 

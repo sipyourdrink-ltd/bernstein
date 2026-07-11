@@ -285,14 +285,26 @@ def print_dry_run_table(workdir: Path) -> None:
 
 
 _SEED_FILENAMES = ("bernstein.yaml", "bernstein.yml")
+_DOT_BERNSTEIN_SEED_FILENAMES = (
+    ".bernstein/bernstein.yaml",
+    ".bernstein/bernstein.yml",
+)
 
 
 def find_seed_file() -> Path | None:
     """Look for a bernstein.yaml in the current directory.
 
+    Checks the project-local ``.bernstein/`` directory first (e.g.
+    ``.bernstein/bernstein.yaml``), then falls back to the root-level
+    ``bernstein.yaml``/``bernstein.yml`` for backward compatibility.
+
     Returns:
         Path to the seed file if found, None otherwise.
     """
+    for name in _DOT_BERNSTEIN_SEED_FILENAMES:
+        p = Path(name)
+        if p.is_file():
+            return p
     for name in _SEED_FILENAMES:
         p = Path(name)
         if p.is_file():

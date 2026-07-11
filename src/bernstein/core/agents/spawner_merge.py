@@ -31,6 +31,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+#: Explicit, opt-in escape hatch that lets agent worktree merges land on the
+#: repository's default (protected) branch. Off by default: agent output must
+#: not reach a protected trunk without an explicit target. Accepts the
+#: project's standard truthy words.
+ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH = "BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH"
+
+_TRUTHY_ALLOW = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
+
+
+def _allow_merge_to_default_branch(env: dict[str, str] | None = None) -> bool:
+    """Return ``True`` only when the operator explicitly opted into merging
+    agent work onto the repository's default branch."""
+    import os
+
+    source = os.environ if env is None else env
+    raw = source.get(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH)
+    return raw is not None and raw.strip().lower() in _TRUTHY_ALLOW
+
+
+def _record_merge_refusal(worktree_root: Path, session_id: str, branch: str) -> None:
+    """Persist a visible record that a default-branch merge was refused.
+
+    Written to ``.sdd/runtime/refused_merges.jsonl`` next to the pending-push
+    journal so an operator (and any postmortem) can see exactly which session
+    was blocked, on which branch, and when.
+    """
+    import json as _json
+
+    entry = {
+        "session_id": _sanitise_for_log(session_id),
+        "branch": _sanitise_for_log(branch),
+        "reason": "target-is-default-branch",
+        "ts": time.time(),
+    }
+    try:
+        path = worktree_root / ".sdd" / "runtime" / "refused_merges.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(_json.dumps(entry) + "\n")
+    except OSError as exc:  # recording is best-effort; never mask the refusal
+        logger.debug("Could not record merge refusal for %s: %s", _sanitise_for_log(session_id), exc)
+
+
 def _sanitise_for_log(value: str) -> str:
     """Strip CR/LF from ``value`` so attacker-controlled input cannot
     inject fake log lines.
@@ -59,7 +102,62 @@ def _run_merge_and_push(
     (:class:`MergeQueue` submit context or a per-repo lock).  Kept as a
     private helper so the two entry points below stay thin.
     """
+    from bernstein.core.git_ops import (
+        current_branch,
+        protected_default_branches,
+        resolve_default_branch,
+        safe_push,
+    )
+
+    # Safety guardrail: agent work is merged into whatever branch is checked
+    # out at ``worktree_root``. If that target IS one of the repository's
+    # protected (default trunk) branches, refuse the merge instead of silently
+    # landing unreviewed commits on the trunk. ``protected_default_branches``
+    # fails closed on an ambiguous default (``origin/HEAD`` unset AND both a
+    # local ``main`` and ``master`` present), returning BOTH names so the guard
+    # refuses either. An explicit opt-in env override lets operators who really
+    # want this proceed.
+    target_branch = current_branch(worktree_root)
+    protected = protected_default_branches(worktree_root)
+    if target_branch is not None and target_branch in protected and not _allow_merge_to_default_branch():
+        _record_merge_refusal(worktree_root, session.id, target_branch)
+        logger.error(
+            "Refusing to merge agent work from %s onto default branch %r: agent "
+            "output must not reach a protected trunk without an explicit target. "
+            "Check out a non-default branch, or set %s=1 to override.",
+            _sanitise_for_log(session.id),
+            _sanitise_for_log(target_branch),
+            ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH,
+        )
+        from bernstein.core.metric_collector import get_collector
+
+        for task_id in session.task_ids:
+            get_collector().record_merge_result(task_id, success=False)
+        return MergeResult(
+            success=False,
+            conflicting_files=[],
+            error=(
+                f"refused: target branch {target_branch!r} is the repository "
+                f"default branch; set {ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH}=1 to override"
+            ),
+        )
+
     merge_start = time.perf_counter()
+    # Provenance: record the call site before invoking the merge so the
+    # log line identifies the WORKER branch + WORKTREE root that triggered
+    # this merge attempt (defect 28: every merge commit must have
+    # provenance -- a decoy with no provenance must be impossible).
+    # Use ``getattr`` so callers passing a minimal stub session
+    # (e.g. ``_Stub`` in test_spawner_merge_queue_wiring) don't crash on
+    # a missing ``role`` attribute -- the log line must NEVER raise.
+    author_role = getattr(session, "role", "<unknown>")
+    logger.info(
+        "merge_preflight: from=<worktree=%s> to=<main=%s> branch=agent/%s author=<spawner:%s> reason=<reap-and-merge>",
+        worktree_root,
+        worktree_root,
+        session.id,
+        author_role,
+    )
     merge_result = merge_worktree_branch_fn(session.id, repo_root=worktree_root)
     merge_duration.observe(time.perf_counter() - merge_start)
 
@@ -70,11 +168,13 @@ def _run_merge_and_push(
         get_collector().record_merge_result(task_id, success=merge_ok)
 
     if merge_result and merge_result.success:
-        from bernstein.core.git_ops import safe_push
-
-        push_result = safe_push(worktree_root, "main")
+        # Push the branch we actually merged into (never a hard-coded "main").
+        # ``target_branch`` is None only on detached HEAD; fall back to the
+        # resolved default there.
+        push_branch = target_branch or resolve_default_branch(worktree_root)
+        push_result = safe_push(worktree_root, push_branch)
         if push_result.ok:
-            logger.info("Pushed merged work from %s to origin/main", session.id)
+            logger.info("Pushed merged work from %s to origin/%s", session.id, push_branch)
         else:
             logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
 

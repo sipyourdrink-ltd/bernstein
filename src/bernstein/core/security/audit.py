@@ -63,6 +63,11 @@ _REQUIRED_KEY_MODE = 0o600
 #: ``agent_restart_between_retries``.
 AGENT_FRESH_RESTART_ON_RETRY = "agent_fresh_restart_on_retry"
 
+#: Emitted once per spawn with the resolved response-style profile and the
+#: SHA-256 of the rendered style addendum, so the profile applied to a task
+#: is reconstructable from the audit chain alongside its cost ledger entry.
+TASK_RESPONSE_PROFILE = "task_response_profile"
+
 #: Issue #1799 - emitted once per step appended to an agent's hash-chained
 #: replay journal. Carries the step ``seq`` and ``step_hash`` in details so
 #: the audit-slice extractor can correlate audit events to journal entries

@@ -11,6 +11,7 @@ import pytest
 from bernstein.core.llm import LLMSettings
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
+from bernstein.adapters.plugin_sdk import AdapterCapability
 from bernstein.adapters.qwen import QwenAdapter
 
 if TYPE_CHECKING:
@@ -95,7 +96,7 @@ class TestQwenAdapterSpawn:
         assert "--model" in inner
         assert inner[inner.index("--model") + 1] == "qwen-max"
 
-    def test_yes_flag_present(self, tmp_path: Path) -> None:
+    def test_approval_mode_flag_present(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=102)
         settings = _default_settings()
@@ -110,7 +111,10 @@ class TestQwenAdapterSpawn:
                 session_id="qwen-s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "-y" in inner
+        assert "--approval-mode" in inner
+        assert inner[inner.index("--approval-mode") + 1] == "yolo"
+        assert "-y" not in inner
+        assert "--yolo" not in inner
 
     def test_prompt_appended_last(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -295,6 +299,128 @@ class TestQwenAdapterSpawn:
 
 
 # ---------------------------------------------------------------------------
+# PR3: sampling params (temperature/top_p) wired via mcp_config
+# ---------------------------------------------------------------------------
+
+
+class TestQwenAdapterPluginInfo:
+    def test_declares_temperature_and_top_p_only(self) -> None:
+        info = QwenAdapter().plugin_info()
+        assert set(info.capabilities) == {
+            AdapterCapability.SUPPORTS_TEMPERATURE,
+            AdapterCapability.SUPPORTS_TOP_P,
+        }
+
+    def test_does_not_declare_coarse_or_top_k_or_max_tokens(self) -> None:
+        info = QwenAdapter().plugin_info()
+        assert AdapterCapability.SUPPORTS_SAMPLING_PARAMS not in info.capabilities
+        assert AdapterCapability.SUPPORTS_TOP_K not in info.capabilities
+        assert AdapterCapability.SUPPORTS_MAX_TOKENS not in info.capabilities
+
+
+class TestQwenAdapterSamplingParams:
+    """mcp_config temperature/top_p must reach the built CLI argv."""
+
+    def test_temperature_reaches_argv(self, tmp_path: Path) -> None:
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=300)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-sampling1",
+                mcp_config={"temperature": 0.3},
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--temperature" in inner
+        assert inner[inner.index("--temperature") + 1] == "0.3"
+
+    def test_top_p_reaches_argv(self, tmp_path: Path) -> None:
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=301)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-sampling2",
+                mcp_config={"top_p": 0.85},
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--top-p" in inner
+        assert inner[inner.index("--top-p") + 1] == "0.85"
+
+    def test_both_reach_argv_together(self, tmp_path: Path) -> None:
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=302)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-sampling3",
+                mcp_config={"temperature": 0.1, "top_p": 0.95},
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--temperature") + 1] == "0.1"
+        assert inner[inner.index("--top-p") + 1] == "0.95"
+
+    def test_no_mcp_config_omits_sampling_flags(self, tmp_path: Path) -> None:
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=303)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-sampling4",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--temperature" not in inner
+        assert "--top-p" not in inner
+
+    def test_top_k_and_max_tokens_never_reach_argv(self, tmp_path: Path) -> None:
+        """Not declared in plugin_info -> not wired, even if present in
+        mcp_config (the spawn-time gate is expected to have refused this
+        spawn upstream; this test proves the adapter itself never fakes
+        support for a flag the real CLI does not have)."""
+        adapter = QwenAdapter()
+        proc_mock = _make_popen_mock(pid=304)
+        settings = _default_settings()
+        with (
+            patch("bernstein.adapters.qwen.subprocess.Popen", return_value=proc_mock) as popen,
+            patch("bernstein.adapters.qwen.LLMSettings", return_value=settings),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="qwen-max", effort="high"),
+                session_id="qwen-sampling5",
+                mcp_config={"top_k": 40, "max_tokens": 4096},
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--top-k" not in inner
+        assert "--max-tokens" not in inner
+
+
+# ---------------------------------------------------------------------------
 # spawn() - env isolation
 # ---------------------------------------------------------------------------
 
@@ -437,13 +563,13 @@ class TestQwenIsAlive:
 class TestQwenKill:
     def test_calls_killpg(self) -> None:
         adapter = QwenAdapter()
-        with patch("bernstein.adapters.base.kill_process_group_graceful") as mock_killpg:
+        with patch("bernstein.adapters.base.reap_process_group") as mock_killpg:
             adapter.kill(555)
         mock_killpg.assert_called_once_with(555)
 
     def test_does_not_raise_on_oserror(self) -> None:
         adapter = QwenAdapter()
-        with patch("bernstein.adapters.base.kill_process_group_graceful", return_value=False):
+        with patch("bernstein.adapters.base.reap_process_group", return_value=False):
             adapter.kill(556)  # must not raise
 
 

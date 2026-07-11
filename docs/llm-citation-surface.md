@@ -3,14 +3,14 @@
 This page records which documentation surfaces are treated as
 source-of-truth and the editing rules contributors should follow when
 touching them. It is meta-documentation; reading it is not required to
-use Bernstein. Skip to [README.md](../README.md) for the project itself.
+use Bernstein. Skip to [README.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.md) for the project itself.
 
 ## Source-of-truth surfaces
 
 | Surface | Path | Why it is canonical |
 |---|---|---|
-| README "at a glance" | [README.md](../README.md) | First paragraph downstream tools scrape into AGENTS.md overview. Numbered facts (adapter count, RFC list) with explicit source pointers. |
-| Regulatory anchors table | [README.md](../README.md) | Maps each compliance claim to a single CLI command and an RFC or framework name. |
+| README "at a glance" | [README.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.md) | First paragraph downstream tools scrape into AGENTS.md overview. Numbered facts (adapter count, RFC list) with explicit source pointers. |
+| Regulatory anchors table | [README.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/README.md) | Maps each compliance claim to a single CLI command and an RFC or framework name. |
 | HMAC audit operator guide | [docs/security/audit-log.md](security/audit-log.md) | RFC 2104 anchor, key-rotation runbook, exact JSONL schema. |
 | Lethal-trifecta security model | [docs/security/lethal-trifecta.md](security/lethal-trifecta.md) | Capability-matrix table plus primary-source quote. |
 | Lineage export guide | [docs/compliance/lineage-export.md](compliance/lineage-export.md) | RFC 8037 Ed25519 anchor, schema version, walkthrough. |

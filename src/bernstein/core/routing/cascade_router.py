@@ -721,15 +721,76 @@ def _cascade_for_task(task: Task) -> list[str]:
     return list(CASCADE)
 
 
+# Ordered effort ladder, cheapest first. A deterministic index into this list
+# lets escalation bump effort by one rung with no LLM in the loop, which keeps
+# the choice byte-identical across a record/replay pair (our deterministic
+# replay lever). ``max`` is reserved for the opus tier via ``_effort_for_model``.
+_EFFORT_LADDER: tuple[str, ...] = ("low", "medium", "high", "max")
+
+
+def effort_for_scope(
+    scope: Scope,
+    complexity: Complexity,
+    attempt: int = 0,
+) -> str:
+    """Deterministically map task scope + complexity (+ attempt) to an effort.
+
+    Pure function of ``(scope, complexity, attempt)`` - no LLM, no clock, no
+    randomness - so a record run and its replay derive the identical effort
+    and any divergence is a real routing change, not noise. This is the lever:
+    the effort a step ran at is reproducible and therefore hashable into the
+    step journal.
+
+    Base mapping (trivial -> low, standard -> medium, complex/high-risk ->
+    high):
+
+    * ``Complexity.HIGH`` **or** ``Scope.LARGE`` -> ``"high"`` (complex or
+      high-risk work).
+    * ``Complexity.LOW`` **and** ``Scope.SMALL`` -> ``"low"`` (trivial work).
+    * everything else -> ``"medium"`` (standard work).
+
+    Escalation: each retry ``attempt`` bumps the result one rung up the effort
+    ladder (``low -> medium -> high -> max``), capped at ``max``. A first
+    attempt (``attempt=0``) is never bumped.
+
+    Args:
+        scope: Task scope.
+        complexity: Task complexity.
+        attempt: 0-based attempt number; higher attempts escalate effort.
+
+    Returns:
+        One of ``"low"``, ``"medium"``, ``"high"``, ``"max"``.
+    """
+    if complexity == Complexity.HIGH or scope == Scope.LARGE:
+        base = "high"
+    elif complexity == Complexity.LOW and scope == Scope.SMALL:
+        base = "low"
+    else:
+        base = "medium"
+
+    idx = _EFFORT_LADDER.index(base)
+    bumped = min(idx + max(attempt, 0), len(_EFFORT_LADDER) - 1)
+    return _EFFORT_LADDER[bumped]
+
+
 def _effort_for_model(model: str, task: Task) -> str:
     """Select an effort level appropriate for the model and task.
+
+    Precedence:
+
+    1. An explicitly pinned ``task.effort`` always wins (caller intent is
+       never overridden).
+    2. ``opus`` -> ``"max"`` (the top tier is always run at max effort).
+    3. Otherwise fall back to the deterministic scope/complexity mapping,
+       escalated by ``task.retry_count`` so a retry runs harder. This fills
+       effort only when it was left unset, per the effort-routing contract.
 
     Args:
         model: Model name (e.g. "haiku", "sonnet", "opus").
         task: Task to assess.
 
     Returns:
-        Effort string (e.g. "low", "high", "max").
+        Effort string (e.g. "low", "medium", "high", "max").
     """
     if task.effort:
         return task.effort
@@ -737,10 +798,11 @@ def _effort_for_model(model: str, task: Task) -> str:
     model_lower = model.lower()
     if "opus" in model_lower:
         return "max"
-    if "haiku" in model_lower:
-        return "low"
-    # sonnet and unknown models
-    return "high"
+
+    # Deterministic scope/complexity mapping, escalated on retry. Replaces the
+    # old flat "haiku=low, else high" heuristic so easy tasks stop overpaying
+    # and effort becomes a reproducible, hashable routing dimension.
+    return effort_for_scope(task.scope, task.complexity, attempt=task.retry_count)
 
 
 def _apply_rework_promotion(

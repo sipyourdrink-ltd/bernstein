@@ -91,31 +91,75 @@ def _count_task_status(task_records: list[dict[str, Any]]) -> tuple[int, int]:
     return done, failed
 
 
+def _profile_comparison_line(comp: Any) -> str:
+    """One human-readable line for a cross-profile comparison."""
+    return (
+        f"{comp.profile_a} vs {comp.profile_b} ({comp.role}/{comp.model}): "
+        f"${comp.mean_cost_usd_per_task_a:.4f} vs ${comp.mean_cost_usd_per_task_b:.4f} per task, "
+        f"{comp.mean_output_tokens_per_task_a:.0f} vs {comp.mean_output_tokens_per_task_b:.0f} out-tokens/task "
+        f"({comp.tasks_a}+{comp.tasks_b} tasks)"
+    )
+
+
+def _render_profile_savings_section(
+    cons: Console,
+    profile_comparisons: list[Any] | None,
+    profiles_seen: int,
+) -> None:
+    """Print the per-profile savings section, honouring the honesty rule.
+
+    Nothing is printed when fewer than two profiles appear in the
+    ledger window. With two or more profiles but no cohort where both
+    sides reach the comparable-task bar, the section prints
+    "insufficient comparable runs" instead of a savings claim.
+    """
+    from bernstein.core.cost.profile_attribution import MIN_COMPARABLE_TASKS
+
+    if profiles_seen < 2:
+        return
+    cons.print()
+    cons.print("[bold]Per-profile comparison[/bold]  (same role+model cohorts only)")
+    if not profile_comparisons:
+        cons.print(
+            f"  [dim]insufficient comparable runs (need >= {MIN_COMPARABLE_TASKS} "
+            f"tasks per profile with matching role and model)[/dim]"
+        )
+        return
+    for comp in profile_comparisons:
+        cons.print(f"  {_profile_comparison_line(comp)}")
+
+
 def _render_savings_comparison(
     cons: Console,
     actual_cost: float,
     savings_vs_opus: float,
+    profile_comparisons: list[Any] | None = None,
+    profiles_seen: int = 0,
 ) -> None:
-    """Print an ASCII bar chart comparing Bernstein vs all-Opus baseline."""
+    """Print an ASCII bar chart comparing Bernstein vs all-Opus baseline.
+
+    When the ledger window covers two or more response-style profiles a
+    per-profile section follows the chart (issue #2245); the section
+    obeys the honesty rule via :func:`_render_profile_savings_section`.
+    """
     single_agent_cost = actual_cost + savings_vs_opus
-    if single_agent_cost <= 0:
-        return
+    if single_agent_cost > 0:
+        savings_pct = (savings_vs_opus / single_agent_cost) * 100
 
-    savings_pct = (savings_vs_opus / single_agent_cost) * 100
+        bar_width = 34
+        single_bar = _ascii_bar(single_agent_cost, single_agent_cost, bar_width)
+        bernstein_bar = _ascii_bar(actual_cost, single_agent_cost, bar_width)
 
-    bar_width = 34
-    single_bar = _ascii_bar(single_agent_cost, single_agent_cost, bar_width)
-    bernstein_bar = _ascii_bar(actual_cost, single_agent_cost, bar_width)
-
-    cons.print()
-    cons.print("[bold]Cost Comparison[/bold]  (Bernstein vs all-Opus baseline)")
-    cons.print(f"  Single agent  [red]{single_bar}[/red]  [dim]${single_agent_cost:.4f}[/dim]")
-    cons.print(f"  Bernstein     [green]{bernstein_bar}[/green]  [bold green]${actual_cost:.4f}[/bold green]")
-    if savings_pct > 0:
-        cons.print(
-            f"\n  [bold green]You saved ${savings_vs_opus:.4f} "
-            f"({savings_pct:.0f}%) by using Bernstein's model cascade[/bold green]"
-        )
+        cons.print()
+        cons.print("[bold]Cost Comparison[/bold]  (Bernstein vs all-Opus baseline)")
+        cons.print(f"  Single agent  [red]{single_bar}[/red]  [dim]${single_agent_cost:.4f}[/dim]")
+        cons.print(f"  Bernstein     [green]{bernstein_bar}[/green]  [bold green]${actual_cost:.4f}[/bold green]")
+        if savings_pct > 0:
+            cons.print(
+                f"\n  [bold green]You saved ${savings_vs_opus:.4f} "
+                f"({savings_pct:.0f}%) by using Bernstein's model cascade[/bold green]"
+            )
+    _render_profile_savings_section(cons, profile_comparisons, profiles_seen)
 
 
 def _render_shareable_summary(
@@ -125,6 +169,8 @@ def _render_shareable_summary(
     tasks_done: int,
     tasks_failed: int,
     total_duration_s: float,
+    profile_comparisons: list[Any] | None = None,
+    profiles_seen: int = 0,
 ) -> None:
     """Print a copy-pasteable markdown run summary."""
     single_agent_cost = actual_cost + savings_vs_opus
@@ -149,6 +195,11 @@ def _render_shareable_summary(
         )
     else:
         lines.append(f"   Cost:  ${actual_cost:.2f}")
+    if profiles_seen >= 2:
+        if profile_comparisons:
+            lines.extend(f"   Profiles: {_profile_comparison_line(comp)}" for comp in profile_comparisons)
+        else:
+            lines.append("   Profiles: insufficient comparable runs")
 
     cons.print()
     cons.print(
@@ -278,6 +329,82 @@ def _aggregate_from_ledger_or_tasks(
             label = str(tags.get("feature_label", "") or "unknown") if isinstance(tags, dict) else "unknown"
         rows[label]["tasks"] += 1
         rows[label]["cost_usd"] += float(rec.get("cost_usd", 0.0) or 0.0)
+    return rows.copy()
+
+
+def _load_profile_ledger_view(ledger_path: Path, cutoff: float) -> tuple[list[Any], list[Any]]:
+    """Load (entries, transitions) for per-profile views from the ledger.
+
+    The transitions file lives next to the ledger
+    (``profile_transitions.jsonl``). A missing ledger yields empty
+    lists so callers degrade to "no profile data".
+    """
+    from bernstein.core.cost.profile_attribution import TRANSITIONS_FILENAME, load_transitions
+    from bernstein.core.cost.spend_ledger import SpendLedger
+
+    if not ledger_path.exists():
+        return [], []
+    entries = SpendLedger.load_entries(ledger_path)
+    if cutoff > 0:
+        entries = [e for e in entries if e.ts >= cutoff]
+    transitions = load_transitions(ledger_path.parent / TRANSITIONS_FILENAME)
+    return entries, transitions
+
+
+def _profile_comparisons_from_ledger(ledger_path: Path, cutoff: float) -> tuple[list[Any], int]:
+    """Return (comparisons, profiles_seen) for the savings sections.
+
+    ``profiles_seen`` counts distinct profile tags among non-excluded
+    entries; the honesty-rule renderers stay silent below two.
+    """
+    from bernstein.core.cost.profile_attribution import (
+        compute_profile_comparisons,
+        entry_profile,
+        transitioned_task_ids,
+    )
+
+    entries, transitions = _load_profile_ledger_view(ledger_path, cutoff)
+    if not entries:
+        return [], 0
+    excluded_ids = transitioned_task_ids(transitions)
+    profiles = {
+        entry_profile(e) for e in entries if entry_profile(e) and (not e.task_id or e.task_id not in excluded_ids)
+    }
+    comparisons = compute_profile_comparisons(entries, transitions)
+    return list(comparisons), len(profiles)
+
+
+def _aggregate_profile_grouping(
+    ledger_path: Path,
+    task_records: list[dict[str, Any]],
+    cutoff: float,
+) -> dict[str, dict[str, Any]]:
+    """Aggregate spend by response-style profile (issue #2245).
+
+    Ledger-backed when the ledger exists (per-entry attribution with
+    transition exclusion); otherwise degrades to the
+    ``cost_tags.response_profile`` stamped on task records so older
+    runs still show a breakdown.
+    """
+    from bernstein.core.cost.profile_attribution import (
+        UNATTRIBUTED_LABEL,
+        aggregate_ledger_by_profile,
+    )
+
+    if ledger_path.exists():
+        entries, transitions = _load_profile_ledger_view(ledger_path, cutoff)
+        grouped = aggregate_ledger_by_profile(entries, transitions)
+        return {k: {"tasks": v["tasks"], "cost_usd": v["cost_usd"]} for k, v in grouped.items()}
+
+    rows: dict[str, dict[str, Any]] = defaultdict(lambda: {"tasks": 0, "cost_usd": 0.0})
+    for rec in task_records:
+        raw_tags: object = rec.get("cost_tags") or {}
+        label = ""
+        if isinstance(raw_tags, dict):
+            tags = cast("dict[str, Any]", raw_tags)
+            label = str(tags.get("response_profile", "") or "")
+        rows[label or UNATTRIBUTED_LABEL]["tasks"] += 1
+        rows[label or UNATTRIBUTED_LABEL]["cost_usd"] += float(rec.get("cost_usd", 0.0) or 0.0)
     return rows.copy()
 
 
@@ -511,6 +638,8 @@ def _cost_render_json(
     grouped_data: dict[str, dict[str, Any]] | None,
     group_by: str | None,
     downgrade: tuple[str, float] | None,
+    profile_comparisons: list[Any] | None = None,
+    profiles_seen: int = 0,
 ) -> None:
     """Render cost report as JSON."""
     output: dict[str, Any] = {
@@ -548,6 +677,9 @@ def _cost_render_json(
     if downgrade is not None:
         output["tip"] = downgrade[0]
         output["potential_savings_usd"] = downgrade[1]
+    if profiles_seen >= 2:
+        output["profile_comparisons"] = [c.to_dict() for c in (profile_comparisons or [])]
+        output["insufficient_comparable_runs"] = not profile_comparisons
     print_json(output)
 
 
@@ -582,7 +714,7 @@ def _cost_render_grouped(
     console.print()
 
 
-@click.command("cost")
+@click.group("cost", invoke_without_command=True)
 @click.option(
     "--metrics-dir",
     default=".sdd/metrics",
@@ -600,9 +732,12 @@ def _cost_render_grouped(
 @click.option(
     "--by",
     "group_by",
-    type=click.Choice(["agent", "model", "task", "day", "role", "feature_label", "envelope"]),
+    type=click.Choice(["agent", "model", "task", "day", "role", "feature_label", "envelope", "profile"]),
     default=None,
-    help="Group breakdown by agent, model, task, day, role, feature_label, or envelope (issue #1405).",
+    help=(
+        "Group breakdown by agent, model, task, day, role, feature_label, "
+        "envelope (issue #1405), or profile (issue #2245)."
+    ),
 )
 @click.option(
     "--ledger",
@@ -610,11 +745,13 @@ def _cost_render_grouped(
     type=str,
     default=".sdd/cost/ledger.jsonl",
     show_default=True,
-    help="Path to the rolling spend ledger (issue #1320). Used when --by is role|feature_label.",
+    help="Path to the rolling spend ledger (issue #1320). Used when --by is role|feature_label|profile.",
 )
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
 @click.option("--share", is_flag=True, default=False, help="Print only the shareable summary snippet.")
+@click.pass_context
 def cost_cmd(
+    ctx: click.Context,
     metrics_dir: str,
     last: str | None,
     since: str | None,
@@ -624,6 +761,8 @@ def cost_cmd(
     share: bool,
 ) -> None:
     """Show cost breakdown for recent runs."""
+    if ctx.invoked_subcommand is not None:
+        return
     # --since is a convenience: ``today`` ≈ ``--last 24h``,
     # ``yesterday`` ≈ ``--last 48h``. When both are provided ``--last`` wins.
     if last is None and since is not None:
@@ -731,7 +870,17 @@ def cost_cmd(
             group_by,
             cutoff,
         )
+    elif group_by == "profile":
+        # Issue #2245: per-entry attribution from the ledger with
+        # transition exclusion; tasks that changed profile mid-flight
+        # appear as an explicit excluded bucket, never split.
+        grouped_data = _aggregate_profile_grouping(Path(ledger_path), task_records, cutoff)
     # group_by == "model" or None => use the default rows (by model)
+
+    # Per-profile savings inputs (issue #2245). Honesty rule: the
+    # renderers only speak when >= 2 profiles are present, and only
+    # claim savings for cohorts that clear MIN_COMPARABLE_TASKS.
+    profile_comparisons, profiles_seen = _profile_comparisons_from_ledger(Path(ledger_path), cutoff)
 
     if as_json or is_json():
         _cost_render_json(
@@ -749,6 +898,8 @@ def cost_cmd(
             grouped_data,
             group_by,
             downgrade,
+            profile_comparisons,
+            profiles_seen,
         )
         return
 
@@ -761,6 +912,8 @@ def cost_cmd(
             tasks_done=tasks_done,
             tasks_failed=tasks_failed,
             total_duration_s=total_dur,
+            profile_comparisons=profile_comparisons,
+            profiles_seen=profiles_seen,
         )
         return
 
@@ -836,8 +989,15 @@ def cost_cmd(
             f"({savings_vs_manual['manual_hours']} hrs @ $100/hr)"
         )
 
-    # ASCII bar chart: Bernstein vs single-agent baseline
-    _render_savings_comparison(console, totals["cost_usd"], savings_vs_opus)
+    # ASCII bar chart: Bernstein vs single-agent baseline, followed by
+    # the per-profile comparison section when profiles are present.
+    _render_savings_comparison(
+        console,
+        totals["cost_usd"],
+        savings_vs_opus,
+        profile_comparisons=profile_comparisons,
+        profiles_seen=profiles_seen,
+    )
 
     # Projected monthly cost
     if projected_monthly > 0:
@@ -856,7 +1016,237 @@ def cost_cmd(
         tasks_done=tasks_done,
         tasks_failed=tasks_failed,
         total_duration_s=total_dur,
+        profile_comparisons=profile_comparisons,
+        profiles_seen=profiles_seen,
     )
+
+
+# ---------------------------------------------------------------------------
+# `bernstein cost profile-report` (issue #2245)
+# ---------------------------------------------------------------------------
+
+
+def _profile_comparison_evidence(
+    eval_ab_dir: Path,
+    comparisons: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Link each cross-profile claim to the latest comparison artifact.
+
+    For every (profile_a, profile_b) pair in the report's comparisons,
+    look up the newest ``eval ab`` comparison artifact for that pair in
+    the pair index. Pairs without recorded evidence are omitted; the
+    link is presentation metadata and never enters the report's hashed
+    payload.
+    """
+    from bernstein.eval.ab_comparison import latest_comparison_for_pair
+
+    evidence: dict[str, dict[str, Any]] = {}
+    for comp in comparisons:
+        pair_key = f"{comp['profile_a']} vs {comp['profile_b']}"
+        if pair_key in evidence:
+            continue
+        found = latest_comparison_for_pair(eval_ab_dir, str(comp["profile_a"]), str(comp["profile_b"]))
+        if found is not None:
+            evidence[pair_key] = {
+                "artifact_name": str(found.get("artifact_name", "")),
+                "artifact_sha256": str(found.get("artifact_sha256", "")),
+            }
+    return evidence
+
+
+def _render_profile_report_human(
+    cons: Console,
+    content: dict[str, Any],
+    sha256: str,
+    artifact: Path,
+    evidence: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """Render the profile report as a table plus its verification anchors."""
+    from rich.table import Table
+
+    table = Table(title=f"Per-profile cost report ({content['window']})", header_style="bold cyan", show_lines=False)
+    table.add_column("Profile", min_width=14, no_wrap=True)
+    table.add_column("Tasks", justify="right", min_width=6)
+    table.add_column("Out tokens", justify="right", min_width=10)
+    table.add_column("Cost USD", justify="right", min_width=10)
+    table.add_column("Tokens/task", justify="right", min_width=11)
+    table.add_column("Pass rate", justify="right", min_width=9)
+
+    profiles = cast("dict[str, Any]", content["profiles"])
+    for label in sorted(profiles):
+        row = cast("dict[str, Any]", profiles[label])
+        quality = cast("dict[str, Any] | None", row.get("quality"))
+        pass_rate = f"{float(quality['verdict_pass_rate']) * 100:.0f}%" if quality else "-"
+        table.add_row(
+            label,
+            str(row["tasks"]),
+            f"{row['output_tokens']:,}",
+            f"${row['cost_usd']:.4f}",
+            f"{row['mean_output_tokens_per_task']:.0f}",
+            pass_rate,
+        )
+    cons.print(table)
+
+    excluded = cast("dict[str, Any]", content["excluded"])
+    if excluded["calls"]:
+        cons.print(
+            f"  [dim]Excluded (profile transition): {excluded['tasks']} task(s), "
+            f"${excluded['cost_usd']:.4f} - attribution is per profile or not at all[/dim]"
+        )
+
+    comparisons = cast("list[dict[str, Any]]", content["comparisons"])
+    if comparisons:
+        cons.print("\n[bold]Comparable cohorts[/bold] (same role+model, both sides >= N tasks)")
+        for comp in comparisons:
+            cons.print(
+                f"  {comp['profile_a']} vs {comp['profile_b']} ({comp['role']}/{comp['model']}): "
+                f"${comp['mean_cost_usd_per_task_a']:.4f} vs ${comp['mean_cost_usd_per_task_b']:.4f} per task"
+            )
+            linked = (evidence or {}).get(f"{comp['profile_a']} vs {comp['profile_b']}")
+            if linked:
+                cons.print(f"    [dim]eval evidence: {linked['artifact_name']}[/dim]")
+    else:
+        cons.print(
+            f"\n  [dim]insufficient comparable runs (need >= {content['min_comparable_tasks']} "
+            f"tasks per profile with matching role and model)[/dim]"
+        )
+
+    ledger_block = cast("dict[str, Any]", content["ledger"])
+    cons.print(f"\n  Report sha256:  {sha256}")
+    cons.print(f"  Ledger lines:   {ledger_block['line_count']} (digest {ledger_block['lines_sha256'][:16]}...)")
+    cons.print(f"  Artifact:       {artifact}")
+    cons.print("  [dim]Appended to the audit chain as cost.profile_report[/dim]")
+
+
+@cost_cmd.command("profile-report")
+@click.option("--last", "last", type=str, default=None, help="Time range: 1h, 24h, 7d, 30d. Default: whole ledger.")
+@click.option(
+    "--metrics-dir",
+    default=".sdd/metrics",
+    show_default=True,
+    help="Directory containing metrics JSONL files (quality-outcome join).",
+)
+@click.option(
+    "--ledger",
+    "ledger_path",
+    type=str,
+    default=".sdd/cost/ledger.jsonl",
+    show_default=True,
+    help="Path to the rolling spend ledger JSONL.",
+)
+@click.option(
+    "--transitions",
+    "transitions_path",
+    type=str,
+    default=".sdd/cost/profile_transitions.jsonl",
+    show_default=True,
+    help="Path to the profile_transition event records.",
+)
+@click.option(
+    "--audit-dir",
+    "audit_dir",
+    type=str,
+    default=".sdd/audit",
+    show_default=True,
+    help="Audit chain directory the report event is appended to.",
+)
+@click.option(
+    "--reports-dir",
+    "reports_dir",
+    type=str,
+    default=".sdd/reports/cost_profiles",
+    show_default=True,
+    help="Directory the content-addressed report artifact is written to.",
+)
+@click.option(
+    "--eval-ab-dir",
+    "eval_ab_dir",
+    type=str,
+    default=".sdd/reports/eval_ab",
+    show_default=True,
+    help="Directory holding eval ab comparison artifacts; cross-profile claims link the latest one per pair.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def cost_profile_report_cmd(
+    last: str | None,
+    metrics_dir: str,
+    ledger_path: str,
+    transitions_path: str,
+    audit_dir: str,
+    reports_dir: str,
+    eval_ab_dir: str,
+    as_json: bool,
+) -> None:
+    """Emit a content-addressed per-profile cost report (issue #2245).
+
+    The report is computed from recorded ledger entries only, hashed
+    over canonical JSON with no timestamps in the payload, written as
+    ``<sha256>.json``, and appended to the audit chain - a third party
+    holding the ledger can recompute it byte-identically.
+
+    \b
+      bernstein cost profile-report --last 7d
+      bernstein cost profile-report --json
+    """
+    from bernstein.core.cost.profile_attribution import load_transitions
+    from bernstein.core.cost.profile_report import build_profile_report, write_report_artifact
+    from bernstein.core.security.audit_chain import AuditChainStore, record_cost_profile_report
+
+    cutoff = _parse_time_range(last) if last else 0.0
+    window_label = last or "all"
+
+    mdir = Path(metrics_dir)
+    task_records = _load_tasks_jsonl(mdir) if mdir.exists() else []
+    task_records = _load_archive_tasks(mdir.parent) + task_records if mdir.exists() else task_records
+
+    report = build_profile_report(
+        ledger_path=Path(ledger_path),
+        task_records=task_records,
+        transitions=load_transitions(Path(transitions_path)),
+        window_label=window_label,
+        cutoff=cutoff,
+    )
+    artifact = write_report_artifact(report, Path(reports_dir))
+
+    ledger_block = cast("dict[str, Any]", report.content["ledger"])
+    try:
+        chain = AuditChainStore(Path(audit_dir))
+        record_cost_profile_report(
+            chain=chain,
+            report_sha256=report.sha256,
+            ledger_lines_sha256=str(ledger_block["lines_sha256"]),
+            ledger_first_line_sha256=str(ledger_block["first_line_sha256"]),
+            ledger_last_line_sha256=str(ledger_block["last_line_sha256"]),
+            ledger_line_count=int(ledger_block["line_count"]),
+            window=window_label,
+            artifact_name=report.artifact_name,
+        )
+    except Exception as exc:
+        # The report is only trustworthy once anchored; refuse to
+        # pretend otherwise.
+        if as_json or is_json():
+            print_json({"error": f"Audit chain append failed: {exc}", "artifact": str(artifact)})
+        else:
+            console.print(f"[red]Audit chain append failed:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    # Evidence links live outside ``content`` so the report's hashed
+    # payload (and its byte-identical recomputability) is untouched.
+    comparisons = cast("list[dict[str, Any]]", report.content["comparisons"])
+    evidence = _profile_comparison_evidence(Path(eval_ab_dir), comparisons)
+
+    if as_json or is_json():
+        print_json(
+            {
+                "artifact": str(artifact),
+                "sha256": report.sha256,
+                "content": report.content,
+                "comparison_evidence": evidence,
+            }
+        )
+        return
+
+    _render_profile_report_human(console, report.content, report.sha256, artifact, evidence)
 
 
 # ---------------------------------------------------------------------------
@@ -1027,4 +1417,4 @@ def cost_envelopes_show_cmd(
     console.print(table)
 
 
-__all__ = ["cost_cmd", "cost_envelopes_group", "estimate_cmd"]
+__all__ = ["cost_cmd", "cost_envelopes_group", "cost_profile_report_cmd", "estimate_cmd"]

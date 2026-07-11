@@ -70,6 +70,21 @@ class ProjectionResult:
     schedule_id: str = ""
     fire_time: int = 0
     last_state_digest: str = ""
+    recurrence: str = ""
+    trigger_input_hash: str = ""
+
+    @property
+    def graph_hash(self) -> str:
+        """Alias for :attr:`projection_hash` in the #2302 vocabulary.
+
+        The issue frames a fire as "a hash rather than a trigger": the
+        canonical task graph's ``graph_hash`` is what ``schedule show
+        --at`` prints and ``schedule verify`` re-derives. It is the same
+        value as :attr:`projection_hash`; the alias keeps the projection's
+        historical name stable while giving callers the graph-centric name
+        the CLI and journal use.
+        """
+        return self.projection_hash
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe view of the projection.
@@ -188,6 +203,10 @@ def project_schedule_fire(
     last_state: Mapping[str, Any] | None,
     goal: str = "",
     scenario_id: str = "",
+    response_profile: str = "",
+    profile_content_sha256: str = "",
+    recurrence: str = "",
+    trigger_input_hash: str = "",
 ) -> ProjectionResult:
     """Project ``(schedule_id, fire_time, last_state)`` onto a task graph.
 
@@ -210,6 +229,30 @@ def project_schedule_fire(
             contract is honoured by the function signature.
         goal: Free-form goal text from the registered schedule.
         scenario_id: Optional named scenario id.
+        response_profile: Optional response-style profile declared on the
+            schedule. When non-empty it is folded
+            into the task identity seed and the canonical payload, so the
+            profile is an input to the task hash rather than a logged
+            field. Empty (the default, and the state of every pre-change
+            schedule) keeps the seed, payload, and hash byte-identical to
+            prior revs - the fold is deliberately conditional so replay of
+            existing audit chains is unaffected.
+        profile_content_sha256: SHA-256 of the rendered style addendum the
+            profile resolves to; folded alongside ``response_profile``.
+        recurrence: Canonical recurrence rule (RFC-5545 ``RRULE:`` or
+            ``cron:`` form, see
+            :func:`bernstein.core.orchestration.recurrence.canonicalise_recurrence`)
+            that produced this fire instant. When non-empty it is folded
+            into the task identity and canonical payload so two operators
+            prove they fired under the byte-identical schedule definition.
+            Empty (the default, and every pre-#2302 schedule) keeps the
+            seed, payload, and hash byte-identical to prior revs.
+        trigger_input_hash: For a webhook or file-change trigger, the
+            SHA-256 of the trigger event that woke the projection. Folded
+            in ONLY when non-empty so a scheduled (cron/RRULE) fire with no
+            external trigger stays byte-identical to prior revs, while a
+            trigger-driven fire binds the exact event bytes into the graph
+            hash - the same projection, with the trigger as an input hash.
 
     Returns:
         A ProjectionResult with the canonical task graph and its hash.
@@ -234,17 +277,25 @@ def project_schedule_fire(
     description = "\n".join(description_lines)
 
     # The task_id MUST be deterministic. Derive it from the canonical
-    # tuple so two operators recompute the same id.
-    task_id_seed = json.dumps(
-        {
-            "schedule_id": schedule_id,
-            "fire_time": fire_time,
-            "state_digest": state_digest,
-            "kind": "root",
-            "rev": SCHEDULE_PROJECTION_REV,
-        },
-        sort_keys=True,
-    ).encode()
+    # tuple so two operators recompute the same id. The response profile
+    # is folded in ONLY when explicitly declared: adding the keys
+    # unconditionally would fork the task identity of every profile-less
+    # schedule against previously recorded audit chains.
+    task_id_seed_obj: dict[str, Any] = {
+        "schedule_id": schedule_id,
+        "fire_time": fire_time,
+        "state_digest": state_digest,
+        "kind": "root",
+        "rev": SCHEDULE_PROJECTION_REV,
+    }
+    if response_profile:
+        task_id_seed_obj["response_profile"] = response_profile
+        task_id_seed_obj["profile_content_sha256"] = profile_content_sha256
+    if recurrence:
+        task_id_seed_obj["recurrence"] = recurrence
+    if trigger_input_hash:
+        task_id_seed_obj["trigger_input_hash"] = trigger_input_hash
+    task_id_seed = json.dumps(task_id_seed_obj, sort_keys=True).encode()
     task_id = "sched-task-" + hashlib.sha256(task_id_seed).hexdigest()[:16]
 
     metadata: tuple[tuple[str, str], ...] = (
@@ -255,6 +306,20 @@ def project_schedule_fire(
     )
     if scenario_id:
         metadata = (*metadata, ("scenario_id", scenario_id))
+    if recurrence:
+        metadata = (*metadata, ("recurrence", recurrence))
+    if trigger_input_hash:
+        metadata = (*metadata, ("trigger_input_hash", trigger_input_hash))
+    if response_profile:
+        # ``mode`` rides the node metadata so a task created from this node
+        # resolves the same profile at spawn time
+        # (``Task.metadata['mode']`` is the top-priority resolution input).
+        metadata = (
+            *metadata,
+            ("mode", response_profile),
+            ("response_profile", response_profile),
+            ("profile_content_sha256", profile_content_sha256),
+        )
 
     role = "manager"
     title = f"Scheduled goal: {(goal or scenario_id or schedule_id)[:120]}"
@@ -269,7 +334,7 @@ def project_schedule_fire(
     )
 
     nodes = _canonical_nodes([root])
-    canonical_obj = {
+    canonical_obj: dict[str, Any] = {
         "rev": SCHEDULE_PROJECTION_REV,
         "schedule_id": schedule_id,
         "fire_time": fire_time,
@@ -278,6 +343,13 @@ def project_schedule_fire(
         "scenario_id": scenario_id,
         "nodes": [_node_to_dict(n) for n in nodes],
     }
+    if response_profile:
+        canonical_obj["response_profile"] = response_profile
+        canonical_obj["profile_content_sha256"] = profile_content_sha256
+    if recurrence:
+        canonical_obj["recurrence"] = recurrence
+    if trigger_input_hash:
+        canonical_obj["trigger_input_hash"] = trigger_input_hash
     canonical_bytes = json.dumps(
         canonical_obj,
         sort_keys=True,
@@ -293,4 +365,70 @@ def project_schedule_fire(
         schedule_id=schedule_id,
         fire_time=fire_time,
         last_state_digest=state_digest,
+        recurrence=recurrence,
+        trigger_input_hash=trigger_input_hash,
+    )
+
+
+def project(
+    schedule_id: str,
+    fire_time: int,
+    last_state: Mapping[str, Any] | None,
+    *,
+    goal: str = "",
+    scenario_id: str = "",
+    recurrence: str = "",
+    trigger_event: bytes | None = None,
+) -> ProjectionResult:
+    """Project ``(schedule_id, fire_time, last_state)`` onto a task graph.
+
+    The #2302 entrypoint: a recurring goal fire is a pure function of its
+    inputs onto a canonical task graph with a deterministic ``graph_hash``.
+    Two calls with identical ``(schedule_id, fire_time, last_state)`` (and
+    identical ``recurrence`` / ``trigger_event``) return byte-identical
+    graphs and hashes - the load-bearing determinism the issue proves.
+
+    This is a thin, ergonomic front for :func:`project_schedule_fire`:
+
+    - ``recurrence`` is canonicalised (RFC-5545 ``RRULE`` or ``cron``)
+      before folding, so two operators who wrote the same rule in a
+      different token order still converge on the same ``graph_hash``.
+    - ``trigger_event`` (webhook / file-change payload bytes) is hashed
+      and folded in as ``trigger_input_hash``, so a trigger-driven fire is
+      *the same projection* with the trigger event bound in by hash. A
+      cron/RRULE fire passes ``trigger_event=None`` and stays
+      byte-identical to a pre-#2302 projection.
+
+    Args:
+        schedule_id: Stable schedule identifier.
+        fire_time: Integer Unix epoch of the canonical fire instant.
+        last_state: Optional mapping folded into the projection digest.
+        goal: Free-form goal text.
+        scenario_id: Optional named scenario id.
+        recurrence: Recurrence rule text (bare cron, ``cron:...``, or
+            ``RRULE:...``); empty means none declared.
+        trigger_event: For a webhook / file-change trigger, the raw event
+            bytes. ``None`` for a plain scheduled fire.
+
+    Returns:
+        A :class:`ProjectionResult`; ``result.graph_hash`` is the value an
+        operator records and a second operator re-derives.
+
+    Raises:
+        RecurrenceParseError: When ``recurrence`` is non-empty and cannot
+            be parsed.
+        TypeError: When ``fire_time`` is not an ``int``.
+    """
+    from bernstein.core.orchestration.recurrence import canonicalise_recurrence
+
+    canonical_recurrence = canonicalise_recurrence(recurrence) if recurrence else ""
+    trigger_input_hash = "sha256:" + hashlib.sha256(trigger_event).hexdigest() if trigger_event is not None else ""
+    return project_schedule_fire(
+        schedule_id=schedule_id,
+        fire_time=fire_time,
+        last_state=last_state,
+        goal=goal,
+        scenario_id=scenario_id,
+        recurrence=canonical_recurrence,
+        trigger_input_hash=trigger_input_hash,
     )

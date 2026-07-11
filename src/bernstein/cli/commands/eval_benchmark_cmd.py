@@ -1168,24 +1168,104 @@ def eval_generate_scenarios(from_traces: int, out_dir: str | None, seed: int) ->
 @click.option(
     "--variant-a",
     "variant_a_path",
-    required=True,
     type=click.Path(exists=True, dir_okay=False),
+    default=None,
     help="YAML file with the A variant (keys: name, prompt, [model], [metadata]).",
 )
 @click.option(
     "--variant-b",
     "variant_b_path",
-    required=True,
     type=click.Path(exists=True, dir_okay=False),
+    default=None,
     help="YAML file with the B variant.",
 )
 @click.option(
     "--tasks",
     "tasks_path",
-    required=True,
     type=click.Path(exists=True, dir_okay=False),
+    default=None,
     help="YAML file with a top-level 'tasks: [...]' list.",
 )
+@click.option(
+    "--suite",
+    "suite_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Suite YAML ('tasks: [...]') for the profile-arm mode.",
+)
+@click.option(
+    "--arm-a",
+    "arm_a",
+    default=None,
+    help="Response profile for arm A (three-arm mode: 'baseline' or 'balanced').",
+)
+@click.option(
+    "--arm-b",
+    "arm_b",
+    default=None,
+    help="Response profile for arm B (the candidate in three-arm mode).",
+)
+@click.option(
+    "--arms",
+    "arm_count",
+    type=click.IntRange(2, 3),
+    default=2,
+    show_default=True,
+    help="2 compares the named profiles; 3 adds the unset baseline and the built-in minimal-control arm.",
+)
+@click.option(
+    "--trials",
+    "trials",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="Trials per (arm, task) pair.",
+)
+@click.option(
+    "--executor",
+    "executor_name",
+    type=click.Choice(["synthetic", "spawn"]),
+    default="synthetic",
+    show_default=True,
+    help="'synthetic' is deterministic and offline; 'spawn' runs each arm as a real task in an isolated worktree.",
+)
+@click.option("--model", "model", default=None, help="Model pin for spawned arms and model label in the artifact.")
+@click.option("--role", "role", default="backend", show_default=True, help="Agent role for spawned arms.")
+@click.option(
+    "--timeout",
+    "timeout_seconds",
+    type=int,
+    default=1800,
+    show_default=True,
+    help="Max seconds to wait per spawned task.",
+)
+@click.option(
+    "--ledger",
+    "ledger_path",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help=(
+        "Spend ledger the runs are joined against "
+        "(defaults: synthetic -> .sdd/eval/ab/ledger.jsonl, spawn -> .sdd/cost/ledger.jsonl)."
+    ),
+)
+@click.option(
+    "--reports-dir",
+    "reports_dir",
+    type=click.Path(file_okay=False),
+    default=".sdd/reports/eval_ab",
+    show_default=True,
+    help="Directory the content-addressed comparison artifact is written to.",
+)
+@click.option(
+    "--audit-dir",
+    "audit_dir",
+    type=click.Path(file_okay=False),
+    default=".sdd/audit",
+    show_default=True,
+    help="Audit chain directory the comparison event is appended to.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON (suite mode).")
 @click.option(
     "--output",
     "output_path",
@@ -1198,25 +1278,76 @@ def eval_generate_scenarios(from_traces: int, out_dir: str | None, seed: int) ->
     type=click.Choice(["exact", "none"]),
     default="exact",
     show_default=True,
-    help="Built-in scorer to apply (synthetic-friendly).",
+    help="Built-in scorer for the variant mode (synthetic-friendly).",
 )
 def eval_ab(
-    variant_a_path: str,
-    variant_b_path: str,
-    tasks_path: str,
+    variant_a_path: str | None,
+    variant_b_path: str | None,
+    tasks_path: str | None,
+    suite_path: str | None,
+    arm_a: str | None,
+    arm_b: str | None,
+    arm_count: int,
+    trials: int,
+    executor_name: str,
+    model: str | None,
+    role: str,
+    timeout_seconds: int,
+    ledger_path: str | None,
+    reports_dir: str,
+    audit_dir: str,
+    as_json: bool,
     output_path: str | None,
     scorer: str,
 ) -> None:
-    """Run two prompt variants over a task set; emit a comparison JSON.
+    """Run an A/B comparison; emit a deterministic comparison JSON.
 
-    Synthetic-only slice: uses the deterministic ``echo_executor``
-    so this command runs offline with zero LLM cost. Real executors plug
-    in via the Python API (``bernstein.eval.ab_runner.run_ab``).
+    Two modes:
+
+    Variant mode (--variant-a/--variant-b/--tasks) compares two prompt
+    variants with the deterministic ``echo_executor`` - offline, zero
+    LLM cost.
+
+    Suite mode (--suite/--arm-a/--arm-b) runs the suite under two
+    response profiles and emits one chain-anchored artifact carrying
+    both the cost delta (ledger-referenced) and the quality delta.
+    With ``--arms 3`` the candidate is measured against a minimal
+    built-in control arm (the honest delta) as well as the unset
+    baseline (shown, labelled conflated).
 
     \b
       bernstein eval ab --variant-a a.yaml --variant-b b.yaml --tasks tasks.yaml
-      bernstein eval ab --variant-a a.yaml --variant-b b.yaml --tasks t.yaml --output report.json
+      bernstein eval ab --suite suite.yaml --arm-a balanced --arm-b terse --json
+      bernstein eval ab --suite suite.yaml --arm-a baseline --arm-b terse --arms 3 --trials 3
+      bernstein eval ab --suite suite.yaml --arm-a balanced --arm-b terse --executor spawn
     """
+    suite_mode = suite_path is not None or arm_a is not None or arm_b is not None
+    if suite_mode:
+        if not (suite_path and arm_a and arm_b):
+            raise click.UsageError("suite mode requires --suite, --arm-a, and --arm-b together")
+        _run_profile_ab_command(
+            suite_path=suite_path,
+            arm_a=arm_a,
+            arm_b=arm_b,
+            arm_count=arm_count,
+            trials=trials,
+            executor_name=executor_name,
+            model=model,
+            role=role,
+            timeout_seconds=timeout_seconds,
+            ledger_path=ledger_path,
+            reports_dir=reports_dir,
+            audit_dir=audit_dir,
+            as_json=as_json,
+            output_path=output_path,
+        )
+        return
+
+    if not (variant_a_path and variant_b_path and tasks_path):
+        raise click.UsageError(
+            "provide --variant-a/--variant-b/--tasks (variant mode) or --suite/--arm-a/--arm-b (suite mode)"
+        )
+
     from bernstein.eval.ab_runner import (
         echo_executor,
         exact_match_scorer,
@@ -1245,6 +1376,172 @@ def eval_ab(
         console.print(f"[green]wrote[/green] {output_path}  winner={comparison.winner}")
     else:
         click.echo(payload)
+
+
+def _run_profile_ab_command(
+    *,
+    suite_path: str,
+    arm_a: str,
+    arm_b: str,
+    arm_count: int,
+    trials: int,
+    executor_name: str,
+    model: str | None,
+    role: str,
+    timeout_seconds: int,
+    ledger_path: str | None,
+    reports_dir: str,
+    audit_dir: str,
+    as_json: bool,
+    output_path: str | None,
+) -> None:
+    """Run the suite under the arm plan and emit the comparison artifact.
+
+    The artifact is content-addressed canonical JSON, written under
+    *reports_dir*, appended to the audit chain, and registered in the
+    pair index that ``bernstein cost profile-report`` links from.
+    """
+    import json as _json
+
+    from bernstein import __version__
+    from bernstein.core.security.audit_chain import AuditChainStore, record_eval_ab_comparison
+    from bernstein.eval.ab_comparison import (
+        append_comparison_index,
+        build_arms,
+        build_comparison_artifact,
+        run_arms,
+        spawn_arm_executor,
+        suite_file_sha256,
+        synthetic_arm_executor,
+        write_comparison_artifact,
+    )
+    from bernstein.eval.ab_runner import load_tasks_yaml
+
+    suite = Path(suite_path)
+    tasks = load_tasks_yaml(suite)
+    if not tasks:
+        console.print("[yellow]Suite has no tasks.[/yellow]")
+        raise SystemExit(1)
+
+    try:
+        plan = build_arms(arm_a, arm_b, arms=arm_count, workdir=Path())
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    if executor_name == "spawn":
+        from bernstein.cli.helpers import SERVER_URL
+
+        lpath = Path(ledger_path) if ledger_path else Path(".sdd/cost/ledger.jsonl")
+        executor = spawn_arm_executor(
+            SERVER_URL,
+            role=role,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+    else:
+        from bernstein.core.cost.spend_ledger import SpendLedger
+
+        # Synthetic figures never land in the production spend ledger.
+        lpath = Path(ledger_path) if ledger_path else Path(".sdd/eval/ab/ledger.jsonl")
+        executor = synthetic_arm_executor(SpendLedger(path=lpath, run_id="eval-ab"))
+
+    rows = run_arms(plan, tasks, executor=executor, trials=trials)
+    artifact = build_comparison_artifact(
+        plan=plan,
+        rows=rows,
+        ledger_path=lpath,
+        suite_sha256=suite_file_sha256(suite),
+        suite_name=suite.name,
+        adapter_versions={"bernstein": __version__},
+        trials=trials,
+        model=model,
+    )
+    artifact_path = write_comparison_artifact(artifact, Path(reports_dir))
+
+    winner = artifact.content["winner"]
+    try:
+        chain = AuditChainStore(Path(audit_dir))
+        record_eval_ab_comparison(
+            chain=chain,
+            artifact_sha256=artifact.sha256,
+            suite_sha256=str(artifact.content["suite_sha256"]),
+            profile_a_sha256=str(artifact.content["profile_a_sha256"]),
+            profile_b_sha256=str(artifact.content["profile_b_sha256"]),
+            arm_count=len(artifact.content["arms"]),
+            row_count=len(artifact.content["per_task"]),
+            winner_arm=str(winner["arm"]),
+            artifact_name=artifact.artifact_name,
+        )
+    except Exception as exc:
+        # The artifact is only trustworthy once anchored; refuse to
+        # pretend otherwise.
+        if as_json:
+            click.echo(_json.dumps({"error": f"Audit chain append failed: {exc}", "artifact": str(artifact_path)}))
+        else:
+            console.print(f"[red]Audit chain append failed:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    append_comparison_index(Path(reports_dir), profile_pair=plan.profile_pair, artifact=artifact)
+
+    payload = _json.dumps(
+        {"artifact": str(artifact_path), "sha256": artifact.sha256, "content": artifact.content},
+        indent=2,
+        sort_keys=True,
+    )
+    if output_path:
+        Path(output_path).write_text(payload + "\n", encoding="utf-8")
+    if as_json:
+        click.echo(payload)
+        return
+
+    _render_profile_ab_human(artifact.content, artifact.sha256, artifact_path)
+
+
+def _render_profile_ab_human(content: dict[str, object], sha256: str, artifact_path: Path) -> None:
+    """Rich rendering of the suite-mode comparison artifact."""
+    from typing import cast
+
+    from rich.table import Table
+
+    aggregates = cast("dict[str, dict[str, object]]", content["aggregates"])
+    table = Table(title="Profile A/B comparison", header_style=_STYLE_BOLD_CYAN, show_lines=False)
+    table.add_column("Arm", min_width=12)
+    table.add_column("Profile", min_width=10)
+    table.add_column("Runs", justify="right")
+    table.add_column("Pass rate", justify="right")
+    table.add_column("Median tokens", justify="right")
+    table.add_column("Median USD", justify="right")
+
+    arms = cast("dict[str, dict[str, object]]", content["arms"])
+    for arm_name, agg in aggregates.items():
+        pass_rate = agg["pass_rate"]
+        median_tokens = agg["median_tokens"]
+        median_usd = agg["median_usd"]
+        table.add_row(
+            arm_name,
+            str(arms[arm_name]["profile"] or "(unset)"),
+            str(agg["runs"]),
+            f"{pass_rate:.1%}" if isinstance(pass_rate, (int, float)) else "not measured",
+            f"{median_tokens:.0f}" if isinstance(median_tokens, (int, float)) else "not measured",
+            f"${median_usd:.6f}" if isinstance(median_usd, (int, float)) else "not measured",
+        )
+    console.print(table)
+
+    deltas = cast("dict[str, dict[str, object]]", content["deltas"])
+    for name, delta in deltas.items():
+        label = "conflated" if delta["conflated"] else "honest"
+        console.print(
+            f"  {name} [{label}]: pass_rate {delta['pass_rate_delta']}  "
+            f"median_usd {delta['median_usd_delta']}  median_tokens {delta['median_tokens_delta']}"
+        )
+
+    winner = cast("dict[str, object]", content["winner"])
+    console.print(f"\n[bold]Winner:[/bold] {winner['arm']}  [dim]{winner['reason']}[/dim]")
+    if winner["missing"]:
+        console.print(f"  [yellow]missing:[/yellow] {', '.join(cast('list[str]', winner['missing']))}")
+    console.print(f"\n  Artifact sha256: {sha256}")
+    console.print(f"  Artifact:        {artifact_path}")
+    console.print("  [dim]Appended to the audit chain as eval.ab_comparison[/dim]")
 
 
 # ---------------------------------------------------------------------------

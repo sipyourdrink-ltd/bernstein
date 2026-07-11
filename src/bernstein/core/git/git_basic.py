@@ -14,10 +14,36 @@ logger = logging.getLogger(__name__)
 _CONVENTIONAL_COMMIT_RE = re.compile(r"^(feat|fix|chore|docs|test|refactor)(\([a-z0-9._/-]+\))?: .+")
 
 # Paths that must NEVER be staged, even via explicit add.
+#
+# Extended (defect 28 - decoy commit / secret leak): the previous list
+# only excluded ``.sdd/runtime/`` and ``.sdd/metrics/``.  The decoy commit
+# ``7e2364e`` on ``main`` (see
+# ``work/bernstein/proofs/d2/minimax/attempt-83808a8a/DIAGNOSIS.md``)
+# swept 83 ``.sdd/*`` files including ``.sdd/attestations/ed25519-signing-key.pem``,
+# ``.sdd/auth/agent_identity_jwt_secret``, ``.sdd/runtime/agent_tokens/``,
+# and ``bernstein.yaml`` into a single commit on a default branch.  The
+# merge-preflight safety guard in :mod:`bernstein.core.git.git_pr` blocks
+# the COMMIT, but to close the gap at the staging layer too we extend the
+# deny list with every prefix that must never reach a default branch.
+#
+# NOTE: entries here are matched as bare substrings against candidate paths
+# (see ``stage_files``/``stage_task_files`` below), so every entry MUST be
+# scoped with enough of a path prefix to avoid matching unrelated legitimate
+# paths.  A bare ``"attestations/"`` or ``"auth/"`` entry would also match
+# any legitimate path that happens to contain that substring anywhere (e.g.
+# ``src/myapp/auth/handler.py``), silently excluding real work from staging
+# -- the inverse of the leak this list exists to prevent.  Keep only the
+# ``.sdd/``-scoped forms.
 _NEVER_STAGE: frozenset[str] = frozenset(
     {
+        ".sdd/",
         ".sdd/runtime/",
         ".sdd/metrics/",
+        ".sdd/attestations/",
+        ".sdd/auth/",
+        ".sdd/traces/",
+        "bernstein.yaml",
+        ".claude/mcp.json",
         ".env",
         "*.pid",
         "*.log",
@@ -419,6 +445,135 @@ def remote_exists(cwd: Path, remote: str = "origin") -> bool:
     """
     result = run_git(["remote", "get-url", remote], cwd, timeout=5)
     return result.ok
+
+
+def _run_git_quiet(args: list[str], cwd: Path) -> GitResult:
+    """Run a read-only git query, converting OS-level errors into a failed
+    :class:`GitResult` instead of raising.
+
+    Used by the branch resolvers below so they honour their "never raises"
+    contract even when *cwd* does not exist, git is not installed, or the
+    command times out.
+    """
+    try:
+        return run_git(args, cwd, timeout=5)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError) as exc:
+        logger.debug("git %s failed at %s: %s", args[0] if args else "?", cwd, exc)
+        return GitResult(returncode=1, stdout="", stderr=str(exc))
+
+
+def current_branch(cwd: Path) -> str | None:
+    """Return the branch currently checked out at *cwd*, or ``None``.
+
+    ``None`` covers detached-HEAD and any git failure. Never raises.
+    """
+    result = _run_git_quiet(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+    if not result.ok:
+        return None
+    name = result.stdout.strip()
+    if not name or name == "HEAD":  # detached HEAD
+        return None
+    return name
+
+
+def _resolve_default_branch_from_remote_head(cwd: Path, remote: str) -> str | None:
+    """Return the default branch named by ``<remote>/HEAD``, or ``None``.
+
+    ``None`` means ``<remote>/HEAD`` is unset (common in ``git worktree``
+    checkouts and partial clones where ``git remote set-head`` was never run),
+    so callers must fall back to a heuristic and treat the result as ambiguous.
+    """
+    head = _run_git_quiet(["symbolic-ref", f"refs/remotes/{remote}/HEAD"], cwd)
+    if head.ok:
+        ref = head.stdout.strip()
+        prefix = f"refs/remotes/{remote}/"
+        if ref.startswith(prefix):
+            return ref.removeprefix(prefix)
+
+    abbrev = _run_git_quiet(["rev-parse", "--abbrev-ref", f"{remote}/HEAD"], cwd)
+    if abbrev.ok:
+        ref = abbrev.stdout.strip()
+        if ref and ref != f"{remote}/HEAD":
+            return ref.removeprefix(f"{remote}/")
+
+    return None
+
+
+def _branch_exists(cwd: Path, branch: str) -> bool:
+    """Return ``True`` if a local ``branch`` ref exists at *cwd*."""
+    probe = _run_git_quiet(["rev-parse", "--verify", "--quiet", branch], cwd)
+    return probe.ok
+
+
+def resolve_default_branch(cwd: Path, remote: str = "origin") -> str:
+    """Resolve the repository's default branch (the protected trunk).
+
+    Resolution order: ``<remote>/HEAD`` first (the authoritative signal), then
+    ``init.defaultBranch`` from git config, then the ``<remote>/master``
+    remote-tracking ref, then the conventional ``main``/``master`` local probe,
+    and finally ``"main"`` as a last resort. Consulting ``init.defaultBranch``
+    and ``<remote>/master`` BEFORE the hard-coded ``main``-first local probe
+    means a repo whose real trunk is ``master`` is not mis-resolved to a stray
+    local ``main`` when ``<remote>/HEAD`` is unavailable. Never raises.
+
+    Args:
+        cwd: Repository root.
+        remote: Remote whose ``HEAD`` symbolic ref names the default branch.
+
+    Returns:
+        The default branch short name (e.g. ``"main"`` or ``"master"``).
+    """
+    from_head = _resolve_default_branch_from_remote_head(cwd, remote)
+    if from_head is not None:
+        return from_head
+
+    cfg = _run_git_quiet(["config", "--get", "init.defaultBranch"], cwd)
+    if cfg.ok and cfg.stdout.strip():
+        configured = cfg.stdout.strip()
+        if _branch_exists(cwd, configured):
+            return configured
+
+    master_tracking = _run_git_quiet(["rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/master"], cwd)
+    if master_tracking.ok:
+        return "master"
+
+    for candidate in ("main", "master"):
+        if _branch_exists(cwd, candidate):
+            return candidate
+
+    if cfg.ok and cfg.stdout.strip():
+        return cfg.stdout.strip()
+
+    return "main"
+
+
+def protected_default_branches(cwd: Path, remote: str = "origin") -> frozenset[str]:
+    """Return the set of branch names that must be treated as protected trunks.
+
+    Normally this is the single :func:`resolve_default_branch` result. But when
+    ``<remote>/HEAD`` is unavailable (unset ``set-head``, partial clone, some
+    ``git worktree`` checkouts) AND both a local ``main`` and a local ``master``
+    exist, the true trunk is genuinely ambiguous: neither the local probe order
+    nor the remote-tracking heuristic can be trusted to pick correctly. In that
+    ambiguous state this returns BOTH names so a merge guard fails closed and
+    refuses to land unreviewed commits on either candidate. Never raises.
+
+    Args:
+        cwd: Repository root.
+        remote: Remote whose ``HEAD`` symbolic ref names the default branch.
+
+    Returns:
+        A frozenset of protected branch short names (usually one, two when the
+        default is ambiguous).
+    """
+    from_head = _resolve_default_branch_from_remote_head(cwd, remote)
+    if from_head is not None:
+        return frozenset({from_head})
+
+    if _branch_exists(cwd, "main") and _branch_exists(cwd, "master"):
+        return frozenset({"main", "master"})
+
+    return frozenset({resolve_default_branch(cwd, remote)})
 
 
 def safe_push(

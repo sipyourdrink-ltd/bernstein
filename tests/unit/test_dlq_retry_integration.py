@@ -52,6 +52,7 @@ class _MockTask:
         self.model = "sonnet"
         self.effort = "high"
         self.max_output_tokens = None
+        self.max_turns = None
         self.meta_messages: list[str] = []
         self.completion_signals: list[object] = []
         self.metadata: dict[str, object] = {}

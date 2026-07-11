@@ -21,6 +21,7 @@ from bernstein.core.cascade_router import (
     CascadeRouter,
     _cascade_for_task,
     _effort_for_model,
+    effort_for_scope,
     load_cascade_savings_summary,
 )
 from bernstein.core.models import Complexity, Scope, Task
@@ -114,16 +115,63 @@ class TestCascadeForTask:
 
 
 # ---------------------------------------------------------------------------
+# effort_for_scope - deterministic scope/complexity/attempt mapping
+# ---------------------------------------------------------------------------
+
+
+class TestEffortForScope:
+    """The effort mapping is a pure, deterministic function of its inputs."""
+
+    def test_trivial_maps_to_low(self) -> None:
+        assert effort_for_scope(Scope.SMALL, Complexity.LOW) == "low"
+
+    def test_standard_maps_to_medium(self) -> None:
+        assert effort_for_scope(Scope.MEDIUM, Complexity.MEDIUM) == "medium"
+
+    def test_high_complexity_maps_to_high(self) -> None:
+        assert effort_for_scope(Scope.MEDIUM, Complexity.HIGH) == "high"
+
+    def test_large_scope_maps_to_high(self) -> None:
+        # Large scope is high-risk even at medium complexity.
+        assert effort_for_scope(Scope.LARGE, Complexity.MEDIUM) == "high"
+
+    def test_mapping_is_deterministic_per_inputs(self) -> None:
+        # Same (scope, complexity, attempt) always yields the same effort -
+        # the property replay depends on.
+        for _ in range(5):
+            assert effort_for_scope(Scope.SMALL, Complexity.MEDIUM, attempt=0) == "medium"
+
+    def test_retry_bumps_one_rung(self) -> None:
+        # trivial -> low; one retry -> medium; two retries -> high.
+        assert effort_for_scope(Scope.SMALL, Complexity.LOW, attempt=0) == "low"
+        assert effort_for_scope(Scope.SMALL, Complexity.LOW, attempt=1) == "medium"
+        assert effort_for_scope(Scope.SMALL, Complexity.LOW, attempt=2) == "high"
+
+    def test_escalation_caps_at_max(self) -> None:
+        # No number of retries pushes past "max".
+        assert effort_for_scope(Scope.LARGE, Complexity.HIGH, attempt=99) == "max"
+
+
+# ---------------------------------------------------------------------------
 # _effort_for_model
 # ---------------------------------------------------------------------------
 
 
 class TestEffortForModel:
-    def test_haiku_returns_low(self) -> None:
-        assert _effort_for_model("haiku", _task()) == "low"
+    def test_trivial_task_returns_low(self) -> None:
+        # SMALL + LOW is trivial work: effort maps to "low" regardless of the
+        # (non-opus) model tier, so easy tasks stop overpaying.
+        task = _task(scope=Scope.SMALL, complexity=Complexity.LOW)
+        assert _effort_for_model("haiku", task) == "low"
 
-    def test_sonnet_returns_high(self) -> None:
-        assert _effort_for_model("sonnet", _task()) == "high"
+    def test_standard_task_returns_medium(self) -> None:
+        # MEDIUM + MEDIUM is standard work -> "medium".
+        assert _effort_for_model("sonnet", _task()) == "medium"
+
+    def test_complex_task_returns_high(self) -> None:
+        # HIGH complexity is complex/high-risk work -> "high".
+        task = _task(complexity=Complexity.HIGH)
+        assert _effort_for_model("sonnet", task) == "high"
 
     def test_opus_returns_max(self) -> None:
         assert _effort_for_model("opus", _task()) == "max"
@@ -132,8 +180,17 @@ class TestEffortForModel:
         task = _task(effort="max")
         assert _effort_for_model("haiku", task) == "max"
 
-    def test_unknown_model_returns_high(self) -> None:
-        assert _effort_for_model("gpt-4", _task()) == "high"
+    def test_unknown_model_uses_scope_mapping(self) -> None:
+        # Unknown (non-opus) model falls through to the scope/complexity map.
+        assert _effort_for_model("gpt-4", _task()) == "medium"
+
+    def test_retry_count_escalates_effort(self) -> None:
+        # A retried standard task runs harder: retry_count bumps effort one
+        # rung, so an escalation-driven effort change is reproducible and
+        # therefore hashable into the step journal.
+        task = _task(scope=Scope.SMALL, complexity=Complexity.LOW)
+        task.retry_count = 1
+        assert _effort_for_model("sonnet", task) == "medium"
 
 
 # ---------------------------------------------------------------------------

@@ -58,7 +58,7 @@ jobs:
       actions: read  # list CI runs and download their coverage artifact
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
 
@@ -131,7 +131,9 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          branch: coverage-ratchet/baseline-${{ github.run_id }}
+          # Stable branch so create-pull-request UPDATES the single open
+          # ratchet PR in place instead of opening a fresh PR every push.
+          branch: coverage-ratchet/baseline
           delete-branch: true
           add-paths: |
             .coverage-baseline.json

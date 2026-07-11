@@ -9,7 +9,7 @@ Bernstein includes a SOC 2-compatible audit mode that creates a tamper-evident, 
 
 ```bash
 # Enable audit mode when running the orchestrator
-bernstein conduct --audit
+bernstein run --audit
 
 # View recent audit events
 bernstein audit show
@@ -109,9 +109,9 @@ bernstein audit query --actor orchestrator --limit 50
 
 Audit mode is controlled by:
 
-1. **CLI flag**: `bernstein conduct --audit`
+1. **CLI flag**: `bernstein run --audit`
 2. **Config file**: Set `audit_mode: true` in `bernstein.yaml`
-3. **Compliance preset**: `bernstein conduct --compliance development` (includes audit)
+3. **Compliance preset**: `bernstein run --compliance development` (includes audit)
 
 The HMAC key is automatically generated on first use and stored in `.sdd/audit/.hmac_key`. Protect this file-it's required for verification.
 

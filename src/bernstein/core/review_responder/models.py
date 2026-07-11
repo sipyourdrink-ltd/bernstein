@@ -7,11 +7,11 @@ responder talk to each other without circular imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 
-class RoundOutcome(str, Enum):  # noqa: UP042 - StrEnum forces str-cmp wins; we want explicit dual-base for label exports
+class RoundOutcome(StrEnum):
     """Outcome label attached to a completed (or aborted) review round.
 
     Values are kept stable because they appear as a Prometheus label.

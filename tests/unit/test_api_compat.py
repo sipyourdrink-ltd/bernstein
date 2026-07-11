@@ -122,13 +122,27 @@ def test_task_response_fields_stable() -> None:
     assert not missing, f"TaskResponse is missing expected fields: {missing}"
 
 
-def test_task_complete_request_result_summary_required() -> None:
-    """TaskCompleteRequest.result_summary must remain required."""
+def test_task_complete_request_requires_summary_or_payload() -> None:
+    """TaskCompleteRequest accepts legacy result_summary or a contract payload.
+
+    Reviewed API change with the worker completion contract: result_summary
+    stays accepted unchanged for existing clients, payload carries the typed
+    completion or refusal, and a body with neither key must be rejected so a
+    bare {} can never register as a worker outcome.
+    """
+    import pytest
+    from pydantic import ValidationError
+
     from bernstein.core.server import TaskCompleteRequest
 
     fields = TaskCompleteRequest.model_fields
     assert "result_summary" in fields
-    assert fields["result_summary"].is_required(), "result_summary must not get a default value"
+    assert "payload" in fields
+    # Legacy clients keep working: summary-only body validates.
+    assert TaskCompleteRequest(result_summary="done").result_summary == "done"
+    # A body with neither key is malformed, not a worker outcome.
+    with pytest.raises(ValidationError):
+        TaskCompleteRequest()
 
 
 def test_heartbeat_request_fields_stable() -> None:

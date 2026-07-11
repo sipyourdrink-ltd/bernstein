@@ -148,6 +148,9 @@ def _make_orch(tmp_path: Path, router: _RouterStub) -> Any:
             _worktree_mgr=_WorktreeManagerStub(tmp_path / "batch-worktree"),
             _worktree_paths={},
             reap_completed_agent=MagicMock(return_value=None),
+            # Routing refuses to guess a model; batch submission reads the
+            # run's default from the spawner.
+            _default_model="mock-model",
         ),
         _batch_sessions={},
         _task_to_session={},

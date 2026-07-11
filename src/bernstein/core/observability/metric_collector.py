@@ -1069,6 +1069,9 @@ class MetricsCollector:
         tokens_before: int,
         tokens_after: int,
         reason: str = "token_budget",
+        *,
+        trigger: str | None = None,
+        correlation_id: str | None = None,
     ) -> None:
         """Record a context compaction event.
 
@@ -1080,18 +1083,24 @@ class MetricsCollector:
             tokens_before: Token count before compaction.
             tokens_after: Token count after compaction.
             reason: Why compaction was triggered.
+            trigger: Compaction lane (``proactive`` or ``reactive``);
+                omitted from the tags when ``None`` so pre-existing
+                callers produce unchanged points.
+            correlation_id: Receipt correlation id tying the metric
+                point to the ``compaction.receipt`` audit-chain event.
         """
         saved = max(0, tokens_before - tokens_after)
-        self._write_metric_point(
-            MetricType.COMPACTION,
-            float(saved),
-            {
-                "session_id": session_id,
-                "tokens_before": str(tokens_before),
-                "tokens_after": str(tokens_after),
-                "reason": reason,
-            },
-        )
+        tags = {
+            "session_id": session_id,
+            "tokens_before": str(tokens_before),
+            "tokens_after": str(tokens_after),
+            "reason": reason,
+        }
+        if trigger is not None:
+            tags["trigger"] = trigger
+        if correlation_id is not None:
+            tags["correlation_id"] = correlation_id
+        self._write_metric_point(MetricType.COMPACTION, float(saved), tags)
 
     # -- Query Methods -------------------------------------------------------
 

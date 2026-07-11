@@ -15,6 +15,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `credential_scoping.py`     | Agent credential scope minimization for least-privilege API keys |
 | `dataclass_helpers.py`      | Helpers for preserving dataclass instance types through updates |
 | `defaults.py`               | Centralized default values for the Bernstein orchestrator |
+| `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
 | `agents/`                   | agents sub-package |
 | `approval/`                 | Interactive tool-call approval (op-002) |
@@ -28,7 +29,9 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `daemon/`                   | Daemon installation helpers for Bernstein |
 | `devops/`                   | devops sub-package |
 | `distribution/`             | Distribution utilities - air-gap wheelhouse build, verify, signing |
+| `endpoints/`                | Local-model worker tier: endpoint conformance and signed certification |
 | `errors/`                   | Structured first-run error categorization for Bernstein |
+| `evidence/`                 | Verification evidence bundles (issue #2362) |
 | `fleet/`                    | Fleet dashboard - supervise multiple Bernstein projects in one view |
 | `git/`                      | git sub-package |
 | `grpc_gen/`                 | Generated gRPC stubs - run ``scripts/generate_proto.sh`` to populate |
@@ -63,6 +66,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `storage/`                  | Pluggable artifact storage sinks (oai-003) |
 | `substrate/`                | Substrate: register Bernstein into host applications (MCP servers, etc.) |
 | `tasks/`                    | tasks sub-package |
+| `teams/`                    | Named team manifests - pinned bundles of roles, model policies, and response profiles |
 | `telemetry/`                | Opt-in operator observability for Bernstein |
 | `tokens/`                   | tokens sub-package |
 | `trackers/`                 | Tracker adapter subsystem |
@@ -73,76 +77,81 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 
 ### `src/bernstein/adapters/` - CLI agent adapters
 
-| File                       | Purpose |
-|----------------------------|---------|
-| `_contract.py`             | Adapter contract loader and capability checker |
-| `aichat.py`                | AIChat CLI adapter |
-| `aider.py`                 | Aider CLI adapter |
-| `amp.py`                   | Amp CLI adapter |
-| `auggie.py`                | Auggie (Augment Code) CLI adapter |
-| `autohand.py`              | Autohand Code CLI adapter |
-| `base.py`                  | Base adapter for CLI coding agents |
-| `caching_adapter.py`       | Caching wrapper for CLI adapters to enable prompt prefix deduplication and response reuse |
-| `charm.py`                 | Charm Crush CLI adapter |
-| `claude.py`                | Claude Code CLI adapter |
-| `claude_agents.py`         | Build per-task Claude Code subagent definitions for the --agents flag |
-| `claude_cache_control.py`  | Anthropic API cache-control block builder for the Claude Code adapter |
-| `claude_exit_codes.py`     | Map Claude Code exit codes to Bernstein AbortReason/TransitionReason |
-| `claude_mcp_loader.py`     | MCP config loading and merging for the Claude Code adapter |
-| `claude_routine.py`        | Claude Code Routine adapter - offloads tasks to Anthropic cloud via /fire API |
-| `claude_stream_parser.py`  | Parse Claude Code --output-format stream-json events |
-| `claude_wrapper_script.py` | Inline wrapper script source + assembly for the Claude Code adapter |
-| `cline.py`                 | Cline CLI adapter |
-| `clm.py`                   | CLM sovereign LLM adapter - drives a customer-side CLM gateway |
-| `clm_tls_launcher.py`      | mTLS launcher for the CLM adapter |
-| `cloudflare_agents.py`     | Cloudflare Agents SDK adapter for local wrangler dev or deployed worker trigger |
-| `codebuff.py`              | Codebuff CLI adapter |
-| `codex.py`                 | OpenAI Codex CLI adapter |
-| `codex_cloudflare.py`      | Codex adapter for Cloudflare Sandbox execution |
-| `cody.py`                  | Sourcegraph Cody CLI adapter |
-| `composio.py`              | Composio Agent Orchestrator (``ao``) CLI adapter |
-| `conformance.py`           | Adapter tool contract conformance suite harness |
-| `continue_dev.py`          | Continue.dev CLI adapter |
-| `copilot.py`               | GitHub Copilot CLI adapter |
-| `cursor.py`                | Cursor Agent CLI adapter |
-| `devin_terminal.py`        | Devin for Terminal (Cognition) CLI adapter |
-| `droid.py`                 | Droid (Factory AI) CLI adapter |
-| `env_isolation.py`         | Environment variable isolation for spawned agents |
-| `forge.py`                 | Forge CLI adapter |
-| `gemini.py`                | Google Gemini / Antigravity CLI adapter |
-| `generic.py`               | Generic CLI adapter for arbitrary coding agent CLIs |
-| `goose.py`                 | Goose CLI adapter for Bernstein |
-| `gptme.py`                 | gptme CLI adapter |
-| `hermes.py`                | Hermes Agent (Nous Research) CLI adapter |
-| `iac.py`                   | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
-| `junie.py`                 | JetBrains Junie CLI adapter |
-| `kilo.py`                  | Kilo CLI adapter (Stackblitz) |
-| `kimi.py`                  | Kimi CLI adapter |
-| `kiro.py`                  | Kiro CLI adapter |
-| `letta_code.py`            | Letta Code CLI adapter |
-| `manager.py`               |  |
-| `mistral.py`               | Mistral Vibe CLI adapter |
-| `mock.py`                  | Mock CLI adapter for zero-API-key demos and testing |
-| `ollama.py`                | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
-| `open_interpreter.py`      | Open Interpreter CLI adapter |
-| `openai_agents.py`         | OpenAI Agents SDK v2 adapter |
-| `openai_agents_runner.py`  | Python entrypoint that runs an OpenAI Agents SDK session |
-| `opencode.py`              | OpenCode CLI adapter |
-| `openhands.py`             | OpenHands CLI adapter |
-| `pi.py`                    | Pi (pi-coding-agent) CLI adapter |
-| `plandex.py`               | Plandex CLI adapter |
-| `plugin_sdk.py`            | Adapter plugin SDK for third-party agent integration |
-| `q_dev.py`                 | AWS Q Developer CLI adapter (binary: ``q``) |
-| `qwen.py`                  | Qwen CLI adapter for OpenAI compatible models |
-| `ralphex.py`               | Ralphex (umputun/ralphex) CLI adapter |
-| `registry.py`              | Adapter registry - look up CLI adapters by name |
-| `report.py`                | Adapter conformance + capability report |
-| `rovo.py`                  | Atlassian Rovo Dev CLI adapter |
-| `session_id.py`            | Deterministic session-id binding for adapter replay isolation |
-| `skills_injector.py`       | Inject per-task Claude Code skills into the worktree before spawn |
-| `strict_schema.py`         | Strict structured-output validation and user-owned-field protection |
-| `use_cases.py`             | Per-adapter metadata for the ``bernstein integrations list`` command |
-| `ci/`                      | CI system adapters for log parsing and failure extraction |
+| File                        | Purpose |
+|-----------------------------|---------|
+| `_contract.py`              | Adapter contract loader and capability checker |
+| `advisories.py`             | Adapter minimum-safe-version advisories (supply-chain posture) |
+| `agy.py`                    | Antigravity CLI (``agy``) adapter |
+| `aichat.py`                 | AIChat CLI adapter |
+| `aider.py`                  | Aider CLI adapter |
+| `amp.py`                    | Amp CLI adapter |
+| `auggie.py`                 | Auggie (Augment Code) CLI adapter |
+| `autohand.py`               | Autohand Code CLI adapter |
+| `base.py`                   | Base adapter for CLI coding agents |
+| `caching_adapter.py`        | Caching wrapper for CLI adapters to enable prompt prefix deduplication and response reuse |
+| `canary.py`                 | Adapter conformance canary matrix (issue #2368) |
+| `charm.py`                  | Charm Crush CLI adapter |
+| `claude.py`                 | Claude Code CLI adapter |
+| `claude_agents.py`          | Build per-task Claude Code subagent definitions for the --agents flag |
+| `claude_cache_control.py`   | Anthropic API cache-control block builder for the Claude Code adapter |
+| `claude_exit_codes.py`      | Map Claude Code exit codes to Bernstein AbortReason/TransitionReason |
+| `claude_mcp_loader.py`      | MCP config loading and merging for the Claude Code adapter |
+| `claude_routine.py`         | Claude Code Routine adapter - offloads tasks to Anthropic cloud via /fire API |
+| `claude_stream_parser.py`   | Parse Claude Code --output-format stream-json events |
+| `claude_wrapper_script.py`  | Inline wrapper script source + assembly for the Claude Code adapter |
+| `cline.py`                  | Cline CLI adapter |
+| `clm.py`                    | CLM sovereign LLM adapter - drives a customer-side CLM gateway |
+| `clm_tls_launcher.py`       | mTLS launcher for the CLM adapter |
+| `cloudflare_agents.py`      | Cloudflare Agents SDK adapter for local wrangler dev or deployed worker trigger |
+| `codebuff.py`               | Codebuff CLI adapter |
+| `codex.py`                  | OpenAI Codex CLI adapter |
+| `codex_cloudflare.py`       | Codex adapter for Cloudflare Sandbox execution |
+| `cody.py`                   | Sourcegraph Cody CLI adapter |
+| `composio.py`               | Composio Agent Orchestrator (``ao``) CLI adapter |
+| `conformance.py`            | Adapter tool contract conformance suite harness |
+| `continue_dev.py`           | Continue.dev CLI adapter |
+| `copilot.py`                | GitHub Copilot CLI adapter |
+| `council_runner.py`         | Task-level "council of agents" runner |
+| `cursor.py`                 | Cursor Agent CLI adapter |
+| `devin_terminal.py`         | Devin for Terminal (Cognition) CLI adapter |
+| `droid.py`                  | Droid (Factory AI) CLI adapter |
+| `env_isolation.py`          | Environment variable isolation for spawned agents |
+| `forge.py`                  | Forge CLI adapter |
+| `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
+| `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
+| `goose.py`                  | Goose CLI adapter for Bernstein |
+| `gptme.py`                  | gptme CLI adapter |
+| `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
+| `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
+| `junie.py`                  | JetBrains Junie CLI adapter |
+| `kilo.py`                   | Kilo CLI adapter (Stackblitz) |
+| `kimi.py`                   | Kimi CLI adapter |
+| `kiro.py`                   | Kiro CLI adapter |
+| `letta_code.py`             | Letta Code CLI adapter |
+| `manager.py`                |  |
+| `mistral.py`                | Mistral Vibe CLI adapter |
+| `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
+| `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
+| `open_interpreter.py`       | Open Interpreter CLI adapter |
+| `openai_agents.py`          | OpenAI Agents SDK v2 adapter |
+| `openai_agents_builtins.py` | Opt-in builtin tools for the OpenAI Agents runner |
+| `openai_agents_runner.py`   | Python entrypoint that runs an OpenAI Agents SDK session |
+| `opencode.py`               | OpenCode CLI adapter |
+| `openhands.py`              | OpenHands CLI adapter |
+| `pi.py`                     | Pi (pi-coding-agent) CLI adapter |
+| `plandex.py`                | Plandex CLI adapter |
+| `plugin_sdk.py`             | Adapter plugin SDK for third-party agent integration |
+| `q_dev.py`                  | AWS Q Developer CLI adapter (binary: ``q``) |
+| `qwen.py`                   | Qwen CLI adapter for OpenAI compatible models |
+| `ralphex.py`                | Ralphex (umputun/ralphex) CLI adapter |
+| `registry.py`               | Adapter registry - look up CLI adapters by name |
+| `report.py`                 | Adapter conformance + capability report |
+| `rovo.py`                   | Atlassian Rovo Dev CLI adapter |
+| `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
+| `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
+| `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
+| `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
+| `ci/`                       | CI system adapters for log parsing and failure extraction |
 
 ### `src/bernstein/agents/` - agent catalog & discovery
 
@@ -226,6 +235,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 
 | File                      | Purpose |
 |---------------------------|---------|
+| `ab_comparison.py`        | Three-arm profile A/B comparison artifact (issue #2247) |
 | `ab_runner.py`            | A/B runner primitive - deterministic prompt-vs-prompt comparison |
 | `baseline.py`             | Baseline tracking for eval-gated evolution |
 | `calibration.py`          | Calibration log + Brier score for router and judge decisions |
@@ -278,6 +288,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `dependency_graph.py`     | ASCII-art dependency graph renderer for tasks |
 | `diff_folding.py`         | Diff folding - collapsible diff display for large changes |
 | `diff_render.py`          | Word-level diff rendering for Bernstein TUI |
+| `event_stream.py`         | SSE thread consumer for the TUI (issue #2297) |
 | `fallback.py`             | Rich-based fallback display for unsupported terminals (TUI-003) |
 | `help_screen.py`          | Help screen modal for TUI - shortcuts plus discoverability hints |
 | `keybinding_config.py`    | TUI-004: Configurable keybinding system with YAML-based key map |
@@ -311,15 +322,17 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 
 ### `src/bernstein/github_app/` - GitHub App integration
 
-| File                | Purpose |
-|---------------------|---------|
-| `app.py`            | GitHub App authentication: JWT creation and installation token exchange |
-| `check_runs.py`     | GitHub Check Runs API client |
-| `ci_router.py`      | CI failure routing: blame attribution and enriched fix-task generation |
-| `cost_reporter.py`  | PR cost annotation: post agent run cost summaries as GitHub PR comments |
-| `mapper.py`         | Event-to-task conversion: maps GitHub webhook events to Bernstein task payloads |
-| `slash_commands.py` | Slash command parser for /bernstein comments on GitHub issues and PRs |
-| `webhooks.py`       | Webhook parsing and HMAC-SHA256 signature verification |
+| File                     | Purpose |
+|--------------------------|---------|
+| `app.py`                 | GitHub App authentication: JWT creation and installation token exchange |
+| `check_runs.py`          | GitHub Check Runs API client |
+| `ci_router.py`           | CI failure routing: blame attribution and enriched fix-task generation |
+| `cost_reporter.py`       | PR cost annotation: post agent run cost summaries as GitHub PR comments |
+| `evidence_projection.py` | Tracker-comment projection of a sealed evidence bundle (issue #2362) |
+| `mapper.py`              | Event-to-task conversion: maps GitHub webhook events to Bernstein task payloads |
+| `review_projection.py`   | Tracker-comment projection of an attested review receipt (issue #2296) |
+| `slash_commands.py`      | Slash command parser for /bernstein comments on GitHub issues and PRs |
+| `webhooks.py`            | Webhook parsing and HMAC-SHA256 signature verification |
 
 ### `src/bernstein/mcp/` - MCP server
 

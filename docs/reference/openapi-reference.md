@@ -2,7 +2,7 @@
 
 Bernstein exposes a task-server HTTP API on `http://127.0.0.1:8052` by default. The full OpenAPI 3.1 specification is available at `/openapi.json` when the server is running.
 
-This page is the canonical hand-maintained reference. It covers ~196 HTTP/WebSocket endpoints across 49 route files, plus 8 MCP tools. Endpoints requiring authentication are marked with `Y` in the **Auth** column.
+This page is the canonical hand-maintained reference. It covers ~216 HTTP/WebSocket endpoints across 58 route files, plus 13 MCP tools. Endpoints requiring authentication are marked with `Y` in the **Auth** column.
 
 ## Generating the spec
 
@@ -34,7 +34,7 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:8052/tasks
 
 Public endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/.well-known/agent.json`, `/.well-known/acp.json`, `/docs`, `/openapi.json`, plus loopback connections from `127.0.0.1` (for local CLI use).
 
-Bearer tokens are issued via `/auth/cli/token` (device flow) or `/auth/token` (programmatic), and rotated via `/auth/refresh`.
+Bearer tokens are issued via the CLI device flow (`/auth/cli/device`, `/auth/cli/authorize`, `/auth/cli/token`).
 
 ---
 
@@ -325,9 +325,7 @@ Source: `core/routes/auth.py`.
 | POST | `/auth/cli/device` | `cli_device_init` | N | Initiate CLI device-flow login |
 | POST | `/auth/cli/token` | `cli_device_token` | N | Exchange device code for token |
 | POST | `/auth/cli/authorize` | `cli_authorize` | N | Authorize a pending device |
-| POST | `/auth/token` | `token_grant` | N | Programmatic token issue |
-| POST | `/auth/refresh` | `token_refresh` | N | Refresh an expired token |
-| POST | `/auth/validate` | `token_validate` | N | Validate a token |
+| GET | `/auth/login` | `login` | N | Interactive login |
 | GET | `/auth/me` | `current_user` | Y | Authenticated-user profile |
 | POST | `/auth/logout` | `logout` | Y | Revoke current session |
 | GET | `/auth/group-mappings` | `group_mappings` | Y | OIDC/SAML group -> role mappings |
@@ -417,7 +415,7 @@ Source: `core/routes/bulletin.py`, `core/routes/channel.py`.
 
 ## MCP tools
 
-The MCP tools below are exposed via Bernstein's MCP server (`core/mcp/server.py`), not over HTTP. They are callable from any MCP-aware client (Claude Desktop, Cursor, etc.) once the MCP server is registered.
+The MCP tools below are exposed via Bernstein's MCP server (`mcp/server.py`), not over HTTP. They are callable from any MCP-aware client (Claude Desktop, Cursor, etc.) once the MCP server is registered.
 
 | Tool name | Purpose |
 |-----------|---------|
@@ -427,7 +425,12 @@ The MCP tools below are exposed via Bernstein's MCP server (`core/mcp/server.py`
 | `bernstein_cost` | Cost summary for the current run |
 | `bernstein_stop` | Stop the running orchestrator |
 | `bernstein_approve` | Approve a pending task or request |
+| `bernstein_create_subtask` | Create a subtask under an existing task |
 | `bernstein_health` | Health check |
+| `bernstein_scenarios` | List available scenarios |
+| `bernstein_scenario` | Run a scenario |
+| `bernstein_scenario_status` | Fetch scenario run status |
+| `verify_chain` | Verify an artefact's lineage chain |
 | `load_skill` | Load a skill pack at runtime |
 
 These are **MCP tools**, not HTTP endpoints. They consume tool-call payloads matching each tool's MCP schema (see `mcp/server.py` for `inputSchema` definitions).

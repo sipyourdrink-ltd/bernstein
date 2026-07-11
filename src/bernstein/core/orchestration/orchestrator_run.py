@@ -210,6 +210,7 @@ def _run_shutdown(orch: Any) -> None:
         ticks=orch._tick_count,
         fingerprint=orch._recorder.fingerprint(),
     )
+    orch._seal_journal_into_lineage_spine()
     logger.info(
         "Orchestrator stopped (replay: %s, fingerprint: %s)",
         orch._recorder.path,

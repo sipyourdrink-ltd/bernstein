@@ -363,7 +363,7 @@ def test_replay_list_shows_recorded_run() -> None:
     with runner.isolated_filesystem():
         rd = Path(".sdd/runs/20240315-143022")
         rd.mkdir(parents=True)
-        (rd / "replay.jsonl").write_text(json.dumps({"ts": 1.0, "event": "start"}) + "\n")
+        (rd / "journal.jsonl").write_text(json.dumps({"ts": 1.0, "event": "start"}) + "\n")
         result = runner.invoke(replay_cmd, ["list"])
     assert result.exit_code == 0, result.output
     assert "20240315-143022" in result.output

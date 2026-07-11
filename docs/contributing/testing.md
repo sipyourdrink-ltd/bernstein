@@ -6,7 +6,7 @@ locally without waiting for the cloud runner.
 
 > **Docs duty for test PRs.** Any PR that adds a new test layer, tool, or
 > harness MUST update this page in the same PR. See the project-wide
-> [Documentation duty](../../CONTRIBUTING.md#docs-alongside-code) rule.
+> [Documentation duty](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md#docs-alongside-code) rule.
 
 ## Tool ↔ bug-class matrix
 

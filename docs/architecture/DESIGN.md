@@ -24,7 +24,7 @@ CLI (src/bernstein/cli/)
         -> Adapter-based process spawning (adapters/)
 ```
 
-Since v1.6, `core/` is organized into 22 sub-packages. Top-level modules like `core/server.py`, `core/orchestrator.py`, `core/spawner.py`, `core/task_lifecycle.py`, and `core/models.py` are thin re-export shims that redirect to their sub-packages.
+Since v1.6, `core/` is organized into 55 sub-packages. Top-level modules like `core/server.py`, `core/orchestrator.py`, `core/spawner.py`, `core/task_lifecycle.py`, and `core/models.py` are thin re-export shims that redirect to their sub-packages.
 
 Primary orchestration modules:
 

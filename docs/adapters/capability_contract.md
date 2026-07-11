@@ -14,7 +14,7 @@ the enum, so adding a new adapter is a contract-completion exercise rather
 than a hunt-and-patch across the core.
 
 The enums and the declaration matrix live in
-[`src/bernstein/adapters/_contract.py`](../../src/bernstein/adapters/_contract.py).
+[`src/bernstein/adapters/_contract.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/_contract.py).
 Strategy is **declared**, not probed: Bernstein never runs the CLI at start
 just to discover its capabilities.
 
@@ -183,4 +183,84 @@ The spawn path enforces the capability: requesting any of these keys for an
 adapter that does not declare `SUPPORTS_SAMPLING_PARAMS` raises
 `SamplingParamsRefusal` instead of silently dropping the parameters. See
 `ensure_sampling_params_supported` in
-[`src/bernstein/adapters/plugin_sdk.py`](../../src/bernstein/adapters/plugin_sdk.py).
+[`src/bernstein/adapters/plugin_sdk.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/plugin_sdk.py).
+
+### Where these values come from
+
+Three sources feed the per-spawn slots above, in ascending precedence:
+
+1. **Mode profile** - the resolved `ModeProfile` for the spawn carries
+   optional `temperature`, `top_p`, `top_k`, and `max_tokens`. They are
+   folded in only when the target adapter declares
+   `SUPPORTS_SAMPLING_PARAMS`, so a default profile never breaks a spawn on
+   an adapter that cannot honour sampling.
+2. **`role_model_policy[<role>]`** - a role may set `base_url` and
+   `api_key_env` in `bernstein.yaml` to target an OpenAI-compatible
+   endpoint other than the default. `api_key_env` is the NAME of an
+   environment variable, validated at parse time against the same
+   fail-closed credential allowlist described above; a rejected name fails
+   `bernstein.yaml` parsing rather than reaching a spawn.
+3. **Explicit `mcp_config`** - an operator-set value always wins over the
+   two derived sources; the merge only fills slots the operator left unset.
+
+A run that sets none of these behaves exactly as before.
+
+## Builtin tool source
+
+By default the runner gives the agent the tools brokered by the Bernstein
+MCP gateway (`tool_source: "gateway"`). Some runs execute with no MCP
+gateway reachable - an isolated worktree with no bridge, a minimal offline
+environment - and would otherwise have no sanctioned way to act on the
+workdir at all.
+
+Setting `tool_source: "builtin"` in the per-spawn `mcp_config` (which the
+adapter forwards to the runner manifest) opts into a small set of builtins.
+They split into two confinement tiers - do not conflate them:
+
+| Tool | Confinement | Purpose |
+| --- | --- | --- |
+| `read_file(path)` | Workdir-confined (builtin layer) | Read a UTF-8 file relative to the run workdir. |
+| `write_file(path, content)` | Workdir-confined (builtin layer) | Write UTF-8 text relative to the run workdir. |
+| `list_dir(path)` | Workdir-confined (builtin layer) | List a directory relative to the run workdir. |
+| `run_command(argv)` | Restricted process-exec primitive; filesystem confinement is the OS sandbox | Run a bare-name command inside the run workdir. |
+
+`read_file`, `write_file`, and `list_dir` are workdir-confined **at the
+builtin layer**: every path argument is resolved against the run workdir, and
+absolute paths and `..` escapes are rejected on the real (symlink-resolved)
+target.
+
+`run_command` is **not** workdir-sandboxed. It runs a child process, and a
+child process can read and write anywhere the runner process can reach, so its
+TRUE filesystem confinement is the configured OS sandbox
+(`docker`/`e2b`/`modal`), not the builtin. The builtin layer applies only
+defense-in-depth: `argv` is a list run with `shell=False` (no shell string, no
+interpolation), and `argv[0]` must be a bare command name - absolute paths,
+path separators, and known shell/interpreters (`sh`, `bash`, `python`, `env`,
+...) are rejected, and the survivor is resolved on `PATH` and run by its
+resolved absolute path. Because true confinement is the OS sandbox,
+`run_command` is exposed **only** when the run has an OS sandbox provider
+configured, or the operator explicitly opts in with
+`BERNSTEIN_BUILTIN_ALLOW_RUN_COMMAND=1`. Under the bare local/worktree path
+with no opt-in, `run_command` is withheld and the three file tools remain
+available.
+
+The builtins never become the default; `gateway` stays the default and any
+value other than `"builtin"` selects it. The builtins enforce these
+properties, each covered by tests in
+[`tests/unit/adapters/test_openai_agents_builtins.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/tests/unit/adapters/test_openai_agents_builtins.py):
+
+1. **Path confinement** (file tools). Every path argument is resolved against
+   the run workdir. Absolute paths and `..` escapes are rejected: the real
+   (symlink-resolved) target must stay inside the real workdir.
+2. **Restricted exec** (`run_command`). `argv` is a list run with
+   `shell=False` (no shell string, no interpolation), and `argv[0]` is a bare
+   command name resolved on `PATH`; absolute paths, path separators, and
+   shell/interpreters are rejected. Availability is gated on an OS sandbox
+   provider or the explicit opt-in.
+3. **Audited.** Every call emits a `tool_call` and a `tool_result` event to
+   the runner's line-delimited JSON event stream, tagged
+   `"tool_source": "builtin"`, with the tool name, arguments, and outcome -
+   so a run with no MCP gateway stays auditable and replayable.
+
+See `build_builtin_tools` in
+[`src/bernstein/adapters/openai_agents_builtins.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/openai_agents_builtins.py).

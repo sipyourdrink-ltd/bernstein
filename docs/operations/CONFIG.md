@@ -20,6 +20,7 @@ All magic numbers, timeouts, and thresholds are centralized in `src/bernstein/co
 - `tasks`
 - `workspace`
 - `role_model_policy`
+- `local_endpoints`
 - `storage`
 - `notify` (webhook/email/desktop notification settings)
 - `network` (IP allowlist)
@@ -130,8 +131,8 @@ Environment variables are useful in CI and automation. Common variables:
 
 | Variable | Purpose |
 |---|---|
-| `BERNSTEIN_SERVER_HOST` | Server bind address |
-| `BERNSTEIN_SERVER_PORT` | Server port (default runtime is `8052`) |
+| `BERNSTEIN_BIND_HOST` | Server bind address (default `127.0.0.1`) |
+| `BERNSTEIN_PORT` | Server port (default `8052`) |
 | `BERNSTEIN_STORAGE_BACKEND` | Storage backend (`memory`, `postgres`, `redis`) |
 | `BERNSTEIN_DATABASE_URL` | PostgreSQL DSN for `postgres`/`redis` backends |
 | `BERNSTEIN_REDIS_URL` | Redis URL for distributed locking backend |
@@ -142,6 +143,13 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_COMPLIANCE` | Compliance preset override |
 | `BERNSTEIN_QUIET` | Quiet mode (reduced terminal output) |
 | `BERNSTEIN_AUDIT` | Enable extra audit behavior in run flow |
+| `BERNSTEIN_STALL_THRESHOLD_S` | Override the manager-stall deadline (see §4.2 below). Takes precedence over the `tuning.orchestrator.stalled_manager_threshold_s` yaml key. |
+| `BERNSTEIN_MAX_TURNS` | Override the SDK turn ceiling for the openai_agents runner (see §4.1). Takes precedence over `tuning.agent.max_turns`. |
+| `BERNSTEIN_JANITOR_FUZZY_PATHS` | Opt-in fuzzy matching for `path_exists` completion signals. **Default `0` (off)**: exact-path matching is unchanged - the check means exactly the path written in the plan. Set to `1` to enable a fuzzy fallback on a literal miss: a pattern derived from the basename (`**/<stem>*<suffix>`) so a manager-guessed path (e.g. `packages/db/test/foo.test.ts`) can match a worker's repo-idiomatic path (e.g. `packages/db/src/__tests__/foo.test.ts`). A fuzzy match logs a WARNING naming the matched path. Explicit glob syntax written in the criterion itself (`*`, `?`, `[`) is always honored, regardless of this flag. See [TROUBLESHOOTING.md #21](TROUBLESHOOTING.md#21-janitor-path_exists-fails-on-a-correctly-placed-file-acceptance-path-mismatch). |
+| `BERNSTEIN_JANITOR_REOPEN_MAX` | Max janitor-reopen cycles per task before a janitor-FAILed task is permanently failed instead of reopened under the same id. **Default `2`.** A non-numeric value logs a warning and falls back to the default; negative values are clamped to `0` (fail immediately, never reopen). |
+| `BERNSTEIN_QUIESCENCE_SETTLE_S` | Settle delay (seconds) the orchestrator waits after a tick reaches quiescence (all tasks terminal) before the re-check that decides whether to self-stop. **Default `2.0`.** Set `0` to skip the settle sleep entirely (used by tests to avoid a real per-tick delay). |
+| `BERNSTEIN_RUN_COMMAND_DEDUPE_WINDOW_S` | Dedupe window (seconds) for the `run_command` builtin: an identical command (same hash) still in flight or finished within this window reuses the original's result instead of re-executing. **Default `2.0`.** Set `0` to disable the dedupe guard entirely. |
+| `BERNSTEIN_OPENAI_AGENTS_TOOL_SOURCE` | Operator lever for the `openai_agents` runner's tool source. Set to `builtin` to make every spawn use the runner's workdir-sandboxed builtin tools (`read_file`/`write_file`/`list_dir`/`run_command`) even when the per-spawn `mcp_config` carries no `tool_source` key. An explicit `mcp_config["tool_source"]` value always wins over this env var. Unset by default. |
 
 ---
 
@@ -155,20 +163,93 @@ tuning:
     tick_interval_s: 5.0
     drain_timeout_s: 120.0
     stale_claim_timeout_s: 1800.0
+    stalled_manager_threshold_s: 300.0
+    max_agent_runtime_s: 3600.0
   spawn:
     spawn_backoff_base_s: 60.0
+  agent:
+    max_turns: 200
+  slo:
+    error_budget_min_failures: 10
 ```
 
 Key default groups:
 
 | Group | Examples |
 |-------|---------|
-| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s` |
+| `OrchestratorDefaults` | `tick_interval_s`, `drain_timeout_s`, `max_consecutive_failures`, `stale_claim_timeout_s`, `stalled_manager_threshold_s`, `max_agent_runtime_s` |
 | `SpawnDefaults` | `spawn_backoff_base_s`, `spawn_backoff_max_s`, `max_spawn_failures` |
 | `TaskDefaults` | Retry limits, deadline windows |
-| `AgentDefaults` | Heartbeat intervals, max dead agents kept |
+| `AgentDefaults` | Heartbeat intervals, max dead agents kept, `max_turns` |
+| `MemoryChainDefaults` | `default_scope` (`user`/`agent`/`run`/`app`), `retention_days` (reporting horizon only; the append-only chain is always retained in full) |
+| `SLODefaults` | `error_budget_min_failures` |
+
+### 4.1) Agent run-length limits (SDK turns, error budget, wall-clock)
+
+Three previously-hardcoded ceilings on the `openai_agents` adapter path are
+now tunable, with defaults unchanged so nothing breaks for existing users:
+
+- **`max_turns`** (`AgentDefaults.max_turns`, default `30`) - forwarded to
+  the OpenAI Agents SDK's `Runner.run_sync(..., max_turns=...)`. The runner
+  forwards `max_turns=30` by default; set `tuning.agent.max_turns` to `None`
+  to omit the kwarg and fall back to the SDK's own default (`10`).
+  A task that legitimately needs more turns
+  before `MaxTurnsExceeded` (large-repo investigation, multi-file
+  refactors) can raise this via `tuning.agent.max_turns: 200` or the
+  `BERNSTEIN_MAX_TURNS` env var (checked first). `BERNSTEIN_MAX_TURNS` must
+  parse as a positive integer - `0`, a negative value, or a non-numeric
+  string is rejected with a warning and falls through to
+  `tuning.agent.max_turns`/the SDK default, rather than being forwarded to
+  `Runner.run_sync` where it would fail every run on the first turn.
+- **`error_budget_min_failures`** (`SLODefaults.error_budget_min_failures`,
+  default `3`) - the floor `ErrorBudget.budget_total` never goes below,
+  even when `total_tasks * (1 - slo_target)` rounds lower. Raise it via
+  `tuning.slo.error_budget_min_failures` when a run's early failures are
+  infra-death retries (rate limits, transient auth) that shouldn't trip
+  `IncidentManager`'s auto-pause. A negative override is clamped to `0`
+  rather than being allowed to suppress the SLO-target-derived budget.
+- **`max_agent_runtime_s`** (`OrchestratorDefaults.max_agent_runtime_s`,
+  default `1800`) - the starting wall-clock kill deadline for a spawned
+  agent, now sourced through `OrchestratorConfig` via the same
+  `tuning.orchestrator.*` mechanism as `stale_claim_timeout_s`. This is
+  only the *starting* value - the agent lifecycle reaper already
+  self-extends it by 600s per cycle up to a 5400s hard cap while the agent
+  keeps heartbeating.
 
 See `defaults.py` for the full list of parameters and their default values.
+
+### 4.2) Manager-stall deadline
+
+`core/orchestration/stalled_manager.py` aborts a run when the manager agent
+has been alive for `stalled_manager_threshold_s` (default `170.0`) with zero
+child tasks posted to the task server. On a larger codebase, or a goal whose
+acceptance criteria demand root-cause investigation before decomposition, the
+manager can legitimately need longer than that before its first `POST /tasks`
+call. Raise the deadline via either:
+
+```yaml
+tuning:
+  orchestrator:
+    stalled_manager_threshold_s: 900.0
+```
+
+or the `BERNSTEIN_STALL_THRESHOLD_S` env var (checked first, so it overrides
+the yaml value for a single run without editing `bernstein.yaml`). Precedence:
+env var > yaml `tuning.orchestrator.stalled_manager_threshold_s` > the
+`170.0` default. Each tier must resolve to a positive, finite number of
+seconds - an unparseable, zero, negative, `nan`, or `inf` value at a given
+tier is rejected with a warning and falls through to the next tier, rather
+than silently disabling the watchdog (fires on turn one) or making it a
+permanent no-op.
+
+If the resolved threshold reaches or exceeds `AGENT.idle_log_age_threshold_s`
+(`180.0` by default - a separate, currently-unwired idle-agent watchdog), a
+warning is logged, since that watchdog would race the stalled-manager
+diagnostic if it is ever wired into the tick loop. This check runs for the
+env var, yaml, and default resolution paths alike, so raising the threshold
+via `BERNSTEIN_STALL_THRESHOLD_S` - the primary way an operator raises it -
+surfaces the warning too. The resolution (and this check) happens once per
+orchestrator instance, not on every tick.
 
 ---
 
@@ -228,6 +309,63 @@ Configuration surface includes:
 - audit controls
 
 For security-sensitive deployments, prefer explicit config in `bernstein.yaml` over implicit defaults.
+
+---
+
+## Bootstrap and merge safety
+
+### GitHub backlog auto-sync (opt-in, off by default)
+
+At bootstrap, Bernstein can pull open GitHub issues into `.sdd/backlog/open/`
+before task scoping. This is **opt-in and off by default** so it cannot
+silently fill the backlog and displace a seeded goal.
+
+Enable it in `bernstein.yaml`:
+
+```yaml
+github:
+  sync_backlog: true   # default: false
+```
+
+Or override at runtime (wins over the config value):
+
+```bash
+BERNSTEIN_SYNC_GITHUB_BACKLOG=1   # truthy enables; falsy (0/false/off) disables
+```
+
+When disabled (the default), no issues are synced.
+
+### Goal-vs-backlog precedence
+
+When a run starts, the planning source is chosen in this order:
+
+1. **Prior session** - resume and skip re-planning.
+2. **Non-empty backlog** - run the backlog tasks.
+3. **Seed goal** - inject the manager/worker task from `goal`.
+
+So a **non-empty backlog takes precedence over the seed goal**. This is kept
+for back-compat with backlog-driven runs, but Bernstein now prints a LOUD
+warning when a seeded goal is skipped because the backlog is non-empty. To run
+the goal instead:
+
+- start from an empty backlog (clear `.sdd/backlog/open/`), or
+- narrow the run with the `BERNSTEIN_TASK_FILTER` sentinel so no backlog task
+  matches.
+
+### Default-branch merge guard
+
+Agent worktree work is merged into whatever branch is checked out at the repo
+root. Bernstein **refuses to merge or push agent work onto the repository's
+default (protected) branch** (`main`/`master`, resolved via `origin/HEAD` with
+a `init.defaultBranch` fallback). The refusal is recorded to
+`.sdd/runtime/refused_merges.jsonl` and the merge is reported as failed rather
+than silently landing unreviewed commits on the trunk.
+
+Check out a non-default branch before merging, or opt in explicitly:
+
+```bash
+BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH=1
+```
 
 ---
 
@@ -326,3 +464,57 @@ fields, or OpenClaw `/v1/sandboxes` REST semantics are obsolete. The repo-truth
 production config surface is `bernstein.yaml` + `.sdd/config.yaml` +
 `BERNSTEIN_*` environment variables, and the OpenClaw runtime path is the
 Gateway WebSocket bridge implemented in Bernstein.
+
+---
+
+## `local_endpoints` - Local-model worker tier
+
+Named OpenAI-compatible endpoint profiles for local runtimes (ollama, LM
+Studio, MLX servers). Role entries reference a profile by name and inherit
+its `base_url`/`model`/`api_key_env`:
+
+```yaml
+local_endpoints:
+  workhorse:
+    base_url: http://127.0.0.1:11434/v1
+    model: qwen2.5-coder:7b-instruct-q4_K_M
+    engine: ollama          # free-form label recorded in the certification receipt
+    timeout: 120            # request timeout in seconds
+    # api_key_env: LOCAL_LLM_API_KEY  # NAME of an env var, never a literal key
+
+role_model_policy:
+  linter:      { endpoint: workhorse }
+  test_writer: { endpoint: workhorse }
+```
+
+Low-stakes roles (`linter`, `test_writer`, `triage`, `doc_sweeper`) run on a
+profile without further ceremony. Every other role is merge-critical and
+requires a signed certification receipt produced by
+`bernstein doctor --endpoint <url>`; an uncertified profile assigned to a
+gated role fails config validation with the exact command to run. See
+[Local endpoints](../reference/local-endpoints.md) for the conformance
+subset, role tiers, and verified configurations.
+
+## Provider availability (`provider_availability`)
+
+Per-role provider fallback chains with conformance floors. Before dispatch
+the scheduler health-probes the declared chain (probe results cached for
+`probe_ttl_minutes`) and picks the first healthy element; the decision is
+recorded as a routing receipt in the audit chain.
+
+```yaml
+provider_availability:
+  probe_ttl_minutes: 5
+  probes_enabled: true      # false for offline runs
+  roles:
+    developer:
+      conformance_floor: advanced
+      chain:
+        - {adapter: claude, model: opus, conformance: expert}
+        - {adapter: codex, model: gpt-5.2, conformance: advanced}
+```
+
+A chain element whose `conformance` is below the role's
+`conformance_floor` fails config validation. Validate declared chains with
+`bernstein doctor --failover-drill`. Full guide:
+[Provider availability & failover](provider-availability.md).

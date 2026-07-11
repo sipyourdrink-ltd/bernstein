@@ -179,6 +179,7 @@ def test_spawn_prompt_includes_bulletin_summary(tmp_path: Path):
         templates_dir=templates_dir,
         workdir=tmp_path,
         bulletin=board,
+        default_model="mock-model",
     )
 
     task = _make_task()
@@ -207,6 +208,7 @@ def test_spawn_prompt_no_bulletin_section_without_board(tmp_path: Path):
         adapter=adapter,
         templates_dir=templates_dir,
         workdir=tmp_path,
+        default_model="mock-model",
     )
 
     task = _make_task()
@@ -236,6 +238,7 @@ def test_spawn_prompt_no_bulletin_section_with_empty_board(tmp_path: Path):
         templates_dir=templates_dir,
         workdir=tmp_path,
         bulletin=board,
+        default_model="mock-model",
     )
 
     task = _make_task()

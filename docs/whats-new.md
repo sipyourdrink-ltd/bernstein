@@ -4,13 +4,13 @@ description: >-
   User-facing summary of the major features that landed in Bernstein 1.9.x -
   OpenAI Agents SDK v2 adapter, pluggable sandbox backends, cloud artifact
   storage sinks, and progressive-disclosure skill packs.
-  Current release is 1.10.x - see CHANGELOG for 1.10 features.
+  For the current release and every version since, see the CHANGELOG.
 ---
 
 # What's New in 1.9.x
 
-> **Note:** This page covers the 1.9.x feature wave. For 1.10.x (current),
-> see the [CHANGELOG](CHANGELOG.md).
+> **Note:** This page covers the historical 1.9.x feature wave. For the
+> current release and all later versions, see the [CHANGELOG](CHANGELOG.md).
 
 Bernstein 1.9 collects four feature tracks. This page summarises them in
 terms of what changes for someone upgrading from 1.8.x. Full detail lives
@@ -49,7 +49,7 @@ steps:
   adapter.
 
 See the [adapter reference](adapters/openai-agents.md) and the
-[decision guide](compare/openai-agents.md) for when to pick
+[decision guide](adapters/openai-agents-comparison.md) for when to pick
 `openai_agents` vs `codex` vs `claude`.
 
 ## Pluggable sandbox backends

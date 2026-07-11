@@ -190,6 +190,10 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     # Verification gate (orchestrator closes after janitor + merge)
     (TaskStatus.DONE, TaskStatus.CLOSED): _always,
     (TaskStatus.DONE, TaskStatus.FAILED): _always,
+    # Janitor reopen (bounded): a done task that fails janitor verification
+    # is re-queued under the SAME id for another attempt. The reopen budget
+    # is enforced by the orchestrator via metadata['janitor_reopen_count'].
+    (TaskStatus.DONE, TaskStatus.OPEN): _always,
     # Abandon primitive (#1350) - agent-initiated structured exit.
     # ABANDONED is a terminal state distinct from FAILED so dashboards can
     # split intentional vs. unintentional exits. Downstream consumers move
@@ -210,6 +214,15 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.BLOCKED_BY_ABANDON, TaskStatus.OPEN): _always,
     (TaskStatus.BLOCKED_BY_ABANDON, TaskStatus.CANCELLED): _always,
     (TaskStatus.BLOCKED_BY_ABANDON, TaskStatus.ABANDONED): _always,
+    # Typed refusal outcomes (#2244) - a worker that cannot proceed reports
+    # a contract-validated refusal at the completion boundary. REFUSED is a
+    # terminal state distinct from FAILED so status surfaces can split
+    # "blocked by design" from "broke while trying". OPEN is a legal source
+    # because /complete auto-claims tasks that reverted to open before the
+    # payload is applied.
+    (TaskStatus.OPEN, TaskStatus.REFUSED): _always,
+    (TaskStatus.CLAIMED, TaskStatus.REFUSED): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.REFUSED): _always,
 }
 
 # Precompute terminal statuses (no outbound transitions).

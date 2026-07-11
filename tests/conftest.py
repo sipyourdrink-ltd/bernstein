@@ -92,24 +92,43 @@ if platform.system() != "Windows":
         resource.setrlimit(resource.RLIMIT_AS, (_MAX_RSS_BYTES, _hard))
 
 
+def _current_rss_bytes() -> int:
+    """Return the process's current resident set size in bytes.
+
+    Deliberately the *current* RSS, not ``ru_maxrss``: the latter is the
+    lifetime peak and never decreases, so once any single test spiked past
+    the cap every later teardown in the run would trip the guard even
+    though the memory had long been reclaimed.
+    """
+    import psutil
+
+    return int(psutil.Process().memory_info().rss)
+
+
+def _enforce_memory_guard(rss_bytes: int) -> None:
+    """Abort the pytest session once if live RSS exceeds the cap.
+
+    Uses ``pytest.exit`` rather than ``sys.exit``: ``SystemExit`` raised in
+    a fixture teardown is recorded as a per-test ERROR and the run keeps
+    going, so a single crossing used to cascade into an error on every
+    remaining test in the session. ``pytest.exit`` stops the run exactly
+    once with a clear message.
+    """
+    if rss_bytes > _MAX_RSS_BYTES:
+        pytest.exit(
+            f"pytest RSS exceeded {_MAX_RSS_BYTES // (1024**3)} GB (actual: {rss_bytes / (1024**3):.1f} GB). Aborting.",
+            returncode=137,
+        )
+
+
 @pytest.fixture(autouse=True)
 def _memory_guard():
-    """Force GC before and after every test; abort if RSS exceeds limit."""
+    """Force GC after every test; abort the session if live RSS exceeds the cap."""
     yield
     # Aggressive garbage collection to prevent accumulation
     gc.collect()
     if platform.system() == "Darwin":
-        import resource
-
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        rss_bytes = usage.ru_maxrss  # macOS reports bytes
-        if rss_bytes > _MAX_RSS_BYTES:
-            print(
-                f"\n\nFATAL: pytest RSS exceeded {_MAX_RSS_BYTES // (1024**3)} GB "
-                f"(actual: {rss_bytes / (1024**3):.1f} GB). Aborting.\n",
-                file=sys.stderr,
-            )
-            sys.exit(137)
+        _enforce_memory_guard(_current_rss_bytes())
 
 
 @pytest.fixture(autouse=True)

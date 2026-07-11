@@ -70,6 +70,22 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "agents",
         # Skills (oai-004)
         "skills",
+        # Skill usage provenance (issue #2301)
+        "skill",
+        # Verifiable spending mandates (issue #2306)
+        "mandate",
+        # Attested pull-request review receipts (issue #2296)
+        "review-receipt",
+        # Journal-anchored stall escalation receipts (issue #2299)
+        "escalation",
+        # Signed maker-checker / judge-panel gate adjudications (issue #2294)
+        "gate",
+        # RBAC + budget decisions as verifiable projections (issue #2309)
+        "governance",
+        # Content-addressed verification evidence bundles (issue #2362)
+        "evidence",
+        # Durable work ledger: resumable task-graph state (issue #2358)
+        "ledger",
         # Auth
         "auth",
         "login",
@@ -79,8 +95,11 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "eval",
         "estimate",
         "checkpoint",
+        # Fork-from-step on worktree snapshots (issue #2295)
+        "fork",
         "wrap-up",
         "replay",
+        "thread",
         "diff",
         "dep-impact",
         "changelog",
@@ -173,8 +192,10 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "review-responder",
         # May 2026 feature batch
         "cluster",
+        "compaction",
         "handoff",
         "lineage",
+        "credential",
         "migrate",
         "routine",
         "wheelhouse",
@@ -186,6 +207,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "wiki",
         # Install-rev fingerprint operator helpers
         "identity",
+        # Delegation-receipt verification (principal->orchestrator->sub-agent)
+        "delegation",
         # Per-role adapter allow/deny-list inspection (role-adapter-policy group)
         "security",
         # Bughunt 2026-05-13 release wave
@@ -241,6 +264,12 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "supervisor",
         # Bot-added: drift autofix (regen_contract_drift.py)
         "schedule",
+        # Bot-added: drift autofix (regen_contract_drift.py)
+        "team",
+        # Audited webhook-node receipts: signed inbound + outbound (issue #2310)
+        "webhook",
+        # Typed activity boundary: verify any-modality activity crossings (issue #2311)
+        "activity",
     }
 )
 

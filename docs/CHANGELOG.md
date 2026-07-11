@@ -6,18 +6,32 @@ All notable project changes are tracked here (code + docs).
 
 ### Added
 
+- `bernstein run --sandbox docker` now provisions a real `DockerSandboxBackend` `SandboxSession` (via `WorkspaceManifest`/`GitRepoEntry`) and attaches it to `AgentSpawner`, so agents actually execute inside the Docker container through the existing `_spawn_via_sandbox_session` path instead of silently falling back to the legacy bind-mount container isolation. `DockerSandboxBackend.create()` bind-mounts the host repo read-only at `/host-repo` and clones it into the container's `/workspace` so agent commits never touch host git state. Backward compatible: without `--sandbox docker` nothing changes, and any provisioning failure (missing `docker` daemon/SDK) logs a warning and falls back to the previous behaviour.
+- `bernstein run --worker <role>` (new flag) spawns a single worker agent with the given role directly against the seed goal, bypassing manager decomposition - a supported path for models that cannot drive the manager's task-server workflow. Requires a seed file; combining it with an inline goal or `--plan-file` is a usage error.
+- `bernstein skills catalog` command group promotes the MCP catalog browse / list / search / install / upgrade / info / status surface to skill packs. Source variants (github, git, npm, file, directory) resolve through the existing `plugin_installer`; catalog manifests carry an Ed25519 signature that the install verifies against the catalog's `signer_pubkey`. Every install / upgrade appends a `skill.catalog.install` event to the HMAC-chained audit log under `.sdd/audit/` with `(manifest_url, manifest_sha256, manifest_signer_pubkey, install_id, prev_chain_digest)`; reverting and replaying the chain pulls the identical sha and refuses installation if the upstream sha drifted. `skills.lock` is extended with `[[catalog]]` rows and `[[lineage_receipt]]` rows so two parallel worktrees launched from the same chain head observe identical skill versions, and an upgrade in one worktree produces a deterministic adopt/pin decision in the other. The existing lineage-v1 gate (`bernstein.core.lineage.gate.check_skill_lockfile`) rejects PRs whose lockfile references a manifest sha not present in the chain's known-good set. Catalog cache lives under `.sdd/skills_catalog/` with revalidation honouring `BERNSTEIN_SKILLS_CATALOG_TTL` (#1796).
 - `bernstein desktop-register --host <name>` covers the remaining priority hosts: Cursor, Continue, Cline, Zed, and Aider, alongside the existing Claude Desktop and Claude Code adapters. JSON hosts merge into their canonical `mcpServers` map (or `context_servers` for Zed); Aider records the entry in its YAML config under `mcp-servers` for community-wrapper consumption (#1676).
 - `bernstein doctor --substrate` reports which detected hosts have Bernstein registered, which do not, and which are stale (canonical command/args differ from the recorded entry) (#1676).
 - Operator docs at `docs/substrate/{cursor,continue,cline,zed,aider}.md` cover install, verification, and uninstall per host (#1676).
+- Slack bidirectional driver with attested approvals: `bernstein chat serve --platform=slack` connects via Socket Mode, dispatches `/bernstein` slash subcommands, decodes Approve/Reject block actions, debounces `chat.update` per channel, signs every outbound message with an Ed25519 detached signature over `(install_id, session_id, content_hash)`, and appends each approval resolution to the HMAC-chained audit log as a `chat.slack.approval` event covering `(approver, message_ts, decision, tool_call_hash, worktree_id)`. Approvals are worktree-pinned: cross-worktree resolutions raise `CrossWorktreeApprovalError` and emit a `chat.slack.approval_rejected` audit entry. Optional `bernstein[slack]` extra pulls in `slack-sdk` (#1794).
+- Discord bidirectional driver with attested approvals: `bernstein chat serve --platform=discord` connects via the Discord gateway, dispatches application-command interactions through `on_command`, decodes Approve/Reject component clicks whose `custom_id` encodes `approve:<id>` / `reject:<id>`, debounces per-message edits to one update per second, signs every outbound message with the install's Ed25519 keypair, and appends each approval resolution to the HMAC-chained audit log as a `chat.discord.approval` event covering `(approver, interaction_id, decision, tool_call_hash, worktree_id, partition_id)`. Approvals are pinned both to a worktree and to a channel-scoped scheduling partition: cross-worktree resolutions raise `CrossWorktreeApprovalError`, cross-partition resolutions raise `ChannelPartitionMismatchError`, and either failure emits a `chat.discord.approval_rejected` audit entry. The shared partition helper lives at `bernstein.core.orchestration.scheduler_partitions` (used by both the Slack and Discord drivers). Optional `bernstein[discord]` extra pulls in `discord.py` (#1795).
+- `docs/operations/chat-bridges.md` documents the Telegram, Slack, and Discord drivers, the env-var contract, the signed envelope shape, the channel-partition fence, and how to verify an outbound message offline (#1794, #1795).
 
 ### Changed
 
 - `bernstein audit export --standard` no longer accepts `dora` or `finos-aigf`; the click choice list is `ai-act` only. The previous control maps for those two standards contained only placeholder rows (`status: "todo"`, `selector: "TODO"`) and have been removed from `SUPPORTED_STANDARDS` until their clause mappings are reviewed by subject-matter experts. Operators who pass either value now receive a clean usage error rather than a TODO-only zip (#1316).
-- `DiscordBridge.on_command` / `on_button` and `SlackBridge.on_command` / `on_button` now raise `NotImplementedError` at registration time instead of silently dropping the handler. Callers that wire handlers up front against the unimplemented drivers will see the failure immediately rather than at the first network call.
+
+### Fixed
+
+- Role prompt templates now actually render: the orchestrator passed the templates *root* (`get_templates_dir(workdir)`) to `AgentSpawner`, whose internal contract (`render_role_prompt`, `_render_fallback`, per-role `config.yaml` lookup, available-role listing) expects the `templates/roles/` directory - so every role template lookup raised `FileNotFoundError` and silently degraded to the generic `"You are a {role} specialist."` fallback whenever no Agency catalog persona matched. Present since v1.0.0; masked in most runs by the catalog override. The call site now appends `/ "roles"`, and the previously-silent `logger.debug` fallback in `_render_prompt` is a `logger.warning` that names the failing `templates_dir`.
+- The manager role always uses its own role template even when an Agency catalog persona fuzzy-matches (e.g. "Product Manager"): the manager template carries the task-server task-creation instructions that no catalog persona defines, so the persona override silently broke goal decomposition - the manager ran to the stall timeout without ever creating child tasks.
+- `bernstein run --model X` is now honored for manager-created child tasks, not just the seed task. The orchestrator subprocess gains a `--model` arg (env fallback `BERNSTEIN_MODEL`) threaded from run bootstrap, `AgentSpawner` accepts `default_model`, and `_coerce_model_for_non_claude_adapter` - previously a universal no-op because no adapter defines `default_model` - uses it to replace internal Claude tier names (`opus`/`sonnet`/`haiku`) emitted by the heuristic/bandit selectors and retry escalation, which non-Claude endpoints reject (e.g. MiniMax HTTP 400 `unknown model 'opus'`). Deliberate pins are preserved: `bernstein ab-test` task creation stamps `metadata.pinned_model = true`, which the coercion guard respects, and any non-tier model name passes through untouched. Watchdog-triggered spawner restarts now re-thread both `--adapter` and `--model` (previously both were dropped on restart).
+- `STALL_THRESHOLD_S` raised from 90s to 170s with an accurate comment naming the adjacent 180s idle-log agent reaper (`AGENT.idle_log_age_threshold_s`): slower non-Claude managers routinely need >90s just to investigate the codebase before creating their first task.
+
+- The smart command/tool auto-approve classifier (`src/bernstein/core/security/auto_approve.py`) is now wired into the live tool-call approval path (`bernstein.core.approval.gate.await_tool_call`); previously it was unit-tested but never invoked at runtime, so its deny-list and evasion defenses gated nothing in a live run. Precedence is deny-wins and the posture is fail-closed: a deny-listed command (`rm -rf`, `git push --force`, `DROP TABLE`, `curl ... | bash`, control-plane/credential writes, and the rest of the list) is rejected by the production path regardless of interactive mode, and every decision the gate acts on is appended to the HMAC-chained audit log under `.sdd/audit/` as an `auto_approve_decision` event carrying the matched pattern - so an auditor can replay the chain and prove which calls were rejected or auto-approved and why. A safe verdict only short-circuits the operator queue when `approvals.smart_auto_approve: true` is set in `bernstein.yaml` (default `false`); an ambiguous verdict, or any classifier error, always falls through to human review and never auto-approves. `NotebookEdit` is removed from the classifier's safe-tools allow list so it falls through to ASK like `Edit`/`Write`, matching the edit-tool classification used elsewhere in the codebase (`observability/traces.py`). A regression test asserts the gate actually invokes the classifier, so the wiring cannot silently rot back into dead code (#1850).
 
 ## [2.5.0] - Interoperability surfaces, host portability, deterministic replay
 
-22 commits since v2.4.0. Full notes: [`docs/release-notes/v2.5.0.md`](docs/release-notes/v2.5.0.md).
+22 commits since v2.4.0. Full notes: [`docs/release-notes/v2.5.0.md`](release-notes/v2.5.0.md).
 
 ### Added
 
@@ -50,7 +64,7 @@ All notable project changes are tracked here (code + docs).
 
 ## [2.4.0] - Observability surfaces, single-writer run state, declarative planning gates
 
-33 commits since v2.3.1. Full notes: [`docs/release-notes/v2.4.0.md`](docs/release-notes/v2.4.0.md).
+33 commits since v2.3.1. Full notes: [`docs/release-notes/v2.4.0.md`](release-notes/v2.4.0.md).
 
 ### Added
 
@@ -102,7 +116,7 @@ All notable project changes are tracked here (code + docs).
 
 ## [2.3.1] - Maintenance
 
-4 commits since v2.3.0. Full notes: [`docs/release-notes/v2.3.1.md`](docs/release-notes/v2.3.1.md).
+4 commits since v2.3.0. Full notes: [`docs/release-notes/v2.3.1.md`](release-notes/v2.3.1.md).
 
 ### Fixed
 
@@ -125,7 +139,7 @@ All notable project changes are tracked here (code + docs).
 
 ## [2.3.0] - Tracker-adapter family
 
-127 commits since v2.2.0. Full notes: [`docs/release-notes/v2.3.0.md`](docs/release-notes/v2.3.0.md).
+127 commits since v2.2.0. Full notes: [`docs/release-notes/v2.3.0.md`](release-notes/v2.3.0.md).
 
 ### Highlights
 
@@ -142,7 +156,7 @@ All notable project changes are tracked here (code + docs).
 
 Bernstein now ships a web interface. The major bump is signalling the new operator surface, not a breaking API change. v1.10.x configs, plans, adapters, audit chain, lineage, and CLI / TUI surfaces are unchanged.
 
-Hand-curated release notes: [`docs/release-notes/v2.0.0.md`](docs/release-notes/v2.0.0.md). Tracking issue: [#1262](https://github.com/sipyourdrink-ltd/bernstein/issues/1262).
+Hand-curated release notes: [`docs/release-notes/v2.0.0.md`](release-notes/v2.0.0.md). Tracking issue: [#1262](https://github.com/sipyourdrink-ltd/bernstein/issues/1262).
 
 ### Added - Web UI
 
@@ -193,7 +207,7 @@ Hand-curated release notes: [`docs/release-notes/v2.0.0.md`](docs/release-notes/
 
 ### Documentation
 
-- **Per-step CLI and model routing surfaced.** Added [`docs/workflows/per-step-routing.md`](docs/workflows/per-step-routing.md) documenting the existing per-step `cli:` / `model:` / `effort:` plan fields, the surfaces that honour them, the surfaces that drop them, and a trace-based verification recipe. `templates/bernstein.yaml` now ships a commented-out per-stage override example that points at the new page. `templates/workflows/idea-to-pr.yaml` and `templates/workflows/refactor-with-tests.yaml` carry inline comments showing where operators most often want to pin different adapters or models and the plan-YAML lift to do it. The runtime support already existed (`plan_loader._parse_step` at `plan_loader.py:255-294`, `planner.py:86-96`); this PR closes the discoverability gap raised in discussion #962.
+- **Per-step CLI and model routing surfaced.** Added [`docs/workflows/per-step-routing.md`](workflows/per-step-routing.md) documenting the existing per-step `cli:` / `model:` / `effort:` plan fields, the surfaces that honour them, the surfaces that drop them, and a trace-based verification recipe. `templates/bernstein.yaml` now ships a commented-out per-stage override example that points at the new page. `templates/workflows/idea-to-pr.yaml` and `templates/workflows/refactor-with-tests.yaml` carry inline comments showing where operators most often want to pin different adapters or models and the plan-YAML lift to do it. The runtime support already existed (`plan_loader._parse_step` at `plan_loader.py:255-294`, `planner.py:86-96`); this PR closes the discoverability gap raised in discussion #962.
 
 ## [1.10.1] - 2026-05-07
 

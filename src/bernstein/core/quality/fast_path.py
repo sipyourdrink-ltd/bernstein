@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, cast
 
 import httpx
 
+from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import Complexity, ModelConfig, Scope, Task
 
@@ -429,13 +430,40 @@ def execute_fast_path(
 # L1 model override - cheapest model for simple tasks
 # ---------------------------------------------------------------------------
 
-# Default L1 model: sonnet (not haiku - on Max plan sonnet is unlimited
-# and produces much better results for the same cost).
-_l1_model_config = ModelConfig(model="sonnet", effort="normal", max_tokens=50_000)
+# L1 model config comes ONLY from routing.yaml's `fast_path.l1_model` /
+# `fast_path.l1_effort` keys, loaded via load_fast_path_config() below.
+# Bernstein never hardcodes a fallback model (previously "sonnet") - if no
+# config has been loaded, get_l1_model_config() raises ModelNotConfiguredError
+# instead of silently defaulting.
+_l1_model_config: ModelConfig | None = None
 
 
 def get_l1_model_config() -> ModelConfig:
-    """Return the cheapest model config for L1 (simple) tasks."""
+    """Return the config-supplied model config for L1 (simple) tasks.
+
+    Raises:
+        ModelNotConfiguredError: if ``fast_path.l1_model`` has not been set
+            via ``load_fast_path_config()`` (i.e. no routing.yaml, or the
+            YAML omits ``fast_path.l1_model``). Bernstein never falls back
+            to a hardcoded default model.
+    """
+    if _l1_model_config is None:
+        logger.error(
+            "get_l1_model_config: no L1 model configured (fast_path.l1_model "
+            "missing from routing.yaml) - raising instead of defaulting to a "
+            "hardcoded model"
+        )
+        raise ModelNotConfiguredError(
+            "No L1 model configured for fast-path routing. Set "
+            "fast_path.l1_model (and optionally fast_path.l1_effort) in "
+            ".sdd/config/routing.yaml - Bernstein does not hardcode a "
+            "default model for L1 tasks."
+        )
+    logger.debug(
+        "get_l1_model_config: returning config-supplied model=%s effort=%s",
+        _l1_model_config.model,
+        _l1_model_config.effort,
+    )
     return _l1_model_config
 
 
@@ -555,16 +583,30 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
     if parsed_l1 is not None:
         _l1_patterns = parsed_l1
 
-    # Load L1 model override
+    # Load L1 model override. l1_model is required - Bernstein does not
+    # hardcode a fallback model (previously "haiku") when the operator sets
+    # l1_effort without also pinning l1_model.
     l1_model: object = fp_cfg.get("l1_model")
     l1_effort: object = fp_cfg.get("l1_effort")
-    if l1_model or l1_effort:
+    if l1_model:
         _l1_model_config = ModelConfig(
-            model=str(l1_model) if l1_model else "haiku",
-            effort=str(l1_effort) if l1_effort else "low",
+            model=str(l1_model),
+            effort=str(l1_effort) if l1_effort else "normal",
             max_tokens=50_000,
         )
-        logger.debug("L1 model config from routing.yaml: %s/%s", _l1_model_config.model, _l1_model_config.effort)
+        logger.info(
+            "L1 model config loaded from routing.yaml (config-supplied): model=%s effort=%s",
+            _l1_model_config.model,
+            _l1_model_config.effort,
+        )
+    elif l1_effort:
+        logger.warning(
+            "routing.yaml fast_path.l1_effort=%r set without fast_path.l1_model - "
+            "ignoring l1_effort (no hardcoded model fallback available); "
+            "L1 model config remains %s",
+            l1_effort,
+            "unset (will raise on use)" if _l1_model_config is None else "unchanged",
+        )
 
     return True
 

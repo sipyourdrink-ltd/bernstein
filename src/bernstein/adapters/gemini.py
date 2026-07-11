@@ -56,6 +56,7 @@ from bernstein.adapters.base import (
 )
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+from bernstein.core.platform_compat import process_group_popen_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +200,11 @@ def _inject_multimodal_attachments(prompt: str, multimodal_context: Any) -> str:
 class GeminiAdapter(CLIAdapter):
     """Spawn and monitor Google Gemini / Antigravity CLI sessions."""
 
+    # Provider-string aliases this adapter resolves from in
+    # ``_infer_adapter_name_for_provider`` (via the registry's
+    # provider-alias table). Unchanged from the old substring branch.
+    provides = ("gemini", "google")
+
     external_endpoints = (("generativelanguage.googleapis.com", 443),)
     # Google Generative Language returns HTTP 429 with status
     # ``RESOURCE_EXHAUSTED`` once per-minute quotas are tripped.
@@ -278,7 +284,7 @@ class GeminiAdapter(CLIAdapter):
                     env=env,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
-                    start_new_session=True,
+                    **process_group_popen_kwargs(),
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError(

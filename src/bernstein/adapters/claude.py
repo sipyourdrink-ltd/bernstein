@@ -23,7 +23,7 @@ import sys
 import time
 from collections.abc import Mapping  # noqa: TC003 - runtime use in ClassVar annotations
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.claude_agents import build_agents_json
@@ -50,7 +50,15 @@ from bernstein.adapters.env_isolation import (
 )
 from bernstein.core.defaults import COST
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
-from bernstein.core.platform_compat import kill_process_group_graceful, process_alive
+from bernstein.core.platform_compat import (
+    kill_process_group_graceful,
+    process_alive,
+    process_group_popen_kwargs,
+    reap_process_group,
+)
+
+if TYPE_CHECKING:
+    from bernstein.core.config.platform_compat import ProcessReapReceipt
 
 # task-budgets-2026-03-13 propagation. Inlined (rather than imported from
 # ``bernstein.core.cost.budget_countdown``) to keep this adapter free of
@@ -65,6 +73,95 @@ def _task_budgets_opt_in() -> bool:
     """Mirror of :func:`bernstein.core.cost.budget_countdown.is_task_budgets_opt_in`."""
     raw = os.environ.get(_TASK_BUDGETS_OPT_IN_ENV, "")
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# ---------------------------------------------------------------------------
+# Context-compaction policy (recorded in the replay fingerprint)
+# ---------------------------------------------------------------------------
+#
+# Context compaction (auto-summarising older context between turns) rewrites
+# the history the model effectively works from. A run that records "context as
+# sent" and later replays it can diverge if compaction changed between the two:
+# the replay reconstructs the sent context, but a compaction event altered what
+# the recorded run actually consumed.
+#
+# The load-bearing, verifiable guarantee here is NOT that we can force
+# compaction off. It is that the compaction policy state is captured in the
+# step fingerprint (the HMAC/Merkle step journal). If compaction behaviour
+# changes between record and replay, the fingerprint diverges and the mismatch
+# is DETECTED and attributable to a named field rather than surfacing as a
+# mysterious, unexplained rewrite. That detection is the deterministic-replay
+# lever; it holds regardless of whether any suppression request is honoured.
+#
+# As a best-effort layer, in deterministic-record or hermetic-replay mode we
+# additionally REQUEST that the CLI suppress its client-side auto-compaction.
+# This is a best-effort request, not an authoritative guarantee: it targets the
+# CLI's own auto-compaction behaviour and cannot promise anything about any
+# server-side context handling. The fingerprint is what makes a divergence
+# safe; the suppression request only reduces how often one happens.
+#
+# The env flags below are the source of truth for the run mode. They mirror
+# the ones read by the orchestrator (BERNSTEIN_DETERMINISTIC_SEED for record,
+# BERNSTEIN_REPLAY_RUN_ID for replay); they are inlined here rather than
+# imported so the adapter stays free of scheduler internals (importlinter
+# contract ``adapters-no-scheduler``).
+_DETERMINISTIC_SEED_ENV: str = "BERNSTEIN_DETERMINISTIC_SEED"
+_REPLAY_RUN_ID_ENV: str = "BERNSTEIN_REPLAY_RUN_ID"
+
+#: Best-effort request to suppress the CLI's client-side auto-compaction; not a
+#: guarantee. Setting it to "1" asks the CLI not to auto-compact its own
+#: context this process; it makes no claim about any server-side handling. The
+#: authoritative replay protection is the recorded fingerprint (see
+#: :func:`ClaudeAdapter._record_compaction_state`), which detects and
+#: attributes any divergence a compaction change would cause.
+_DISABLE_COMPACTION_ENV: str = "DISABLE_AUTO_COMPACT"
+
+
+def _deterministic_run_mode() -> bool:
+    """Return whether this process runs in deterministic-record or hermetic-replay mode.
+
+    Reads :data:`_DETERMINISTIC_SEED_ENV` (record) and
+    :data:`_REPLAY_RUN_ID_ENV` (replay) from the environment. Either being set
+    to a non-empty value means the run must be byte-reconstructable, so the
+    compaction policy state is recorded in the fingerprint and a best-effort
+    suppression request is emitted.
+
+    Returns:
+        ``True`` when a deterministic seed or a replay run id is present.
+    """
+    seed = os.environ.get(_DETERMINISTIC_SEED_ENV, "").strip()
+    replay = os.environ.get(_REPLAY_RUN_ID_ENV, "").strip()
+    return bool(seed) or bool(replay)
+
+
+def apply_compaction_policy(env: dict[str, str]) -> bool:
+    """Apply the deterministic context-compaction policy to a spawn *env*.
+
+    In deterministic-record or hermetic-replay mode, sets
+    :data:`_DISABLE_COMPACTION_ENV` to "1" as a best-effort request that the
+    CLI suppress its client-side auto-compaction. This is a request, not a
+    guarantee: it cannot promise the model saw byte-identical context. Outside
+    those modes the env is left untouched (default behaviour).
+
+    Mutates *env* in place and returns whether the suppression policy was
+    applied, so the caller can record the policy state in the step fingerprint.
+    The fingerprint is the load-bearing guarantee: any divergence a compaction
+    change causes is detected and attributed to a known, recorded policy field
+    rather than surfacing as a mysterious rewrite.
+
+    Args:
+        env: The filtered spawn environment dict (mutated in place).
+
+    Returns:
+        ``True`` when the suppression policy was applied for this request
+        (deterministic modes), ``False`` when it was left at the default.
+    """
+    if _deterministic_run_mode():
+        # Best-effort request to suppress client-side auto-compaction; not a
+        # guarantee. The recorded fingerprint is what makes replay safe.
+        env[_DISABLE_COMPACTION_ENV] = "1"
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +266,11 @@ _RATE_LIMIT_COOLDOWN: float = COST.rate_limit_cooldown_s
 
 class ClaudeCodeAdapter(CLIAdapter):
     """Spawn and monitor Claude Code CLI sessions."""
+
+    # Provider-string aliases this adapter resolves from in
+    # ``_infer_adapter_name_for_provider`` (via the registry's
+    # provider-alias table). Unchanged from the old substring branch.
+    provides = ("claude", "anthropic")
 
     external_endpoints = (("api.anthropic.com", 443),)
     # Surface the upstream provider on the ``bernstein status``
@@ -283,6 +385,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         batch_mode: bool = False,
         task_scope: str = "medium",
         budget_multiplier: float = 1.0,
+        explicit_max_turns: int | None = None,
     ) -> list[str]:
         """Build the claude CLI command with effort mapping.
 
@@ -314,12 +417,37 @@ class ClaudeCodeAdapter(CLIAdapter):
             budget_multiplier: Additional multiplier applied on top of the
                 scope-based budget (e.g. 2.0 when retrying after hitting the
                 budget cap in a previous attempt).
+            explicit_max_turns: When set (e.g. from ``Task.max_turns``), used
+                verbatim for ``--max-turns``, bypassing the batch_mode /
+                scope_multiplier / effort-based computation below entirely.
         """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
-        base_turns = COST.effort_base_turns.get(effort, 50)
-        scope_multiplier = self._SCOPE_MULTIPLIERS.get(task_scope, 1.5)
-        max_turns = self.BATCH_MAX_TURNS if batch_mode else int(base_turns * scope_multiplier)
+        if explicit_max_turns is not None:
+            if explicit_max_turns <= 0:
+                _logger.warning(
+                    "_build_command: explicit_max_turns=%d is not a positive integer - rejecting "
+                    "rather than emitting an invalid --max-turns flag to the Claude CLI",
+                    explicit_max_turns,
+                )
+                raise ValueError(f"explicit_max_turns must be a positive integer, got {explicit_max_turns}")
+            max_turns = explicit_max_turns
+            _logger.info(
+                "_build_command: max_turns=%d (explicit override; bypassing batch_mode/scope_multiplier computation)",
+                max_turns,
+            )
+        else:
+            base_turns = COST.effort_base_turns.get(effort, 50)
+            scope_multiplier = self._SCOPE_MULTIPLIERS.get(task_scope, 1.5)
+            max_turns = self.BATCH_MAX_TURNS if batch_mode else int(base_turns * scope_multiplier)
+            _logger.info(
+                "_build_command: max_turns=%d (computed: batch_mode=%s effort=%s task_scope=%s scope_multiplier=%s)",
+                max_turns,
+                batch_mode,
+                effort,
+                task_scope,
+                scope_multiplier,
+            )
         claude_effort = ({"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}).get(
             effort, "high"
         )
@@ -419,6 +547,43 @@ class ClaudeCodeAdapter(CLIAdapter):
             completion_path=completion_path,
         )
 
+    @staticmethod
+    def _record_compaction_state(workdir: Path, session_id: str, *, compaction_disabled: bool) -> None:
+        """Persist the compaction policy state applied to this spawn.
+
+        Writes a small sidecar JSON at
+        ``.sdd/runtime/compaction/<session_id>.json`` recording whether the
+        best-effort suppression policy was applied. The spawner folds this flag
+        into the step journal so that if compaction behaviour changes between
+        record and replay, the resulting divergence is DETECTED and attributable
+        to a known, recorded policy field rather than surfacing as a mysterious
+        context rewrite. This recording is the load-bearing replay guarantee;
+        the suppression request is only best-effort. Writing is itself
+        best-effort: a failure here must never break spawn.
+
+        Args:
+            workdir: Agent working directory (root of ``.sdd``).
+            session_id: Session id used as the sidecar filename.
+            compaction_disabled: ``True`` when the suppression policy was
+                applied for this request (deterministic / hermetic modes).
+        """
+        try:
+            state_dir = workdir / ".sdd" / "runtime" / "compaction"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            state_path = state_dir / f"{session_id}.json"
+            payload = {
+                "session_id": session_id,
+                # ``compaction_enabled`` is the policy value folded into the
+                # step fingerprint: True = default behaviour (no suppression
+                # requested), False = best-effort suppression requested for
+                # this deterministic/replay run. It records the policy we
+                # applied, not a proof the provider honoured it.
+                "compaction_enabled": not compaction_disabled,
+            }
+            state_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        except OSError as exc:  # pragma: no cover - best-effort, never blocks spawn
+            _logger.debug("Could not record compaction state for %s: %s", session_id, exc)
+
     def _launch_process(
         self,
         cmd: list[str],
@@ -453,8 +618,8 @@ class ClaudeCodeAdapter(CLIAdapter):
                     env=env,
                     stdout=subprocess.PIPE,
                     stderr=stderr_file,
-                    start_new_session=True,
                     preexec_fn=preexec_fn,
+                    **process_group_popen_kwargs(),
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError("claude not found in PATH. Install Claude Code: https://claude.ai/code") from exc
@@ -467,9 +632,9 @@ class ClaudeCodeAdapter(CLIAdapter):
                     stdin=claude_proc.stdout,
                     stdout=log_file,
                     stderr=stderr_file,
-                    start_new_session=True,
                     cwd=workdir,
                     env=env,
+                    **process_group_popen_kwargs(),
                 )
             except Exception:
                 claude_proc.kill()
@@ -585,6 +750,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
         multimodal_context: Any | None = None,
+        explicit_max_turns: int | None = None,
     ) -> SpawnResult:
         self.enforce_network_policy()
         # Issue #1797: encode any attached images into the prompt body
@@ -628,6 +794,13 @@ class ClaudeCodeAdapter(CLIAdapter):
             _logger.info("Batch mode detected for session %s - using %d max-turns", session_id, self.BATCH_MAX_TURNS)
 
         agents_json = build_agents_json(role)
+        if explicit_max_turns is not None:
+            _logger.info(
+                "spawn: session=%s explicit_max_turns=%d supplied - will bypass batch_mode/scope_multiplier "
+                "max_turns computation in _build_command",
+                session_id,
+                explicit_max_turns,
+            )
         cmd = self._build_command(
             model_config,
             effective_mcp,
@@ -639,6 +812,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             batch_mode=batch_mode,
             task_scope=task_scope,
             budget_multiplier=budget_multiplier,
+            explicit_max_turns=explicit_max_turns,
         )
 
         # Wrap with bernstein-worker for process visibility
@@ -695,6 +869,14 @@ class ClaudeCodeAdapter(CLIAdapter):
                 env["ANTHROPIC_BETA"] = f"{existing_beta},{_TASK_BUDGETS_BETA_VALUE}"
             else:
                 env["ANTHROPIC_BETA"] = _TASK_BUDGETS_BETA_VALUE
+        # In deterministic-record / hermetic-replay mode, emit a best-effort
+        # request to suppress client-side auto-compaction (no-op otherwise).
+        # The returned policy flag is recorded in the fingerprint so any
+        # compaction-driven divergence between record and replay is detected
+        # and stays attributable rather than mysterious. The recording, not the
+        # suppression request, is the load-bearing guarantee.
+        compaction_disabled = apply_compaction_policy(env)
+        self._record_compaction_state(workdir, session_id, compaction_disabled=compaction_disabled)
         claude_proc, wrapper_proc = self._launch_process(wrapped_cmd, wrapper, workdir, log_path, env=env)
 
         # Track the worker process (wraps claude) for is_alive/kill
@@ -724,23 +906,24 @@ class ClaudeCodeAdapter(CLIAdapter):
         # Fallback for processes we didn't spawn
         return process_alive(pid)
 
-    def kill(self, pid: int) -> None:
-        # The claude process is spawned with start_new_session=True, so
+    def kill(self, pid: int) -> ProcessReapReceipt:
+        # The claude process is spawned with process-group isolation, so
         # its PID equals its PGID.  Use the PID directly as PGID instead
         # of os.getpgid() which fails when the process is already dead -
         # this ensures we kill the entire session group including any
         # child processes (the actual claude CLI) that outlive the wrapper.
         #
-        # ``kill_process_group_graceful`` sends SIGTERM, polls briefly, and
+        # ``reap_process_group`` sends SIGTERM, polls briefly, and
         # escalates to SIGKILL if the group is still alive.  Without the
         # escalation, agents that trap SIGTERM survive reap paths - see
-        # .
-        kill_process_group_graceful(pid)
+        # .  The returned receipt describes the primary (agent) group reap.
+        receipt = reap_process_group(pid)
         # Also kill the wrapper process with the same TERM→KILL escalation
         wrapper_pid = self._wrapper_pids.pop(pid, None)
         if wrapper_pid:
             kill_process_group_graceful(wrapper_pid)
         self._procs.pop(pid, None)
+        return receipt
 
     def name(self) -> str:
         return "Claude Code"

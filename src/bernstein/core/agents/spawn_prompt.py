@@ -719,6 +719,61 @@ def _get_lesson_context(role: str, tasks: list[Task], workdir: Path) -> str:
     return lesson_context
 
 
+def _legacy_completion_instructions(tasks: list[Task]) -> str:
+    """Fallback completion instructions when the contract include is absent.
+
+    Mirrors the pre-contract prose: concrete curl commands with
+    --retry-connrefused (not --retry-all-errors) so curl only retries
+    transient connection failures, NOT 4xx errors like 409 Conflict.
+    """
+    completion_cmds = "\n".join(
+        f"curl -s -w '\\n%{{http_code}}' --retry 3 --retry-delay 2 --retry-connrefused "
+        f"-X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
+        f'-H "Content-Type: application/json" '
+        f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
+        for t in tasks
+    )
+    return (
+        f"Complete these tasks. When ALL are done, mark each complete on the task server:\n\n"
+        f"```bash\n{completion_cmds}\n```\n\n"
+        f"**Important:** Only retry on connection refused / network errors. "
+        f"If the server returns HTTP 409 or any other 4xx error, do NOT retry. "
+        f"The task state has changed and retrying will not help. Just exit.\n\n"
+        f"Then exit."
+    )
+
+
+def _render_completion_instructions(tasks: list[Task]) -> str:
+    """Build the terminal-outcome instruction block for the worker prompt.
+
+    Renders the shared ``templates/roles/_includes/completion_contract.md``
+    partial (#2244) so the runtime prompt and the role task templates emit
+    the same schema-enforced completion/refusal instructions. Falls back
+    to the legacy prose-summary instructions when the include is missing
+    (e.g. a stripped install), so spawns never lose the done signal.
+    """
+    from bernstein import _BUNDLED_TEMPLATES_DIR
+
+    include_path = _BUNDLED_TEMPLATES_DIR / "roles" / "_includes" / "completion_contract.md"
+    try:
+        template = include_path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("Completion contract include missing at %s; using legacy instructions", include_path)
+        return _legacy_completion_instructions(tasks)
+
+    ids = [t.id for t in tasks]
+    if len(ids) == 1:
+        header = "Complete this task. When done, report a terminal outcome for it:\n\n"
+        block = template.replace("{{TASK_ID}}", ids[0])
+    else:
+        header = (
+            "Complete these tasks. When ALL are done, report a terminal outcome "
+            "for each of these task ids (one POST per id): " + ", ".join(ids) + "\n\n"
+        )
+        block = template.replace("{{TASK_ID}}", "<task_id>")
+    return f"{header}{block}\nThen exit."
+
+
 def _render_prompt(
     tasks: list[Task],
     templates_dir: Path,
@@ -731,6 +786,8 @@ def _render_prompt(
     task_graph: TaskGraph | None = None,
     meta_messages: list[str] | None = None,
     file_ownership: dict[str, str] | None = None,
+    max_turns: int | None = None,
+    mailbox_section: str = "",
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -756,6 +813,20 @@ def _render_prompt(
         meta_messages: Optional list of operational nudges/hints (T423).
         file_ownership: Optional mapping of filepath -> agent_id for files
             currently being edited by other agents.
+        max_turns: Optional best-effort resolution of the agent's tool-use
+            turn cap, known at the caller's spawn call site. When present,
+            renders a static "## Turn budget" section so the model
+            self-polices instead of exploring until MaxTurnsExceeded fires
+            with zero output (work/bernstein/m27-nudge-plan.md, Approach C
+            MINIMAL). ``None`` means no value was resolvable at
+            prompt-build time - the section is skipped, not rendered with
+            a placeholder.
+        mailbox_section: Pre-rendered coordination-mailbox section (#2357),
+            produced by
+            :func:`bernstein.core.communication.task_mailbox.render_mailbox_section`
+            from the task's pending messages. A pure projection of the
+            mailbox journal, so every adapter type receives the identical
+            bytes. Empty string means no section is added.
 
     Returns:
         Complete prompt string ready for the CLI adapter.
@@ -775,24 +846,9 @@ def _render_prompt(
     project_md = workdir / ".sdd" / "project.md"
     project_context = _read_cached(project_md)
 
-    # Completion instructions with concrete curl commands and retry logic.
-    # Use --retry-connrefused (not --retry-all-errors) so curl only retries
-    # transient connection failures, NOT 4xx errors like 409 Conflict.
-    completion_cmds = "\n".join(
-        f"curl -s -w '\\n%{{http_code}}' --retry 3 --retry-delay 2 --retry-connrefused "
-        f"-X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
-        f'-H "Content-Type: application/json" '
-        f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
-        for t in tasks
-    )
-    instructions = (
-        f"Complete these tasks. When ALL are done, mark each complete on the task server:\n\n"
-        f"```bash\n{completion_cmds}\n```\n\n"
-        f"**Important:** Only retry on connection refused / network errors. "
-        f"If the server returns HTTP 409 or any other 4xx error, do NOT retry. "
-        f"The task state has changed and retrying will not help. Just exit.\n\n"
-        f"Then exit."
-    )
+    # Completion-contract instructions shared with templates/roles via the
+    # single _includes/completion_contract.md partial (#2244).
+    instructions = _render_completion_instructions(tasks)
 
     # Available roles from templates directory
     available_roles = ""
@@ -890,6 +946,11 @@ def _render_prompt(
                 ),
             )
         )
+    # Coordination mailbox (#2357): typed messages other workers addressed to
+    # these tasks, rendered deterministically from the mailbox journal so two
+    # adapter types receive byte-identical context.
+    if mailbox_section and mailbox_section.strip():
+        named_sections.append(("coordination mailbox", deduplicate_section(mailbox_section)))
     # File ownership warnings: tell agents which files are locked by others
     if file_ownership:
         # Exclude files owned by the current agent
@@ -977,6 +1038,56 @@ def _render_prompt(
     if meta_messages:
         nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"
         named_sections.append(("meta nudges", nudges_block))
+
+    # Turn-budget nudge (work/bernstein/m27-nudge-plan.md, Approach C
+    # MINIMAL) - see the sibling implementation/rationale in
+    # bernstein.core.agents.spawner_core._render_prompt, which is the
+    # actually-live production render path; this module's _render_prompt
+    # is kept in sync for test coverage (tests/unit/agents/test_spawn_prompt_pure.py)
+    # and any future caller that switches to it.
+    if max_turns is not None and max_turns > 0:
+        halfway_turn = max(1, max_turns // 2)
+        # Mirrors spawner_core._render_prompt: near_end is 3 turns before
+        # the cap, never below/at halfway, and never past max_turns itself.
+        near_end_turn = min(max_turns, max(halfway_turn + 1, max_turns - 3))
+        turn_budget_block = (
+            "\n## Turn budget\n"
+            f"You have a hard budget of {max_turns} tool-use turns for this task.\n\n"
+            f"- By turn {halfway_turn} (roughly halfway): if the core task is already "
+            "done, STOP - write your final summary now. Do not spend remaining turns "
+            "re-reading files you've already read or re-verifying work that already "
+            "passed.\n"
+            f"- By turn {near_end_turn} (near your limit): if you have not yet written "
+            "any code/output, you are out of time for further exploration - write "
+            "SOMETHING now, even a partial/best-effort change, rather than continuing "
+            "to read.\n"
+            "- On your FINAL turn: your last message must be plain text summarizing "
+            "what you accomplished, what remains unfinished, and any risks. Do not "
+            "attempt further tool calls.\n\n"
+            "STOP CONDITIONS - if any of these are true, stop immediately and write "
+            "your summary:\n"
+            "- All requested changes are implemented and tests pass\n"
+            "- You have verified your work is correct\n"
+            "- You are re-reading files you already read with no new information to "
+            "gain\n"
+        )
+        named_sections.append(("turn budget", turn_budget_block))
+        logger.info(
+            "Turn budget nudge injected for role=%s session=%s: max_turns=%d halfway=%d near_end=%d",
+            role,
+            session_id,
+            max_turns,
+            halfway_turn,
+            near_end_turn,
+        )
+    else:
+        logger.info(
+            "Turn budget nudge skipped for role=%s session=%s: max_turns not available "
+            "at prompt-build time (resolved value=%r)",
+            role,
+            session_id,
+            max_turns,
+        )
 
     # Strip empty/whitespace-only sections before compression
     named_sections = [(name, content) for name, content in named_sections if content and content.strip()]
@@ -1112,6 +1223,8 @@ def render_prompt(
     task_graph: TaskGraph | None = None,
     meta_messages: list[str] | None = None,
     file_ownership: dict[str, str] | None = None,
+    max_turns: int | None = None,
+    mailbox_section: str = "",
 ) -> str:
     """Public wrapper for compatibility-safe prompt rendering.
 
@@ -1132,6 +1245,8 @@ def render_prompt(
         task_graph=task_graph,
         meta_messages=meta_messages,
         file_ownership=file_ownership,
+        max_turns=max_turns,
+        mailbox_section=mailbox_section,
     )
     _observe_cache_locality(rendered, tasks)
     return rendered

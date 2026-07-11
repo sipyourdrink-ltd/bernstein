@@ -16,7 +16,10 @@ from bernstein.core.fast_path import (
     get_l1_model_config,
     try_fast_path_batch,
 )
-from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.models import Complexity, ModelConfig, Scope, Task
+
+from bernstein.core import fast_path as fast_path_module
+from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 
 # --- Helpers ---
 
@@ -369,14 +372,33 @@ class TestFastPathStats:
 
 
 class TestL1ModelConfig:
-    """Tests for L1 cheapest model config."""
+    """Tests for L1 cheapest model config.
 
-    def test_l1_model_is_sonnet(self) -> None:
+    L1 model config comes only from routing.yaml's fast_path.l1_model
+    (see load_fast_path_config) - Bernstein never hardcodes a fallback
+    model, so get_l1_model_config() must raise when unconfigured and
+    return exactly what was configured when it is.
+    """
+
+    def setup_method(self) -> None:
+        self._orig = fast_path_module._l1_model_config
+
+    def teardown_method(self) -> None:
+        fast_path_module._l1_model_config = self._orig
+
+    def test_raises_when_unconfigured(self) -> None:
+        fast_path_module._l1_model_config = None
+        with pytest.raises(ModelNotConfiguredError, match="No L1 model configured"):
+            get_l1_model_config()
+
+    def test_l1_model_returns_config_supplied_model(self) -> None:
+        fast_path_module._l1_model_config = ModelConfig(model="sonnet", effort="normal", max_tokens=50_000)
         cfg = get_l1_model_config()
         assert cfg.model == "sonnet"
         assert cfg.effort == "normal"
 
     def test_l1_model_has_reasonable_token_limit(self) -> None:
+        fast_path_module._l1_model_config = ModelConfig(model="sonnet", effort="normal", max_tokens=50_000)
         cfg = get_l1_model_config()
         assert cfg.max_tokens <= 100_000
 

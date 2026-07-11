@@ -160,7 +160,7 @@ The remediation message names:
 - the verdict in plain English (the same string the metric exporter
   records),
 - the CLI verb the operator can run for full diagnostics
-  (`bernstein mcp verify <spec>`),
+  (`bernstein mcp test <server-name>`),
 - the override knobs (`mcp.allow_unsigned: true` and
   `BERNSTEIN_MCP_ALLOW_UNSIGNED=true`),
 - up to three CRITICAL scanner findings with their CWE tags and

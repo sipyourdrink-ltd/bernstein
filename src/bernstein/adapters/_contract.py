@@ -525,6 +525,18 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.STREAM_JSON,
     ),
+    # agy is the successor CLI for the discontinued non-enterprise hosted
+    # gemini backend; separate adapter (single binary, print mode, sandbox
+    # pinned) -- see docs/adapters/agy.md. Dangerous mode is
+    # --dangerously-skip-permissions; print mode emits plain text (no
+    # structured event stream), so the channel is text signals. The CLI
+    # has --conversation <id> resume, but native reattach is not wired
+    # yet, so resume stays declared unsupported (fresh-session fallback).
+    "agy": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
     # CLI-flag dangerous mode, text-signal channel, fresh-session resume.
     "cline": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "charm": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
@@ -673,3 +685,62 @@ def resume_capability(adapter_name: str) -> str:
 #: callers that imported the dict directly. Adapters absent are assumed
 #: :data:`RESUME_FALLBACK_FRESH`.
 RESUME_CAPABILITY_MATRIX: dict[str, str] = {name: resume_capability(name) for name in STRATEGY_MATRIX}
+
+
+# ---------------------------------------------------------------------------
+# Checkpointed-retry capability map (issue #2359)
+# ---------------------------------------------------------------------------
+#
+# A failed task's retry can continue the prior native agent session (warm),
+# branch a new session off the recorded checkpoint (fork), or restart from
+# zero (cold). What a given adapter can offer is a pure function of the
+# resume axis it already declares in :data:`STRATEGY_MATRIX` -- a single
+# source of truth, so the retry surface can never claim a warm resume that
+# ``bernstein resume`` would refuse.
+
+
+class CheckpointRetryCapability(StrEnum):
+    """What kind of checkpointed retry an adapter's native sessions support."""
+
+    #: The adapter can reattach to the prior session (warm continuation).
+    RESUME = "resume"
+    #: The adapter can additionally branch a fresh session off a recorded
+    #: checkpoint, leaving the original session intact.
+    FORK = "fork"
+    #: No native session continuation; every retry is a cold restart.
+    NONE = "none"
+
+
+#: Registry keys of adapters whose native session store supports branching a
+#: new session from an existing one (a superset of plain resume). Kept as an
+#: explicit declaration: fork support is a stronger upstream contract than
+#: the resume flag alone proves.
+_FORK_CAPABLE_ADAPTERS: frozenset[str] = frozenset({"claude", "claude_routine"})
+
+
+def checkpoint_retry_capability(adapter_name: str) -> CheckpointRetryCapability:
+    """Return the checkpointed-retry capability for ``adapter_name``.
+
+    Derived from :data:`STRATEGY_MATRIX`: an adapter whose declared
+    :class:`ResumeStrategy` is :attr:`ResumeStrategy.UNSUPPORTED` can never
+    be warm/fork capable (:attr:`CheckpointRetryCapability.NONE`). Adapters
+    with native resume are :attr:`CheckpointRetryCapability.RESUME`, upgraded
+    to :attr:`CheckpointRetryCapability.FORK` when the adapter is in the
+    explicit fork-capable set. Unknown adapters degrade to ``NONE`` so an
+    undeclared adapter never accidentally resumes a provider-side session.
+    """
+    key = _NAMESPACE_ALIASES.get(adapter_name, adapter_name)
+    strategy = strategy_for(key)
+    if strategy.resume is ResumeStrategy.UNSUPPORTED:
+        return CheckpointRetryCapability.NONE
+    if key in _FORK_CAPABLE_ADAPTERS:
+        return CheckpointRetryCapability.FORK
+    return CheckpointRetryCapability.RESUME
+
+
+#: Full per-adapter checkpointed-retry capability map, one row per declared
+#: adapter. Derived, never hand-maintained: a new adapter picks up its row
+#: from the strategy matrix it must already declare.
+CHECKPOINT_RETRY_CAPABILITY_MATRIX: dict[str, CheckpointRetryCapability] = {
+    name: checkpoint_retry_capability(name) for name in STRATEGY_MATRIX
+}

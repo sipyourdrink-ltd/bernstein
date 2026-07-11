@@ -58,10 +58,15 @@ _BUNDLED_TEMPLATES_DIR = _bundled_templates_dir
 def get_templates_dir(workdir: Path) -> Path:
     """Return the templates directory for a project, with bundled fallback.
 
-    Checks ``workdir / "templates"`` first; falls back to the package's
-    bundled defaults so that ``bernstein`` works right after ``pip install``
-    without requiring ``bernstein init`` first.
+    Checks ``workdir / ".bernstein" / "templates"`` first (project-local
+    Bernstein directory), then ``workdir / "templates"`` for backward
+    compatibility, then falls back to the package's bundled defaults so
+    that ``bernstein`` works right after ``pip install`` without requiring
+    ``bernstein init`` first.
     """
+    dot_bernstein = workdir / ".bernstein" / "templates"
+    if dot_bernstein.is_dir():
+        return dot_bernstein
     local = workdir / "templates"
     if local.is_dir():
         return local

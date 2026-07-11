@@ -3,7 +3,7 @@ title: Bernstein - Open-Source Multi-Agent Orchestration Platform
 description: >-
   Bernstein is the open-source multi-agent orchestrator for AI coding agents.
   Run Claude Code, Codex, Gemini CLI, and the OpenAI Agents SDK in parallel.
-  Deterministic scheduling, 44 adapters, pluggable sandbox backends,
+  Deterministic scheduling, 40+ adapters, pluggable sandbox backends,
   cloud artifact storage, progressive skills, zero vendor lock-in.
 tags:
   - orchestration
@@ -74,7 +74,7 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 
     ---
 
-    44 CLI adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini, Cursor, Aider, Cloudflare Agents, GitHub Copilot, Devin Terminal, CLM gateway, AWS Q Developer, and more.
+    40+ CLI adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini, Cursor, Aider, Cloudflare Agents, GitHub Copilot, Devin Terminal, CLM gateway, AWS Q Developer, and more.
     Mix cheap local models with cloud models in the same run.
 
 - :material-source-branch:{ .lg .middle } **Git worktree isolation**
@@ -99,7 +99,7 @@ Bernstein is built for the forward-deployed engineering pattern:
 parachute onto a client repo and stand up an AI engineering crew in
 minutes. State lives in `.sdd/` - no server to provision. Per-agent
 credential scoping keeps your keys out of the client's environment.
-The 44-adapter spread means the swarm runs on whichever CLI agent
+The 45-adapter spread means the swarm runs on whichever CLI agent
 the client already trusts (Claude Code, Codex, Gemini CLI, Aider,
 and more). Every step is an HMAC-signed audit record, replayable
 for client compliance review.
@@ -115,7 +115,7 @@ for client compliance review.
 | :material-api: [API Reference](reference/openapi-reference.md) | Task server REST API |
 | :material-sitemap: [Architecture](architecture/ARCHITECTURE.md) | How Bernstein works under the hood |
 | :material-state-machine: [Lifecycle FSM](architecture/LIFECYCLE.md) | Task and agent state machines with transition tables |
-| :material-text-box-check: [What's New](whats-new.md) | Summary of recent releases (1.9 → 1.10) |
+| :material-text-box-check: [What's New](whats-new.md) | Historical 1.9.x feature summary; see the [Changelog](CHANGELOG.md) for 2.x releases |
 | :material-history: [Changelog](CHANGELOG.md) | Full release history |
 | :material-shield-lock: [Air-gap installation](installation/air-gap.md) | Wheelhouse build, signed verification, `--profile airgap`, deny-all egress |
 

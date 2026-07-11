@@ -117,3 +117,35 @@ class TestPublish:
         blob = receipt_path.read_bytes()
         assert b"SECRET_TOKEN_DO_NOT_LEAK" not in blob
         assert b"ALSO_SECRET" not in blob
+
+
+class TestPublishEffortReanchor:
+    """Published receipts must re-anchor over the effort dimension too.
+
+    Regression: the publish recompute path folded every hashed field except
+    ``effort`` when re-anchoring the redacted chain, silently dropping the
+    effort dimension from published receipts while the redacted rows still
+    carried the ``effort`` key.
+    """
+
+    def test_effort_bearing_journal_publishes_and_verifies(self, tmp_path: Path) -> None:
+        agent_dir = tmp_path / "agent-effort"
+        journal = Journal.open(agent_dir)
+        journal.append(input_hash="a0", model="m1", prompt="p0", effort="high")
+        journal.append(input_hash="a1", model="m1", prompt="p1", effort="low")
+        journal.close()
+
+        receipt_path = tmp_path / "redacted.tar"
+        result = publish_receipt(
+            agent_dir,
+            receipt_path,
+            agent_id="agent-effort",
+            policy=RedactionPolicy.default(),
+            opt_in=True,
+        )
+
+        # Offline verify must reproduce the re-anchored head, which only holds
+        # if the re-anchor folds effort into each recomputed step hash.
+        v = verify_receipt(receipt_path, expected_head=result.head_hash)
+        assert v.ok, v.errors
+        assert v.steps == 2

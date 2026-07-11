@@ -185,7 +185,7 @@ class TestJanitorPipeline:
         await asyncio.to_thread(subprocess.run, ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
         await asyncio.to_thread(
             subprocess.run,
-            ["git", "commit", "-m", "add output"],
+            ["git", "commit", "-m", "T-E2E-001: add output"],
             cwd=tmp_path,
             check=True,
             capture_output=True,
@@ -475,7 +475,7 @@ class TestFullSpawnExecuteVerifyMergePipeline:
         )
         await asyncio.to_thread(
             subprocess.run,
-            ["git", "commit", "-m", "agent: create result.py"],
+            ["git", "commit", "-m", "T-FULL-003: agent: create result.py"],
             cwd=tmp_path,
             check=True,
             capture_output=True,

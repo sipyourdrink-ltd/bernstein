@@ -6,19 +6,17 @@
 
 **Do not open a public issue for security vulnerabilities.**
 
-### Preferred channel - Bug Bounty
-
-Submit reports through our HackerOne program:
-
-**https://hackerone.com/bernstein**
-
-HackerOne handles triage, communication, and rewards. Reports are triaged within 72 hours.
-
-### Alternative - Email
-
-For issues outside the HackerOne scope or if you prefer direct contact:
+### Preferred channel - Email
 
 **forte@bernstein.run** (PGP key: `/.well-known/security-pgp.asc`)
+
+Reports are triaged within 72 hours.
+
+### Alternative - GitHub private security advisory
+
+Open a private advisory so triage and the fix stay in one place:
+
+**https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new**
 
 ---
 
@@ -55,7 +53,7 @@ For issues outside the HackerOne scope or if you prefer direct contact:
 | Medium | 4.0–6.9 | Auth bypass for low-privilege endpoints, info disclosure of agent tokens, SSRF | $100 – $250 |
 | Low | 0.1–3.9 | Minor info disclosure, non-exploitable misconfigurations | $25 – $100 |
 
-Rewards are paid in USD via HackerOne. Minimum payout threshold: $25.
+Rewards are paid in USD. Minimum payout threshold: $25.
 
 Duplicate reports receive no reward. First valid reporter wins.
 
@@ -113,9 +111,9 @@ See [`docs/security/bug-bounty.md`](docs/security/bug-bounty.md) for the full sa
 
 | Version | Supported |
 |---------|-----------|
-| 1.7.x   | Yes       |
-| 1.6.x   | Critical patches only |
-| < 1.6   | No        |
+| 2.16.x  | Yes       |
+| 2.15.x  | Critical patches only |
+| < 2.15  | No        |
 
 Security patches are backported to the current minor version only. Always run the latest release.
 

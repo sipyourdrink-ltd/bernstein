@@ -1,4 +1,4 @@
-"""Dashboard-specific routes - file lock inspection endpoint."""
+"""Dashboard-specific routes - file locks and the auth endpoints (#2366)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,15 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from bernstein.core.server.dashboard_auth import (
+    ANONYMOUS_PRINCIPAL,
+    PASSWORD_PRINCIPAL,
+    SESSION_COOKIE,
+    DashboardAuthState,
+    verify_password,
+)
+from bernstein.core.server.dashboard_tokens import ACTION_LOGIN, SCOPE_OPERATOR
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -18,6 +27,109 @@ router = APIRouter()
 
 def _runtime_dir(request: Request) -> Path:
     return request.app.state.runtime_dir  # type: ignore[no-any-return]
+
+
+def _auth_state(request: Request) -> DashboardAuthState:
+    """Fetch the shared dashboard auth state (created in ``create_app``)."""
+    state = getattr(request.app.state, "dashboard_auth_state", None)
+    if isinstance(state, DashboardAuthState):
+        return state
+    # Minimal embeddings without create_app wiring: an empty state means
+    # auth is not configured and the endpoints degrade gracefully.
+    return DashboardAuthState()
+
+
+async def _request_json(request: Request) -> dict[str, Any]:
+    """Parse the request body as a JSON object, tolerating garbage."""
+    try:
+        parsed: object = await request.json()
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+@router.get("/dashboard/auth/status")
+async def dashboard_auth_status(request: Request) -> JSONResponse:
+    """Report whether dashboard auth is required and who is logged in."""
+    state = _auth_state(request)
+    required = state.auth_required()
+    credential = state.resolve_credential(request) if required else None
+    return JSONResponse(
+        {
+            "auth_required": required,
+            "authenticated": (credential is not None) or not required,
+            "principal": credential[0] if credential else None,
+            "scope": credential[1] if credential else None,
+        }
+    )
+
+
+@router.post("/dashboard/auth/login")
+async def dashboard_auth_login(request: Request) -> JSONResponse:
+    """Open a dashboard session from a password or a scoped token.
+
+    The session cookie wraps exactly the principal and scope the credential
+    carried; a viewer token can never log into an operator session. Every
+    attempt -- success or failure -- is journaled as a signed governance
+    decision (``dashboard.login``).
+    """
+    state = _auth_state(request)
+    if not state.auth_required():
+        return JSONResponse({"authenticated": True, "token": None, "principal": None, "scope": None})
+
+    body = await _request_json(request)
+    principal = ""
+    scope = ""
+
+    raw_token = body.get("token")
+    if isinstance(raw_token, str) and raw_token and state.token_registry is not None:
+        record = state.token_registry.validate(raw_token)
+        if record is not None:
+            principal, scope = record.principal, record.scope
+
+    provided_password = body.get("password")
+    if (
+        not scope
+        and isinstance(provided_password, str)
+        and provided_password
+        and verify_password(provided_password, state.effective_password())
+    ):
+        principal, scope = PASSWORD_PRINCIPAL, SCOPE_OPERATOR
+
+    verdict = state.record_decision(
+        subject=principal or ANONYMOUS_PRINCIPAL,
+        scope=scope,
+        action=ACTION_LOGIN,
+    )
+    if verdict != "allow":
+        return JSONResponse(status_code=401, content={"detail": "Invalid dashboard credentials"})
+
+    session_token = state.session_store.create_session(principal=principal, scope=scope)
+    response = JSONResponse(
+        {
+            "authenticated": True,
+            "token": session_token,
+            "principal": principal,
+            "scope": scope,
+        }
+    )
+    response.set_cookie(SESSION_COOKIE, session_token, httponly=True, samesite="lax")
+    return response
+
+
+@router.post("/dashboard/auth/logout")
+async def dashboard_auth_logout(request: Request) -> JSONResponse:
+    """Close the current dashboard session (idempotent)."""
+    state = _auth_state(request)
+    cookie_token = request.cookies.get(SESSION_COOKIE, "")
+    if cookie_token:
+        state.session_store.revoke_session(cookie_token)
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        state.session_store.revoke_session(auth_header[7:])
+    response = JSONResponse({"message": "Logged out"})
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 
 @router.get("/dashboard/file_locks")

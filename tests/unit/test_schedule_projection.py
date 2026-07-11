@@ -387,3 +387,55 @@ class TestProjectionPurity:
             if previous is None:
                 previous = result.canonical_bytes
             assert result.canonical_bytes == previous
+
+
+class TestResponseProfileFold:
+    """The response-style profile is an input to task identity when (and
+    only when) a profile is explicitly declared."""
+
+    def _fire(self, **overrides):
+        kwargs = {
+            "schedule_id": "sched_style",
+            "fire_time": 1_700_000_000,
+            "last_state": None,
+            "goal": "Nightly triage",
+        }
+        kwargs.update(overrides)
+        return project_schedule_fire(**kwargs)
+
+    def test_no_profile_is_byte_identical_to_pre_change_shape(self) -> None:
+        """Backward compatibility: with no profile declared, the canonical
+        payload contains no profile keys and the task hash is unchanged."""
+        result = self._fire()
+        payload = json.loads(result.canonical_bytes.decode())
+        assert "response_profile" not in payload
+        assert "profile_content_sha256" not in payload
+        node_metadata_keys = {k for k, _v in [tuple(item) for item in payload["nodes"][0]["metadata"]]}
+        assert "response_profile" not in node_metadata_keys
+
+    def test_profile_folds_into_task_identity(self) -> None:
+        plain = self._fire()
+        profiled = self._fire(response_profile="terse", profile_content_sha256="c" * 64)
+        assert plain.projection_hash != profiled.projection_hash
+        assert plain.nodes[0].task_id != profiled.nodes[0].task_id
+
+    def test_profile_fold_is_deterministic(self) -> None:
+        a = self._fire(response_profile="terse", profile_content_sha256="c" * 64)
+        b = self._fire(response_profile="terse", profile_content_sha256="c" * 64)
+        assert a.canonical_bytes == b.canonical_bytes
+        assert a.projection_hash == b.projection_hash
+
+    def test_different_profile_hash_forks_identity(self) -> None:
+        a = self._fire(response_profile="terse", profile_content_sha256="c" * 64)
+        b = self._fire(response_profile="terse", profile_content_sha256="d" * 64)
+        assert a.projection_hash != b.projection_hash
+        assert a.nodes[0].task_id != b.nodes[0].task_id
+
+    def test_profile_lands_in_canonical_payload_and_node_metadata(self) -> None:
+        result = self._fire(response_profile="verbose", profile_content_sha256="e" * 64)
+        payload = json.loads(result.canonical_bytes.decode())
+        assert payload["response_profile"] == "verbose"
+        assert payload["profile_content_sha256"] == "e" * 64
+        metadata = {k: v for k, v in [tuple(item) for item in payload["nodes"][0]["metadata"]]}
+        assert metadata["response_profile"] == "verbose"
+        assert metadata["mode"] == "verbose"

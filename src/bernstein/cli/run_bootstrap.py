@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 import sys
 import time
@@ -19,6 +20,8 @@ import httpx
 from bernstein.cli.first_run_guard import handle_first_run_exception
 from bernstein.cli.helpers import (
     SDD_DIRS,
+    SERVER_URL,
+    auth_headers,
     console,
     find_seed_file,
     print_banner,
@@ -36,6 +39,8 @@ from bernstein.cli.run_preflight import (
 from bernstein.core.cost import estimate_run_cost
 from bernstein.core.manager_parsing import _resolve_depends_on  # pyright: ignore[reportPrivateUsage]
 from bernstein.core.plan_loader import PlanLoadError, load_plan, load_plan_from_yaml
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Plan helpers
@@ -717,9 +722,60 @@ def _init_impl(
     console.print("  2. Run [bold]bernstein[/bold] to start the orchestra")
     console.print("")
     console.print(
-        "  See [link=https://chernistry.github.io/bernstein/]docs[/link] "
+        "  See [link=https://bernstein.readthedocs.io/en/latest/]docs[/link] "
         "or [bold]examples/quickstart/[/bold] for a working example."
     )
+
+
+def _signal_orchestrator_shutdown(*, reason: str = "cli detected run completion") -> None:
+    """Best-effort belt-and-braces graceful-shutdown signal to the orchestrator.
+
+    The orchestrator has its own quiescence self-stop (see
+    ``core/orchestration/orchestrator.py`` tick-quiescence handling) that
+    should already have terminated the run by the time the CLI observes
+    completion. This call exists purely as a backstop: if the self-stop
+    ever fails to fire, the CLI still nudges the server's ``POST /shutdown``
+    route (see ``core/routes/status_lifecycle.py::shutdown_server``) so the
+    run does not hang forever.
+
+    This call is idempotent and never raises: a connection error or 404
+    almost always means the orchestrator already stopped itself, which is
+    treated as success (not a failure of this signal).
+    """
+    target = f"{SERVER_URL}/shutdown"
+    try:
+        resp = httpx.post(
+            target,
+            json={"reason": reason},
+            timeout=3.0,
+            headers=auth_headers(),
+        )
+        if resp.status_code == 404:
+            logger.info(
+                "cli_shutdown_signal: sent target=%s result=already_stopped "
+                "(404 - server likely self-stopped and torn down its routes)",
+                target,
+            )
+            return
+        resp.raise_for_status()
+        logger.info(
+            "cli_shutdown_signal: sent target=%s result=acknowledged response=%s",
+            target,
+            resp.json() if resp.content else None,
+        )
+    except httpx.ConnectError:
+        logger.info(
+            "cli_shutdown_signal: sent target=%s result=already_stopped "
+            "(connection refused - orchestrator process already exited via self-stop)",
+            target,
+        )
+    except Exception as exc:
+        logger.info(
+            "cli_shutdown_signal: sent target=%s result=error error=%s "
+            "(non-fatal - orchestrator quiescence self-stop is the primary path)",
+            target,
+            exc,
+        )
 
 
 def _wait_for_run_completion(
@@ -749,6 +805,15 @@ def _wait_for_run_completion(
             claimed_count = int(status_payload.get("claimed", 0) or 0)
             agent_count = int(health_payload.get("agent_count", 0) or 0)
             if total > 0 and open_count == claimed_count == 0 and (agent_count == 0):
+                logger.info(
+                    "run_completion_detected: total=%d open=%d claimed=%d agent_count=%d "
+                    "- sending belt-and-braces shutdown signal",
+                    total,
+                    open_count,
+                    claimed_count,
+                    agent_count,
+                )
+                _signal_orchestrator_shutdown(reason="cli detected run completion (quiescent)")
                 return status_payload
         time.sleep(poll_interval_s)
     return last_status

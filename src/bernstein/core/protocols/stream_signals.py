@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 SIGNAL_PREFIX: str = "BERNSTEIN:"
 
 
-class SignalKind(str, Enum):  # noqa: UP042 - explicit str base for wire-token round-trips
+class SignalKind(StrEnum):
     """Canonical signal kinds emitted by adapter stdout.
 
     The string values are the wire tokens that follow the

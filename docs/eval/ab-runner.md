@@ -68,10 +68,11 @@ The output carries:
 
 ## Live model-vs-model A/B
 
-For a quick CLI shape comparing two models on a single live task,
-see `bernstein ab-test --model-a opus --model-b sonnet --task "..."`.
-That command wraps the orchestrator's two-task path; the runner
-described here covers offline / synthetic prompt comparisons.
+For a CLI A/B comparison over a suite, use
+`bernstein eval ab --suite suite.yaml --arm-a balanced --arm-b terse`.
+Variant mode (`--variant-a`/`--variant-b`/`--tasks`) compares two prompt
+variants offline; the runner described here covers those offline /
+synthetic prompt comparisons.
 
 ## Limitations
 
@@ -88,6 +89,6 @@ described here covers offline / synthetic prompt comparisons.
 ## Related
 
 - Source: `src/bernstein/eval/ab_runner.py`
-- Live model-vs-model: `src/bernstein/cli/commands/ab_test_cmd.py`
+- CLI A/B command (`bernstein eval ab`): `src/bernstein/cli/commands/eval_benchmark_cmd.py`
 - [Best-of-N delegation](../concepts/best-of-n.md)
 - [Incident-to-eval synthesis](incident-synthesis.md)

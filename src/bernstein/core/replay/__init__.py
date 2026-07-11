@@ -6,18 +6,19 @@ recorded fixtures instead of live providers.
 
 Public surface:
 
-* :class:`ReplayGateway` - record/replay adapter around LLM + tool calls.
-* :data:`RECORD_ENV_VAR` - env-var that opts-in to recording.
+* :class:`EventJournal` - the single always-on Merkle-chained per-run
+  event recorder whose head hash is the run identity (issue #2293).
+* :class:`ReplayGateway` - fixture-replay adapter around LLM + tool calls.
+* :data:`RECORD_ENV_VAR` - env-var that opts the *gateway* into recording.
 * :func:`diff_event_logs` - line-by-line first-divergence locator.
 
-The existing ``RunRecorder`` in :mod:`bernstein.core.persistence.recorder`
-already handles orchestrator-level lifecycle events. This package adds a
-second, finer-grained log dedicated to LLM/tool I/O so replay can reproduce
-adapter responses byte-for-byte.
+The :class:`EventJournal` is the canonical run recorder: it records by
+default into ``.sdd/runs/<run_id>/journal.jsonl`` and its head hash is the
+run identity. It replaced the old orchestrator ``RunRecorder``.
 
-The gateway is OFF by default. Set ``BERNSTEIN_RECORD=1`` or pass
-``record=True`` explicitly to enable recording - we don't want to grow
-``.sdd/`` on every casual user invocation.
+The :class:`ReplayGateway` is a distinct concern - it captures LLM/tool
+I/O so a run can be re-executed against recorded fixtures. It is OFF by
+default; set ``BERNSTEIN_RECORD=1`` or pass ``record=True`` to enable it.
 """
 
 from __future__ import annotations
@@ -29,6 +30,12 @@ from bernstein.core.replay.diff import (
     diff_event_logs,
     load_events,
 )
+from bernstein.core.replay.fork import (
+    ForkError,
+    ForkResult,
+    fork_run,
+    record_snapshot_event,
+)
 from bernstein.core.replay.gateway import (
     EVENTS_FILENAME,
     RECORD_ENV_VAR,
@@ -36,6 +43,15 @@ from bernstein.core.replay.gateway import (
     ReplayGateway,
     ReplayMissError,
     is_recording_enabled,
+)
+from bernstein.core.replay.journal import (
+    JOURNAL_FILENAME,
+    RETENTION_ENV_VAR,
+    EventJournal,
+    JournalVerifyResult,
+    rebuild_state,
+    seal_journal_into_spine,
+    verify_journal,
 )
 
 if TYPE_CHECKING:
@@ -71,14 +87,25 @@ def record_run(sdd_dir: Path, conversation_id: str, adapter_name: str, run_id: s
 
 __all__ = [
     "EVENTS_FILENAME",
+    "JOURNAL_FILENAME",
     "RECORD_ENV_VAR",
+    "RETENTION_ENV_VAR",
     "DivergenceResult",
+    "EventJournal",
+    "ForkError",
+    "ForkResult",
     "GatewayMode",
+    "JournalVerifyResult",
     "ReplayGateway",
     "ReplayMissError",
     "diff_event_logs",
+    "fork_run",
     "is_recording_enabled",
     "load_events",
     "locate_run",
+    "rebuild_state",
     "record_run",
+    "record_snapshot_event",
+    "seal_journal_into_spine",
+    "verify_journal",
 ]

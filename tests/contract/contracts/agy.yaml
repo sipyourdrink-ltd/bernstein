@@ -1,0 +1,36 @@
+# Contract for the Antigravity CLI (adapter: agy).
+#
+# Verified against Antigravity CLI 1.0.0. Always-passed surface from
+# src/bernstein/adapters/agy.py:
+# ``agy -p <prompt> --sandbox --dangerously-skip-permissions
+# [--print-timeout <N>s]``.
+#
+# ``--conversation`` (resume a previous conversation by id) is pinned as
+# part of the contract surface even though native resume is not wired
+# yet: losing it upstream would silently foreclose the resume lane.
+#
+# agy is closed-source and distributed via an upstream installer, so
+# install.method is "manual" (no package spec bernstein could pin).
+adapter: agy
+binary: agy
+install:
+  method: manual
+  spec: ""
+auth:
+  required_for_help: false
+  required_for_models: false
+  # Keyring / OAuth is the default; API keys are optional overrides.
+  secret_env:
+    - "GOOGLE_API_KEY"
+    - "GEMINI_API_KEY"
+required_flags:
+  - "-p"
+  - "--print"
+  - "--sandbox"
+  - "--dangerously-skip-permissions"
+  - "--print-timeout"
+  - "--conversation"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

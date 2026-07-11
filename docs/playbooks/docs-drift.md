@@ -163,7 +163,7 @@ curl -sS https://pypistats.org/api/packages/bernstein/recent | jq .data
 ## Cross-repo
 
 The public website and several long-form pages live in
-[`sipyourdrink-ltd/bernstein-landing`](https://github.com/sipyourdrink-ltd/bernstein-landing).
+`sipyourdrink-ltd/bernstein-landing`.
 These pages mirror or extend the bernstein docs; when bernstein docs change,
 the landing copy may need a follow-up edit.
 

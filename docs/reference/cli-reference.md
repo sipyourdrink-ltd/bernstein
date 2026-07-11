@@ -1,6 +1,6 @@
 # CLI Reference
 
-Bernstein ships **163 CLI commands** registered in `cli/main.py`. This page is the single-source reference for every flag on every visible command. For driving Bernstein from a script, also read [`cli/task-lifecycle.md`](cli/task-lifecycle.md) and [`cli/replay.md`](cli/replay.md).
+Bernstein ships **174 CLI commands** registered in `cli/main.py`. This page is the single-source reference for every flag on every visible command. For driving Bernstein from a script, also read [`cli/task-lifecycle.md`](cli/task-lifecycle.md) and [`cli/replay.md`](cli/replay.md).
 
 > **Find a command fast:** `Ctrl-F` for the command name. Every entry below cites its source as `cli/<file>:<line>`.
 > **Get rich help in the terminal:** `bernstein --help` (root rich-formatted help) and `bernstein help-all` (the same, exhaustive). Per-command help: `bernstein <command> --help` works on every visible command and group.
@@ -48,7 +48,7 @@ Any global flag may also be set via `bernstein.yaml` (e.g. `budget: 5.00`); the 
 
 ## Commands by category
 
-The 163 commands are organised below by purpose, not alphabetically. Use the table inside each category for quick lookup; the longer per-command entries follow for the highest-traffic commands.
+The 174 commands are organised below by purpose, not alphabetically. Use the table inside each category for quick lookup; the longer per-command entries follow for the highest-traffic commands.
 
 ### Conventions
 
@@ -78,10 +78,10 @@ The "do work" commands. This is where most operators live.
 | `bernstein init-wizard` | Interactive project setup. | `cli/init_wizard_cmd.py` |
 | `bernstein dry-run` | Preview the plan without spawning. | `cli/commands/dry_run_cmd.py:203` |
 | `bernstein replay RUN_ID` | Replay a past run step-by-step. | `cli/commands/advanced_cmd.py:876` |
-| `bernstein replay-filter RUN_ID` | Replay with `--filter` / `--event-type` / `--agent` / `--search`. | `cli/commands/replay_filter_cmd.py:164` |
 | `bernstein undo` | Undo the last operation. | `cli/undo_cmd.py:15` |
 | `bernstein checkpoint` | Save progress for later resume. | `cli/commands/checkpoint_cmd.py:49` |
 | `bernstein wrap-up` | End session with summary + learnings. | `cli/wrap_up_cmd.py` |
+| `bernstein fork --run ID --from-step N` | Rewind a run to journal step N and branch a new run from its content-addressed worktree snapshot. | `cli/commands/fork_cmd.py` |
 
 #### `bernstein run`
 
@@ -133,11 +133,10 @@ See [`cli/task-lifecycle.md#bernstein-cancel`](cli/task-lifecycle.md#bernstein-c
 | Flag | Default | Meaning |
 |---|---|---|
 | `--workdir` | `.` | Project root. |
-| `--worktrees` | off | Remove orphan worktrees. |
-| `--logs` | off | Truncate `.sdd/logs/` and `.sdd/runtime/*.log`. |
-| `--yes` | off | Skip confirmation. |
+| `--yes` | off | Skip the confirmation prompt. |
+| `--force` | off | Also delete agent branches not merged into main (may discard in-flight work). |
 
-#### `bernstein replay` / `bernstein replay-filter`
+#### `bernstein replay`
 
 See [`cli/replay.md`](cli/replay.md) for full reference.
 
@@ -181,8 +180,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein tasks` | Alias of `bernstein plan`. | `cli/main.py:706` |
 | `bernstein merge` | Merge a completed task's worktree. | `cli/commands/merge_cmd.py:64` |
 | `bernstein review` | Trigger queue review or run a review pipeline. | `cli/commands/task_cmd.py:175` |
-| `bernstein verify` | Run quality gates manually. | `cli/verify_cmd.py` |
-| `bernstein delegate` | Assign a task to a specific agent. | `cli/delegate_cmd.py:22` |
+| `bernstein verify` | Verify WAL integrity, execution determinism, memory provenance, formal properties, or a wheelhouse. | `cli/verify_cmd.py` |
 | `bernstein from-ticket FILE` | Generate tasks from a ticket file. | `cli/commands/ticket_cmd.py:231` |
 | `bernstein ticket` | Ticket integration group. | `cli/commands/ticket_cmd.py:246` |
 | `bernstein validate PLAN.yaml` | Validate a plan file's schema. | `cli/plan_validate_cmd.py:142` |
@@ -211,15 +209,7 @@ See [`cli/task-lifecycle.md#bernstein-add-task`](cli/task-lifecycle.md#bernstein
 
 #### `bernstein review`
 
-See [`cli/task-lifecycle.md#bernstein-review--bernstein-verify`](cli/task-lifecycle.md#bernstein-review--bernstein-verify).
-
-#### `bernstein delegate`
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--role ROLE` | required | Which agent role to assign. |
-| `--task TEXT` | required | Task description. |
-| `--cli {claude\|codex\|gemini\|qwen}` | auto | Force a specific agent. |
+See [`cli/task-lifecycle.md#bernstein-review-bernstein-verify`](cli/task-lifecycle.md#bernstein-review-bernstein-verify).
 
 ---
 
@@ -277,8 +267,7 @@ A subcommand group; defaults to `bernstein logs tail`.
 | Subcommand | Flags | Purpose |
 |---|---|---|
 | `tail` | `--follow / -f`, `--agent / -a ID`, `--lines / -n N`, `--runtime-dir DIR` | Tail the most recent agent log. |
-| `list` | none | List all agent log files. |
-| `show NAME` | none | Print one specific log. |
+| `search QUERY` | `--time-range`, `--agent-role` | Search logs across all agent sessions and the orchestrator. |
 
 `bernstein logs` (no subcommand) is equivalent to `bernstein logs tail`.
 
@@ -314,6 +303,15 @@ A subcommand group; defaults to `bernstein logs tail`.
 | `--as-json` | off | Emit raw JSON. |
 | `--traces-dir DIR` | `.sdd/traces` | Directory containing trace files. |
 
+Subcommands `project RUN_ID` and `verify-projection RUN_ID` emit and verify a
+signed OTel GenAI span set projected from the run event journal. Span ids are
+derived from journal entry hashes (byte-identical across replays), each span
+carries `bernstein.journal.entry_hash`, and the set is signed with the install
+identity. `--no-genai-stability` omits the Development-stage GenAI convention
+attributes while keeping the ids journal-anchored; the local
+`.sdd/runs/<run_id>/projection.otel.json` store emits even with no OTLP endpoint
+set. (`cli/commands/advanced_cmd.py`, `core/observability/otel_projection.py`.)
+
 #### `bernstein slo`
 
 | Flag | Default | Meaning |
@@ -328,7 +326,7 @@ A subcommand group; defaults to `bernstein logs tail`.
 
 | Command | Purpose | Source |
 |---|---|---|
-| `bernstein verify` | Run quality gates manually. | `cli/verify_cmd.py` |
+| `bernstein verify` | Verify WAL integrity, execution determinism, memory provenance, formal properties, or a wheelhouse. | `cli/verify_cmd.py` |
 | `bernstein autofix` | Auto-repair CI failures (group). | `cli/commands/autofix_cmd.py:172` |
 | `bernstein ci` | CI integration commands (group). | `cli/commands/ci_cmd.py:49` |
 | `bernstein chaos` | Chaos engineering (group). | `cli/commands/chaos_cmd.py:32` |
@@ -337,6 +335,20 @@ A subcommand group; defaults to `bernstein logs tail`.
 | `bernstein api-check` | Detect breaking-API changes. | `cli/api_check_cmd.py:22` |
 | `bernstein dep-impact` | Dependency change impact. | `cli/dep_impact_cmd.py:25` |
 | `bernstein diff` | Task-state diff. | `cli/diff_cmd.py:504` |
+
+#### `bernstein verify`
+
+Verifies integrity and reproducibility artefacts. It does not run lint / test / type-check quality gates; use `bernstein test` and the project's configured quality gates for that.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `WHEELHOUSE_PATH` | none | Positional: verify air-gap wheelhouse signatures. |
+| `--wal-integrity RUN_ID` | none | Validate a run's WAL hash chain. |
+| `--determinism RUN_ID` | none | Compute and show a run's execution fingerprint. |
+| `--expect FINGERPRINT` | none | Gate `--determinism`: exit non-zero unless the fingerprint matches. |
+| `--baseline RUN_ID` | none | Gate `--determinism`: exit non-zero unless the run reproduces this baseline. |
+| `--memory-audit` | off | Audit lesson-memory provenance chain. |
+| `--formal TASK_ID` | none | Run Z3 / Lean4 formal property checks for a completed task. |
 
 #### `bernstein autofix`
 
@@ -353,9 +365,8 @@ A subcommand group; defaults to `bernstein logs tail`.
 
 | Subcommand | Purpose |
 |---|---|
-| `tail RUN_URL` | Tail a GitHub Actions run, surface failing tests. |
-| `watch REPO` | Watch a repo for CI failures and create autofix tasks. |
-| `summarize` | Summarize recent CI runs. |
+| `fix` | One-shot fix of a specific failing GitHub Actions run. |
+| `watch REPO` | Watch a repo for CI failures and auto-create fix tasks. |
 
 Common flags: `--token` (env: `GITHUB_TOKEN`), `--server`, `--interval`. (`cli/commands/ci_cmd.py:49+`.)
 
@@ -422,7 +433,6 @@ Show what changed between two task states.
 |---|---|---|
 | `bernstein agents` | Agent catalog ops (group). | `cli/commands/agents_cmd.py:22` |
 | `bernstein test-adapter` | Spawn one adapter to verify its plumbing. | `cli/adapter_cmd.py:84` |
-| `bernstein delegate` | Assign a task to a specific agent. | `cli/delegate_cmd.py:22` |
 | `bernstein worker` | Join a cluster as a remote worker node. | `cli/worker_cmd.py:371` |
 | `bernstein evolve` | Self-improvement loop. | `cli/evolve_cmd.py:48` |
 
@@ -482,6 +492,7 @@ See [`operations/cluster-mode.md`](../operations/cluster-mode.md) for the full s
 | `bernstein prompts` | Prompt-template management (group). | `cli/commands/prompts_cmd.py:36` |
 | `bernstein manifest` | Manifest mgmt (group). | `cli/commands/manifest_cmd.py:18` |
 | `bernstein templates` | Project template mgmt (group). | `cli/commands/templates_cmd.py:41` |
+| `bernstein skill` | Skill usage provenance (group): install receipts + provenance graph. | `cli/commands/skill_cmd.py:1` |
 
 #### `bernstein plugins`
 
@@ -495,32 +506,46 @@ Lists plugins in `.bernstein/plugins/<name>/meta.json`.
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | List installed skills. `--source local\|registry` filter. |
-| `load NAME` | Load a skill by name. `--reference FILE` / `--script FILE` to override the default entry. |
-| `install NAME` | Install a skill from the registry. |
-| `uninstall NAME` | Remove an installed skill. |
+| `list` | List every discoverable skill with a one-line description. `--layered` shows the base/team/user view. |
+| `show NAME` | Print a skill's `SKILL.md` body. `--reference FILE` / `--per-layer` to inspect a specific reference or the per-layer diff. |
+| `install NAME` | Install a skill from a local path. |
+| `remove NAME` | Remove a previously installed skill. |
 
-(`cli/commands/skills_cmd.py:13-81`.)
+The `skills catalog ...` subgroup browses, installs, searches, and upgrades skill packs from the registry. Other subcommands include `bench`, `diff`, `lint`, `test`, `sync`, and `watch`. (`cli/commands/skills_cmd.py`.)
+
+#### `bernstein skill`
+
+Usage-attestation surface for installed skills. Each catalog install anchors a
+lineage receipt in the run's Merkle+HMAC spine; provenance recomputes usage
+from verified journal heads rather than a stored counter.
+
+| Subcommand | Purpose |
+|---|---|
+| `provenance SKILL` | Print the verified runs and artifacts a skill contributed to; the verified-run count is recomputed from journal heads on every call. |
+| `verify SKILL` | Recompute the install receipt and flag a manifest-hash drift between the receipt and the currently installed content. |
+
+`SKILL` is a catalog entry id (resolved via `skills.lock`) or a raw content
+digest. (`cli/commands/skill_cmd.py`.)
 
 #### `bernstein prompts`
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | List prompt templates. |
-| `show NAME` | Show a prompt's content. |
-| `versions NAME` | List versions of a prompt. |
-| `diff NAME V1 V2` | Diff two versions. `--json` for machine output. |
-| `rollback NAME VERSION` | Roll a prompt back to VERSION. |
-| `bandit NAME V_A V_B` | Run an A/B bandit on two versions. `--split FRACTION` (default 0.5). |
-| `delete NAME` | Delete a prompt template. |
+| `list` | List all versioned prompts and their active versions. |
+| `show NAME` | Show all versions of a prompt with their metrics. |
+| `compare NAME V1 V2` | Compare metrics between two prompt versions. |
+| `promote NAME VERSION` | Promote a specific version to active. |
+| `ab-start NAME A B` | Start an A/B test between two prompt versions. |
+| `ab-stop NAME` | Stop an active A/B test without promoting either version. |
+| `seed` | Seed `.sdd/prompts/` from `templates/prompts/` as v1. |
 
 #### `bernstein manifest`
 
 | Subcommand | Purpose |
 |---|---|
+| `list` | List all available run manifests. |
 | `show RUN_ID` | Show the manifest for a run. |
-| `compare RUN_A RUN_B` | Compare two run manifests. |
-| `verify RUN_ID` | Re-compute and verify the manifest hash. |
+| `diff RUN_A RUN_B` | Compare two run configurations and highlight differences. |
 
 #### `bernstein templates`
 
@@ -528,7 +553,10 @@ Lists plugins in `.bernstein/plugins/<name>/meta.json`.
 |---|---|
 | `list` | List available templates. |
 | `show TEMPLATE [OUTPUT]` | Print template content (or write to OUTPUT). |
-| `apply TEMPLATE` | Apply a template to the current project. `--dest DIR`, `--force`. |
+| `use TEMPLATE [OUTPUT]` | Copy TEMPLATE to OUTPUT (default `plans/<name>.yaml`). |
+| `compress ROLE\|--all` | Operator-gated LLM compression of role prompt templates (`cli/commands/templates_cmd.py`). Rewrite via the configured adapter (`--model`, `--provider`), then mechanical validators (fenced blocks, headings, URLs, inline code, placeholders, completion-contract block; at most two targeted fix retries), then apply. Originals are stored under `~/.local/share/bernstein/template-backups/` keyed by content hash with readback verification; the receipt `{role, pre_sha256, post_sha256, pre_tokens, post_tokens, validators, adapter, model}` is chained to the audit log and a `templates.lock` row lets `bernstein team drift` classify the change as intentional. Prints only the template token delta; per-spawn savings come from `bernstein cost --by role`. `--workdir DIR`, `--yes` skips the confirmation. |
+| `restore ROLE` | Reverse the most recent receipted compression byte-identically (backup hash, on-disk hash, and directory digest all verified). `--workdir DIR`. |
+| `hooks list` / `hooks use` | Browse and scaffold bundled command-hook templates. |
 
 ---
 
@@ -537,7 +565,7 @@ Lists plugins in `.bernstein/plugins/<name>/meta.json`.
 | Command | Purpose | Source |
 |---|---|---|
 | `bernstein cloud` | Cloudflare cloud agent ops (group). | `cli/commands/cloud_cmd.py:35` |
-| `bernstein worker` | Join a cluster as worker (see [Adapters & agents](#adapters--agents)). | `cli/worker_cmd.py:371` |
+| `bernstein worker` | Join a cluster as worker (see [Adapters & agents](#adapters-agents)). | `cli/worker_cmd.py:371` |
 | `bernstein gateway` | Gateway mgmt (group). | `cli/commands/gateway_cmd.py:28` |
 | `bernstein tunnel` | Tunnel mgmt (group). | `cli/commands/tunnel_cmd.py:62` |
 | `bernstein remote` | Remote-host execution (group). | `cli/commands/remote_cmd.py:52` |
@@ -548,11 +576,12 @@ Lists plugins in `.bernstein/plugins/<name>/meta.json`.
 
 | Subcommand | Purpose |
 |---|---|
-| `setup` | Configure Cloudflare credentials. |
+| `login` | Authenticate with Bernstein Cloud. |
+| `logout` | Remove stored cloud credentials. |
 | `run GOAL` | Run an agent on Cloudflare Workers. `--max-agents N`, `--model`, `--budget USD`, `--wait/--no-wait`. |
 | `status [RUN_ID]` | Status of a cloud run. |
 | `runs` | Recent cloud runs. `--limit N`, `--json`. |
-| `costs` | Cloud spend. `--period current\|YYYY-MM`. |
+| `cost` | Cloud usage and spend. |
 | `init` | Generate `wrangler.toml`. `--worker-name`, `-o FILE`. |
 | `deploy` | Deploy the Worker. `--worker-name`. |
 
@@ -562,18 +591,16 @@ Lists plugins in `.bernstein/plugins/<name>/meta.json`.
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start the gateway server. |
-| `stop` | Stop the gateway. |
-| `status` | Show gateway status. |
-| `routes` | Show active routes. |
+| `start` | Start the MCP gateway proxy. |
+| `replay` | Replay recorded MCP tool calls from a previous gateway run. |
 
 #### `bernstein tunnel`
 
 | Subcommand | Purpose |
 |---|---|
-| `open PORT` | Open a tunnel to PORT. `--name NAME`, `--provider {cloudflared\|ngrok}`. |
+| `start` | Start a tunnel exposing `localhost:<PORT>` publicly. `--name NAME`, `--provider {cloudflared\|ngrok\|bore\|tailscale}`. |
 | `list` | List active tunnels. |
-| `close [NAME]` | Close one tunnel. `--all` closes every active tunnel. |
+| `stop` | Stop a named tunnel or (with `--all`) every active tunnel. |
 
 (`cli/commands/tunnel_cmd.py:62-117`.)
 
@@ -581,9 +608,9 @@ Lists plugins in `.bernstein/plugins/<name>/meta.json`.
 
 | Subcommand | Purpose |
 |---|---|
-| `run HOST` | Spawn an agent on a remote host. `--user`, `--port`, `--key-file`. |
-| `sync HOST PATH` | Rsync a path to a remote host. `--user`, `--port`, `--exclude`, `--delete`. |
-| `disconnect HOST` | Close any open SSH multiplexing channel for HOST. |
+| `run HOST` | Invoke `bernstein run PATH` against HOST over SSH. `--user`, `--port`, `--key-file`. |
+| `test HOST` | Check that HOST is reachable and time the round trip. |
+| `forget HOST` | Remove any cached ControlMaster sockets for HOST. |
 
 (`cli/commands/remote_cmd.py:52-200`.)
 
@@ -600,12 +627,13 @@ Multi-project dashboard.
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | Projects in the fleet. |
-| `add PATH` | Add a project to the fleet. |
-| `remove NAME` | Remove a project from the fleet. |
-| `dashboard` | Open the fleet web dashboard. |
+| `list` | List instances discovered under the fleet root. |
+| `ls` | List configured projects without launching the dashboard. |
+| `reload` | Rescan the fleet root and report what would be picked up. |
+| `bulk-cost-report` | Run `bernstein cost report` against every matching project. |
+| `bulk-pause` / `bulk-resume` / `bulk-stop` | Pause, resume, or stop every matching project. |
 
-(`cli/commands/fleet_cmd.py:50+`.)
+The group also accepts `--web [host:]port` to run the web view instead of the TUI. (`cli/commands/fleet_cmd.py:50+`.)
 
 ---
 
@@ -616,15 +644,44 @@ Multi-project dashboard.
 | `bernstein login` | Log in (alias for `auth login`). | `cli/commands/auth_cmd.py:auth_login` |
 | `bernstein auth` | Auth ops (group). | `cli/commands/auth_cmd.py:139` |
 | `bernstein creds` | Credential mgmt (group). | `cli/commands/creds_cmd.py:214` |
-| `bernstein users` | User mgmt (group). | `cli/commands/users_cmd.py:57` |
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
+| `bernstein identity` | Install-identity ops (group): fingerprint helpers plus `keydir`. | `cli/commands/identity_cmd.py:identity_group` |
+| `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
+| `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
+| `bernstein credential` | C2PA content credentials projected from the lineage spine (group). | `cli/commands/credential_cmd.py` |
+| `bernstein mandate` | Verifiable spending mandates as journal-anchored consent receipts (group): `emit` / `verify` / `revoke`. | `cli/commands/mandate_cmd.py` |
+| `bernstein compaction` | Compaction receipt-chain ops (group). | `cli/commands/compaction_cmd.py:32` |
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
 | `bernstein approve-tool` | Approve a tool-call request. | `cli/commands/approval_cmd.py:approve_tool_cmd` |
 | `bernstein reject-tool` | Reject a tool-call request. | `cli/commands/approval_cmd.py:reject_tool_cmd` |
+| `bernstein review-receipt` | Attested PR review receipts binding issue / plan / tool calls / diff (group): `emit` / `verify`. | `cli/commands/review_receipt_cmd.py` |
+| `bernstein gate verify <run>` | Verify a maker-checker / judge-panel gate's signed adjudication record: recompute `inputs_hash` from `--inputs` and confirm the panel saw exactly those inputs, then confirm the spine anchor still verifies. Exit 1 when no record, 2 on mismatch. | `cli/commands/gate_cmd.py` |
+| `bernstein governance verify <run>` | Recompute every RBAC access and per-subject budget decision recorded for a run from the signed spine and confirm the recorded verdicts: re-resolve roles from the signed `--bindings`, re-project spend from the `--ledger`, and match. Exit 1 when no records, 2 on mismatch. | `cli/commands/governance_cmd.py` |
 
-> Task-level `approve` / `reject` are different commands - see [Plan & tasks](#plan--tasks).
+> Task-level `approve` / `reject` are different commands - see [Plan & tasks](#plan-tasks).
+
+#### `bernstein identity`
+
+| Subcommand | Purpose |
+|---|---|
+| `show` | Print the install-rev fingerprint token. |
+| `decode TOKEN` | Confirm a token came from a real install (shape + sentinel check). |
+| `verify TOKEN [--nonce HEX]` | Full HMAC-strength verify when the operator holds the install nonce. |
+| `keydir` | Print the install-identity key directory (JWKS) used to verify outbound HTTP Message Signatures. Mirrors `/.well-known/http-message-signatures-directory`. |
+| `disable` | Print the env line that suppresses every fingerprint emit site. |
+
+Outbound agent-facing requests (A2A card fetch, browser/research rendering)
+carry an RFC 9421 Ed25519 signature keyed to the install-identity thumbprint.
+`BERNSTEIN_HTTP_SIGNING_REQUIRED=1` turns an unsigned outbound path into a hard
+error. `BERNSTEIN_AGENT_CARD_KEY_DIR` overrides the key directory location.
+
+#### `bernstein delegation`
+
+| Subcommand | Purpose |
+|---|---|
+| `verify RUN [--root DIR] [--json]` | Reconstruct the `principal -> orchestrator -> sub-agent` chain for a run from HMAC-chained per-hop receipts and confirm it is intact; exits non-zero on tamper, deleted hop, or a missing chain. |
 
 #### `bernstein login`
 
@@ -640,49 +697,38 @@ Multi-project dashboard.
 | Subcommand | Purpose |
 |---|---|
 | `login` | Same as `bernstein login`. |
-| `logout` | Drop the local session. |
-| `whoami` | Print the logged-in identity. |
-| `token list` | List active tokens. |
-| `token revoke ID` | Revoke a token. |
+| `logout` | Revoke the current session and clear the cached token. |
+| `status` | Show current authentication status. |
+| `dashboard-token` | Scoped dashboard credentials (group): `issue` / `list` / `revoke`. See [Dashboard authentication](#dashboard-authentication-bernstein-auth-dashboard-token). |
 
 #### `bernstein creds`
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | List configured credentials. |
-| `add PROVIDER` | Add credentials for a provider. |
-| `remove PROVIDER` | Remove credentials. |
-| `rotate PROVIDER` | Rotate stored credentials. |
-| `test PROVIDER` | Verify credentials work. |
+| `list` | List stored credentials. |
+| `revoke PROVIDER` | Remove a credential locally and call the provider's revoke endpoint. |
+| `test PROVIDER` | Re-validate a stored credential against the provider's whoami. |
 
 (`cli/commands/creds_cmd.py:214-282`.)
-
-#### `bernstein users`
-
-| Subcommand | Purpose |
-|---|---|
-| `list` | List users (auth required). |
-| `add EMAIL` | Add a user. `--role` (admin/user/viewer), `--name`. |
-| `remove EMAIL` | Remove a user. |
-| `whoami` | Print the current user. |
 
 #### `bernstein policy`
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | List active policies. |
-| `show NAME` | Show one policy's contents. |
-| `apply FILE` | Apply a policy YAML. |
-| `remove NAME` | Remove a policy. |
+| `check` | Run YAML / Rego policies against the current repository diff. |
 
 #### `bernstein compliance`
 
 | Subcommand | Purpose |
 |---|---|
-| `report` | Generate a compliance report. `--workdir`, `--json-output`. |
-| `assess FRAMEWORK` | Assess against a framework (`eu_ai_act`, `hipaa`, `soc2`). |
-| `evidence FRAMEWORK` | Export evidence package. `--version`. |
-| `controls FRAMEWORK` | Export controls. `--json-output`. |
+| `list` | List available compliance policies. |
+| `enable` / `disable` | Activate or deactivate a compliance framework policy set. |
+| `check` | Evaluate compliance policies against the current runtime. |
+| `assess` | Run the EU AI Act compliance assessment. |
+| `eu-ai-act` | Show the current EU AI Act task-risk summary. |
+| `report` | Print the EU AI Act compliance report from an existing assessment. |
+| `pack` | Build a one-command EU AI Act Article 12 evidence bundle. |
+| `rego` | Export OPA / Rego rule files for a compliance framework. |
 
 (`cli/commands/compliance_cmd.py:26+`.)
 
@@ -690,9 +736,9 @@ Multi-project dashboard.
 
 | Subcommand | Purpose |
 |---|---|
-| `tail` | Recent audit events. `--limit N`. |
+| `show` | Show recent audit log events. `--limit N`. |
 | `verify` | Verify audit log integrity. `--merkle-only`, `--hmac-only`. |
-| `anchor` | Anchor the Merkle root as a git tag. `--anchor-git`. |
+| `seal` | Compute a Merkle root across all audit log files and store the seal. |
 | `export PERIOD` | Export evidence for a period. `--output DIR`, `--dir WORKDIR`. Tenant-scoped slice via `--tenant`. |
 | `slice` | Write a deterministic JSONL subset between two HMAC anchors. `--from`, `--to`, `-o PATH`. |
 | `query` | Query audit events. `--event-type`, `--actor`, `--since`, `--limit`. |
@@ -700,6 +746,57 @@ Multi-project dashboard.
 (`cli/commands/audit_cmd.py:25+`. The `slice` verb is the
 deterministic-subset extractor described in
 [HMAC-chained audit log](../security/audit-log.md#slicing-a-deterministic-subset).)
+
+#### `bernstein lineage`
+
+| Subcommand | Purpose |
+|---|---|
+| `verify RUN_ID` | Verify the run's lineage spine: recompute the full Merkle hash chain and every HMAC tag, print the head hash. `--workdir DIR`. Exit 0 = OK, 1 = no entries, 2 = tamper. |
+| `replay RUN_ID` | Walk the run's spine entries in append order (artifact, actor, step, model, content hash, entry hash). `--workdir DIR`, `--limit N`. Exit 1 on an empty run. |
+
+Every adapter artifact write is recorded, without per-adapter opt-in, as
+one Merkle-chained, HMAC-tagged entry in the run's lineage spine under
+`.sdd/lineage/<run_id>/spine.jsonl` (head hash in `spine.head`). The head
+hash is the run's artifact-provenance identity. Recording is gated by
+`BERNSTEIN_LINEAGE_ENABLED` (default on); when enabled it fails closed, so
+a write that cannot be recorded raises rather than dropping provenance.
+`verify` against an empty run reports a distinct `NO ENTRIES` status
+instead of passing trivially. (`cli/commands/lineage_cmd.py`,
+`core/lineage/spine.py`.)
+
+#### `bernstein credential`
+
+| Subcommand | Purpose |
+|---|---|
+| `emit ARTIFACT --run-id RUN_ID` | Project the artifact's lineage-spine subtree into a signed C2PA 2.2 manifest and write `<artifact>.c2pa.json`. `--workdir DIR`, `--json`. Exit 0 = written, 1 = no lineage / bad input. |
+| `verify ARTIFACT` | Confirm the manifest's hard-binding hash matches the artifact bytes and the signature chains to the install identity. `--workdir DIR`, `--manifest PATH`. Exit 0 = OK, 1 = bad input, 2 = verification failed. |
+
+The manifest is a deterministic projection of the artifact's lineage
+entries: a hard-binding assertion (`c2pa.hash.data`) carries the spine
+entry's content hash and an actions assertion (`c2pa.actions`) records the
+producing model and actor. It is signed with the install-identity Ed25519
+key, so one attestation root covers both who ran the artifact and what was
+produced. With no lineage entry for the artifact there is nothing to
+project, so `emit` fails rather than fabricating an unsigned label.
+Watermark and fingerprint soft-binding layers are pluggable via
+`c2pa.soft-binding`. Two replays of the same run produce byte-identical
+manifests. (`cli/commands/credential_cmd.py`, `core/lineage/c2pa.py`.)
+
+#### `bernstein compaction`
+
+| Subcommand | Purpose |
+|---|---|
+| `log` | Print a task's compaction receipt chain. `--task ID` (required), `--audit-dir`, `--sdd-dir`, `--json`, `--verify`. |
+
+Every context compaction (proactive threshold or reactive overflow recovery)
+is recorded as a `compaction.receipt` event in the HMAC-chained audit log and
+as a step in the worker's replay journal. `log` prints those receipts
+(trigger, token delta, validator verdicts, retry count, pre/post SHA-256).
+`--verify` re-runs the receipt verification: the HMAC chain must verify and
+every journaled compaction step must have a chain receipt with matching
+hashes; the command exits non-zero otherwise.
+
+(`cli/commands/compaction_cmd.py:32+`.)
 
 #### `bernstein quarantine`
 
@@ -726,32 +823,46 @@ bernstein reject-tool  <request_id>
 | Command | Purpose | Source |
 |---|---|---|
 | `bernstein cost` | Spend breakdown by model / task. | `cli/commands/cost.py:540` |
+| `bernstein cost profile-report` | Content-addressed per-profile cost report, appended to the audit chain. | `cli/commands/cost.py` |
 | `bernstein estimate` | Estimate cost before running. | `cli/commands/cost.py:388` |
-| `bernstein token-report` | Token usage breakdown. | `cli/token_cmd.py` |
 
 #### `bernstein cost`
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--period {today\|week\|month\|all}` | week | Time window. |
-| `--by {model\|role\|task}` | model | Group-by dimension. |
+| `--last {1h\|24h\|7d\|30d}` | none | Time range window. |
+| `--since ANCHOR` | none | Anchor for `--last` (e.g. `today`, `yesterday`). |
+| `--by {agent\|model\|task\|day\|role\|feature_label\|envelope\|profile}` | model | Group-by dimension. `profile` groups by response-style profile; tasks whose profile changed mid-run appear as an explicit excluded bucket. |
+| `--ledger PATH` | `.sdd/cost/ledger.jsonl` | Rolling spend ledger (used when `--by` is `role\|feature_label\|profile`). |
+| `--metrics-dir DIR` | `.sdd/metrics` | Directory containing metrics JSONL files. |
 | `--json` | off | Emit JSON. |
+| `--share` | off | Print only the shareable summary snippet. |
+
+#### `bernstein cost profile-report`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--last {1h\|24h\|7d\|30d}` | whole ledger | Ledger window. |
+| `--ledger PATH` | `.sdd/cost/ledger.jsonl` | Spend ledger to compute from. |
+| `--json` | off | Emit JSON. |
+
+Emits per-profile tasks / output tokens / USD / mean tokens per task plus
+joined verification pass rates. The artifact is canonical JSON named by its
+own SHA-256, embeds the ledger line-hash range it was computed from, and is
+appended to the audit chain, so anyone holding the ledger can recompute it
+byte-identically. Cross-profile savings are only claimed when both profiles
+have at least 5 tasks with the same role and model; otherwise the report
+states "insufficient comparable runs".
 
 #### `bernstein estimate`
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--plan FILE` | `bernstein.yaml` | Plan to estimate. |
-| `--model NAME` | auto | Override model. |
-| `--detailed` | off | Per-task breakdown. |
-
-#### `bernstein token-report`
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--period {today\|week\|month}` | week | Time window. |
-| `--by {model\|session}` | model | Group-by. |
-| `--json` | off | Emit JSON. |
+| `GOAL` | required | Task description to estimate (positional). |
+| `--role ROLE` | none | Agent role for the task. |
+| `--scope {small\|medium\|large}` | none | Task scope. |
+| `--complexity {low\|medium\|high}` | none | Task complexity. |
+| `--metrics-dir DIR` | `.sdd/metrics` | Directory containing historical metrics. |
 
 ---
 
@@ -817,44 +928,53 @@ bernstein completions --shell zsh > ~/.zsh/completion/_bernstein
 
 | Subcommand | Purpose |
 |---|---|
-| `show` | Print effective config. |
+| `list` | List all config keys with their effective values and sources. |
+| `get KEY` | Show the effective value for KEY and its source. |
 | `set KEY VALUE` | Update a config value. |
-| `unset KEY` | Remove a config value. |
-| `validate` | Validate the config. |
+| `diff` | Show settings that differ from defaults. |
+| `conflicts` | Show settings where multiple sources define conflicting values. |
+| `view-mode` | Set the dashboard detail level (novice, standard, expert). |
+| `validate` | Validate project configuration. |
 
 #### `bernstein workspace`
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | Active worktrees. |
-| `clean` | Clean up old worktrees. |
-| `show NAME` | Show a worktree's metadata. |
+| `clone` | Clone all missing repos defined in the workspace. |
+| `validate` | Check workspace health: all repos exist and are valid git checkouts. |
+
+For worktree lifecycle (inspection / reaping) use `bernstein worktrees list` / `bernstein worktrees gc`.
 
 #### `bernstein session`
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | List saved sessions. |
-| `resume NAME` | Resume a saved session. |
-| `save NAME` | Save current state as a session. |
-| `delete NAME` | Delete a session. |
+| `list` | List all recorded sessions, newest first. |
+| `show NAME` | Show full details of a recorded session. |
+| `fork` | Fork a recorded session into a sibling git worktree. |
+| `replay` | Replay a recorded session for deterministic reproducibility. |
 
 #### `bernstein memory`
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | Memory entries. |
-| `show KEY` | Show a memory entry. |
-| `set KEY VALUE` | Set a memory entry. |
-| `forget KEY` | Delete a memory entry. |
+| `list` | List stored memories. |
+| `add CONTENT` | Add a persistent memory entry. |
+| `remove ID` | Remove a memory entry by id. |
+| `share KEY VALUE --tag TAG` | Publish a cross-task fact. |
+| `query --tag TAG` | List published facts (redacted by default). |
+| `verify --scope SCOPE --namespace NS` | Prove every fact in a scope/namespace chain was written by its actor and never edited; recomputes the hash chain, every HMAC tag, and each `source_hash` anchor against the lineage spine. Exit 0 = OK, 1 = no entries, 2 = tamper. |
+| `why FACT --scope SCOPE --namespace NS` | Return the originating run id and step for a stored fact (only when its `source_hash` resolves to a real lineage-spine entry). |
+| `forget ENTRY_HASH --scope SCOPE --namespace NS` | Append a signed tombstone for a memory-chain entry without deleting it; the original entry and chain stay verifiable. |
 
 #### `bernstein cache`
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | List cache entries. `--workdir`, `--limit`, `--json`. |
-| `show TASK_ID` | Show one cache entry. `--workdir`, `--json`. |
-| `clear` | Clear the cache. `--workdir`, `--scope`, `--yes`. |
+| `list` | List cached task-result entries. `--workdir`, `--limit`, `--json`. |
+| `inspect TASK_ID` | Inspect the cached result produced by a specific task. `--workdir`, `--json`. |
+| `action` | Inspect / replay the action-level LLM cache. |
+| `clear` | Clear response-cache entries. `--workdir`, `--scope`, `--yes`. |
 
 (`cli/commands/cache_cmd.py:45-146`.)
 
@@ -862,9 +982,8 @@ bernstein completions --shell zsh > ~/.zsh/completion/_bernstein
 
 | Subcommand | Purpose |
 |---|---|
-| `send` | Send a one-off notification. `--driver {slack\|telegram\|discord\|email\|webhook\|shell}`, `--message`, `--target`. |
-| `test DRIVER` | Smoke-test a driver. |
-| `list` | List configured drivers. |
+| `list` | List configured sinks from `bernstein.yaml`. |
+| `test` | Fire a synthetic event end-to-end through `--sink`. |
 
 (`cli/commands/notify_cmd.py:63+`.)
 
@@ -872,10 +991,9 @@ bernstein completions --shell zsh > ~/.zsh/completion/_bernstein
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | Configured trigger sources. `-n LIMIT`. |
-| `enable NAME` | Enable a trigger. |
-| `disable NAME` | Disable a trigger. |
-| `test NAME` | Smoke-test a trigger. |
+| `list` | Show all configured triggers and their status. `-n LIMIT`. |
+| `fire NAME` | Manually fire a trigger by name (for testing). |
+| `history` | Show the recent trigger fire log. |
 
 #### `bernstein dr`
 
@@ -883,10 +1001,8 @@ Disaster recovery; see [`operations/disaster-recovery.md`](../operations/disaste
 
 | Subcommand | Purpose |
 |---|---|
-| `snapshot` | Create a state snapshot. |
-| `restore SNAPSHOT_ID` | Restore from a snapshot. |
-| `list` | List snapshots. |
-| `verify` | Verify snapshot integrity. |
+| `backup` | Backup persistent `.sdd/` state to a file. |
+| `restore` | Restore `.sdd/` state from a backup file. |
 
 #### `bernstein daemon`
 
@@ -947,18 +1063,18 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 
 | Subcommand | Purpose |
 |---|---|
-| `start` | Start a chat-control bridge. `--driver {telegram\|slack\|discord}`, `--token`, `--target`. |
-| `stop` | Stop the bridge. |
-| `status` | Show bridge status. |
+| `serve` | Run the chat bridge for PLATFORM until Ctrl-C. `--driver {telegram\|slack\|discord}`, `--token`, `--target`. |
+| `status` | Print active chat<->session bindings. |
+| `logout` | Drop cached bindings for PLATFORM. |
 
 #### `bernstein hooks`
 
 | Subcommand | Purpose |
 |---|---|
-| `list` | Installed hooks. |
-| `install NAME` | Install a hook (e.g. `smart_approve`). |
-| `uninstall NAME` | Remove a hook. |
-| `test NAME` | Smoke-test a hook. |
+| `list` | Print registered hooks for each lifecycle event. |
+| `run EVENT` | Fire EVENT with an empty context (useful for smoke-testing). |
+| `check` | Validate hook-config syntax and script availability. |
+| `dry-run EVENT` | Fire EVENT with a synthetic payload to see what fires. |
 
 #### `bernstein pr`
 
@@ -1006,18 +1122,34 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 | `bernstein fingerprint` | Replay verification (group). | `cli/fingerprint_cmd.py:37` |
 | `bernstein graph` | Dependency graph (group). | `cli/graph_cmd.py:19` |
 | `bernstein profile` | Task profiling. | `cli/profile_cmd.py:73` |
-| `bernstein evolve` | Self-improvement loop (see [Adapters & agents](#adapters--agents)). | `cli/evolve_cmd.py:48` |
+| `bernstein evolve` | Self-improvement loop (see [Adapters & agents](#adapters-agents)). | `cli/evolve_cmd.py:48` |
 | `bernstein changelog` | Generate a CHANGELOG entry. | `cli/changelog_cmd.py:314` |
 | `bernstein run-changelog` | Changelog from runs. | `cli/run_changelog_cmd.py:25` |
-| `bernstein checkpoint` | Save progress (see [Run & control](#run--control)). | `cli/commands/checkpoint_cmd.py:49` |
+| `bernstein checkpoint` | Save progress (see [Run & control](#run-control)). | `cli/commands/checkpoint_cmd.py:49` |
 | `bernstein voice` / `bernstein listen` | Voice control (experimental). | `cli/voice_cmd.py:437` |
 | `bernstein install-hooks` | Install git hooks. | `cli/commands/advanced_cmd.py:448` |
 | `bernstein ab-test` | A/B model comparison. | `cli/commands/ab_test_cmd.py:14` |
 | `bernstein acp serve` | Run an ACP server. | `cli/commands/acp_cmd.py:33` |
 | `bernstein scaffold "<prompt>"` | Bootstrap a project from a prompt. | `cli/commands/scaffold_cmd.py` |
-| `bernstein test` | Run the project's test suite. | `cli/test_cmd.py:13` |
+| `bernstein test` | Run automated resilience tests with optional chaos injection. | `cli/test_cmd.py:13` |
 | `bernstein wiki build` | Render `WIKI.md` from the AST symbol graph. | `cli/commands/wiki_cmd.py` |
 | `bernstein workflow` | Workflow mgmt (group). | `cli/workflow_cmd.py:15` |
+| `bernstein replay RUN_ID --verify` / `--from-step N` | Recompute the run journal's Merkle head and report the first divergent step (writes `divergence_report.json`), or rebuild deterministic state to step N. | `cli/commands/advanced_cmd.py` |
+| `bernstein thread verify --run <id>` | Prove the live event stream equals the run journal: recompute the journal's Merkle chain and confirm every streamed event carries the byte-identical entry hash. `--json` for machine output. Exit 1 on divergence, 2 when the run journal is missing. | `cli/commands/thread_cmd.py` |
+| `bernstein webhook verify <event_id>` | Verify an audited webhook node's signed receipts: recompute the inbound event hash and the outbound result hash against the run journal, re-check both Ed25519 signatures offline, and re-anchor both receipts against the webhook-node lineage spine. Exit 1 when no receipt / no outbound yet, 2 on tamper. | `cli/commands/webhook_cmd.py` |
+| `bernstein escalation show <id>` | Print the operator projection of a stall escalation receipt: stall reason, deterministic recommended action, resume fork point, and spine anchor. `--json` for machine output. Exit 1 when no receipt matches the id. | `cli/commands/escalation_cmd.py` |
+| `bernstein escalation verify <id>` | Reconstruct the trailing failure window from the run journal, walk the journal's Merkle chain, and confirm every bound entry hash matches the receipt (plus the Ed25519 signature and spine anchor). Exit 0 verified, 1 no receipt, 2 mismatch (a tampered journal entry inside the window). | `cli/commands/escalation_cmd.py` |
+| `bernstein schedule show <id> --at <time>` / `bernstein schedule verify` | Project a recurring fire onto a canonical task graph. `show --at <epoch-or-ISO8601>` prints the deterministic graph hash the schedule would dispatch at that instant without firing (no journal, receipt, or `last_fire_at` mutation). `verify` replays every recorded fire and confirms its graph hash reproduces byte-identically from `(schedule, fire_time, state)`; `--json` for machine output, exit 1 on any mismatch. RFC-5545 `RRULE` and cron are both accepted; a webhook / file-change trigger binds its event as an input hash. | `cli/commands/schedule_cmd.py` |
+| `bernstein activity verify <run>` | Re-verify every typed activity boundary crossing anchored in a run's canonical event journal. Confirms the journal's Merkle chain is intact, recomputes each activity's `evidence_set_hash` from its pinned observation hashes, and reattaches the evidence bytes from the run's content store (when present), re-checking each content hash. Works across modalities (research, browser/computer-use, data, ops, coding). `--json` for machine output. Exit 0 verified, 1 no run / no activity, 2 mismatch (a tampered journal entry or a divergent stored blob). | `cli/commands/activity_cmd.py` |
+| `bernstein interop a2a verify-thread --from-thread <task-uuid>` | Prove a cross-agent A2A thread equals the executed actions: for the task uuid, recompute every signed message receipt binding `{message_hash, peer_card_fingerprint, task_uuid, journal_entry_hash}`, re-check each Ed25519 signature offline, verify the message-receipt lineage spine, re-anchor each receipt against it, and confirm every message hash is referenced by the seeded per-task journal. `--json` for machine output. Exit 0 verified, 1 on no thread / mismatch (a tampered receipt, spine, or journal). | `cli/commands/interop_cmd.py` |
+| `bernstein evidence show <task>` | Render the sealed verification evidence bundle for a task: gate verdict, bundle hash, spine anchor, and a per-producer table (kind, required/advisory, pass/fail, exit code, stored size, content hash). `-w/--workdir` sets the project root. Exit 0 when a bundle exists, 1 when there is none. | `cli/commands/evidence_cmd.py` |
+| `bernstein evidence verify <task>` | Recompute a task's evidence bundle offline: check the Ed25519 signature over the canonical binding, verify the evidence lineage spine and the bundle's spine anchor, and re-hash every stored evidence blob (plus each media item's C2PA content credential) against the sealed manifest. Exit 0 verified, 1 no bundle, 2 mismatch (a tampered evidence file, bundle, or spine). `bernstein audit verify` runs the same check across every bundle. | `cli/commands/evidence_cmd.py` |
+| `bernstein ledger verify <run>` | Walk a run's durable work ledger (`.sdd/runtime/ledger/<run-id>/`) and recompute every entry hash against the canonical-JSON contract. A tampered entry is named at its exact position (`entry <seq> (line <n>)`). `--expected-head HASH` additionally pins the tail. `--json` for machine output. Exit 0 verified, 1 no ledger, 2 mismatch. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger anchor <run>` | Verify the run's chain, then publish it -- chunked, with a deterministic tree identity -- to `refs/bernstein/work-ledger/<run-id>` and mirror the anchor into the HMAC audit chain as a `work_ledger.anchor` event. Re-anchoring an extended chain adds a child commit; an identical chain is idempotent. Exit 0 anchored, 1 no ledger, 2 broken chain or git refusal, 3 the anchored chain diverges from the local one. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger fetch <run>` | Pull the anchored ledger ref from a remote (default `origin`) after a clone and materialize it into `.sdd/runtime/ledger/<run-id>/`. Verifies the anchored chain end to end before writing; an existing local chain is only ever fast-forwarded -- a diverged pair is refused with the exact fork entry named. Exit 0 materialized, 1 no anchored ledger on the remote, 2 broken anchored chain, 3 divergence. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger resume <run>` | Resume a run from its work ledger on any clone: verify the chain end to end, rebuild scheduler state by deterministic replay (completed / in-flight / scheduled / failed tasks), record the resume as a new chain entry, and write one resume signal per frontier task for the resume watcher. `--dry-run` prints the plan without recording anything; `--json` for machine output. Exit 0 resumed, 1 no ledger, 2 verification failed (exact entry position reported), 3 two divergent resumes detected and refused. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger runs` | List runs with an anchored work ledger in this repository. `--json` for machine output. | `cli/commands/ledger_cmd.py` |
+| `bernstein ledger gc <run>` | Squash the run's anchor history to a single commit, preserving the current anchored tree byte for byte. Superseded chunk blobs become unreachable so a normal `git gc` reclaims them -- the repo-bloat bound for long runs. Exit 0 done, 1 no anchored ledger. | `cli/commands/ledger_cmd.py` |
 
 #### `bernstein ab-test`
 
@@ -1041,10 +1173,8 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 
 | Subcommand | Purpose |
 |---|---|
-| `compute RUN_ID` | Compute the SHA-256 of a run's events. |
-| `verify RUN_ID HASH` | Verify a run matches a known fingerprint. |
-| `compare RUN_A RUN_B` | Compare two run fingerprints. |
-| `seal FILES...` | Seal a set of files with a fingerprint. |
+| `build` | Build a local similarity index from a corpus directory. |
+| `check FILE` | Check generated code against the index. |
 
 (`cli/commands/fingerprint_cmd.py:37+`.)
 
@@ -1052,9 +1182,8 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 
 | Subcommand | Purpose |
 |---|---|
-| `tasks` | Render the task DAG. |
-| `agents` | Render the agent / capability graph. |
-| `impact NODE` | Show downstream impact of a node. |
+| `tasks` | Render the current task dependency graph as ASCII or Mermaid. |
+| `impact FILE_QUERY` | Print downstream files impacted by changing FILE_QUERY. |
 
 #### `bernstein voice` / `bernstein listen`
 
@@ -1083,7 +1212,13 @@ Experimental voice control (see [`operations/voice-control.md`](../operations/vo
 
 #### `bernstein test`
 
-Convenience wrapper for the project's test suite. Honours the project's configured test runner (`bernstein.yaml: quality_gates.tests`); typically just delegates to `pytest -q` or equivalent.
+Runs automated resilience tests with optional chaos injection. This is not a project test-suite runner; use `bernstein.yaml: quality_gates.tests` (and your configured test runner) for that.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--chaos` | off | Enable random chaos injection during the test. |
+| `--duration N` | none | Test duration in seconds. |
+| `--workdir PATH` | `.` | Project root. |
 
 #### `bernstein wiki build`
 
@@ -1129,8 +1264,146 @@ To invoke any of them, just type the full path (`bernstein task compose ...`) - 
 ## See also
 
 - [`cli/task-lifecycle.md`](cli/task-lifecycle.md) - driving Bernstein from a script.
-- [`cli/replay.md`](cli/replay.md) - `replay` + `replay-filter` reference.
+- [`cli/replay.md`](cli/replay.md) - `replay` reference.
 - [`reference/mcp-catalog.md`](mcp-catalog.md) - MCP catalog walkthrough.
 - [`reference/openapi-reference.md`](openapi-reference.md) - REST + WebSocket + ACP/A2A endpoints.
 - [`reference/FEATURE_MATRIX.md`](FEATURE_MATRIX.md) - capability matrix.
 - [`operations/CONFIG.md`](../operations/CONFIG.md) - every config key Bernstein recognises.
+
+---
+
+## Endpoint certification: `bernstein doctor --endpoint`
+
+Certify an OpenAI-compatible endpoint (a local runtime such as ollama, LM
+Studio, or an MLX server) for per-role use. The doctor runs a fixed
+conformance subset -- reachability, chat completion, tool calling, patch
+format fidelity, timeout behavior, context floor -- and prints a
+deterministic certify/reject verdict per role with machine reason codes.
+The result is sealed as a signed receipt under
+`.sdd/endpoints/certifications/`, anchored to the lineage spine, and
+mirrored into the audit chain; config validation gates merge-critical roles
+on it.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--endpoint URL` | - | Base URL of the endpoint to certify (activates this mode). |
+| `--endpoint-model NAME` | first `/models` entry | Model id to certify. |
+| `--endpoint-engine NAME` | empty | Runtime label recorded in the receipt. |
+| `--endpoint-api-key-env NAME` | none | NAME of the env var holding the endpoint key. |
+| `--endpoint-timeout SECONDS` | 60 | Per-probe response budget; exceeding it fails the probe. |
+| `--role ROLE` | low-stakes local tier | Role(s) to evaluate (repeatable). |
+| `--json` | off | Machine-readable transcript, verdicts, and receipt anchor. |
+
+Exit codes: `0` every evaluated role certified, `1` at least one role
+rejected, `2` no model could be resolved.
+
+```bash
+bernstein doctor --endpoint http://127.0.0.1:11434/v1 --endpoint-engine ollama
+bernstein doctor --endpoint http://127.0.0.1:11434/v1 --role manager
+```
+
+See [Local endpoints](local-endpoints.md) for profiles, role tiers, and the
+verified-configuration table.
+
+## Provider failover drill
+
+#### `bernstein doctor --failover-drill`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--failover-drill` | off | Exercise every fallback chain declared under `provider_availability` in `bernstein.yaml`. |
+| `--json` | off | Machine-readable drill report (for CI). |
+
+Probes every declared chain element and evaluates each chain position as
+the dispatch target under a simulated outage of its predecessors. Exits
+non-zero when any declared chain element is broken, and zero when all are
+healthy. Each drill row carries the deterministic routing-decision hash its
+simulated outage prefix would produce; drill outcomes are mirrored into the
+audit chain when a `.sdd` workspace is present. See
+[Provider availability & failover](../operations/provider-availability.md).
+
+## Packaged agent skill: `bernstein skills package`
+
+Bernstein ships a cross-vendor `bernstein-run` skill (open `SKILL.md`
+format) so agent sessions can drive orchestration without a separate
+shell. Installs are receipt-backed: each install anchors a
+content-addressed receipt in the `skills` lineage spine and mirrors a
+`plugin.install_receipt` event into the HMAC audit chain.
+
+#### `bernstein skills package show`
+
+Prints the bundled skill's content address, manifest hash, and the
+supported host list.
+
+#### `bernstein skills package install`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--host NAME` | - | Target host (`claude`, `codex`, `copilot`, `cursor`, `gemini`); selects the host's default skills directory. |
+| `--scope project\|user` | `project` | Install under the project root or the home directory. |
+| `--dest DIR` | - | Explicit destination directory (overrides `--host`/`--scope`). |
+| `--record-only` | off | Anchor a tree the host already installed (e.g. a plugin checkout) without copying. |
+| `--force` | off | Overwrite a destination whose content differs from the bundled skill. |
+| `--workdir DIR` | `.` | Project root where the receipt is anchored. |
+
+Exit codes: `0` installed and anchored, `1` error.
+
+#### `bernstein skills package verify`
+
+Re-hashes the installed tree and proves it against the anchored receipt:
+the recomputed content address selects the receipt, then the install
+spine and the manifest hash are checked. A tampered tree resolves to a
+content address with no receipt, so the verdict is structural.
+
+Exit codes: `0` verified, `1` missing directory, `2` attestation failure.
+
+```bash
+bernstein skills package install --host claude --scope project
+bernstein skills package install --dest ~/.claude/plugins/bernstein --record-only
+bernstein skills package verify --host claude --scope project
+```
+
+See [Agent sessions](../integrations/agent-session.md) for the skill
+body, per-host notes, and the registry listings generated at release
+time.
+
+## Dashboard authentication: `bernstein auth dashboard-token`
+
+The dashboard (`bernstein gui serve`, `/dashboard` on the task server)
+accepts two credential kinds: a password (`BERNSTEIN_DASHBOARD_PASSWORD` or
+the `dashboard_auth` block in `bernstein.yaml`) and scoped tokens issued
+here. Tokens carry a principal and a scope: `viewer` reads every surface and
+can change nothing; `operator` can also trigger state-changing actions.
+
+Grants live in an append-only journal of HMAC-signed rows
+(`.sdd/auth/dashboard_tokens.jsonl`) that stores only the token's SHA-256
+digest - the raw token is printed once at issue time. Editing a row (for
+example widening `viewer` to `operator`) breaks its signature and the token
+stops validating. Every issue and revoke is mirrored onto the audit chain
+(`dashboard.token_grant`), and every login and write authorization is a
+signed governance decision in the `dashboard-auth` lineage run - recompute
+them offline with `bernstein governance verify dashboard-auth`.
+
+| Subcommand | Purpose |
+|---|---|
+| `issue --principal NAME [--scope viewer\|operator]` | Issue a token (printed once, digest journaled). |
+| `list` | Show journal rows: id, kind, principal, scope. Never prints tokens. |
+| `revoke TOKEN_ID` | Append a signed revocation; the token stops validating immediately. |
+
+All subcommands accept `--workdir` (default `.`) pointing at the project
+root containing `.sdd/`.
+
+```bash
+bernstein auth dashboard-token issue --principal alice --scope viewer
+bernstein auth dashboard-token list
+bernstein auth dashboard-token revoke 3f1a9c2d5e7b0a41
+bernstein governance verify dashboard-auth
+```
+
+Startup posture: `bernstein gui serve` on a loopback host without any
+credential configured issues an operator token and prints it once; on a
+non-loopback host it refuses to start until a token or password is
+configured. There is no silent open mode on a routable interface. Use the
+token as `Authorization: Bearer <token>` or in the dashboard login form
+(`POST /dashboard/auth/login`); the session cookie inherits exactly the
+token's principal and scope.

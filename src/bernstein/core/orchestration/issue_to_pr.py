@@ -46,8 +46,11 @@ import re
 import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
+from pathlib import Path
 from typing import Any
+
+from bernstein.core.security.sanitize import sanitize_log
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +80,7 @@ STAGE_PR_REVISED_RE: re.Pattern[str] = re.compile(
 APPROVAL_KEYWORD: str = "[approved]"
 
 
-class Stage(str, Enum):  # noqa: UP042 - explicit str base for label export
+class Stage(StrEnum):
     """Pipeline stages, ordered."""
 
     PLAN = "plan"
@@ -86,7 +89,7 @@ class Stage(str, Enum):  # noqa: UP042 - explicit str base for label export
     PR_REVISE = "pr_revise"
 
 
-class StageOutcome(str, Enum):  # noqa: UP042 - explicit str base for label export
+class StageOutcome(StrEnum):
     """Outcome of running a single stage."""
 
     ADVANCED = "advanced"
@@ -283,12 +286,17 @@ class DiffProposal:
         commit_message: Commit subject; the body is appended by the
             pipeline with a back-reference to the issue and plan comment.
         base: Base branch the PR is opened against. Defaults to ``main``.
+        task_id: The Bernstein task this diff resolves, if known. When set and
+            that task sealed a verification-evidence bundle under the pipeline's
+            work dir, the opened PR body links the bundle (issue #2362, AC3).
+            Empty string when the diff is not tied to a tracked task.
     """
 
     patch: str
     branch: str
     commit_message: str
     base: str = "main"
+    task_id: str = ""
 
 
 #: Type aliases for the two injection points.
@@ -679,6 +687,9 @@ class IssueToPRPipeline:
             remote, returning the head commit SHA.  Defaults to a stub
             that raises; production wiring injects the autofix-daemon
             applicator.
+        workdir: Durable project root under which sealed verification-evidence
+            bundles are read when linking them into an opened PR body (issue
+            #2362, AC3). Defaults to the current working directory.
     """
 
     config: IssueToPRConfig
@@ -687,6 +698,7 @@ class IssueToPRPipeline:
     diff_generator: DiffGenerator | None = None
     revise_generator: ReviseGenerator | None = None
     apply_diff: Callable[[DiffProposal], str] | None = None
+    workdir: Path = field(default_factory=Path.cwd)
 
     # -- gating ---------------------------------------------------------
 
@@ -877,6 +889,46 @@ class IssueToPRPipeline:
             detail="approval recorded",
         )
 
+    # -- evidence projection -------------------------------------------
+
+    def _evidence_projection(self, task_id: str) -> str:
+        """Return the sealed-evidence projection to append to a PR body (AC3).
+
+        When the diff resolves a task that sealed a verification-evidence bundle
+        under :attr:`workdir`, the opened PR body links the bundle (gate verdict,
+        anchor prefix, offline verify command) so review happens against sealed
+        proof rather than a rerun. The projection reuses the same builder the
+        canonical ``bernstein pr`` path uses.
+
+        Fail-open (issue #2362): resolving or projecting the bundle must never
+        block or fail PR creation, so an absent task id or bundle returns an
+        empty string, and any raised error is caught, sanitised-logged, and
+        swallowed -- the body is then exactly the plain "Resolves #N" text.
+
+        Args:
+            task_id: The task the diff resolves, or empty when untracked.
+
+        Returns:
+            A leading-newline-separated projection block, or ``""`` when no
+            bundle is present or resolution failed.
+        """
+        if not task_id:
+            return ""
+        try:
+            from bernstein.core.evidence.bundle import read_evidence_bundle
+            from bernstein.github_app.evidence_projection import build_evidence_projection
+
+            bundle = read_evidence_bundle(self.workdir, task_id)
+            if bundle is None:
+                return ""
+            return "\n" + build_evidence_projection(bundle)
+        except Exception as exc:  # fail-open: evidence must never block PR creation
+            logger.warning(
+                "issue-to-pr: evidence projection failed; PR body unchanged: %s",
+                sanitize_log(str(exc)),
+            )
+            return ""
+
     # -- stage 3: pr_open ----------------------------------------------
 
     def tick_pr_open(self, repo: str, issue_number: int) -> StageReport:
@@ -948,6 +1000,7 @@ class IssueToPRPipeline:
                 detail=f"apply_diff raised: {exc!r}",
             )
         pr_body = f"Resolves #{issue_number}.\n\nPlan: see comment #{sticky.get('id')} on the issue.\n"
+        pr_body += self._evidence_projection(diff.task_id)
         title = diff.commit_message or f"feat: resolve #{issue_number}"
         pr = self.client.open_pull_request(
             repo=repo,

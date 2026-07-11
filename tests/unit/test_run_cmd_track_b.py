@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from bernstein.cli.run_bootstrap import _signal_orchestrator_shutdown
 from bernstein.cli.run_cmd import (
     RunCostEstimate,
     _emit_preflight_runtime_warnings,
@@ -75,10 +76,80 @@ def test_wait_for_run_completion_returns_quiescent_status() -> None:
         patch("bernstein.cli.run_bootstrap.server_get", side_effect=_fake_server_get),
         patch("bernstein.cli.run_bootstrap.time.sleep", return_value=None),
         patch("bernstein.cli.run_bootstrap.time.time", side_effect=_fake_time),
+        patch("bernstein.cli.run_bootstrap._signal_orchestrator_shutdown") as shutdown_signal,
     ):
         result = _wait_for_run_completion(timeout_s=5.0)
 
     assert result == {"total": 2, "open": 0, "claimed": 0}
+    # Defect-3 fix: completion detection must invoke the belt-and-braces
+    # shutdown signal exactly once, as a backstop to the orchestrator's own
+    # quiescence self-stop.
+    shutdown_signal.assert_called_once()
+
+
+def test_wait_for_run_completion_timeout_does_not_signal_shutdown() -> None:
+    """If quiescence is never observed (timeout), no shutdown signal should fire --
+    we only know completion happened when total > 0 and open == claimed == 0."""
+    clock = {"now": 0.0}
+
+    def _fake_time() -> float:
+        clock["now"] += 10.0
+        return clock["now"]
+
+    with (
+        patch("bernstein.cli.run_bootstrap.server_get", return_value={"total": 2, "open": 1, "claimed": 0}),
+        patch("bernstein.cli.run_bootstrap.time.sleep", return_value=None),
+        patch("bernstein.cli.run_bootstrap.time.time", side_effect=_fake_time),
+        patch("bernstein.cli.run_bootstrap._signal_orchestrator_shutdown") as shutdown_signal,
+    ):
+        _wait_for_run_completion(timeout_s=5.0)
+
+    shutdown_signal.assert_not_called()
+
+
+def test_signal_orchestrator_shutdown_posts_to_shutdown_endpoint() -> None:
+    """Happy path: orchestrator still up, POST /shutdown is sent and acknowledged."""
+    fake_response = type(
+        "FakeResponse",
+        (),
+        {
+            "status_code": 200,
+            "content": b'{"status": "shutting_down"}',
+            "json": lambda self: {"status": "shutting_down"},
+            "raise_for_status": lambda self: None,
+        },
+    )()
+
+    with patch("bernstein.cli.run_bootstrap.httpx.post", return_value=fake_response) as post:
+        _signal_orchestrator_shutdown(reason="test")
+
+    post.assert_called_once()
+    called_kwargs = post.call_args.kwargs
+    assert called_kwargs["json"] == {"reason": "test"}
+
+
+def test_signal_orchestrator_shutdown_treats_connection_refused_as_success() -> None:
+    """The orchestrator's own quiescence self-stop may already have torn the
+    server down by the time the CLI signals -- connection-refused must be
+    logged and treated as success, never raised."""
+    import httpx
+
+    with patch("bernstein.cli.run_bootstrap.httpx.post", side_effect=httpx.ConnectError("refused")):
+        # Must not raise.
+        _signal_orchestrator_shutdown(reason="test")
+
+
+def test_signal_orchestrator_shutdown_treats_404_as_success() -> None:
+    """A 404 (route torn down after self-stop) is also treated as success."""
+    fake_response = type(
+        "FakeResponse",
+        (),
+        {"status_code": 404, "content": b"", "json": lambda self: None, "raise_for_status": lambda self: None},
+    )()
+
+    with patch("bernstein.cli.run_bootstrap.httpx.post", return_value=fake_response):
+        # Must not raise.
+        _signal_orchestrator_shutdown(reason="test")
 
 
 def test_finalize_run_output_quiet_uses_summary_only() -> None:

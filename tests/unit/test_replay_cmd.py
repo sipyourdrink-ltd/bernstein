@@ -12,7 +12,7 @@ from click.testing import CliRunner
 def _write_run(run_dir: Path, *, run_id: str) -> None:
     run_path = run_dir / run_id
     run_path.mkdir(parents=True, exist_ok=True)
-    (run_path / "replay.jsonl").write_text(
+    (run_path / "journal.jsonl").write_text(
         "\n".join(
             [
                 json.dumps({"ts": 1.0, "elapsed_s": 0.0, "event": "run_started", "run_id": run_id}),

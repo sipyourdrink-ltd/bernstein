@@ -91,9 +91,7 @@ exists so Scorecard's `Fuzzing` check finds something it understands.
 ## MaintainedID 90-day self-resolve
 
 Scorecard's `MaintainedID` returns 0 for any repo younger than 90 days.
-This repo was migrated to `sipyourdrink-ltd/bernstein` recently, so
-the signal will self-resolve once the repository crosses the threshold.
-
-Automated re-check: `.github/workflows/scorecard-90d-check.yml` runs
-weekly. Once the repo passes 90 days, it runs Scorecard and posts the
-result to issue #1482 so an operator can close the checkpoint.
+The repository has now passed the 90-day threshold, so the signal has
+self-resolved. Issue #1482 tracked the checkpoint and is closed; the
+one-shot re-check workflow that watched for the threshold has been
+removed now that it has served its purpose.

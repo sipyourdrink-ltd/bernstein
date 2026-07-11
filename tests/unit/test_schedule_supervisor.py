@@ -429,3 +429,45 @@ class TestProjectionPersistenceAlignment:
 
 def test_default_catch_up_limit_is_positive() -> None:
     assert DEFAULT_CATCH_UP_LIMIT > 0
+
+
+class TestResponseProfileProjectionFold:
+    """A schedule-declared response profile forks the projected task identity."""
+
+    def test_declared_profile_changes_projection_hash(self, tmp_path: Path) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="* * * * *", goal="Nightly triage")
+        sup = ScheduleSupervisor(store, lambda _e: None, _StubAuditLog())
+        epoch = int(datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC).timestamp())
+
+        plain = sup._fire(schedule, epoch, counterfactual=True)
+        schedule.extra["response_profile"] = "terse"
+        profiled = sup._fire(schedule, epoch, counterfactual=True)
+
+        assert plain.projection_hash != profiled.projection_hash
+
+    def test_unknown_profile_is_ignored(self, tmp_path: Path) -> None:
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="* * * * *", goal="Nightly triage")
+        sup = ScheduleSupervisor(store, lambda _e: None, _StubAuditLog())
+        epoch = int(datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC).timestamp())
+
+        plain = sup._fire(schedule, epoch, counterfactual=True)
+        schedule.extra["response_profile"] = "shouty"
+        ignored = sup._fire(schedule, epoch, counterfactual=True)
+
+        assert plain.projection_hash == ignored.projection_hash
+
+    def test_balanced_profile_still_folds_declared_identity(self, tmp_path: Path) -> None:
+        # An EXPLICIT balanced profile is still a declared input: it folds
+        # (with the empty-addendum hash), unlike an absent profile.
+        store = ScheduleStore(tmp_path)
+        schedule = store.add(cron="* * * * *", goal="Nightly triage")
+        sup = ScheduleSupervisor(store, lambda _e: None, _StubAuditLog())
+        epoch = int(datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC).timestamp())
+
+        plain = sup._fire(schedule, epoch, counterfactual=True)
+        schedule.extra["response_profile"] = "balanced"
+        profiled = sup._fire(schedule, epoch, counterfactual=True)
+
+        assert plain.projection_hash != profiled.projection_hash

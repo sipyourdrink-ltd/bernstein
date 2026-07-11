@@ -6,7 +6,7 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 
 ## 1) Adapter parity is not perfect
 
-**What:** Bernstein ships 43 CLI adapters, but different CLI agents expose different capabilities and process semantics.
+**What:** Bernstein ships 40+ CLI adapters, but different CLI agents expose different capabilities and process semantics.
 
 **Impact:** Stop/restart behavior, output shape, structured output support, and error handling can vary by adapter. The conformance harness (`adapters/conformance.py`) helps catch regressions across adapters.
 
@@ -53,6 +53,10 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 - Set explicit budgets.
 - Use deterministic completion signals/tests.
 - Monitor early-run behavior and tune config for your environment.
+- Declare per-role fallback chains under `provider_availability` so dispatch
+  probes provider health before spawning and fails over deterministically;
+  run `bernstein doctor --failover-drill` (for example in CI) to find broken
+  chains before an outage does.
 
 ---
 

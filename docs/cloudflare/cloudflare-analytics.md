@@ -183,4 +183,4 @@ ORDER BY month_to_date DESC;
 
 ## Setup
 
-See [Cloudflare setup](cloudflare-setup.md#4-create-a-d1-database-analytics--billing) for the `wrangler d1 create` flow. Schema creation is idempotent and runs on first call to `initialize_schema()` -- no separate migration step.
+See [Cloudflare setup](cloudflare-setup.md#4-create-a-d1-database-analytics-billing) for the `wrangler d1 create` flow. Schema creation is idempotent and runs on first call to `initialize_schema()` -- no separate migration step.

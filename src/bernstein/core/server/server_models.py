@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import AliasChoices, BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
 from bernstein.core.tasks.task_store import ProgressEntry
@@ -40,6 +40,7 @@ _MAX_PATH_LEN = 4_096  # owned_files / parent_task_id / depends_on entries
 _MAX_LIST_LEN = 100
 _MAX_DICT_SERIALIZED_LEN = 50_000  # cap serialized size of dict[str, Any] fields
 _MAX_META_MESSAGE_LEN = 10_000  # retry meta_messages - operational hints
+_MAX_REASON_LEN = 10_000  # fail/reopen/cancel/block reason - human-readable note
 
 
 def _enforce_dict_size(value: dict[str, Any] | None, *, field_name: str) -> dict[str, Any] | None:
@@ -62,6 +63,23 @@ def _enforce_dict_size(value: dict[str, Any] | None, *, field_name: str) -> dict
             f"{field_name} exceeds {_MAX_DICT_SERIALIZED_LEN} serialized chars",
         )
     return value
+
+
+def _sanitize_reason(value: str, field_name: str) -> str:
+    """Strip CR/LF from a free-text reason and cap its length at the API boundary.
+
+    Reason fields flow into ``logger.*`` calls in the task routes. Stripping
+    carriage returns and newlines here is a root-cause defense against log
+    injection: a caller cannot forge log lines even before the value reaches a
+    log sink. The sink-side ``sanitize_log`` wrapping is kept as well, so the
+    two layers are independent. Length is capped to block multi-MB reasons from
+    bloating the log stream.
+    """
+    if not isinstance(value, str):
+        return value
+    if len(value) > _MAX_REASON_LEN:
+        raise ValueError(f"{field_name} exceeds {_MAX_REASON_LEN} chars")
+    return value.replace("\r", " ").replace("\n", " ")
 
 
 def _ensure_task_enum(value: str, field_name: str) -> str:
@@ -106,7 +124,14 @@ class TaskCreate(BaseModel):
     approval_required: bool = False
     risk_level: str = Field(default="low", max_length=_MAX_SHORT_STR_LEN)
     estimated_minutes: int | None = None
-    depends_on: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LEN)
+    # ``needs`` is the declaration-style alias for the same dependency list
+    # (#2357); both spellings populate ``depends_on`` and the claim API only
+    # offers tasks whose dependencies are complete.
+    depends_on: list[str] = Field(
+        default_factory=list,
+        max_length=_MAX_LIST_LEN,
+        validation_alias=AliasChoices("depends_on", "needs"),
+    )
     parent_task_id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
     depends_on_repo: str | None = Field(default=None, max_length=_MAX_PATH_LEN)
     owned_files: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LEN)
@@ -135,6 +160,14 @@ class TaskCreate(BaseModel):
     terminal_reason: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_LEN)
     max_output_tokens: int | None = None  # Per-task output-token cap (escalated on retry)
     meta_messages: list[str] | None = Field(default=None, max_length=_MAX_LIST_LEN)
+    # Explicit override for compute_max_turns()'s complexity-based auto-computation.
+    # When set, callers get exact control over how many turns a Claude agent spawn
+    # gets, bypassing scope/complexity math entirely (see claude_max_turns.py).
+    # Bounded because the value reaches the CLI --max-turns flag verbatim: 0 or a
+    # negative would break the spawn (ge=1 also gives a clean 422 instead of a
+    # confusing CLI-level failure downstream), and an unbounded value defeats
+    # turn budgeting.
+    max_turns: int | None = Field(default=None, ge=1, le=10_000)
 
     @field_validator("scope", "complexity", "task_type")
     @classmethod
@@ -234,6 +267,7 @@ class TaskResponse(BaseModel):
     terminal_reason: str | None = None
     max_output_tokens: int | None = None
     meta_messages: list[str] = Field(default_factory=list)
+    max_turns: int | None = None
 
 
 class WebhookTaskResponse(BaseModel):
@@ -243,9 +277,31 @@ class WebhookTaskResponse(BaseModel):
 
 
 class TaskCompleteRequest(BaseModel):
-    """Body for POST /tasks/{task_id}/complete."""
+    """Body for POST /tasks/{task_id}/complete.
 
-    result_summary: str
+    ``result_summary`` is the legacy free-form summary and stays accepted
+    unchanged. ``payload`` carries a structured terminal payload under the
+    worker completion contract (#2244) - either a completion or a typed
+    refusal - and is schema-validated at the API boundary; an invalid
+    payload is a typed ``contract_violation`` failure, never a silent
+    accept. When ``payload`` is provided, ``result_summary`` is ignored.
+    """
+
+    result_summary: str = ""
+    payload: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _require_summary_or_payload(cls, data: Any) -> Any:
+        """Reject bodies that carry neither field.
+
+        A body with an explicitly empty ``result_summary`` still validates -
+        the store maps that to the empty-summary auto-fail path - but a body
+        with neither key is a malformed request, not a worker outcome.
+        """
+        if isinstance(data, dict) and "result_summary" not in data and "payload" not in data:
+            raise ValueError("either result_summary or payload is required")
+        return data
 
 
 class TaskFailRequest(BaseModel):
@@ -253,17 +309,43 @@ class TaskFailRequest(BaseModel):
 
     reason: str = ""
 
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
+
+
+class TaskReopenRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/reopen."""
+
+    reason: str = ""
+
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
+
 
 class TaskCancelRequest(BaseModel):
     """Body for POST /tasks/{task_id}/cancel."""
 
     reason: str = ""
 
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
+
 
 class TaskBlockRequest(BaseModel):
     """Body for POST /tasks/{task_id}/block."""
 
     reason: str = ""
+
+    @field_validator("reason")
+    @classmethod
+    def _sanitize_reason(cls, value: str, info: ValidationInfo) -> str:
+        return _sanitize_reason(value, info.field_name or "reason")
 
 
 class TaskPatchRequest(BaseModel):
@@ -337,6 +419,42 @@ class BatchClaimResponse(BaseModel):
 
     claimed: list[str]
     failed: list[str]
+
+
+class TaskMessagePost(BaseModel):
+    """Body for POST /tasks/{task_id}/messages (#2357).
+
+    Typed, size-capped worker mailbox payload. ``kind`` must be one of the
+    closed vocabulary (``finding`` / ``artefact_ref`` / ``question``).
+    The message body is capped by the mailbox chain to 4096 UTF-8 bytes
+    (see ``task_mailbox.MAX_MESSAGE_BODY_BYTES``); the API model mirrors
+    this limit so oversized bodies fail validation up front instead of
+    being rejected downstream. The byte-strict cap remains authoritative
+    in the mailbox for multibyte payloads.
+    """
+
+    sender: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    kind: str = Field(min_length=1, max_length=64)
+    body: str = Field(min_length=1, max_length=4096)
+    sender_card_fingerprint: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+
+
+class TaskMessageResponse(BaseModel):
+    """One delivered mailbox message (chain order = delivery order)."""
+
+    seq: int
+    task_id: str
+    sender: str
+    sender_card_fingerprint: str
+    kind: str
+    body: str
+    body_hash: str
+    redaction_count: int
+    timestamp: float
+    prev_entry_hash: str
+    entry_hash: str
+    signature: str
+    signer_public_key_pem: str
 
 
 class BatchCreateRequest(BaseModel):
@@ -521,6 +639,7 @@ class TaskCountsResponse(BaseModel):
     orphaned: int = 0
     abandoned: int = 0
     blocked_by_abandon: int = 0
+    refused: int = 0
     total: int = 0
 
 

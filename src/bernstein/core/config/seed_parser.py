@@ -23,6 +23,7 @@ from bernstein.core.compliance import ComplianceConfig, CompliancePreset
 from bernstein.core.config.seed_config import (
     CORSConfig,
     DashboardAuthConfig,
+    GithubConfig,
     MetricSchema,
     ModelFallbackSeedConfig,
     NetworkConfig,
@@ -140,6 +141,83 @@ def _parse_team(raw: object) -> Literal["auto"] | list[str]:
             return [str(r) for r in items]
         raise SeedError(f"team list must contain only strings, got: {raw!r}")
     raise SeedError(f"team must be 'auto' or a list of role names, got: {raw!r}")
+
+
+def _expand_team_manifest(
+    raw_ref: object,
+    *,
+    raw_team: object,
+    raw_role_policy: object,
+    workdir: Path,
+) -> tuple[list[str], object, str, str]:
+    """Expand a ``team_manifest: <name>[@sha256]`` reference (issue #2248).
+
+    A pure front-end over the existing structures: the manifest is
+    resolved from ``templates/teams/`` (workdir first, then the bundled
+    defaults), expanded to a plain role list plus raw per-role policy
+    dicts, and merged under any seed-level ``role_model_policy`` (seed
+    keys win per role key). The merged mapping then flows through the
+    standard ``_parse_role_model_policy`` validator, so a manifest-driven
+    seed parses to byte-identical structures as the equivalent
+    hand-written one.
+
+    Args:
+        raw_ref: The ``team_manifest`` YAML value.
+        raw_team: The ``team`` YAML value, for the mutual-exclusion check.
+        raw_role_policy: The ``role_model_policy`` YAML value to merge over
+            the expansion.
+        workdir: The seed file's directory; manifest resolution root.
+
+    Returns:
+        ``(team, merged_role_policy, manifest_name, manifest_digest)``
+        where ``merged_role_policy`` is ``None`` when neither the manifest
+        nor the seed declares any policy.
+
+    Raises:
+        SeedError: On a malformed reference or a ``team``/``team_manifest``
+            conflict.
+        TeamManifestNotFoundError: When the manifest does not exist.
+        TeamManifestDigestMismatchError: When an ``@sha256`` pin does not
+            match the resolved manifest (AC4). Both subclass ``SeedError``.
+    """
+    if not isinstance(raw_ref, str) or not raw_ref.strip():
+        raise SeedError(
+            f"team_manifest must be a non-empty string of the form '<name>' or '<name>@<sha256>', got: {raw_ref!r}"
+        )
+    if isinstance(raw_team, list) and raw_team:
+        raise SeedError("team and team_manifest are mutually exclusive; remove one of them")
+
+    # Imported lazily so parsing a seed without a manifest reference does
+    # not pay for the teams package (mirrors the response_style import).
+    from bernstein.core.teams.manifest import (
+        TeamManifestDigestMismatchError,
+        expand_manifest,
+        parse_manifest_ref,
+        resolve_team_manifest,
+    )
+
+    name, pinned = parse_manifest_ref(raw_ref)
+    manifest = resolve_team_manifest(name, workdir=workdir)
+    digest = manifest.digest()
+    if pinned is not None and pinned != digest:
+        raise TeamManifestDigestMismatchError(
+            f"team_manifest {name!r} digest mismatch: pinned {pinned}, resolved {digest}. "
+            "Update the pin to the resolved digest or restore the manifest it was created from."
+        )
+
+    expanded = expand_manifest(manifest)
+    merged: dict[str, object] = {role: dict(policy) for role, policy in expanded.role_model_policy.items()}
+    if raw_role_policy is not None:
+        if not isinstance(raw_role_policy, dict):
+            raise SeedError("role_model_policy must be a mapping of role -> settings")
+        for role, settings in cast("_StrObjDict", raw_role_policy).items():
+            base = merged.get(role)
+            if isinstance(base, dict) and isinstance(settings, dict):
+                merged[role] = {**cast("_StrObjDict", base), **cast("_StrObjDict", settings)}
+            else:
+                merged[role] = settings
+
+    return list(expanded.team), (merged or None), name, digest
 
 
 def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
@@ -632,14 +710,14 @@ def _parse_bridge_settings(raw: object) -> BridgeConfigSet | None:
     return BridgeConfigSet(openclaw=_parse_openclaw_runtime_config(data.get("openclaw")))
 
 
-def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
+def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str | int | dict[str, object]]] | None:
     """Parse optional role-specific provider/model overrides."""
     if raw is None:
         return None
     if not isinstance(raw, dict):
         raise SeedError("role_model_policy must be a mapping of role -> settings")
 
-    parsed: dict[str, dict[str, str]] = {}
+    parsed: dict[str, dict[str, str | int | dict[str, object]]] = {}
     for role, settings in raw.items():
         if not isinstance(role, str) or not role:
             raise SeedError("role_model_policy keys must be non-empty role strings")
@@ -647,13 +725,167 @@ def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
     return parsed
 
 
-def _parse_single_role_policy(role: str, settings: object) -> dict[str, str]:
-    """Parse and validate a single role's model policy settings."""
+_ROLE_POLICY_KEYS: tuple[str, ...] = (
+    "provider",
+    "model",
+    "effort",
+    "cli",
+    "base_url",
+    "api_key_env",
+)
+
+# Integer-typed role policy keys, validated and stored separately from the
+# string-typed keys above. ``max_tokens`` is a per-role sampling override
+# (see ``RoleModelPolicyEntry.max_tokens`` in config_schema.py:179) that must
+# flow through the seed parser unchanged so an operator can cap completion
+# length for a role - without this branch a seed file setting
+# ``role_model_policy.<role>.max_tokens`` was rejected at parse time with
+# "unknown keys: max_tokens" (parser/schema divergence fixed here).
+_ROLE_POLICY_INT_KEYS: tuple[str, ...] = ("max_tokens",)
+
+# ``response_style`` declares the per-role response-style profile
+# (``verbose``/``balanced``/``terse``) applied at spawn time (see
+# ``bernstein.core.agents.response_style``). The value is validated against
+# the closed style vocabulary in ``_parse_single_role_policy``; the mapped
+# mode-profile template file is validated for existence in ``parse_seed``
+# so a dangling template reference fails at config-validation time with a
+# typed ``ResponseStyleTemplateError``, not at spawn time.
+_ROLE_POLICY_STYLE_KEY = "response_style"
+
+# ``council`` is parsed and validated separately (its value is a nested
+# mapping, not a scalar string/int like every other role-policy key), so it
+# is carved out of the unknown-keys check in ``_parse_single_role_policy``
+# rather than added to ``_ROLE_POLICY_KEYS``.
+_ROLE_POLICY_COUNCIL_KEY = "council"
+
+_COUNCIL_CANDIDATE_KEYS: tuple[str, ...] = ("model", "base_url", "api_key_env")
+
+
+def _parse_council_candidate(role: str, member: str, raw: object) -> dict[str, str]:
+    """Parse one ``candidates[]`` entry or the ``judge`` entry of a council block.
+
+    ``member`` is a human-readable label (``"candidates[0]"`` or
+    ``"judge"``) used only for error messages. ``model`` is required;
+    ``base_url``/``api_key_env`` are optional and follow the same
+    fail-closed ``api_key_env`` credential-allowlist validation as the
+    top-level role policy fields of the same name.
+    """
+    if not isinstance(raw, dict):
+        raise SeedError(f"role_model_policy[{role!r}].council.{member} must be a mapping")
+
+    model = raw.get("model")
+    if not isinstance(model, str) or not model:
+        raise SeedError(f"role_model_policy[{role!r}].council.{member}.model must be a non-empty string")
+    parsed: dict[str, str] = {"model": model}
+
+    for key in ("base_url", "api_key_env"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value:
+            raise SeedError(f"role_model_policy[{role!r}].council.{member}.{key} must be a non-empty string")
+        parsed[key] = value
+
+    if "api_key_env" in parsed:
+        from bernstein.adapters.openai_agents_runner import validate_api_key_env_name
+
+        try:
+            validate_api_key_env_name(parsed["api_key_env"])
+        except RuntimeError as exc:
+            raise SeedError(f"role_model_policy[{role!r}].council.{member}.api_key_env: {exc}") from exc
+
+    unknown_keys = sorted(set(raw) - set(_COUNCIL_CANDIDATE_KEYS))
+    if unknown_keys:
+        raise SeedError(f"role_model_policy[{role!r}].council.{member} has unknown keys: {', '.join(unknown_keys)}")
+    return parsed
+
+
+def _parse_council(role: str, raw: object) -> dict[str, object]:
+    """Parse the optional ``council:`` block of a role's model policy.
+
+    Shape (mirrors :class:`bernstein.core.config.config_schema.CouncilConfig`)::
+
+        council:
+          candidates:
+            - model: gpt-5-mini
+            - model: deepseek/deepseek-v4-flash
+              base_url: https://openrouter.ai/api/v1
+              api_key_env: OPENROUTER_API_KEY
+          judge:
+            model: gpt-5
+          timeout: 60.0
+
+    ``candidates`` must be a non-empty list; ``judge`` is required.
+    ``timeout`` is optional and defaults to 60.0 seconds (matching
+    ``CouncilConfig.timeout``'s Pydantic default) when absent.
+    """
+    if not isinstance(raw, dict):
+        raise SeedError(f"role_model_policy[{role!r}].council must be a mapping")
+
+    raw_candidates = raw.get("candidates")
+    if not isinstance(raw_candidates, list) or not raw_candidates:
+        raise SeedError(f"role_model_policy[{role!r}].council.candidates must be a non-empty list")
+    candidates = [_parse_council_candidate(role, f"candidates[{i}]", entry) for i, entry in enumerate(raw_candidates)]
+
+    raw_judge = raw.get("judge")
+    if raw_judge is None:
+        raise SeedError(f"role_model_policy[{role!r}].council.judge is required")
+    judge = _parse_council_candidate(role, "judge", raw_judge)
+
+    parsed: dict[str, object] = {"candidates": candidates, "judge": judge}
+
+    raw_timeout = raw.get("timeout")
+    if raw_timeout is not None:
+        if isinstance(raw_timeout, bool) or not isinstance(raw_timeout, (int, float)) or raw_timeout <= 0:
+            raise SeedError(f"role_model_policy[{role!r}].council.timeout must be a positive number")
+        parsed["timeout"] = float(raw_timeout)
+
+    unknown_keys = sorted(set(raw) - {"candidates", "judge", "timeout"})
+    if unknown_keys:
+        raise SeedError(f"role_model_policy[{role!r}].council has unknown keys: {', '.join(unknown_keys)}")
+    return parsed
+
+
+def _parse_single_role_policy(role: str, settings: object) -> dict[str, str | int | dict[str, object]]:
+    """Parse and validate a single role's model policy settings.
+
+    ``base_url`` and ``api_key_env`` are optional per-role endpoint
+    overrides that flow through the spawn path into the adapter manifest
+    the same way ``model``/``provider`` do. ``api_key_env`` is the NAME of
+    an environment variable, never a literal key, and is validated against
+    the same fail-closed credential allowlist the ``openai_agents`` runner
+    enforces so a repo-carried config cannot forward an unrelated host
+    secret to an arbitrary endpoint.
+
+    ``max_tokens`` is an optional per-role integer cap on completion length
+    (see :data:`_ROLE_POLICY_INT_KEYS`); it is validated as a positive int
+    here and flows unchanged into
+    :meth:`bernstein.core.agents.spawner_core.AgentSpawner._apply_sampling_overrides`.
+
+    ``council`` is an optional "council of agents" fan-out/judge block (see
+    :func:`_parse_council` and
+    :class:`bernstein.core.config.config_schema.CouncilConfig`). When
+    present, it is parsed into a nested dict and carried under the
+    ``"council"`` key alongside the scalar fields above - the adapter/spawn
+    path is responsible for using it to drive a TASK-LEVEL council run
+    (``bernstein.adapters.council_runner.run_council``) instead of a single
+    model for this role.
+
+    A separate, simpler convention also produces a council run: setting
+    ``model`` itself to a ``.yaml``/``.yml`` path (e.g.
+    ``"councils/planning.yaml"``) instead of a real model id. That path is
+    stored here completely unresolved/unvalidated - deliberately, so a seed
+    file with a council-file reference for a role parses successfully even
+    when the file's contents are only meaningful at run time, in the
+    worktree, relative to ``.bernstein/``. The runner
+    (``openai_agents_runner._load_council_config``) is what actually
+    resolves and loads it, at spawn/run time, not here.
+    """
     if not isinstance(settings, dict):
         raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
 
-    normalized: dict[str, str] = {}
-    for key in ("provider", "model", "effort", "cli"):
+    normalized: dict[str, str | int | dict[str, object]] = {}
+    for key in _ROLE_POLICY_KEYS:
         value = settings.get(key)
         if value is None:
             continue
@@ -661,10 +893,48 @@ def _parse_single_role_policy(role: str, settings: object) -> dict[str, str]:
             raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a non-empty string")
         normalized[key] = value
 
+    for key in _ROLE_POLICY_INT_KEYS:
+        value = settings.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a positive integer")
+        normalized[key] = value
+
+    # Reuse the adapter's fail-closed credential-name allowlist. Imported
+    # lazily so parsing a seed file does not import the adapters package
+    # (and its optional SDK path) at module load. A rejected name surfaces
+    # as a SeedError so the misconfig fails at parse time, not at spawn.
+    if "api_key_env" in normalized:
+        from bernstein.adapters.openai_agents_runner import validate_api_key_env_name
+
+        try:
+            validate_api_key_env_name(str(normalized["api_key_env"]))
+        except RuntimeError as exc:
+            raise SeedError(f"role_model_policy[{role!r}][api_key_env]: {exc}") from exc
+
     if "cli" in normalized and "provider" not in normalized:
         normalized["provider"] = normalized["cli"]
 
-    unknown_keys = sorted(set(settings) - {"provider", "model", "effort", "cli"})
+    raw_style = settings.get(_ROLE_POLICY_STYLE_KEY)
+    if raw_style is not None:
+        from bernstein.core.agents.response_style import RESPONSE_STYLES
+
+        if not isinstance(raw_style, str) or raw_style not in RESPONSE_STYLES:
+            allowed = ", ".join(RESPONSE_STYLES)
+            raise SeedError(
+                f"role_model_policy[{role!r}][{_ROLE_POLICY_STYLE_KEY!r}] must be one of: {allowed} (got {raw_style!r})"
+            )
+        normalized[_ROLE_POLICY_STYLE_KEY] = raw_style
+
+    raw_council = settings.get(_ROLE_POLICY_COUNCIL_KEY)
+    if raw_council is not None:
+        normalized[_ROLE_POLICY_COUNCIL_KEY] = _parse_council(role, raw_council)
+
+    allowed_keys = (
+        set(_ROLE_POLICY_KEYS) | set(_ROLE_POLICY_INT_KEYS) | {_ROLE_POLICY_COUNCIL_KEY, _ROLE_POLICY_STYLE_KEY}
+    )
+    unknown_keys = sorted(set(settings) - allowed_keys)
     if unknown_keys:
         raise SeedError(f"role_model_policy[{role!r}] has unknown keys: {', '.join(unknown_keys)}")
     return normalized
@@ -753,6 +1023,41 @@ def _parse_model_fallback(raw: object) -> ModelFallbackSeedConfig | None:
         include_timeouts=include_timeouts_raw,
         trigger_codes=[int(c) for c in codes_raw],
     )
+
+
+def _parse_provider_availability(raw: object) -> dict[str, Any] | None:
+    """Parse and validate the optional provider_availability section (#2355).
+
+    The section declares per-role provider fallback chains with conformance
+    floors. Validation happens here so a chain element below its role's
+    floor fails at config load, never at first dispatch. The raw mapping is
+    returned unchanged (the spawner re-parses it into typed policies).
+
+    Args:
+        raw: Raw YAML value for the ``provider_availability`` section.
+
+    Returns:
+        The validated raw mapping, or None when the section is absent.
+
+    Raises:
+        SeedError: If the section is malformed or a fallback element sits
+            below its role's conformance floor.
+    """
+    if raw is None:
+        return None
+    from bernstein.core.routing.provider_availability import (
+        AvailabilityPolicyError,
+        parse_provider_availability,
+    )
+
+    if not isinstance(raw, dict):
+        raise SeedError(f"provider_availability must be a mapping, got: {type(raw).__name__}")
+    section = cast("dict[str, Any]", raw)
+    try:
+        parse_provider_availability(section)
+    except AvailabilityPolicyError as exc:
+        raise SeedError(str(exc)) from exc
+    return section
 
 
 def _parse_tuning(raw: dict[str, object]) -> None:
@@ -889,6 +1194,23 @@ def _parse_session(raw: object) -> SessionConfig:
     if not isinstance(stale_raw, int) or stale_raw < 1:
         raise SeedError(f"session.stale_after_minutes must be a positive integer, got: {stale_raw!r}")
     return SessionConfig(resume=resume_raw, stale_after_minutes=stale_raw)
+
+
+def _parse_github(raw: object) -> GithubConfig:
+    """Parse the optional ``github`` section.
+
+    Only ``sync_backlog`` is recognised today. Auto-sync of open issues into
+    the backlog is opt-in (default ``False``) because it can silently displace
+    a seeded goal on a non-empty backlog.
+    """
+    if raw is None:
+        return GithubConfig()
+    if not isinstance(raw, dict):
+        raise SeedError(f"github must be a mapping, got: {type(raw).__name__}")
+    sync_raw: object = cast("_StrObjDict", raw).get("sync_backlog", False)
+    if not isinstance(sync_raw, bool):
+        raise SeedError(f"github.sync_backlog must be a bool, got: {type(sync_raw).__name__}")
+    return GithubConfig(sync_backlog=sync_raw)
 
 
 def _parse_workspace(
@@ -1529,6 +1851,21 @@ def parse_seed(path: Path) -> SeedConfig:
     budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, data.get("budget")))
     team = _parse_team(data.get("team"))
 
+    # ``team_manifest: <name>[@sha256]`` expands deterministically into the
+    # inline ``team`` + ``role_model_policy`` structures before validation,
+    # so everything downstream of this point sees only the existing shapes.
+    team_manifest_name: str | None = None
+    team_manifest_digest: str | None = None
+    role_policy_raw: object = data.get("role_model_policy")
+    raw_manifest_ref = data.get("team_manifest")
+    if raw_manifest_ref is not None:
+        team, role_policy_raw, team_manifest_name, team_manifest_digest = _expand_team_manifest(
+            raw_manifest_ref,
+            raw_team=data.get("team"),
+            raw_role_policy=role_policy_raw,
+            workdir=path.parent,
+        )
+
     cli = _parse_cli(data)
     max_agents_raw = _parse_max_agents(data)
     model_raw = _parse_model(data)
@@ -1536,7 +1873,29 @@ def parse_seed(path: Path) -> SeedConfig:
 
     constraints = _parse_string_list(data.get("constraints"), "constraints")
     context_files = _parse_string_list(data.get("context_files"), "context_files")
-    role_model_policy = _parse_role_model_policy(data.get("role_model_policy"))
+    role_model_policy = _parse_role_model_policy(role_policy_raw)
+
+    # AC4: every declared response_style
+    # must be renderable from the mode-profile templates visible from the
+    # seed file's directory. A workdir override directory that lacks the
+    # mapped template file fails here with the typed template error instead
+    # of surfacing as a spawn failure mid-run.
+    if role_model_policy:
+        declared_styles = [
+            str(entry[_ROLE_POLICY_STYLE_KEY])
+            for entry in role_model_policy.values()
+            if _ROLE_POLICY_STYLE_KEY in entry
+        ]
+        if declared_styles:
+            from bernstein.core.agents.response_style import (
+                ResponseStyleTemplateError,
+                validate_style_templates,
+            )
+
+            try:
+                validate_style_templates(declared_styles, workdir=path.parent)
+            except ResponseStyleTemplateError as exc:
+                raise SeedError(f"role_model_policy response_style validation failed: {exc}") from exc
 
     agent_catalog_raw = _parse_optional_str_field(data, "agent_catalog")
     mcp_servers_raw = _parse_mcp_servers(data)
@@ -1556,6 +1915,7 @@ def parse_seed(path: Path) -> SeedConfig:
 
     cluster = _parse_cluster(data.get("cluster"))
     session_cfg = _parse_session(data.get("session"))
+    github_cfg = _parse_github(data.get("github"))
     workspace = _parse_workspace(data.get("workspace"), data.get("repos"), path.parent)
     worktree_setup = _parse_worktree_setup(data.get("worktree_setup"))
     batch = _parse_batch(data.get("batch"))
@@ -1577,7 +1937,10 @@ def parse_seed(path: Path) -> SeedConfig:
 
     internal_llm_provider_raw = _validate_optional_str(data, "internal_llm_provider", "openrouter_free")
     internal_llm_model_raw = _validate_optional_str(data, "internal_llm_model", "nvidia/nemotron-3-super-120b-a12b")
+    judge_model_raw = _parse_optional_str_field(data, "judge_model")
+    judge_provider_raw = _parse_optional_str_field(data, "judge_provider")
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
+    provider_availability = _parse_provider_availability(data.get("provider_availability"))
     cost_tags = _parse_cost_tags(data.get("cost_tags", {}))
     cost_autopilot_raw = _validate_optional_bool(data, "cost_autopilot", False)
     cost_envelopes = _parse_cost_envelopes(data)
@@ -1596,6 +1959,8 @@ def parse_seed(path: Path) -> SeedConfig:
         goal=goal,
         budget_usd=budget_usd,
         team=team,
+        team_manifest=team_manifest_name,
+        team_manifest_digest=team_manifest_digest,
         cli=cli,
         max_agents=max_agents_raw,
         model=model_raw,
@@ -1613,6 +1978,7 @@ def parse_seed(path: Path) -> SeedConfig:
         cluster=cluster,
         workspace=workspace,
         session=session_cfg,
+        github=github_cfg,
         worktree_setup=worktree_setup,
         secrets=secrets,
         key_rotation=key_rotation,
@@ -1634,7 +2000,10 @@ def parse_seed(path: Path) -> SeedConfig:
         tenants=tenants,
         internal_llm_provider=internal_llm_provider_raw,
         internal_llm_model=internal_llm_model_raw,
+        judge_model=cast("str | None", judge_model_raw),
+        judge_provider=cast("str | None", judge_provider_raw),
         model_fallback=model_fallback,
+        provider_availability=provider_availability,
         cost_tags=cost_tags,
         cost_autopilot=cost_autopilot_raw,
         cost_envelopes=cost_envelopes,

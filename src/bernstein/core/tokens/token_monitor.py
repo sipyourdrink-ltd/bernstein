@@ -850,6 +850,35 @@ def _handle_quadratic_warning(orch: Any, session: Any, monitor: Any, total: int)
     monitor.mark_warned(session.id)
 
 
+def _handle_proactive_compaction(orch: Any, session: Any) -> bool:
+    """Run the proactive compaction lane for one session (issue #2246).
+
+    Converts the session's context utilization percentage into the
+    fraction the proactive lane expects and delegates. The lane itself
+    enforces its feature flag (off by default), threshold, and
+    per-task attempt budget, so this hook is a no-op for existing runs.
+
+    Args:
+        orch: Orchestrator instance.
+        session: The live agent session being inspected this tick.
+
+    Returns:
+        True when a validated compaction was applied and receipted.
+    """
+    pct = float(getattr(session, "context_utilization_pct", 0.0) or 0.0)
+    if pct <= 0.0:
+        return False
+    # Lazy import: tokens -> orchestration only inside the tick hook, so
+    # module import order stays acyclic.
+    from bernstein.core.orchestration.proactive_compaction import maybe_compact_proactively
+
+    try:
+        return maybe_compact_proactively(orch, session, utilization_fraction=pct / 100.0)
+    except Exception as exc:
+        logger.warning("Proactive compaction hook failed for session %s: %s", session.id, exc)
+        return False
+
+
 def _handle_context_utilization(orch: Any, session: Any, monitor: Any) -> None:
     """Log context utilization warning and trigger auto-compact if needed."""
     if not session.context_utilization_alert:
@@ -908,9 +937,12 @@ def check_token_growth(orch: Any) -> None:
     3. Fetches the latest ``files_changed`` count from progress snapshots.
     4. If tokens exceed ``_KILL_THRESHOLD`` with zero file changes → SIGKILL.
     5. If quadratic growth is detected → log a warning (once per session).
-    6. If context utilization exceeds the compact threshold → send compaction
+    6. If the ``compaction.proactive`` config is on and utilization crossed
+       its threshold → run the validated, receipted proactive compaction
+       lane (``orchestration.proactive_compaction``) before any overflow.
+    7. If context utilization exceeds the compact threshold → send compaction
        WAKEUP signal, guarded by the circuit breaker.
-    7. If tokens used exceed the configured nudge threshold fraction of the
+    8. If tokens used exceed the configured nudge threshold fraction of the
        session's token budget → send a continuation WAKEUP nudge (once per
        session).
 
@@ -934,6 +966,7 @@ def check_token_growth(orch: Any) -> None:
             continue
 
         _handle_quadratic_warning(orch, session, monitor, total)
+        _handle_proactive_compaction(orch, session)
         _handle_context_utilization(orch, session, monitor)
         _handle_budget_nudge(orch, session, monitor)
 

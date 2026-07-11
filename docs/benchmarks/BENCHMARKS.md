@@ -40,10 +40,12 @@ This is a **simulation** - it models scheduling behavior on realistic DAGs, not 
 ### Reproduce
 
 ```bash
-uv run python benchmarks/run_benchmark.py
+uv run python benchmarks/run_benchmark.py --output benchmarks/results/
 ```
 
-See `benchmarks/results/benchmark_simulate_20260401_073802.md` for the raw output.
+The run writes a JSON results file and a Markdown report under
+`benchmarks/results/`. That directory is generated on demand and is not
+committed to the repository.
 
 ---
 

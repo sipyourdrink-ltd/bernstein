@@ -220,6 +220,43 @@ Service maps work out of the box because every span carries
 `service.name` as a resource attribute; no extra config required for
 Tempo or Jaeger to associate them.
 
+### Signed journal projection (verifiable spans)
+
+Ordinary OTLP spans carry random ids that any tool can emit and none can
+verify. `core/observability/otel_projection.py` makes the GenAI export a
+*deterministic projection* of the run event journal instead:
+
+- span ids are derived from journal entry hashes (`span_id = H("otel.span",
+  entry_hash)[:8 bytes]`), so two replays of the same run export a
+  byte-identical trace,
+- every span carries `bernstein.journal.entry_hash` pinning the exact
+  journal row it projects,
+- journal events map onto the OTel GenAI operation layers (`invoke_workflow`
+  root, `invoke_agent`, `execute_tool`, `chat`),
+- the whole span set is signed with the install-identity Ed25519 key, so a
+  tampered span breaks the entry-hash binding or the signature.
+
+The projection is written to the local
+`.sdd/runs/<run_id>/projection.otel.json` store even when no OTLP endpoint is
+set (`BERNSTEIN_OTEL_ENDPOINT` stays opt-in). The GenAI convention attributes
+are still Development-stage; they live behind the stability flag
+(`--no-genai-stability` to omit them) and never affect the ids or the
+entry-hash binding, so an attribute rename cannot corrupt the journal-anchored
+truth.
+
+```bash
+# Project a run's journal into a signed OTel span set (local JSONL store).
+bernstein trace project <run_id>
+
+# Recompute span ids from the journal and verify the signature.
+bernstein trace verify-projection <run_id>
+```
+
+Each emit appends an `otel.projection` event to the HMAC audit chain
+recording the run id, the journal head, the derived trace id, the span count,
+and the sha256 of the signed span set, so an operator can confirm from the
+chain alone that a trace faithfully projects the journal.
+
 ## SLO tracking
 
 `core/observability/slo.py` defines targets, computes status, and tracks

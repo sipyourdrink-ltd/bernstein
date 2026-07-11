@@ -28,6 +28,27 @@ def _default_poll_interval_s() -> int:
     return int(_defaults.ORCHESTRATOR.tick_interval_s)
 
 
+def _default_stalled_manager_threshold_s() -> float:
+    """Return the current canonical stalled-manager deadline.
+
+    Reads from :mod:`bernstein.core.defaults` each call (same pattern as
+    :func:`_default_poll_interval_s`) so that ``tuning.orchestrator.
+    stalled_manager_threshold_s`` overrides from ``bernstein.yaml`` are
+    honoured. See ``core.orchestration.stalled_manager`` for the consumer.
+    """
+    return float(_defaults.ORCHESTRATOR.stalled_manager_threshold_s)
+
+
+def _default_max_agent_runtime_s() -> int:
+    """Return the current canonical agent wall-clock kill starting value.
+
+    Reads from :mod:`bernstein.core.defaults` each call (same pattern as
+    :func:`_default_poll_interval_s`) so that ``tuning.orchestrator.
+    max_agent_runtime_s`` overrides are honoured.
+    """
+    return int(_defaults.ORCHESTRATOR.max_agent_runtime_s)
+
+
 class TaskStoreUnavailable(Exception):
     """Raised when the task store cannot operate after exhausting retries.
 
@@ -164,6 +185,7 @@ class TaskStatus(Enum):
     PENDING_APPROVAL = "pending_approval"  # Completed; awaiting human approval before taking effect
     ABANDONED = "abandoned"  # Agent voluntarily abandoned with a structured reason (#1350)
     BLOCKED_BY_ABANDON = "blocked_by_abandon"  # Downstream task waiting on an abandoned dependency (#1350)
+    REFUSED = "refused"  # Worker reported a typed refusal via the completion contract (#2244)
 
 
 class TaskType(Enum):
@@ -337,6 +359,29 @@ def _normalize_attachments(raw: object) -> list[str]:
     return [str(a) for a in raw]
 
 
+def _normalize_evidence_producers(raw: object) -> list[dict[str, Any]]:
+    """Coerce an ``evidence_producers`` payload into a ``list[dict]``.
+
+    Each entry declares one verification-evidence producer (issue #2362):
+    ``{name, kind, command, required}``. Full field validation lives in
+    :func:`bernstein.core.evidence.bundle.parse_producers`; this normaliser only
+    guarantees the field is a list of mappings so a malformed payload fails
+    loudly at task construction rather than at gate time.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        raise TypeError("Task.evidence_producers must be a list of producer specs, got a single mapping")
+    if not isinstance(raw, list | tuple):
+        raise TypeError(f"Task.evidence_producers must be a list, got {type(raw).__name__}")
+    producers: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise TypeError(f"each evidence producer must be a mapping, got {type(entry).__name__}")
+        producers.append({str(k): v for k, v in entry.items()})
+    return producers
+
+
 @dataclass
 class Task:
     """A unit of work for an agent."""
@@ -431,6 +476,18 @@ class Task:
     # that report ``is_multimodal_capable() == False`` MUST refuse spawns
     # carrying a non-empty list before any process is launched.
     attachments: list[str] = field(default_factory=list[str])
+    # Issue #2362: declared verification-evidence producers. Each is a mapping
+    # ``{name, kind, command, required}`` describing a proof-of-done producer
+    # (test command, coverage, lint, optional screenshot/recording) run at gate
+    # time. Required producers gate completion; advisory ones only attach. Empty
+    # list = no evidence bundle is sealed for this task. Parsed by
+    # ``bernstein.core.evidence.bundle.parse_producers``.
+    evidence_producers: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    # Explicit override for compute_max_turns()'s complexity-based auto-computation
+    # (see bernstein.core.agents.claude_max_turns.compute_max_turns). When set,
+    # this value is used verbatim for the Claude adapter's --max-turns flag,
+    # bypassing all scope/complexity-derived math. None = auto-compute as before.
+    max_turns: int | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Task:
@@ -532,6 +589,8 @@ class Task:
             parallel_safe=bool(raw.get("parallel_safe", False)),
             story_id=(str(raw["story_id"]) if raw.get("story_id") else None),
             attachments=_normalize_attachments(raw.get("attachments")),
+            evidence_producers=_normalize_evidence_producers(raw.get("evidence_producers")),
+            max_turns=(lambda v: None if v is None else int(v))(raw.get("max_turns")),
         )
 
 
@@ -906,6 +965,12 @@ class AgentSession:
     abort_detail: str = ""
     finish_reason: str = ""
     meta_messages: list[str] = field(default_factory=list[str])  # Operational nudges/hints (T423)
+    # Response-style profile applied at spawn. The profile name and the
+    # SHA-256 of the rendered style addendum are stamped here so the cost
+    # ledger entry written at task completion can attribute spend per
+    # profile without re-resolving config.
+    response_profile: str = ""
+    profile_content_sha256: str = ""
 
 
 class IsolationMode(StrEnum):
@@ -1225,7 +1290,16 @@ class OrchestratorConfig:
     # Deployments that explicitly relied on the 900s value must set this field explicitly.
     heartbeat_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_stale_s))
     heartbeat_enabled: bool = True
-    max_agent_runtime_s: int = 1800  # 30 min wall-clock kill (agents need time for complex tasks)
+    # Derived from ORCHESTRATOR.max_agent_runtime_s (canonical) so
+    # ``tuning.orchestrator.max_agent_runtime_s`` overrides the starting
+    # wall-clock kill deadline (agents need time for complex tasks; this
+    # self-extends up to a 5400s hard cap while heartbeating, see
+    # core/agents/agent_lifecycle.py - this is only the starting value).
+    max_agent_runtime_s: int = field(default_factory=_default_max_agent_runtime_s)
+    # Derived from ORCHESTRATOR.stalled_manager_threshold_s (canonical) so
+    # ``tuning.orchestrator.stalled_manager_threshold_s`` overrides actually
+    # change the manager-stall deadline. See core.orchestration.stalled_manager.
+    stalled_manager_threshold_s: float = field(default_factory=_default_stalled_manager_threshold_s)
     max_tasks_per_agent: int = 2  # batch 2 same-role tasks per agent to reduce context overhead
     server_url: str = "http://localhost:8052"
     evolution_enabled: bool = True
@@ -1247,6 +1321,10 @@ class OrchestratorConfig:
     max_crash_retries: int = 2  # Max times to resume in same worktree before escalating
     cross_model_verify: Any | None = None  # CrossModelVerifierConfig | None
     context_degradation: Any | None = None  # ContextDegradationConfig | None - restart agents on quality drop
+    # Proactive compaction lane: {proactive, threshold, max_per_task}.
+    # Resolved by orchestration.proactive_compaction.resolve_compaction_settings;
+    # None keeps the lane off so existing runs are unchanged.
+    compaction: Any | None = None
     force_parallel: bool = False  # Skip complexity advisor - always decompose/parallelize
     plan_mode: bool = False  # When True, tasks start as PLANNED and require approval before execution
     workflow: str | None = None  # "governed" activates governed workflow mode; None = adaptive (default)
@@ -1290,6 +1368,11 @@ class OrchestratorConfig:
     # Default off; enable once multi-tenant workloads exist.
     fair_scheduling_enabled: bool = False
     cost_autopilot: bool = False  # Wire CostAutopilot when True
+    # Janitor LLM-judge model/provider override, threaded from the seed's
+    # ``judge_model``/``judge_provider`` (bernstein.yaml). None = fall back
+    # to the janitor's hardcoded JUDGE_MODEL/JUDGE_PROVIDER defaults.
+    judge_model: str | None = None
+    judge_provider: str | None = None
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

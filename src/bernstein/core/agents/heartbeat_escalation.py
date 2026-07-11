@@ -22,8 +22,13 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 
 from bernstein.core.defaults import AGENT
+from bernstein.core.platform_compat import is_signal_supported
 
 logger = logging.getLogger(__name__)
+
+# Numeric force-kill code used when SIGKILL is not defined (Windows).
+# ``kill_process_group`` maps it to a native process-tree termination.
+_FORCE_KILL_CODE = 9
 
 
 class EscalationTier(IntEnum):
@@ -286,20 +291,33 @@ class HeartbeatEscalationLadder:
             return True
 
         if tier == EscalationTier.SIGUSR1:
+            # SIGUSR1 has no Windows equivalent; degrade to a logged no-op
+            # instead of raising AttributeError at escalation time.  The
+            # SIGTERM and SIGKILL tiers above it still fire.
+            if not is_signal_supported("SIGUSR1"):
+                logger.warning(
+                    "SIGUSR1 nudge unsupported on this platform for agent %s (heartbeat age: %.0fs)",
+                    state.session_id,
+                    heartbeat_age_s,
+                )
+                return False
             return self._send_signal(state, signal.SIGUSR1, "SIGUSR1", heartbeat_age_s)
 
         if tier == EscalationTier.SIGTERM:
             return self._send_signal(state, signal.SIGTERM, "SIGTERM", heartbeat_age_s)
 
         if tier == EscalationTier.SIGKILL:
-            return self._send_signal(state, signal.SIGKILL, "SIGKILL", heartbeat_age_s)
+            # On platforms without SIGKILL the numeric force-kill code is
+            # sent; ``kill_process_group`` maps it to a native tree kill.
+            kill_sig = signal.SIGKILL if is_signal_supported("SIGKILL") else _FORCE_KILL_CODE
+            return self._send_signal(state, kill_sig, "SIGKILL", heartbeat_age_s)
 
         return False
 
     def _send_signal(
         self,
         state: AgentEscalationState,
-        sig: signal.Signals,
+        sig: signal.Signals | int,
         sig_name: str,
         heartbeat_age_s: float,
     ) -> bool:

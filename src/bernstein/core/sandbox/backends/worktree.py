@@ -29,6 +29,11 @@ from bernstein.core.sandbox.backend import (
     SandboxCapability,
     SandboxSession,
 )
+from bernstein.core.sandbox.snapshot import (
+    commit_worktree_snapshot,
+    resume_worktree_snapshot,
+    snapshot_ref_name,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -36,6 +41,11 @@ if TYPE_CHECKING:
     from bernstein.core.sandbox.manifest import WorkspaceManifest
 
 logger = logging.getLogger(__name__)
+
+#: Where worktrees live under the repo root. Mirrors the convention in
+#: :mod:`bernstein.core.git.worktree`; kept local so the sandbox backend
+#: does not reach into that module's private constant.
+_WORKTREE_BASE = ".sdd/worktrees"
 
 
 class WorktreeSandboxSession(SandboxSession):
@@ -57,6 +67,8 @@ class WorktreeSandboxSession(SandboxSession):
         manager: WorktreeManager,
         base_env: Mapping[str, str],
         default_timeout: int,
+        run_id: str | None = None,
+        step_index: int | None = None,
     ) -> None:
         """Initialise the session.
 
@@ -70,6 +82,11 @@ class WorktreeSandboxSession(SandboxSession):
             base_env: Environment applied to every :meth:`exec`.
             default_timeout: Default wall-clock timeout for
                 :meth:`exec` when the caller doesn't supply one.
+            run_id: Run this session's worktree belongs to. Required for
+                :meth:`snapshot` so the snapshot can be pinned to
+                ``refs/bernstein/snapshots/<run_id>/<step_index>``.
+            step_index: Journal step index the next :meth:`snapshot`
+                pins. Required alongside ``run_id``.
         """
         self.session_id = session_id
         self.workdir = str(worktree_path)
@@ -77,6 +94,8 @@ class WorktreeSandboxSession(SandboxSession):
         self._manager = manager
         self._base_env = dict(base_env)
         self._default_timeout = default_timeout
+        self._run_id = run_id
+        self._step_index = step_index
         self._closed = False
 
     # ------------------------------------------------------------------
@@ -194,12 +213,45 @@ class WorktreeSandboxSession(SandboxSession):
         )
 
     # ------------------------------------------------------------------
-    # Snapshots (unsupported)
+    # Snapshots (git-commit primitive, issue #2295)
     # ------------------------------------------------------------------
 
     async def snapshot(self) -> str:
-        """Worktree backend does not support snapshots."""
-        raise NotImplementedError("WorktreeSandboxBackend does not declare the SNAPSHOT capability")
+        """Commit the working tree and return the snapshot commit sha.
+
+        The full working tree is committed to
+        ``refs/bernstein/snapshots/<run_id>/<step_index>`` and the commit
+        sha is returned as the snapshot id (AC1). The sha is
+        content-addressed, so a byte-identical tree always yields the same
+        id - the value operators cross-check against the journal (AC3/AC5).
+
+        Raises:
+            RuntimeError: When the session was created without a
+                ``run_id``/``step_index`` (there is no ref to address).
+            SnapshotError: When an underlying git command fails.
+        """
+        if self._closed:
+            raise RuntimeError(f"Session {self.session_id} is closed")
+        if self._run_id is None or self._step_index is None:
+            raise RuntimeError(
+                "snapshot() requires run_id and step_index; pass them in the "
+                "backend.create options so the snapshot can be pinned to a ref"
+            )
+        run_id = self._run_id
+        step_index = self._step_index
+        return await asyncio.to_thread(
+            commit_worktree_snapshot,
+            self._manager.repo_root,
+            self._worktree_path,
+            run_id=run_id,
+            step_index=step_index,
+        )
+
+    def snapshot_ref(self) -> str | None:
+        """Return the ref :meth:`snapshot` writes to, or ``None`` if unset."""
+        if self._run_id is None or self._step_index is None:
+            return None
+        return snapshot_ref_name(self._run_id, self._step_index)
 
     # ------------------------------------------------------------------
     # Shutdown
@@ -228,8 +280,9 @@ class WorktreeSandboxBackend:
     multiple manifests pointing at the same repo share the existing
     graveyard, lock, and salvage state.
 
-    Snapshots are not supported because git worktrees don't have a
-    natural restore primitive that survives the host process.
+    Snapshots are supported via git commits (issue #2295): a session's
+    working tree is committed to a ``refs/bernstein/snapshots/`` ref and
+    :meth:`resume` checks that commit out into a fresh detached worktree.
     """
 
     name = "worktree"
@@ -238,12 +291,17 @@ class WorktreeSandboxBackend:
             SandboxCapability.FILE_RW,
             SandboxCapability.EXEC,
             SandboxCapability.NETWORK,
+            SandboxCapability.SNAPSHOT,
         }
     )
 
     def __init__(self) -> None:
         self._managers: dict[Path, WorktreeManager] = {}
         self._sessions: dict[str, WorktreeSandboxSession] = {}
+        # Repo root snapshots resolve against on ``resume``. Set to the
+        # most recent ``create``/``resume`` so a bare snapshot sha maps
+        # back to the object store that holds it.
+        self._last_repo_root: Path | None = None
 
     def _manager_for(self, repo_root: Path) -> WorktreeManager:
         resolved = repo_root.resolve()
@@ -292,6 +350,10 @@ class WorktreeSandboxBackend:
         else:
             repo_root = Path.cwd()
         manager = await asyncio.to_thread(self._manager_for, repo_root)
+        self._last_repo_root = manager.repo_root
+        run_id = opts.get("run_id")
+        step_index_opt = opts.get("step_index")
+        step_index = int(step_index_opt) if step_index_opt is not None else None
         worktree_path = await asyncio.to_thread(manager.create, session_id)
 
         # Byte-injected files land at manifest.root for cloud backends,
@@ -323,13 +385,53 @@ class WorktreeSandboxBackend:
             manager=manager,
             base_env=manifest.env,
             default_timeout=manifest.timeout_seconds,
+            run_id=str(run_id) if run_id is not None else None,
+            step_index=step_index,
         )
         self._sessions[session_id] = session
         return session
 
     async def resume(self, snapshot_id: str) -> SandboxSession:
-        """Worktree backend does not support snapshot/resume."""
-        raise NotImplementedError("WorktreeSandboxBackend does not declare the SNAPSHOT capability")
+        """Restore a snapshot commit into a fresh detached worktree.
+
+        The snapshot id is a git commit sha produced by
+        :meth:`WorktreeSandboxSession.snapshot`. It is checked out into a
+        new worktree directory whose tree is byte-identical to the
+        snapshotted one (AC1) and fully isolated from any sibling resume
+        of the same snapshot (AC4).
+
+        Args:
+            snapshot_id: The commit sha returned by ``session.snapshot``.
+
+        Raises:
+            RuntimeError: When the backend has no repo context to resolve
+                the snapshot against (no prior ``create``).
+            SnapshotError: When the git checkout fails.
+        """
+        repo_root = self._last_repo_root
+        if repo_root is None:
+            raise RuntimeError(
+                "resume() needs a repo context; call create() at least once, "
+                "or use core.replay.fork which resumes against an explicit repo"
+            )
+        manager = await asyncio.to_thread(self._manager_for, repo_root)
+        session_id = self._allocate_session_id()
+        dest_path = manager.repo_root / _WORKTREE_BASE / session_id
+        await asyncio.to_thread(
+            resume_worktree_snapshot,
+            manager.repo_root,
+            snapshot_id,
+            dest_path,
+        )
+        session = WorktreeSandboxSession(
+            session_id=session_id,
+            worktree_path=dest_path,
+            manager=manager,
+            base_env={},
+            default_timeout=1800,
+        )
+        self._sessions[session_id] = session
+        return session
 
     async def destroy(self, session: SandboxSession) -> None:
         """Shut down *session* and drop it from the internal table."""

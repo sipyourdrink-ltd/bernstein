@@ -200,6 +200,42 @@ def test_dynamic_retry_limit_transient_beats_default_higher() -> None:
     assert _dynamic_retry_limit("connection refused", default_max=9) == 3
 
 
+@pytest.mark.parametrize(
+    "reason",
+    [
+        # A terminal gate-refusal reason (issue #2341): the random compaction
+        # correlation hex happens to embed a numeric status marker. This must
+        # NOT be read as a transient failure and granted a retry budget.
+        "Context overflow: compaction refused by sensitive gate "
+        "(rules: content.pem-unterminated; correlation=compact-a1503f2b)",
+        "correlation=compact-de429abc",  # '429' inside a hex run
+        "correlation=compact-9502dead",  # '502' inside a hex run
+        "correlation=compact-fa504bcd",  # '504' inside a hex run
+    ],
+)
+def test_dynamic_retry_limit_status_digits_inside_opaque_id_are_not_transient(reason: str) -> None:
+    # Regression (#2341): a status-shaped digit run buried in an identifier
+    # aliases a transient marker only under bare-substring matching. With
+    # token-boundary matching it stays terminal, so a refusal keeps its
+    # forced no-retry budget instead of intermittently gaining three retries.
+    assert _dynamic_retry_limit(reason, default_max=0) == 0
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "HTTP 503 Service Unavailable",
+        "received 429 from provider",
+        "gateway returned 502",
+        "upstream 504 gateway timeout",
+    ],
+)
+def test_dynamic_retry_limit_real_http_status_still_transient(reason: str) -> None:
+    # The boundary-matching fix must not regress genuine status markers that
+    # appear as standalone tokens in a real provider error string.
+    assert _dynamic_retry_limit(reason, default_max=0) == 3
+
+
 # ---------------------------------------------------------------------------
 # _batch_timeout_seconds
 # ---------------------------------------------------------------------------

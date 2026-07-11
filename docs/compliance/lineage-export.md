@@ -315,7 +315,7 @@ bernstein lineage export r-2026-05-05 --format jsonld \
 ```
 
 Combine with the `bernstein compliance assess` evidence package
-([compliance.md § assess](../operations/compliance.md#assess--generate-the-eu-ai-act-evidence-package))
+([compliance.md § assess](../operations/compliance.md#assess-generate-the-eu-ai-act-evidence-package))
 for the full Article 43 handoff.
 
 ### HIPAA

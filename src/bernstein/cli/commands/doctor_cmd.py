@@ -64,7 +64,7 @@ def check_python_version() -> dict[str, Any]:
 def check_adapters_installed() -> list[dict[str, Any]]:
     """Check which CLI adapters are on PATH."""
     results: list[dict[str, Any]] = []
-    for name in ("claude", "codex", "gemini", "qwen", "aider"):
+    for name in ("agy", "claude", "codex", "gemini", "qwen", "aider"):
         found = shutil.which(name) is not None
         results.append(
             {
@@ -157,6 +157,68 @@ def check_adapter_advisories() -> list[dict[str, Any]]:
                     "name": label,
                     "status": _CHECK_PASS,
                     "detail": f"{version} >= safe floor {advisory.min_safe_version}",
+                    "fix": "",
+                }
+            )
+    return results
+
+
+def check_canary_last_green() -> list[dict[str, Any]]:
+    """Warn when an installed agent version is ahead of its last-green.
+
+    The nightly adapter conformance canary regenerates a per-adapter
+    last-green projection (the newest upstream version whose conformance
+    receipt passed; see ``docs/adapters/conformance-canary.md``). When a
+    locally installed binary is *newer* than last-green, the canary has
+    not yet verified that release against the adapter contract, so
+    unattended runs are one upstream regression away from failing without
+    warning. Rows:
+
+    - PASS when the installed version is at or below last-green,
+    - WARN when it is strictly ahead of last-green,
+    - adapters whose binary is missing, whose version cannot be probed,
+      or which carry no last-green row are omitted so the surface stays
+      quiet.
+    """
+    from packaging.version import InvalidVersion, Version
+
+    from bernstein.adapters.canary import load_last_green
+
+    results: list[dict[str, Any]] = []
+    for name, entry in sorted(load_last_green().items()):
+        if shutil.which(entry.binary) is None:
+            continue  # adapter not installed: nothing to advise on
+        version = _probe_adapter_version(entry.binary)
+        if version is None:
+            continue  # unknown version is already surfaced by advisories
+        try:
+            installed = Version(version)
+            last_green = Version(entry.version)
+        except InvalidVersion:
+            continue
+        label = f"Adapter last-green: {name}"
+        if installed > last_green:
+            results.append(
+                {
+                    "name": label,
+                    "status": _CHECK_WARN,
+                    "detail": (
+                        f"{version} is ahead of last-green {entry.version} "
+                        f"(receipt {entry.receipt_sha256[:12]}); the conformance "
+                        "canary has not verified this release yet"
+                    ),
+                    "fix": (
+                        f"Check docs/adapters/conformance-canary.md, or pin {entry.binary} "
+                        f"to {entry.version} for unattended runs"
+                    ),
+                }
+            )
+        else:
+            results.append(
+                {
+                    "name": label,
+                    "status": _CHECK_PASS,
+                    "detail": f"{version} <= last-green {entry.version}",
                     "fix": "",
                 }
             )
@@ -412,6 +474,7 @@ def run_all_checks() -> list[dict[str, Any]]:
     checks.append(check_python_version())
     checks.extend(check_adapters_installed())
     checks.extend(check_adapter_advisories())
+    checks.extend(check_canary_last_green())
     checks.extend(check_api_keys())
     checks.extend(
         (
@@ -506,6 +569,122 @@ def _render_substrate_report(  # NOSONAR python:S3516 - advisory surface, always
 
     console.print(table)
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Endpoint certification (``bernstein doctor --endpoint``, issue #2356)
+# ---------------------------------------------------------------------------
+
+
+def _run_endpoint_certification(
+    *,
+    endpoint: str,
+    model: str | None,
+    engine: str,
+    api_key_env: str | None,
+    timeout: float,
+    roles: tuple[str, ...],
+    as_json: bool,
+) -> int:
+    """Probe an OpenAI-compatible endpoint and seal a certification receipt.
+
+    Returns the process exit code: 0 when every evaluated role certified,
+    1 when at least one role was rejected, 2 when no model could be
+    resolved for the endpoint.
+    """
+    import json as _json
+    import time
+
+    from rich.table import Table
+
+    from bernstein.cli.helpers import console
+    from bernstein.core.endpoints.certification import (
+        build_endpoint_certification,
+        certification_path,
+        load_or_create_endpoint_identity,
+    )
+    from bernstein.core.endpoints.conformance import (
+        LOCAL_TIER_ROLES,
+        discover_default_model,
+        evaluate_roles,
+        run_conformance,
+    )
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    api_key = os.environ.get(api_key_env) if api_key_env else None
+
+    resolved_model = model or discover_default_model(base_url=endpoint, api_key=api_key, timeout=timeout)
+    if not resolved_model:
+        console.print(
+            "[red]Cannot resolve a model for this endpoint.[/red] The /models "
+            "listing is unavailable; pass --endpoint-model explicitly."
+        )
+        return 2
+
+    evaluated_roles = roles or tuple(sorted(LOCAL_TIER_ROLES))
+    transcript = run_conformance(
+        base_url=endpoint,
+        model=resolved_model,
+        api_key=api_key,
+        timeout=timeout,
+    )
+    verdicts = evaluate_roles(transcript, evaluated_roles)
+
+    workdir = Path.cwd()
+    hmac_key = load_or_create_audit_key()
+    private_pem, public_pem = load_or_create_endpoint_identity(workdir / ".sdd" / "identity")
+    chain = AuditChainStore(workdir / ".sdd" / "audit", key=hmac_key)
+    sealed = build_endpoint_certification(
+        workdir=workdir,
+        lineage_root=workdir / ".sdd" / "lineage",
+        hmac_key=hmac_key,
+        private_key_pem=private_pem,
+        public_key_pem=public_pem,
+        transcript=transcript,
+        verdicts=verdicts,
+        engine=engine,
+        timestamp=int(time.time()),
+        chain=chain,
+    )
+    receipt_path = certification_path(workdir, sealed.fingerprint())
+    all_certified = all(v.certified for v in verdicts)
+
+    if as_json:
+        payload = {
+            "base_url": transcript.base_url,
+            "model": resolved_model,
+            "engine": engine,
+            "fingerprint": sealed.fingerprint(),
+            "suite_version": transcript.suite_version,
+            "transcript_hash": transcript.transcript_hash(),
+            "probes": [r.to_dict() for r in transcript.results],
+            "verdicts": [v.to_dict() for v in verdicts],
+            "journal_entry_hash": sealed.journal_entry_hash,
+            "receipt_path": str(receipt_path),
+        }
+        click.echo(_json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if all_certified else 1
+
+    console.print()
+    console.print(f"[bold]Endpoint certification[/bold] {transcript.base_url} model={resolved_model}")
+    console.print(f"  transcript  {transcript.transcript_hash()}")
+    console.print(f"  receipt     {receipt_path}")
+    console.print(f"  anchor      {sealed.journal_entry_hash}")
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Role", style="bold")
+    table.add_column("Verdict")
+    table.add_column("Reasons", overflow="fold")
+    for verdict in verdicts:
+        status = "[green]certified[/green]" if verdict.certified else "[red]rejected[/red]"
+        table.add_row(verdict.role, status, ", ".join(verdict.reasons) or "-")
+    console.print(table)
+    console.print(
+        "\n[dim]The receipt is signed and anchored to the audit chain; config "
+        "validation gates merge-critical roles on it.[/dim]\n"
+    )
+    return 0 if all_certified else 1
 
 
 @click.command("doctor")

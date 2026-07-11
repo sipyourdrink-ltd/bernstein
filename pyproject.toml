@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "2.11.0"
+version = "3.3.0"
 description = "Audit-grade multi-agent orchestration for CLI coding agents (Claude Code, Codex, Gemini CLI, and 40 more): HMAC-chained audit log, signed agent cards, per-artefact lineage, air-gap deploy. The orchestrator your compliance team will sign off on."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -392,6 +392,19 @@ artifacts = [
 # Blast-radius detector defaults (#1322) so the reversibility gate finds
 # its rule list without requiring a source checkout.
 "templates/blast-radius" = "bernstein/_default_templates/blast-radius"
+# Built-in team manifests (#2248) so `team_manifest: python` and the
+# `bernstein team` commands resolve right after pip install.
+"templates/teams" = "bernstein/_default_templates/teams"
+# Cross-vendor agent-plugin assets (#2369): the bernstein-run skill plus
+# the plugin command/agent/rule files, so `bernstein skills package
+# install` resolves the bundled tree right after pip install. Loader:
+# bernstein.core.skills.packaging.packaged_asset_root.
+"skills" = "bernstein/_default_templates/agent_plugin/skills"
+"commands" = "bernstein/_default_templates/agent_plugin/commands"
+"agents" = "bernstein/_default_templates/agent_plugin/agents"
+"rules" = "bernstein/_default_templates/agent_plugin/rules"
+".mcp.json" = "bernstein/_default_templates/agent_plugin/.mcp.json"
+".plugin/plugin.json" = "bernstein/_default_templates/agent_plugin/.plugin/plugin.json"
 # ascii_logo.md now lives in-package at src/bernstein/_default_templates/ -
 # no force-include needed. The dev-repo copy at docs/assets/ascii_logo.md is
 # the display fallback read by cli/display/splash_v2.py when running from a

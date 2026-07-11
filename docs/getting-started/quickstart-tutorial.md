@@ -33,7 +33,7 @@ bernstein --version
 You should see something like:
 
 ```
-bernstein 1.9.3
+bernstein 2.16.1
 ```
 
 > **If you see "command not found"**: Make sure your tool bin directory is on `$PATH`.
@@ -182,7 +182,7 @@ Inspect a specific task's changes:
 ```bash
 bernstein diff <task-id>     # Git diff produced by the agent
 bernstein trace <task-id>    # Decision trace (which rules fired, what was approved)
-bernstein logs -a <task-id>  # Full agent output
+bernstein logs tail -a <task-id>  # Full agent output
 ```
 
 ---
@@ -277,7 +277,7 @@ The dashboard shows:
 bernstein stop
 ```
 
-This gracefully drains in-progress tasks (10-second timeout by default), then shuts down
+This gracefully drains in-progress tasks (30-second timeout by default), then shuts down
 the task server and all agents.
 
 ```bash
@@ -352,8 +352,8 @@ roles:
 Bernstein detects stalled agents automatically and retries the task. To check status manually:
 
 ```bash
-bernstein status --agents   # Show agent heartbeat times
-bernstein stop --agent <agent-id>   # Manually kill a specific agent
+bernstein status --mode expert   # Show agent detail, including heartbeats
+bernstein agents showcase        # List available agents grouped by role
 ```
 
 ### "bernstein init fails - not a git repository"

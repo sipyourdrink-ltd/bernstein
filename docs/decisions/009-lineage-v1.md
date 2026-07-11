@@ -1,6 +1,6 @@
 # ADR-009: Lineage v1 - Sigstore-style per-artefact transparency log
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-05-13
 **Context**: Bernstein multi-agent orchestration system
 

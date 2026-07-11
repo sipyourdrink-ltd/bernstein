@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bernstein.adapters.base import build_worker_cmd
+from bernstein.core.orchestration.worker import _resolve_launch_cmd
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,11 +59,125 @@ class TestBuildWorkerCmd:
 
 
 # ---------------------------------------------------------------------------
+# _resolve_launch_cmd -- cross-platform argv[0] resolution (issue #2287)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLaunchCmd:
+    """argv[0] resolution: bare name -> absolute path, Windows .cmd -> cmd.exe.
+
+    On Windows, ``CreateProcess`` (what ``subprocess.Popen`` calls without a
+    shell) ignores ``PATHEXT`` for ``argv[0]`` and cannot run a ``.cmd``/``.bat``
+    batch shim even by full path. nvm-windows installs the Codex/Claude/Gemini
+    CLIs as ``codex.cmd`` etc., so a bare ``"codex"`` failed with ``exit 127``.
+    These tests simulate Windows via monkeypatch; CI runs on Linux.
+    """
+
+    def test_bare_name_resolves_to_absolute_path_posix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A bare name that shutil.which finds becomes its absolute path."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "posix")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: "/usr/local/bin/codex" if name == "codex" else None,
+        )
+        result = _resolve_launch_cmd(["codex", "exec", "-m", "gpt-5.5"])
+        assert result == ["/usr/local/bin/codex", "exec", "-m", "gpt-5.5"]
+
+    def test_windows_cmd_shim_wrapped_in_cmd_exe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """On nt, a resolved .cmd shim is routed through cmd.exe /c."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        # Windows uses ``\\`` as sep and ``/`` as altsep.
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: r"C:\nvm4w\nodejs\codex.CMD" if name == "codex" else None,
+        )
+        result = _resolve_launch_cmd(["codex", "exec", "-m", "gpt-5.5"])
+        assert result == [
+            r"C:\Windows\System32\cmd.exe",
+            "/c",
+            r"C:\nvm4w\nodejs\codex.CMD",
+            "exec",
+            "-m",
+            "gpt-5.5",
+        ]
+
+    def test_windows_bat_shim_wrapped_in_cmd_exe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A .bat shim is treated like .cmd -- routed through cmd.exe."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: r"C:\tools\agent.bat" if name == "agent" else None,
+        )
+        result = _resolve_launch_cmd(["agent", "--go"])
+        assert result[0] == r"C:\Windows\System32\cmd.exe"
+        assert result[1] == "/c"
+        assert result[2] == r"C:\tools\agent.bat"
+        assert result[3:] == ["--go"]
+
+    def test_windows_real_exe_launched_directly(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A resolved .exe is a PE binary: launch it directly, no cmd.exe."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: r"C:\Python\python.exe" if name == "python" else None,
+        )
+        result = _resolve_launch_cmd(["python", "-c", "pass"])
+        assert result == [r"C:\Python\python.exe", "-c", "pass"]
+
+    def test_already_absolute_path_left_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A path-qualified argv[0] is not re-resolved through shutil.which."""
+
+        def _boom(_name: str) -> str:
+            raise AssertionError("shutil.which must not be called for a path-qualified argv[0]")
+
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "posix")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.shutil.which", _boom)
+        cmd = ["/usr/local/bin/codex", "exec"]
+        assert _resolve_launch_cmd(cmd) == cmd
+
+    def test_unresolved_bare_name_preserved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """shutil.which returning None keeps the original so the caller's
+        FileNotFoundError -> 'command not found' (exit 127) path still fires."""
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "posix")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda _name: None,
+        )
+        cmd = ["nonexistent_command_xyz", "--flag"]
+        assert _resolve_launch_cmd(cmd) == cmd
+
+    def test_windows_altsep_qualified_path_left_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """On Windows a forward-slash path (altsep) is also treated as
+        qualified and not re-resolved."""
+
+        def _boom(_name: str) -> str:
+            raise AssertionError("shutil.which must not be called for a path-qualified argv[0]")
+
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.sep", "\\")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.altsep", "/")
+        monkeypatch.setattr("bernstein.core.orchestration.worker.shutil.which", _boom)
+        cmd = ["C:/nvm4w/nodejs/codex.cmd", "exec"]
+        assert _resolve_launch_cmd(cmd) == cmd
+
+    def test_empty_cmd_returned_as_is(self) -> None:
+        """Guard: an empty argv is returned unchanged (main() handles it)."""
+        assert _resolve_launch_cmd([]) == []
+
+
+# ---------------------------------------------------------------------------
 # Worker process (integration)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="Shim module loader breaks subprocess imports during decomposition")
 class TestWorkerProcess:
     def test_worker_writes_and_cleans_pid_file(self, tmp_path: Path) -> None:
         """Worker should write PID file on start and remove it on exit."""
@@ -118,6 +233,64 @@ class TestWorkerProcess:
         # Give a moment for cleanup
         time.sleep(0.2)
         assert not pid_file.exists(), "PID file was not cleaned up"
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signals")
+    def test_worker_cleans_pid_file_when_sigterm_races_startup(self, tmp_path: Path) -> None:
+        """Regression (#2341): SIGTERM at startup must never leak the PID file.
+
+        The worker must install its terminating-signal handler *before* the
+        PID file exists, so no instant passes where the file is present
+        without a cleanup path. Before the fix the handler was installed only
+        after the child spawn; a SIGTERM landing in that window took the
+        default disposition (terminate, no ``finally`` unlink) and leaked the
+        PID file - a phantom ``bernstein ps`` entry and the intermittent
+        cleanup-order failure this test guards.
+
+        Each iteration sends a single SIGTERM the instant the PID file first
+        appears (the widest point of the old window, before ``child_pid`` is
+        even written) and asserts the file is always gone. On the buggy
+        ordering this leaks on a large fraction of iterations; the fixed
+        ordering cleans up every time.
+        """
+        for i in range(24):
+            pid_dir = tmp_path / f"pids-{i}"
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "bernstein.core.orchestration.worker",
+                    "--role",
+                    "test",
+                    "--session",
+                    f"race-{i}",
+                    "--pid-dir",
+                    str(pid_dir),
+                    "--",
+                    "sleep",
+                    "10",
+                ],
+                start_new_session=True,
+            )
+            pid_file = pid_dir / f"race-{i}.json"
+            # Wait only until the PID file first appears - the earliest and
+            # widest point of the startup race window.
+            deadline = time.monotonic() + 5
+            while not pid_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.0005)
+            assert pid_file.exists(), f"iter {i}: PID file never appeared"
+
+            # One group-directed SIGTERM at that instant, exactly as a reaper
+            # would, then assert the worker cleaned up after itself.
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                raise
+            time.sleep(0.2)
+            assert not pid_file.exists(), (
+                f"iter {i}: PID file leaked after SIGTERM at startup (worker exit={proc.returncode})"
+            )
 
     def test_worker_forwards_signals(self, tmp_path: Path) -> None:
         """Worker should forward SIGTERM to child and exit."""

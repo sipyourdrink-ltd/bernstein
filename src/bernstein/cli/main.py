@@ -59,12 +59,14 @@ from bernstein.cli.commands.best_of_n_rank_cmd import best_of_n_group
 from bernstein.cli.commands.bom_cmd import bom_group
 from bernstein.cli.commands.bundle_cmd import bundle_group
 from bernstein.cli.commands.citation_cmd import quality_group as citation_quality_group
+from bernstein.cli.commands.compaction_cmd import compaction_group
 from bernstein.cli.commands.consensus_cmd import consensus_group
 from bernstein.cli.commands.criterion_profile_cmd import criterion_profile_group
 from bernstein.cli.commands.decisions_cmd import decisions_group
 from bernstein.cli.commands.desktop_register_cmd import desktop_register_cmd
 from bernstein.cli.commands.export_cmd import export_cmd
 from bernstein.cli.commands.fleet_cmd import fleet_group
+from bernstein.cli.commands.fork_cmd import fork_cmd
 from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
@@ -463,7 +465,7 @@ def print_rich_help() -> None:
     opts.add_row("", "--fresh", "ignore saved session, start clean")
     opts.add_row("", "--version", "show version")
     c.print(opts)
-    c.print("\n  [dim]docs:[/dim] https://chernistry.github.io/bernstein/")
+    c.print("\n  [dim]docs:[/dim] https://bernstein.readthedocs.io/en/latest/")
     c.print("  [dim]repo:[/dim] https://github.com/sipyourdrink-ltd/bernstein")
     c.print("  [dim]audit chain:[/dim] docs/security/audit-log.md  (RFC 2104 HMAC-SHA256)\n")
 
@@ -899,6 +901,9 @@ from bernstein.gui.cli import gui_group as _gui_group  # noqa: E402
 cli.add_command(_gui_group)
 cli.add_command(trace_cmd, "trace")
 cli.add_command(replay_cmd, "replay")
+from bernstein.cli.commands.thread_cmd import thread_cmd as _thread_cmd  # noqa: E402
+
+cli.add_command(_thread_cmd, "thread")
 cli.add_command(github_group)
 cli.add_command(graph_group, "graph")
 cli.add_command(policy_group, "policy")
@@ -968,7 +973,23 @@ cli.add_command(skills_group)
 from bernstein.cli.commands.skills_catalog_cmd import catalog_group as _skills_catalog_group  # noqa: E402
 
 skills_group.add_command(_skills_catalog_group, "catalog")
+# Packaged agent-skill installs with chain-anchored receipts (issue #2369).
+from bernstein.cli.commands.skills_package_cmd import package_group as _skills_package_group  # noqa: E402
+
+skills_group.add_command(_skills_package_group, "package")
+# Skill usage provenance (issue #2301): install receipts + provenance graph.
+from bernstein.cli.commands.skill_cmd import skill_group as _skill_group  # noqa: E402
+
+cli.add_command(_skill_group)
+# Named team manifests (issue #2248): list/show/drift.
+from bernstein.cli.commands.team_cmd import team_group as _team_group  # noqa: E402
+
+cli.add_command(_team_group, "team")
 cli.add_command(test_cmd, "test")
+# Scoped dashboard tokens (issue #2366): issue/list/revoke under `auth`.
+from bernstein.cli.commands.dashboard_token_cmd import dashboard_token_group as _dashboard_token_group  # noqa: E402
+
+auth_group.add_command(_dashboard_token_group, "dashboard-token")
 cli.add_command(auth_group, "auth")
 cli.add_command(auth_login, "login")
 cli.add_command(evolve)
@@ -991,11 +1012,13 @@ cli.add_command(start)
 cli.add_command(demo)
 cli.add_command(checkpoint_cmd, "checkpoint")
 cli.add_command(resume_cmd, "resume")
+cli.add_command(fork_cmd, "fork")
 cli.add_command(wrap_up, "wrap-up")
 cli.add_command(audit_group, "audit")
 cli.add_command(bom_group, "bom")
 cli.add_command(bundle_group, "bundle")
 cli.add_command(compliance_group, "compliance")
+cli.add_command(compaction_group, "compaction")
 cli.add_command(verify_cmd, "verify")
 cli.add_command(chaos_group, "chaos")
 cli.add_command(manifest_group, "manifest")
@@ -1094,6 +1117,34 @@ from bernstein.cli.commands.lineage_cmd import lineage_cmd  # noqa: E402
 
 cli.add_command(lineage_cmd, "lineage")
 
+# C2PA content credentials projected from the lineage spine (#2303).
+from bernstein.cli.commands.credential_cmd import credential_group  # noqa: E402
+
+cli.add_command(credential_group, "credential")
+
+# Verifiable spending mandates as journal-anchored consent receipts (#2306).
+from bernstein.cli.commands.mandate_cmd import mandate_group  # noqa: E402
+
+cli.add_command(mandate_group, "mandate")
+
+# Attested pull-request review receipts linking issue -> plan -> tool calls -> diff (#2296).
+from bernstein.cli.commands.review_receipt_cmd import review_receipt_group  # noqa: E402
+
+cli.add_command(review_receipt_group, "review-receipt")
+# Journal-anchored stall escalation receipts (#2299).
+from bernstein.cli.commands.escalation_cmd import escalation_group  # noqa: E402
+
+cli.add_command(escalation_group, "escalation")
+# Signed maker-checker / judge-panel gate adjudications (#2294).
+from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
+
+cli.add_command(gate_group, "gate")
+
+# RBAC + budget decisions as verifiable projections over the audit chain (#2309).
+from bernstein.cli.commands.governance_cmd import governance_group  # noqa: E402
+
+cli.add_command(governance_group, "governance")
+
 # Per-tool-call snapshots + stacked agent branches.
 from bernstein.cli.commands.git_cmd import git_cmd  # noqa: E402
 
@@ -1129,6 +1180,12 @@ cli.add_command(handoff_group, "handoff")
 from bernstein.cli.commands.identity_cmd import identity_group  # noqa: E402
 
 cli.add_command(identity_group, "identity")
+
+# Delegation-receipt verification for the principal->orchestrator->sub-agent
+# chain (issue #2305).
+from bernstein.cli.commands.delegation_cmd import delegation_group  # noqa: E402
+
+cli.add_command(delegation_group, "delegation")
 cli.add_command(analyze_cmd, "analyze")  # issue #768
 
 # Blast-radius scorer (issue #1322): inspect + ad-hoc score a change.
@@ -1168,3 +1225,23 @@ cli.add_command(telemetry_group, "telemetry")
 from bernstein.cli.commands.trend_scan_cmd import trend_scan_group  # noqa: E402
 
 cli.add_command(trend_scan_group, "trend-scan")
+
+# Audited webhook-node receipts: signed inbound + outbound webhook events (#2310).
+from bernstein.cli.commands.webhook_cmd import webhook_group  # noqa: E402
+
+cli.add_command(webhook_group, "webhook")
+
+# Typed activity boundary: verify any-modality activity crossings from the journal (#2311).
+from bernstein.cli.commands.activity_cmd import activity_group  # noqa: E402
+
+cli.add_command(activity_group, "activity")
+
+# Content-addressed verification evidence bundles: signed proof-of-done per task (#2362).
+from bernstein.cli.commands.evidence_cmd import evidence_group  # noqa: E402
+
+cli.add_command(evidence_group, "evidence")
+
+# Durable work ledger: resumable task-graph state anchored to a git ref (#2358).
+from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
+
+cli.add_command(ledger_group, "ledger")

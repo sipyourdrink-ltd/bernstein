@@ -6,9 +6,9 @@ Full details of the Bernstein vulnerability disclosure and bug bounty program.
 
 Bernstein orchestrates AI coding agents that run directly on a user's machine. The attack surface is meaningful: agents read/write files, execute CLI commands, and communicate via a local HTTP task server. We treat security seriously and compensate researchers who find real issues.
 
-Reports go through **HackerOne**: https://hackerone.com/bernstein
-
-Email fallback: security@bernstein.dev (see `SECURITY.md` for PGP key).
+Report a vulnerability by email to **forte@bernstein.run** (PGP key at
+`/.well-known/security-pgp.asc`), or open a private security advisory on
+GitHub: https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new
 
 ---
 
@@ -123,7 +123,7 @@ Relevant code: `src/bernstein/core/bulletin.py`
 
 ## Submission guidelines
 
-1. Use the HackerOne form at https://hackerone.com/bernstein
+1. Email **forte@bernstein.run** or open a private GitHub security advisory
 2. Include:
    - Description of the vulnerability
    - Steps to reproduce (curl commands, scripts, or a PoC)

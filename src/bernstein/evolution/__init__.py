@@ -12,6 +12,7 @@ are hash-locked and cannot be modified by the evolution system.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -97,6 +98,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bernstein.core.models import Task
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "AgentMetrics",
@@ -403,8 +406,27 @@ class EvolutionCoordinator:
         janitor_passed: bool,
         model: str | None = None,
         provider: str | None = None,
+        tokens_prompt: int = 0,
+        tokens_completion: int = 0,
     ) -> None:
-        """Record metrics for a completed task."""
+        """Record metrics for a completed task.
+
+        Args:
+            task: The completed task.
+            duration_seconds: Wall-clock duration of the agent run.
+            cost_usd: Real LLM cost for this task, if known. Callers must
+                thread through the actual runner-priced cost (e.g. recovered
+                from a cost sidecar for orphaned/auto-completed tasks) rather
+                than hardcoding ``0.0`` -- a hardcoded zero here is exactly
+                the bug-13-family defect where ``.sdd/metrics/tasks.jsonl``
+                shows ``cost_usd: 0.0`` for tasks the provider actually
+                charged real money for.
+            janitor_passed: Whether janitor verification passed.
+            model: Model used, if known.
+            provider: Provider used, if known.
+            tokens_prompt: Prompt tokens consumed, if known.
+            tokens_completion: Completion tokens consumed, if known.
+        """
         metrics = TaskMetrics(
             timestamp=time.time(),
             task_id=task.id,
@@ -414,6 +436,8 @@ class EvolutionCoordinator:
             duration_seconds=duration_seconds,
             cost_usd=cost_usd,
             janitor_passed=janitor_passed,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
         )
         self.collector.record_task_metrics(metrics)
 
@@ -423,18 +447,46 @@ class EvolutionCoordinator:
         role: str,
         lifetime_seconds: float,
         tasks_completed: int,
+        _model: str | None = None,
         model: str | None = None,
     ) -> None:
         """Record agent session lifetime metrics when an agent ends.
+
+        API-drift fix (defect 22): the real callers in
+        ``core/tasks/task_lifecycle.py`` and ``core/agents/agent_lifecycle.py``
+        invoke this with the underscore-prefixed ``_model`` kwarg, while this
+        signature historically only accepted ``model``. That mismatch raised
+        ``TypeError: record_agent_lifetime() got an unexpected keyword
+        argument '_model'`` on every call, which was silently swallowed by a
+        broad ``except Exception`` (task_lifecycle.py, logged at WARNING) or a
+        bare ``contextlib.suppress(Exception)`` (agent_lifecycle.py's
+        wall-clock and heartbeat reap paths - no log at all). Net effect: the
+        evolution system's agents.jsonl metrics stream never received a
+        single agent-lifetime record, starving role/model retirement analysis
+        of its primary input with zero visible signal in the reap paths.
+
+        Both spellings are accepted so this also stays compatible with any
+        caller (including existing tests) still passing the un-prefixed
+        ``model`` kwarg.
 
         Args:
             agent_id: Unique agent session identifier.
             role: Role the agent was assigned.
             lifetime_seconds: Total wall-clock time the agent was alive.
             tasks_completed: Number of tasks the agent successfully completed.
-            _model: Model used by the agent (part of interface).
+            _model: Model used by the agent, as passed by the real orchestrator
+                callers (underscore-prefixed).
+            model: Same field, accepted un-prefixed for backward compatibility.
         """
-        _ = model  # Part of interface
+        resolved_model = _model if _model is not None else model
+        logger.info(
+            "record_agent_lifetime: agent_id=%s role=%s model=%s lifetime_seconds=%.2f tasks_completed=%d",
+            agent_id,
+            role,
+            resolved_model,
+            lifetime_seconds,
+            tasks_completed,
+        )
         metrics = AgentMetrics(
             timestamp=time.time(),
             agent_id=agent_id,

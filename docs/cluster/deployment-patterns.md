@@ -36,24 +36,25 @@ bernstein cluster bootstrap-ca \
     --out-dir ~/.bernstein/cluster \
     --server-san central.internal
 
-bernstein cluster server \
-    --bind 0.0.0.0:8052 \
-    --tls-ca   ~/.bernstein/cluster/ca.crt \
-    --tls-cert ~/.bernstein/cluster/server.crt \
-    --tls-key  ~/.bernstein/cluster/server.key \
-    --tls-verify required
+# Bind to all interfaces so workers can reach it.
+BERNSTEIN_BIND_HOST=0.0.0.0 bernstein start
 ```
+
+mTLS is not configured with CLI flags: wire the CA, server cert, and
+server key into `ClusterConfig.tls` as shown in
+[`mtls-setup.md`](./mtls-setup.md).
 
 ```bash
 # On each worker
 # (ca.crt + node.crt + node.key copied out-of-band into ~/.bernstein/cluster/)
-bernstein cluster worker \
+bernstein worker \
     --server https://central.internal:8052 \
-    --tls-ca   ~/.bernstein/cluster/ca.crt \
-    --tls-cert ~/.bernstein/cluster/node.crt \
-    --tls-key  ~/.bernstein/cluster/node.key \
-    --role backend
+    --roles backend
 ```
+
+The worker's CA, node cert, and node key are wired through
+`ClusterConfig.tls` (see [`mtls-setup.md`](./mtls-setup.md)), not via CLI
+flags.
 
 That's it. No tunnel, no overlay. The network is trusted; mTLS makes it
 auditable.
@@ -99,7 +100,7 @@ server via a public hostname under your Cloudflare zone.
 ### Files
 
 A complete copy-paste-runnable example lives at
-[`examples/cluster/cloudflared/`](../../examples/cluster/cloudflared/):
+[`examples/cluster/cloudflared/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/examples/cluster/cloudflared):
 
 - `config.yml` - `cloudflared` ingress config
 - `Dockerfile` - sidecar image (pinned `cloudflare/cloudflared:latest`)
@@ -126,10 +127,10 @@ public hostname like any HTTPS server.
 
 ```bash
 # On the worker (laptop, separate cloud, build runner)
-bernstein cluster worker \
+bernstein worker \
     --server https://central.bernstein.example.com \
-    --role backend \
-    --auth-secret "$BERNSTEIN_CLUSTER_AUTH_SECRET"
+    --roles backend \
+    --token "$BERNSTEIN_AUTH_TOKEN"
 ```
 
 If you put Cloudflare Access in front of the hostname, set:
@@ -158,10 +159,10 @@ End-to-end:
 2. **Operator (per contractor).** In the Cloudflare dashboard, mint one
    Access service token per contractor; revoke it when they leave.
 3. **Contractor.** Install Bernstein, set the two `CF_ACCESS_*` env vars
-   for their service token, run `bernstein cluster worker --server
-   https://central.bernstein.example.com --role backend`. They never
+   for their service token, run `bernstein worker --server
+   https://central.bernstein.example.com --roles backend`. They never
    touch your VPN.
-4. **Verify.** On the central node, `bernstein cluster status` lists the
+4. **Verify.** On the central node, the `GET /cluster/status` snapshot lists the
    contractor's worker as `ONLINE`. Revoking the service token in
    Cloudflare immediately blocks them at the edge - Bernstein doesn't
    need to know.
@@ -206,12 +207,12 @@ This is the right shape when:
    keys are fine.
 3. An ACL that allows `tag:bernstein-worker` to talk to
    `tag:bernstein-central` on TCP/8052 - see
-   [`examples/cluster/tailscale/tailscale.json`](../../examples/cluster/tailscale/tailscale.json).
+   [`examples/cluster/tailscale/tailscale.json`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/examples/cluster/tailscale/tailscale.json).
 
 ### Files
 
 A complete copy-paste-runnable example lives at
-[`examples/cluster/tailscale/`](../../examples/cluster/tailscale/):
+[`examples/cluster/tailscale/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/examples/cluster/tailscale):
 
 - `tailscale.json` - tailnet ACL granting only worker→central on 8052
 - `docker-compose.yml` - central + tailscaled sidecar
@@ -238,10 +239,10 @@ tailscale status | grep bernstein-central
 # On the worker
 sudo tailscale up --authkey="$TS_AUTHKEY_WORKER" --advertise-tags=tag:bernstein-worker
 
-bernstein cluster worker \
+bernstein worker \
     --server http://bernstein-central.tailXXXXX.ts.net:8052 \
-    --role backend \
-    --auth-secret "$BERNSTEIN_CLUSTER_AUTH_SECRET"
+    --roles backend \
+    --token "$BERNSTEIN_AUTH_TOKEN"
 ```
 
 The traffic stays inside the tailnet; the URL is `http://` because the
@@ -283,7 +284,7 @@ Workers and central on the same trusted network?
            no  -> Pattern 3 (Tailscale overlay)
 ```
 
-All three patterns work with the existing `bernstein cluster worker
+All three patterns work with the existing `bernstein worker
 --server <url>` flag. Customers don't write Bernstein-specific
 networking code; they pick the tunnel/overlay that fits their
 operations and point the worker at the resulting hostname.
@@ -303,7 +304,7 @@ operations and point the worker at the resulting hostname.
 ## Related
 
 - [`mtls-setup.md`](./mtls-setup.md) - application-layer mutual TLS
-- [`examples/cluster/cloudflared/`](../../examples/cluster/cloudflared/)
-- [`examples/cluster/tailscale/`](../../examples/cluster/tailscale/)
-- [`tests/integration/cluster/test_cluster_tunnel_smoke.py`](../../tests/integration/cluster/test_cluster_tunnel_smoke.py)
+- [`examples/cluster/cloudflared/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/examples/cluster/cloudflared)
+- [`examples/cluster/tailscale/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/examples/cluster/tailscale)
+- [`tests/integration/cluster/test_cluster_tunnel_smoke.py`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/tests/integration/cluster/test_cluster_tunnel_smoke.py)
   - CI smoke test for Pattern 2

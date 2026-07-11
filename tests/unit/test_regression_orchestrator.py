@@ -140,7 +140,7 @@ def _build_orchestrator(
     adp = adapter or _mock_adapter()
     templates_dir = tmp_path / "templates" / "roles"
     templates_dir.mkdir(parents=True)
-    spawner = AgentSpawner(adp, templates_dir, tmp_path)
+    spawner = AgentSpawner(adp, templates_dir, tmp_path, default_model="mock-model")
     client = httpx.Client(transport=transport, base_url="http://testserver")
     return Orchestrator(cfg, spawner, tmp_path, client=client)
 
@@ -289,10 +289,13 @@ class TestTaskStateTransitions:
         assert event.entity_type == "task"
 
     def test_illegal_task_transition_raises(self) -> None:
-        """DONE -> OPEN is not in the transition table."""
+        """DONE -> IN_PROGRESS is not in the transition table.
+
+        (DONE -> OPEN is intentionally legal now: bounded janitor reopen.)
+        """
         task = _make_task(id="T-bad", status="done")
         with pytest.raises(IllegalTransitionError):
-            transition_task(task, TaskStatus.OPEN)
+            transition_task(task, TaskStatus.IN_PROGRESS)
 
     def test_illegal_agent_transition_raises(self) -> None:
         """dead -> working is not allowed."""

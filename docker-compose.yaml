@@ -117,7 +117,7 @@ services:
   # and optionally Jaeger/Datadog/New Relic.
   # Profile: docker compose --profile otel up -d
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.155.0
+    image: otel/opentelemetry-collector-contrib:0.156.0
     profiles: [otel]
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
@@ -157,7 +157,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:v3.13.0
+    image: prom/prometheus:v3.13.1
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"

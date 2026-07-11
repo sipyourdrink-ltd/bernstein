@@ -53,7 +53,7 @@ def test_routing_emits_decision_record(_redirect_decision_log: Path) -> None:
     """``route_task`` produces exactly one model_route decision per call."""
     from bernstein.core.routing.router_core import route_task
 
-    route_task(_make_task("t-1"))
+    route_task(_make_task("t-1"), default_model="run-default")
 
     records = dl.replay(_redirect_decision_log)
     assert len(records) == 1
@@ -67,7 +67,7 @@ def test_routing_decision_inputs_carry_task_id(
     """The decision record's ``inputs`` payload includes the task id + role."""
     from bernstein.core.routing.router_core import route_task
 
-    route_task(_make_task("t-42", role="manager"))
+    route_task(_make_task("t-42", role="manager"), default_model="run-default")
 
     [rec] = dl.replay(_redirect_decision_log)
     assert rec.inputs.get("task_id") == "t-42"
@@ -79,7 +79,7 @@ def test_routing_disable_via_env(_redirect_decision_log: Path, monkeypatch: pyte
     from bernstein.core.routing.router_core import route_task
 
     monkeypatch.setenv(dl.ENV_DISABLE, "0")
-    route_task(_make_task("t-3"))
+    route_task(_make_task("t-3"), default_model="run-default")
 
     assert not _redirect_decision_log.exists()
 
@@ -91,7 +91,7 @@ def test_routing_multiple_calls_each_emit_one_record(
     from bernstein.core.routing.router_core import route_task
 
     for i in range(5):
-        route_task(_make_task(f"t-{i}"))
+        route_task(_make_task(f"t-{i}"), default_model="run-default")
 
     records = dl.replay(_redirect_decision_log)
     assert len(records) == 5
@@ -105,8 +105,8 @@ def test_cli_tail_surfaces_routing_decisions(
     from bernstein.cli.commands.decisions_cmd import decisions_group
     from bernstein.core.routing.router_core import route_task
 
-    route_task(_make_task("t-cli-1", role="frontend"))
-    route_task(_make_task("t-cli-2", role="backend"))
+    route_task(_make_task("t-cli-1", role="frontend"), default_model="run-default")
+    route_task(_make_task("t-cli-2", role="backend"), default_model="run-default")
 
     runner = CliRunner()
     result = runner.invoke(decisions_group, ["tail", "--path", str(_redirect_decision_log)])

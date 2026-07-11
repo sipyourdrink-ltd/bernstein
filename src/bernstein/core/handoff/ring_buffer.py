@@ -116,7 +116,14 @@ class StreamTailBuffer:
         self._workdir = workdir
         self._session_id = session_id
         self._max_entries = max_entries
-        self._path = workdir / _TAIL_DIR / f"{session_id}.jsonl"
+        # The session id becomes a filename component; normalise the
+        # candidate and require it to stay inside the tail directory so a
+        # hostile id ("../", absolute path) cannot address other files.
+        tail_dir = os.path.realpath(workdir / _TAIL_DIR)
+        candidate = os.path.realpath(os.path.join(tail_dir, f"{session_id}.jsonl"))
+        if not candidate.startswith(tail_dir + os.sep):
+            raise ValueError("session_id must resolve inside the handoff tail directory")
+        self._path = Path(candidate)
 
     @property
     def path(self) -> Path:

@@ -152,6 +152,9 @@ class WrapUpBrief:
         learnings: Insights or observations worth carrying forward.
         next_session_brief: Suggested starting point for the next session.
         git_diff_stat: Output of ``git diff --stat`` at wrap-up time.
+        completed_task_ids: Ids of tasks that finished successfully this
+            session. The PR-open path reads these to link each task's sealed
+            verification-evidence bundle (issue #2362).
     """
 
     timestamp: float
@@ -160,6 +163,7 @@ class WrapUpBrief:
     learnings: list[str] = field(default_factory=list[str])
     next_session_brief: str = ""
     git_diff_stat: str = ""
+    completed_task_ids: list[str] = field(default_factory=list[str])
 
     def to_dict(self) -> dict[str, object]:
         """Serialise to a JSON-compatible dict."""
@@ -186,6 +190,7 @@ class WrapUpBrief:
             learnings=list(data.get("learnings", [])),  # type: ignore[arg-type]
             next_session_brief=str(data.get("next_session_brief", "")),
             git_diff_stat=str(data.get("git_diff_stat", "")),
+            completed_task_ids=[str(t) for t in data.get("completed_task_ids", [])],  # type: ignore[union-attr]
         )
 
 

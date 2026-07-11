@@ -450,7 +450,8 @@ class TestRoutTaskBanditIntegration:
         assert config.model == "sonnet"
 
     def test_bandit_does_not_affect_manager_tasks(self, tmp_path: Path) -> None:
-        """Manager role always uses opus regardless of bandit data."""
+        """Manager role escalates to max effort on the configured default_model
+        regardless of bandit data (the haiku arm must not win)."""
         from bernstein.core.router import route_task
 
         metrics_dir = tmp_path / "metrics"
@@ -458,19 +459,21 @@ class TestRoutTaskBanditIntegration:
         _bandit_with_data(metrics_dir, "manager", "haiku", observations=10, successes=10)
 
         task = _task(role="manager")
-        config = route_task(task, bandit_metrics_dir=metrics_dir)
+        config = route_task(task, bandit_metrics_dir=metrics_dir, default_model="run-default")
 
-        assert config.model == "opus"
+        assert config.model == "run-default"
+        assert config.effort == "max"
 
     def test_route_task_without_bandit_uses_heuristics(self) -> None:
         """Without bandit_metrics_dir, route_task uses heuristics."""
         from bernstein.core.router import route_task
 
         task = _task(role="backend", complexity=Complexity.MEDIUM)
-        config = route_task(task, bandit_metrics_dir=None)
+        config = route_task(task, bandit_metrics_dir=None, default_model="run-default")
 
-        # Heuristic gives sonnet for medium backend tasks
-        assert config.model in ("sonnet", "haiku", "opus")
+        # Heuristic gives high effort on the default model for medium backend tasks
+        assert config.model == "run-default"
+        assert config.effort == "high"
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +499,8 @@ class TestSelectBatchConfigBanditIntegration:
         assert config.model == "sonnet"
 
     def test_manager_ignores_bandit(self, tmp_path: Path) -> None:
-        """Manager always gets opus even if bandit says haiku."""
+        """Manager always gets the configured default at max effort even if
+        bandit says haiku."""
         from bernstein.core.spawner import _select_batch_config
 
         metrics_dir = tmp_path / "metrics"
@@ -504,18 +508,20 @@ class TestSelectBatchConfigBanditIntegration:
         _bandit_with_data(metrics_dir, "manager", "haiku", observations=10, successes=10)
 
         tasks = [_task(role="manager")]
-        config = _select_batch_config(tasks, metrics_dir=metrics_dir)
+        config = _select_batch_config(tasks, metrics_dir=metrics_dir, default_model="run-default")
 
-        assert config.model == "opus"
+        assert config.model == "run-default"
+        assert config.effort == "max"
 
     def test_no_metrics_dir_falls_back_to_heuristics(self) -> None:
         """Without metrics_dir, uses heuristic routing."""
         from bernstein.core.spawner import _select_batch_config
 
         tasks = [_task(role="backend", complexity=Complexity.MEDIUM)]
-        config = _select_batch_config(tasks, metrics_dir=None)
+        config = _select_batch_config(tasks, metrics_dir=None, default_model="run-default")
 
-        assert config.model in ("sonnet", "opus")
+        assert config.model == "run-default"
+        assert config.effort == "high"
 
 
 # ---------------------------------------------------------------------------

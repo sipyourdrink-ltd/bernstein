@@ -40,7 +40,7 @@ stages:
 
 The first two stages run sequentially - you need to understand the codebase before translating. But Translation fans out to 8 agents working simultaneously, each converting a module group. Verification runs janitor checks: `mvn test`, `mvn verify`, SpotBugs, PMD.
 
-Full plan: [`examples/plans/cobol-modernization.yaml`](../../examples/plans/cobol-modernization.yaml)
+Full plan: [`examples/plans/cobol-modernization.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/examples/plans/cobol-modernization.yaml)
 
 Run it:
 

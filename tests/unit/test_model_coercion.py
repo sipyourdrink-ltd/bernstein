@@ -9,8 +9,10 @@ and executed model agree, while leaving the Claude path byte-identical.
 
 from __future__ import annotations
 
+import pytest
 from bernstein.core.models import ModelConfig
 
+from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.agents.spawner_warm_pool import _coerce_model_for_non_claude_adapter
 
 
@@ -44,13 +46,16 @@ def test_non_tier_model_passed_through() -> None:
     assert out.model == "gpt-5.4"
 
 
-def test_no_default_leaves_model_unchanged() -> None:
-    out = _coerce_model_for_non_claude_adapter(
-        ModelConfig(model="sonnet", effort="high"),
-        adapter_name="Codex",
-        adapter_default_model=None,
-    )
-    assert out.model == "sonnet"
+def test_no_default_refuses_unpinned_tier() -> None:
+    """With no adapter or run-level default, an unpinned Claude tier name has
+    no valid substitute for a non-Claude adapter, so coercion refuses instead
+    of passing the tier name through to a CLI that cannot run it."""
+    with pytest.raises(ModelNotConfiguredError, match="unpinned Claude tier name"):
+        _coerce_model_for_non_claude_adapter(
+            ModelConfig(model="sonnet", effort="high"),
+            adapter_name="Codex",
+            adapter_default_model=None,
+        )
 
 
 def test_run_level_default_model_coerces_haiku_for_qwen() -> None:

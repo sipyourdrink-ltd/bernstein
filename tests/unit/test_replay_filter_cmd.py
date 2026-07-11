@@ -102,7 +102,9 @@ class TestReplayFilterCmd:
         sdd_dir = tmp_path / ".sdd"
         runs_dir = sdd_dir / "runs" / "20240315-143022"
         runs_dir.mkdir(parents=True)
-        (runs_dir / "replay.jsonl").write_text(json.dumps({"ts": 1.0, "elapsed_s": 0.0, "event": "run_started"}) + "\n")
+        (runs_dir / "journal.jsonl").write_text(
+            json.dumps({"ts": 1.0, "elapsed_s": 0.0, "event": "run_started"}) + "\n"
+        )
 
         runner = CliRunner()
         result = runner.invoke(replay_filter_cmd, ["list", "--sdd-dir", str(sdd_dir)])
@@ -118,7 +120,7 @@ class TestReplayFilterCmd:
             {"ts": 2.0, "elapsed_s": 1.0, "event": "agent_spawned", "agent_id": "be-1"},
             {"ts": 3.0, "elapsed_s": 2.0, "event": "run_completed"},
         ]
-        (runs_dir / "replay.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+        (runs_dir / "journal.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -133,7 +135,7 @@ class TestReplayFilterCmd:
         runs_dir = sdd_dir / "runs" / "run1"
         runs_dir.mkdir(parents=True)
         events = [{"ts": 1.0, "elapsed_s": 0.0, "event": "run_started"}]
-        (runs_dir / "replay.jsonl").write_text(json.dumps(events[0]) + "\n")
+        (runs_dir / "journal.jsonl").write_text(json.dumps(events[0]) + "\n")
 
         runner = CliRunner()
         result = runner.invoke(

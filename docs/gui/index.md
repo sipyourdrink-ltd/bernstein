@@ -27,11 +27,11 @@ Browser-based operator surface for live Bernstein runs. Mounted on the same Fast
 | Inspect HMAC audit chain head and verify          | yes          |
 | Review per-adapter cost over the last 24 h        | yes          |
 | Pipe Bernstein into a script or CI step           | no - use the REST API |
-| Drive Bernstein from a terminal-only host         | no - use `bernstein dashboard` (TUI) |
+| Drive Bernstein from a terminal-only host         | no - use `bernstein live` (TUI) |
 
 ## Who it is for
 
-Operators supervising live agent runs. The GUI mirrors what an operator already does in the TUI (`bernstein dashboard`) but trades keyboard density for diff rendering, sparklines, and a queue-style approvals view.
+Operators supervising live agent runs. The GUI mirrors what an operator already does in the TUI (`bernstein live`) but trades keyboard density for diff rendering, sparklines, and a queue-style approvals view.
 
 ## Read next
 

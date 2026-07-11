@@ -1,8 +1,7 @@
 # Bernstein Security Contact - RFC 9116
 # https://securitytxt.org/
 
-Contact: mailto:security@bernstein.dev
-Contact: https://hackerone.com/bernstein
+Contact: mailto:forte@bernstein.run
 
 Encryption: https://bernstein.dev/.well-known/security-pgp.asc
 

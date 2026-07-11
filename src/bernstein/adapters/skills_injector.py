@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
 import yaml
@@ -34,8 +36,6 @@ from bernstein.core.skills.routing import auto_route_enabled, select_auto_route_
 from bernstein.core.skills.sanitizer import sanitize_skill_body
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from bernstein.core.skills.routing import RoutableTask
 
     class Task(RoutableTask, Protocol):
@@ -82,6 +82,94 @@ ROLE_SKILL_MAP: dict[str, list[str]] = {
     ],
     "security": [],
 }
+
+
+def _resolve_git_exclude_path(workdir: Path) -> Path | None:
+    """Resolve the ``info/exclude`` file for ``workdir``'s git repo.
+
+    Uses ``git rev-parse --git-path info/exclude`` rather than assuming
+    ``workdir/.git/info/exclude`` exists, because inside a ``git worktree``
+    ``.git`` is a *file* containing a ``gitdir: <path>`` pointer to the real
+    gitdir (typically under the main checkout's ``.git/worktrees/<name>/``),
+    not a directory. ``git rev-parse --git-path`` resolves this correctly in
+    both the plain-repo and worktree cases.
+
+    Returns ``None`` (and logs at debug level) if ``workdir`` is not inside a
+    git repository or the ``git`` binary is unavailable - exclusion is a
+    best-effort hardening measure and must never block agent spawn.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-path", "info/exclude"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _logger.debug("Could not resolve git info/exclude for %s: %s", workdir, exc)
+        return None
+
+    exclude_relpath = result.stdout.strip()
+    if not exclude_relpath:
+        _logger.debug("git rev-parse --git-path info/exclude returned empty for %s", workdir)
+        return None
+
+    exclude_path = Path(exclude_relpath)
+    if not exclude_path.is_absolute():
+        exclude_path = workdir / exclude_path
+    return exclude_path
+
+
+def _exclude_injected_paths(workdir: Path, relative_paths: list[str]) -> None:
+    """Idempotently append ``relative_paths`` to ``workdir``'s ``info/exclude``.
+
+    Injected skill files must remain readable by Claude Code (which reads
+    the working tree directly) but must never be staged or committed by an
+    agent's broad ``git add`` - two agents' worktrees render different
+    session-specific content into the same filenames, so committing them
+    causes a merge conflict on every worker merge back to the shared work
+    branch. Writing to ``info/exclude`` (rather than ``.gitignore``) keeps
+    this local-only and out of the tracked tree entirely.
+    """
+    exclude_path = _resolve_git_exclude_path(workdir)
+    if exclude_path is None:
+        _logger.debug(
+            "Skipping git exclude registration for %s - not a git repo or git unavailable",
+            workdir,
+        )
+        return
+
+    try:
+        exclude_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+    except OSError as exc:
+        _logger.debug("Failed to read git exclude file %s: %s", exclude_path, exc)
+        return
+
+    existing_lines = set(existing.splitlines())
+    new_lines = [path for path in relative_paths if path not in existing_lines]
+    if not new_lines:
+        _logger.debug("All injected paths already excluded in %s", exclude_path)
+        return
+
+    try:
+        with exclude_path.open("a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            for path in new_lines:
+                fh.write(f"{path}\n")
+                _logger.debug("Excluded injected skill from git: %s -> %s", path, exclude_path)
+    except OSError as exc:
+        _logger.debug("Failed to append to git exclude file %s: %s", exclude_path, exc)
+        return
+
+    _logger.debug(
+        "Registered %d injected skill path(s) in git exclude file %s",
+        len(new_lines),
+        exclude_path,
+    )
 
 
 def render_skill_template(
@@ -179,6 +267,7 @@ def inject_skills(
             templates_to_inject.append(candidate.template_name)
             trigger_by_template[candidate.template_name] = "auto-route"
 
+    written_relpaths: list[str] = []
     for template_name in templates_to_inject:
         source_path = skills_source_dir / template_name
         if not source_path.exists():
@@ -209,6 +298,7 @@ def inject_skills(
         try:
             dest_path.write_text(rendered, encoding="utf-8")
             _logger.debug("Injected skill: %s -> %s", template_name, dest_path)
+            written_relpaths.append(str(dest_path.relative_to(workdir)))
         except OSError as exc:
             _logger.debug("Failed to write skill %s: %s", dest_path, exc)
             continue
@@ -249,6 +339,9 @@ def inject_skills(
         except Exception:
             # Never let the activation log block a spawn.
             _logger.debug("activation log append failed for %s", template_name, exc_info=True)
+
+    if written_relpaths:
+        _exclude_injected_paths(workdir, written_relpaths)
 
 
 def _extract_skill_version(content: str) -> str:

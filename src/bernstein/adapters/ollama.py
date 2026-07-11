@@ -31,16 +31,20 @@ EU-residency / vLLM note:
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.models import ModelConfig
+
+logger = logging.getLogger(__name__)
 
 # Default Ollama API endpoint
 OLLAMA_BASE_URL = "http://localhost:11434"
@@ -130,6 +134,27 @@ class OllamaAdapter(CLIAdapter):
     def eu_residency(self) -> bool:
         """Return whether the EU-residency self-hosted guard is active."""
         return self._eu_residency
+
+    def plugin_info(self) -> AdapterPluginInfo:
+        """Declare the sampling surface OllamaAdapter genuinely wires.
+
+        This adapter drives Aider (see the module docstring), which
+        accepts a ``--temperature`` flag. Aider has no ``--top-p``,
+        ``--top-k``, or completion ``--max-tokens`` CLI flag (its
+        ``--max-chat-history-tokens`` controls a different thing - chat
+        history truncation, not the completion length), so only the
+        narrow temperature capability is declared -
+        :func:`bernstein.adapters.plugin_sdk.ensure_sampling_params_supported`
+        refuses a spawn requesting the others rather than silently
+        dropping them.
+        """
+        return AdapterPluginInfo(
+            name="ollama",
+            version="0.1.0",
+            author="bernstein",
+            description="Ollama / OpenAI-compatible local LLM adapter (via Aider)",
+            capabilities=(AdapterCapability.SUPPORTS_TEMPERATURE,),
+        )
 
     def _resolve_model(self, model_name: str) -> str:
         """Map Bernstein model name to Ollama / OpenAI-compatible model ID."""
@@ -242,6 +267,21 @@ class OllamaAdapter(CLIAdapter):
             "1024",
             "--no-auto-lint",
         ]
+
+        if mcp_config:
+            temperature = mcp_config.get("temperature")
+            if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+                logger.debug("ollama adapter: wiring --temperature=%s onto aider argv", temperature)
+                cmd.extend(["--temperature", str(float(temperature))])
+            for dropped_key in ("top_p", "top_k", "max_tokens"):
+                if mcp_config.get(dropped_key) is not None:
+                    logger.warning(
+                        "ollama adapter: %s=%r requested but not wired (aider has no matching "
+                        "CLI flag) - ensure_sampling_params_supported should have refused this "
+                        "spawn before reaching here",
+                        dropped_key,
+                        mcp_config.get(dropped_key),
+                    )
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(

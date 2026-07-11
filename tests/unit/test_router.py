@@ -19,6 +19,8 @@ from bernstein.core.router import (
     route_task,
 )
 
+from bernstein.core import fast_path as fast_path_module
+
 # --- Helpers ---
 
 
@@ -30,7 +32,13 @@ def _make_task(
     description: str = "Write the code.",
     scope: Scope = Scope.MEDIUM,
     complexity: Complexity = Complexity.MEDIUM,
+    model: str | None = "sonnet",
+    effort: str | None = None,
 ) -> Task:
+    # ``model`` defaults to an explicit pin because routing no longer guesses
+    # a model for unconfigured tasks; provider-selection tests here exercise
+    # tier/policy behavior, not model resolution. Pass ``model=None`` plus
+    # ``route_task(..., default_model=...)`` to exercise resolution itself.
     return Task(
         id=id,
         title=title,
@@ -38,6 +46,8 @@ def _make_task(
         role=role,
         scope=scope,
         complexity=complexity,
+        model=model,
+        effort=effort,
     )
 
 
@@ -249,8 +259,8 @@ class TestSelectProviderForTask:
             )
         )
 
-        # Task requires opus (manager role)
-        task = _make_task(role="manager")
+        # Task requires opus (pinned) but the provider only serves sonnet
+        task = _make_task(role="manager", model="opus")
 
         with pytest.raises(RouterError, match="No available provider"):
             router.select_provider_for_task(task)
@@ -346,7 +356,7 @@ class TestModelMatching:
             )
         )
 
-        task = _make_task(role="manager")  # routes to opus
+        task = _make_task(role="manager", model="opus", effort="max")
         decision = router.select_provider_for_task(task)
 
         assert decision.provider == "provider"
@@ -365,10 +375,10 @@ class TestModelMatching:
             )
         )
 
-        task = _make_task(complexity=Complexity.HIGH, scope=Scope.LARGE)
+        task = _make_task(complexity=Complexity.HIGH, scope=Scope.LARGE, model="opus", effort="max")
         decision = router.select_provider_for_task(task)
 
-        # Effort should be preserved from base routing (max for large+high)
+        # Effort should be preserved from base routing (max, pinned on the task)
         assert decision.model_config.effort == "max"
 
 
@@ -433,13 +443,13 @@ class TestBatchRouting:
         )
 
         tasks = [
-            _make_task(id="T-first", role="manager"),
+            _make_task(id="T-first", role="manager", model="opus", effort="max"),
             _make_task(id="T-second", role="backend"),
         ]
 
         decisions = router.route_batch(tasks)
 
-        # Manager routes to opus, backend to sonnet
+        # Manager pinned to opus, backend to sonnet
         assert decisions[0].model_config.model == "opus"
         assert decisions[1].model_config.model == "sonnet"
 
@@ -448,78 +458,102 @@ class TestBatchRouting:
 
 
 class TestRouteTask:
-    def test_manager_routes_to_opus_max(self) -> None:
-        task = _make_task(role="manager")
-        config = route_task(task)
+    """Routing no longer hardcodes Claude tier names; high-stakes tasks
+    escalate to max effort on the operator-configured default_model, and
+    L1 tasks use the routing.yaml-configured fast_path.l1_model."""
 
-        assert config.model == "opus"
+    _L1_CONFIG = ModelConfig(model="l1-model", effort="normal", max_tokens=50_000)
+
+    def test_manager_routes_to_default_model_max(self) -> None:
+        task = _make_task(role="manager", model=None)
+        config = route_task(task, default_model="run-default")
+
+        assert config.model == "run-default"
         assert config.effort == "max"
 
-    def test_security_routes_to_opus_max(self) -> None:
-        # Security needs deep analysis -- always use opus/max
-        task = _make_task(role="security")
-        config = route_task(task)
+    def test_security_routes_to_default_model_max(self) -> None:
+        # Security needs deep analysis -- always use max effort
+        task = _make_task(role="security", model=None)
+        config = route_task(task, default_model="run-default")
 
-        assert config.model == "opus"
+        assert config.model == "run-default"
         assert config.effort == "max"
 
-    def test_large_high_complexity_routes_to_opus_max(self) -> None:
-        # Large scope + high complexity = hardest tasks, use opus/max
-        task = _make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
-        config = route_task(task)
+    def test_large_high_complexity_routes_to_default_model_max(self) -> None:
+        # Large scope + high complexity = hardest tasks, use max effort
+        task = _make_task(scope=Scope.LARGE, complexity=Complexity.HIGH, model=None)
+        config = route_task(task, default_model="run-default")
 
-        assert config.model == "opus"
+        assert config.model == "run-default"
         assert config.effort == "max"
 
-    def test_medium_complexity_routes_to_sonnet_high(self) -> None:
-        task = _make_task(complexity=Complexity.MEDIUM)
-        config = route_task(task)
+    def test_medium_complexity_routes_to_default_model_high(self) -> None:
+        task = _make_task(complexity=Complexity.MEDIUM, model=None)
+        config = route_task(task, default_model="run-default")
 
-        assert config.model == "sonnet"
+        assert config.model == "run-default"
         assert config.effort == "high"
 
-    def test_simple_tasks_route_to_sonnet(self) -> None:
-        # Low complexity + small scope tasks are L1 fast-pathed to haiku/low
-        task = _make_task(complexity=Complexity.LOW, scope=Scope.SMALL)
+    def test_simple_tasks_route_to_l1_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Low complexity + small scope tasks are L1 fast-pathed to the
+        # routing.yaml-configured L1 model
+        monkeypatch.setattr(fast_path_module, "_l1_model_config", self._L1_CONFIG)
+        task = _make_task(complexity=Complexity.LOW, scope=Scope.SMALL, model=None)
         config = route_task(task)
 
-        assert config.model == "sonnet"
+        assert config.model == "l1-model"
         assert config.effort == "normal"
 
-    def test_l1_docstring_task_routes_to_sonnet(self) -> None:
-        """L1 tasks (e.g. add docstring) should route to haiku/low."""
+    def test_simple_tasks_fall_back_to_default_model_when_l1_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Without fast_path.l1_model, L1 classification falls through to the
+        # standard routing sources instead of failing the task.
+        monkeypatch.setattr(fast_path_module, "_l1_model_config", None)
+        task = _make_task(complexity=Complexity.LOW, scope=Scope.SMALL, model=None)
+        config = route_task(task, default_model="run-default")
+
+        assert config.model == "run-default"
+
+    def test_l1_docstring_task_routes_to_l1_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """L1 tasks (e.g. add docstring) route to the configured L1 model."""
+        monkeypatch.setattr(fast_path_module, "_l1_model_config", self._L1_CONFIG)
         task = _make_task(
             title="Add docstring to parse_config",
             complexity=Complexity.LOW,
             scope=Scope.SMALL,
+            model=None,
         )
         config = route_task(task)
 
-        assert config.model == "sonnet"
+        assert config.model == "l1-model"
         assert config.effort == "normal"
 
-    def test_l1_typo_task_routes_to_sonnet(self) -> None:
-        """L1 tasks (e.g. fix typo) should route to haiku/low."""
+    def test_l1_typo_task_routes_to_l1_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """L1 tasks (e.g. fix typo) route to the configured L1 model."""
+        monkeypatch.setattr(fast_path_module, "_l1_model_config", self._L1_CONFIG)
         task = _make_task(
             title="Fix typo in error message",
             complexity=Complexity.LOW,
             scope=Scope.SMALL,
+            model=None,
         )
         config = route_task(task)
 
-        assert config.model == "sonnet"
+        assert config.model == "l1-model"
         assert config.effort == "normal"
 
-    def test_l1_not_applied_to_excluded_roles(self) -> None:
+    def test_l1_not_applied_to_excluded_roles(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Manager/architect/security roles are never L1-routed."""
+        monkeypatch.setattr(fast_path_module, "_l1_model_config", self._L1_CONFIG)
         task = _make_task(
             title="Add docstring to security module",
             role="security",
+            model=None,
         )
-        config = route_task(task)
+        config = route_task(task, default_model="run-default")
 
-        # Security always gets opus, regardless of L1 pattern match
-        assert config.model == "opus"
+        # Security always escalates to max effort, regardless of L1 pattern match
+        assert config.model == "run-default"
+        assert config.effort == "max"
 
 
 # --- Default router ---
@@ -615,8 +649,8 @@ class TestRoutingWithMockedTierStates:
         assert simple_decision.tier == Tier.FREE
         assert simple_decision.estimated_cost == pytest.approx(0.0)
 
-        # Complex task (manager) should fall back to paid if free doesn't support opus
-        manager_task = _make_task(role="manager")
+        # Complex task (manager, pinned to opus) should fall back to paid if free doesn't support opus
+        manager_task = _make_task(role="manager", model="opus", effort="max")
         manager_decision = router.select_provider_for_task(manager_task)
         # Free tier doesn't have opus, should fallback to standard
         assert manager_decision.tier == Tier.STANDARD

@@ -206,6 +206,11 @@ def publish_receipt(
             prompt=redacted.get("prompt"),
             tool_call=redacted.get("tool_call"),
             tool_result=redacted.get("tool_result"),
+            # Re-anchor over the effort dimension too: a redacted row keeps
+            # its ``effort`` key (get -> None on legacy rows), so the
+            # published receipt does not silently drop the effort dimension
+            # from the chain.
+            effort=redacted.get("effort"),
         )
         redacted["step_hash"] = new_step_hash
         # Blob refs may name cleartext blobs; drop them in published receipts.

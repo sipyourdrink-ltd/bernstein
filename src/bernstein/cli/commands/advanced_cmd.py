@@ -35,6 +35,7 @@ from bernstein.cli.helpers import (
 )
 from bernstein.cli.mcp_cmd import mcp_server as mcp_server  # re-exported for main.py
 from bernstein.core.runtime_state import read_session_replay_metadata
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.traces import TraceStore, build_replay_task_request, render_replay_diff
 from bernstein.core.visual_config import VisualConfig, resolve_visual_config
 
@@ -543,21 +544,105 @@ def plugins_cmd(workdir: str) -> None:
     default=False,
     help="Print the top curated documentation gaps and exit.",
 )
+@click.option(
+    "--endpoint",
+    "endpoint",
+    default=None,
+    help="Certify an OpenAI-compatible endpoint (base URL, e.g. http://127.0.0.1:11434/v1).",
+)
+@click.option(
+    "--endpoint-model",
+    "endpoint_model",
+    default=None,
+    help="Model id to certify; defaults to the first entry of the endpoint's /models listing.",
+)
+@click.option(
+    "--endpoint-engine",
+    "endpoint_engine",
+    default="",
+    help="Runtime label recorded in the receipt (e.g. ollama, lmstudio, mlx).",
+)
+@click.option(
+    "--endpoint-api-key-env",
+    "endpoint_api_key_env",
+    default=None,
+    help="NAME of the environment variable holding the endpoint's API key (never the key itself).",
+)
+@click.option(
+    "--endpoint-timeout",
+    "endpoint_timeout",
+    type=float,
+    default=60.0,
+    show_default=True,
+    help="Per-probe response budget in seconds; exceeding it fails the probe.",
+)
+@click.option(
+    "--role",
+    "roles",
+    multiple=True,
+    help="Role(s) to evaluate against --endpoint (repeatable). Defaults to the low-stakes local tier.",
+)
+@click.option(
+    "--failover-drill",
+    "failover_drill",
+    is_flag=True,
+    default=False,
+    help="Exercise every declared provider fallback chain; exit non-zero on any broken chain.",
+)
 @click.pass_context
-def doctor(ctx: click.Context, as_json: bool, auto_fix: bool, suggest_docs: bool) -> None:
+def doctor(
+    ctx: click.Context,
+    as_json: bool,
+    auto_fix: bool,
+    suggest_docs: bool,
+    endpoint: str | None,
+    endpoint_model: str | None,
+    endpoint_engine: str,
+    endpoint_api_key_env: str | None,
+    endpoint_timeout: float,
+    roles: tuple[str, ...],
+    failover_drill: bool,
+) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
     \b
-      bernstein doctor                # print diagnostic report
-      bernstein doctor --json         # machine-readable output
-      bernstein doctor --fix          # attempt to auto-fix issues
-      bernstein doctor --suggest-docs # surface top curated documentation gaps
-      bernstein doctor airgap         # battery of checks for an air-gapped run
-      bernstein doctor sonar          # surface SonarQube insights for the project
-      bernstein doctor glitchtip      # surface GlitchTip issue counts and top unresolved
+      bernstein doctor                  # print diagnostic report
+      bernstein doctor --json           # machine-readable output
+      bernstein doctor --fix            # attempt to auto-fix issues
+      bernstein doctor --suggest-docs   # surface top curated documentation gaps
+      bernstein doctor --endpoint http://127.0.0.1:11434/v1
+                                        # certify a local OpenAI-compatible endpoint per role
+      bernstein doctor --failover-drill # probe every declared provider fallback chain
+      bernstein doctor airgap           # battery of checks for an air-gapped run
+      bernstein doctor sonar            # surface SonarQube insights for the project
+      bernstein doctor glitchtip        # surface GlitchTip issue counts and top unresolved
     """
     if ctx.invoked_subcommand is not None:
         ctx.obj = {"as_json": as_json, "auto_fix": auto_fix}
+        return
+
+    if endpoint is not None:
+        from bernstein.cli.commands.doctor_cmd import _run_endpoint_certification
+
+        exit_code = _run_endpoint_certification(
+            endpoint=endpoint,
+            model=endpoint_model,
+            engine=endpoint_engine,
+            api_key_env=endpoint_api_key_env,
+            timeout=endpoint_timeout,
+            roles=roles,
+            as_json=as_json,
+        )
+        if exit_code:
+            raise SystemExit(exit_code)
+        return
+
+    if failover_drill:
+        from bernstein.cli.commands.doctor.failover_drill import run_failover_drill_cli
+
+        exit_code = run_failover_drill_cli(workdir=Path.cwd(), as_json=as_json)
+        if exit_code:
+            raise SystemExit(exit_code)
         return
 
     if suggest_docs:
@@ -1322,11 +1407,232 @@ def trace_reindex_cmd(ctx: click.Context) -> None:
 
 
 # ---------------------------------------------------------------------------
+# trace project / verify-projection -- signed OTel span set from the journal
+# ---------------------------------------------------------------------------
+
+#: Default local JSONL store for projected OTLP spans. The projection emits
+#: here even with no OTLP endpoint set (issue #2300, AC5).
+_OTEL_PROJECTION_SUFFIX = ".otel.json"
+
+
+def _journal_path_for_run(root: Path, run_id: str) -> Path:
+    from bernstein.core.replay.journal import JOURNAL_FILENAME
+
+    return root / ".sdd" / "runs" / run_id / JOURNAL_FILENAME
+
+
+def _projection_dest(root: Path, run_id: str) -> Path:
+    return root / ".sdd" / "runs" / run_id / f"projection{_OTEL_PROJECTION_SUFFIX}"
+
+
+@trace_cmd.command("project")
+@click.argument("run_id")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--no-genai-stability",
+    "no_stability",
+    is_flag=True,
+    default=False,
+    help="Omit the (Development-stage) GenAI convention attributes; ids stay journal-anchored.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the signed projection to stdout as JSON instead of writing a file.",
+)
+def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bool) -> None:
+    """Project ``RUN_ID``'s event journal into a signed OTel span set.
+
+    Span ids are derived from journal entry hashes, so two replays export a
+    byte-identical id tree; the set is signed with the install identity. The
+    projection is written to the local JSONL store even with no OTLP endpoint
+    set (issue #2300).
+
+    Exit codes: 0 = written, 1 = no journal / bad input.
+    """
+    from bernstein.cli.commands.credential_cmd import (
+        _load_or_create_install_key,
+        _signing_key_path,
+    )
+    from bernstein.core.observability.otel_projection import (
+        ProjectionError,
+        canonical_projection_bytes,
+        project_spans,
+        projection_to_dict,
+        sign_projection,
+    )
+    from bernstein.core.replay.journal import load_events
+
+    root = Path(workdir).resolve()
+    journal_path = _journal_path_for_run(root, run_id)
+    events = load_events(journal_path)
+    if not events:
+        raise click.ClickException(
+            f"no event journal for run {sanitize_log(run_id)} at {sanitize_log(str(journal_path))}",
+        )
+
+    key = _load_or_create_install_key(_signing_key_path(root))
+    from bernstein.core.security.audit_dsse import keyid_from_public_key
+
+    try:
+        projection = project_spans(
+            events,
+            run_id=run_id,
+            genai_stability=not no_stability,
+            keyid=keyid_from_public_key(key.public_key()),
+        )
+    except ProjectionError as exc:
+        raise click.ClickException(sanitize_log(str(exc))) from exc
+
+    signed = sign_projection(projection, signing_key=key)
+    doc = json.dumps(projection_to_dict(signed), sort_keys=True, indent=2)
+
+    if as_json:
+        click.echo(doc)
+        return
+
+    _record_otel_projection_event(
+        root,
+        run_id=run_id,
+        journal_head=str(events[-1].get("event_hash", "")),
+        trace_id=signed.trace_id,
+        span_count=len(signed.spans),
+        projection_bytes=canonical_projection_bytes(signed),
+    )
+
+    dest = _projection_dest(root, run_id)
+    dest.write_text(doc, encoding="utf-8")
+    console.print(
+        f"[green]OK[/green] -- wrote signed OTel projection {sanitize_log(str(dest))} "
+        f"(trace {signed.trace_id[:16]}, {len(signed.spans)} spans)"
+    )
+
+
+@trace_cmd.command("verify-projection")
+@click.argument("run_id")
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/.",
+)
+@click.option(
+    "--projection",
+    "projection_path",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Projection path (defaults to .sdd/runs/<run>/projection.otel.json).",
+)
+def trace_verify_projection_cmd(run_id: str, workdir: str, projection_path: str | None) -> None:
+    """Recompute span ids from ``RUN_ID``'s journal and verify the signature.
+
+    Rejects a span whose id was altered or whose journal entry hash is absent
+    from the chain, and confirms the signature chains to the install identity.
+
+    Exit codes: 0 = OK, 1 = bad input, 2 = verification failed.
+    """
+    from bernstein.cli.commands.credential_cmd import (
+        _load_or_create_install_key,
+        _signing_key_path,
+    )
+    from bernstein.core.observability.otel_projection import (
+        ProjectionError,
+        projection_from_dict,
+        verify_projection,
+    )
+    from bernstein.core.replay.journal import load_events
+
+    root = Path(workdir).resolve()
+    events = load_events(_journal_path_for_run(root, run_id))
+    if not events:
+        console.print(f"[red]No event journal for run[/red] {sanitize_log(run_id)}")
+        raise SystemExit(1)
+
+    mpath = Path(projection_path) if projection_path is not None else _projection_dest(root, run_id)
+    if not mpath.exists():
+        console.print(f"[red]No projection at[/red] {sanitize_log(str(mpath))}")
+        raise SystemExit(1)
+
+    try:
+        payload = json.loads(mpath.read_text(encoding="utf-8"))
+        projection = projection_from_dict(payload)
+    except (OSError, ValueError, ProjectionError) as exc:
+        console.print(f"[red]Cannot read projection:[/red] {sanitize_log(str(exc))}")
+        raise SystemExit(1) from exc
+
+    public_key = _load_or_create_install_key(_signing_key_path(root)).public_key()
+    result = verify_projection(projection, events, public_key)
+
+    console.print()
+    console.print(
+        f"[bold]OTel projection[/bold] run={sanitize_log(run_id)} "
+        f"trace={projection.trace_id[:16]} spans={len(projection.spans)}"
+    )
+    if result.ok:
+        console.print("[green]OK[/green] -- span ids recompute from the journal, signature chains to install identity.")
+        raise SystemExit(0)
+    console.print(f"[red]VERIFICATION FAILED[/red] -- {len(result.errors)} error(s):")
+    for err in result.errors:
+        console.print(f"  - {sanitize_log(err)}")
+    raise SystemExit(2)
+
+
+def _record_otel_projection_event(
+    root: Path,
+    *,
+    run_id: str,
+    journal_head: str,
+    trace_id: str,
+    span_count: int,
+    projection_bytes: bytes,
+) -> None:
+    """Best-effort append of an ``otel.projection`` audit-chain event.
+
+    A verifier holding the journal reprojects byte-identically and confirms the
+    exported spans faithfully project the chain. Failure to record must not
+    abort the emit -- the projection file is the primary artifact.
+    """
+    import hashlib
+
+    try:
+        from bernstein.core.security.audit import load_or_create_audit_key
+        from bernstein.core.security.audit_chain import (
+            AuditChainStore,
+            record_otel_projection,
+        )
+
+        chain = AuditChainStore(root / ".sdd" / "audit", key=load_or_create_audit_key())
+        record_otel_projection(
+            chain=chain,
+            run_id=run_id,
+            journal_head=journal_head,
+            trace_id=trace_id,
+            span_count=span_count,
+            projection_sha256=hashlib.sha256(projection_bytes).hexdigest(),
+        )
+    except Exception as exc:  # pragma: no cover - defensive; emit is primary
+        _LOGGER.warning("otel projection audit record failed: %s", sanitize_log(str(exc)))
+
+
+# ---------------------------------------------------------------------------
 # replay
 # ---------------------------------------------------------------------------
 
 
-_REPLAY_JSONL = "replay.jsonl"
+#: Canonical per-run event journal filename (issue #2293). The old
+#: ``replay.jsonl`` recorder was consolidated into ``journal.jsonl``.
+_REPLAY_JSONL = "journal.jsonl"
 
 
 def _replay_print_header(
@@ -1614,6 +1920,86 @@ def _replay_run_impl(
     console.print("[dim]This fingerprint proves the exact sequence of events in this run.[/dim]")
 
 
+def _resolve_journal_path(run_id: str, runs_dir: Path) -> Path:
+    """Resolve a run id (or ``latest``) to its canonical journal path."""
+    if run_id == "latest":
+        run_id = _replay_resolve_latest(runs_dir)
+    return runs_dir / run_id / _REPLAY_JSONL
+
+
+def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
+    """Recompute the journal head and report the first divergent step.
+
+    On an intact journal, reports byte-identity. When a step diverges,
+    writes a ``divergence_report.json`` artifact listing ``(step_index,
+    expected_hash, actual_hash)`` and exits non-zero (issue #2293, AC2).
+    """
+    from bernstein.core.replay.journal import verify_journal
+
+    runs_dir = Path(sdd_dir) / "runs"
+    journal_path = _resolve_journal_path(run_id, runs_dir)
+    if not journal_path.exists():
+        console.print(f"[red]Journal not found:[/red] {journal_path}")
+        raise SystemExit(1)
+
+    result = verify_journal(journal_path)
+    if result.ok:
+        if as_json:
+            console.print_json(json.dumps({"run_id": run_id, "verified": True, "count": result.count}))
+        else:
+            console.print(
+                f"[green]OK[/green] journal for [bold]{run_id}[/bold] is byte-identical ({result.count} steps)"
+            )
+        return
+
+    report = {
+        "run_id": run_id,
+        "step_index": result.divergent_index,
+        "expected_hash": result.expected_hash,
+        "actual_hash": result.actual_hash,
+    }
+    report_path = journal_path.parent / "divergence_report.json"
+    with contextlib.suppress(OSError):
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    if as_json:
+        console.print_json(json.dumps(report))
+    else:
+        console.print(
+            f"[red]DIVERGENCE[/red] first divergent step [bold]{result.divergent_index}[/bold] "
+            f"in run [bold]{run_id}[/bold]"
+        )
+        console.print(f"[dim]expected:[/dim] {result.expected_hash}")
+        console.print(f"[dim]actual:  [/dim] {result.actual_hash}")
+        console.print(f"[dim]Divergence report written to:[/dim] {report_path}")
+    raise SystemExit(1)
+
+
+def _replay_from_step(*, run_id: str, sdd_dir: str, from_step: int, as_json: bool) -> None:
+    """Rebuild deterministic run state by walking the journal to ``from_step``.
+
+    Two independent invocations produce byte-identical output, so the
+    reconstruction is reproducible (issue #2293, AC4).
+    """
+    from bernstein.core.replay.journal import rebuild_state
+
+    runs_dir = Path(sdd_dir) / "runs"
+    journal_path = _resolve_journal_path(run_id, runs_dir)
+    if not journal_path.exists():
+        console.print(f"[red]Journal not found:[/red] {journal_path}")
+        raise SystemExit(1)
+
+    state = rebuild_state(journal_path, from_step=from_step)
+    if as_json:
+        # Sorted keys + no run-id envelope keeps the output byte-stable
+        # across invocations so replay reconstruction is reproducible.
+        console.print(json.dumps(state, sort_keys=True))
+        return
+    console.print(f"[bold]Rebuilt state for {run_id} through step {state['step_count']}[/bold]")
+    console.print(f"[dim]head:[/dim] {state['head_hash']}")
+    console.print(f"[dim]events:[/dim] {', '.join(state['events'])}")
+
+
 @click.command("replay")
 @click.argument("run_id", nargs=-1, required=True)
 @click.option(
@@ -1641,6 +2027,20 @@ def _replay_run_impl(
     default=None,
     help="Append additional hint text to the replayed task description.",
 )
+@click.option(
+    "--verify",
+    "verify",
+    is_flag=True,
+    default=False,
+    help="Recompute the journal head and report the first divergent step.",
+)
+@click.option(
+    "--from-step",
+    "from_step",
+    type=int,
+    default=None,
+    help="Rebuild deterministic run state by walking the journal to step N.",
+)
 def replay_cmd(
     run_id: tuple[str, ...],
     sdd_dir: str,
@@ -1648,11 +2048,13 @@ def replay_cmd(
     limit: int | None,
     model: str | None,
     extra_context: str | None,
+    verify: bool,
+    from_step: int | None,
 ) -> None:
     """Replay a past orchestration run step-by-step.
 
     \b
-    Reads .sdd/runs/{run_id}/replay.jsonl and displays events in a
+    Reads .sdd/runs/{run_id}/journal.jsonl and displays events in a
     Rich table showing timing, event type, agent, task, and details.
 
     \b
@@ -1664,6 +2066,8 @@ def replay_cmd(
       bernstein replay list                       # list available runs
       bernstein replay latest                     # replay most recent run
       bernstein replay 20240315-143022            # replay a specific run
+      bernstein replay <RUN_ID> --verify          # recompute head, find divergence
+      bernstein replay <RUN_ID> --from-step N     # rebuild state to step N
       bernstein replay diff RUN_A RUN_B           # first-divergence finder
       bernstein replay <AGENT_ID>                 # per-step journal view (#1799)
       bernstein replay export <AGENT_ID> -o RECEIPT   # portable receipt (#1799)
@@ -1689,6 +2093,16 @@ def replay_cmd(
             "OR bernstein replay export|publish|verify|diff-journal ...",
         )
         raise SystemExit(2)
+
+    # --verify / --from-step operate on the canonical run event journal
+    # (issue #2293): recompute the Merkle head and locate divergence, or
+    # rebuild a deterministic state projection for a prefix of the run.
+    if verify:
+        _replay_verify_journal(run_id=args[0], sdd_dir=sdd_dir, as_json=as_json)
+        return
+    if from_step is not None:
+        _replay_from_step(run_id=args[0], sdd_dir=sdd_dir, from_step=from_step, as_json=as_json)
+        return
 
     # When an agent journal exists for this id, prefer the per-step view
     # over the run-trace view. The journal directory naming is unambiguous
