@@ -207,6 +207,11 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # both the HMAC chain and the Merkle seal.
     all_passed = _verify_evidence_bundles() and all_passed
 
+    # Tournament selection receipts are a further integrity pillar: a tampered
+    # score or a hand-picked winner must fail verify exactly like a tampered
+    # chain entry (#2353). Orthogonal to both HMAC chain and Merkle seal.
+    all_passed = _verify_tournament_receipts() and all_passed
+
     console.print()
     raise SystemExit(0 if all_passed else 1)
 
@@ -292,6 +297,52 @@ def _verify_evidence_bundles() -> bool:
     console.print(Panel("[bold red]Evidence Bundle Verification FAILED[/bold red]", border_style="red", expand=False))
     for result in failures:
         task = result.bundle.task_id if result.bundle is not None else "?"
+        console.print(f"  [red]![/red] task {task}: {result.reason}")
+    return False
+
+
+def _verify_tournament_receipts() -> bool:
+    """Verify every tournament selection receipt and print results.
+
+    A tampered score or a hand-picked winner makes ``bernstein audit verify``
+    fail with the task named, exactly like a tampered chain entry (#2353). When
+    no receipts exist the check is a silent no-op.
+    """
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.tournament.receipt import verify_all_tournament_receipts
+
+    # AUDIT_DIR is ``.sdd/audit``; receipts live under
+    # ``<root>/.sdd/tournaments/receipts``.
+    workdir = AUDIT_DIR.parent.parent
+
+    try:
+        key = load_or_create_audit_key()
+    except OSError as exc:  # pragma: no cover - filesystem race
+        console.print(f"[red]Failed to load audit key for tournament verification: {exc}[/red]")
+        return False
+
+    results = verify_all_tournament_receipts(workdir, hmac_key=key)
+    if not results:
+        return True  # no tournament receipts recorded; nothing to verify
+
+    failures = [r for r in results if not r.ok]
+    console.print()
+    if not failures:
+        console.print(
+            Panel("[bold green]Tournament Receipt Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Receipts", str(len(results)))
+        console.print(table)
+        return True
+
+    console.print(
+        Panel("[bold red]Tournament Receipt Verification FAILED[/bold red]", border_style="red", expand=False)
+    )
+    for result in failures:
+        task = result.receipt.task_id if result.receipt is not None else "?"
         console.print(f"  [red]![/red] task {task}: {result.reason}")
     return False
 

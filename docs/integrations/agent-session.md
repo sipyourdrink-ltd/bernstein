@@ -76,6 +76,45 @@ address with no receipt: tamper detection is structural, not a stored
 comparison. Exit codes: `0` verified, `1` missing directory, `2`
 attestation failure.
 
+## Updating an install
+
+Bumping an installed skill to newer content is not a plain overwrite. An
+update binds the *prior* content address to the new one, so the
+supersession is itself a chain-anchored fact:
+
+```bash
+bernstein skills package update --host claude --scope project
+```
+
+The update writes an update receipt (`.sdd/skills/updates/`) keyed by the
+new content address, anchors it in the same `skills` lineage spine, and
+mirrors a `plugin.update_receipt` event into the HMAC chain. A verifier
+walks the update receipts newest to oldest and lands on the root
+`plugin.install_receipt`, so the full supersession history of an installed
+tree is reconstructable offline. An update onto a tree that was never
+anchored is refused (run `install` first); an update whose source already
+matches the installed tree is a no-op. Exit codes: `0` updated or already
+current, `1` error.
+
+`verify` (and `status`, below) transparently accept an updated tree: the
+recomputed content address resolves to the update receipt, and the lineage
+is required to chain back to a root install.
+
+## Checking every install at once
+
+`status` scans the default skill directory for each supported host and
+scope, re-hashes any present tree, and proves it against its anchored
+install or update receipt:
+
+```bash
+bernstein skills package status
+bernstein skills package status --json
+```
+
+Exit codes: `0` every present install verifies (or none present), `2` at
+least one present install failed verification. `--json` emits the
+per-install verdicts for scripting.
+
 ## The plugin bundle
 
 The repository root doubles as the plugin root:

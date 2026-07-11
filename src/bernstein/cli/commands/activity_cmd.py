@@ -80,6 +80,7 @@ def activity_verify_cmd(run: str, workdir: str, as_json: bool) -> None:
                     "kind": s.kind,
                     "ok": s.ok,
                     "evidence_reattached": s.evidence_reattached,
+                    "signed_receipt_verified": s.signed_receipt_verified,
                     "reason": s.reason,
                 }
                 for s in result.stages
@@ -95,7 +96,12 @@ def activity_verify_cmd(run: str, workdir: str, as_json: bool) -> None:
             for stage in result.stages:
                 if stage.ok:
                     tag = "[green]OK[/green]"
-                    extra = " (evidence reattached)" if stage.evidence_reattached else ""
+                    notes = []
+                    if stage.evidence_reattached:
+                        notes.append("evidence reattached")
+                    if stage.signed_receipt_verified:
+                        notes.append("signed receipt verified")
+                    extra = f" ({', '.join(notes)})" if notes else ""
                     console.print(f"  {tag} {stage.stage_id} [{stage.kind}]{extra}")
                 else:
                     console.print(f"  [red]MISMATCH[/red] {stage.stage_id} [{stage.kind}] -- {stage.reason}")

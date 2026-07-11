@@ -57,6 +57,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `review_responder/`         | PR review responder - react to inline review comments on Bernstein PRs |
 | `routes/`                   | FastAPI router modules for the Bernstein task server |
 | `routing/`                  | routing sub-package |
+| `run_service/`              | Detached run service: submit a goal, disconnect, reattach later (#2352) |
 | `sandbox/`                  | Pluggable sandbox backends for agent isolation (oai-002 phase 1) |
 | `security/`                 | security sub-package |
 | `server/`                   | server sub-package - re-exports for backward compatibility |
@@ -69,6 +70,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `teams/`                    | Named team manifests - pinned bundles of roles, model policies, and response profiles |
 | `telemetry/`                | Opt-in operator observability for Bernstein |
 | `tokens/`                   | tokens sub-package |
+| `tournament/`               | Tournament runs: parallel attempts selected by deterministic evaluators (#2353) |
 | `trackers/`                 | Tracker adapter subsystem |
 | `trigger_sources/`          | Trigger source adapters - normalize raw events into TriggerEvent |
 | `tunnels/`                  | Tunnel provider abstraction and registry |
@@ -122,6 +124,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `goose.py`                  | Goose CLI adapter for Bernstein |
 | `gptme.py`                  | gptme CLI adapter |
 | `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
+| `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
 | `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
 | `junie.py`                  | JetBrains Junie CLI adapter |
 | `kilo.py`                   | Kilo CLI adapter (Stackblitz) |
