@@ -563,13 +563,13 @@ class TestQwenIsAlive:
 class TestQwenKill:
     def test_calls_killpg(self) -> None:
         adapter = QwenAdapter()
-        with patch("bernstein.adapters.base.kill_process_group_graceful") as mock_killpg:
+        with patch("bernstein.adapters.base.reap_process_group") as mock_killpg:
             adapter.kill(555)
         mock_killpg.assert_called_once_with(555)
 
     def test_does_not_raise_on_oserror(self) -> None:
         adapter = QwenAdapter()
-        with patch("bernstein.adapters.base.kill_process_group_graceful", return_value=False):
+        with patch("bernstein.adapters.base.reap_process_group", return_value=False):
             adapter.kill(556)  # must not raise
 
 

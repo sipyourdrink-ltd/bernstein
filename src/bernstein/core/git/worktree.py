@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 from bernstein.core.git.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
 from bernstein.core.git.salvage import SalvageResult, salvage_worktree
 from bernstein.core.git.worktree_isolation import validate_worktree_isolation
-from bernstein.core.platform_compat import process_alive
+from bernstein.core.platform_compat import IS_WINDOWS, process_alive, robust_rmtree
 
 if TYPE_CHECKING:
     import threading
@@ -830,6 +830,32 @@ class WorktreeManager:
                 )
         except Exception as exc:
             logger.warning("Failed to remove worktree for %s: %s", session_id, exc)
+
+        # 1b. Windows: git can leave the directory behind when a file inside
+        # it is still locked (antivirus, indexers, a slow-to-exit child
+        # holding a handle) or read-only.  Retry the removal with the
+        # platform-layer helper (read-only clearing + backoff), then prune
+        # the now-orphaned worktree metadata.  POSIX behaviour is unchanged.
+        if IS_WINDOWS and worktree_path.exists():
+            if robust_rmtree(worktree_path):
+                try:
+                    subprocess.run(
+                        ["git", "worktree", "prune"],
+                        cwd=self.repo_root,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=10,
+                    )
+                except Exception as exc:
+                    logger.debug("git worktree prune after residual removal failed: %s", exc)
+            else:
+                logger.warning(
+                    "Residual worktree directory could not be removed for %s: %s",
+                    session_id,
+                    worktree_path,
+                )
 
         # 2. Delete the branch
         #    When salvage moved the branch to salvage/<id> the original agent

@@ -414,11 +414,11 @@ class TestQDevIsAlive:
 class TestQDevKill:
     def test_calls_kill_process_group_graceful(self) -> None:
         adapter = QDevAdapter()
-        with patch("bernstein.adapters.base.kill_process_group_graceful") as mock_kill:
+        with patch("bernstein.adapters.base.reap_process_group") as mock_kill:
             adapter.kill(555)
         mock_kill.assert_called_once_with(555)
 
     def test_does_not_raise_on_dead_process(self) -> None:
         adapter = QDevAdapter()
-        with patch("bernstein.adapters.base.kill_process_group_graceful", return_value=False):
+        with patch("bernstein.adapters.base.reap_process_group", return_value=False):
             adapter.kill(556)  # must not raise

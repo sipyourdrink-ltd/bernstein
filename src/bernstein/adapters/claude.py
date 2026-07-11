@@ -23,7 +23,7 @@ import sys
 import time
 from collections.abc import Mapping  # noqa: TC003 - runtime use in ClassVar annotations
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.claude_agents import build_agents_json
@@ -50,7 +50,15 @@ from bernstein.adapters.env_isolation import (
 )
 from bernstein.core.defaults import COST
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
-from bernstein.core.platform_compat import kill_process_group_graceful, process_alive
+from bernstein.core.platform_compat import (
+    kill_process_group_graceful,
+    process_alive,
+    process_group_popen_kwargs,
+    reap_process_group,
+)
+
+if TYPE_CHECKING:
+    from bernstein.core.config.platform_compat import ProcessReapReceipt
 
 # task-budgets-2026-03-13 propagation. Inlined (rather than imported from
 # ``bernstein.core.cost.budget_countdown``) to keep this adapter free of
@@ -610,8 +618,8 @@ class ClaudeCodeAdapter(CLIAdapter):
                     env=env,
                     stdout=subprocess.PIPE,
                     stderr=stderr_file,
-                    start_new_session=True,
                     preexec_fn=preexec_fn,
+                    **process_group_popen_kwargs(),
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError("claude not found in PATH. Install Claude Code: https://claude.ai/code") from exc
@@ -624,9 +632,9 @@ class ClaudeCodeAdapter(CLIAdapter):
                     stdin=claude_proc.stdout,
                     stdout=log_file,
                     stderr=stderr_file,
-                    start_new_session=True,
                     cwd=workdir,
                     env=env,
+                    **process_group_popen_kwargs(),
                 )
             except Exception:
                 claude_proc.kill()
@@ -898,23 +906,24 @@ class ClaudeCodeAdapter(CLIAdapter):
         # Fallback for processes we didn't spawn
         return process_alive(pid)
 
-    def kill(self, pid: int) -> None:
-        # The claude process is spawned with start_new_session=True, so
+    def kill(self, pid: int) -> ProcessReapReceipt:
+        # The claude process is spawned with process-group isolation, so
         # its PID equals its PGID.  Use the PID directly as PGID instead
         # of os.getpgid() which fails when the process is already dead -
         # this ensures we kill the entire session group including any
         # child processes (the actual claude CLI) that outlive the wrapper.
         #
-        # ``kill_process_group_graceful`` sends SIGTERM, polls briefly, and
+        # ``reap_process_group`` sends SIGTERM, polls briefly, and
         # escalates to SIGKILL if the group is still alive.  Without the
         # escalation, agents that trap SIGTERM survive reap paths - see
-        # .
-        kill_process_group_graceful(pid)
+        # .  The returned receipt describes the primary (agent) group reap.
+        receipt = reap_process_group(pid)
         # Also kill the wrapper process with the same TERM→KILL escalation
         wrapper_pid = self._wrapper_pids.pop(pid, None)
         if wrapper_pid:
             kill_process_group_graceful(wrapper_pid)
         self._procs.pop(pid, None)
+        return receipt
 
     def name(self) -> str:
         return "Claude Code"

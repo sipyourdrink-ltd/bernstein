@@ -16,10 +16,21 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from bernstein.core.platform_compat import is_filesystem_link
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_link_target(path: Path) -> Path:
+    """Resolve a link (symlink or junction) to its target path.
+
+    Isolated in a helper so tests can exercise the junction branches on
+    platforms where junctions cannot be created.
+    """
+    return path.resolve()
 
 
 class WorktreeIsolationError(Exception):
@@ -53,8 +64,8 @@ def check_sdd_not_shared(worktree_path: Path, repo_root: Path) -> list[str]:
 
     The .sdd/ directory inside a worktree must be either absent (fine, will
     be created fresh) or a real directory local to the worktree.  It must NOT
-    be a symlink into the parent repo's .sdd/ because that would let agents
-    clobber each other's state files.
+    be a symlink (or, on Windows, an NTFS junction) into the parent repo's
+    .sdd/ because that would let agents clobber each other's state files.
 
     Args:
         worktree_path: Path to the worktree directory.
@@ -69,8 +80,8 @@ def check_sdd_not_shared(worktree_path: Path, repo_root: Path) -> list[str]:
     if not sdd_path.exists():
         return violations
 
-    if sdd_path.is_symlink():
-        link_target = sdd_path.resolve()
+    if is_filesystem_link(sdd_path):
+        link_target = _resolve_link_target(sdd_path)
         parent_sdd = repo_root / ".sdd"
         if link_target == parent_sdd.resolve() or str(link_target).startswith(str(parent_sdd.resolve())):
             violations.append(f".sdd/ is a symlink to parent repo state: {sdd_path} -> {link_target}")
@@ -109,14 +120,14 @@ def check_symlinks_read_only(
         return violations
 
     for entry in worktree_path.iterdir():
-        if not entry.is_symlink():
+        if not is_filesystem_link(entry):
             continue
 
         rel_name = entry.name
         if rel_name in allowed_symlink_dirs:
             continue
 
-        link_target = entry.resolve()
+        link_target = _resolve_link_target(entry)
         # Symlinks pointing into the parent repo's mutable state dirs are dangerous
         mutable_dirs = (".sdd", ".git")
         for mutable in mutable_dirs:

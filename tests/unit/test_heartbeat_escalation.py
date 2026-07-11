@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import signal
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -117,7 +116,6 @@ class TestBasicEscalation:
         assert result.tier == EscalationTier.SIGTERM
         mock_kill.assert_called_with(1234, signal.SIGTERM)
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL not available on Windows")
     @patch("bernstein.core.platform_compat.kill_process_group")
     def test_sigkill_at_threshold(self, mock_kill: MagicMock) -> None:
         ladder = HeartbeatEscalationLadder()
@@ -128,7 +126,10 @@ class TestBasicEscalation:
         result = ladder.check_and_escalate("agent-1", heartbeat_age_s=150.0)
         assert result is not None
         assert result.tier == EscalationTier.SIGKILL
-        mock_kill.assert_called_with(1234, signal.SIGKILL)
+        # On hosts without SIGKILL the ladder falls back to the numeric
+        # force-kill code, which the platform layer maps to a tree kill.
+        expected_sig = getattr(signal, "SIGKILL", 9)
+        mock_kill.assert_called_with(1234, expected_sig)
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +148,6 @@ class TestIdempotency:
         assert result1.tier == EscalationTier.WARN
         assert result2 is None  # already warned
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL not available on Windows")
     def test_escalates_to_next_tier(self) -> None:
         ladder = HeartbeatEscalationLadder()
         ladder.register_agent("agent-1", pid=1234)
@@ -275,3 +275,71 @@ class TestUnregister:
     def test_unregister_nonexistent_is_safe(self) -> None:
         ladder = HeartbeatEscalationLadder()
         ladder.unregister_agent("nonexistent")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Platform-safe tier delivery (issue #2367)
+# ---------------------------------------------------------------------------
+
+_HB = "bernstein.core.agents.heartbeat_escalation"
+
+
+class TestPlatformSafeTiers:
+    """The escalation ladder must run on hosts without POSIX signals.
+
+    SIGUSR1 has no Windows equivalent, so that tier degrades to a logged
+    no-op instead of an ``AttributeError`` at escalation time.  SIGKILL is
+    represented by the numeric force-kill code (9), which the platform
+    layer translates to a native tree termination.
+    """
+
+    def _escalate_to(self, ladder: HeartbeatEscalationLadder, age: float) -> EscalationAction | None:
+        ladder.register_agent("agent-1", pid=1234)
+        result: EscalationAction | None = None
+        for step_age in (60.0, 90.0, 120.0, 150.0):
+            if step_age > age:
+                break
+            result = ladder.check_and_escalate("agent-1", heartbeat_age_s=step_age) or result
+        return result
+
+    @patch("bernstein.core.platform_compat.kill_process_group")
+    @patch(f"{_HB}.is_signal_supported", return_value=False)
+    def test_sigusr1_tier_is_noop_without_signal_support(
+        self,
+        _mock_supported: MagicMock,
+        mock_kill: MagicMock,
+    ) -> None:
+        ladder = HeartbeatEscalationLadder()
+        result = self._escalate_to(ladder, 90.0)
+        assert result is not None
+        assert result.tier == EscalationTier.SIGUSR1
+        assert result.action_taken is False
+        mock_kill.assert_not_called()
+
+    @patch("bernstein.core.platform_compat.kill_process_group")
+    @patch(f"{_HB}.is_signal_supported", return_value=False)
+    def test_sigkill_tier_uses_numeric_force_kill(
+        self,
+        _mock_supported: MagicMock,
+        mock_kill: MagicMock,
+    ) -> None:
+        ladder = HeartbeatEscalationLadder()
+        result = self._escalate_to(ladder, 150.0)
+        assert result is not None
+        assert result.tier == EscalationTier.SIGKILL
+        assert result.action_taken is True
+        mock_kill.assert_called_with(1234, 9)
+
+    @patch("bernstein.core.platform_compat.kill_process_group")
+    @patch(f"{_HB}.is_signal_supported", return_value=False)
+    def test_sigterm_tier_still_delivers(
+        self,
+        _mock_supported: MagicMock,
+        mock_kill: MagicMock,
+    ) -> None:
+        ladder = HeartbeatEscalationLadder()
+        result = self._escalate_to(ladder, 120.0)
+        assert result is not None
+        assert result.tier == EscalationTier.SIGTERM
+        assert result.action_taken is True
+        mock_kill.assert_called_with(1234, signal.SIGTERM)
