@@ -86,6 +86,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "evidence",
         # Durable work ledger: resumable task-graph state (issue #2358)
         "ledger",
+        # Detached run service: submit, disconnect, reattach later (issue #2352)
+        "run-service",
         # Auth
         "auth",
         "login",

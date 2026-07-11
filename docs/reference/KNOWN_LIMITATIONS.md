@@ -28,6 +28,11 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 - Keep concurrency conservative.
 - Use workspace decomposition and staged plans.
 - Treat cluster/worker setups as advanced operations that require explicit validation in your environment.
+- For a single long-running goal you want to detach from and reattach later, use `bernstein run-service submit`/`attach` (below) rather than a full cluster.
+
+**Detached single-host runs (shipped):** `bernstein run-service` decouples a run from the invoking terminal on one host. A session-detached supervisor owns execution while the durable work ledger owns state; `attach` proves ledger continuity across the detach boundary before rendering progress, and every lifecycle boundary is a signed audit-chain receipt. A supervisor killed mid-run resumes from the ledger tip with zero lost completed tasks. `bernstein worker` remains the multi-host fan-out path.
+
+**Off-host execution (documented follow-on):** running a detached run's tasks on another host is not yet wired. Promoting the `ssh` sandbox backend (`core/sandbox/ssh_backend.py`) from scaffold to supported, and enabling the hosted sandbox backends in the existing registry (`core/sandbox/backends/`) behind an optional extra, are tracked as a later increment. Remote-backend secrets will flow through the credential vault only, never the ledger or the receipts.
 
 ---
 
