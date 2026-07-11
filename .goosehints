@@ -81,6 +81,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 |-----------------------------|---------|
 | `_contract.py`              | Adapter contract loader and capability checker |
 | `advisories.py`             | Adapter minimum-safe-version advisories (supply-chain posture) |
+| `agy.py`                    | Antigravity CLI (``agy``) adapter |
 | `aichat.py`                 | AIChat CLI adapter |
 | `aider.py`                  | Aider CLI adapter |
 | `amp.py`                    | Amp CLI adapter |
@@ -88,6 +89,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `autohand.py`               | Autohand Code CLI adapter |
 | `base.py`                   | Base adapter for CLI coding agents |
 | `caching_adapter.py`        | Caching wrapper for CLI adapters to enable prompt prefix deduplication and response reuse |
+| `canary.py`                 | Adapter conformance canary matrix (issue #2368) |
 | `charm.py`                  | Charm Crush CLI adapter |
 | `claude.py`                 | Claude Code CLI adapter |
 | `claude_agents.py`          | Build per-task Claude Code subagent definitions for the --agents flag |

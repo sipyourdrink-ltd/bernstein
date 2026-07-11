@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.adapters.plugin_sdk import AdapterPluginInfo
+    from bernstein.core.config.platform_compat import ProcessReapReceipt
     from bernstein.core.models import ModelConfig
 
 logger = logging.getLogger(__name__)
@@ -223,11 +224,11 @@ class CachingAdapter(CLIAdapter):
             return False
         return self._inner.is_alive(pid)
 
-    def kill(self, pid: int) -> None:
-        """Delegate to inner adapter."""
+    def kill(self, pid: int) -> ProcessReapReceipt | None:
+        """Delegate to inner adapter (no receipt for cached PID 0)."""
         if pid == 0:
-            return
-        self._inner.kill(pid)
+            return None
+        return self._inner.kill(pid)
 
     def detect_tier(self) -> Any:
         """Delegate to inner adapter."""

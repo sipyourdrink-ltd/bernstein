@@ -223,12 +223,12 @@ class TestAdapterContract:
 
     def test_kill_does_not_raise(self, name: str, factory: Any) -> None:
         adapter = factory()
-        with patch("bernstein.adapters.base.kill_process_group_graceful"):
+        with patch("bernstein.adapters.base.reap_process_group"):
             adapter.kill(999)  # must not raise
 
     def test_kill_suppresses_oserror(self, name: str, factory: Any) -> None:
         adapter = factory()
-        with patch("bernstein.adapters.base.kill_process_group_graceful", return_value=False):
+        with patch("bernstein.adapters.base.reap_process_group", return_value=False):
             adapter.kill(99999)  # must not raise
 
     def test_detect_tier_returns_none_or_api_tier_info(self, name: str, factory: Any) -> None:

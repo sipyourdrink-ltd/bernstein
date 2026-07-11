@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+from bernstein.adapters.agy import AgyAdapter
 from bernstein.adapters.aichat import AIChatAdapter
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.adapters.amp import AmpAdapter
@@ -59,6 +60,11 @@ from bernstein.adapters.rovo import RovoAdapter
 logger = logging.getLogger(__name__)
 
 _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
+    # Successor CLI for the discontinued non-enterprise hosted gemini
+    # backend. Separate registry entry from "gemini"/"antigravity" (which
+    # stay on the dual-binary GeminiAdapter for the enterprise / API-key
+    # lane); see docs/adapters/agy.md for the split.
+    "agy": AgyAdapter,
     "aichat": AIChatAdapter,
     "aider": AiderAdapter,
     "amp": AmpAdapter,

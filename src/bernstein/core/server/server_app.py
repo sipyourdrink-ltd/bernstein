@@ -1106,6 +1106,36 @@ def create_app(
         expected_resource=expected_resource,
     )
 
+    # Dashboard auth (#2366) - scoped sessions / tokens for the /dashboard
+    # surface. Added AFTER the SSO middleware so it sees the request first:
+    # a validated dashboard credential stamps
+    # ``request.state.dashboard_principal``, which the SSO layer honours for
+    # dashboard paths. The audit-chain key and store are constructed here
+    # (shared with the mailbox block below) because every dashboard authz
+    # decision is anchored in the ``dashboard-auth`` lineage run and mirrored
+    # onto the chain with the acting principal attached.
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.server.dashboard_auth import DashboardAuthMiddleware, DashboardAuthState
+    from bernstein.core.server.dashboard_tokens import (
+        DashboardGovernance,
+        DashboardTokenRegistry,
+        resolve_dashboard_hmac_key,
+    )
+
+    _chain_key = resolve_dashboard_hmac_key(sdd_dir)
+    _audit_chain = AuditChainStore(sdd_dir / "audit", key=_chain_key)
+
+    dashboard_auth_state = DashboardAuthState(
+        token_registry=DashboardTokenRegistry(sdd_dir / "auth" / "dashboard_tokens.jsonl", hmac_key=_chain_key),
+        governance=DashboardGovernance(
+            sdd_dir / "lineage",
+            hmac_key=_chain_key,
+            audit_chain=_audit_chain,
+        ),
+    )
+    application.add_middleware(DashboardAuthMiddleware, state=dashboard_auth_state)
+    application.state.dashboard_auth_state = dashboard_auth_state  # type: ignore[attr-defined]
+
     # Per-endpoint request rate limiting - reads buckets from app.state.seed_config.
     application.add_middleware(RequestRateLimitMiddleware)
 
@@ -1183,12 +1213,8 @@ def create_app(
     # documents; an explicit BERNSTEIN_AUDIT_KEY_PATH override still wins
     # so operators can point every verifier at one key.
     from bernstein.core.communication.task_mailbox import TaskMailbox
-    from bernstein.core.security.audit import load_or_create_audit_key
-    from bernstein.core.security.audit_chain import AuditChainStore
 
-    _key_override = os.environ.get("BERNSTEIN_AUDIT_KEY_PATH", "")
-    _chain_key = load_or_create_audit_key(Path(_key_override) if _key_override else sdd_dir / "keys" / "audit.key")
-    application.state.audit_chain = AuditChainStore(sdd_dir / "audit", key=_chain_key)  # type: ignore[attr-defined]
+    application.state.audit_chain = _audit_chain  # type: ignore[attr-defined]
     application.state.task_mailbox = TaskMailbox(  # type: ignore[attr-defined]
         jsonl_path.parent / "mailbox.jsonl",
         hmac_key=_chain_key,

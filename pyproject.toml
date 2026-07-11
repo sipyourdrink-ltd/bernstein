@@ -395,6 +395,16 @@ artifacts = [
 # Built-in team manifests (#2248) so `team_manifest: python` and the
 # `bernstein team` commands resolve right after pip install.
 "templates/teams" = "bernstein/_default_templates/teams"
+# Cross-vendor agent-plugin assets (#2369): the bernstein-run skill plus
+# the plugin command/agent/rule files, so `bernstein skills package
+# install` resolves the bundled tree right after pip install. Loader:
+# bernstein.core.skills.packaging.packaged_asset_root.
+"skills" = "bernstein/_default_templates/agent_plugin/skills"
+"commands" = "bernstein/_default_templates/agent_plugin/commands"
+"agents" = "bernstein/_default_templates/agent_plugin/agents"
+"rules" = "bernstein/_default_templates/agent_plugin/rules"
+".mcp.json" = "bernstein/_default_templates/agent_plugin/.mcp.json"
+".plugin/plugin.json" = "bernstein/_default_templates/agent_plugin/.plugin/plugin.json"
 # ascii_logo.md now lives in-package at src/bernstein/_default_templates/ -
 # no force-include needed. The dev-repo copy at docs/assets/ascii_logo.md is
 # the display fallback read by cli/display/splash_v2.py when running from a

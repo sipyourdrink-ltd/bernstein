@@ -310,3 +310,56 @@ jobs:
           if ! npm publish --access public; then
             echo "::warning::npm wrapper publish failed; continuing release"
           fi
+
+  # MCP registry listing (#2369). Regenerated from pyproject.toml by
+  # scripts/gen_distribution_manifests.py so the listing can never drift
+  # from the released package version; the check step blocks the publish
+  # on drift instead of shipping a stale manifest. Registry submission is
+  # not on the release critical path (external review latency), so a
+  # registry outage cannot fail the release itself.
+  publish-mcp-registry:
+    name: Publish MCP registry listing
+    runs-on: ubuntu-latest
+    needs: publish
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - name: Check manifest sync with release version
+        run: |
+          set -euo pipefail
+          python3 scripts/gen_distribution_manifests.py --check
+          VERSION="${RELEASE_TAG#v}"
+          MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('server.json'))['version'])")
+          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+            echo "::error::server.json version $MANIFEST_VERSION does not match release $VERSION"
+            exit 1
+          fi
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) ARCH=amd64 ;;
+            aarch64) ARCH=arm64 ;;
+          esac
+          curl -fsSL \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${OS}_${ARCH}.tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --version
+      - name: Publish server.json
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

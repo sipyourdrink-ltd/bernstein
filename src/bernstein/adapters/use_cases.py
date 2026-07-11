@@ -53,6 +53,16 @@ class AdapterUseCase:
 # ``bernstein.adapters.registry``. When in doubt about a binary name,
 # cross-reference ``adapter_cmd._BINARY_OVERRIDES``.
 USE_CASES: dict[str, AdapterUseCase] = {
+    "agy": AdapterUseCase(
+        headline="Antigravity CLI (agy) - successor to the non-enterprise Gemini CLI path",
+        binary="agy",
+        details=(
+            "Print-mode headless runs with the terminal sandbox pinned and "
+            "permission prompts auto-approved. Use the gemini adapter for "
+            "the enterprise / API-key lane; see the lane table in the docs."
+        ),
+        docs_path="docs/adapters/agy.md",
+    ),
     "aichat": AdapterUseCase(
         headline="Multi-provider chat CLI with shell command and file context",
         binary="aichat",

@@ -39,7 +39,7 @@ Bernstein is a deterministic Python scheduler that runs a crew of CLI coding age
 
 ### at a glance
 
-- **45 CLI agent adapters**: 42 third-party wrappers, 2 leaf-node delegators, plus a generic `--prompt` wrapper. Source of truth: the [supported agents](#supported-agents) table below.
+- **46 CLI agent adapters**: 43 third-party wrappers, 2 leaf-node delegators, plus a generic `--prompt` wrapper. Source of truth: the [supported agents](#supported-agents) table below.
 - **HMAC-SHA256 audit chain** per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104), one record per scheduling decision, tamper-evident. Operator guide: [docs/security/audit-log.md](docs/security/audit-log.md).
 - **Bearer-token task server** authenticates the manager and every worker. Per-session zero-trust JWT in `.sdd/runtime/agent_tokens/`, legacy `BERNSTEIN_AUTH_TOKEN` fallback, opt-out via `BERNSTEIN_AUTH_DISABLED=1`. Flow + diagnostics: [docs/security/manager-auth.md](docs/security/manager-auth.md).
 - **Signed agent cards** use detached JWS ([RFC 7515 §A.5](https://datatracker.ietf.org/doc/html/rfc7515#appendix-A.5)) over [RFC 8785 (JCS)](https://datatracker.ietf.org/doc/html/rfc8785) canonicalization, with [Ed25519 / EdDSA](https://datatracker.ietf.org/doc/html/rfc8037) keys. Code: [src/bernstein/core/security/agent_card_signer.py](src/bernstein/core/security/agent_card_signer.py).
@@ -169,7 +169,7 @@ Stock workflows shipping in the wheel: `idea-to-pr`, `refactor-with-tests`, `sec
 
 Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
 
-45 CLI agent adapters: 42 third-party wrappers, 2 leaf-node delegators, plus a generic wrapper for anything with `--prompt`.
+46 CLI agent adapters: 43 third-party wrappers, 2 leaf-node delegators, plus a generic wrapper for anything with `--prompt`.
 
 | Agent | Models | Install |
 |-------|--------|---------|
@@ -178,6 +178,7 @@ Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap l
 | [OpenAI Agents SDK v2](https://openai.github.io/openai-agents-python/) | GPT-5, GPT-5 mini, o4 | `pip install 'bernstein[openai]'` |
 | [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) | Copilot-managed (GPT-5, Sonnet 4.6) | `npm install -g @github/copilot` |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini 2.5 Pro, Gemini Flash | `npm install -g @google/gemini-cli` |
+| [Antigravity CLI](docs/adapters/agy.md) (`agy`) | Service-managed (Gemini family) | Upstream installer, then `agy install` |
 | [Cursor](https://www.cursor.com) | Sonnet 4.6, Opus 4, GPT-5 | [Cursor app](https://www.cursor.com) |
 | [Devin Terminal](https://devin.ai) (Cognition) | Devin-managed | `curl -fsSL https://cli.devin.ai/install.sh \| bash` then `devin auth login` |
 | [Aider](https://aider.chat) | Any OpenAI/Anthropic-compatible | `pip install aider-chat` |
@@ -251,6 +252,8 @@ bernstein gui serve --minimal     # skip the full /api/v1/* surface
 
 The Vite bundle is committed under `src/bernstein/gui/static/`, so wheel installs work without a Node toolchain. Surface tour + per-task drawer: [docs/web-ui.md](docs/web-ui.md).
 
+The dashboard requires a credential: on a loopback bind an operator token is issued and printed at startup; a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; every grant and write authorization is a signed governance record (`bernstein governance verify dashboard-auth`).
+
 ## how it works
 
 Bernstein runs a four-stage pipeline per goal:
@@ -300,6 +303,7 @@ Highest-value commands; full list in [docs/operations/commands.md](docs/operatio
 | `bernstein templates compress <role>\|--all` | Operator-gated, one-time LLM compression of role prompt templates: mechanically validated (fenced blocks, headings, URLs, placeholders, completion contract stay byte-equal), originals backed up out of tree by content hash, receipt chained to the audit log. `bernstein templates restore <role>` reverses it byte-identically; savings appear in `bernstein cost --by role`. |
 | `bernstein identity keydir` | Prints the install-identity key directory (JWKS) - the Ed25519 public keys that verify the RFC 9421 HTTP Message Signatures Bernstein places on its outbound agent-facing requests (also served at `/.well-known/http-message-signatures-directory`). Set `BERNSTEIN_HTTP_SIGNING_REQUIRED=1` to refuse unsigned outbound paths. |
 | `bernstein delegation verify <run>` | Reconstructs the `principal -> orchestrator -> sub-agent` delegation chain for a run from HMAC-chained per-hop receipts and confirms it is intact offline; exits non-zero on any tamper or deleted hop. |
+| `bernstein skills package install\|verify` | Installs the bundled cross-vendor `bernstein-run` agent skill into a host's skill directory (`--host claude\|codex\|copilot\|cursor\|gemini`, or `--dest`) and anchors a content-addressed install receipt in the lineage spine and audit chain; `verify` re-hashes the installed tree and proves it against the receipt. `--record-only` anchors a plugin checkout the host installed itself. See [docs/integrations/agent-session.md](docs/integrations/agent-session.md). |
 
 ### retrieval & caching: what's actually under the hood
 

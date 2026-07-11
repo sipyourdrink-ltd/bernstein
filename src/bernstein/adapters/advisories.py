@@ -50,6 +50,12 @@ class AdapterAdvisory:
 # and "upgrade recommended".  Seeded conservatively; expand as floors are
 # confirmed.
 ADAPTER_MIN_SAFE_VERSIONS: dict[str, AdapterAdvisory] = {
+    "agy": AdapterAdvisory(
+        adapter="agy",
+        min_safe_version="1.0.0",
+        advisory_id="BSA-0004",
+        note="agy below 1.0.0 is known-unsafe for spawned use; upgrade recommended.",
+    ),
     "aider": AdapterAdvisory(
         adapter="aider",
         min_safe_version="0.60.0",

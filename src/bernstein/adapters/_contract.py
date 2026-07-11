@@ -525,6 +525,18 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.STREAM_JSON,
     ),
+    # agy is the successor CLI for the discontinued non-enterprise hosted
+    # gemini backend; separate adapter (single binary, print mode, sandbox
+    # pinned) -- see docs/adapters/agy.md. Dangerous mode is
+    # --dangerously-skip-permissions; print mode emits plain text (no
+    # structured event stream), so the channel is text signals. The CLI
+    # has --conversation <id> resume, but native reattach is not wired
+    # yet, so resume stays declared unsupported (fresh-session fallback).
+    "agy": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
     # CLI-flag dangerous mode, text-signal channel, fresh-session resume.
     "cline": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),
     "charm": AdapterStrategy(dangerous_mode=DangerousModeStrategy.CLI_FLAG),

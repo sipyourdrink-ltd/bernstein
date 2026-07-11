@@ -16,6 +16,25 @@ to follow the [first-run walkthrough](first-run.md).
 
 That's it. You do **not** need a CLI coding agent installed yet - that comes in the first-run page.
 
+### Supported platforms
+
+| Platform | Status | Process management |
+|----------|--------|--------------------|
+| Linux | Supported | POSIX process groups; graceful stop with force-kill escalation |
+| macOS | Supported | POSIX process groups; graceful stop with force-kill escalation |
+| Windows | Supported | Native process-tree termination (no POSIX signals required); `.cmd`/`.bat` adapter shims resolved automatically |
+
+Windows notes:
+
+- Worktree directory sharing via symlinks (`node_modules`, `.venv`) requires
+  Developer Mode or Administrator privileges; without it, agents fall back to
+  per-worktree installs.
+- Deep worktree paths are handled with extended-length path support; no
+  registry changes are needed.
+- Forced agent stops are recorded in the audit chain with the same receipt
+  format on every platform, so run histories verify identically across
+  mixed-OS teams.
+
 ---
 
 ## Recommended: `uv tool install`

@@ -1,6 +1,6 @@
 {
   "name": "bernstein",
-  "version": "0.9.0",
+  "version": "3.2.0",
   "description": "Multi-agent orchestration for CLI coding agents. Spawn parallel agents, verify their work, and merge results.",
   "author": {
     "name": "chernistry",
@@ -9,9 +9,17 @@
   "homepage": "https://github.com/sipyourdrink-ltd/bernstein",
   "repository": "https://github.com/sipyourdrink-ltd/bernstein",
   "license": "Apache-2.0",
-  "keywords": ["orchestration", "multi-agent", "coding-agents", "claude-code", "codex", "gemini"],
+  "keywords": [
+    "orchestration",
+    "multi-agent",
+    "coding-agents",
+    "claude-code",
+    "codex",
+    "gemini"
+  ],
   "commands": "./commands/",
   "agents": "./agents/",
   "rules": "./rules/",
+  "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }
