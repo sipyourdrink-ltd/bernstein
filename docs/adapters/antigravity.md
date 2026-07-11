@@ -152,3 +152,13 @@ want Claude continue using the existing `claude` adapter.
    reports the binary path and `conformance: ok`.
 4. Optionally uninstall the legacy `gemini` binary. The adapter
    handles either ordering.
+
+---
+
+## Successor CLI (`agy`)
+
+The hosted backend behind the non-enterprise path was discontinued in
+June 2026. Consumer-path operators (free / AI Pro / Ultra) should use
+the separate [`agy` adapter](agy.md) for the successor Antigravity CLI
+(`agy` binary). This dual-binary adapter remains the enterprise /
+API-key lane.
