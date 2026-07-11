@@ -353,6 +353,15 @@ EVENT_TASK_CLAIM_RECEIPT = "task.claim_receipt"
 #: reap path ran and on which platform semantics it relied.
 EVENT_PROCESS_REAP_RECEIPT = "process.reap_receipt"
 
+#: Issue #2366 -- emitted whenever a scoped dashboard token is issued or
+#: revoked. The event mirrors the signed registry row: the short token id,
+#: the token digest, the principal, the scope, and the grant kind -- never
+#: the raw token (the registry itself only ever stores the digest). Together
+#: with the ``governance.decision`` events the dashboard authz layer
+#: records, the chain carries the full life of a dashboard credential:
+#: grant, every write it authorized, and revocation.
+EVENT_DASHBOARD_TOKEN_GRANT = "dashboard.token_grant"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2203,6 +2212,52 @@ def record_process_reap_receipt(
     )
 
 
+def record_dashboard_token_grant(
+    *,
+    chain: AuditChainStore,
+    grant: str,
+    token_id: str,
+    token_sha256: str,
+    principal: str,
+    scope: str,
+    actor: str = "dashboard",
+) -> AuditEvent:
+    """Append a ``dashboard.token_grant`` event into *chain* (#2366).
+
+    Mirrors one signed row of the dashboard token registry so credential
+    grants and revocations are chain-attested alongside the authz decisions
+    they later authorize. Only the digest and metadata are recorded -- the
+    raw token exists solely in the issuing terminal.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        grant: ``issue`` or ``revoke``.
+        token_id: Short hex id of the token (digest prefix).
+        token_sha256: Hex SHA-256 of the raw token.
+        principal: The seat / person the token attributes actions to.
+        scope: The granted scope (``viewer`` / ``operator``; empty on
+            revocations).
+        actor: Recorded actor; defaults to ``"dashboard"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_DASHBOARD_TOKEN_GRANT,
+        actor=actor,
+        resource_type="dashboard_token",
+        resource_id=token_id,
+        details={
+            "grant": grant,
+            "token_id": token_id,
+            "token_sha256": token_sha256,
+            "principal": principal,
+            "scope": scope,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2211,6 +2266,7 @@ __all__ = [
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
     "EVENT_COST_PROFILE_REPORT",
+    "EVENT_DASHBOARD_TOKEN_GRANT",
     "EVENT_ENDPOINT_CERTIFICATION",
     "EVENT_ESCALATION_RECEIPT",
     "EVENT_EVAL_AB_COMPARISON",
@@ -2251,6 +2307,7 @@ __all__ = [
     "record_activity_result",
     "record_checkpoint_retry",
     "record_cost_profile_report",
+    "record_dashboard_token_grant",
     "record_endpoint_certification",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
