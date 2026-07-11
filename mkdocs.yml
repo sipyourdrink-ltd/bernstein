@@ -279,6 +279,7 @@ nav:
       - Per-agent run instrumentation: operations/INSTRUMENTATION.md
       - Verification tracking: operations/verification-tracking.md
       - Deterministic replay: operations/deterministic-replay.md
+      - Run review board: operations/review-board.md
       - Observability: operations/observability-overview.md
       - Side-channel telemetry: observability/side-channel.md
       - LLM watcher (opt-in): observability/llm-watcher.md
