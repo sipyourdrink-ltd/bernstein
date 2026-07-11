@@ -440,9 +440,6 @@ def apply_canary_outcome(
     """Fold one outcome into the canary state; decide whether to report.
 
     State shape (per adapter): ``{"consecutive_failures": int,
-    "reported_fingerprint": str}``.
-
-    State shape (per adapter): ``{"consecutive_failures": int,
     "last_fingerprint": str, "reported_fingerprint": str}``.
 
     Rules:

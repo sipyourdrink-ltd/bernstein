@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -79,6 +80,8 @@ def _outcome(
 
 def _write_stub_cli(bin_dir: Path, name: str, *, version: str, help_text: str) -> Path:
     """Write an executable stub CLI that answers --version and --help."""
+    if sys.platform.startswith("win"):  # pragma: no cover
+        pytest.skip("POSIX shell scripts required for canary probe stubs.")
     bin_dir.mkdir(parents=True, exist_ok=True)
     path = bin_dir / name
     path.write_text(
@@ -439,6 +442,8 @@ class TestRunMatrix:
         assert verify_canary_receipt(json.loads(receipts[0].read_text(encoding="utf-8")))
 
     def test_receipts_dir_containment_enforced(self, tmp_path: Path) -> None:
+        if sys.platform.startswith("win"):  # pragma: no cover
+            pytest.skip("symlink creation requires elevated privileges on Windows.")
         outside = tmp_path / "outside"
         link = tmp_path / "receipts"
         outside.mkdir()
@@ -557,3 +562,30 @@ class TestDoctorAheadOfLastGreen:
 
         source = inspect.getsource(doctor_cmd)
         assert "check_canary_last_green()" in source
+
+    def test_surfaced_by_bernstein_doctor_cli(self) -> None:
+        """The `bernstein doctor` surface (status_cmd) shows the advisory."""
+        from bernstein.cli.commands import doctor_cmd, status_cmd
+
+        def fake_which(binary: str) -> str | None:
+            return "/usr/local/bin/agy" if binary == "agy" else None
+
+        checks: list[dict] = []
+        with (
+            patch.object(doctor_cmd.shutil, "which", side_effect=fake_which),
+            patch.object(doctor_cmd, "_probe_adapter_version", return_value="1.5.0"),
+            patch("bernstein.adapters.canary.load_last_green", return_value=self._entries()),
+        ):
+            status_cmd._doctor_check_last_green(checks)
+        assert len(checks) == 1
+        assert checks[0]["ok"] is True  # advisory only: never fails doctor
+        assert "WARNING" in checks[0]["detail"]
+        assert "last-green" in checks[0]["detail"]
+
+    def test_wired_into_bernstein_doctor_command(self) -> None:
+        import inspect
+
+        from bernstein.cli.commands import status_cmd
+
+        source = inspect.getsource(status_cmd)
+        assert "_doctor_check_last_green(checks)" in source
