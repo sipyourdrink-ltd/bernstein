@@ -392,6 +392,15 @@ EVENT_DASHBOARD_TOKEN_GRANT = "dashboard.token_grant"
 #: the verdict, and the projected overrun are recorded -- never prompt content.
 EVENT_COST_DISPATCH_RECEIPT = "cost.dispatch_receipt"
 
+#: Issue #2353 -- emitted whenever a tournament selects a winning attempt.
+#: The event mirrors the signed selection receipt: the task id, the tournament
+#: receipt hash (spine anchor), the winning attempt hash, the full set of
+#: attempt hashes, and the evaluator names that decided the outcome -- never a
+#: model judgement (there is none in the decision path). A verifier can join a
+#: chain entry to the offline-verifiable receipt and prove which attempt won
+#: and why, without re-running the tournament.
+EVENT_TOURNAMENT_SELECTION = "tournament.selection"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2461,6 +2470,53 @@ def record_cost_dispatch_receipt(
     )
 
 
+def record_tournament_selection(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    receipt_hash: str,
+    winner_hash: str,
+    attempt_hashes: list[str],
+    evaluator_names: list[str],
+    actor: str = "tournament",
+) -> AuditEvent:
+    """Append a ``tournament.selection`` event into *chain* (#2353).
+
+    Mirrors a signed tournament selection receipt into the audit chain. The
+    receipt itself is the offline-verifiable proof of why an attempt won; this
+    entry lets an auditor join the chain to that receipt and confirm the
+    decision was made without a model in the loop. Only hashes and metadata are
+    recorded -- the attempt artefacts live in the tournament lineage spine.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task the tournament ran for.
+        receipt_hash: The tournament receipt's spine anchor (its identity).
+        winner_hash: The winning attempt's content hash.
+        attempt_hashes: Every attempt's content hash (winner + losers).
+        evaluator_names: The scripted evaluators that decided the outcome.
+        actor: Recorded actor; defaults to ``"tournament"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TOURNAMENT_SELECTION,
+        actor=actor,
+        resource_type="tournament",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "receipt_hash": receipt_hash,
+            "winner_hash": winner_hash,
+            "attempt_hashes": list(attempt_hashes),
+            "attempt_count": len(attempt_hashes),
+            "evaluator_names": list(evaluator_names),
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2498,6 +2554,7 @@ __all__ = [
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
+    "EVENT_TOURNAMENT_SELECTION",
     "EVENT_WEBHOOK_NODE_RECEIPT",
     "EVENT_WORK_LEDGER_ANCHOR",
     "AuditChainStore",
@@ -2541,6 +2598,7 @@ __all__ = [
     "record_task_claim_receipt",
     "record_task_mailbox_message",
     "record_thread_approval",
+    "record_tournament_selection",
     "record_webhook_node_receipt",
     "record_work_ledger_anchor",
 ]

@@ -1435,3 +1435,18 @@ configured. There is no silent open mode on a routable interface. Use the
 token as `Authorization: Bearer <token>` or in the dashboard login form
 (`POST /dashboard/auth/login`); the session cookie inherits exactly the
 token's principal and scope.
+
+## `bernstein tournament`
+
+Tournament runs: parallel attempts selected by deterministic evaluators (#2353).
+
+| Command | Description | Source |
+| --- | --- | --- |
+| `bernstein tournament show <task>` | Render the tournament selection receipt for a task: the winner, the attempt count, the evaluators and tie-break, the spine anchor, and a per-attempt table (rank, attempt hash, score, `chosen`/`sibling` edge). `-w/--workdir` sets the project root. Exit 0 when a receipt exists, 1 when there is none. | `cli/commands/tournament_cmd.py` |
+| `bernstein tournament verify <task>` | Recompute a task's tournament selection offline: replay the deterministic scorer over the recorded evaluator outputs, check exactly one chosen edge over the recorded attempts, verify the Ed25519 signature over the canonical binding, verify the tournament lineage spine, and re-anchor the receipt. A tampered score or a hand-picked winner diverges from the replay and fails. Exit 0 verified, 1 no receipt, 2 mismatch. `bernstein audit verify` runs the same check across every receipt. | `cli/commands/tournament_cmd.py` |
+
+Selection is a pure function of the evaluator outputs (test pass rate, lint
+status, coverage delta, mutation score, arbitrary commands) with a stable
+attempt-hash tie-break, so replaying the run reproduces the identical decision.
+Fan-out is gated on the task's existing per-ticket budget ceiling and aborts
+with a clear error before spawning when projected spend would breach the cap.

@@ -86,6 +86,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "evidence",
         # Durable work ledger: resumable task-graph state (issue #2358)
         "ledger",
+        # Tournament runs: parallel attempts selected by deterministic evaluators (issue #2353)
+        "tournament",
         # Auth
         "auth",
         "login",

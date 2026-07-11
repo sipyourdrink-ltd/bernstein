@@ -1245,3 +1245,8 @@ cli.add_command(evidence_group, "evidence")
 from bernstein.cli.commands.ledger_cmd import ledger_group  # noqa: E402
 
 cli.add_command(ledger_group, "ledger")
+
+# Tournament runs: parallel attempts selected by deterministic evaluators (#2353).
+from bernstein.cli.commands.tournament_cmd import tournament_group  # noqa: E402
+
+cli.add_command(tournament_group, "tournament")
