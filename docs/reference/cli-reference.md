@@ -1446,12 +1446,30 @@ overrides the home directory for user-scoped destinations.
 Exit codes: `0` every present install verifies (or none present), `2` at
 least one present install failed verification.
 
+#### `bernstein skills package conformance`
+
+Installs the bundled skill into every selected host against one shared
+install, then replays the skill's documented self-check contract (`skills
+package show`, then `skills package verify --dest`) per host. Each host runs
+the contract as it would from inside its own session; the per-host pass/fail
+table, the shared content address, and the aggregate verdict are sealed into
+a content-addressed conformance receipt anchored in the lineage spine and a
+`plugin.conformance_receipt` audit-chain event.
+
+Options: `--host` (repeatable; defaults to every supported host), `--scope`
+(`project`/`user`), `--min-hosts` (green hosts required for an overall pass;
+default `3`), `--json`, `--workdir`.
+
+Exit codes: `0` every host green and the `--min-hosts` bar met, `2`
+conformance failed, `1` error.
+
 ```bash
 bernstein skills package install --host claude --scope project
 bernstein skills package install --dest ~/.claude/plugins/bernstein --record-only
 bernstein skills package verify --host claude --scope project
 bernstein skills package update --host claude --scope project
 bernstein skills package status
+bernstein skills package conformance --host claude --host codex --host cursor
 ```
 
 See [Agent sessions](../integrations/agent-session.md) for the skill
