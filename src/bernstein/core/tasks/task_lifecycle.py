@@ -41,6 +41,7 @@ from bernstein.core.fast_path import (
 from bernstein.core.hook_events import HookEvent
 from bernstein.core.janitor import run_janitor, verify_task
 from bernstein.core.metrics import get_collector
+from bernstein.core.replay.review_board import record_task_merged
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
@@ -2987,6 +2988,10 @@ def _reap_and_cleanup_session(
         # No-op when the task declares no producers; fail-open otherwise so a
         # producer/gate error can never block, delay, or fail the completion.
         seal_evidence_on_completion(orch._workdir, task)
+        # issue #2365: chain the merge decision into the run journal so the
+        # review board's merged column is a projection of the journal, not a
+        # side inference. No-op when the orchestrator has no recorder.
+        record_task_merged(getattr(orch, "_recorder", None), task_id=task.id, agent_id=session.id)
 
     orch._spawner.cleanup_worktree(session.id)
     return cache_verified, cache_diff_lines
