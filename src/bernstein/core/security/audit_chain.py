@@ -380,6 +380,18 @@ EVENT_PROCESS_REAP_RECEIPT = "process.reap_receipt"
 #: grant, every write it authorized, and revocation.
 EVENT_DASHBOARD_TOKEN_GRANT = "dashboard.token_grant"
 
+#: Issue #2354 -- emitted once per cost-aware dispatch decision. The
+#: deterministic decision (admit/halt under USD caps) is a pure function of a
+#: hash-pinned price table, the spend ledger, and the caps; this event mirrors
+#: the decision's identity into the HMAC chain by recording ``{decision_hash,
+#: run_id, task_id, admit, breached_dimension, projected_overrun_usd,
+#: price_table_hash, ledger_state_hash, policy_hash, journal_entry_hash}``. A
+#: verifier holding the same ledger and price table recomputes the decision
+#: byte-identically and checks it against the chain, so a halt names exactly
+#: why it fired and two operators replay the same budget decision. Only hashes,
+#: the verdict, and the projected overrun are recorded -- never prompt content.
+EVENT_COST_DISPATCH_RECEIPT = "cost.dispatch_receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2381,6 +2393,74 @@ def record_dashboard_token_grant(
     )
 
 
+def record_cost_dispatch_receipt(
+    *,
+    chain: AuditChainStore,
+    decision_hash: str,
+    run_id: str,
+    task_id: str,
+    admit: bool,
+    breached_dimension: str,
+    projected_overrun_usd: float,
+    price_table_hash: str,
+    ledger_state_hash: str,
+    policy_hash: str,
+    journal_entry_hash: str,
+    actor: str = "cost_policy",
+) -> AuditEvent:
+    """Append a ``cost.dispatch_receipt`` event into *chain* (#2354).
+
+    Mirrors one deterministic cost-aware dispatch decision into the HMAC chain
+    so an operator can prove, from the chain alone, that a dispatch was admitted
+    or halted under a named policy against a pinned price table and ledger --
+    and, on a halt, exactly which dimension breached and by how much. Only
+    hashes, the verdict, and the projected overrun are recorded; a verifier
+    holding the same ledger and price table recomputes the ``decision_hash``
+    byte-identically.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        decision_hash: Deterministic ``sha256:`` hash pinning the whole
+            decision (the receipt identity).
+        run_id: The run the candidate belonged to.
+        task_id: The task the candidate belonged to.
+        admit: Whether the dispatch was admitted (``False`` == halted).
+        breached_dimension: The first breached cap dimension (``task`` /
+            ``run`` / ``day``), empty when admitted.
+        projected_overrun_usd: USD the breached dimension would exceed its cap
+            by (``0`` when admitted).
+        price_table_hash: Content hash of the pinned price table.
+        ledger_state_hash: Hash over the projected prior spend the decision
+            read from the ledger.
+        policy_hash: Content hash of the caps the decision enforced.
+        journal_entry_hash: Lineage-spine entry hash anchoring the sealed
+            decision bytes; a verifier holding the spine can recompute it.
+        actor: Recorded actor; defaults to ``"cost_policy"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_COST_DISPATCH_RECEIPT,
+        actor=actor,
+        resource_type="cost_dispatch_receipt",
+        resource_id=decision_hash,
+        details={
+            "decision_hash": decision_hash,
+            "run_id": run_id,
+            "task_id": task_id,
+            "admit": admit,
+            "breached_dimension": breached_dimension,
+            "projected_overrun_usd": round(projected_overrun_usd, 6),
+            "price_table_hash": price_table_hash,
+            "ledger_state_hash": ledger_state_hash,
+            "policy_hash": policy_hash,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2389,6 +2469,7 @@ __all__ = [
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
+    "EVENT_COST_DISPATCH_RECEIPT",
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_DASHBOARD_TOKEN_GRANT",
     "EVENT_ENDPOINT_CERTIFICATION",
@@ -2432,6 +2513,7 @@ __all__ = [
     "record_activity_result",
     "record_adapter_canary_receipt",
     "record_checkpoint_retry",
+    "record_cost_dispatch_receipt",
     "record_cost_profile_report",
     "record_dashboard_token_grant",
     "record_endpoint_certification",

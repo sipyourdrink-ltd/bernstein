@@ -824,6 +824,8 @@ bernstein reject-tool  <request_id>
 |---|---|---|
 | `bernstein cost` | Spend breakdown by model / task. | `cli/commands/cost.py:540` |
 | `bernstein cost profile-report` | Content-addressed per-profile cost report, appended to the audit chain. | `cli/commands/cost.py` |
+| `bernstein cost policy preflight` | Surface pool exhaustion before a run starts; exits non-zero when a capped pool is (or would be) exhausted. | `cli/commands/cost.py` |
+| `bernstein cost policy verify DECISION_HASH` | Verify a sealed dispatch receipt offline against the lineage spine. | `cli/commands/cost.py` |
 | `bernstein estimate` | Estimate cost before running. | `cli/commands/cost.py:388` |
 
 #### `bernstein cost`
@@ -863,6 +865,32 @@ states "insufficient comparable runs".
 | `--scope {small\|medium\|large}` | none | Task scope. |
 | `--complexity {low\|medium\|high}` | none | Task complexity. |
 | `--metrics-dir DIR` | `.sdd/metrics` | Directory containing historical metrics. |
+
+#### `bernstein cost policy preflight`
+
+Cost-aware scheduling (issue #2354). Projects the spend ledger into named
+pools, compares each against its configured cap plus the planned run spend, and
+exits non-zero when any capped pool is (or would be) exhausted -- so pool
+exhaustion stops a run at the gate, not halfway through. Also reports the
+shipped price-table staleness advisory.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--ledger PATH` | `.sdd/cost/ledger.jsonl` | Rolling spend ledger to project. |
+| `--config PATH` | `bernstein.yaml` | Config holding `cost_policy.pools` caps. |
+| `--plan SPEC` | none | Planned per-pool spend, e.g. `api=2.50,subscription=0`. |
+| `--json` | off | Emit JSON. |
+
+#### `bernstein cost policy verify DECISION_HASH`
+
+Re-derives the decision hash from the stored dispatch receipt (catching a
+forged admit / zeroed overrun) and re-checks the lineage-spine anchor. A
+receipt that no longer recomputes fails exactly like a tampered chain entry.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--workdir DIR` | `.` | Project root holding `.sdd/cost/dispatch` receipts and `.sdd/lineage`. |
+| `--json` | off | Emit JSON. |
 
 ---
 
