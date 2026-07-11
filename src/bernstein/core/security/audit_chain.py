@@ -380,6 +380,17 @@ EVENT_PROCESS_REAP_RECEIPT = "process.reap_receipt"
 #: grant, every write it authorized, and revocation.
 EVENT_DASHBOARD_TOKEN_GRANT = "dashboard.token_grant"
 
+#: Issue #2352 -- emitted at every lifecycle boundary of a detached run
+#: (submit, detach, reattach, daemon restart, complete). The daemon that owns
+#: the run is a projection of the durable work ledger; each receipt binds the
+#: ledger head at the boundary so a reattaching operator can prove, from the
+#: chain alone, that the current ledger is a forward extension of the head
+#: they last saw -- nothing happened off the record while they were away.
+#: Only the run id, the transition, the ledger head/entry count, and (for
+#: reattach/restart boundaries) the ``from_head``/``to_head``/``entries_added``
+#: continuity span are recorded -- never goal text or task payloads.
+EVENT_RUN_LIFECYCLE = "run.lifecycle"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2381,6 +2392,61 @@ def record_dashboard_token_grant(
     )
 
 
+def record_run_lifecycle(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    transition: str,
+    ledger_head: str,
+    entry_count: int,
+    from_head: str = "",
+    to_head: str = "",
+    entries_added: int = 0,
+    actor: str = "run_service",
+) -> AuditEvent:
+    """Append a ``run.lifecycle`` event into *chain* (#2352).
+
+    Records one lifecycle boundary of a detached run into the HMAC-chained
+    audit log. The detached-run daemon owns execution but its state is a
+    projection of the durable work ledger; this receipt binds the ledger head
+    at the boundary so a reattaching operator (or an offline verifier) can
+    prove the current ledger extends the head last seen. Only identifiers,
+    the transition, and the continuity span are recorded -- never goal text or
+    task payloads.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose lifecycle boundary is recorded.
+        transition: One of ``submitted`` / ``detached`` / ``reattached`` /
+            ``daemon_restarted`` / ``completed``.
+        ledger_head: Head entry hash of the work ledger at the boundary.
+        entry_count: Number of ledger entries at the boundary.
+        from_head: Ledger head the operator last saw (reattach/restart only).
+        to_head: Ledger head at reattach/restart (equals ``ledger_head``).
+        entries_added: Entries appended between ``from_head`` and ``to_head``.
+        actor: Recorded actor; defaults to ``"run_service"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_RUN_LIFECYCLE,
+        actor=actor,
+        resource_type="run",
+        resource_id=run_id,
+        details={
+            "run_id": run_id,
+            "transition": transition,
+            "ledger_head": ledger_head,
+            "entry_count": entry_count,
+            "from_head": from_head,
+            "to_head": to_head,
+            "entries_added": entries_added,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -2408,6 +2474,7 @@ __all__ = [
     "EVENT_PROCESS_REAP_RECEIPT",
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
+    "EVENT_RUN_LIFECYCLE",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
@@ -2451,6 +2518,7 @@ __all__ = [
     "record_process_reap_receipt",
     "record_review_receipt",
     "record_routing_failover_receipt",
+    "record_run_lifecycle",
     "record_schedule_fire_projection",
     "record_sensitive_gate",
     "record_skill_install_receipt",
