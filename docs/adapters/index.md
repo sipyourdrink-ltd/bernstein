@@ -43,7 +43,9 @@ These are the most exercised adapters in the test matrix.
 - `codex` - OpenAI Codex CLI.
 - `cursor` - Cursor Agent CLI.
 - `aider` - Aider pair-programming CLI.
-- `gemini` - Google Gemini CLI.
+- `gemini` - Google Gemini CLI (enterprise / API-key lane).
+- `agy` - Antigravity CLI, successor for the non-enterprise Gemini path
+  (see [`agy.md`](agy.md) for the lane split).
 - `copilot` - GitHub Copilot CLI.
 - `goose` - Block Goose.
 

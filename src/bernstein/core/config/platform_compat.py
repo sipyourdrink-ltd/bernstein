@@ -13,19 +13,23 @@ the POSIX APIs are unavailable.
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
 import platform
 import shlex
+import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     import pytest
 
@@ -322,22 +326,110 @@ def kill_process_group_graceful(
         later had to be used).  ``False`` when the group was already dead
         or the initial SIGTERM could not be sent.
     """
+    return reap_process_group(
+        pgid,
+        grace_seconds=grace_seconds,
+        poll_interval=poll_interval,
+    ).delivered
+
+
+# Reap-method identifiers recorded in :class:`ProcessReapReceipt`.
+_REAP_METHOD_POSIX = "posix_process_group"
+_REAP_METHOD_WINDOWS = "windows_process_tree"
+
+
+@dataclass(frozen=True)
+class ProcessReapReceipt:
+    """Structured outcome of a process-tree reap.
+
+    A deterministic projection of what the reap path did: which platform
+    mechanism delivered the stop, whether the graceful stop was delivered,
+    and whether escalation to a force-kill was required.  Callers mirror
+    the receipt into the audit chain so a failure window can be
+    reconstructed offline.
+
+    Attributes:
+        pgid: Process group ID (POSIX) or lead PID (Windows) targeted.
+        os_name: Normalised OS name (``"linux"``, ``"macos"``, ``"windows"``).
+        method: Delivery mechanism identifier
+            (``"posix_process_group"`` or ``"windows_process_tree"``).
+        delivered: Whether the initial graceful stop was delivered.
+        escalated: Whether a force-kill was required after the grace window.
+        grace_seconds: The grace window that applied to this reap.
+    """
+
+    pgid: int
+    os_name: str
+    method: str
+    delivered: bool
+    escalated: bool
+    grace_seconds: float
+
+    def to_details(self) -> dict[str, object]:
+        """Return the receipt as a plain dict for audit-chain payloads."""
+        return {
+            "pgid": self.pgid,
+            "os_name": self.os_name,
+            "method": self.method,
+            "delivered": self.delivered,
+            "escalated": self.escalated,
+            "grace_seconds": self.grace_seconds,
+        }
+
+
+def reap_process_group(
+    pgid: int,
+    *,
+    grace_seconds: float = 3.0,
+    poll_interval: float = 0.1,
+) -> ProcessReapReceipt:
+    """Reap a process group and return a structured receipt.
+
+    Same TERM -> poll -> force-kill escalation as
+    :func:`kill_process_group_graceful` (which delegates here), but the
+    outcome is returned as a :class:`ProcessReapReceipt` so callers can
+    record *how* the reap was performed instead of a bare bool.
+
+    Args:
+        pgid: Process group ID (on Unix) or PID (on Windows).
+        grace_seconds: Total time to wait for the graceful stop to take
+            effect before escalating to a force-kill.
+        poll_interval: How often to poll :func:`process_alive` during the
+            grace window.
+
+    Returns:
+        A frozen :class:`ProcessReapReceipt` describing the reap outcome.
+    """
+    os_name = _detect_os_name()
+    method = _REAP_METHOD_WINDOWS if IS_WINDOWS else _REAP_METHOD_POSIX
+
+    def _receipt(*, delivered: bool, escalated: bool) -> ProcessReapReceipt:
+        return ProcessReapReceipt(
+            pgid=pgid,
+            os_name=os_name,
+            method=method,
+            delivered=delivered,
+            escalated=escalated,
+            grace_seconds=grace_seconds,
+        )
+
     if pgid <= 0:
-        return False
+        return _receipt(delivered=False, escalated=False)
 
     # Best-effort TERM first; if it fails the group is already gone.
     if not kill_process_group(pgid, signal.SIGTERM):
-        return False
+        return _receipt(delivered=False, escalated=False)
 
     # Poll for graceful exit.  Using the lead PID as a liveness proxy is
     # safe because it is guaranteed to be the session leader (start_new_session=True).
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
         if not process_alive(pgid):
-            return True
+            return _receipt(delivered=True, escalated=False)
         time.sleep(poll_interval)
 
     # Still alive after grace period - escalate.
+    escalated = False
     if process_alive(pgid):
         logger.warning(
             "Process group %d did not exit within %.1fs of SIGTERM; sending SIGKILL",
@@ -346,7 +438,8 @@ def kill_process_group_graceful(
         )
         kill_sig = signal.SIGKILL if is_signal_supported("SIGKILL") else 9
         kill_process_group(pgid, kill_sig)
-    return True
+        escalated = True
+    return _receipt(delivered=True, escalated=escalated)
 
 
 def process_alive(pid: int) -> bool:
@@ -531,3 +624,363 @@ def _win_process_alive(pid: int) -> bool:
         return False
     finally:
         kernel32.CloseHandle(handle)  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# Process-group spawn keywords
+# ---------------------------------------------------------------------------
+
+# CREATE_NEW_PROCESS_GROUP is only defined by the subprocess module on
+# Windows; the literal value is stable Win32 API surface.
+_WIN_CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+
+def process_group_popen_kwargs() -> dict[str, Any]:
+    """Return the ``subprocess.Popen`` keywords that isolate a process tree.
+
+    Deterministic projection of the current platform onto spawn flags:
+
+    * POSIX: ``{"start_new_session": True}`` - the child becomes a session
+      leader, so its PID equals its PGID and the whole tree can be reaped
+      with ``os.killpg``.
+    * Windows: ``{"creationflags": CREATE_NEW_PROCESS_GROUP}`` - the child
+      anchors its own process group so console control events and
+      ``taskkill /T`` tree termination target the agent tree, not the
+      orchestrator.
+
+    ``start_new_session`` is silently ignored by CPython on Windows, so
+    call sites that spread these kwargs get real group semantics on both
+    platforms instead of POSIX-only behaviour.
+
+    Returns:
+        Keyword arguments to spread into ``subprocess.Popen``.
+    """
+    if IS_WINDOWS:
+        creationflags: int = getattr(
+            subprocess,
+            "CREATE_NEW_PROCESS_GROUP",
+            _WIN_CREATE_NEW_PROCESS_GROUP,
+        )
+        return {"creationflags": creationflags}
+    return {"start_new_session": True}
+
+
+# ---------------------------------------------------------------------------
+# Windows Job Objects
+# ---------------------------------------------------------------------------
+
+# Win32 constants used by the Job Object primitives.
+_WIN_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_WIN_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_WIN_PROCESS_SET_QUOTA = 0x0100
+_WIN_PROCESS_TERMINATE = 0x0001
+
+
+def _win_kernel32() -> Any:
+    """Return the kernel32 DLL handle (Windows only).
+
+    Isolated in a helper so tests can exercise the Job Object logic on any
+    platform by substituting a mock kernel32.
+    """
+    import ctypes
+
+    return ctypes.windll.kernel32  # type: ignore[attr-defined]
+
+
+def _win_job_limit_info() -> Any:
+    """Build a JOBOBJECT_EXTENDED_LIMIT_INFORMATION with kill-on-close set.
+
+    The ctypes structure definitions are portable; only the kernel32 calls
+    that consume the structure are Windows-specific.
+    """
+    import ctypes
+    import ctypes.wintypes
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = (
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        )
+
+    class _BasicLimitInformation(ctypes.Structure):
+        _fields_ = (
+            ("PerProcessUserTimeLimit", ctypes.wintypes.LARGE_INTEGER),
+            ("PerJobUserTimeLimit", ctypes.wintypes.LARGE_INTEGER),
+            ("LimitFlags", ctypes.wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.wintypes.DWORD),
+            ("SchedulingClass", ctypes.wintypes.DWORD),
+        )
+
+    class _ExtendedLimitInformation(ctypes.Structure):
+        _fields_ = (
+            ("BasicLimitInformation", _BasicLimitInformation),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        )
+
+    info = _ExtendedLimitInformation()
+    info.BasicLimitInformation.LimitFlags = _WIN_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    return info
+
+
+class WindowsJobObject:
+    """Job Object supervision for a Windows process tree.
+
+    Job Objects are the Windows-native replacement for POSIX process
+    groups: every process assigned to the job (and every descendant it
+    spawns) is a member, so :meth:`terminate` reaps the whole tree in one
+    kernel call, and the ``KILL_ON_JOB_CLOSE`` limit guarantees the tree
+    dies with the supervisor even if the orchestrator crashes.
+
+    Inert on POSIX: :meth:`available` returns ``False`` and every other
+    method raises :class:`RuntimeError` so accidental use is loud.
+
+    Usage::
+
+        with WindowsJobObject() as job:
+            if job.create():
+                job.assign(proc.pid)
+            ...
+            job.terminate()
+    """
+
+    def __init__(self) -> None:
+        self._handle: int | None = None
+
+    @staticmethod
+    def available() -> bool:
+        """Return ``True`` when Job Objects exist on this platform."""
+        return IS_WINDOWS
+
+    def _require_windows(self) -> None:
+        if not IS_WINDOWS:
+            raise RuntimeError("Job Objects are Windows-only; check WindowsJobObject.available() first")
+
+    def create(self) -> bool:
+        """Create an anonymous Job Object with kill-on-close semantics.
+
+        Returns:
+            ``True`` when the job was created and configured.
+        """
+        self._require_windows()
+        import ctypes
+
+        kernel32 = _win_kernel32()
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            logger.warning("CreateJobObjectW failed; falling back to taskkill tree termination")
+            return False
+        info = _win_job_limit_info()
+        ok = kernel32.SetInformationJobObject(
+            handle,
+            _WIN_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok:
+            logger.warning("SetInformationJobObject failed; closing job handle")
+            kernel32.CloseHandle(handle)
+            return False
+        self._handle = int(handle)
+        return True
+
+    def assign(self, pid: int) -> bool:
+        """Assign *pid* (and its future descendants) to this job.
+
+        Args:
+            pid: Lead process ID to place under supervision.
+
+        Returns:
+            ``True`` when the process joined the job.
+        """
+        self._require_windows()
+        if self._handle is None or pid <= 0:
+            return False
+        kernel32 = _win_kernel32()
+        proc = kernel32.OpenProcess(
+            _WIN_PROCESS_SET_QUOTA | _WIN_PROCESS_TERMINATE,
+            False,
+            pid,
+        )
+        if not proc:
+            return False
+        try:
+            return bool(kernel32.AssignProcessToJobObject(self._handle, proc))
+        finally:
+            kernel32.CloseHandle(proc)
+
+    def terminate(self, exit_code: int = 1) -> bool:
+        """Terminate every process in the job in a single kernel call.
+
+        Args:
+            exit_code: Exit code reported for the terminated processes.
+
+        Returns:
+            ``True`` when the job tree was terminated.
+        """
+        self._require_windows()
+        if self._handle is None:
+            return False
+        kernel32 = _win_kernel32()
+        return bool(kernel32.TerminateJobObject(self._handle, exit_code))
+
+    def close(self) -> None:
+        """Release the job handle.  Idempotent.
+
+        With ``KILL_ON_JOB_CLOSE`` set, closing the last handle also
+        terminates any processes still in the job.
+        """
+        if self._handle is None:
+            return
+        if IS_WINDOWS:
+            _win_kernel32().CloseHandle(self._handle)
+        self._handle = None
+
+    def __enter__(self) -> WindowsJobObject:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+# ---------------------------------------------------------------------------
+# Filesystem semantics (worktree handling)
+# ---------------------------------------------------------------------------
+
+# Legacy Windows path-length ceiling that still applies to many Win32 file
+# APIs unless the extended-length prefix is used.  CreateDirectoryW caps at
+# MAX_PATH - 12 (248); staying below that keeps every worktree file
+# operation safe.
+_WIN_LONG_PATH_THRESHOLD = 248
+_WIN_EXTENDED_PREFIX = "\\\\?\\"
+
+
+def to_extended_length_path(path: str | Path) -> str:
+    """Return *path* in a form safe for long Windows paths.
+
+    On Windows, absolute paths at or beyond the legacy limit are given the
+    extended-length prefix (``\\\\?\\`` or ``\\\\?\\UNC\\`` for UNC paths) so
+    deep worktree trees survive Win32 file APIs.  Short paths are returned
+    as normalised absolute paths without the prefix.  On POSIX the input is
+    returned unchanged.
+
+    Args:
+        path: Filesystem path (string or ``Path``).
+
+    Returns:
+        A string path usable with ``open``, ``shutil``, and ``os`` calls.
+    """
+    raw = os.fspath(path)
+    if not IS_WINDOWS:
+        return raw
+    if raw.startswith(_WIN_EXTENDED_PREFIX):
+        return raw
+    absolute = ntpath.abspath(raw)
+    if len(absolute) < _WIN_LONG_PATH_THRESHOLD:
+        return absolute
+    if absolute.startswith("\\\\"):
+        # UNC path: \\server\share\... -> \\?\UNC\server\share\...
+        return _WIN_EXTENDED_PREFIX + "UNC" + absolute[1:]
+    return _WIN_EXTENDED_PREFIX + absolute
+
+
+def _win_clear_readonly(func: Callable[[str], object], path: str, _exc: BaseException) -> None:
+    """``shutil.rmtree`` onexc handler: clear read-only and retry once."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def robust_rmtree(
+    path: str | Path,
+    *,
+    max_attempts: int = 5,
+    retry_delay_s: float = 0.1,
+) -> bool:
+    """Remove a directory tree, tolerating Windows filesystem semantics.
+
+    On POSIX this is a single ``shutil.rmtree`` attempt - behaviour is
+    unchanged from calling it directly, except failures are logged and
+    reported instead of raised.  On Windows, read-only attributes (which
+    git sets on object files) are cleared on demand, long paths get the
+    extended-length prefix, and transient sharing violations (antivirus,
+    indexers, a slow-to-exit child holding a handle) are retried with a
+    linear backoff.
+
+    Args:
+        path: Directory tree to remove.
+        max_attempts: Maximum removal attempts on Windows (must be >= 1).
+        retry_delay_s: Base delay between attempts; grows linearly.
+
+    Returns:
+        ``True`` when the tree is gone (or never existed), ``False`` when
+        removal ultimately failed.
+    """
+    raw = os.fspath(path)
+    if not os.path.lexists(raw):
+        return True
+
+    if not IS_WINDOWS:
+        try:
+            shutil.rmtree(raw)
+        except OSError as exc:
+            logger.warning("Failed to remove tree %s: %s", raw, type(exc).__name__)
+            return False
+        return True
+
+    target = to_extended_length_path(raw)
+    attempts = max(1, max_attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            shutil.rmtree(target, onexc=_win_clear_readonly)
+        except OSError as exc:
+            if attempt == attempts:
+                logger.warning(
+                    "Failed to remove tree %s after %d attempts: %s",
+                    raw,
+                    attempts,
+                    type(exc).__name__,
+                )
+                return False
+            time.sleep(retry_delay_s * attempt)
+        else:
+            return True
+    return False
+
+
+def is_filesystem_link(path: Path) -> bool:
+    """Return ``True`` when *path* is a symlink or an NTFS junction.
+
+    ``Path.is_symlink()`` is ``False`` for junctions, so Windows callers
+    that only check for symlinks can be bypassed by a junction pointing at
+    the same target.  Junction probing is a no-op on POSIX
+    (``Path.is_junction()`` always returns ``False`` there), so POSIX
+    behaviour is identical to ``is_symlink()``.
+
+    Args:
+        path: Path to probe.  Only ``is_symlink``/``is_junction`` are used,
+            so duck-typed stand-ins work in tests.
+
+    Returns:
+        ``True`` for symlinks and junctions; ``False`` otherwise (including
+        unreadable paths).
+    """
+    try:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        if is_junction is None:
+            return False
+        return bool(is_junction())
+    except OSError:
+        return False

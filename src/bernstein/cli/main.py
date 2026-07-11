@@ -986,6 +986,10 @@ from bernstein.cli.commands.team_cmd import team_group as _team_group  # noqa: E
 
 cli.add_command(_team_group, "team")
 cli.add_command(test_cmd, "test")
+# Scoped dashboard tokens (issue #2366): issue/list/revoke under `auth`.
+from bernstein.cli.commands.dashboard_token_cmd import dashboard_token_group as _dashboard_token_group  # noqa: E402
+
+auth_group.add_command(_dashboard_token_group, "dashboard-token")
 cli.add_command(auth_group, "auth")
 cli.add_command(auth_login, "login")
 cli.add_command(evolve)

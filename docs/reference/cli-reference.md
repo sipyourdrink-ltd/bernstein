@@ -699,6 +699,7 @@ error. `BERNSTEIN_AGENT_CARD_KEY_DIR` overrides the key directory location.
 | `login` | Same as `bernstein login`. |
 | `logout` | Revoke the current session and clear the cached token. |
 | `status` | Show current authentication status. |
+| `dashboard-token` | Scoped dashboard credentials (group): `issue` / `list` / `revoke`. See [Dashboard authentication](#dashboard-authentication-bernstein-auth-dashboard-token). |
 
 #### `bernstein creds`
 
@@ -1365,3 +1366,44 @@ bernstein skills package verify --host claude --scope project
 See [Agent sessions](../integrations/agent-session.md) for the skill
 body, per-host notes, and the registry listings generated at release
 time.
+
+## Dashboard authentication: `bernstein auth dashboard-token`
+
+The dashboard (`bernstein gui serve`, `/dashboard` on the task server)
+accepts two credential kinds: a password (`BERNSTEIN_DASHBOARD_PASSWORD` or
+the `dashboard_auth` block in `bernstein.yaml`) and scoped tokens issued
+here. Tokens carry a principal and a scope: `viewer` reads every surface and
+can change nothing; `operator` can also trigger state-changing actions.
+
+Grants live in an append-only journal of HMAC-signed rows
+(`.sdd/auth/dashboard_tokens.jsonl`) that stores only the token's SHA-256
+digest - the raw token is printed once at issue time. Editing a row (for
+example widening `viewer` to `operator`) breaks its signature and the token
+stops validating. Every issue and revoke is mirrored onto the audit chain
+(`dashboard.token_grant`), and every login and write authorization is a
+signed governance decision in the `dashboard-auth` lineage run - recompute
+them offline with `bernstein governance verify dashboard-auth`.
+
+| Subcommand | Purpose |
+|---|---|
+| `issue --principal NAME [--scope viewer\|operator]` | Issue a token (printed once, digest journaled). |
+| `list` | Show journal rows: id, kind, principal, scope. Never prints tokens. |
+| `revoke TOKEN_ID` | Append a signed revocation; the token stops validating immediately. |
+
+All subcommands accept `--workdir` (default `.`) pointing at the project
+root containing `.sdd/`.
+
+```bash
+bernstein auth dashboard-token issue --principal alice --scope viewer
+bernstein auth dashboard-token list
+bernstein auth dashboard-token revoke 3f1a9c2d5e7b0a41
+bernstein governance verify dashboard-auth
+```
+
+Startup posture: `bernstein gui serve` on a loopback host without any
+credential configured issues an operator token and prints it once; on a
+non-loopback host it refuses to start until a token or password is
+configured. There is no silent open mode on a routable interface. Use the
+token as `Authorization: Bearer <token>` or in the dashboard login form
+(`POST /dashboard/auth/login`); the session cookie inherits exactly the
+token's principal and scope.

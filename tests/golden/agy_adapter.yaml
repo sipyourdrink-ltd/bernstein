@@ -1,0 +1,21 @@
+name: agy_adapter_spawn
+adapter_class: bernstein.adapters.agy.AgyAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    # The CLI exposes no model flag (selection is server-side), so the
+    # model never reaches the argv; it is recorded by the worker wrapper.
+    model: "default"
+    expected_pid: 3345
+    inner_argv:
+      - "agy"
+      - "-p"
+      - "fix the bug in main.py"
+      - "--sandbox"
+      - "--dangerously-skip-permissions"
+      # No --print-timeout: the replay harness spawns with
+      # timeout_seconds=0, which suppresses the upstream wait bound.
+    env_extra_keys:
+      - "GOOGLE_API_KEY"
+      - "GEMINI_API_KEY"
+      - "GOOGLE_CLOUD_PROJECT"
+      - "GOOGLE_APPLICATION_CREDENTIALS"

@@ -392,22 +392,28 @@ class TestIsAlive:
 class TestKill:
     """kill() terminates both the claude process and the wrapper process."""
 
-    def test_calls_kill_process_group_on_claude_process(self) -> None:
+    def test_calls_reap_on_claude_process(self) -> None:
         adapter = ClaudeCodeAdapter()
         ClaudeCodeAdapter._procs[50] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[50] = 51
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg:
+        with (
+            patch("bernstein.adapters.claude.reap_process_group") as mock_reap,
+            patch("bernstein.adapters.claude.kill_process_group_graceful"),
+        ):
             adapter.kill(50)
 
-        mock_kpg.assert_any_call(50)
+        mock_reap.assert_called_once_with(50)
 
     def test_kills_wrapper_process(self) -> None:
         adapter = ClaudeCodeAdapter()
         ClaudeCodeAdapter._procs[60] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[60] = 61
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg:
+        with (
+            patch("bernstein.adapters.claude.reap_process_group"),
+            patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg,
+        ):
             adapter.kill(60)
 
         mock_kpg.assert_any_call(61)
@@ -417,7 +423,10 @@ class TestKill:
         ClaudeCodeAdapter._procs[70] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[70] = 71
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful"):
+        with (
+            patch("bernstein.adapters.claude.reap_process_group"),
+            patch("bernstein.adapters.claude.kill_process_group_graceful"),
+        ):
             adapter.kill(70)
 
         assert 70 not in ClaudeCodeAdapter._procs
@@ -429,7 +438,10 @@ class TestKill:
         ClaudeCodeAdapter._procs[80] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[80] = 81
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful", return_value=False):
+        with (
+            patch("bernstein.adapters.claude.reap_process_group"),
+            patch("bernstein.adapters.claude.kill_process_group_graceful", return_value=False),
+        ):
             adapter.kill(80)  # must not raise
 
     def test_handles_failed_wrapper_kill(self) -> None:
@@ -438,13 +450,13 @@ class TestKill:
         ClaudeCodeAdapter._procs[90] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[90] = 91
 
-        # kill_process_group_graceful succeeds for main pid (90), fails for wrapper (91)
-        def _kpg_side_effect(pgid: int) -> bool:
-            return pgid != 91
-
-        with patch(
-            "bernstein.adapters.claude.kill_process_group_graceful",
-            side_effect=_kpg_side_effect,
+        # Wrapper kill fails for wrapper pid (91); primary reap succeeds.
+        with (
+            patch("bernstein.adapters.claude.reap_process_group"),
+            patch(
+                "bernstein.adapters.claude.kill_process_group_graceful",
+                return_value=False,
+            ),
         ):
             adapter.kill(90)  # must not raise
 
@@ -454,11 +466,15 @@ class TestKill:
         ClaudeCodeAdapter._procs[100] = MagicMock()
         # _wrapper_pids intentionally not set for pid 100
 
-        with patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg:
+        with (
+            patch("bernstein.adapters.claude.reap_process_group") as mock_reap,
+            patch("bernstein.adapters.claude.kill_process_group_graceful") as mock_kpg,
+        ):
             adapter.kill(100)
 
-        # Only the main process group is killed, no wrapper
-        mock_kpg.assert_called_once_with(100)
+        # Only the main process group is reaped, no wrapper kill
+        mock_reap.assert_called_once_with(100)
+        mock_kpg.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
