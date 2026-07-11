@@ -108,6 +108,17 @@ AUTH_PUBLIC_PATHS = frozenset(
         "/auth/cli/device",
         "/auth/cli/token",
         "/auth/providers",
+        # Dashboard auth flow (#2366). Login requires a credential in the
+        # body, status only reports whether auth is required, and logout is
+        # an idempotent session drop - none of them expose run data. The
+        # /api/v1 mirrors are listed too because this set matches exact
+        # paths.
+        "/dashboard/auth/login",
+        "/dashboard/auth/logout",
+        "/dashboard/auth/status",
+        "/api/v1/dashboard/auth/login",
+        "/api/v1/dashboard/auth/logout",
+        "/api/v1/dashboard/auth/status",
     }
 )
 
@@ -445,6 +456,16 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         # HMAC-authenticated paths: the route handler verifies a shared
         # secret; the bearer middleware lets them through.
         if path in AUTH_HMAC_PATHS or path.startswith(AUTH_HMAC_PATH_PREFIXES):
+            response = await call_next(request)
+            return response
+
+        # Dashboard requests already authenticated by the dashboard auth
+        # layer (#2366). ``dashboard_principal`` is stamped only after the
+        # outer DashboardAuthMiddleware validated a session or a signed
+        # scoped token and journaled the authz decision, so honouring it
+        # here does not widen the surface - unauthenticated dashboard
+        # requests never carry it and fall through to the bearer checks.
+        if path.startswith(("/dashboard", "/api/v1/dashboard")) and getattr(request.state, "dashboard_principal", ""):
             response = await call_next(request)
             return response
 
