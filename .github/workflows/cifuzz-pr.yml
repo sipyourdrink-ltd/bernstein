@@ -38,8 +38,13 @@ jobs:
     # SARIF via run_fuzzers (output-sarif: true). Crash artefacts are
     # surfaced through actions/upload-artifact below, which gives PR
     # authors enough signal without the elevated token scope.
+    #
+    # `actions: read` lets run_fuzzers diff against the previous build's
+    # corpus artefact (avoids the 401 it otherwise logs when fetching it);
+    # it is a read scope, so it does not affect the Scorecard token score.
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
