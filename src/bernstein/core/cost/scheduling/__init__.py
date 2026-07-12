@@ -38,6 +38,21 @@ from bernstein.core.cost.scheduling.cache_window import (
 from bernstein.core.cost.scheduling.cache_window import (
     plan_cache_fanout as plan_cache_fanout,
 )
+from bernstein.core.cost.scheduling.dispatch_gate import (
+    RunDispatchOutcome as RunDispatchOutcome,
+)
+from bernstein.core.cost.scheduling.dispatch_gate import (
+    build_dispatch_candidates as build_dispatch_candidates,
+)
+from bernstein.core.cost.scheduling.dispatch_gate import (
+    evaluate_run_dispatch as evaluate_run_dispatch,
+)
+from bernstein.core.cost.scheduling.dispatch_gate import (
+    resolve_cost_caps as resolve_cost_caps,
+)
+from bernstein.core.cost.scheduling.dispatch_gate import (
+    resolve_price_table as resolve_price_table,
+)
 from bernstein.core.cost.scheduling.policy import (
     CostCaps as CostCaps,
 )

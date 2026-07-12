@@ -24,6 +24,11 @@ from pathlib import Path
 import click
 
 from bernstein.cli.helpers import console
+from bernstein.core.skills.conformance import (
+    DEFAULT_MIN_HOSTS,
+    SubprocessTransport,
+    run_conformance,
+)
 from bernstein.core.skills.packaging import (
     PACKAGED_SKILL_NAME,
     PackagedInstallError,
@@ -375,6 +380,114 @@ def status_cmd(as_json: bool, home: str | None, workdir: str) -> None:
         mark = "[green]OK[/green]" if row["verified"] else f"[red]FAILED[/red] ({row['reason']})"
         console.print(f"  {row['host']}/{row['scope']}: {mark} -> {row['dest']}")
     raise SystemExit(2 if any_failed else 0)
+
+
+def _default_transport() -> SubprocessTransport:
+    """Return the production transport (real ``bernstein`` subprocess).
+
+    Isolated behind a factory so tests can inject a faithful in-process
+    transport without spawning real subprocesses.
+    """
+    return SubprocessTransport()
+
+
+@package_group.command("conformance")
+@click.option(
+    "--host",
+    "hosts",
+    type=click.Choice(sorted(supported_hosts())),
+    multiple=True,
+    help="Agent host to sweep (repeatable); defaults to every supported host.",
+)
+@click.option(
+    "--scope",
+    type=click.Choice(["project", "user"]),
+    default="project",
+    show_default=True,
+    help="Install scope used for each host's skill directory.",
+)
+@click.option(
+    "--min-hosts",
+    type=click.IntRange(min=1),
+    default=DEFAULT_MIN_HOSTS,
+    show_default=True,
+    help="Minimum green hosts required for an overall pass.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the sweep verdict as JSON.",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Project root containing .sdd/ (the shared install and receipt root).",
+)
+def conformance_cmd(
+    hosts: tuple[str, ...],
+    scope: str,
+    min_hosts: int,
+    as_json: bool,
+    workdir: str,
+) -> None:
+    """Install the skill into each host and replay its self-check contract.
+
+    Proves the packaged skill works from several agent CLIs against one
+    bernstein install and seals the per-host pass/fail table into a
+    content-addressed conformance receipt anchored in the lineage spine and
+    audit chain. Exit codes: 0 = all hosts green and the ``--min-hosts`` bar
+    met, 2 = conformance failed, 1 = error.
+    """
+    root = Path(workdir).resolve()
+    selected = tuple(hosts) if hosts else supported_hosts()
+
+    try:
+        outcome = run_conformance(
+            workdir=root,
+            hosts=selected,
+            transport=_default_transport(),
+            hmac_key=_load_hmac_key(),
+            install_id=f"conformance-{scope}",
+            timestamp=int(datetime.now(tz=UTC).timestamp()),
+            scope=scope,
+            min_hosts=min_hosts,
+        )
+    except PackagedInstallError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    rows = [{"host": r.host, "scope": r.scope, "dest": str(r.dest), "ok": r.ok} for r in outcome.hosts]
+    if as_json:
+        console.print_json(
+            data={
+                "skill_hash": outcome.skill_hash,
+                "receipt_id": outcome.receipt_id,
+                "spine_anchor": outcome.spine_anchor,
+                "min_hosts": outcome.min_hosts,
+                "passed_hosts": list(outcome.passed_hosts),
+                "ok": outcome.ok,
+                "hosts": rows,
+            }
+        )
+        raise SystemExit(0 if outcome.ok else 2)
+
+    console.print()
+    console.print(f"[bold]Packaged skill conformance[/bold] skill_hash={outcome.skill_hash}")
+    for row in rows:
+        mark = "[green]OK[/green]" if row["ok"] else "[red]FAILED[/red]"
+        console.print(f"  {row['host']}/{row['scope']}: {mark} -> {row['dest']}")
+    console.print(f"  passed:        {len(outcome.passed_hosts)}/{len(outcome.hosts)} (min {outcome.min_hosts})")
+    console.print(f"  receipt_id:    {outcome.receipt_id}")
+    console.print(f"  spine_anchor:  {outcome.spine_anchor}")
+    if outcome.ok:
+        console.print("[green]PASS[/green] -- the skill drove every host against one install.")
+        raise SystemExit(0)
+    console.print("[red]FAILED[/red] -- see the per-host verdicts above.")
+    raise SystemExit(2)
 
 
 __all__ = ["package_group"]

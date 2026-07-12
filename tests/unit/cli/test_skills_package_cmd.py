@@ -266,3 +266,119 @@ def test_status_no_installs_exits_0(tmp_path: Path) -> None:
         ["status", "--workdir", str(workdir), "--home", str(tmp_path / "home")],
     )
     assert status.exit_code == 0, status.output
+
+
+# ---------------------------------------------------------------------------
+# conformance (multi-host live validation, issue #2369 tail)
+# ---------------------------------------------------------------------------
+
+
+class _InProcessTransport:
+    """Faithful transport: run the real root CLI in-process via ``CliRunner``."""
+
+    def invoke(self, host, argv, *, cwd):
+        from bernstein.cli.main import cli
+        from bernstein.core.skills.conformance import CommandResult
+
+        result = CliRunner().invoke(cli, list(argv))
+        return CommandResult(argv=tuple(argv), exit_code=result.exit_code)
+
+
+class _RedTransport:
+    """Return exit 2 for one named host, 0 otherwise."""
+
+    def __init__(self, red_host):
+        self._red = red_host
+
+    def invoke(self, host, argv, *, cwd):
+        from bernstein.core.skills.conformance import CommandResult
+
+        return CommandResult(argv=tuple(argv), exit_code=2 if host == self._red else 0)
+
+
+def _patch_transport(monkeypatch, transport):
+    monkeypatch.setattr(
+        "bernstein.cli.commands.skills_package_cmd._default_transport",
+        lambda: transport,
+    )
+
+
+def test_conformance_three_hosts_pass_exit_0(monkeypatch, tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    _patch_transport(monkeypatch, _InProcessTransport())
+    result = CliRunner().invoke(
+        package_group,
+        [
+            "conformance",
+            "--host",
+            "claude",
+            "--host",
+            "codex",
+            "--host",
+            "cursor",
+            "--min-hosts",
+            "3",
+            "--workdir",
+            str(workdir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "PASS" in result.output
+
+
+def test_conformance_json_shape(monkeypatch, tmp_path: Path) -> None:
+    import json
+
+    workdir = _workdir(tmp_path)
+    _patch_transport(monkeypatch, _InProcessTransport())
+    result = CliRunner().invoke(
+        package_group,
+        [
+            "conformance",
+            "--host",
+            "claude",
+            "--host",
+            "codex",
+            "--host",
+            "cursor",
+            "--json",
+            "--workdir",
+            str(workdir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert set(payload["passed_hosts"]) == {"claude", "codex", "cursor"}
+    assert payload["receipt_id"].startswith("sha256:")
+
+
+def test_conformance_red_host_exit_2(monkeypatch, tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    _patch_transport(monkeypatch, _RedTransport("cursor"))
+    result = CliRunner().invoke(
+        package_group,
+        [
+            "conformance",
+            "--host",
+            "claude",
+            "--host",
+            "codex",
+            "--host",
+            "cursor",
+            "--workdir",
+            str(workdir),
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "FAILED" in result.output
+
+
+def test_conformance_below_min_hosts_exit_2(monkeypatch, tmp_path: Path) -> None:
+    workdir = _workdir(tmp_path)
+    _patch_transport(monkeypatch, _InProcessTransport())
+    result = CliRunner().invoke(
+        package_group,
+        ["conformance", "--host", "claude", "--host", "codex", "--min-hosts", "3", "--workdir", str(workdir)],
+    )
+    assert result.exit_code == 2, result.output

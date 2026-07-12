@@ -1201,7 +1201,7 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 | `bernstein ledger resume <run>` | Resume a run from its work ledger on any clone: verify the chain end to end, rebuild scheduler state by deterministic replay (completed / in-flight / scheduled / failed tasks), record the resume as a new chain entry, and write one resume signal per frontier task for the resume watcher. `--dry-run` prints the plan without recording anything; `--json` for machine output. Exit 0 resumed, 1 no ledger, 2 verification failed (exact entry position reported), 3 two divergent resumes detected and refused. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger runs` | List runs with an anchored work ledger in this repository. `--json` for machine output. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger gc <run>` | Squash the run's anchor history to a single commit, preserving the current anchored tree byte for byte. Superseded chunk blobs become unreachable so a normal `git gc` reclaims them -- the repo-bloat bound for long runs. Exit 0 done, 1 no anchored ledger. | `cli/commands/ledger_cmd.py` |
-| `bernstein run-service submit <goal> --task <id>...` | Open a detached run: seed the work ledger (`run.open` + one `task.scheduled` per `--task`), persist the run descriptor (goal digest, never the goal text), and sign a `submitted` lifecycle receipt into the HMAC audit chain. By default spawns a session-detached supervisor that survives the terminal; `--foreground` advances the run in-process; `--per-task-delay` makes off-terminal progress observable; `--json` for machine output. | `cli/commands/run_service_cmd.py` |
+| `bernstein run-service submit <goal> --task <id>...` | Open a detached run: seed the work ledger (`run.open` + one `task.scheduled` per `--task`), persist the run descriptor (goal digest, never the goal text), and sign a `submitted` lifecycle receipt into the HMAC audit chain. By default spawns a session-detached supervisor that survives the terminal; `--foreground` advances the run in-process; `--per-task-delay` makes off-terminal progress observable; `--json` for machine output. `--backend ssh` runs each task off-host on the ssh backend in its own isolated remote git worktree (one branch per task) and signs a `run.ssh_task` receipt binding that worktree; pass `--ssh-host` and `--ssh-path` (absolute remote dir), optionally `--ssh-user`/`--ssh-port`/`--ssh-identity`, `--ssh-repo` to git-worktree from with `--ssh-base-branch`, and `--ssh-secret ENV=PROVIDER` (repeatable) to inject a vault credential into the remote env resolved from the vault only, never the ledger or the receipts. | `cli/commands/run_service_cmd.py` |
 | `bernstein run-service attach <run>` | Reattach from any shell: prove the current ledger head is a forward extension of the head last seen (the reattach artefact is that continuity proof), record a `reattached` receipt, and render the live projection (completed / in-flight / scheduled tasks). `--json` for machine output. Exit 0 continuous, 1 no such run, 3 continuity broken (the ledger diverged or failed to verify). | `cli/commands/run_service_cmd.py` |
 | `bernstein run-service status [<run>]` | Show supervisor liveness plus the ledger projection for a run; with no run id, list every run in the project. `--json` for machine output. Exit 1 when the named run does not exist. | `cli/commands/run_service_cmd.py` |
 | `bernstein run-service stop <run>` | Stop the run's supervisor process (SIGTERM then SIGKILL after a grace window) and record a `detached` boundary receipt so a later attach can prove continuity. `--json` for machine output. Exit 1 when the run does not exist. | `cli/commands/run_service_cmd.py` |
@@ -1446,12 +1446,30 @@ overrides the home directory for user-scoped destinations.
 Exit codes: `0` every present install verifies (or none present), `2` at
 least one present install failed verification.
 
+#### `bernstein skills package conformance`
+
+Installs the bundled skill into every selected host against one shared
+install, then replays the skill's documented self-check contract (`skills
+package show`, then `skills package verify --dest`) per host. Each host runs
+the contract as it would from inside its own session; the per-host pass/fail
+table, the shared content address, and the aggregate verdict are sealed into
+a content-addressed conformance receipt anchored in the lineage spine and a
+`plugin.conformance_receipt` audit-chain event.
+
+Options: `--host` (repeatable; defaults to every supported host), `--scope`
+(`project`/`user`), `--min-hosts` (green hosts required for an overall pass;
+default `3`), `--json`, `--workdir`.
+
+Exit codes: `0` every host green and the `--min-hosts` bar met, `2`
+conformance failed, `1` error.
+
 ```bash
 bernstein skills package install --host claude --scope project
 bernstein skills package install --dest ~/.claude/plugins/bernstein --record-only
 bernstein skills package verify --host claude --scope project
 bernstein skills package update --host claude --scope project
 bernstein skills package status
+bernstein skills package conformance --host claude --host codex --host cursor
 ```
 
 See [Agent sessions](../integrations/agent-session.md) for the skill

@@ -29,12 +29,14 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import secrets
 import shlex
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from bernstein.core.sandbox.backend import (
     ExecResult,
@@ -53,6 +55,32 @@ _CONNECT_TIMEOUT_SECONDS = 10
 _SERVER_ALIVE_INTERVAL_SECONDS = 30
 _CONTROL_PERSIST_SECONDS = 600
 _DEFAULT_TIMEOUT_SLACK = 5
+
+#: A remote-path segment (session id / worktree dir name) must match this so it
+#: can never escape the remote worktree root or be read as an ``ssh`` flag.
+_SESSION_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _validate_session_component(component: str) -> str:
+    """Return *component* when it is a safe single remote-path segment.
+
+    Rejects the empty string, ``.``/``..``, and anything carrying a path
+    separator or a leading dash, so a caller-supplied session id can never
+    traverse out of ``<path>/<session_id>`` or be mistaken for an option
+    (CodeQL py/path-injection).
+
+    Args:
+        component: The candidate remote-path segment.
+
+    Returns:
+        The validated component, unchanged.
+
+    Raises:
+        ValueError: If *component* is not a safe single segment.
+    """
+    if component in {"", ".", ".."} or _SESSION_COMPONENT_RE.match(component) is None:
+        raise ValueError(f"unsafe session id {component!r}: must match [A-Za-z0-9][A-Za-z0-9._-]*")
+    return component
 
 
 class SandboxConnectionError(RuntimeError):
@@ -112,6 +140,119 @@ def _classify_ssh_failure(host: str, stderr: str) -> SandboxConnectionError | No
             hint="check network reachability and any VPN requirements",
         )
     return None
+
+
+@dataclass(frozen=True)
+class RemoteExec:
+    """Raw outcome of one ssh transport call.
+
+    Attributes:
+        returncode: Exit code of the remote process (``-1`` if it never
+            reported one).
+        stdout: Raw bytes the remote process wrote to stdout.
+        stderr: Raw bytes the remote process wrote to stderr.
+    """
+
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+
+
+@runtime_checkable
+class SSHTransport(Protocol):
+    """The external ssh boundary: run a prepared ``ssh`` argv and report back.
+
+    The backend owns argv assembly (options, the ``[user@]host`` target, the
+    ``sh -c`` wrapping); the transport owns only the process hop. The default
+    transport shells out to the system ``ssh`` binary. A test or an embedding
+    host can inject an in-process transport so the backend's real logic -- the
+    base64 file transfer and the remote ``git worktree`` lifecycle -- runs
+    without a live remote, which is how the ssh backend is proven off-host
+    (issue #2352, AC4).
+    """
+
+    def run_blocking(self, argv: list[str]) -> RemoteExec:
+        """Run a control-plane call (open/close the ControlMaster) and wait."""
+        ...
+
+    async def run_async(
+        self,
+        argv: list[str],
+        *,
+        timeout_seconds: int | None = None,
+        stdin: bytes | None = None,
+    ) -> RemoteExec:
+        """Run a remote command over ssh and collect its result.
+
+        Raises:
+            TimeoutError: When *timeout_seconds* elapses before the command
+                finishes.
+        """
+        ...
+
+    def popen(
+        self,
+        argv: list[str],
+        *,
+        stdin: int | None = None,
+        stdout: int | None = None,
+        stderr: int | None = None,
+    ) -> subprocess.Popen[bytes]:
+        """Spawn a streaming remote command and return the live client handle."""
+        ...
+
+
+class _SubprocessSSHTransport:
+    """Default :class:`SSHTransport`: shell out to the system ``ssh`` binary.
+
+    Stateless -- the backend keeps every connection detail and hands over a
+    fully-built argv, so this class only ever runs processes.
+    """
+
+    def run_blocking(self, argv: list[str]) -> RemoteExec:
+        proc = subprocess.run(argv, capture_output=True, check=False)
+        return RemoteExec(returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+
+    async def run_async(
+        self,
+        argv: list[str],
+        *,
+        timeout_seconds: int | None = None,
+        stdin: bytes | None = None,
+    ) -> RemoteExec:
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        deadline = timeout_seconds + _DEFAULT_TIMEOUT_SLACK if timeout_seconds else None
+        try:
+            async with asyncio.timeout(deadline):
+                stdout, stderr = await process.communicate(input=stdin)
+        except TimeoutError:
+            process.kill()
+            try:
+                async with asyncio.timeout(5):
+                    await process.wait()
+            except TimeoutError:
+                logger.warning("ssh process did not exit after kill: %s", argv)
+            raise TimeoutError(f"ssh command timed out after {timeout_seconds}s") from None
+        return RemoteExec(
+            returncode=process.returncode if process.returncode is not None else -1,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    def popen(
+        self,
+        argv: list[str],
+        *,
+        stdin: int | None = None,
+        stdout: int | None = None,
+        stderr: int | None = None,
+    ) -> subprocess.Popen[bytes]:
+        return subprocess.Popen(argv, stdin=stdin, stdout=stdout, stderr=stderr)
 
 
 class SSHSandboxSession(SandboxSession):
@@ -308,6 +449,7 @@ class SSHSandboxBackend:
         identity_file: str | Path | None = None,
         port: int = 22,
         strict_host_key_checking: bool = True,
+        transport: SSHTransport | None = None,
     ) -> None:
         """Initialise the backend.
 
@@ -323,6 +465,10 @@ class SSHSandboxBackend:
             strict_host_key_checking: When ``True`` (default) the
                 corresponding ``StrictHostKeyChecking`` flag is passed
                 as ``yes``; ``False`` sets it to ``accept-new``.
+            transport: The ssh transport to run prepared argv through.
+                Defaults to :class:`_SubprocessSSHTransport` (the system
+                ``ssh`` binary). Inject an in-process transport to drive the
+                backend without a live host.
         """
         if not host:
             raise ValueError("host must be non-empty")
@@ -334,6 +480,7 @@ class SSHSandboxBackend:
         self._identity_file = Path(identity_file) if identity_file is not None else None
         self._port = port
         self._strict_host_key_checking = strict_host_key_checking
+        self._transport: SSHTransport = transport if transport is not None else _SubprocessSSHTransport()
         self._sessions: dict[str, SSHSandboxSession] = {}
         self._control_socket = self._build_control_socket_path(host, os.getpid())
         self._master_started = False
@@ -426,13 +573,9 @@ class SSHSandboxBackend:
             self._remote_target(),
         ]
         logger.debug("ssh: opening ControlMaster socket %s", self._control_socket)
-        proc = subprocess.run(
-            argv,
-            capture_output=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            stderr = proc.stderr.decode("utf-8", errors="replace")
+        result = self._transport.run_blocking(argv)
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace")
             classified = _classify_ssh_failure(self._host, stderr)
             if classified is not None:
                 raise classified
@@ -456,7 +599,7 @@ class SSHSandboxBackend:
             self._remote_target(),
         ]
         try:
-            subprocess.run(argv, capture_output=True, check=False)
+            self._transport.run_blocking(argv)
         except OSError as exc:
             logger.debug("ssh -O exit: %s", exc)
         # Best-effort socket removal - OpenSSH usually clears it itself.
@@ -481,34 +624,17 @@ class SSHSandboxBackend:
         self.ensure_control_master()
         argv = self._build_ssh_cmd(cmd)
         start = time.monotonic()
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        deadline = timeout_seconds + _DEFAULT_TIMEOUT_SLACK if timeout_seconds else None
-        try:
-            async with asyncio.timeout(deadline):
-                stdout, stderr = await process.communicate(input=stdin)
-        except TimeoutError:
-            process.kill()
-            try:
-                async with asyncio.timeout(5):
-                    await process.wait()
-            except TimeoutError:
-                logger.warning("ssh process did not exit after kill: %s", argv)
-            raise TimeoutError(f"ssh command timed out after {timeout_seconds}s") from None
+        result = await self._transport.run_async(argv, timeout_seconds=timeout_seconds, stdin=stdin)
         duration = time.monotonic() - start
-        exit_code = process.returncode if process.returncode is not None else -1
+        exit_code = result.returncode
         if exit_code != 0:
-            classified = _classify_ssh_failure(self._host, stderr.decode("utf-8", errors="replace"))
+            classified = _classify_ssh_failure(self._host, result.stderr.decode("utf-8", errors="replace"))
             if classified is not None:
                 raise classified
         return ExecResult(
             exit_code=exit_code,
-            stdout=stdout,
-            stderr=stderr,
+            stdout=result.stdout,
+            stderr=result.stderr,
             duration_seconds=duration,
         )
 
@@ -551,34 +677,76 @@ class SSHSandboxBackend:
         quoted = shlex.join(cmd)
         script = f"{cd_prefix}{env_prefix}{quoted}".strip()
         argv = self._build_ssh_cmd(script)
-        return subprocess.Popen(
-            argv,
-            stdin=stdin,
-            stdout=stdout,
-            stderr=stderr,
-        )
+        return self._transport.popen(argv, stdin=stdin, stdout=stdout, stderr=stderr)
 
     # ------------------------------------------------------------------
     # Worktree lifecycle (remote)
     # ------------------------------------------------------------------
 
-    async def create_remote_worktree(self, manifest: WorkspaceManifest, session_id: str) -> str:
+    async def create_remote_worktree(
+        self,
+        manifest: WorkspaceManifest,
+        session_id: str,
+        *,
+        new_branch: str | None = None,
+        reset: bool = False,
+    ) -> str:
         """Provision a fresh remote worktree and return its POSIX path.
 
-        When ``manifest.repo`` is set, ``git worktree add`` is executed
-        on the remote host. Otherwise a plain directory is created.
+        When ``manifest.repo`` is set, ``git worktree add`` is executed on the
+        remote host. Passing *new_branch* provisions the worktree on a brand-new
+        branch cut from ``manifest.repo.branch`` (``git worktree add -b``), so
+        many sessions can fan out from one base ref without the branch-per-tree
+        collision that plain ``git worktree add <path> <branch>`` would hit --
+        the isolation guarantee the detached run service leans on. Without a
+        repo, a plain directory is created.
+
+        With *reset*, provisioning is idempotent under resume: any stale
+        worktree left at the path by a killed prior attempt is removed and the
+        branch is created-or-reset (``git worktree add -B``). This lets a
+        supervisor re-run a task that was killed mid-execution on the ssh
+        backend without a branch/worktree collision, so a resumed run loses no
+        work across the ssh boundary.
+
+        Args:
+            manifest: The workspace manifest; ``manifest.repo`` selects the
+                git-worktree path over the plain-directory path.
+            session_id: The remote worktree directory name; validated so it
+                cannot escape ``<path>``.
+            new_branch: Optional new branch name to create for this worktree.
+            reset: When ``True``, clear any stale worktree/dir first and reset
+                the branch instead of failing if it already exists.
+
+        Returns:
+            The absolute POSIX path of the provisioned worktree.
         """
+        session_id = _validate_session_component(session_id)
         workdir = str(PurePosixPath(self._path) / session_id)
+        quoted_workdir = shlex.quote(workdir)
         if manifest.repo is not None:
             repo_src = shlex.quote(manifest.repo.src_path)
-            branch = shlex.quote(manifest.repo.branch)
-            script = (
-                f"mkdir -p {shlex.quote(self._path)} && "
-                f"cd {repo_src} && "
-                f"git worktree add {shlex.quote(workdir)} {branch}"
-            )
+            base = shlex.quote(manifest.repo.branch)
+            cleanup = ""
+            if reset:
+                # Retire a stale worktree from a killed attempt (dir + admin
+                # record) and prune any dangling record so `-B` can reuse the
+                # branch. `prune` covers the case where the dir was already
+                # removed but its admin record survived.
+                cleanup = (
+                    f"if [ -e {quoted_workdir} ]; then "
+                    f"git -C {repo_src} worktree remove --force {quoted_workdir} 2>/dev/null "
+                    f"|| rm -rf {quoted_workdir}; fi; "
+                    f"git -C {repo_src} worktree prune 2>/dev/null || true; "
+                )
+            if new_branch is not None:
+                branch_flag = "-B" if reset else "-b"
+                add = f"git worktree add {branch_flag} {shlex.quote(new_branch)} {quoted_workdir} {base}"
+            else:
+                add = f"git worktree add {quoted_workdir} {base}"
+            script = f"mkdir -p {shlex.quote(self._path)} && cd {repo_src} && {cleanup}{add}"
         else:
-            script = f"mkdir -p {shlex.quote(workdir)}"
+            pre = f"rm -rf {quoted_workdir} && " if reset else ""
+            script = f"{pre}mkdir -p {quoted_workdir}"
         result = await self.run_ssh(script)
         if result.exit_code != 0:
             raise RuntimeError(
@@ -598,9 +766,17 @@ class SSHSandboxBackend:
         return workdir
 
     async def destroy_remote_worktree(self, workdir: str) -> None:
-        """Best-effort cleanup of a remote worktree directory."""
+        """Best-effort cleanup of a remote worktree directory.
+
+        A git worktree's ``.git`` is a *file* (a gitdir pointer), not a
+        directory, so ``git worktree remove`` is what actually retires the
+        worktree's admin record in the source repo. Removing the directory
+        alone would leave a dangling record that blocks the branch from being
+        reused on a later resume, so the remove runs from inside the worktree
+        (which resolves back to the source repo) before the directory is wiped.
+        """
         script = (
-            f"if [ -d {shlex.quote(workdir)}/.git ]; then "
+            f"if [ -e {shlex.quote(workdir)}/.git ]; then "
             f"  git -C {shlex.quote(workdir)} worktree remove --force {shlex.quote(workdir)} 2>/dev/null || true; "
             f"fi; "
             f"rm -rf {shlex.quote(workdir)}"
@@ -620,11 +796,24 @@ class SSHSandboxBackend:
 
         Recognised ``options`` keys:
 
-        - ``session_id``: Pinned session identifier. Random when absent.
+        - ``session_id``: Pinned session identifier (validated as a safe
+          single remote-path segment). Random when absent.
+        - ``worktree_branch``: New branch to cut this worktree onto
+          (``git worktree add -b``), so sessions sharing a base ref stay
+          isolated. Ignored when the manifest has no repo.
+        - ``worktree_reset``: When truthy, provision idempotently under resume
+          (clear a stale worktree and reset the branch) instead of failing if
+          it already exists.
         """
-        hint = dict(options or {}).get("session_id")
-        session_id = hint if isinstance(hint, str) and hint else f"sbx-{secrets.token_hex(6)}"
-        workdir = await self.create_remote_worktree(manifest, session_id)
+        opts = dict(options or {})
+        hint = opts.get("session_id")
+        session_id = (
+            _validate_session_component(hint) if isinstance(hint, str) and hint else f"sbx-{secrets.token_hex(6)}"
+        )
+        branch_opt = opts.get("worktree_branch")
+        new_branch = branch_opt if isinstance(branch_opt, str) and branch_opt else None
+        reset = bool(opts.get("worktree_reset"))
+        workdir = await self.create_remote_worktree(manifest, session_id, new_branch=new_branch, reset=reset)
 
         if manifest.files:
             for entry in manifest.files:
@@ -659,7 +848,9 @@ class SSHSandboxBackend:
 
 
 __all__ = [
+    "RemoteExec",
     "SSHSandboxBackend",
     "SSHSandboxSession",
+    "SSHTransport",
     "SandboxConnectionError",
 ]

@@ -115,6 +115,29 @@ Exit codes: `0` every present install verifies (or none present), `2` at
 least one present install failed verification. `--json` emits the
 per-install verdicts for scripting.
 
+## Proving the skill drives several hosts against one install
+
+`conformance` closes the loop end to end: it installs the bundled skill into
+every selected host against one shared install, then replays the skill's
+documented self-check contract (`skills package show`, then `skills package
+verify --dest`) per host, exactly as an agent session would run it:
+
+```bash
+bernstein skills package conformance --host claude --host codex --host cursor
+bernstein skills package conformance --json
+```
+
+Each host must pass every contract step, and at least `--min-hosts` hosts
+(default 3) must be green, for an overall pass. The shared content address,
+the ordered per-host verdicts, and the aggregate result are sealed into a
+content-addressed conformance receipt anchored in the `skills` lineage spine
+and a `plugin.conformance_receipt` audit-chain event - so "the skill works
+from N agent CLIs against one install" is a chain-verifiable fact, not a
+transient log line.
+
+Exit codes: `0` every host green and the `--min-hosts` bar met, `2`
+conformance failed, `1` error.
+
 ## The plugin bundle
 
 The repository root doubles as the plugin root:

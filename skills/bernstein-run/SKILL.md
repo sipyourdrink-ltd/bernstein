@@ -61,15 +61,24 @@ Report the run as complete only when both verifications exit 0.
 
 ## Verifying this skill's own install
 
-Installs of this skill are receipt-backed. To prove the skill content the
-session is driving matches what was installed:
+Installs of this skill are receipt-backed. To confirm `bernstein` is on PATH
+and the bundled skill asset resolves in this session:
+
+```bash
+bernstein skills package show
+```
+
+To prove the skill content the session is driving matches what was
+installed:
 
 ```bash
 bernstein skills package verify --dest <path-to-this-skill-directory>
 ```
 
 Exit 0 means the installed tree's content address matches a receipt
-anchored in the lineage spine and audit chain.
+anchored in the lineage spine and audit chain. These two commands are the
+self-check contract the multi-host conformance sweep replays per agent host
+(`bernstein skills package conformance`).
 
 ## Notes
 
