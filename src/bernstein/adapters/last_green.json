@@ -5,6 +5,42 @@
       "receipt_sha256": "006fb946868db1d68aee03a2530b21981aec240fbf6e1ae663c272eb63e66a53",
       "recorded_at": "2026-07-11T05:57:23Z",
       "version": "1.0.0"
+    },
+    "claude": {
+      "binary": "claude",
+      "receipt_sha256": "70a4b6117ee6d1b35e46ff86ba336c7c138a75581744d7e5c158f76532b05f9a",
+      "recorded_at": "2026-07-12T07:25:34Z",
+      "version": "2.1.207"
+    },
+    "codex": {
+      "binary": "codex",
+      "receipt_sha256": "36acf8934592a09d8c744b290e8833015c076cbdf243ef4591835d83120b9142",
+      "recorded_at": "2026-07-12T07:25:34Z",
+      "version": "0.144.1"
+    },
+    "copilot": {
+      "binary": "copilot",
+      "receipt_sha256": "cbd54fc3ee806233fba52e2271811013da6cf5fe6adec26437a31d80a7f48a8d",
+      "recorded_at": "2026-07-12T07:25:34Z",
+      "version": "1.0.70"
+    },
+    "gemini": {
+      "binary": "gemini",
+      "receipt_sha256": "7c0241cda25cf36460ece59d884f2ddfbee9d8019a2a233114f0d9bea7def0be",
+      "recorded_at": "2026-07-12T07:25:34Z",
+      "version": "0.50.0"
+    },
+    "opencode": {
+      "binary": "opencode",
+      "receipt_sha256": "b0bc5dcef54ea93925e909f66baa0647cf723e9ebd6dd555cb0e0ffadc452327",
+      "recorded_at": "2026-07-12T07:25:34Z",
+      "version": "1.17.18"
+    },
+    "qwen": {
+      "binary": "qwen",
+      "receipt_sha256": "4cecea6a3c6a1b2ed35f87a486fc07e4441f4fc50421d85085026ed684860f52",
+      "recorded_at": "2026-07-12T07:25:34Z",
+      "version": "0.19.9"
     }
   },
   "schema_version": 1
