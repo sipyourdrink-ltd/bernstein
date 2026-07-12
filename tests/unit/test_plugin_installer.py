@@ -127,14 +127,23 @@ class TestExtractArchive:
 
         assert not (tmp_path / "out_evil" / "pwned.txt").exists()
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="Unix mode bits are POSIX-only")
     def test_extract_zip_preserves_unix_file_mode(self, tmp_path: Path) -> None:
+        """Zip extraction preserves the Unix mode on POSIX; extracts on Windows.
+
+        Runs on every OS. POSIX asserts the 0o755 mode is preserved; Windows
+        does not carry Unix mode bits, so it asserts the entry was extracted
+        with the expected content instead of skipping the lane.
+        """
         archive = _make_zip_with_mode(tmp_path / "plugin.zip", "bin/plugin", "#!/bin/sh\n", 0o755)
         dest = tmp_path / "out"
 
         _extract_archive(archive, dest)
 
-        assert stat.S_IMODE((dest / "bin" / "plugin").stat().st_mode) == 0o755
+        extracted = dest / "bin" / "plugin"
+        if sys.platform == "win32":
+            assert extracted.read_text() == "#!/bin/sh\n"
+        else:
+            assert stat.S_IMODE(extracted.stat().st_mode) == 0o755
 
     def test_extract_tar_gz(self, tmp_path: Path) -> None:
         archive = _make_tgz(tmp_path / "plugin.tar.gz", {"readme.md": "# Plugin"})

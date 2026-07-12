@@ -128,16 +128,25 @@ class TestInstallPrePushHook:
         assert hook.exists()
         assert "ruff" in hook.read_text()
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="Unix file permissions not applicable on Windows")
     def test_hook_is_executable(self, tmp_path: Path) -> None:
+        """The installed hook is runnable (platform-keyed assertion).
+
+        Runs on every OS. POSIX asserts the owner-execute mode bit; Windows has
+        no execute bit (git runs the hook through the shell), so it asserts the
+        hook was written with the expected body instead of skipping the lane.
+        """
         import stat
 
         git_hooks = tmp_path / ".git" / "hooks"
         git_hooks.mkdir(parents=True)
         install_pre_push_hook(tmp_path)
         hook = tmp_path / ".git" / "hooks" / "pre-push"
-        mode = hook.stat().st_mode
-        assert mode & stat.S_IXUSR
+        if sys.platform == "win32":
+            assert hook.exists()
+            assert "ruff" in hook.read_text()
+        else:
+            mode = hook.stat().st_mode
+            assert mode & stat.S_IXUSR
 
     def test_skips_existing_without_force(self, tmp_path: Path) -> None:
         git_hooks = tmp_path / ".git" / "hooks"

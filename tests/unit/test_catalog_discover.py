@@ -262,14 +262,19 @@ class TestLoadGenericEntry:
         assert result["security"]["model"] == "sonnet"
         assert result["security"]["effort"] == "high"
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="chmod 0o000 has no effect on Windows")
     def test_skips_unreadable_file(self, tmp_path, caplog):
-        """Unreadable files are logged as warnings and skipped."""
+        """An unreadable file is skipped; a readable one loads (platform-keyed).
+
+        Runs on every OS. ``chmod 0o000`` denies read on POSIX (the file is
+        skipped) but is a no-op on Windows (the file stays readable and loads),
+        so the expectation is keyed off the platform rather than skipping the
+        Windows lane.
+        """
         import logging
 
         bad_file = tmp_path / "bad.yaml"
         bad_file.write_text("role: something")
-        bad_file.chmod(0o000)  # make unreadable
+        bad_file.chmod(0o000)  # denies read on POSIX; no-op on Windows
 
         registry = CatalogRegistry()
         entry = _make_entry(name="generic", type_="generic", path=str(tmp_path))
@@ -277,8 +282,13 @@ class TestLoadGenericEntry:
         try:
             with caplog.at_level(logging.WARNING):
                 result = registry._load_generic_entry(entry)
-            # Should not raise; unreadable file skipped
-            assert "something" not in result
+            if sys.platform == "win32":
+                # Windows cannot make the file unreadable via mode bits, so the
+                # loader reads it like any other entry.
+                assert "role" in result or "something" in str(result)
+            else:
+                # Should not raise; the unreadable file is skipped.
+                assert "something" not in result
         finally:
             bad_file.chmod(0o644)  # restore for cleanup
 

@@ -451,9 +451,49 @@ def _run_hang() -> int:
         time.sleep(60)
 
 
+#: Config keys the harness may set, mapped to their ``BERNSTEIN_FAKE_CLI_*``
+#: environment variable. Loading the config in Python (rather than sourcing a
+#: shell file) keeps the wrapper trivial and identical on POSIX and Windows.
+_CONFIG_ENV_KEYS: dict[str, str] = {
+    "mode": "BERNSTEIN_FAKE_CLI_MODE",
+    "exit_code": "BERNSTEIN_FAKE_CLI_EXIT_CODE",
+    "delay_s": "BERNSTEIN_FAKE_CLI_DELAY_S",
+    "argv_dump": "BERNSTEIN_FAKE_CLI_ARGV_DUMP",
+    "env_dump": "BERNSTEIN_FAKE_CLI_ENV_DUMP",
+    "stdout": "BERNSTEIN_FAKE_CLI_STDOUT",
+    "profile": "BERNSTEIN_FAKE_CLI_PROFILE",
+    "stderr": "BERNSTEIN_FAKE_CLI_STDERR",
+}
+
+
+def _load_config_file() -> None:
+    """Populate ``BERNSTEIN_FAKE_CLI_*`` env vars from the JSON config file.
+
+    The wrapper only exports ``BERNSTEIN_FAKE_CLI_CONFIG`` (a path) and
+    ``BERNSTEIN_FAKE_CLI_PROFILE``. Everything else is read here so a single
+    Python config loader works identically under a POSIX ``sh`` wrapper and a
+    Windows ``.cmd`` wrapper -- no shell ``source``/``.`` semantics required.
+    An env var already present in the process takes precedence over the file so
+    a test can still override a single key inline.
+    """
+    config_path = os.environ.get("BERNSTEIN_FAKE_CLI_CONFIG")
+    if not config_path or not Path(config_path).is_file():
+        return
+    try:
+        data = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    for key, env_name in _CONFIG_ENV_KEYS.items():
+        if key in data and os.environ.get(env_name) is None:
+            os.environ[env_name] = str(data[key])
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse env config, dispatch to the requested mode."""
     argv = list(sys.argv if argv is None else argv)
+    _load_config_file()
     profile = _resolve_profile(argv[0] if argv else "")
 
     _maybe_dump_argv(argv)
