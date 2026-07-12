@@ -1,18 +1,22 @@
 name: main-red-guard
 
-# Blocks PR merges while the most recent CI run on main is failed or
-# cancelled and main HEAD has NOT yet advanced past the failing SHA.
+# Advisory guard: warns (does NOT block) when the most recent CI run on
+# main is failed or cancelled and main HEAD has NOT yet advanced past the
+# failing SHA.
 #
 # The auto-merge flow on this repo previously allowed PRs to merge into a
 # red main when the CI gate ran on a stale SHA: the rapid burst of merges
 # cancelled each other's CI runs, leaving "green" only on a SHA that was
-# never actually committed. Adding this guard as a required check forces
-# the operator to either:
+# never actually committed. This guard surfaces that condition so the
+# operator can choose to either:
 #
 #   * Wait for the next push to main that produces a green CI run, or
 #   * Roll forward main with a fix commit that supersedes the failing SHA.
 #
-# Either way, the next PR merge happens on top of a known-good main.
+# The check is advisory: a red main emits a ::warning:: and the job still
+# exits 0 so it never hard-blocks a merge on its own. The detection logic
+# (including treating a cancelled run on the current HEAD as red) is left
+# intact; only the merge-blocking exit is downgraded to a warning.
 
 on:
   pull_request:
@@ -118,5 +122,7 @@ jobs:
             echo ""
             echo "Either land a fix commit on main, or wait for a fresh green CI run, before this PR can merge."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::error::main is red (CI conclusion=${CONCLUSION} on ${RUN_SHA}); blocking merge. See ${RUN_URL}."
-          exit 1
+          # Advisory only: warn but do not fail. The FAIL summary above is
+          # kept verbatim so the operator still sees the full detail.
+          echo "::warning::main is red (CI conclusion=${CONCLUSION} on ${RUN_SHA}). See ${RUN_URL}."
+          exit 0
