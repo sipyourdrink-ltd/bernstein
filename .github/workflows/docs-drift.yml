@@ -98,8 +98,21 @@ jobs:
             drift-report.json
           retention-days: 14
 
-      - name: Comment drift report on the pull request
+      - name: Add drift report to job summary
+        # Always surface the report in the job summary when there is drift,
+        # so it is visible on fork PRs (whose read-only token cannot post a
+        # comment) and whenever the comment step below is swallowed.
         if: github.event_name == 'pull_request' && steps.drift.outputs.clean != 'True'
+        run: cat drift-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment drift report on the pull request
+        # Same-repo PRs only: fork PRs run with a read-only GITHUB_TOKEN and
+        # the comment API 403s (the job summary above is their fallback).
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.drift.outputs.clean != 'True'
+        # Dependabot same-repo PRs also receive a read-only token, so even a
+        # same-repo comment can 403. Do not fail the drift check on that; the
+        # report is already in the job summary and the uploaded artifact.
+        continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
