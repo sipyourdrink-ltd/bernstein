@@ -120,3 +120,20 @@ def test_dockerfile_has_mcp_registry_server_name_label() -> None:
     server_name = _json.loads((_REPO / "server.json").read_text(encoding="utf-8"))["name"]
     assert "io.modelcontextprotocol.server.name" in dockerfile
     assert server_name in dockerfile
+
+
+def test_publish_workflow_mcp_registry_is_idempotent() -> None:
+    """The registry publish step must treat an already-published version as success.
+
+    The MCP registry rejects re-submitting a live version with an HTTP 400
+    ``cannot publish duplicate version``. This happens on any re-run or when the
+    tag-push and workflow_dispatch triggers race to publish the same server.json.
+    The listing is already correct in that case, so the step must swallow the
+    duplicate rather than fail the release with a red check.
+    """
+    workflow = (
+        _REPO / ".github" / "workflows" / "publish.yml"
+    ).read_text(encoding="utf-8")
+    # The publish step guards on the duplicate-version marker and exits 0 for it.
+    assert "duplicate version" in workflow
+    assert "idempotent" in workflow.lower()

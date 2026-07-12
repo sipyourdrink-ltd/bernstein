@@ -362,6 +362,22 @@ jobs:
           ./mcp-publisher --version
       - name: Publish server.json
         run: |
-          set -euo pipefail
+          set -uo pipefail
           ./mcp-publisher login github-oidc
-          ./mcp-publisher publish
+          # Idempotent publish: the registry rejects re-submitting a version that
+          # is already live with an HTTP 400 "cannot publish duplicate version".
+          # That happens whenever this job runs more than once for the same
+          # release (a workflow re-run, or the tag-push and workflow_dispatch
+          # triggers racing to publish the same server.json). The listing is
+          # already correct in that case, so a duplicate is a success, not a
+          # failure — swallow it and let any other error still fail the step.
+          out=$(./mcp-publisher publish 2>&1)
+          code=$?
+          printf '%s\n' "$out"
+          if [ "$code" -ne 0 ]; then
+            if printf '%s' "$out" | grep -qi "duplicate version"; then
+              echo "::notice::version already present in the MCP registry; treating duplicate as success (idempotent)"
+              exit 0
+            fi
+            exit "$code"
+          fi
