@@ -52,11 +52,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Phase-1 default knob. The cron trigger is gated by ENABLE_CRON so a
-  # scheduled run is a no-op until the operator opts in via a follow-up
-  # PR that flips this value. Job 'if:' cannot read env directly, so the
-  # gate runs as the first step of the job (see "Gate cron trigger").
-  ENABLE_CRON: '0'
+  # Cron enabled: a clean workflow_dispatch smoke run opened a real
+  # eval-case PR, so the daily ingest path is proven. Emitted cases are
+  # redacted P1 (warn-only) YAML; the scheduled run stays a
+  # review-before-merge PR and never pushes to main. Job 'if:' cannot
+  # read env directly, so the gate runs as the first step of the job
+  # (see "Gate cron trigger").
+  ENABLE_CRON: '1'
 
 jobs:
   ingest:
