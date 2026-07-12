@@ -170,8 +170,11 @@ class EventJournal:
         run_root = (runs_root / safe_run_id).resolve()
         if not run_root.is_relative_to(runs_root):
             raise ValueError(f"run_id escapes the journal runs root: {run_id!r}")
+        # Create and open only the contained directory itself (not a path derived
+        # from it), so both filesystem sinks operate directly on the value proven
+        # to sit inside the runs root.
+        run_root.mkdir(parents=True, exist_ok=True)
         self._path = run_root / JOURNAL_FILENAME
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index = 0
         self._head = _GENESIS_HASH
