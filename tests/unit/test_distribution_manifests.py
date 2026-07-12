@@ -131,9 +131,7 @@ def test_publish_workflow_mcp_registry_is_idempotent() -> None:
     The listing is already correct in that case, so the step must swallow the
     duplicate rather than fail the release with a red check.
     """
-    workflow = (
-        _REPO / ".github" / "workflows" / "publish.yml"
-    ).read_text(encoding="utf-8")
+    workflow = (_REPO / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
     # The publish step guards on the duplicate-version marker and exits 0 for it.
     assert "duplicate version" in workflow
     assert "idempotent" in workflow.lower()
