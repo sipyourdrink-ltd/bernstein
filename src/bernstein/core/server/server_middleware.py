@@ -146,6 +146,15 @@ def _is_sse_request(request: Request) -> bool:
     if "text/event-stream" in accept.lower():
         return True
     path = request.url.path
+    # The SSE routes are served both at the root and under the /api/v1
+    # version prefix. Strip the prefix so the versioned aliases
+    # (/api/v1/events, /api/v1/events/cost) are detected the same as
+    # their unprefixed forms - otherwise the crash guard wraps their
+    # never-ending stream and turns a transport-level disconnect into a
+    # spurious 500. A non-SSE route that merely ends in "/events" (e.g.
+    # /webhooks/slack/events) still returns False.
+    if path.startswith("/api/v1/"):
+        path = path[len("/api/v1") :]
     return path == "/events" or path.startswith("/events/")
 
 

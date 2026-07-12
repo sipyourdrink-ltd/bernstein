@@ -15,6 +15,7 @@ import json
 import logging
 import secrets
 import time
+from enum import StrEnum
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -32,6 +33,19 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 # Request / response schemas
 # ---------------------------------------------------------------------------
+
+
+class LoginProvider(StrEnum):
+    """SSO providers accepted by ``GET /auth/login``.
+
+    Typing the ``provider`` query param with this enum lets FastAPI
+    reject unknown values with a ``422`` at the validation layer instead
+    of the handler falling through to a generic error for an input it
+    was never going to support.
+    """
+
+    OIDC = "oidc"
+    SAML = "saml"
 
 
 class AuthProvidersResponse(BaseModel):
@@ -177,11 +191,11 @@ def auth_providers(request: Request) -> AuthProvidersResponse:
         503: {"description": "SSO authentication not configured"},
     },
 )
-async def login(request: Request, provider: str = "oidc") -> Response:
+async def login(request: Request, provider: LoginProvider = LoginProvider.OIDC) -> Response:
     """Initiate SSO login. Redirects to IdP."""
     svc = _get_auth_service(request)
 
-    if provider == "oidc" and svc.config.oidc.enabled:
+    if provider == LoginProvider.OIDC and svc.config.oidc.enabled:
         state = secrets.token_urlsafe(32)
         # Store state for CSRF validation (in-memory is fine for this)
         if not hasattr(request.app.state, "_oidc_states"):
@@ -192,14 +206,14 @@ async def login(request: Request, provider: str = "oidc") -> Response:
         auth_url = svc.get_oidc_auth_url(state=state, discovery=discovery)
         return RedirectResponse(url=auth_url, status_code=302)
 
-    if provider == "saml" and svc.config.saml.enabled:
+    if provider == LoginProvider.SAML and svc.config.saml.enabled:
         relay_state = secrets.token_urlsafe(16)
         redirect_url = svc.get_saml_auth_redirect_url(relay_state=relay_state)
         return RedirectResponse(url=redirect_url, status_code=302)
 
     raise HTTPException(
         status_code=400,
-        detail=f"Authentication provider '{provider}' is not enabled",
+        detail=f"Authentication provider '{provider.value}' is not enabled",
     )
 
 
