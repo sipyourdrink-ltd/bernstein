@@ -158,9 +158,8 @@ def owner_from_server_json(server_json_path: Path) -> str | None:
     url = (data.get("repository") or {}).get("url", "")
     if not isinstance(url, str) or "github.com/" not in url:
         return None
-    tail = url.split("github.com/", 1)[1].strip("/")
-    parts = tail.split("/")
-    return parts[0] if parts and parts[0] else None
+    owner = url.split("github.com/", 1)[1].strip("/").split("/", 1)[0]
+    return owner or None
 
 
 def canonical_signed_image(owner: str, version: str) -> ImageReference:
