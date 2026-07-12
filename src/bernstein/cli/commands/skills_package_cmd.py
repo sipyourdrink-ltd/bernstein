@@ -382,6 +382,103 @@ def status_cmd(as_json: bool, home: str | None, workdir: str) -> None:
     raise SystemExit(2 if any_failed else 0)
 
 
+def _package_version() -> str:
+    """Return the installed bernstein version (the release tag the image pins)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("bernstein")
+    except PackageNotFoundError:  # pragma: no cover - source checkout without install
+        import tomllib
+
+        pyproject = Path(__file__).resolve().parents[4] / "pyproject.toml"
+        with pyproject.open("rb") as fh:
+            return str(tomllib.load(fh)["project"]["version"])
+
+
+@package_group.command("image-verify")
+@click.option(
+    "--version",
+    "version_override",
+    default=None,
+    help="Release version the signed image must pin (defaults to the installed bernstein version).",
+)
+@click.option(
+    "--online",
+    is_flag=True,
+    default=False,
+    help="Also run `gh attestation verify` against the live Sigstore attestation (needs network + gh).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the verdict as JSON.",
+)
+@click.option(
+    "--repo-root",
+    type=click.Path(file_okay=False, exists=True),
+    default=".",
+    show_default=True,
+    help="Repository root holding server.json and packaging/docker-mcp/.",
+)
+def image_verify_cmd(version_override: str | None, online: bool, as_json: bool, repo_root: str) -> None:
+    """Verify the packaged distribution resolves to the canonical signed image.
+
+    Proves, offline, that the MCP registry listing (``server.json``) and the
+    Docker MCP catalog entry (``packaging/docker-mcp/server.yaml``) agree on the
+    same ``ghcr.io/<owner>/bernstein`` repository and that the registry listing
+    pins the release version, so a host pulls the exact signed image the release
+    built. With ``--online`` it also verifies the live Sigstore
+    build-provenance attestation via ``gh attestation verify``.
+
+    Exit codes: 0 = consistent (and, with ``--online``, attestation verified or
+    tooling unavailable); 2 = a manifest mismatch or a failed online attestation.
+    """
+    from bernstein.core.skills.image_provenance import (
+        owner_from_server_json,
+        verify_attestation,
+        verify_signed_image_provenance,
+    )
+
+    root = Path(repo_root).resolve()
+    version = version_override or _package_version()
+    result = verify_signed_image_provenance(repo_root=root, version=version)
+
+    payload: dict[str, object] = {"version": version, "provenance": result.to_dict()}
+    failed = not result.ok
+
+    if online and result.ok:
+        owner = owner_from_server_json(root / "server.json") or ""
+        attestation = verify_attestation(result.image_ref, owner=owner)
+        payload["attestation"] = attestation.to_dict()
+        # A present-but-failed attestation is a hard failure; unavailable tooling
+        # leaves the offline verdict standing.
+        if attestation.available and not attestation.verified:
+            failed = True
+
+    if as_json:
+        console.print_json(data=payload)
+        raise SystemExit(2 if failed else 0)
+
+    console.print()
+    console.print("[bold]Signed-image provenance[/bold]")
+    mark = "[green]OK[/green]" if result.ok else f"[red]FAILED[/red] ({result.reason})"
+    console.print(f"  manifest consistency: {mark}")
+    if result.ok:
+        console.print(f"  signed image: {result.image_ref}")
+    att = payload.get("attestation")
+    if isinstance(att, dict):
+        if not att["available"]:
+            console.print(f"  attestation: [yellow]skipped[/yellow] ({att['detail']})")
+        elif att["verified"]:
+            console.print(f"  attestation: [green]verified[/green] ({att['detail']})")
+        else:
+            console.print(f"  attestation: [red]FAILED[/red] ({att['detail']})")
+    raise SystemExit(2 if failed else 0)
+
+
 def _default_transport() -> SubprocessTransport:
     """Return the production transport (real ``bernstein`` subprocess).
 
