@@ -2247,18 +2247,40 @@ def claim_and_spawn_batches(
 
         # Provider batch: submit eligible low-risk single-task work to
         # OpenAI/Anthropic batch APIs instead of spawning a local CLI agent.
+        # The capability-gated route_batch decision (#2354, AC3) is the gate:
+        # a batch-eligible task reaches the batch surface only on a
+        # batch-capable adapter, a non-eligible task never does, and a
+        # batch-eligible task on an adapter with no batch surface is refused
+        # (dispatched interactively) rather than faked. The routing decision is
+        # sealed as a cost.batch_route receipt.
         if len(batch) == 1:
             _batch_api = getattr(orch, "_batch_api", None)
             if _batch_api is not None:
-                _batch_result = _batch_api.try_submit(orch, batch[0])
-                if _batch_result.handled:
-                    if _batch_result.submitted:
-                        assigned_task_ids.add(batch[0].id)
-                        _claimed_titles.add(_base_title(batch[0].title))
-                        result.spawned.append(_batch_result.session_id or f"provider-batch:{batch[0].id}")
-                    elif _batch_result.reason:
-                        result.errors.append(f"batch:{batch[0].id}: {_batch_result.reason}")
-                    continue
+                from bernstein.core.cost.scheduling.live_dispatch import (
+                    decide_batch_route,
+                    seal_batch_route,
+                )
+
+                _route = decide_batch_route(orch, batch[0])
+                seal_batch_route(orch, _route)
+                if _route.route == "batch":
+                    _batch_result = _batch_api.try_submit(orch, batch[0])
+                    if _batch_result.handled:
+                        if _batch_result.submitted:
+                            assigned_task_ids.add(batch[0].id)
+                            _claimed_titles.add(_base_title(batch[0].title))
+                            result.spawned.append(_batch_result.session_id or f"provider-batch:{batch[0].id}")
+                        elif _batch_result.reason:
+                            result.errors.append(f"batch:{batch[0].id}: {_batch_result.reason}")
+                        continue
+                elif _route.refused_reason:
+                    logger.debug(
+                        "cost: task %s batch-eligible but adapter %s has no batch surface (%s); "
+                        "dispatching interactively",
+                        batch[0].id,
+                        _route.adapter,
+                        _route.refused_reason,
+                    )
 
         batch_timeout_s = _batch_timeout_seconds(batch)
         _shadow_bandit_decision: Any | None = None

@@ -394,3 +394,140 @@ def test_audit_event_records_selection(tmp_path: Path) -> None:
     assert event.event_type == EVENT_TOURNAMENT_SELECTION
     assert event.details["winner_hash"] == outcomes[0].attempt_hash
     assert event.details["attempt_count"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Cache-window fan-out (#2354, AC4)
+# ---------------------------------------------------------------------------
+
+
+def test_cache_window_fanout_warms_once_before_siblings_on_capable_adapter(tmp_path: Path) -> None:
+    """A capable + enabled adapter primes the shared prefix once, then M siblings hit it."""
+    from bernstein.core.tournament.runner import CacheWindowFanout, TournamentRunner
+
+    priv, pub = load_or_create_tournament_identity(tmp_path / ".sdd" / "tournaments")
+    hmac_key = load_or_create_audit_key(tmp_path / ".sdd" / "audit.key")
+    order: list[str] = []
+
+    def spawner(task_id: str, n: int) -> list[str]:
+        order.append(f"spawn:{n}")
+        return [f"{task_id}-{i}" for i in range(n)]
+
+    def warmup() -> None:
+        order.append("warmup")
+
+    runner = TournamentRunner(
+        spawner=spawner,
+        evaluator=lambda ids: _outcomes(),
+        cache_window=CacheWindowFanout(adapter="claude", prefix="shared-system-prompt", warmup=warmup, enabled=True),
+    )
+    outcome = runner.run(
+        task_id="T-cache",
+        spec=_spec(),  # attempts=3
+        per_attempt_cost_usd=0.5,
+        cap_usd=100.0,
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=hmac_key,
+        private_key_pem=priv,
+        public_key_pem=pub,
+        timestamp=7,
+    )
+    # One warm-up strictly precedes the three sibling spawns.
+    assert order == ["warmup", "spawn:1", "spawn:1", "spawn:1"]
+    assert outcome.cache_fanout is not None
+    assert outcome.cache_fanout.warmup_calls_made == 1
+    assert outcome.cache_fanout.worker_calls_made == 3
+    assert outcome.cache_fanout.cache_hits == 3
+
+
+def test_cache_window_disabled_issues_no_warmup(tmp_path: Path) -> None:
+    """With the window disabled, the fan-out issues no warm-up and expects no hits."""
+    from bernstein.core.tournament.runner import CacheWindowFanout, TournamentRunner
+
+    priv, pub = load_or_create_tournament_identity(tmp_path / ".sdd" / "tournaments")
+    hmac_key = load_or_create_audit_key(tmp_path / ".sdd" / "audit.key")
+    warmups: list[int] = []
+
+    runner = TournamentRunner(
+        spawner=lambda task_id, n: [f"{task_id}-{i}" for i in range(n)],
+        evaluator=lambda ids: _outcomes(),
+        cache_window=CacheWindowFanout(
+            adapter="claude", prefix="shared", warmup=lambda: warmups.append(1), enabled=False
+        ),
+    )
+    outcome = runner.run(
+        task_id="T-off",
+        spec=_spec(),
+        per_attempt_cost_usd=0.5,
+        cap_usd=100.0,
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=hmac_key,
+        private_key_pem=priv,
+        public_key_pem=pub,
+        timestamp=8,
+    )
+    assert warmups == []
+    assert outcome.cache_fanout is not None
+    assert outcome.cache_fanout.warmup_calls_made == 0
+    assert outcome.cache_fanout.cache_hits == 0
+
+
+def test_cache_window_incapable_adapter_issues_no_warmup(tmp_path: Path) -> None:
+    """An adapter with no cache window issues no warm-up even when enabled."""
+    from bernstein.core.tournament.runner import CacheWindowFanout, TournamentRunner
+
+    priv, pub = load_or_create_tournament_identity(tmp_path / ".sdd" / "tournaments")
+    hmac_key = load_or_create_audit_key(tmp_path / ".sdd" / "audit.key")
+    warmups: list[int] = []
+
+    runner = TournamentRunner(
+        spawner=lambda task_id, n: [f"{task_id}-{i}" for i in range(n)],
+        evaluator=lambda ids: _outcomes(),
+        cache_window=CacheWindowFanout(adapter="mock", prefix="shared", warmup=lambda: warmups.append(1), enabled=True),
+    )
+    outcome = runner.run(
+        task_id="T-incap",
+        spec=_spec(),
+        per_attempt_cost_usd=0.5,
+        cap_usd=100.0,
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=hmac_key,
+        private_key_pem=priv,
+        public_key_pem=pub,
+        timestamp=9,
+    )
+    assert warmups == []  # mock is not a cache-window adapter
+    assert outcome.cache_fanout is not None
+    assert outcome.cache_fanout.warmup_calls_made == 0
+    assert outcome.cache_fanout.cache_hits == 0
+
+
+def test_runner_without_cache_window_spawns_in_one_call(tmp_path: Path) -> None:
+    """The default (no cache window) fans out siblings in one spawner call, unchanged."""
+    from bernstein.core.tournament.runner import TournamentRunner
+
+    priv, pub = load_or_create_tournament_identity(tmp_path / ".sdd" / "tournaments")
+    hmac_key = load_or_create_audit_key(tmp_path / ".sdd" / "audit.key")
+    calls: list[int] = []
+
+    runner = TournamentRunner(
+        spawner=lambda task_id, n: (calls.append(n), [f"{task_id}-{i}" for i in range(n)])[1],
+        evaluator=lambda ids: _outcomes(),
+    )
+    outcome = runner.run(
+        task_id="T-plain",
+        spec=_spec(),
+        per_attempt_cost_usd=0.5,
+        cap_usd=100.0,
+        workdir=tmp_path,
+        lineage_root=tmp_path / ".sdd" / "lineage",
+        hmac_key=hmac_key,
+        private_key_pem=priv,
+        public_key_pem=pub,
+        timestamp=10,
+    )
+    assert calls == [3]  # one call, n=attempts
+    assert outcome.cache_fanout is None

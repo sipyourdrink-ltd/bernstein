@@ -230,8 +230,14 @@ def test_claim_and_spawn_batches_auto_decomposes_large_task_before_claim(tmp_pat
 
 
 def test_claim_and_spawn_batches_submits_provider_batch_without_spawning(tmp_path: Path, make_task: Any) -> None:
-    """Eligible provider-batch work is submitted and skips the local spawn path."""
+    """Eligible provider-batch work is submitted and skips the local spawn path.
+
+    The capability-gated route_batch decision (#2354) only reaches the batch
+    surface on a batch-capable adapter, so the orchestrator resolves ``claude``
+    (a declared batch adapter).
+    """
     orch = _claim_orch(tmp_path)
+    orch._spawner.default_adapter_name = "claude"
     task = make_task(id="T-batch", title="Update docs", description="Refresh the API docs.")
     task.batch_eligible = True
     orch._batch_api = MagicMock()
@@ -247,6 +253,83 @@ def test_claim_and_spawn_batches_submits_provider_batch_without_spawning(tmp_pat
     orch._batch_api.try_submit.assert_called_once()
     orch._spawner.spawn_for_tasks.assert_not_called()
     assert result.spawned == ["batch-T-batch"]
+
+
+class _FakeBatchSurface:
+    """A faithful mock batch-capable adapter surface (#2354).
+
+    Mirrors the ``ProviderBatchManager.try_submit`` contract: it records the
+    task ids it was asked to dispatch and reports them as handled + submitted,
+    so a test can prove which tasks the live path actually routed to the batch
+    endpoint versus which bypassed it to interactive dispatch.
+    """
+
+    def __init__(self) -> None:
+        self.submitted_task_ids: list[str] = []
+
+    def try_submit(self, orch: Any, task: Any) -> SimpleNamespace:
+        self.submitted_task_ids.append(task.id)
+        return SimpleNamespace(handled=True, submitted=True, session_id=f"batch-{task.id}")
+
+    def poll(self, orch: Any) -> None:  # pragma: no cover - parity with the real surface
+        del orch
+
+
+def test_live_path_routes_batch_eligible_task_through_batch_surface(tmp_path: Path, make_task: Any) -> None:
+    """A batch-eligible task on a batch-capable adapter routes to the batch surface (AC3)."""
+    orch = _claim_orch(tmp_path)
+    orch._spawner.default_adapter_name = "claude"  # declared batch-capable
+    surface = _FakeBatchSurface()
+    orch._batch_api = surface
+    task = make_task(id="T-eligible", title="Update docs", description="Refresh the docs.")
+    task.batch_eligible = True
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    assert surface.submitted_task_ids == ["T-eligible"]
+    orch._spawner.spawn_for_tasks.assert_not_called()
+    assert result.spawned == ["batch-T-eligible"]
+
+
+def test_live_path_non_eligible_task_bypasses_batch_surface(tmp_path: Path, make_task: Any) -> None:
+    """A non-eligible task never routes to batch, even on a batch-capable adapter (AC3)."""
+    orch = _claim_orch(tmp_path)
+    orch._spawner.default_adapter_name = "claude"  # capable, but the task is not eligible
+    surface = _FakeBatchSurface()
+    orch._batch_api = surface
+    task = make_task(id="T-realtime", title="Design the API", description="Interactive work.")
+    task.batch_eligible = False  # explicit realtime -> never a batch candidate
+    session = AgentSession(
+        id="A-realtime", role="backend", task_ids=[task.id], model_config=ModelConfig("sonnet", "high")
+    )
+    orch._spawner.spawn_for_tasks.return_value = session
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    assert surface.submitted_task_ids == []  # batch surface was bypassed
+    orch._spawner.spawn_for_tasks.assert_called_once()
+
+
+def test_live_path_eligible_on_incapable_adapter_is_refused_not_faked(tmp_path: Path, make_task: Any) -> None:
+    """A batch-eligible task on an adapter with no batch surface runs interactively (AC3)."""
+    orch = _claim_orch(tmp_path)
+    orch._spawner.default_adapter_name = "mock"  # not a batch-capable adapter
+    surface = _FakeBatchSurface()
+    orch._batch_api = surface
+    task = make_task(id="T-refused", title="Update docs", description="Refresh the docs.")
+    task.batch_eligible = True
+    session = AgentSession(
+        id="A-refused", role="backend", task_ids=[task.id], model_config=ModelConfig("sonnet", "high")
+    )
+    orch._spawner.spawn_for_tasks.return_value = session
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    assert surface.submitted_task_ids == []  # refused, not faked onto a missing surface
+    orch._spawner.spawn_for_tasks.assert_called_once()
 
 
 def test_claim_and_spawn_batches_sets_small_timeout_bucket(tmp_path: Path, make_task: Any) -> None:

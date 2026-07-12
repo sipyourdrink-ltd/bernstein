@@ -3044,6 +3044,75 @@ def record_run_ssh_task(
     )
 
 
+#: Issue #2354 -- emitted whenever the live dispatch loop routes a task with
+#: respect to the provider batch surface. The event mirrors the deterministic
+#: :func:`~bernstein.core.cost.scheduling.batch.route_batch` decision so an
+#: operator can prove, from the chain alone, that a batch-eligible task reached
+#: the batch endpoint only on a batch-capable adapter -- and that an eligible
+#: task on an adapter with no batch surface was refused (routed interactively),
+#: never faked. Only the routing verdict and capability facts are recorded.
+EVENT_COST_BATCH_ROUTE = "cost.batch_route"
+
+
+def record_cost_batch_route(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    adapter: str,
+    batch_eligible: bool,
+    adapter_capable: bool,
+    capability: str,
+    route: str,
+    refused_reason: str,
+    actor: str = "cost_policy",
+) -> AuditEvent:
+    """Append a ``cost.batch_route`` event into *chain* (#2354).
+
+    Mirrors one live batch-routing decision into the HMAC chain so the routing
+    of a task -- to the batch surface or to interactive dispatch -- is a
+    verifiable receipt, not a log line. A batch-eligible task routes to
+    ``batch`` only when the resolved adapter declares a batch surface; an
+    eligible task on an incapable adapter routes ``interactive`` with
+    *refused_reason* recorded, and a non-eligible task routes ``interactive``
+    with no reason. A verifier reading the chain, the adapter capability map,
+    and the task's eligibility recomputes the same verdict.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run the task belonged to.
+        task_id: The task being routed.
+        adapter: Registry name of the resolved adapter.
+        batch_eligible: Whether policy marked the task batch-eligible.
+        adapter_capable: Whether the resolved adapter declares a batch surface.
+        capability: The declared batch-dispatch capability string.
+        route: ``batch`` or ``interactive``.
+        refused_reason: Why an eligible task was refused the batch surface
+            (empty unless a batch-eligible task hit an incapable adapter).
+        actor: Recorded actor; defaults to ``"cost_policy"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_COST_BATCH_ROUTE,
+        actor=actor,
+        resource_type="cost_batch_route",
+        resource_id=task_id,
+        details={
+            "run_id": run_id,
+            "task_id": task_id,
+            "adapter": adapter,
+            "batch_eligible": batch_eligible,
+            "adapter_capable": adapter_capable,
+            "capability": capability,
+            "route": route,
+            "refused_reason": refused_reason,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -3052,6 +3121,7 @@ __all__ = [
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
+    "EVENT_COST_BATCH_ROUTE",
     "EVENT_COST_DISPATCH_RECEIPT",
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_DASHBOARD_TOKEN_GRANT",
@@ -3105,6 +3175,7 @@ __all__ = [
     "record_activity_result",
     "record_adapter_canary_receipt",
     "record_checkpoint_retry",
+    "record_cost_batch_route",
     "record_cost_dispatch_receipt",
     "record_cost_profile_report",
     "record_dashboard_token_grant",

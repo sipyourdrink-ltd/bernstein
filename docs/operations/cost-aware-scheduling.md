@@ -130,6 +130,26 @@ when the adapter actually has one. An eligible task on a non-batch adapter is
 batch path that does not exist. A task that is not batch-eligible never routes
 to batch.
 
+### Live routing in the run loop
+
+The routing decision is consulted inside the live spawn loop, not only in
+preflight. Before a single-task batch is dispatched, the run resolves the
+adapter that would run the task (a per-role adapter pin wins, else the active
+default adapter), derives batch eligibility from the same classifier the
+provider-batch path uses, and takes the capability-gated route:
+
+- a batch-eligible task on a batch-capable adapter is submitted to the batch
+  surface (no local agent is spawned);
+- a batch-eligible task on an adapter with no batch surface is refused and
+  dispatched interactively;
+- a task that is not batch-eligible bypasses the batch surface entirely.
+
+Each routing decision is sealed as a `cost.batch_route` audit-chain event, so
+the routing of a task -- to the batch endpoint or to interactive dispatch -- is
+an independently verifiable receipt rather than a log line. A verifier holding
+the chain, the adapter capability map, and the task's eligibility recomputes the
+same verdict.
+
 ## Cache-window fan-out (capability-gated, default off)
 
 When M workers share a prompt prefix, dispatching them concurrently makes them
@@ -150,6 +170,14 @@ cost_policy:
 With the opt-in on a capable adapter, a fan-out of M workers issues one warm-up
 call plus M cache-hitting calls. With the default off, the workers race without
 a warm-up and no hits are assumed.
+
+The fan-out is wired into the tournament runner, whose sibling attempts of one
+task share the same prompt prefix -- the exact shape a prompt cache rewards.
+When the resolved adapter is cache-window capable and the opt-in is set, the
+runner issues one warm-up call to prime the shared prefix strictly before the
+siblings spawn, so each sibling hits the warm cache inside the TTL instead of
+racing to write it. The observed warm-up and cache-hit counts are recorded on
+the round outcome.
 
 ## Determinism and verifiability
 

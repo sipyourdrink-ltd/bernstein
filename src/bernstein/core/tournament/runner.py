@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from bernstein.core.cost.scheduling.live_dispatch import run_cache_window_fanout
 from bernstein.core.cost.ticket_cap import resolve_ticket_cap_usd
 from bernstein.core.tournament.evaluators import AttemptOutcome
 from bernstein.core.tournament.receipt import TournamentReceipt, emit_tournament_receipt
@@ -26,6 +27,7 @@ from bernstein.core.tournament.receipt import TournamentReceipt, emit_tournament
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.cost.scheduling.cache_window import CacheFanoutResult
     from bernstein.core.tournament.spec import TournamentSpec
 
 logger = logging.getLogger(__name__)
@@ -121,12 +123,38 @@ AttemptReclaimer = Callable[[AttemptOutcome], None]
 
 
 @dataclass(frozen=True, slots=True)
+class CacheWindowFanout:
+    """Cache-window configuration for a tournament fan-out (#2354, AC4).
+
+    A tournament fans out ``attempts`` sibling attempts of one task, so every
+    sibling shares the same prompt prefix -- the exact shape a prompt cache
+    rewards. When the resolved adapter is cache-window capable and *enabled* is
+    set, the runner issues one warm-up call to prime the shared prefix strictly
+    before the siblings spawn, so each sibling hits the warm cache inside the
+    TTL instead of racing to write it. Conservative default off: an absent
+    config or ``enabled=False`` leaves the fan-out unchanged.
+
+    Attributes:
+        adapter: Registry name of the adapter the attempts run on.
+        prefix: The shared prompt prefix (hashed into the plan, never stored).
+        warmup: Invoked at most once to prime the shared prefix.
+        enabled: Operator opt-in; the conservative default is ``False``.
+    """
+
+    adapter: str
+    prefix: str
+    warmup: Callable[[], None]
+    enabled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TournamentOutcome:
     """Aggregated result of one tournament round."""
 
     receipt: TournamentReceipt
     winner_hash: str
     projected_usd: float
+    cache_fanout: CacheFanoutResult | None = None
 
 
 @dataclass
@@ -137,11 +165,53 @@ class TournamentRunner:
         spawner: Spawn ``n`` sibling attempts; returns their ids.
         evaluator: Block until attempts finish; returns their outcomes.
         reclaimer: Optional teardown callback for losing attempts.
+        cache_window: Optional cache-window fan-out config; when set and
+            enabled on a capable adapter, one warm-up call primes the shared
+            prompt prefix before the siblings spawn (default off / unset).
     """
 
     spawner: AttemptSpawner
     evaluator: AttemptEvaluator
     reclaimer: AttemptReclaimer | None = field(default=None)
+    cache_window: CacheWindowFanout | None = field(default=None)
+
+    def _fanout(self, task_id: str, attempts: int) -> tuple[list[str], CacheFanoutResult | None]:
+        """Spawn *attempts* siblings, optionally through the cache window.
+
+        Without a cache-window config the siblings spawn in one call, exactly
+        as before. With one, the fan-out is driven through
+        :func:`~bernstein.core.cost.scheduling.live_dispatch.run_cache_window_fanout`:
+        a capable + enabled adapter issues one warm-up call before spawning the
+        siblings one at a time, so each sibling hits the primed cache; the
+        observed call counts are returned for the receipt.
+        """
+        cache_window = self.cache_window
+        if cache_window is None:
+            return list(self.spawner(task_id, attempts)), None
+
+        collected: list[str] = []
+        primed = {"warm": False}
+
+        def _warmup_call() -> None:
+            # Only invoked by the plan on a capable + enabled adapter. Mark the
+            # cache primed so the siblings that follow report a hit.
+            primed["warm"] = True
+            cache_window.warmup()
+
+        def _worker_call(_index: int) -> bool:
+            collected.extend(self.spawner(task_id, 1))
+            # A sibling hits the cache exactly when the warm-up ran first.
+            return primed["warm"]
+
+        result = run_cache_window_fanout(
+            adapter=cache_window.adapter,
+            prefix=cache_window.prefix,
+            worker_count=attempts,
+            warmup_call=_warmup_call,
+            worker_call=_worker_call,
+            enabled=cache_window.enabled,
+        )
+        return collected, result
 
     def run(
         self,
@@ -169,7 +239,7 @@ class TournamentRunner:
             per_attempt_cost_usd=per_attempt_cost_usd,
             cap_usd=cap_usd,
         )
-        ids = list(self.spawner(task_id, spec.attempts))
+        ids, cache_fanout = self._fanout(task_id, spec.attempts)
         outcomes = list(self.evaluator(ids))
         if not outcomes:
             raise RuntimeError(f"tournament for task {task_id!r} produced zero attempt outcomes")
@@ -199,13 +269,19 @@ class TournamentRunner:
             receipt.winner_hash,
             len(outcomes),
         )
-        return TournamentOutcome(receipt=receipt, winner_hash=receipt.winner_hash, projected_usd=projected)
+        return TournamentOutcome(
+            receipt=receipt,
+            winner_hash=receipt.winner_hash,
+            projected_usd=projected,
+            cache_fanout=cache_fanout,
+        )
 
 
 __all__ = [
     "AttemptEvaluator",
     "AttemptReclaimer",
     "AttemptSpawner",
+    "CacheWindowFanout",
     "TournamentBudgetExceeded",
     "TournamentOutcome",
     "TournamentRunner",
