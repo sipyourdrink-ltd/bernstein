@@ -22,7 +22,10 @@ on:
 
 concurrency:
   group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR analyses, but never cancel a main-branch analysis
+  # mid-run: a cancelled CodeQL run leaves code scanning in a "CodeQL exited
+  # with errors" configuration-error state and drops that commit's coverage.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Default-deny at workflow scope; the analyze job re-asserts the narrow
 # writes it actually needs (Scorecard token-permissions).
