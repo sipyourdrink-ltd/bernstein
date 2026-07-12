@@ -1289,10 +1289,11 @@ jobs:
     # ``claude.cmd`` / ``codex.cmd`` / ``gemini.cmd`` shims on PATH and the
     # adapter launch path resolves them through ``cmd.exe /c``, so each
     # adapter's spawn / stop (platform process-tree reap) / restart contract is
-    # exercised against a real subprocess. The job also runs a full example
-    # goal end to end (mock agent) and the Windows worktree-isolation contract,
-    # so worktree isolation is asserted on the Windows lane. Required (in the
-    # ci-gate needs list), not advisory.
+    # exercised against a real subprocess. The job also runs the real-run canary
+    # (a mock-agent subprocess spawn plus a full ``git worktree`` create /
+    # isolate / teardown round-trip) and the Windows worktree-isolation contract,
+    # so a real run end to end with worktree isolation intact is asserted on the
+    # Windows lane. Required (in the ci-gate needs list), not advisory.
     name: Adapter conformance + e2e (windows)
     needs: [lint]
     runs-on: windows-latest
@@ -1314,12 +1315,12 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Adapter conformance (spawn/stop/restart), example-goal e2e, worktree isolation
+      - name: Adapter conformance (spawn/stop/restart), real-run canary, worktree isolation
         shell: pwsh
         run: |
           uv run pytest `
             tests/integration/test_adapter_conformance_lifecycle.py `
-            tests/integration/test_full_lifecycle.py `
+            tests/unit/test_canary_real_run.py `
             tests/unit/test_worktree_isolation_windows.py `
             -x -q --timeout=180
 
