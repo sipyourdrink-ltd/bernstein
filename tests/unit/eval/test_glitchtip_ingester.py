@@ -218,6 +218,125 @@ class TestRedaction:
 
 
 # ---------------------------------------------------------------------------
+# Filesystem-path scrubbing: absolute home/root frame paths must not leak
+# the OS username into committed public YAML.
+# ---------------------------------------------------------------------------
+
+
+class TestFramePathScrub:
+    @pytest.mark.parametrize(
+        "abs_path",
+        [
+            "/Users/alice/dev/bernstein/src/bernstein/x.py",
+            "/home/bob/bernstein/src/bernstein/x.py",
+            "/root/carol/bernstein/src/bernstein/x.py",
+            "C:\\Users\\dave\\bernstein\\src\\x.py",
+        ],
+    )
+    def test_absolute_home_path_scrubbed_from_prompt(self, tmp_path: Path, abs_path: str) -> None:
+        inc = GlitchTipIncident(
+            issue_id="777",
+            exception_type="RuntimeError",
+            exception_value="boom",
+            top_frame_path=abs_path,
+            top_frame_line=42,
+        )
+        synth = IncidentSynthesizer(tmp_path)
+        case = synth.synthesize_from_glitchtip_incident(inc)
+        assert case is not None
+        for leak in ("/Users/", "/home/", "/root/", "C:\\Users\\"):
+            assert leak not in case.prompt
+        # The username segment is gone; a relative-looking tail remains.
+        assert "alice" not in case.prompt
+        assert "<path>/" in case.prompt
+
+    def test_absolute_home_path_scrubbed_from_yaml(self, tmp_path: Path) -> None:
+        gt_dir = tmp_path / ".sdd" / "reports" / "glitchtip_events"
+        gt_dir.mkdir(parents=True, exist_ok=True)
+        (gt_dir / "issue-778.json").write_text(
+            json.dumps(
+                {
+                    "glitchtip_issue_id": "778",
+                    "project_slug": "bernstein-orchestrator",
+                    "exception_type": "RuntimeError",
+                    "exception_value": "boom",
+                    "top_frame_path": "/Users/erin/dev/bernstein/src/bernstein/x.py",
+                    "top_frame_line": 7,
+                    "first_seen": "",
+                    "last_seen": "",
+                    "event_count": 1,
+                    "environment": "production",
+                    "release": "",
+                    "title": "RuntimeError: boom",
+                },
+            ),
+            encoding="utf-8",
+        )
+        synth = IncidentSynthesizer(tmp_path)
+        result = synth.sync()
+        assert len(result.created) == 1
+        cases_dir = tmp_path / "src" / "bernstein" / "eval" / "cases" / "incidents"
+        body = next(cases_dir.glob("inc-*.yaml")).read_text(encoding="utf-8")
+        for leak in ("/Users/", "/home/", "/root/", "erin"):
+            assert leak not in body
+
+
+# ---------------------------------------------------------------------------
+# Pagination host pinning: a cross-host ``next`` link is never followed.
+# ---------------------------------------------------------------------------
+
+
+class TestPaginationHostPin:
+    def test_same_host_next_is_followed(self) -> None:
+        page1 = _fixture("issues_page1.json")
+        page2 = _fixture("issues_page2.json")
+        next_url = "https://x.example.com/api/0/organizations/bernstein/issues/?cursor=p2"
+        link_header = f'<{next_url}>; rel="next"; results="true"'
+        fake = _FakeHTTP(
+            [
+                ("cursor=p2", (200, page2, {})),
+                ("issues/", (200, page1, {"link": link_header})),
+            ],
+        )
+        issues = SCRAPER.list_unresolved_issues(
+            "https://x.example.com",
+            "tok",
+            "bernstein",
+            http_get=fake,
+        )
+        assert len(issues) == 2
+        assert any("cursor=p2" in c for c in fake.calls)
+
+    def test_cross_host_next_is_dropped(self) -> None:
+        page1 = _fixture("issues_page1.json")
+        # A hostile server tries to redirect the token-bearing cursor at
+        # an attacker-controlled host; it must not be followed.
+        evil_url = "https://evil.example.net/api/0/organizations/bernstein/issues/?cursor=p2"
+        link_header = f'<{evil_url}>; rel="next"; results="true"'
+        fake = _FakeHTTP(
+            [
+                ("issues/", (200, page1, {"link": link_header})),
+            ],
+        )
+        issues = SCRAPER.list_unresolved_issues(
+            "https://x.example.com",
+            "tok",
+            "bernstein",
+            http_get=fake,
+        )
+        # Only page 1 was fetched; the cross-host cursor was never called.
+        assert len(fake.calls) == 1
+        assert not any("evil.example.net" in c for c in fake.calls)
+        assert len(issues) == 1
+
+    def test_same_host_helper(self) -> None:
+        assert SCRAPER._same_host("https://x.example.com/api/0/x/?c=1", "https://x.example.com")
+        assert not SCRAPER._same_host("https://evil.example.net/api/0/x/", "https://x.example.com")
+        assert not SCRAPER._same_host("ftp://x.example.com/api/0/x/", "https://x.example.com")
+        assert not SCRAPER._same_host("/relative/only", "https://x.example.com")
+
+
+# ---------------------------------------------------------------------------
 # JSON record ingestion + dedup / idempotency via sync()
 # ---------------------------------------------------------------------------
 
