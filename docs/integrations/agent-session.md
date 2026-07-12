@@ -138,6 +138,32 @@ transient log line.
 Exit codes: `0` every host green and the `--min-hosts` bar met, `2`
 conformance failed, `1` error.
 
+## Verifying the signed distribution image
+
+The MCP registry listing (`server.json`) and the Docker MCP catalog entry
+(`packaging/docker-mcp/server.yaml`) both point a host at a runnable image;
+that image is signed at build time with a Sigstore keyless build-provenance
+attestation. `image-verify` proves, offline, that the two manifests resolve to
+the same canonical `ghcr.io/<owner>/bernstein` repository and that the registry
+listing pins the release version, so a pull can never resolve to a different
+(or unsigned) image than the catalog advertises:
+
+```bash
+bernstein skills package image-verify                 # defaults to the installed version
+bernstein skills package image-verify --version 3.4.1 --json
+bernstein skills package image-verify --online        # also run `gh attestation verify`
+```
+
+The offline check is a deterministic projection of the two manifests. With
+`--online` it additionally runs `gh attestation verify oci://<ref>` against the
+live Sigstore attestation (when the `gh` CLI and a network are available; absent
+tooling leaves the offline verdict standing). The same consistency check is a
+release gate: `scripts/gen_distribution_manifests.py --check` -- run in the
+publish workflow before the registry listing is pushed -- fails the release if
+the listing and the catalog disagree or the tag does not pin the version. Exit
+codes: `0` consistent (and, with `--online`, attestation verified or tooling
+unavailable), `2` a manifest mismatch or a failed online attestation.
+
 ## The plugin bundle
 
 The repository root doubles as the plugin root:

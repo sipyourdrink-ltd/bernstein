@@ -1463,6 +1463,22 @@ default `3`), `--json`, `--workdir`.
 Exit codes: `0` every host green and the `--min-hosts` bar met, `2`
 conformance failed, `1` error.
 
+#### `bernstein skills package image-verify`
+
+Proves, offline, that the MCP registry listing (`server.json`) and the Docker
+MCP catalog entry (`packaging/docker-mcp/server.yaml`) resolve to the same
+canonical signed `ghcr.io/<owner>/bernstein` image and that the registry
+listing pins the release version, so a host cannot pull a different (or
+unsigned) image than the catalog advertises. With `--online` it additionally
+runs `gh attestation verify` against the live Sigstore build-provenance
+attestation.
+
+Options: `--version` (the release version the image must pin; defaults to the
+installed bernstein version), `--online`, `--json`, `--repo-root`.
+
+Exit codes: `0` consistent (and, with `--online`, attestation verified or
+tooling unavailable), `2` a manifest mismatch or a failed online attestation.
+
 ```bash
 bernstein skills package install --host claude --scope project
 bernstein skills package install --dest ~/.claude/plugins/bernstein --record-only
