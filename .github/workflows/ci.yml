@@ -17,6 +17,8 @@ on:
       - "docs/**"
       - "!docs/operations/ci-topology.md"
       - "!docs/observability/**"
+      - "!docs/skills/**"
+      - "!docs/benchmarks/**"
       - "*.md"
       - "!README.md"
       - "LICENSE"
@@ -68,6 +70,8 @@ on:
       - "docs/**"
       - "!docs/operations/ci-topology.md"
       - "!docs/observability/**"
+      - "!docs/skills/**"
+      - "!docs/benchmarks/**"
       - "*.md"
       - "!README.md"
       - "LICENSE"
@@ -384,6 +388,12 @@ jobs:
         # .goosehints / .cursor/rules/*.mdc drift from `bernstein agents-md
         # generate`. Run `uv run bernstein agents-md sync` locally to fix.
         run: uv run bernstein agents-md verify --workdir .
+      - name: Distribution manifest drift check
+        # Fails in under a minute if server.json / .plugin/plugin.json drift
+        # from `scripts/gen_distribution_manifests.py`, instead of surfacing the
+        # drift much later inside a long test shard. Run
+        # `uv run python scripts/gen_distribution_manifests.py` locally to fix.
+        run: uv run python scripts/gen_distribution_manifests.py --check
 
   lint:
     name: Lint

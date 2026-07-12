@@ -42,6 +42,8 @@ on:
       - "docs/**"
       - "!docs/operations/ci-topology.md"
       - "!docs/observability/**"
+      - "!docs/skills/**"
+      - "!docs/benchmarks/**"
       - "*.md"
       - "!README.md"
       - "LICENSE"
