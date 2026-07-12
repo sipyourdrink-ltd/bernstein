@@ -51,7 +51,7 @@ def _spec(remote_repo: Path, remote_root: Path, *, secret: bool = False) -> SSHB
         remote_root=str(remote_root),
         repo_src=str(remote_repo),
         base_branch="main",
-        secret_env=(("GITHUB_TOKEN", "github"),) if secret else (),
+        vault_env=(("GITHUB_TOKEN", "github"),) if secret else (),
     )
 
 
@@ -68,9 +68,18 @@ def test_spec_public_dict_is_secret_free_and_round_trips(remote_repo: Path, tmp_
     spec = _spec(remote_repo, tmp_path / "root", secret=True)
     public = spec.to_public_dict()
     # Only env-var names and provider ids -- never a secret value.
-    assert "github" in str(public["secret_env"])
+    assert "github" in str(public["vault_env"])
     assert _SECRET not in str(public)
     assert SSHBackendSpec.from_public_dict(public) == spec
+
+
+def test_from_public_dict_accepts_legacy_secret_env_key(remote_repo: Path, tmp_path: Path) -> None:
+    # A sidecar written before the field rename used the ``secret_env`` key for
+    # the same non-secret (env-name, provider-id) pairs; a resume must still load it.
+    spec = _spec(remote_repo, tmp_path / "root", secret=True)
+    legacy = spec.to_public_dict()
+    legacy["secret_env"] = legacy.pop("vault_env")
+    assert SSHBackendSpec.from_public_dict(legacy) == spec
 
 
 def test_spec_sidecar_round_trips_on_disk(project: Path, remote_repo: Path, tmp_path: Path) -> None:

@@ -86,13 +86,13 @@ def _build_ssh_spec(
     if not host or not path:
         console.print("[red]--backend ssh requires --ssh-host and --ssh-path.[/red]")
         raise SystemExit(EXIT_NO_RUN)
-    secret_env: list[tuple[str, str]] = []
+    vault_env: list[tuple[str, str]] = []
     for item in secrets:
         env_name, sep, provider_id = item.partition("=")
         if not sep or not env_name or not provider_id:
             console.print(f"[red]--ssh-secret must be ENV=PROVIDER, got {item!r}.[/red]")
             raise SystemExit(EXIT_NO_RUN)
-        secret_env.append((env_name, provider_id))
+        vault_env.append((env_name, provider_id))
     return SSHBackendSpec(
         host=host,
         remote_root=path,
@@ -101,7 +101,7 @@ def _build_ssh_spec(
         identity_file=identity,
         repo_src=repo,
         base_branch=base_branch,
-        secret_env=tuple(secret_env),
+        vault_env=tuple(vault_env),
     )
 
 

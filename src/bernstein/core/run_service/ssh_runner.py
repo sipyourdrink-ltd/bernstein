@@ -80,7 +80,7 @@ class SSHBackendSpec:
     """Non-secret connection descriptor for running a goal on the ssh backend.
 
     Every field here is safe to persist and to read back on a supervisor
-    restart. Credentials are *not* here: ``secret_env`` names which vault
+    restart. Credentials are *not* here: ``vault_env`` names which vault
     provider supplies which remote environment variable, and the values are
     fetched from the vault at execution time.
 
@@ -95,9 +95,10 @@ class SSHBackendSpec:
             unset, each task gets a plain isolated directory instead.
         base_branch: Base ref each per-task worktree branch is cut from.
         strict_host_key_checking: Passed through to the ssh backend.
-        secret_env: Tuple of ``(remote_env_name, vault_provider_id)`` pairs. The
+        vault_env: Tuple of ``(remote_env_name, vault_provider_id)`` pairs. The
             runner resolves each provider from the vault and injects it into the
-            remote environment under ``remote_env_name``.
+            remote environment under ``remote_env_name``. These are provider
+            *ids*, never secret values -- safe to persist and to log.
         timeout_seconds: Per-task wall-clock timeout for the remote command.
     """
 
@@ -109,7 +110,7 @@ class SSHBackendSpec:
     repo_src: str | None = None
     base_branch: str = "main"
     strict_host_key_checking: bool = True
-    secret_env: tuple[tuple[str, str], ...] = ()
+    vault_env: tuple[tuple[str, str], ...] = ()
     timeout_seconds: int = 1800
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -123,15 +124,20 @@ class SSHBackendSpec:
             "repo_src": self.repo_src,
             "base_branch": self.base_branch,
             "strict_host_key_checking": self.strict_host_key_checking,
-            "secret_env": [[name, provider] for name, provider in self.secret_env],
+            "vault_env": [[name, provider] for name, provider in self.vault_env],
             "timeout_seconds": self.timeout_seconds,
         }
 
     @classmethod
     def from_public_dict(cls, data: Mapping[str, Any]) -> SSHBackendSpec:
         """Rebuild a spec from :meth:`to_public_dict` output."""
-        raw_secret_env = data.get("secret_env") or ()
-        secret_env = tuple((str(name), str(provider)) for name, provider in raw_secret_env)
+        # ``vault_env`` binds a remote env-var name to a vault provider id;
+        # older sidecars persisted the same non-secret pairs under the
+        # ``secret_env`` key, so accept either for a resume across upgrades.
+        raw_bindings = data.get("vault_env")
+        if raw_bindings is None:
+            raw_bindings = data.get("secret_env") or ()
+        vault_env = tuple((str(name), str(provider)) for name, provider in raw_bindings)
         return cls(
             host=str(data["host"]),
             remote_root=str(data["remote_root"]),
@@ -141,7 +147,7 @@ class SSHBackendSpec:
             repo_src=data.get("repo_src"),
             base_branch=str(data.get("base_branch", "main")),
             strict_host_key_checking=bool(data.get("strict_host_key_checking", True)),
-            secret_env=secret_env,
+            vault_env=vault_env,
             timeout_seconds=int(data.get("timeout_seconds", 1800)),
         )
 
@@ -233,7 +239,7 @@ class SSHTaskRunner:
             run_id: The run whose tasks this runner executes.
             backend: Pre-built backend (tests inject one over an in-process
                 transport). When ``None`` a real backend is built lazily.
-            vault: Vault used to resolve ``spec.secret_env`` providers.
+            vault: Vault used to resolve ``spec.vault_env`` providers.
             command_for: Maps a task id to the argv run in its worktree.
                 Defaults to reading the per-task isolation marker back.
             chain: Audit chain store; defaults to the run's ``.sdd/audit``.
@@ -260,7 +266,7 @@ class SSHTaskRunner:
     # -- secret resolution (vault-only) -------------------------------------
 
     def resolve_secret_env(self) -> dict[str, str]:
-        """Resolve every ``secret_env`` provider from the vault only.
+        """Resolve every ``vault_env`` provider from the vault only.
 
         The legacy environment fallback is disabled, so a provider missing from
         the vault raises rather than silently reading an ambient env var.
@@ -269,13 +275,13 @@ class SSHTaskRunner:
             SSHRunnerError: If a provider cannot be resolved from the vault.
         """
         env: dict[str, str] = {}
-        for env_name, provider_id in self._spec.secret_env:
+        for env_name, provider_id in self._spec.vault_env:
             try:
                 resolution = resolve_secret(provider_id, vault=self._vault, environ={}, audit=False)
             except Exception as exc:
                 # Log the failure *type* only -- never the provider payload.
                 logger.warning(
-                    "ssh runner: secret resolution failed for provider %s (%s)",
+                    "ssh runner: vault resolution failed for provider %s (%s)",
                     sanitize_log(provider_id),
                     type(exc).__name__,
                 )

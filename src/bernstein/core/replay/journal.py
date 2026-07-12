@@ -43,8 +43,10 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,21 @@ RETENTION_ENV_VAR = "BERNSTEIN_REPLAY_RETENTION"
 _NON_DETERMINISTIC_FIELDS = frozenset({"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"})
 
 _GENESIS_HASH = ""
+
+#: A run_id names exactly one journal directory and must be a single safe path
+#: segment. This mirrors ``run_service.paths.validate_run_id``: an anchored
+#: allowlist match then a return of the checked value, the shape CodeQL credits
+#: as a path-injection barrier. The journal path is derived only from the value
+#: :func:`_validated_run_id` returns, so no attacker-controlled character reaches
+#: the filesystem sinks below.
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def _validated_run_id(run_id: str) -> str:
+    """Return *run_id* unchanged when it is a safe path segment, else raise."""
+    if not _RUN_ID_RE.match(run_id):
+        raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
+    return run_id
 
 
 def _payload_hash(event_type: str, payload: dict[str, Any]) -> str:
@@ -138,29 +155,16 @@ class EventJournal:
     def __init__(self, run_id: str, sdd_dir: Path) -> None:
         self._run_id = run_id
         self._runs_root = sdd_dir / "runs"
-        # Path-injection guard (py/path-injection). A run_id names one journal
-        # directory and must be a single path segment. First a filesystem-free
-        # lexical check (no time-of-check/time-of-use window) that rejects
-        # traversal, separators, and absolute paths outright.
-        if (
-            not run_id
-            or run_id in {".", ".."}
-            or "/" in run_id
-            or "\\" in run_id
-            or "\x00" in run_id
-            or Path(run_id).is_absolute()
-        ):
+        # Path-injection barrier (py/path-injection). A run_id names one journal
+        # directory and must be a single safe path segment. ``.``/``..`` pass the
+        # id alphabet but are the current/parent directory, so reject them first;
+        # then ``_validated_run_id`` -- an anchored allowlist match that returns
+        # the checked value, mirroring run_service.paths.validate_run_id -- is the
+        # sanitizer the filesystem sinks below are built from. The path is derived
+        # only from the value that flows out of that barrier.
+        if run_id in {".", ".."}:
             raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
-        # Positive allowlist: a run_id must be a strict identifier. This is the
-        # barrier the path is built from; combined with the blocklist above it
-        # leaves no attacker-controlled character able to reach the filesystem
-        # sink below.
-        if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
-            raise ValueError(f"unsafe run_id for journal path: {run_id!r}")
-        # Pin the directory name to os.path.basename so no directory component
-        # can survive into the path; for a run_id that passed the checks above
-        # this is a no-op, but it keeps the path derivation explicit.
-        safe_run_id = os.path.basename(run_id)
+        safe_run_id = _validated_run_id(run_id)
         self._path = self._runs_root / safe_run_id / JOURNAL_FILENAME
         # Defence in depth: refuse a resolved path that still escapes the runs
         # root, e.g. through a symlinked run directory.

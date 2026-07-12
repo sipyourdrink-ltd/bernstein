@@ -77,7 +77,7 @@ def _spec(remote_repo: Path, remote_root: Path, *, secret: bool = False) -> SSHB
         remote_root=str(remote_root),
         repo_src=str(remote_repo),
         base_branch="main",
-        secret_env=(("GITHUB_TOKEN", "github"),) if secret else (),
+        vault_env=(("GITHUB_TOKEN", "github"),) if secret else (),
     )
 
 
