@@ -28,12 +28,17 @@ def _test_one_input(data: bytes) -> None:
     """Fuzz entrypoint: feed arbitrary bytes to PyYAML's safe_load."""
     try:
         yaml.safe_load(data)
-    except (yaml.YAMLError, UnicodeDecodeError, ValueError, TypeError, OverflowError):
+    except (yaml.YAMLError, UnicodeDecodeError, ValueError, TypeError, OverflowError, RecursionError):
         # Documented failure modes for malformed input. Not a crash.
         # OverflowError is raised by PyYAML's C scanner on Python 3.11 when
         # parsing very long ``\\Uxxxxxxxx`` escapes (codepoints that exceed
         # the C int range during conversion); it is parser-internal and not
         # a bug in the seed-parser surface under test.
+        # RecursionError is raised by PyYAML's composer, which recurses once
+        # per nesting level: deeply nested flow collections (e.g. many
+        # ``[[[...`` openers) exceed the interpreter recursion limit. This
+        # is documented upstream parser behaviour on adversarial input, not
+        # a crash in the seed-parser surface under test.
         return
 
 

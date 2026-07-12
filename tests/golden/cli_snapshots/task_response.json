@@ -5,6 +5,8 @@
   "cell_id": null,
   "claimed_at": null,
   "cli": null,
+  "closed_at": null,
+  "completed_at": null,
   "completion_signals": [],
   "complexity": "medium",
   "created_at": 1700000000.0,

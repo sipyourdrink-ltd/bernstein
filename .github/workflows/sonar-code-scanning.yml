@@ -1,0 +1,92 @@
+name: Sonar findings to code scanning
+
+# Converts open SonarQube findings (issues of every type plus security
+# hotspots) into a SARIF document and uploads it to GitHub code
+# scanning. On a public repo this keeps finding detail in the Security
+# tab, which is visible to maintainers (write access and above) rather
+# than to every reader of the public issue tracker.
+#
+# The SARIF conversion reuses the Sonar client in
+# scripts/sweep_sonar_findings.py via its --emit-sarif mode; it never
+# creates issues or backlog tickets.
+
+on:
+  schedule:
+    - cron: "27 5 * * *"  # 05:27 UTC daily; off-peak, distinct from other jobs.
+  workflow_dispatch:
+
+concurrency:
+  group: sonar-code-scanning-${{ github.ref }}
+  cancel-in-progress: false
+
+# Default-deny at workflow scope; the job re-asserts the narrow write it
+# needs to upload SARIF to code scanning.
+permissions:
+  contents: read
+
+jobs:
+  sonar-sarif:
+    name: Upload Sonar SARIF to code scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Skip cleanly when the Sonar host is not configured (for example on
+    # forks). The credential guard below then fails loudly if the host is
+    # present but the token is missing, rather than uploading empty SARIF.
+    if: ${{ vars.SONAR_HOST_URL != '' }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: ./.github/actions/bootstrap
+        with:
+          python-version: '3.13'
+
+      - name: Install project deps
+        run: |
+          uv sync --group dev
+
+      - name: Verify Sonar credentials present
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SONAR_HOST_URL}" ] || [ -z "${SONAR_TOKEN}" ]; then
+            echo "::error::SONAR_HOST_URL (repo variable) and SONAR_TOKEN (repo secret) must both be set." >&2
+            exit 1
+          fi
+
+      - name: Generate SARIF from Sonar findings
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+        run: |
+          set -euo pipefail
+          uv run python scripts/sweep_sonar_findings.py --emit-sarif sonar.sarif
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        with:
+          sarif_file: sonar.sarif
+          category: sonarqube
+
+      - name: Upload SARIF as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sonar-sarif
+          path: sonar.sarif
+          if-no-files-found: warn
+          retention-days: 14

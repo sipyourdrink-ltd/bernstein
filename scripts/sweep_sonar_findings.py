@@ -26,6 +26,21 @@ issue via ``gh issue create``. P0 covers BLOCKER findings; P1 covers
 CRITICAL and MAJOR. P2 tickets (MINOR, INFO) stay file-only so the GH
 issue feed does not get flooded by low-severity churn.
 
+SARIF mode
+----------
+
+    python scripts/sweep_sonar_findings.py --emit-sarif sonar.sarif \\
+        [--fixture path/to/issues.json]
+
+``--emit-sarif PATH`` reuses the same Sonar client to fetch *all*
+findings (issues of every type plus security hotspots) and writes them
+as a SARIF 2.1.0 document at ``PATH``. This is the path that feeds
+GitHub code scanning (the Security tab), so vulnerability detail stays
+visible to maintainers rather than public issue readers. In SARIF mode
+the script never writes backlog tickets and never opens GitHub issues.
+Output is deterministic (rules and results are sorted on stable keys)
+so an unchanged finding set produces byte-identical SARIF on re-run.
+
 Exit codes
 ----------
 
@@ -40,6 +55,7 @@ import argparse
 import dataclasses
 import datetime as _dt
 import json
+import os
 import random
 import re
 import subprocess
@@ -452,7 +468,14 @@ FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
 
 @dataclasses.dataclass(frozen=True)
 class Finding:
-    """One Sonar finding, normalised."""
+    """One Sonar finding, normalised.
+
+    The first seven fields are consumed by both the backlog-ticket path
+    and the SARIF path. The trailing fields (``message``, ``tags``,
+    ``rule_name``, ``vulnerability_probability``) are populated only for
+    the SARIF path; the ticket path never reads them (it synthesises its
+    public-safe prose from the vetted blurb table instead).
+    """
 
     key: str
     rule: str
@@ -461,6 +484,10 @@ class Finding:
     component: str
     line: int | None
     creation_date: str  # ISO-8601 timestamp string, used only for sorting.
+    message: str = ""
+    tags: tuple[str, ...] = ()
+    rule_name: str = ""
+    vulnerability_probability: str | None = None
 
     @property
     def severity_rank(self) -> int:
@@ -700,8 +727,18 @@ def fetch_findings(
     return findings
 
 
-def _normalise_issue(raw: dict[str, Any]) -> Finding | None:
-    """Coerce one raw Sonar issue dict into a :class:`Finding`."""
+def _normalise_issue(
+    raw: dict[str, Any],
+    *,
+    rules_by_key: dict[str, str] | None = None,
+) -> Finding | None:
+    """Coerce one raw Sonar issue dict into a :class:`Finding`.
+
+    ``rules_by_key`` maps a Sonar rule key to its human-readable name (as
+    returned in the ``rules`` block when ``additionalFields=rules`` is
+    requested). It is used only to populate the SARIF ``rule_name``; the
+    ticket path passes ``None`` and never reads the field.
+    """
     key = raw.get("key")
     rule = raw.get("rule")
     severity = raw.get("severity")
@@ -725,6 +762,15 @@ def _normalise_issue(raw: dict[str, Any]) -> Finding | None:
             line = None
     if not isinstance(creation, str):
         creation = ""
+    message = raw.get("message")
+    message = message if isinstance(message, str) else ""
+    raw_tags = raw.get("tags")
+    tags: tuple[str, ...] = tuple(t for t in raw_tags if isinstance(t, str)) if isinstance(raw_tags, list) else ()
+    rule_name = ""
+    if rules_by_key is not None:
+        candidate = rules_by_key.get(rule)
+        if isinstance(candidate, str):
+            rule_name = candidate
     return Finding(
         key=key,
         rule=rule,
@@ -733,7 +779,172 @@ def _normalise_issue(raw: dict[str, Any]) -> Finding | None:
         component=component,
         line=line,
         creation_date=creation,
+        message=message,
+        tags=tags,
+        rule_name=rule_name,
     )
+
+
+def _normalise_hotspot(raw: dict[str, Any]) -> Finding | None:
+    """Coerce one raw Sonar security-hotspot dict into a :class:`Finding`.
+
+    Hotspots come from ``/api/hotspots/search`` and use a different shape
+    than issues: the rule key is ``ruleKey``, there is no ``severity``
+    field, and the risk band lives in ``vulnerabilityProbability``
+    (``HIGH`` / ``MEDIUM`` / ``LOW``). The synthesised :class:`Finding`
+    carries ``type="SECURITY_HOTSPOT"`` and an empty ``severity`` so the
+    SARIF layer keys its severity off the probability instead.
+    """
+    key = raw.get("key")
+    rule = raw.get("ruleKey")
+    component = raw.get("component")
+    line = raw.get("line")
+    probability = raw.get("vulnerabilityProbability")
+    message = raw.get("message")
+    creation = raw.get("creationDate") or ""
+    if not (isinstance(key, str) and key and isinstance(rule, str) and isinstance(component, str)):
+        return None
+    if line is not None and not isinstance(line, int):
+        try:
+            line = int(line)
+        except (TypeError, ValueError):
+            line = None
+    return Finding(
+        key=key,
+        rule=rule,
+        severity="",
+        type="SECURITY_HOTSPOT",
+        component=component,
+        line=line,
+        creation_date=creation if isinstance(creation, str) else "",
+        message=message if isinstance(message, str) else "",
+        tags=(),
+        rule_name="",
+        vulnerability_probability=probability if isinstance(probability, str) else None,
+    )
+
+
+def fetch_hotspots(
+    config: SonarConfig,
+    *,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    client: httpx.Client | None = None,
+    sleep_fn: SleepFn = _jitter_sleep,
+) -> list[Finding]:
+    """Page through ``/api/hotspots/search`` and return open hotspots.
+
+    Reuses the same retry/auth client the issues fetch uses. The default
+    (no ``status`` filter) returns hotspots still awaiting review, which
+    is the open cohort we want to surface in the Security tab.
+    """
+    url = f"{config.host}/api/hotspots/search"
+    findings: list[Finding] = []
+    owns_client = client is None
+    if owns_client:
+        client = httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS, auth=_auth(config.token))
+    assert client is not None
+    try:
+        page = 1
+        while page <= MAX_PAGES:
+            params: dict[str, Any] = {
+                "projectKey": config.project_key,
+                "ps": str(page_size),
+                "p": str(page),
+            }
+            resp = _request_with_retries(client, url, params, sleep_fn=sleep_fn)
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                break
+            for raw in payload.get("hotspots") or []:
+                if not isinstance(raw, dict):
+                    continue
+                finding = _normalise_hotspot(raw)
+                if finding is not None:
+                    findings.append(finding)
+            paging = payload.get("paging") or {}
+            try:
+                total = int(paging.get("total", 0))
+                page_idx = int(paging.get("pageIndex", page))
+                size = int(paging.get("pageSize", page_size))
+            except (TypeError, ValueError):
+                break
+            if size <= 0 or page_idx * size >= total:
+                break
+            page += 1
+    finally:
+        if owns_client:
+            client.close()
+    return findings
+
+
+def collect_sarif_findings(
+    config: SonarConfig,
+    *,
+    client: httpx.Client | None = None,
+    sleep_fn: SleepFn = _jitter_sleep,
+) -> list[Finding]:
+    """Fetch every finding for the SARIF export: all issues plus hotspots.
+
+    Unlike :func:`fetch_findings` (which the ticket path narrows by
+    severity), this pulls issues of every type and severity and enriches
+    them with the rule-name map so the SARIF driver carries readable rule
+    metadata. Then it appends the security hotspots.
+    """
+    owns_client = client is None
+    if owns_client:
+        client = httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS, auth=_auth(config.token))
+    assert client is not None
+    try:
+        url = f"{config.host}/api/issues/search"
+        raw_issues: list[dict[str, Any]] = []
+        rules_by_key: dict[str, str] = {}
+        page = 1
+        while page <= MAX_PAGES:
+            params: dict[str, Any] = {
+                "componentKeys": config.project_key,
+                "resolved": "false",
+                "types": "CODE_SMELL,BUG,VULNERABILITY",
+                "additionalFields": "rules",
+                "s": "CREATION_DATE",
+                "asc": "false",
+                "ps": str(DEFAULT_PAGE_SIZE),
+                "p": str(page),
+            }
+            resp = _request_with_retries(client, url, params, sleep_fn=sleep_fn)
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                break
+            for rule_obj in payload.get("rules") or []:
+                if not isinstance(rule_obj, dict):
+                    continue
+                rkey = rule_obj.get("key")
+                rname = rule_obj.get("name")
+                if isinstance(rkey, str):
+                    rules_by_key[rkey] = rname if isinstance(rname, str) else ""
+            for raw in payload.get("issues") or []:
+                if isinstance(raw, dict):
+                    raw_issues.append(raw)
+            paging = payload.get("paging") or {}
+            try:
+                total = int(paging.get("total", 0))
+                page_idx = int(paging.get("pageIndex", page))
+                size = int(paging.get("pageSize", DEFAULT_PAGE_SIZE))
+            except (TypeError, ValueError):
+                break
+            if size <= 0 or page_idx * size >= total:
+                break
+            page += 1
+
+        findings: list[Finding] = []
+        for raw in raw_issues:
+            finding = _normalise_issue(raw, rules_by_key=rules_by_key)
+            if finding is not None:
+                findings.append(finding)
+        findings.extend(fetch_hotspots(config, client=client, sleep_fn=sleep_fn))
+        return findings
+    finally:
+        if owns_client:
+            client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1029,6 +1240,217 @@ def maybe_create_gh_issue(
 
 
 # ---------------------------------------------------------------------------
+# SARIF emission (feeds GitHub code scanning / the Security tab)
+# ---------------------------------------------------------------------------
+
+SARIF_SCHEMA_URI = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
+SARIF_VERSION = "2.1.0"
+
+# GitHub reads ``security-severity`` (a 0-10 string) to bucket a finding
+# into critical/high/medium/low in the Security tab. Map Sonar's issue
+# severities and hotspot probability bands onto that scale.
+SECURITY_SEVERITY_BY_SEVERITY: dict[str, str] = {
+    "BLOCKER": "9.5",
+    "CRITICAL": "8.0",
+    "MAJOR": "5.5",
+    "MINOR": "3.0",
+    "INFO": "1.0",
+}
+SECURITY_SEVERITY_BY_PROBABILITY: dict[str, str] = {
+    "HIGH": "8.0",
+    "MEDIUM": "5.0",
+    "LOW": "3.0",
+}
+
+
+def _sarif_security_severity(finding: Finding) -> str | None:
+    """Return a 0-10 ``security-severity`` string for security findings.
+
+    Only vulnerabilities and security hotspots carry one; bugs and code
+    smells return ``None`` so GitHub does not badge them as security
+    alerts.
+    """
+    if finding.type == "SECURITY_HOTSPOT":
+        return SECURITY_SEVERITY_BY_PROBABILITY.get((finding.vulnerability_probability or "").upper())
+    if finding.type == "VULNERABILITY":
+        return SECURITY_SEVERITY_BY_SEVERITY.get(finding.severity)
+    return None
+
+
+def _sarif_level(finding: Finding) -> str:
+    """Map a finding to a SARIF result level (error / warning / note)."""
+    if finding.type == "SECURITY_HOTSPOT":
+        probability = (finding.vulnerability_probability or "").upper()
+        if probability == "HIGH":
+            return "error"
+        if probability == "MEDIUM":
+            return "warning"
+        return "note"
+    if finding.type == "VULNERABILITY" and finding.severity in ("BLOCKER", "CRITICAL"):
+        return "error"
+    if finding.severity == "MAJOR":
+        return "warning"
+    return "note"
+
+
+def build_sarif(findings: Sequence[Finding], *, host: str) -> dict[str, Any]:
+    """Build a SARIF 2.1.0 document from Sonar findings.
+
+    Deterministic: rules are sorted by id and results by a stable
+    (uri, startLine, ruleId, key) tuple, so an unchanged finding set
+    yields byte-identical output on re-run.
+    """
+    host = host.rstrip("/")
+
+    # Aggregate one rule object per unique rule key.
+    rule_state: dict[str, dict[str, Any]] = {}
+    for finding in findings:
+        key = finding.rule
+        entry = rule_state.setdefault(key, {"name": key, "tags": set(), "security": None})
+        if finding.rule_name and entry["name"] == key:
+            entry["name"] = finding.rule_name
+        for tag in finding.tags:
+            entry["tags"].add(tag)
+        severity = _sarif_security_severity(finding)
+        if severity is not None:
+            current = entry["security"]
+            # Keep the highest security-severity seen for the rule.
+            if current is None or float(severity) > float(current):
+                entry["security"] = severity
+
+    rules: list[dict[str, Any]] = []
+    for key in sorted(rule_state):
+        entry = rule_state[key]
+        properties: dict[str, Any] = {"tags": sorted(entry["tags"])}
+        if entry["security"] is not None:
+            properties["security-severity"] = entry["security"]
+        rules.append(
+            {
+                "id": key,
+                "name": entry["name"],
+                "shortDescription": {"text": entry["name"]},
+                "helpUri": f"{host}/coding_rules?open={key}&rule_key={key}",
+                "properties": properties,
+            }
+        )
+
+    results: list[dict[str, Any]] = []
+    for finding in findings:
+        uri = _component_path(finding.component)
+        line = finding.line if (finding.line is not None and finding.line > 0) else 1
+        results.append(
+            {
+                "ruleId": finding.rule,
+                "level": _sarif_level(finding),
+                "message": {"text": finding.message or finding.rule},
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": uri},
+                            "region": {"startLine": line},
+                        }
+                    }
+                ],
+                "partialFingerprints": {"sonarFindingKey": finding.key},
+            }
+        )
+    results.sort(
+        key=lambda r: (
+            r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            r["locations"][0]["physicalLocation"]["region"]["startLine"],
+            r["ruleId"],
+            r["partialFingerprints"]["sonarFindingKey"],
+        )
+    )
+
+    return {
+        "$schema": SARIF_SCHEMA_URI,
+        "version": SARIF_VERSION,
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "SonarQube",
+                        "informationUri": host,
+                        "rules": rules,
+                    }
+                },
+                "results": results,
+            }
+        ],
+    }
+
+
+def _load_sarif_fixture(path: Path) -> list[Finding]:
+    """Load findings for the SARIF path from a saved JSON fixture.
+
+    Accepts a payload with an ``issues`` array (Sonar issue shape), an
+    optional ``hotspots`` array (Sonar hotspot shape), and an optional
+    ``rules`` array (``{key, name}``) used to fill rule names.
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return []
+    rules_by_key: dict[str, str] = {}
+    for rule_obj in payload.get("rules") or []:
+        if isinstance(rule_obj, dict) and isinstance(rule_obj.get("key"), str):
+            name = rule_obj.get("name")
+            rules_by_key[rule_obj["key"]] = name if isinstance(name, str) else ""
+    findings: list[Finding] = []
+    for raw in payload.get("issues") or []:
+        if isinstance(raw, dict):
+            finding = _normalise_issue(raw, rules_by_key=rules_by_key)
+            if finding is not None:
+                findings.append(finding)
+    for raw in payload.get("hotspots") or []:
+        if isinstance(raw, dict):
+            finding = _normalise_hotspot(raw)
+            if finding is not None:
+                findings.append(finding)
+    return findings
+
+
+def _resolve_sarif_host(config: SonarConfig | None) -> str:
+    """Pick the host used for ``informationUri`` and rule ``helpUri``."""
+    if config is not None:
+        return config.host
+    env_host = (os.environ.get("SONAR_HOST_URL") or "").strip().rstrip("/")
+    return env_host or "https://sonarqube.invalid"
+
+
+def run_emit_sarif(args: argparse.Namespace) -> int:
+    """Fetch all findings and write a SARIF document. No tickets, no issues."""
+    out_path = Path(args.emit_sarif)
+    if args.fixture:
+        try:
+            findings = _load_sarif_fixture(Path(args.fixture))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"error: failed to load fixture: {exc}", file=sys.stderr)
+            return 2
+        host = _resolve_sarif_host(load_config())
+    else:
+        config = load_config()
+        if config is None:
+            print("error: SONAR_HOST_URL and SONAR_TOKEN must be set", file=sys.stderr)
+            return 2
+        try:
+            findings = collect_sarif_findings(config)
+        except SonarAPIError as exc:
+            print(f"error: sonar fetch failed: {exc}", file=sys.stderr)
+            return 1
+        host = config.host
+
+    sarif = build_sarif(findings, host=host)
+    if out_path.parent and not out_path.parent.exists():
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(sarif, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    n_rules = len(sarif["runs"][0]["tool"]["driver"]["rules"])
+    n_results = len(sarif["runs"][0]["results"])
+    print(f"sonar-sarif: findings={len(findings)} rules={n_rules} results={n_results} out={out_path}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
@@ -1211,11 +1633,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Override the UTC day used in filenames and ticket ids (YYYY-MM-DD).",
     )
+    p.add_argument(
+        "--emit-sarif",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write all findings (issues of every type plus security "
+            "hotspots) as a SARIF 2.1.0 document at PATH instead of "
+            "emitting backlog tickets. Feeds GitHub code scanning."
+        ),
+    )
     return p.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    if getattr(args, "emit_sarif", None):
+        return run_emit_sarif(args)
     return run_sweep(args)
 
 

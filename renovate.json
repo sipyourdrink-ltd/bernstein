@@ -3,21 +3,38 @@
   "extends": [
     "config:recommended"
   ],
+  "minimumReleaseAge": "7 days",
   "packageRules": [
     {
       "description": "Pin python to 3.13 until aider-chat and other adapters confirm 3.14 compatibility.",
       "matchManagers": [
         "github-actions",
         "docker-compose",
-        "dockerfile",
-        "regex"
+        "dockerfile"
       ],
-      "matchPackagePatterns": [
-        "^python$",
-        "actions/python-versions",
-        "actions/setup-python"
+      "matchPackageNames": [
+        "python",
+        "/actions/python-versions/",
+        "/actions/setup-python/"
       ],
       "allowedVersions": "<=3.13"
+    },
+    {
+      "description": "Hold major updates back longer so a fast-follow patch can land before we bump.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "Hold TypeScript on 6.x for the npm packages: ts-jest's peer range is '>=4.3 <7', so a TypeScript 7 bump makes 'npm ci' fail with ERESOLVE. Renovate updates package.json and the lockfile together, so a bump within this range stays consistent. Lift this once ts-jest supports TypeScript 7.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchPackageNames": [
+        "typescript"
+      ],
+      "allowedVersions": "<7"
     }
   ]
 }

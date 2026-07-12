@@ -39,6 +39,12 @@ on:
       - ".goosehints"
       - "README.md"
       - "CONTRIBUTING.md"
+  schedule:
+    # Weekly strict data-freshness sweep. Time-stamped markers drift purely
+    # with the calendar, so the hard-threshold check runs on this cadence and
+    # opens/updates a single tracking issue instead of reddening main pushes.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 concurrency:
   group: docs-drift-${{ github.ref }}
@@ -98,8 +104,21 @@ jobs:
             drift-report.json
           retention-days: 14
 
-      - name: Comment drift report on the pull request
+      - name: Add drift report to job summary
+        # Always surface the report in the job summary when there is drift,
+        # so it is visible on fork PRs (whose read-only token cannot post a
+        # comment) and whenever the comment step below is swallowed.
         if: github.event_name == 'pull_request' && steps.drift.outputs.clean != 'True'
+        run: cat drift-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment drift report on the pull request
+        # Same-repo PRs only: fork PRs run with a read-only GITHUB_TOKEN and
+        # the comment API 403s (the job summary above is their fallback).
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.drift.outputs.clean != 'True'
+        # Dependabot same-repo PRs also receive a read-only token, so even a
+        # same-repo comment can 403. Do not fail the drift check on that; the
+        # report is already in the job summary and the uploaded artifact.
+        continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -130,15 +149,18 @@ jobs:
 
   docs-data-freshness:
     # Advisory check: flags time-stamped metric lines (stars, downloads,
-    # dated qualifiers) older than 30 days as a soft warning. On push to
-    # main, markers older than 60 days fail this job. This job is NOT in
-    # the canary list of required checks: time-stamped metrics drift
-    # between scheduled refreshes and the gate catches them automatically.
+    # dated qualifiers) older than 30 days as a soft warning. Staleness is
+    # purely temporal, so pushes to main and PRs only run the soft check and
+    # never fail on it. The hard 60-day threshold is enforced only on the
+    # weekly scheduled run, which opens or updates a single marker-tagged
+    # tracking issue instead of failing an unrelated main push. This job is
+    # NOT in the canary list of required checks.
     name: Data freshness (advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
+      issues: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -151,13 +173,53 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Run data-freshness check (soft on PR, strict on push to main)
+      - name: Run data-freshness check (soft on PR + push, strict weekly)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            python scripts/check_data_freshness.py --strict
-          else
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+            # PR + push to main: soft run only. A stale marker is a warning,
+            # never a failure, so it cannot redden an unrelated main push.
             python scripts/check_data_freshness.py
+            exit 0
+          fi
+          # Weekly scheduled sweep: enforce the hard threshold, but route a
+          # failure into a single tracking issue rather than failing the job.
+          set +e
+          OUTPUT="$(python scripts/check_data_freshness.py --strict 2>&1)"
+          RC=$?
+          set -e
+          printf '%s\n' "${OUTPUT}"
+          TITLE="docs data-freshness: stale time-stamped markers"
+          if [ "${RC}" -eq 0 ]; then
+            echo "::notice::No stale markers; nothing to track."
+            exit 0
+          fi
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          BODY="$(cat <<EOF
+          One or more time-stamped markers exceed the 60-day hard limit.
+          Refresh them per docs/playbooks/docs-drift.md, then this issue auto-updates on the next weekly sweep.
+
+          \`\`\`
+          ${OUTPUT}
+          \`\`\`
+
+          Workflow run: ${RUN_URL}
+          EOF
+          )"
+          EXISTING="$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --search "in:title ${TITLE}" \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')"
+          if [ -n "${EXISTING}" ]; then
+            echo "Refreshing existing tracking issue #${EXISTING}"
+            gh issue edit "${EXISTING}" --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" --body "${BODY}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" \
+              --label "docs,bot" --body "${BODY}"
           fi
         shell: bash
 

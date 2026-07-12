@@ -140,7 +140,6 @@ The current inventory is:
 |------|-----------------------------|-------------|-----------------|
 | `README.md` (intro line) | `as of YYYY-MM-DD: N stars, N forks, ~N pypi downloads/day (~Nk/month)` | GitHub API, PyPI | `gh api repos/sipyourdrink-ltd/bernstein --jq '{stargazers_count, forks_count}'` and `curl -sS https://pypistats.org/api/packages/bernstein/recent \| jq .data` |
 | `README.md` (regulatory anchors) | `### regulatory anchors (as of YYYY-MM-DD)` | Regulator publications | Manual review of cited regulations |
-| `docs/adapter-deferred.md` | `## <Tool> - <STATUS> (YYYY-MM-DD)` | Vendor announcements | Manual review of each named tool's release notes |
 
 ### Refresh commands
 
@@ -155,8 +154,12 @@ curl -sS https://pypistats.org/api/packages/bernstein/recent | jq .data
 
 - An `as of YYYY-MM-DD` marker older than 30 days is considered stale and
   emits a soft warning from `scripts/check_data_freshness.py`.
-- A marker older than 60 days is a hard fail on push to `main`; the workflow
-  job `docs-data-freshness` exits with status 1.
+- A marker older than 60 days is a hard fail only on the weekly scheduled run
+  of the `docs-data-freshness` job. Instead of failing pushes to `main`, the
+  scheduled run opens or updates a single marker-tagged tracking issue so a
+  stale marker never reddens unrelated main pushes.
+- Pushes to `main` still run the checker in soft (non-strict) mode for the
+  inline warning, but never fail on staleness.
 - The `docs-data-freshness` check is advisory and is not part of the canary
   list of required checks.
 

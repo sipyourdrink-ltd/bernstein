@@ -23,6 +23,13 @@ _ANALYZER_CACHE_VERSION = "2"
 _COMPAT_CACHE_VERSION = "2"
 _WORKFLOW_PATH_PREFIX = ".github/workflows/"
 
+# Inert repo-root files that never affect test outcomes. A change limited to
+# these paths does not force a full-suite fallback. Kept intentionally tiny:
+# docs/ and pyproject.toml are deliberately excluded so that a version bump or
+# documentation change still fails open to the full suite instead of selecting
+# zero tests.
+_FALLBACK_ALLOWLIST = frozenset({"LICENSE", ".gitignore"})
+
 
 type _JsonObject = dict[str, object]
 
@@ -493,14 +500,18 @@ class TestImpactAnalyzer:
             affected.update(test_list)
             mappings.append(TestMapping(source_file=rel_path, test_files=test_list, reason=reason))
 
-        if changed_sources and not affected:
-            return ImpactAnalysis(
-                changed_files=normalized,
-                affected_tests=all_tests,
-                mappings=[],
-                coverage_pct=0.0,
-                fallback_used=True,
-            )
+        # Fail open: a changed path matched by no selection rule (a version bump,
+        # a docs edit, a new top-level config) must run the full suite rather
+        # than silently select zero tests and merge green.
+        uncovered = [path for path in normalized if not self._is_selection_covered(path)]
+        if uncovered:
+            return self._fallback_all_tests(normalized, all_tests, reason="uncovered_path", source=uncovered[0])
+
+        # A src change that maps to no test also fails open. Broader than "nothing
+        # mapped": if any changed source is unmapped, run everything, so a
+        # partially-unmapped change set cannot skip the tests guarding it.
+        if covered_sources < len(changed_sources):
+            return self._fallback_all_tests(normalized, all_tests, reason="unmapped_source", source="src")
 
         return ImpactAnalysis(
             changed_files=normalized,
@@ -508,6 +519,44 @@ class TestImpactAnalyzer:
             mappings=mappings,
             coverage_pct=self._compute_coverage_pct(changed_sources, covered_sources, affected),
             fallback_used=False,
+        )
+
+    def _is_selection_covered(self, rel_path: str) -> bool:
+        """Return True when a changed path is matched by a known selection rule.
+
+        The recognised rules are: a source file under ``src`` (``src/**/*.py``),
+        a ``tests/**/test_*.py`` file, a ``tests/**/conftest.py`` file, a GitHub
+        Actions workflow, and the small inert allowlist. Anything else is
+        considered uncovered and forces a fail-open fallback to the full suite.
+        """
+        path = Path(rel_path).as_posix()
+        if path in _FALLBACK_ALLOWLIST:
+            return True
+        if path.startswith(_WORKFLOW_PATH_PREFIX):
+            return True
+        if path.endswith(".py") and (self._root / rel_path).is_relative_to(self._src_root):
+            return True
+        if path.startswith("tests/"):
+            name = Path(path).name
+            if name == "conftest.py" or (name.startswith("test_") and name.endswith(".py")):
+                return True
+        return False
+
+    def _fallback_all_tests(
+        self,
+        normalized: list[str],
+        all_tests: list[str],
+        *,
+        reason: str,
+        source: str,
+    ) -> ImpactAnalysis:
+        """Return a fail-open analysis that selects the entire test suite."""
+        return ImpactAnalysis(
+            changed_files=normalized,
+            affected_tests=all_tests,
+            mappings=[TestMapping(source_file=source, test_files=all_tests, reason=reason)],
+            coverage_pct=100.0,
+            fallback_used=True,
         )
 
     def _discover_tests(self) -> list[Path]:

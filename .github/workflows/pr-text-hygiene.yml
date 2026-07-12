@@ -76,6 +76,14 @@ jobs:
           PR_TEXT_HYGIENE_DENYLIST: ${{ vars.PR_TEXT_HYGIENE_DENYLIST }}
         run: |
           set -euo pipefail
+          # The deny-list is a repository variable (not a secret), so it is
+          # not masked by default. Register it as a masked value and pass
+          # only the env-var *name* to the script, so the phrase list is
+          # never echoed into public CI logs even if a later step prints
+          # the environment.
+          if [ -n "${PR_TEXT_HYGIENE_DENYLIST:-}" ]; then
+            echo "::add-mask::${PR_TEXT_HYGIENE_DENYLIST}"
+          fi
           python scripts/check_pr_text_hygiene.py \
             --title "${PR_TITLE}" \
             --body "${PR_BODY:-}" \

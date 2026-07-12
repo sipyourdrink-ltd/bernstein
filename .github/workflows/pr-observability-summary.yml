@@ -86,7 +86,18 @@ jobs:
             echo 'OBSERVABILITY_EOF'
           } >> "$GITHUB_OUTPUT"
 
+      - name: Append summary to job step summary
+        # Always surface the report in the job summary. Fork PRs run with a
+        # read-only GITHUB_TOKEN, so the sticky-comment step below 403s and
+        # is skipped; the step summary keeps the observability report
+        # visible regardless of who opened the PR.
+        run: cat .ci/observability/pr_summary.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Post sticky comment
+        # Skip on fork PRs: their GITHUB_TOKEN is read-only and the comment
+        # API returns 403. workflow_dispatch and same-repo PRs keep the
+        # sticky comment.
+        if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88  # v3.0.5
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -225,24 +225,52 @@ jobs:
               body += '\n> Gate is **advisory** while thresholds stabilise. To kill survivors locally:\n> `uv run python scripts/mutmut_critical.py --only <module>`';
             }
 
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
+            // Always surface the table in the job summary first, so the
+            // report is never lost even when the PR comment cannot be
+            // posted (fork PRs run with a read-only GITHUB_TOKEN).
+            await core.summary.addRaw(body).write();
+
+            // Fork short-circuit: a read-only token cannot comment, so skip
+            // the API calls entirely rather than let them 403.
+            const headRepo = context.payload.pull_request
+              && context.payload.pull_request.head
+              && context.payload.pull_request.head.repo
+              && context.payload.pull_request.head.repo.full_name;
+            const baseRepo = `${context.repo.owner}/${context.repo.repo}`;
+            if (headRepo && headRepo !== baseRepo) {
+              core.notice(`Fork PR (${headRepo}); mutation report written to the job summary instead of a PR comment.`);
+              return;
+            }
+
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body,
               });
+              const existing = comments.find(c => c.body && c.body.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body,
+                });
+              }
+            } catch (e) {
+              // A read-only token (e.g. dependabot same-repo PRs) 403s on
+              // the comment API. The report is already in the job summary,
+              // so downgrade to a notice rather than failing the job.
+              if (e.status === 403) {
+                core.notice('Comment API returned 403 (read-only token); mutation report is in the job summary.');
+                return;
+              }
+              throw e;
             }

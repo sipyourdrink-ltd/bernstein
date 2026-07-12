@@ -45,19 +45,10 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-
-      - name: Bootstrap (uv + python)
-        uses: ./.github/actions/bootstrap
-        with:
-          python-version: "3.12"
-          cache-key-suffix: sourcery-cli
-
+      # Short-circuit before checkout/bootstrap: when SOURCERY_API_KEY is
+      # absent (the default in forks and unconfigured repos) there is
+      # nothing to run, so skip the checkout and uv bootstrap entirely
+      # rather than warming a cache that the later steps never use.
       - name: Check Sourcery token
         id: check
         env:
@@ -69,6 +60,21 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Checkout
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Bootstrap (uv + python)
+        if: steps.check.outputs.skip != 'true'
+        uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.12"
+          cache-key-suffix: sourcery-cli
 
       - name: Install Sourcery
         if: steps.check.outputs.skip != 'true'

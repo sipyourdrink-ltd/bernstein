@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 _SDD_NOT_CONFIGURED = "sdd_dir not configured"
@@ -232,8 +233,21 @@ def memory_audit(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
+class BroadcastRequest(BaseModel):
+    """Body for ``POST /broadcast``.
+
+    Typing the body with a model lets FastAPI reject non-object or
+    malformed JSON with a ``422`` instead of letting ``dict.get`` (or a
+    ``JSONDecodeError``) raise an unhandled exception. ``message``
+    defaults to an empty string so a missing field still funnels into
+    the existing ``400 message is required`` path.
+    """
+
+    message: str = ""
+
+
 @router.post("/broadcast")
-async def broadcast_command(request: Request) -> JSONResponse:
+async def broadcast_command(request: Request, payload: BroadcastRequest) -> JSONResponse:
     """Send a message to all running agents via fastest available channel.
 
     Uses stdin pipe where available (sub-second delivery), falls back
@@ -243,8 +257,7 @@ async def broadcast_command(request: Request) -> JSONResponse:
     """
     from bernstein.core.agent_ipc import broadcast_message
 
-    body: Any = await request.json()
-    message: str = body.get("message", "")
+    message = payload.message
     if not message:
         return JSONResponse(content={"error": "message is required"}, status_code=400)
 
