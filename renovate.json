@@ -25,6 +25,16 @@
         "major"
       ],
       "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "Hold TypeScript on 6.x for the npm packages: ts-jest's peer range is '>=4.3 <7', so a TypeScript 7 bump makes 'npm ci' fail with ERESOLVE. Renovate updates package.json and the lockfile together, so a bump within this range stays consistent. Lift this once ts-jest supports TypeScript 7.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchPackageNames": [
+        "typescript"
+      ],
+      "allowedVersions": "<7"
     }
   ]
 }
