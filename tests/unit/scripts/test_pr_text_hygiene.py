@@ -313,3 +313,119 @@ def test_load_denylist_skips_blank_entries(tmp_path: Path, hygiene_module: Modul
     path.write_text(json.dumps({"denylist": ["cringe", "  ", ""]}), encoding="utf-8")
     phrases = hygiene_module.load_denylist(path)
     assert phrases == ["cringe"]
+
+
+# --- Word-boundary regression coverage ----------------------------------
+#
+# Plain substring matching produced false positives: a short token could
+# match inside an unrelated longer word. The boundary-aware matcher
+# requires a non-alphanumeric neighbour on the left for every phrase and
+# on the right as well for short (<= 4 char) tokens. These fixtures use
+# neutral placeholder phrases; the point under test is the boundary logic,
+# not any particular phrase.
+
+
+@pytest.fixture
+def boundary_deny_file(tmp_path: Path) -> Path:
+    """Deny-list mixing a short acronym and longer phrases."""
+    path = tmp_path / "boundary.json"
+    path.write_text(
+        json.dumps({"denylist": ["SEO", "cringe", "foo bar"]}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_short_token_not_matched_inside_word(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:
+    """A short token must not match when embedded in a longer word.
+
+    'closeout' contains the substring 'seo' with alphanumeric neighbours
+    on both sides, so the acronym rule must not flag it.
+    """
+    phrases = hygiene_module.load_denylist(boundary_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="chore: closeout stale PRs",
+        body="",
+        branch="feat/clean",
+        commit_messages=[],
+        phrases=phrases,
+    )
+    assert findings == []
+
+
+def test_short_token_not_matched_as_word_prefix(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:
+    """A short token followed by more letters must not match ('Seoul')."""
+    phrases = hygiene_module.load_denylist(boundary_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="docs: note the author visited Seoul",
+        body="",
+        branch="feat/clean",
+        commit_messages=[],
+        phrases=phrases,
+    )
+    assert findings == []
+
+
+def test_short_token_matched_standalone(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:
+    """A standalone short token is still flagged (space boundaries)."""
+    phrases = hygiene_module.load_denylist(boundary_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="docs: add SEO playbook",
+        body="",
+        branch="feat/clean",
+        commit_messages=[],
+        phrases=phrases,
+    )
+    assert ("title", "SEO") in findings
+
+
+def test_short_token_matched_with_hyphen_boundary(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:
+    """A hyphen counts as a boundary for the short-token rule ('SEO-friendly')."""
+    phrases = hygiene_module.load_denylist(boundary_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="docs: make copy SEO-friendly",
+        body="",
+        branch="feat/clean",
+        commit_messages=[],
+        phrases=phrases,
+    )
+    assert ("title", "SEO") in findings
+
+
+def test_long_phrase_matched_inside_word(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:
+    """A long phrase keeps left-boundary matching ('cringeworthy' fails)."""
+    phrases = hygiene_module.load_denylist(boundary_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="chore: this reads cringeworthy",
+        body="",
+        branch="feat/clean",
+        commit_messages=[],
+        phrases=phrases,
+    )
+    assert ("title", "cringe") in findings
+
+
+def test_multiword_phrase_suffixed_form_still_matched(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:
+    """A multi-word phrase with a suffix appended still matches (left boundary only)."""
+    phrases = hygiene_module.load_denylist(boundary_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="chore: drop the foo barbaz wording",
+        body="",
+        branch="feat/clean",
+        commit_messages=[],
+        phrases=phrases,
+    )
+    assert ("title", "foo bar") in findings
+
+
+def test_short_token_matched_in_commit_message(hygiene_module: ModuleType, boundary_deny_file: Path) -> None:
+    """Boundary matching applies to commit messages too."""
+    phrases = hygiene_module.load_denylist(boundary_deny_file)
+    findings = hygiene_module.check_pr_text(
+        title="chore: docs",
+        body="",
+        branch="feat/clean",
+        commit_messages=["chore: docs\n\nAdds an SEO section to the guide."],
+        phrases=phrases,
+    )
+    assert any(surface.startswith("commit[") and phrase == "SEO" for surface, phrase in findings)
