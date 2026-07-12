@@ -3,6 +3,19 @@ name: Branch protection audit
 # Read live branch protection for `main` and compare its required status
 # checks with the in-tree required-check canary expectation. This catches
 # repository-setting drift that workflow-file tests cannot see.
+#
+# Required secret: BRANCH_PROTECTION_AUDIT_TOKEN
+#   The default GITHUB_TOKEN cannot read branch protection: that endpoint
+#   requires an admin-scoped token, and Actions cannot be granted admin.
+#   Configure a fine-grained PAT (or GitHub App installation token) with
+#   this repository's:
+#     - Administration: read-only
+#     - Contents: read
+#   and store it as the repo secret BRANCH_PROTECTION_AUDIT_TOKEN.
+#   The first job step fails loudly if the secret is absent; there is no
+#   github.token fallback because that token cannot satisfy the endpoint.
+#   (A PAT expiry re-surfaces as the same loud failure; an App
+#   installation token avoids the rotation.)
 
 on:
   schedule:
@@ -23,12 +36,23 @@ jobs:
     permissions:
       contents: read
     env:
-      GH_TOKEN: ${{ github.token }}
+      # Admin-scoped read is required to fetch branch protection; the
+      # default github.token cannot do it. See the workflow header for the
+      # secret's required fine-grained PAT scopes. No github.token fallback.
+      GH_TOKEN: ${{ secrets.BRANCH_PROTECTION_AUDIT_TOKEN }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
+
+      - name: Require branch-protection audit token
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::BRANCH_PROTECTION_AUDIT_TOKEN secret not configured. Create a fine-grained PAT (Administration: read-only, Contents: read) for this repo and store it as the BRANCH_PROTECTION_AUDIT_TOKEN secret. See the workflow header comment."
+            exit 1
+          fi
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:

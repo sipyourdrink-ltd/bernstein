@@ -39,7 +39,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # inventory table in docs/playbooks/docs-drift.md.
 INVENTORY: tuple[str, ...] = (
     "README.md",
-    "docs/adapter-deferred.md",
     "docs/llm-citation-surface.md",
     "docs/compare/bernstein-vs-github-agent-hq.md",
     "docs/compare/index.html",

@@ -36,6 +36,11 @@ _TEST_REQUIRED_PREFIXES = (
 DEFAULT_TEST_FILE_TIMEOUT_SECONDS = 300
 TEST_FILE_TIMEOUT_ENV = "BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS"
 
+# A heavily-parallel shard can transiently exhaust the OS thread table, which
+# surfaces as this CPython error rather than a genuine test failure. A single
+# serial retry distinguishes the environmental flake from a real regression.
+_THREAD_EXHAUSTION_MARKER = "RuntimeError: can't start new thread"
+
 
 def test_file_timeout_seconds() -> int:
     """Return the per-file subprocess timeout in seconds."""
@@ -153,6 +158,26 @@ def run_file(path: Path, extra_args: list[str], coverage: bool = False) -> tuple
     return path, result.returncode, duration, output
 
 
+def retry_on_thread_exhaustion(
+    path: Path,
+    extra_args: list[str],
+    code: int,
+    output: str,
+    coverage: bool = False,
+) -> tuple[int, float, str] | None:
+    """Re-run *path* once serially when it failed from OS thread exhaustion.
+
+    Returns the retry ``(code, duration, output)`` when the original failure
+    carried the thread-exhaustion marker, otherwise ``None`` (no retry). The
+    retry runs the same isolated subprocess as ``run_file``; because the caller
+    invokes it serially, the transient thread pressure has cleared by then.
+    """
+    if code == 0 or _THREAD_EXHAUSTION_MARKER not in output:
+        return None
+    _path, retry_code, retry_duration, retry_output = run_file(path, extra_args, coverage=coverage)
+    return retry_code, retry_duration, retry_output
+
+
 def _print_failure_summary(output: str) -> None:
     """Print the pytest failure summary from subprocess output.
 
@@ -217,6 +242,11 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool, co
                 break
             continue
 
+        retry = retry_on_thread_exhaustion(path, extra_args, code, output, coverage=coverage)
+        if retry is not None:
+            print(f"  RETRIED (thread exhaustion) {label}")
+            code, duration, output = retry
+
         total_duration += duration
         if _report_file_result(label, code, duration, output):
             passed += 1
@@ -264,6 +294,11 @@ def run_parallel(
                     for f in futures:
                         f.cancel()
                 continue
+
+            retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
+            if retry is not None:
+                print(f"  RETRIED (thread exhaustion) {fpath.name}")
+                code, duration, output = retry
 
             done += 1
             label = f"[{done}/{total}] {fpath.name}"

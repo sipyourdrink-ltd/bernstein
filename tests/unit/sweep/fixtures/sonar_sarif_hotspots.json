@@ -1,0 +1,38 @@
+{
+  "rules": [
+    {"key": "python:S2068", "name": "Credentials should not be hard-coded"},
+    {"key": "python:S4830", "name": "Server certificates should be verified during SSL/TLS connections"}
+  ],
+  "issues": [
+    {
+      "key": "ISSUE-VULN-001",
+      "rule": "python:S2068",
+      "severity": "CRITICAL",
+      "type": "VULNERABILITY",
+      "component": "bernstein:src/bernstein/core/x.py",
+      "line": 12,
+      "message": "Vendor message ignored by tickets but kept for the Security tab.",
+      "tags": ["cwe", "owasp-a3"],
+      "creationDate": "2026-06-01T10:00:00+0000"
+    }
+  ],
+  "hotspots": [
+    {
+      "key": "HOTSPOT-HIGH-001",
+      "ruleKey": "python:S4830",
+      "component": "bernstein:src/bernstein/core/tls.py",
+      "line": 55,
+      "message": "Enable server certificate validation.",
+      "vulnerabilityProbability": "HIGH",
+      "creationDate": "2026-06-01T09:00:00+0000"
+    },
+    {
+      "key": "HOTSPOT-LOW-001",
+      "ruleKey": "python:S2245",
+      "component": "src/bernstein/core/rng.py",
+      "vulnerabilityProbability": "LOW",
+      "message": "Make sure using this pseudorandom number generator is safe.",
+      "creationDate": "2026-06-01T08:00:00+0000"
+    }
+  ]
+}

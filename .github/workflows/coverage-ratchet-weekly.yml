@@ -11,8 +11,7 @@ name: Coverage ratchet (weekly floor bump)
 #
 # The cron trigger ships disabled-by-default. Flip ENABLE_CRON to "1" (in
 # this file, not at run time) only after a clean workflow_dispatch smoke
-# run, mirroring the sweep-sonar-findings.yml rollout. Until then a
-# scheduled fire is a clean no-op.
+# run. Until then a scheduled fire is a clean no-op.
 
 on:
   schedule:

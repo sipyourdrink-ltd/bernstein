@@ -43,14 +43,23 @@ Run locally::
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+# Phrases at or below this length are treated as short tokens (e.g. a
+# three-letter acronym). Short tokens require a non-alphanumeric boundary
+# on BOTH sides so they do not match by accident inside an unrelated
+# longer word. Longer phrases require only a left boundary so that
+# suffixed forms (plurals, adjective endings) are still caught.
+_SHORT_PHRASE_MAX_LEN = 4
 
 
 def _parse_denylist_payload(raw: str, source: str) -> list[str]:
@@ -101,20 +110,41 @@ def load_denylist_from_env(env_var: str) -> list[str]:
     return _parse_denylist_payload(raw, f"env:{env_var}")
 
 
+@functools.lru_cache(maxsize=512)
+def _compile_phrase(phrase: str) -> re.Pattern[str]:
+    """Compile a deny-list phrase into a boundary-aware pattern.
+
+    The pattern reduces false positives from plain substring matching:
+
+    * A left boundary ``(?<![A-Za-z0-9])`` is always required, so a phrase
+      never matches when it is glued to the tail of a longer word.
+    * A right boundary ``(?![A-Za-z0-9])`` is added only for short phrases
+      (``<= _SHORT_PHRASE_MAX_LEN``). Short acronyms are the main source of
+      accidental hits inside longer words, so they must be delimited on
+      both sides; longer phrases keep a left-only boundary so suffixed
+      forms still match.
+
+    Matching stays case-insensitive.
+    """
+    left = r"(?<![A-Za-z0-9])"
+    right = r"(?![A-Za-z0-9])" if len(phrase) <= _SHORT_PHRASE_MAX_LEN else ""
+    return re.compile(left + re.escape(phrase) + right, re.IGNORECASE)
+
+
 def scan_surface(surface: str, text: str, phrases: Iterable[str]) -> list[tuple[str, str]]:
     """Return ``(surface, phrase)`` for each deny-list phrase that appears in *text*.
 
-    Matching is case-insensitive substring matching. ``text`` may be
-    empty or whitespace only; in that case no matches are returned.
+    Matching is case-insensitive and boundary-aware (see
+    :func:`_compile_phrase`). ``text`` may be empty or whitespace only; in
+    that case no matches are returned.
     """
     if not text:
         return []
-    lowered = text.lower()
-    if not lowered.strip():
+    if not text.strip():
         return []
     findings: list[tuple[str, str]] = []
     for phrase in phrases:
-        if phrase.lower() in lowered:
+        if _compile_phrase(phrase).search(text):
             findings.append((surface, phrase))
     return findings
 

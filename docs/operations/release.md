@@ -18,6 +18,26 @@ Update this table whenever a release workflow is added, renamed, or moved.
 | `.github/workflows/publish-homebrew.yml` | Publish Homebrew Formula | `release`, `workflow_dispatch` | Updates the Homebrew tap formula for a released version. | Runs after a GitHub Release is published, or manually for a selected version. |
 | `.github/workflows/sbom-upload.yml` | SBOM upload | `push`, `release` | Generates and uploads the CycloneDX SBOM when the Dependency-Track endpoint is configured. | Runs on main updates and after a GitHub Release is published. |
 
+## Bumping the version
+
+`scripts/bump_version.py` is the only supported way to bump the release version.
+
+```
+python scripts/bump_version.py 3.4.5
+```
+
+It performs the three coupled edits in one deterministic step:
+
+1. rewrites `project.version` in `pyproject.toml`,
+2. runs `uv lock` so `uv.lock` pins the new version, and
+3. regenerates `server.json` and `.plugin/plugin.json` via
+   `scripts/gen_distribution_manifests.py`.
+
+Do not hand-edit any of these files for a bump. A bump that touches only
+`pyproject.toml` desyncs the lockfile and the distribution manifests, which the
+CI drift gates then fail. Commit the bump in a PR; the merge to `main` triggers
+CI and `.github/workflows/auto-release.yml` picks up the untagged version.
+
 ## Guardrails
 
 - `.github/workflows/auto-release.yml` only creates tags.

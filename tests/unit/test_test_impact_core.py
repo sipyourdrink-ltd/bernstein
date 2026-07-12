@@ -122,6 +122,80 @@ def test_workflow_change_selects_workflow_yaml_tests(tmp_path: Path) -> None:
     ]
 
 
+def test_version_bump_falls_back_to_all_tests(tmp_path: Path) -> None:
+    """A pyproject.toml-only change must run the full suite, not select zero tests.
+
+    This is the regression guard for the dominant red-main mechanism: version
+    bump PRs matched no selection rule, selected no tests, and merged green.
+    """
+    _write(tmp_path / "src" / "demo" / "__init__.py", "")
+    _write(tmp_path / "src" / "demo" / "logic.py", "def run() -> int:\n    return 1\n")
+    _write(tmp_path / "pyproject.toml", '[project]\nname = "demo"\nversion = "1.0.0"\n')
+    _write(tmp_path / "tests" / "unit" / "test_alpha.py", "def test_alpha() -> None:\n    assert True\n")
+    _write(tmp_path / "tests" / "unit" / "test_beta.py", "def test_beta() -> None:\n    assert True\n")
+
+    analyzer = ImpactAnalyzer(tmp_path, test_dirs=[tmp_path / "tests" / "unit"])
+    analysis = analyzer.analyze(["pyproject.toml"])
+
+    assert analysis.fallback_used is True
+    assert analysis.affected_tests == [
+        "tests/unit/test_alpha.py",
+        "tests/unit/test_beta.py",
+    ]
+
+
+def test_docs_only_change_falls_back_to_all_tests(tmp_path: Path) -> None:
+    """A docs-only change matches no selection rule and fails open to all tests."""
+    _write(tmp_path / "src" / "demo" / "__init__.py", "")
+    _write(tmp_path / "docs" / "x.md", "# doc\n")
+    _write(tmp_path / "tests" / "unit" / "test_alpha.py", "def test_alpha() -> None:\n    assert True\n")
+    _write(tmp_path / "tests" / "unit" / "test_beta.py", "def test_beta() -> None:\n    assert True\n")
+
+    analyzer = ImpactAnalyzer(tmp_path, test_dirs=[tmp_path / "tests" / "unit"])
+    analysis = analyzer.analyze(["docs/x.md"])
+
+    assert analysis.fallback_used is True
+    assert analysis.affected_tests == [
+        "tests/unit/test_alpha.py",
+        "tests/unit/test_beta.py",
+    ]
+
+
+def test_allowlisted_root_file_does_not_force_fallback(tmp_path: Path) -> None:
+    """An inert allowlisted file (LICENSE) selects nothing without a full fallback."""
+    _write(tmp_path / "src" / "demo" / "__init__.py", "")
+    _write(tmp_path / "LICENSE", "Apache-2.0\n")
+    _write(tmp_path / "tests" / "unit" / "test_alpha.py", "def test_alpha() -> None:\n    assert True\n")
+
+    analyzer = ImpactAnalyzer(tmp_path, test_dirs=[tmp_path / "tests" / "unit"])
+    analysis = analyzer.analyze(["LICENSE"])
+
+    assert analysis.fallback_used is False
+    assert analysis.affected_tests == []
+
+
+def test_partially_unmapped_source_change_falls_back_to_all_tests(tmp_path: Path) -> None:
+    """When one changed source maps to a test but another does not, run everything.
+
+    Old behavior only fell back when nothing mapped; a partially-unmapped set
+    would run just the mapped subset and skip the tests guarding the rest.
+    """
+    _write(tmp_path / "src" / "demo" / "__init__.py", "")
+    _write(tmp_path / "src" / "demo" / "mapped.py", "def mapped() -> int:\n    return 1\n")
+    _write(tmp_path / "src" / "demo" / "orphan.py", "def orphan() -> int:\n    return 2\n")
+    _write(tmp_path / "tests" / "unit" / "test_mapped.py", "def test_mapped() -> None:\n    assert True\n")
+    _write(tmp_path / "tests" / "unit" / "test_other.py", "def test_other() -> None:\n    assert True\n")
+
+    analyzer = ImpactAnalyzer(tmp_path, test_dirs=[tmp_path / "tests" / "unit"])
+    analysis = analyzer.analyze(["src/demo/mapped.py", "src/demo/orphan.py"])
+
+    assert analysis.fallback_used is True
+    assert analysis.affected_tests == [
+        "tests/unit/test_mapped.py",
+        "tests/unit/test_other.py",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # get_dependent_source_files
 # ---------------------------------------------------------------------------

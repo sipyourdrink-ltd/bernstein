@@ -126,6 +126,19 @@ def _set_proctitle(title: str) -> None:
         setproctitle.setproctitle(title)
 
 
+def _atomic_write_json(path: Path, info: dict[str, object]) -> None:
+    """Write ``info`` as JSON to *path* atomically (crash-safe, fsync-backed).
+
+    Delegates to the audited persistence helper, which writes to a sibling
+    temp file and renames via ``os.replace``. A reaper or supervisor reading the
+    pid file concurrently therefore always sees either the complete old bytes or
+    the complete new bytes, never a truncated half-written mix.
+    """
+    from bernstein.core.persistence.atomic_write import write_atomic_json
+
+    write_atomic_json(path, info, indent=None)
+
+
 def _write_pid_file(
     pid_dir: Path,
     session: str,
@@ -145,7 +158,7 @@ def _write_pid_file(
         sys.exit(1)
     if on_resolved is not None:
         on_resolved(pid_file)
-    pid_file.write_text(json.dumps(info), encoding="utf-8")
+    _atomic_write_json(pid_file, info)
     return pid_file
 
 
@@ -469,7 +482,7 @@ def main() -> None:
             sys.exit(1)
         info = json.loads(pid_file.read_text(encoding="utf-8"))
         info["child_pid"] = child.pid
-        pid_file.write_text(json.dumps(info), encoding="utf-8")
+        _atomic_write_json(pid_file, info)
 
     # 4. Start log monitor for hierarchical abort (T442)
     if args.log_path:

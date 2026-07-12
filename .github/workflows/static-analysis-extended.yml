@@ -187,6 +187,12 @@ jobs:
         # Re-run with exit-code=1 to fail the job on any HIGH/CRITICAL
         # finding. We split SARIF upload from the failing gate so
         # findings still reach Code Scanning when the gate fires.
+        #
+        # PR-exempt: a newly-disclosed CVE in an unchanged dependency would
+        # otherwise redden PRs that never touched it. The SARIF upload above
+        # still surfaces the finding on PRs, and dependency-review covers
+        # dependency changes, so the hard gate only runs on push/schedule.
+        if: github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: fs

@@ -56,6 +56,17 @@ jobs:
           . .venv-sbom/bin/activate
           cyclonedx-py environment --output-file bernstein.cyclonedx.json
 
+      - name: Archive SBOM artifact
+        # Upload the SBOM before the upload gate so the artifact is retained
+        # even when the Dependency-Track upload is skipped or the DT
+        # instance is unreachable. This is the fallback record of the SBOM.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sbom-cyclonedx
+          path: bernstein.cyclonedx.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Check operator endpoint
         id: gate
         run: |
@@ -71,8 +82,12 @@ jobs:
         env:
           GH_REF_NAME: ${{ github.ref_name }}
         run: |
-          # multipart/form-data upload via curl - more reliable than the bundled action
+          # multipart/form-data upload via curl - more reliable than the bundled action.
+          # Retry transient failures (DT outage / network blips) before failing
+          # the gate: --retry-all-errors also retries connection resets and
+          # non-2xx responses, not just curl's default transient set.
           curl -fS --max-time 90 \
+            --retry 4 --retry-delay 10 --retry-all-errors \
             -H "X-Api-Key: $DT_API_KEY" \
             -F "autoCreate=true" \
             -F "projectName=bernstein" \

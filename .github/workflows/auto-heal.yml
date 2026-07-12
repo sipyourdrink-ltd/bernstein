@@ -152,10 +152,15 @@ jobs:
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
-          python-version: "3.13"
+          python-version: "3.14"
+          # Create and activate a managed virtualenv so the editable install
+          # below lands in it. Without this the install has no environment to
+          # target; `--system` used to paper over that but the setup-uv managed
+          # Python is not a system interpreter, so the install silently missed.
+          activate-environment: true
 
       - name: Install package (editable, no deps)
-        run: uv pip install --system -e . --no-deps
+        run: uv pip install -e . --no-deps
 
       - name: Extract failure metadata
         id: meta

@@ -88,14 +88,16 @@ jobs:
         run: uv run pytest tests/integration/test_adapter_e2e.py -x -q --timeout=60
 
   open-failure-issue:
-    # If the nightly fails on a scheduled run, open a single tracking
-    # issue (or comment on the existing one) so macOS drift never sits
-    # silent. Labelled `ci-macos-nightly` for easy filtering. Skipped
-    # on workflow_dispatch and push events to avoid noise during
-    # operator-driven runs.
+    # If the nightly fails on a scheduled OR push-to-main run, open a
+    # single tracking issue (or comment on the existing one) so macOS
+    # drift never sits silent. Push-to-main failures are real regressions
+    # that previously failed silently (no issue was opened), so they are
+    # now included. Labelled `ci-macos-nightly` for easy filtering. Only
+    # workflow_dispatch is skipped, to avoid noise during operator-driven
+    # ad-hoc runs.
     name: Open / update macOS nightly failure issue
     needs: [test-macos-nightly]
-    if: failure() && github.event_name == 'schedule'
+    if: failure() && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -110,10 +112,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           TITLE="macOS nightly CI failing"
-          BODY="The macOS nightly safety-net workflow failed on $(date -u +%Y-%m-%dT%H:%M:%SZ). Run: ${RUN_URL}. See #1468 for the gating policy."
+          BODY="The macOS safety-net workflow failed (trigger: ${EVENT_NAME}) on $(date -u +%Y-%m-%dT%H:%M:%SZ). Run: ${RUN_URL}. See #1468 for the gating policy."
           # Find an existing open issue first so we do not create a new
           # one every night while the underlying break persists.
           EXISTING=$(gh issue list --label ci-macos-nightly --state open \
