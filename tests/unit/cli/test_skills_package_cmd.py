@@ -382,3 +382,64 @@ def test_conformance_below_min_hosts_exit_2(monkeypatch, tmp_path: Path) -> None
         ["conformance", "--host", "claude", "--host", "codex", "--min-hosts", "3", "--workdir", str(workdir)],
     )
     assert result.exit_code == 2, result.output
+
+
+def _image_repo(
+    root: Path, *, oci_tag: str = "3.4.1", catalog_image: str = "ghcr.io/sipyourdrink-ltd/bernstein"
+) -> Path:
+    """Write a minimal server.json + docker-mcp catalog for image-verify tests."""
+    import json
+
+    (root / "server.json").write_text(
+        json.dumps(
+            {
+                "name": "io.github.sipyourdrink-ltd/bernstein",
+                "repository": {"url": "https://github.com/sipyourdrink-ltd/bernstein", "source": "github"},
+                "version": "3.4.1",
+                "packages": [
+                    {"registryType": "pypi", "identifier": "bernstein", "version": "3.4.1"},
+                    {"registryType": "oci", "identifier": f"ghcr.io/sipyourdrink-ltd/bernstein:{oci_tag}"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    catalog = root / "packaging" / "docker-mcp"
+    catalog.mkdir(parents=True)
+    (catalog / "server.yaml").write_text(f"name: bernstein\nimage: {catalog_image}\n", encoding="utf-8")
+    return root
+
+
+def test_image_verify_ok_exit_0(tmp_path: Path) -> None:
+    _image_repo(tmp_path)
+    result = CliRunner().invoke(
+        package_group,
+        ["image-verify", "--version", "3.4.1", "--repo-root", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "OK" in result.output
+    assert "ghcr.io/sipyourdrink-ltd/bernstein:3.4.1" in result.output
+
+
+def test_image_verify_json_shape(tmp_path: Path) -> None:
+    import json
+
+    _image_repo(tmp_path)
+    result = CliRunner().invoke(
+        package_group,
+        ["image-verify", "--version", "3.4.1", "--repo-root", str(tmp_path), "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["provenance"]["ok"] is True
+    assert payload["version"] == "3.4.1"
+
+
+def test_image_verify_mismatch_exit_2(tmp_path: Path) -> None:
+    _image_repo(tmp_path, catalog_image="ghcr.io/other/bernstein")
+    result = CliRunner().invoke(
+        package_group,
+        ["image-verify", "--version", "3.4.1", "--repo-root", str(tmp_path)],
+    )
+    assert result.exit_code == 2, result.output
+    assert "FAILED" in result.output

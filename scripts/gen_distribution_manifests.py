@@ -102,9 +102,45 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    # Signed-image provenance: the MCP registry listing and the Docker MCP
+    # catalog must resolve to the same canonical signed GHCR image, and the
+    # listing must pin this release version. A divergence here would publish a
+    # listing that pulls a different (or unsigned) image than the catalog, so
+    # it fails the release like manifest drift does. Uses the current on-disk
+    # server.json (already regenerated above in write mode).
+    provenance = _load_image_provenance().verify_signed_image_provenance(repo_root=REPO, version=version)
+    if not provenance.ok:
+        print(f"signed-image provenance mismatch: {provenance.reason}", file=sys.stderr)
+        return 1
+
     if args.check:
         print(f"distribution manifests in sync (version {version})")
+    print(f"signed-image provenance OK: {provenance.image_ref}")
     return 0
+
+
+def _load_image_provenance() -> object:
+    """Load the stdlib-only image-provenance module by file path.
+
+    Loading it directly (rather than importing ``bernstein.core.skills``) keeps
+    this release gate runnable with a bare ``python3`` even when the bernstein
+    package and its dependencies are not pip-installed in the publish job.
+    """
+    import importlib.util
+
+    module_path = REPO / "src" / "bernstein" / "core" / "skills" / "image_provenance.py"
+    spec = importlib.util.spec_from_file_location("_bernstein_image_provenance", module_path)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        msg = f"cannot load image provenance module at {module_path}"
+        raise RuntimeError(msg)
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec so the module's ``@dataclass`` definitions can resolve
+    # their own annotations (dataclasses looks the class module up in sys.modules
+    # under ``from __future__ import annotations``).
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 if __name__ == "__main__":
