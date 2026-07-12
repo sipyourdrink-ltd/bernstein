@@ -34,7 +34,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | push | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
 | .github/workflows/dependabot-auto-merge.yml | Dependabot Auto-merge | pull_request | {"cancel-in-progress": "true", "group": "dependabot-merge-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/docs-drift.yml | docs-drift | pull_request, push | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
+| .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/docs-observability-snapshot.yml | Observability daily snapshot | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/eval-nightly.yml | eval-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "eval-nightly-${{ github.ref }}"} | 3 |
 | .github/workflows/flake-quarantine.yml | Flake quarantine | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "flake-quarantine"} | 1 |
@@ -194,7 +194,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/coverage-ratchet.yml | ratchet: {"actions": "read", "contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependabot-auto-merge.yml | workflow: {"contents": "read"}<br>auto-merge: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependency-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | - |
-| .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>docs-data-freshness: {"contents": "read"}<br>drift-check: {"contents": "read", "pull-requests": "write"} | - |
+| .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>docs-data-freshness: {"contents": "read", "issues": "write"}<br>drift-check: {"contents": "read", "pull-requests": "write"} | - |
 | .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_GLITCHTIP_TOKEN, DTRACK_TOKEN, GITHUB_TOKEN, SONAR_TOKEN |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED, GLITCHTIP_DSN |
 | .github/workflows/flake-quarantine.yml | workflow: {"contents": "read"}<br>detect-and-quarantine: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
