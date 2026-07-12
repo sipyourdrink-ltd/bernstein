@@ -302,6 +302,76 @@ def test_discover_changed_files_falls_back_to_two_dot_diff_without_merge_base(
     assert calls[-1][-1] == "origin/main..HEAD"
 
 
+def test_retry_on_thread_exhaustion_reruns_and_can_recover(
+    run_tests_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A thread-exhaustion failure re-runs once serially and can pass on retry."""
+    calls: list[Path] = []
+
+    def fake_run_file(path: Path, *_: object, **__: object) -> tuple[Path, int, float, str]:
+        calls.append(path)
+        return path, 0, 0.2, "1 passed"
+
+    monkeypatch.setattr(run_tests_module, "run_file", fake_run_file)
+
+    result = run_tests_module.retry_on_thread_exhaustion(
+        Path("tests/unit/test_x.py"),
+        [],
+        code=1,
+        output="E   RuntimeError: can't start new thread",
+    )
+
+    assert result == (0, 0.2, "1 passed")
+    assert calls == [Path("tests/unit/test_x.py")]
+
+
+def test_retry_on_thread_exhaustion_skips_unrelated_failures(
+    run_tests_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A normal assertion failure is not retried (only thread exhaustion is)."""
+    called = False
+
+    def fake_run_file(*_: object, **__: object) -> tuple[Path, int, float, str]:
+        nonlocal called
+        called = True
+        return Path("x"), 0, 0.0, ""
+
+    monkeypatch.setattr(run_tests_module, "run_file", fake_run_file)
+
+    result = run_tests_module.retry_on_thread_exhaustion(
+        Path("tests/unit/test_x.py"),
+        [],
+        code=1,
+        output="E   AssertionError: expected 1 got 2",
+    )
+
+    assert result is None
+    assert called is False
+
+
+def test_retry_on_thread_exhaustion_skips_passing_files(
+    run_tests_module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A passing file is never retried even if the marker appears in output."""
+
+    def fake_run_file(*_: object, **__: object) -> tuple[Path, int, float, str]:
+        raise AssertionError("run_file must not be called for a passing file")
+
+    monkeypatch.setattr(run_tests_module, "run_file", fake_run_file)
+
+    result = run_tests_module.retry_on_thread_exhaustion(
+        Path("tests/unit/test_x.py"),
+        [],
+        code=0,
+        output="RuntimeError: can't start new thread (in a captured, non-fatal context)",
+    )
+
+    assert result is None
+
+
 def test_discover_changed_files_includes_untracked_files_for_head(
     run_tests_module: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
