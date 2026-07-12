@@ -14,7 +14,8 @@ FROM python:3.13-slim@sha256:eb43ff125d8d58d7449dcba7d336c23bcac412f526d861db493
 
 LABEL org.opencontainers.image.title="bernstein" \
       org.opencontainers.image.description="Declarative agent orchestration for engineering teams" \
-      org.opencontainers.image.source="https://github.com/bernstein-ai/bernstein"
+      org.opencontainers.image.source="https://github.com/bernstein-ai/bernstein" \
+      io.modelcontextprotocol.server.name="io.github.sipyourdrink-ltd/bernstein"
 
 # Install git (required for git_ops) and curl (healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \

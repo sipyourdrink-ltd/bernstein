@@ -105,3 +105,18 @@ def test_gen_script_check_mode_passes_and_is_idempotent(tmp_path: Path) -> None:
     assert regen.returncode == 0, regen.stdout + regen.stderr
     assert (_REPO / "server.json").read_bytes() == before["server.json"]
     assert (_REPO / ".plugin" / "plugin.json").read_bytes() == before["plugin.json"]
+
+
+def test_dockerfile_has_mcp_registry_server_name_label() -> None:
+    """The published image must carry the MCP registry server-name annotation.
+
+    The MCP registry rejects a server.json whose OCI package image lacks the
+    ``io.modelcontextprotocol.server.name`` label, so the Dockerfile must set it
+    to the same identity the manifest declares.
+    """
+    import json as _json
+
+    dockerfile = (_REPO / "Dockerfile").read_text(encoding="utf-8")
+    server_name = _json.loads((_REPO / "server.json").read_text(encoding="utf-8"))["name"]
+    assert "io.modelcontextprotocol.server.name" in dockerfile
+    assert server_name in dockerfile
