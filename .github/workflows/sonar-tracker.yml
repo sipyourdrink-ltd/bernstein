@@ -3,8 +3,8 @@ name: SonarQube findings tracker
 # Renders a single consolidated GitHub issue ("SonarQube findings tracker")
 # from the live Sonar API and keeps it in sync. The issue is found by a
 # hidden marker in its body, so every run edits the same issue instead of
-# opening duplicates. This is the consolidated counterpart to the per-finding
-# sweeper in sweep-sonar-findings.yml.
+# opening duplicates. This is the consolidated counterpart to the SARIF
+# route in sonar-code-scanning.yml, which sends findings to the Security tab.
 #
 # Triggers:
 #   * workflow_dispatch  - manual run.

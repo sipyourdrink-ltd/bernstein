@@ -26,7 +26,7 @@ OWNED_WORKFLOWS = (
     "pr-observability-summary.yml",
     "glitchtip-ingester.yml",
     "nightly-canary.yml",
-    "sweep-sonar-findings.yml",
+    "sonar-code-scanning.yml",
 )
 
 CURL_PIPE_SH_RE = re.compile(r"curl\b[^\n|]*\|\s*(?:ba)?sh\b")
@@ -81,7 +81,7 @@ def test_owned_workflows_do_not_install_uv_with_unpinned_pip(workflow_name: str)
         "pr-observability-summary.yml",
         "glitchtip-ingester.yml",
         "nightly-canary.yml",
-        "sweep-sonar-findings.yml",
+        "sonar-code-scanning.yml",
     ),
 )
 def test_project_install_workflows_use_local_bootstrap_action(workflow_name: str) -> None:

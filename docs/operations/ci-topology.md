@@ -70,13 +70,13 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/soc2-evidence-nightly.yml | soc2-evidence-nightly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
+| .github/workflows/sonar-code-scanning.yml | Sonar findings to code scanning | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "sonar-code-scanning-${{ github.ref }}"} | 1 |
 | .github/workflows/sonar-hotspot-review.yml | SonarQube hotspot review | workflow_dispatch | {"cancel-in-progress": "false", "group": "sonar-hotspot-review"} | 1 |
 | .github/workflows/sonar-pr-comment.yml | SonarQube PR insights comment | pull_request | {"cancel-in-progress": "true", "group": "sonar-pr-comment-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/sonar-scan.yml | SonarQube scan | schedule, workflow_dispatch, workflow_run | {"cancel-in-progress": "false", "group": "sonar-scan-${{ github.ref }}"} | 1 |
 | .github/workflows/sonar-tracker.yml | SonarQube findings tracker | schedule, workflow_dispatch, workflow_run | {"cancel-in-progress": "false", "group": "sonar-tracker"} | 1 |
 | .github/workflows/stale.yml | Stale cleanup | schedule | {"cancel-in-progress": "false", "group": "stale-${{ github.ref }}"} | 1 |
 | .github/workflows/static-analysis-extended.yml | static-analysis (extended) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "static-analysis-extended-${{ github.ref }}"} | 6 |
-| .github/workflows/sweep-sonar-findings.yml | Sonar findings sweeper | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "sweep-sonar-findings"} | 1 |
 | .github/workflows/telegram-notify.yml | Telegram CI Notifications | workflow_call | - | 1 |
 | .github/workflows/trend-scan.yml | Trend scan | workflow_dispatch | {"cancel-in-progress": "false", "group": "trend-scan"} | 1 |
 | .github/workflows/trufflehog.yml | trufflehog (secret scanning) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trufflehog-${{ github.ref }}"} | 1 |
@@ -151,13 +151,13 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
 | .github/workflows/soc2-evidence-nightly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
+| .github/workflows/sonar-code-scanning.yml | sonar-sarif: Upload Sonar SARIF to code scanning |
 | .github/workflows/sonar-hotspot-review.yml | review: Apply hotspot review manifest |
 | .github/workflows/sonar-pr-comment.yml | comment: Sonar smells delta comment |
 | .github/workflows/sonar-scan.yml | scan: SonarQube scan |
 | .github/workflows/sonar-tracker.yml | render: Render Sonar tracker issue |
 | .github/workflows/stale.yml | stale |
 | .github/workflows/static-analysis-extended.yml | perflint: perflint (hot-path antipatterns)<br>refurb: refurb (idioms)<br>semgrep: Semgrep (CE rules)<br>trivy-fs: Trivy (filesystem)<br>trivy-iac: Trivy (IaC)<br>vulture: vulture (dead code) |
-| .github/workflows/sweep-sonar-findings.yml | sweep: Sweep Sonar findings |
 | .github/workflows/telegram-notify.yml | notify |
 | .github/workflows/trend-scan.yml | scan: Run trend scan |
 | .github/workflows/trufflehog.yml | trufflehog: trufflehog scan |
@@ -232,13 +232,13 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
 | .github/workflows/soc2-evidence-nightly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED |
+| .github/workflows/sonar-code-scanning.yml | workflow: {"contents": "read"}<br>sonar-sarif: {"contents": "read", "security-events": "write"} | SONAR_TOKEN |
 | .github/workflows/sonar-hotspot-review.yml | workflow: {"contents": "read"} | SONAR_TOKEN |
 | .github/workflows/sonar-pr-comment.yml | workflow: {"contents": "read", "issues": "write", "pull-requests": "write"} | SONAR_TOKEN |
 | .github/workflows/sonar-scan.yml | workflow: {"actions": "read", "contents": "read"} | GITHUB_TOKEN, SONAR_TOKEN |
 | .github/workflows/sonar-tracker.yml | workflow: {"contents": "read"}<br>render: {"contents": "read", "issues": "write"} | SONAR_TOKEN |
 | .github/workflows/stale.yml | workflow: {"issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/static-analysis-extended.yml | workflow: {"contents": "read"}<br>perflint: {"contents": "read", "security-events": "write"}<br>refurb: {"contents": "read", "security-events": "write"}<br>semgrep: {"contents": "read", "security-events": "write"}<br>trivy-fs: {"contents": "read", "security-events": "write"}<br>trivy-iac: {"contents": "read", "security-events": "write"}<br>vulture: {"contents": "read", "security-events": "write"} | - |
-| .github/workflows/sweep-sonar-findings.yml | workflow: {"contents": "read"}<br>sweep: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, SONAR_TOKEN |
 | .github/workflows/telegram-notify.yml | workflow: {"actions": "read", "contents": "read"} | TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/trend-scan.yml | scan: {"contents": "read"} | - |
 | .github/workflows/trufflehog.yml | workflow: {"contents": "read"}<br>trufflehog: {"contents": "read", "pull-requests": "read"} | - |
@@ -278,6 +278,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/sbom.yml | sbom: upload sbom |
 | .github/workflows/scorecard.yml | analysis: upload scorecard-results<br>upload: download scorecard-results |
 | .github/workflows/soc2-evidence-nightly.yml | pack: upload soc2-evidence-${{ github.run_id }} |
+| .github/workflows/sonar-code-scanning.yml | sonar-sarif: upload sonar-sarif |
 | .github/workflows/sonar-scan.yml | scan: download coverage-report<br>scan: download coverage-report |
 | .github/workflows/static-analysis-extended.yml | perflint: upload perflint-sarif<br>refurb: upload refurb-sarif<br>semgrep: upload semgrep-sarif<br>trivy-fs: upload trivy-fs-sarif<br>trivy-iac: upload trivy-iac-sarif<br>vulture: upload vulture-sarif |
 | .github/workflows/trend-scan.yml | scan: upload trend-scan-rollup |

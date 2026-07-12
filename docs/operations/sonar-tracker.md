@@ -159,15 +159,20 @@ SONAR_TOKEN=<your-browse-token> \
 uv run python scripts/render_sonar_tracker.py --dry-run --output-body /tmp/body.md
 ```
 
-## Relationship to the per-finding sweeper
+## Relationship to the other Sonar surfaces
 
-| | Sweeper (`sweep-sonar-findings.yml`) | Tracker (`sonar-tracker.yml`) |
+| | Code scanning (`sonar-code-scanning.yml`) | Tracker (`sonar-tracker.yml`) |
 |---|---|---|
-| Output | one backlog ticket file per finding | one consolidated GitHub issue |
-| Storage | `.sdd/backlog/open/*.md` via a PR | a labelled GitHub issue thread |
-| De-dup | on `sonar_issue_key` in frontmatter | on the hidden body marker |
-| Audience | the backlog pickup workflow | an agent or operator working a thread |
+| Output | SARIF uploaded to the Security tab | one consolidated GitHub issue |
+| Visibility | maintainers (write access and above) | anyone who can read the issue |
+| De-dup | on `partialFingerprints.sonarFindingKey` | on the hidden body marker |
+| Audience | maintainers triaging security alerts | an agent or operator working a thread |
 
-The two are complementary and can run side by side. Pick the tracker when
-you want a single living thread; pick the sweeper when you want individual
-tickets that flow through the backlog state machine.
+The two are complementary and can run side by side. Pick code scanning
+when finding detail should stay in the maintainer-only Security tab; pick
+the tracker when you want a single living issue thread to work top-down.
+
+The local backlog sweep (`bernstein doctor sonar-sweep`, documented in
+[`sonar-sweeper.md`](sonar-sweeper.md)) still exists for on-demand triage
+into gitignored `.sdd/backlog/` files, but it no longer runs on a
+schedule.
