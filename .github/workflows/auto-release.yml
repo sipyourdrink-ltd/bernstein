@@ -404,10 +404,13 @@ jobs:
       # weekly even when nothing was wrong with the code.
       #
       # New behaviour: when the current pyproject.toml version is already
-      # tagged, exit cleanly with a notice. The operator can ship the next
-      # release by manually bumping `pyproject.toml` in any PR (the bump
+      # tagged, exit cleanly with a notice. The operator ships the next
+      # release by running `scripts/bump_version.py` in any PR (the bump
       # commit itself triggers a fresh CI → auto-release run that finds an
       # untagged version and proceeds to tag and hand off to publish.yml).
+      # `scripts/bump_version.py` is the only supported bump path: it rewrites
+      # pyproject.toml, refreshes uv.lock, and regenerates the distribution
+      # manifests together, so a bump PR never desyncs the lockfile or manifests.
       - name: No-op when current version is already tagged
         if: steps.check.outputs.exists == 'true'
         id: bump
@@ -416,7 +419,7 @@ jobs:
         run: |
           IFS='.' read -r MAJOR MINOR PATCH <<< "${CURRENT_VERSION}"
           NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          echo "::notice::v${CURRENT_VERSION} is already tagged. Skipping auto-release. To ship the next patch, manually bump pyproject.toml to v${NEXT} (or higher) in any PR - auto-release will pick it up on merge."
+          echo "::notice::v${CURRENT_VERSION} is already tagged. Skipping auto-release. To ship the next patch, run 'python scripts/bump_version.py ${NEXT}' (or a higher version) and open a PR - it rewrites pyproject.toml, refreshes uv.lock, and regenerates the distribution manifests together, and auto-release picks it up on merge."
           echo "version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "deferred=true" >> "$GITHUB_OUTPUT"
 
