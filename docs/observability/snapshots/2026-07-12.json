@@ -1,0 +1,121 @@
+{
+  "summary": {
+    "ok": 1,
+    "warn": 1,
+    "fail": 0,
+    "skipped": 2,
+    "error": 0
+  },
+  "backends": [
+    {
+      "backend": "sonar",
+      "status": "warn",
+      "detail": "project bernstein",
+      "error": null,
+      "metrics": [
+        {
+          "name": "coverage_pct",
+          "value": "81.0%",
+          "numeric": 81.0,
+          "threshold": "80.0%",
+          "threshold_status": "ok",
+          "delta": "new"
+        },
+        {
+          "name": "code_smells",
+          "value": "13",
+          "numeric": 13.0,
+          "threshold": "50",
+          "threshold_status": "ok",
+          "delta": "new"
+        },
+        {
+          "name": "bugs",
+          "value": "0",
+          "numeric": 0.0,
+          "threshold": "0",
+          "threshold_status": "ok",
+          "delta": "new"
+        },
+        {
+          "name": "vulnerabilities",
+          "value": "3",
+          "numeric": 3.0,
+          "threshold": "0",
+          "threshold_status": "warn",
+          "delta": "new"
+        },
+        {
+          "name": "security_hotspots",
+          "value": "4",
+          "numeric": 4.0,
+          "threshold": "0",
+          "threshold_status": "warn",
+          "delta": "new"
+        }
+      ]
+    },
+    {
+      "backend": "glitchtip",
+      "status": "skipped",
+      "detail": "BERNSTEIN_GLITCHTIP_TOKEN not set",
+      "error": null,
+      "metrics": []
+    },
+    {
+      "backend": "dt",
+      "status": "skipped",
+      "detail": "DTRACK_URL/TOKEN/PROJECT not set",
+      "error": null,
+      "metrics": []
+    },
+    {
+      "backend": "code-scanning",
+      "status": "ok",
+      "detail": "2 open alert(s)",
+      "error": null,
+      "metrics": [
+        {
+          "name": "open_alerts",
+          "value": "2",
+          "numeric": 2.0,
+          "threshold": "0",
+          "threshold_status": "warn",
+          "delta": "new"
+        },
+        {
+          "name": "critical_alerts",
+          "value": "0",
+          "numeric": 0.0,
+          "threshold": "0",
+          "threshold_status": "ok",
+          "delta": "new"
+        },
+        {
+          "name": "high_alerts",
+          "value": "0",
+          "numeric": 0.0,
+          "threshold": "0",
+          "threshold_status": "ok",
+          "delta": "new"
+        },
+        {
+          "name": "medium_alerts",
+          "value": "0",
+          "numeric": 0.0,
+          "threshold": "",
+          "threshold_status": "ok",
+          "delta": "new"
+        },
+        {
+          "name": "low_alerts",
+          "value": "0",
+          "numeric": 0.0,
+          "threshold": "",
+          "threshold_status": "ok",
+          "delta": "new"
+        }
+      ]
+    }
+  ]
+}
