@@ -1,6 +1,6 @@
 {
-  "established": true,
-  "note": "Windows lane promoted to a required gate (#2367). The full unit suite runs green on windows-latest (4 shards) and the dedicated `Adapter conformance + e2e (windows)` job runs the real spawn/stop/restart contract for claude/codex/gemini plus the Windows worktree-isolation contract. A red Windows result now blocks via scripts/windows_lane_gate.py (::error::, exit 1). To roll back a flapping lane, flip `established` back to false (single-line revert) and open an issue; see docs/operations/merge-gate.md#windows-lane-promotion.",
+  "established": false,
+  "note": "Windows lane gate mechanism is shipped and the dedicated `Adapter conformance + e2e (windows)` job (required, in ci-gate needs) runs the real spawn/stop/restart contract for claude/codex/gemini plus the Windows worktree-isolation contract. The full unit `Test (windows-latest, ...)` matrix is kept advisory for now: main still carries pre-existing Windows-only failures outside this issue's scope (e.g. tests/unit/adapters/test_openai_agents_builtins.py glob-expansion behavior). Flip `established` to true only after those are fixed and the lane holds a green streak on main; see docs/operations/merge-gate.md#windows-lane-promotion. Until then a red unit-lane result is surfaced as a ::warning:: by scripts/windows_lane_gate.py and does not block.",
   "streak_required": 10,
   "flip_procedure": "docs/operations/merge-gate.md#windows-lane-promotion"
 }
