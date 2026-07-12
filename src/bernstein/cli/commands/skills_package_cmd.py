@@ -444,7 +444,7 @@ def conformance_cmd(
     met, 2 = conformance failed, 1 = error.
     """
     root = Path(workdir).resolve()
-    selected = tuple(hosts) if hosts else supported_hosts()
+    selected = hosts if hosts else supported_hosts()
 
     try:
         outcome = run_conformance(
