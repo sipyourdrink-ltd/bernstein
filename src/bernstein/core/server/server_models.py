@@ -256,6 +256,8 @@ class TaskResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: float
     claimed_at: float | None = None
+    completed_at: float | None = None
+    closed_at: float | None = None
     deadline: float | None = None
     progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
     version: int = 1

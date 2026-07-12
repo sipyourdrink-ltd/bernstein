@@ -22,6 +22,8 @@ Tools:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
@@ -228,12 +230,27 @@ def _project_task_helper(data: dict[str, Any]) -> Any:
     created_at_ts = data.get("created_at")
     created_at = datetime.fromtimestamp(created_at_ts, tz=UTC) if created_at_ts else datetime.now(UTC)
 
+    # Derive lastUpdatedAt from the task's newest recorded transition
+    # (created -> claimed -> completed -> closed) so two reads of an unchanged
+    # task project the SAME timestamp. Stamping wall-clock now() here is
+    # non-idempotent: it manufactures phantom updates for change-detection
+    # clients and breaks the deterministic-projection contract. now() stays
+    # only as a last resort when the payload carries no timestamp at all.
+    transition_ts = (
+        data.get("created_at"),
+        data.get("claimed_at"),
+        data.get("completed_at"),
+        data.get("closed_at"),
+    )
+    newest_ts = max((t for t in transition_ts if t is not None), default=None)
+    last_updated = datetime.fromtimestamp(newest_ts, tz=UTC) if newest_ts is not None else datetime.now(UTC)
+
     return Task(
         taskId=mcp_task_id,
         status=mcp_status,
         statusMessage=status_message,
         createdAt=created_at,
-        lastUpdatedAt=datetime.now(UTC),
+        lastUpdatedAt=last_updated,
         ttl=None,
         pollInterval=5000,
     )
@@ -759,6 +776,37 @@ def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
         mcp._tool_manager._tools.pop(name, None)
 
 
+# MCP ``tasks/list`` is a paginated request whose only client-supplied knob is
+# an opaque cursor. We page the task server in fixed windows and encode the next
+# offset into the cursor, so a client can walk past the legacy 500-item cap the
+# server applies to unpaginated GET /tasks calls.
+_LIST_TASKS_PAGE_SIZE = 100
+
+_CURSOR_PREFIX = "offset="
+
+
+def _encode_task_cursor(offset: int) -> str:
+    """Encode a pagination offset as an opaque, deterministic cursor token."""
+    return base64.urlsafe_b64encode(f"{_CURSOR_PREFIX}{offset}".encode()).decode()
+
+
+def _decode_task_cursor(cursor: str | None) -> int:
+    """Decode a cursor produced by :func:`_encode_task_cursor` back to an offset.
+
+    A missing cursor starts at offset 0. A malformed cursor is a client error
+    (the token did not originate from this server) and raises ``ValueError``.
+    """
+    if not cursor:
+        return 0
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        if raw.startswith(_CURSOR_PREFIX):
+            return max(0, int(raw[len(_CURSOR_PREFIX) :]))
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        pass
+    raise ValueError(f"Invalid pagination cursor: {cursor!r}")
+
+
 def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
     """Register custom experimental handlers for the MCP Tasks extension."""
     import httpx
@@ -811,12 +859,28 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
 
     @mcp._mcp_server.experimental.list_tasks()
     async def list_tasks(req: ListTasksRequest) -> ListTasksResult:
+        # Translate the opaque cursor into an offset and always send explicit
+        # limit/offset, so the server returns the paginated envelope instead of
+        # the legacy flat list hard-capped at 500 (which strands the tail for
+        # any operator with more than 500 tasks).
+        offset = _decode_task_cursor(req.params.cursor if req.params else None)
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            resp = await client.get(f"{server_url}/tasks", headers=_auth_headers())
+            resp = await client.get(
+                f"{server_url}/tasks",
+                params={"limit": _LIST_TASKS_PAGE_SIZE, "offset": offset},
+                headers=_auth_headers(),
+            )
             resp.raise_for_status()
-            tasks_data = resp.json()
+            envelope = resp.json()
+        # Envelope shape: {tasks, total, limit, offset}. Compute nextCursor from
+        # the offset/limit the server actually applied (it clamps both), so the
+        # walk terminates exactly when the last page has been served.
+        tasks_data = envelope["tasks"]
+        total = envelope["total"]
+        next_offset = envelope["offset"] + envelope["limit"]
         mcp_tasks = [_project_task_helper(t) for t in tasks_data]
-        return ListTasksResult(tasks=mcp_tasks)
+        next_cursor = _encode_task_cursor(next_offset) if next_offset < total else None
+        return ListTasksResult(tasks=mcp_tasks, nextCursor=next_cursor)
 
     @mcp._mcp_server.experimental.cancel_task()
     async def cancel_task(req: CancelTaskRequest) -> CancelTaskResult:

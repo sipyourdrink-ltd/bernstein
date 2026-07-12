@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +21,7 @@ from mcp.types import (
     GetTaskResult,
     ListTasksRequest,
     ListTasksResult,
+    PaginatedRequestParams,
     TextContent,
 )
 
@@ -45,16 +47,34 @@ def mock_client() -> AsyncMock:
     return client
 
 
-def _make_task_dict(task_id: str, status: str = "open", result_summary: str | None = None) -> dict[str, Any]:
-    return {
+def _make_task_dict(
+    task_id: str,
+    status: str = "open",
+    result_summary: str | None = None,
+    *,
+    created_at: float = 1711574400.0,
+    claimed_at: float | None = None,
+    completed_at: float | None = None,
+    closed_at: float | None = None,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
         "id": task_id,
         "title": "Test task",
         "description": "A test task description",
         "role": "backend",
         "status": status,
-        "created_at": 1711574400.0,
+        "created_at": created_at,
         "result_summary": result_summary,
     }
+    # Only attach transition timestamps when supplied, mirroring the server
+    # payload where an unclaimed/unclosed task omits these keys entirely.
+    if claimed_at is not None:
+        data["claimed_at"] = claimed_at
+    if completed_at is not None:
+        data["completed_at"] = completed_at
+    if closed_at is not None:
+        data["closed_at"] = closed_at
+    return data
 
 
 @pytest.mark.asyncio
@@ -120,10 +140,15 @@ async def test_list_tasks_endpoint(mock_client: AsyncMock) -> None:
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json = MagicMock(
-        return_value=[
-            _make_task_dict("task-1", status="done"),
-            _make_task_dict("task-2", status="failed"),
-        ]
+        return_value={
+            "tasks": [
+                _make_task_dict("task-1", status="done"),
+                _make_task_dict("task-2", status="failed"),
+            ],
+            "total": 2,
+            "limit": 100,
+            "offset": 0,
+        }
     )
     mock_client.get = AsyncMock(return_value=mock_response)
 
@@ -385,3 +410,160 @@ def test_spawn_for_tasks_trace_env_is_scoped_and_restored(monkeypatch: pytest.Mo
     spawner.spawn_for_tasks([task_b])
     assert seen["TRACEPARENT"] is None  # B must NOT inherit A's traceparent
     assert os.environ.get("TRACEPARENT") is None
+
+
+# ---------------------------------------------------------------------------
+# lastUpdatedAt determinism (a projection of an unchanged task must be idempotent)
+# ---------------------------------------------------------------------------
+
+
+def test_project_task_helper_last_updated_derived_from_last_transition() -> None:
+    """lastUpdatedAt must reflect the task's newest stored transition timestamp.
+
+    A closed task's last change is ``closed_at``; the projection must surface
+    that instant, not wall-clock ``now()``.
+    """
+    created = 1711574400.0
+    data = _make_task_dict(
+        "t-ts",
+        status="closed",
+        created_at=created,
+        claimed_at=created + 60,
+        completed_at=created + 120,
+        closed_at=created + 180,
+    )
+    task_obj = _project_task_helper(data)
+    assert task_obj.createdAt == datetime.fromtimestamp(created, tz=UTC)
+    assert task_obj.lastUpdatedAt == datetime.fromtimestamp(created + 180, tz=UTC)
+
+
+def test_project_task_helper_last_updated_is_deterministic() -> None:
+    """Two projections of the same unchanged task return identical timestamps.
+
+    Non-idempotent ``lastUpdatedAt`` produces phantom updates for
+    change-detection clients and breaks the deterministic-substrate contract.
+    """
+    data = _make_task_dict("t-idem", status="claimed", created_at=1711574400.0, claimed_at=1711574460.0)
+    first = _project_task_helper(data).lastUpdatedAt
+    second = _project_task_helper(data).lastUpdatedAt
+    assert first == second
+    # The stable value is the newest transition (claimed_at here), not now().
+    assert first == datetime.fromtimestamp(1711574460.0, tz=UTC)
+
+
+def test_project_task_helper_last_updated_falls_back_to_created_at() -> None:
+    """A freshly-opened task (no later transitions) reports lastUpdatedAt == createdAt."""
+    data = _make_task_dict("t-open", status="open", created_at=1711574400.0)
+    task_obj = _project_task_helper(data)
+    assert task_obj.lastUpdatedAt == task_obj.createdAt
+    assert task_obj.lastUpdatedAt == datetime.fromtimestamp(1711574400.0, tz=UTC)
+
+
+def test_task_response_exposes_completion_timestamps() -> None:
+    """The task API must serialise completed_at/closed_at so the MCP layer can
+    derive a deterministic lastUpdatedAt for terminal tasks."""
+    from bernstein.core.server.server_app import task_to_response
+    from bernstein.core.tasks.models import Task, TaskStatus
+
+    task = Task(
+        id="t-serialise",
+        title="t",
+        description="",
+        role="backend",
+        status=TaskStatus.CLOSED,
+        batch_eligible=False,
+        claimed_at=111.0,
+        completed_at=222.0,
+        closed_at=333.0,
+    )
+    resp = task_to_response(task)
+    assert resp.completed_at == 222.0
+    assert resp.closed_at == 333.0
+
+
+# ---------------------------------------------------------------------------
+# list_tasks pagination (cursor in -> limit/offset out -> nextCursor)
+# ---------------------------------------------------------------------------
+
+
+def _paginated_envelope(tasks: list[dict[str, Any]], *, total: int, limit: int, offset: int) -> dict[str, Any]:
+    return {"tasks": tasks, "total": total, "limit": limit, "offset": offset}
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_requests_pagination_and_sets_next_cursor(mock_client: AsyncMock) -> None:
+    mcp = create_mcp_server()
+    handler = mcp._mcp_server.request_handlers[ListTasksRequest]  # pyright: ignore[reportPrivateUsage]
+
+    page = [_make_task_dict(f"task-{i}", status="open") for i in range(100)]
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=_paginated_envelope(page, total=250, limit=100, offset=0))
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        res = (await handler(ListTasksRequest())).root
+        assert isinstance(res, ListTasksResult)
+
+    # The handler must send explicit pagination so the server returns the
+    # envelope path instead of the legacy list hard-capped at 500.
+    sent_params = cast(dict[str, Any], mock_client.get.call_args.kwargs.get("params") or {})
+    assert sent_params.get("limit") is not None
+    assert sent_params.get("offset") == 0
+    assert len(res.tasks) == 100
+    # 250 total, only 100 returned -> the client can page further.
+    assert res.nextCursor is not None
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_no_next_cursor_at_tail(mock_client: AsyncMock) -> None:
+    mcp = create_mcp_server()
+    handler = mcp._mcp_server.request_handlers[ListTasksRequest]  # pyright: ignore[reportPrivateUsage]
+
+    page = [_make_task_dict("task-only", status="done")]
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value=_paginated_envelope(page, total=1, limit=100, offset=0))
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        res = (await handler(ListTasksRequest())).root
+        assert isinstance(res, ListTasksResult)
+
+    assert len(res.tasks) == 1
+    assert res.nextCursor is None
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_cursor_translates_to_offset(mock_client: AsyncMock) -> None:
+    mcp = create_mcp_server()
+    handler = mcp._mcp_server.request_handlers[ListTasksRequest]  # pyright: ignore[reportPrivateUsage]
+
+    # Page 1: 100 of 150 -> yields a cursor pointing past the first page.
+    page1 = [_make_task_dict(f"task-{i}") for i in range(100)]
+    resp1 = MagicMock()
+    resp1.raise_for_status = MagicMock()
+    resp1.json = MagicMock(return_value=_paginated_envelope(page1, total=150, limit=100, offset=0))
+    mock_client.get = AsyncMock(return_value=resp1)
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        res1 = (await handler(ListTasksRequest())).root
+        assert isinstance(res1, ListTasksResult)
+        cursor = res1.nextCursor
+        assert cursor is not None
+
+        # Page 2: feed the cursor back; the handler must request offset=100.
+        page2 = [_make_task_dict(f"task-{i}") for i in range(100, 150)]
+        resp2 = MagicMock()
+        resp2.raise_for_status = MagicMock()
+        resp2.json = MagicMock(return_value=_paginated_envelope(page2, total=150, limit=100, offset=100))
+        mock_client.get = AsyncMock(return_value=resp2)
+
+        res2 = (await handler(ListTasksRequest(params=PaginatedRequestParams(cursor=cursor)))).root
+        assert isinstance(res2, ListTasksResult)
+
+    sent_params = cast(dict[str, Any], mock_client.get.call_args.kwargs.get("params") or {})
+    assert sent_params.get("offset") == 100
+    assert len(res2.tasks) == 50
+    # 100 + 100 >= 150 -> tail reached.
+    assert res2.nextCursor is None
