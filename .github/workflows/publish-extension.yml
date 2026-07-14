@@ -36,7 +36,7 @@ jobs:
       # zizmor cache-poisoning: cache is disabled (no `cache:` key); only
       # tag- and release-triggered, which are authored by maintainers, so
       # the residual default-cache risk is acceptable here.
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6 # zizmor: ignore[cache-poisoning]
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6 # zizmor: ignore[cache-poisoning]
         with:
           node-version: '24'
 
