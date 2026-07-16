@@ -58,7 +58,7 @@ URL after launch: `http://127.0.0.1:8052/ui/`.
 
 4. **Static assets missing.** `bernstein gui serve` will exit with `GUI static assets not found at …` if the wheel was built without the `static/` bundle. Rebuild with `cd web && npm install && npm run build` (writes to `../src/bernstein/gui/static/`).
 
-5. **No extras gate.** `bernstein gui serve` runs on a plain install; the `[gui]` extra is forward-compat only and is not required at runtime. Install it (`pip install 'bernstein[gui]'`) only to pin the `qrcode` dep for `bernstein gui qr` / `--tunnel`.
+5. **No extras gate.** `bernstein gui serve` runs on a plain install. See [Install the extras](#install-the-extras) above for why the `[gui]` extra is forward-compat only and when you need it.
 
 ## Verify
 

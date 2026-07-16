@@ -10,7 +10,7 @@ tags:
 
 ## `ModuleNotFoundError: sse_starlette` or `qrcode`
 
-There is no runtime extras gate: `bernstein gui serve` runs on a plain install because `sse-starlette` arrives transitively via core deps and `fastapi` / `uvicorn` are already required (`src/bernstein/gui/cli.py` module docstring). You only need the `[gui]` extra to pin `qrcode` for `bernstein gui qr` / `--tunnel`.
+There is no runtime extras gate - `bernstein gui serve` runs on a plain install. See [Install the extras](install.md#install-the-extras) for why. You only need the `[gui]` extra to pin `qrcode` for `bernstein gui qr` / `--tunnel`.
 
 **Fix.**
 
