@@ -4,30 +4,105 @@ All notable project changes are tracked here (code + docs).
 
 ## [Unreleased]
 
-### Added
+## [3.5.0] - 2026-07-16
 
-- `bernstein run --sandbox docker` now provisions a real `DockerSandboxBackend` `SandboxSession` (via `WorkspaceManifest`/`GitRepoEntry`) and attaches it to `AgentSpawner`, so agents actually execute inside the Docker container through the existing `_spawn_via_sandbox_session` path instead of silently falling back to the legacy bind-mount container isolation. `DockerSandboxBackend.create()` bind-mounts the host repo read-only at `/host-repo` and clones it into the container's `/workspace` so agent commits never touch host git state. Backward compatible: without `--sandbox docker` nothing changes, and any provisioning failure (missing `docker` daemon/SDK) logs a warning and falls back to the previous behaviour.
-- `bernstein run --worker <role>` (new flag) spawns a single worker agent with the given role directly against the seed goal, bypassing manager decomposition - a supported path for models that cannot drive the manager's task-server workflow. Requires a seed file; combining it with an inline goal or `--plan-file` is a usage error.
-- `bernstein skills catalog` command group promotes the MCP catalog browse / list / search / install / upgrade / info / status surface to skill packs. Source variants (github, git, npm, file, directory) resolve through the existing `plugin_installer`; catalog manifests carry an Ed25519 signature that the install verifies against the catalog's `signer_pubkey`. Every install / upgrade appends a `skill.catalog.install` event to the HMAC-chained audit log under `.sdd/audit/` with `(manifest_url, manifest_sha256, manifest_signer_pubkey, install_id, prev_chain_digest)`; reverting and replaying the chain pulls the identical sha and refuses installation if the upstream sha drifted. `skills.lock` is extended with `[[catalog]]` rows and `[[lineage_receipt]]` rows so two parallel worktrees launched from the same chain head observe identical skill versions, and an upgrade in one worktree produces a deterministic adopt/pin decision in the other. The existing lineage-v1 gate (`bernstein.core.lineage.gate.check_skill_lockfile`) rejects PRs whose lockfile references a manifest sha not present in the chain's known-good set. Catalog cache lives under `.sdd/skills_catalog/` with revalidation honouring `BERNSTEIN_SKILLS_CATALOG_TTL` (#1796).
-- `bernstein desktop-register --host <name>` covers the remaining priority hosts: Cursor, Continue, Cline, Zed, and Aider, alongside the existing Claude Desktop and Claude Code adapters. JSON hosts merge into their canonical `mcpServers` map (or `context_servers` for Zed); Aider records the entry in its YAML config under `mcp-servers` for community-wrapper consumption (#1676).
-- `bernstein doctor --substrate` reports which detected hosts have Bernstein registered, which do not, and which are stale (canonical command/args differ from the recorded entry) (#1676).
-- Operator docs at `docs/substrate/{cursor,continue,cline,zed,aider}.md` cover install, verification, and uninstall per host (#1676).
-- Slack bidirectional driver with attested approvals: `bernstein chat serve --platform=slack` connects via Socket Mode, dispatches `/bernstein` slash subcommands, decodes Approve/Reject block actions, debounces `chat.update` per channel, signs every outbound message with an Ed25519 detached signature over `(install_id, session_id, content_hash)`, and appends each approval resolution to the HMAC-chained audit log as a `chat.slack.approval` event covering `(approver, message_ts, decision, tool_call_hash, worktree_id)`. Approvals are worktree-pinned: cross-worktree resolutions raise `CrossWorktreeApprovalError` and emit a `chat.slack.approval_rejected` audit entry. Optional `bernstein[slack]` extra pulls in `slack-sdk` (#1794).
-- Discord bidirectional driver with attested approvals: `bernstein chat serve --platform=discord` connects via the Discord gateway, dispatches application-command interactions through `on_command`, decodes Approve/Reject component clicks whose `custom_id` encodes `approve:<id>` / `reject:<id>`, debounces per-message edits to one update per second, signs every outbound message with the install's Ed25519 keypair, and appends each approval resolution to the HMAC-chained audit log as a `chat.discord.approval` event covering `(approver, interaction_id, decision, tool_call_hash, worktree_id, partition_id)`. Approvals are pinned both to a worktree and to a channel-scoped scheduling partition: cross-worktree resolutions raise `CrossWorktreeApprovalError`, cross-partition resolutions raise `ChannelPartitionMismatchError`, and either failure emits a `chat.discord.approval_rejected` audit entry. The shared partition helper lives at `bernstein.core.orchestration.scheduler_partitions` (used by both the Slack and Discord drivers). Optional `bernstein[discord]` extra pulls in `discord.py` (#1795).
-- `docs/operations/chat-bridges.md` documents the Telegram, Slack, and Discord drivers, the env-var contract, the signed envelope shape, the channel-partition fence, and how to verify an outbound message offline (#1794, #1795).
+Hardens audit identity across MCP protocol change and replay detection of provider-side context rewrites, plus a security dependency bump and CI reliability work. Full notes: [`docs/release-notes/v3.5.0.md`](release-notes/v3.5.0.md).
 
-### Changed
+## [3.4.4] - 2026-07-12
 
-- `bernstein audit export --standard` no longer accepts `dora` or `finos-aigf`; the click choice list is `ai-act` only. The previous control maps for those two standards contained only placeholder rows (`status: "todo"`, `selector: "TODO"`) and have been removed from `SUPPORTED_STANDARDS` until their clause mappings are reviewed by subject-matter experts. Operators who pass either value now receive a clean usage error rather than a TODO-only zip (#1316).
+Adds the experimental MCP Tasks protocol surface to the Bernstein MCP server, plus release-pipeline hardening. Full notes: [`docs/release-notes/v3.4.4.md`](release-notes/v3.4.4.md).
 
-### Fixed
+## [3.4.3] - 2026-07-12
 
-- Role prompt templates now actually render: the orchestrator passed the templates *root* (`get_templates_dir(workdir)`) to `AgentSpawner`, whose internal contract (`render_role_prompt`, `_render_fallback`, per-role `config.yaml` lookup, available-role listing) expects the `templates/roles/` directory - so every role template lookup raised `FileNotFoundError` and silently degraded to the generic `"You are a {role} specialist."` fallback whenever no Agency catalog persona matched. Present since v1.0.0; masked in most runs by the catalog override. The call site now appends `/ "roles"`, and the previously-silent `logger.debug` fallback in `_render_prompt` is a `logger.warning` that names the failing `templates_dir`.
-- The manager role always uses its own role template even when an Agency catalog persona fuzzy-matches (e.g. "Product Manager"): the manager template carries the task-server task-creation instructions that no catalog persona defines, so the persona override silently broke goal decomposition - the manager ran to the stall timeout without ever creating child tasks.
-- `bernstein run --model X` is now honored for manager-created child tasks, not just the seed task. The orchestrator subprocess gains a `--model` arg (env fallback `BERNSTEIN_MODEL`) threaded from run bootstrap, `AgentSpawner` accepts `default_model`, and `_coerce_model_for_non_claude_adapter` - previously a universal no-op because no adapter defines `default_model` - uses it to replace internal Claude tier names (`opus`/`sonnet`/`haiku`) emitted by the heuristic/bandit selectors and retry escalation, which non-Claude endpoints reject (e.g. MiniMax HTTP 400 `unknown model 'opus'`). Deliberate pins are preserved: `bernstein ab-test` task creation stamps `metadata.pinned_model = true`, which the coercion guard respects, and any non-tier model name passes through untouched. Watchdog-triggered spawner restarts now re-thread both `--adapter` and `--model` (previously both were dropped on restart).
-- `STALL_THRESHOLD_S` raised from 90s to 170s with an accurate comment naming the adjacent 180s idle-log agent reaper (`AGENT.idle_log_age_threshold_s`): slower non-Claude managers routinely need >90s just to investigate the codebase before creating their first task.
+Fixes the MCP registry listing publish by carrying the required OCI image label on the published container. Full notes: [`docs/release-notes/v3.4.3.md`](release-notes/v3.4.3.md).
 
-- The smart command/tool auto-approve classifier (`src/bernstein/core/security/auto_approve.py`) is now wired into the live tool-call approval path (`bernstein.core.approval.gate.await_tool_call`); previously it was unit-tested but never invoked at runtime, so its deny-list and evasion defenses gated nothing in a live run. Precedence is deny-wins and the posture is fail-closed: a deny-listed command (`rm -rf`, `git push --force`, `DROP TABLE`, `curl ... | bash`, control-plane/credential writes, and the rest of the list) is rejected by the production path regardless of interactive mode, and every decision the gate acts on is appended to the HMAC-chained audit log under `.sdd/audit/` as an `auto_approve_decision` event carrying the matched pattern - so an auditor can replay the chain and prove which calls were rejected or auto-approved and why. A safe verdict only short-circuits the operator queue when `approvals.smart_auto_approve: true` is set in `bernstein.yaml` (default `false`); an ambiguous verdict, or any classifier error, always falls through to human review and never auto-approves. `NotebookEdit` is removed from the classifier's safe-tools allow list so it falls through to ASK like `Edit`/`Write`, matching the edit-tool classification used elsewhere in the codebase (`observability/traces.py`). A regression test asserts the gate actually invokes the classifier, so the wiring cannot silently rot back into dead code (#1850).
+## [3.4.2] - 2026-07-12
+
+Wires cost-aware batch and cache policies into the live run loop, runs adapter conformance on a real Windows CI runner, and makes the distribution image verifiable. Full notes: [`docs/release-notes/v3.4.2.md`](release-notes/v3.4.2.md).
+
+## [3.4.1] - 2026-07-12
+
+Completes v3.4.0 follow-up: Windows parity coverage and a security-hardening and static-analysis cleanup pass. Full notes: [`docs/release-notes/v3.4.1.md`](release-notes/v3.4.1.md).
+
+## [3.4.0] - 2026-07-12
+
+Ships typed activity records, detached runs, tournament selection, cost-aware dispatch, in-process gates, a spec-to-graph pipeline, workload identity, and an MCP Tasks surface as signed, replayable records. Full notes: [`docs/release-notes/v3.4.0.md`](release-notes/v3.4.0.md).
+
+## [3.3.0] - 2026-07-11
+
+Operator-capability release: authenticated dashboard with scoped tokens and governance receipts, the agy adapter with a nightly conformance canary, and the run review board over sealed evidence bundles. Full notes: [`docs/release-notes/v3.3.0.md`](release-notes/v3.3.0.md).
+
+## [3.2.0] - 2026-07-10
+
+Resumability and availability: interrupted runs continue from a verified ledger, provider outages reroute along declared fallback chains with a receipt per decision, and certified local endpoints join the worker pool. Full notes: [`docs/release-notes/v3.2.0.md`](release-notes/v3.2.0.md).
+
+## [3.1.0] - 2026-07-07
+
+Task completion produces a sealed, content-addressed verification evidence bundle that verifies against the same audit chain. Full notes: [`docs/release-notes/v3.1.0.md`](release-notes/v3.1.0.md).
+
+## [3.0.0] - 2026-07-06
+
+Verifiability release: every major surface ships its primary artifact as a proof (signed lineage receipt, HMAC-chained journal entry, content-addressed record, or deterministic projection). Full notes: [`docs/release-notes/v3.0.0.md`](release-notes/v3.0.0.md).
+
+## [2.16.1] - 2026-07-06
+
+Windows: adapter binaries installed as `.cmd`/`.bat` shims now spawn correctly. Full notes: [`docs/release-notes/v2.16.1.md`](release-notes/v2.16.1.md).
+
+## [2.16.0] - 2026-07-05
+
+Output-economy and worker-reliability release: response-style profiles, ledger-attributed savings, a three-arm cost-and-quality A/B harness, proactive context compaction with signed receipts, and schema-enforced worker outcomes. Full notes: [`docs/release-notes/v2.16.0.md`](release-notes/v2.16.0.md).
+
+## [2.15.0] - 2026-07-05
+
+Hold/release lease API, explicit per-task `max_turns`, per-agent run instrumentation, and a council-of-agents redesign, built around five community contributions. Full notes: [`docs/release-notes/v2.15.0.md`](release-notes/v2.15.0.md).
+
+## [2.14.1] - 2026-07-04
+
+Security and hygiene patch: log-injection sanitisation across the task server and no sensitive-data logging in the openai_agents adapter. Full notes: [`docs/release-notes/v2.14.1.md`](release-notes/v2.14.1.md).
+
+## [2.14.0] - 2026-07-04
+
+Multi-provider orchestration hardening: a batch of correctness and run-safety fixes for real-codebase runs across mixed providers. Full notes: [`docs/release-notes/v2.14.0.md`](release-notes/v2.14.0.md).
+
+## [2.13.0] - 2026-07-02
+
+Run-safety guardrails (opt-in GitHub backlog sync, protected default branch) and per-role endpoint configuration. Full notes: [`docs/release-notes/v2.13.0.md`](release-notes/v2.13.0.md).
+
+## [2.12.0] - 2026-07-02
+
+Worker isolation, replay integrity (compaction-aware step fingerprint, effort level as a replay dimension), and OWASP security-taxonomy audit mapping. Full notes: [`docs/release-notes/v2.12.0.md`](release-notes/v2.12.0.md).
+
+## [2.11.0] - 2026-07-02
+
+Optional sampling and endpoint parameters on the openai_agents runner, fail-closed API-key env allowlisting, and a hardened Docker sandbox path. Full notes: [`docs/release-notes/v2.11.0.md`](release-notes/v2.11.0.md).
+
+## [2.10.0] - 2026-07-02
+
+Real end-to-end Docker sandbox provisioning, `bernstein run --worker <role>`, and fixes for role-template rendering and `--model` propagation to child tasks. Full notes: [`docs/release-notes/v2.10.0.md`](release-notes/v2.10.0.md).
+
+## [2.9.0] - 2026-06-30
+
+GitHub Copilot CLI adapter runs in non-interactive print mode, plus a security bump and a refurb cleanup. Full notes: [`docs/release-notes/v2.9.0.md`](release-notes/v2.9.0.md).
+
+## [2.8.5] - 2026-06-29
+
+Maintenance release: dependency and CI-action updates and a fix for the scheduled review-bot sweep. Full notes: [`docs/release-notes/v2.8.5.md`](release-notes/v2.8.5.md).
+
+## [2.8.2] - 2026-06-27
+
+Reliability and maintenance: Codex ChatGPT OAuth login works again, worktree GC no longer loses unmerged work, and `worktrees unlock` recovers a stuck GC lock. Full notes: [`docs/release-notes/v2.8.2.md`](release-notes/v2.8.2.md).
+
+## [2.7.0] - 2026-05-24
+
+Maintenance release: deterministic skill-routing tools, Sonar hotspot cleanup, and CI and publish-pipeline reliability work. No dedicated release-notes page; see the `v2.7.0` git tag.
+
+## [2.6.0] - 2026-05-22
+
+Bidirectional Slack and Discord chat drivers with verifiable approvals, per-step replay with a hash-chained journal, operator-registered recurring goals, a signed supervisor surface, a signed skill catalog, and image-attachment provenance. Full notes: [`docs/release-notes/v2.6.0.md`](release-notes/v2.6.0.md).
+
+## [2.5.1] - 2026-05-20
+
+Restores the auto patch-publish pipeline after a broken workflow_run dispatcher silently swallowed releases, and ships the accumulated security, observability, routes, and API fixes. Full notes: [`docs/release-notes/v2.5.1.md`](release-notes/v2.5.1.md).
 
 ## [2.5.0] - Interoperability surfaces, host portability, deterministic replay
 
@@ -204,6 +279,8 @@ Hand-curated release notes: [`docs/release-notes/v2.0.0.md`](release-notes/v2.0.
 ### Limitations (intentional)
 
 - A11y audit, dark / light theme toggle UI, mobile-responsive pass, Settings screen wiring, Fleet UI, front-end test suite, Playwright e2e - all open. See [#1262](https://github.com/sipyourdrink-ltd/bernstein/issues/1262) for contributor-welcome pointers.
+
+> **Older 1.x releases.** The 1.8.x and 1.9.x feature wave and the v1.10.2-v1.10.8 patch line are summarised in [What's New](whats-new.md); full per-tag detail lives in the git tags (`git tag --list 'v1.*'`).
 
 ## [1.10.1] - 2026-05-07
 

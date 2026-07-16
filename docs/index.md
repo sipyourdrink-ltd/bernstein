@@ -115,7 +115,7 @@ for client compliance review.
 | :material-api: [API Reference](reference/openapi-reference.md) | Task server REST API |
 | :material-sitemap: [Architecture](architecture/ARCHITECTURE.md) | How Bernstein works under the hood |
 | :material-state-machine: [Lifecycle FSM](architecture/LIFECYCLE.md) | Task and agent state machines with transition tables |
-| :material-text-box-check: [What's New](whats-new.md) | Historical 1.9.x feature summary; see the [Changelog](CHANGELOG.md) for 2.x releases |
+| :material-text-box-check: [What's New](whats-new.md) | Historical 1.9.x feature summary; see the [Changelog](CHANGELOG.md) for later releases |
 | :material-history: [Changelog](CHANGELOG.md) | Full release history |
 | :material-shield-lock: [Air-gap installation](installation/air-gap.md) | Wheelhouse build, signed verification, `--profile airgap`, deny-all egress |
 

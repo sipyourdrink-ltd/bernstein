@@ -130,7 +130,7 @@ more specific environment matched.
                     Bernstein Doctor
 ─────────────────────────────────────────────────────────────────
  Check               Category      Status   Detail                Remediation
- install:bernstein   installation  ✓ OK     v2.0.1
+ install:bernstein   installation  ✓ OK     v3.5.0
  adapter:claude      adapter       ✓ OK     /usr/local/bin/claude -> claude-code 2.1.5
  adapter:codex       adapter       ✗ FAIL   Binary `codex` not in PATH   Install via vendor instructions
  network:anthropic   network       ✓ OK     reachable: api.anthropic.com:443
