@@ -32,6 +32,7 @@ from bernstein.adapters._contract import (
     StrategyView,
     _capability_failures,  # pyright: ignore[reportPrivateUsage]
     _strip_ansi,  # pyright: ignore[reportPrivateUsage]
+    probe_failure_reason,
     strategy_for,
 )
 
@@ -352,6 +353,26 @@ def check_adapter_in_process(
         )
 
     help_text = (proc.stdout or "") + (proc.stderr or "")
+
+    # A binary that is installed and answers --help but advertises none of
+    # its required tokens (or nothing at all) is a broken/redesigned probe
+    # surface, not genuine per-flag drift: an installed adapter cannot
+    # legitimately drop its entire required surface in one release. Record it
+    # as an inconclusive skip so the canary flags it for investigation
+    # instead of paging with a misleading "every flag removed" regression
+    # (issue #2488). Partial misses still fall through to a fail below.
+    probe_reason = probe_failure_reason(spec, help_text)
+    if probe_reason is not None:
+        total_required = len(spec.required_flags) + len(spec.required_subcommands)
+        return ConformanceVerdictPayload(
+            verdict=CONFORMANCE_SKIP,
+            detail=(
+                f"probe inconclusive ({probe_reason}): `{' '.join(help_cmd)}` advertised none of "
+                f"the {total_required} required tokens; not treated as drift"
+            ),
+            capabilities=capabilities,
+        )
+
     failures = _capability_failures(spec, help_text)
     if failures:
         return ConformanceVerdictPayload(
