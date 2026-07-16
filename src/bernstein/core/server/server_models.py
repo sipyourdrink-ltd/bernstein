@@ -423,6 +423,27 @@ class BatchClaimResponse(BaseModel):
     failed: list[str]
 
 
+class ClaimReceiptRequest(BaseModel):
+    """Body for POST /tasks/claim-receipt (#2555).
+
+    Drives the dependency-gated claim path over MCP and returns a signed,
+    content-addressed :class:`ClaimReceipt` instead of a mutable task
+    projection. The eligibility predicates mirror
+    :class:`bernstein.core.tasks.claim.ClaimFilter`: a task is offered only
+    when its ``depends_on`` are all present in ``completed_ids`` (the
+    dependency gate), and a filter that matches no eligible row still returns
+    a signed refusal receipt (never a silent skip).
+    """
+
+    claimer_id: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    claimer_card_fingerprint: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    role: str | None = Field(default=None, max_length=64)
+    project: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    capability: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    completed_ids: list[str] = Field(default_factory=list)
+    max_attempts: int | None = Field(default=None, ge=0)
+
+
 class TaskMessagePost(BaseModel):
     """Body for POST /tasks/{task_id}/messages (#2357).
 

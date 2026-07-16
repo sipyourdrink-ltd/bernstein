@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bernstein_claim",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["claimer_id"],
+  "properties": {
+    "claimer_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]+$"},
+    "role": {"type": ["string", "null"], "maxLength": 64},
+    "project": {"type": ["string", "null"], "maxLength": 256},
+    "capability": {"type": ["string", "null"], "maxLength": 256},
+    "completed_ids": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9_.:-]+$"}
+    },
+    "max_attempts": {"type": ["integer", "null"], "minimum": 0, "maximum": 100000},
+    "claimer_card_fingerprint": {"type": ["string", "null"], "maxLength": 256}
+  }
+}

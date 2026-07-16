@@ -96,6 +96,62 @@ def claim_backlog(
     console.print(claimed.id)
 
 
+@backlog_group.command("verify-claim")
+@click.option(
+    "--receipt",
+    "receipt_path",
+    default="-",
+    metavar="PATH",
+    help="Claim receipt JSON to verify ('-' reads stdin).",
+)
+@click.option(
+    "--backlog",
+    "backlog_path",
+    default=Path(".sdd/runtime/task-backlog.json"),
+    show_default=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Path to the shared JSON backlog to reproject from.",
+)
+@click.option(
+    "--audit-dir",
+    "audit_dir",
+    default=Path(".sdd/audit"),
+    show_default=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Audit chain directory the claim event was mirrored into.",
+)
+def verify_claim(receipt_path: str, backlog_path: Path, audit_dir: Path) -> None:
+    """Verify a claim receipt offline against the backlog and audit chain.
+
+    Reprojects the backlog head from the on-disk backlog, checks the receipt
+    signature, verifies the audit chain, and confirms a matching
+    ``task.claim_receipt`` event sits at the receipt's embedded chain head -
+    the same chain ``bernstein audit verify`` walks. Exits non-zero when the
+    receipt does not verify.
+    """
+    import sys
+
+    from bernstein.core.protocols.mcp.claim_receipt import ClaimReceipt, verify_claim_receipt
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.server.dashboard_tokens import resolve_dashboard_hmac_key
+    from bernstein.core.tasks.claim import Backlog
+
+    raw = sys.stdin.read() if receipt_path == "-" else Path(receipt_path).read_text(encoding="utf-8")
+    receipt = ClaimReceipt.from_wire(json.loads(raw))
+    rows = [entry.to_dict() for entry in Backlog.load(backlog_path).entries]
+    chain = AuditChainStore(audit_dir, key=resolve_dashboard_hmac_key(audit_dir.parent))
+
+    ok, reason = verify_claim_receipt(receipt, rows, chain)
+    if is_json():
+        print_json({"verified": ok, "reason": reason, "task_id": receipt.task_id, "granted": receipt.granted})
+    elif ok:
+        console.print(f"[green]OK[/green] claim receipt verifies (task_id={receipt.task_id or '<refused>'})")
+    else:
+        console.print(f"[red]FAIL[/red] {reason}")
+    if not ok:
+        raise SystemExit(1)
+
+
 @click.command("compose", hidden=True)
 @click.argument("title")
 @click.option("--role", default="backend", show_default=True, help="Agent role for this task.")

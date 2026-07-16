@@ -504,7 +504,141 @@ def _register_task_handle_tool(mcp: FastMCP[None]) -> None:
 
 
 def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
-    """Register mutation tools: stop, approve, create_subtask."""
+    """Register mutation tools: stop, approve, create_subtask, claim, update."""
+
+    @mcp.tool()
+    async def bernstein_claim(  # pyright: ignore[reportUnusedFunction]
+        claimer_id: str,
+        role: str | None = None,
+        project: str | None = None,
+        capability: str | None = None,
+        completed_ids: list[str] | None = None,
+        max_attempts: int | None = None,
+        claimer_card_fingerprint: str | None = None,
+    ) -> str:
+        """Claim the next eligible task and return a verifiable claim receipt.
+
+        Drives the dependency-gated claim path: a task is offered only when
+        every id in its ``depends_on`` is present in ``completed_ids``. Unlike
+        a raw claim, the result is a signed, content-addressed **claim
+        receipt** the worker holds and can re-verify offline against the audit
+        chain (``bernstein audit verify``), not a mutable task projection. A
+        filter that matches no eligible task returns a signed *refusal*
+        receipt - a claim attempt is never a silent skip.
+
+        Args:
+            claimer_id: The claiming worker's identity.
+            role: Only claim tasks for this role (e.g. ``backend``).
+            project: Only claim tasks in this project namespace.
+            capability: Only claim tasks requiring this capability.
+            completed_ids: Task ids whose dependencies are satisfied; a task
+                is eligible only when all of its ``depends_on`` are listed.
+            max_attempts: Skip tasks at or above this attempt count.
+            claimer_card_fingerprint: ``sha256:`` fingerprint of the claimer's
+                agent card key, bound into the receipt.
+
+        Returns:
+            JSON of the signed claim receipt (``taskId``, ``granted``,
+            ``backlogHead``, ``filterDigest``, ``chainHead``, ``receiptHash``,
+            ``signature``, ``pollToken``, ...).
+        """
+        completed = completed_ids or []
+        err = _validate_or_error(
+            "bernstein_claim",
+            {
+                "claimer_id": claimer_id,
+                "role": role,
+                "project": project,
+                "capability": capability,
+                "completed_ids": completed,
+                "max_attempts": max_attempts,
+                "claimer_card_fingerprint": claimer_card_fingerprint,
+            },
+        )
+        if err is not None:
+            return _validation_error_response(err)
+        try:
+            payload: dict[str, Any] = {"claimer_id": claimer_id, "completed_ids": completed}
+            if role is not None:
+                payload["role"] = role
+            if project is not None:
+                payload["project"] = project
+            if capability is not None:
+                payload["capability"] = capability
+            if max_attempts is not None:
+                payload["max_attempts"] = max_attempts
+            if claimer_card_fingerprint is not None:
+                payload["claimer_card_fingerprint"] = claimer_card_fingerprint
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(
+                    f"{server_url}/tasks/claim-receipt",
+                    json=payload,
+                    headers=_auth_headers(),
+                )
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(data, indent=2)
+        except Exception as exc:
+            return _error_response(exc)
+
+    @mcp.tool()
+    async def bernstein_update(  # pyright: ignore[reportUnusedFunction]
+        task_id: str,
+        body: str,
+        sender: str,
+        kind: str = "finding",
+        sender_card_fingerprint: str | None = None,
+    ) -> str:
+        """Post an incremental progress update as a signed journal entry.
+
+        Wraps the worker mailbox: the update is DLP-redacted, HMAC-chained
+        onto the mailbox journal, Ed25519-signed, and mirrored to the audit
+        chain (``task.mailbox_message``) before returning. The result IS the
+        signed journal entry - a worker holds a progress record it can verify
+        offline against the same chain ``bernstein audit verify`` walks, not a
+        bare status string.
+
+        Args:
+            task_id: The task the update is addressed to.
+            body: The progress message body (<= 4096 bytes).
+            sender: The posting worker's identity.
+            kind: Typed message kind - one of ``finding`` / ``artefact_ref``
+                / ``question``.
+            sender_card_fingerprint: ``sha256:`` fingerprint of the sender's
+                agent card key.
+
+        Returns:
+            JSON of the signed mailbox journal entry (``seq``,
+            ``prev_entry_hash``, ``entry_hash``, ``signature``,
+            ``signer_public_key_pem``, ``body_hash``, ...).
+        """
+        err = _validate_or_error(
+            "bernstein_update",
+            {
+                "task_id": task_id,
+                "body": body,
+                "sender": sender,
+                "kind": kind,
+                "sender_card_fingerprint": sender_card_fingerprint,
+            },
+        )
+        if err is not None:
+            return _validation_error_response(err)
+        try:
+            payload: dict[str, Any] = {"sender": sender, "kind": kind, "body": body}
+            if sender_card_fingerprint is not None:
+                payload["sender_card_fingerprint"] = sender_card_fingerprint
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(
+                    f"{server_url}/tasks/{task_id}/messages",
+                    json=payload,
+                    headers=_auth_headers(),
+                )
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(data, indent=2)
+        except Exception as exc:
+            return _error_response(exc)
 
     @mcp.tool()
     async def bernstein_stop(  # pyright: ignore[reportUnusedFunction]

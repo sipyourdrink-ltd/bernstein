@@ -1223,6 +1223,14 @@ def create_app(
         identity_dir=sdd_dir / "identity",
     )
 
+    # Verifiable claim-receipt loop (#2555). The MCP claim path atomically
+    # claims from a shared JSON backlog and signs the returned receipt with a
+    # dedicated install identity alongside the mailbox identity. The backlog
+    # path aligns with the ``bernstein backlog`` CLI default so both surfaces
+    # claim from one file.
+    application.state.claim_backlog_path = jsonl_path.parent / "task-backlog.json"  # type: ignore[attr-defined]
+    application.state.claim_identity_dir = sdd_dir / "identity"  # type: ignore[attr-defined]
+
     # Real-time behavior anomaly monitor - checks file access and output-size on
     # every progress update and writes kill signals for compromised sessions.
     from bernstein.core.behavior_anomaly import RealtimeBehaviorMonitor

@@ -16,7 +16,7 @@ callable.
 | Tier | Budget | Tools advertised | Use when |
 |------|--------|------------------|----------|
 | `core` | smallest | `bernstein_health`, `bernstein_run`, `bernstein_status`, `bernstein_tasks`, `bernstein_task_handle` | Cost-sensitive runs or small-context adapters; you only need to start and observe a run. |
-| `standard` (default) | medium | core plus `bernstein_cost`, `bernstein_stop`, `bernstein_approve`, `bernstein_create_subtask`, `load_skill` | The typical run: mutation, approval, and skill loading. |
+| `standard` (default) | medium | core plus `bernstein_cost`, `bernstein_stop`, `bernstein_approve`, `bernstein_create_subtask`, `bernstein_claim`, `bernstein_update`, `load_skill` | The typical run: mutation, approval, the pull-worker claim/update verbs, and skill loading. |
 | `all` | largest | standard plus the scenario bridge (`bernstein_scenarios`, `bernstein_scenario`, `bernstein_scenario_status`) and `verify_chain` | Power-user setups that drive scenario libraries or audit lineage. |
 
 The exact membership is declared once in
