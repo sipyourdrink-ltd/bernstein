@@ -364,6 +364,12 @@ jobs:
         run: |
           set -uo pipefail
           ./mcp-publisher login github-oidc
+          # GitHub runs this step under `bash -e`, so without disabling
+          # errexit the `out=$(...)` capture below would abort the step on
+          # the publisher's non-zero exit before we can inspect the error.
+          # Turn errexit off here so the duplicate-version branch can run
+          # and the real exit code is captured in `code`.
+          set +e
           # Idempotent publish: the registry rejects re-submitting a version that
           # is already live with an HTTP 400 "cannot publish duplicate version".
           # That happens whenever this job runs more than once for the same

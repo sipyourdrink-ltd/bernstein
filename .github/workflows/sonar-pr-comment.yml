@@ -52,8 +52,18 @@ jobs:
           set -euo pipefail
           # Tolerate the case where the project has not been scanned
           # yet: this workflow stays advisory either way.
+          #
+          # Keep the token out of the process argv: write it into a
+          # short-lived curl config file (mode 0600 via mktemp) and pass
+          # it with -K, so the credential never appears in the process
+          # list. Sonar uses the token as the HTTP basic-auth username
+          # with an empty password. printf is a bash builtin, so the
+          # token is not exposed as an argv there either. TLS stays on.
+          auth_cfg="$(mktemp)"
+          trap 'rm -f "$auth_cfg"' EXIT
+          printf 'user = "%s:"\n' "${SONAR_TOKEN}" > "$auth_cfg"
           http_code=$(curl -sS -o response.json -w '%{http_code}' \
-            -u "${SONAR_TOKEN}:" \
+            -K "$auth_cfg" \
             "${SONAR_HOST_URL%/}/api/measures/component?component=bernstein&metricKeys=code_smells,bugs,vulnerabilities,security_hotspots,coverage")
           echo "status=${http_code}" >> "$GITHUB_OUTPUT"
           if [ "${http_code}" != "200" ]; then

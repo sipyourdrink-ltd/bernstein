@@ -1,0 +1,14 @@
+id: inc-6993059498c0
+severity: P1
+source_incident: "glitchtip-issue:3"
+owner: orchestrator
+created_at: 1783846151.179
+expected_outcome: "Agent must complete the task without hitting the previously-recorded failure mode. (root cause: runtime_exception)"
+tags:
+  - glitchtip
+  - regression
+  - runtime_error
+prompt: |
+  Reproduce and resolve the runtime exception reported by GlitchTip issue 3.
+  Project: bernstein
+  Event count: 1
