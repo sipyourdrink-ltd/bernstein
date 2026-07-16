@@ -3,7 +3,9 @@
 Covers the ``--emit-sarif`` path that feeds GitHub code scanning:
 required SARIF 2.1.0 structure, project-key prefix stripping, the
 VULNERABILITY -> error + security-severity mapping, security-hotspot
-handling, and byte-for-byte determinism on re-run.
+handling, byte-for-byte determinism on re-run, and the security-scope
+filter that keeps pure-maintainability CODE_SMELL findings out of the
+Security tab.
 """
 
 from __future__ import annotations
@@ -12,11 +14,14 @@ import json
 from pathlib import Path
 
 from sweep_sonar_findings import (  # type: ignore[import-not-found]
-    _load_sarif_fixture as load_sarif_fixture,
+    SARIF_CODE_SCANNING_TYPES,
+    Finding,
+    build_sarif,
+    filter_sarif_findings,
+    main,
 )
 from sweep_sonar_findings import (  # type: ignore[import-not-found]
-    build_sarif,
-    main,
+    _load_sarif_fixture as load_sarif_fixture,
 )
 
 _FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -200,8 +205,11 @@ def test_emit_sarif_cli_writes_valid_file(tmp_path: Path, capsys) -> None:  # ty
     doc = json.loads(out.read_text(encoding="utf-8"))
     assert doc["version"] == "2.1.0"
     captured = capsys.readouterr()
-    assert "rules=6" in captured.out
-    assert "results=6" in captured.out
+    # The canonical fixture has 6 findings, but 4 are pure-maintainability
+    # CODE_SMELL findings that the default security scope drops, leaving
+    # the VULNERABILITY and BUG (2 rules, 2 results).
+    assert "rules=2" in captured.out
+    assert "results=2" in captured.out
 
 
 def test_emit_sarif_writes_no_backlog_tickets(tmp_path: Path) -> None:
@@ -210,3 +218,114 @@ def test_emit_sarif_writes_no_backlog_tickets(tmp_path: Path) -> None:
     assert rc == 0
     # SARIF mode must not emit any Markdown backlog ticket anywhere.
     assert list(tmp_path.rglob("*.md")) == []
+
+
+# ---------------------------------------------------------------------------
+# Security-scope filter (keep the Security tab focused on security)
+# ---------------------------------------------------------------------------
+
+
+def _finding(key: str, ftype: str, *, rule: str | None = None) -> Finding:
+    """Build a minimal Finding of a given Sonar type for filter tests."""
+    return Finding(
+        key=key,
+        rule=rule or f"python:{key}",
+        severity="MAJOR",
+        type=ftype,
+        component="bernstein:src/bernstein/core/x.py",
+        line=10,
+        creation_date="2026-06-01T00:00:00+0000",
+    )
+
+
+def test_code_scanning_types_constant() -> None:
+    # The exported set is exactly the security- and reliability-relevant
+    # Sonar types. CODE_SMELL (pure maintainability) is deliberately out.
+    assert frozenset({"VULNERABILITY", "SECURITY_HOTSPOT", "BUG"}) == SARIF_CODE_SCANNING_TYPES
+    assert "CODE_SMELL" not in SARIF_CODE_SCANNING_TYPES
+
+
+def test_filter_excludes_code_smells_by_default() -> None:
+    findings = [
+        _finding("V1", "VULNERABILITY"),
+        _finding("H1", "SECURITY_HOTSPOT"),
+        _finding("B1", "BUG"),
+        _finding("C1", "CODE_SMELL"),
+        _finding("C2", "CODE_SMELL"),
+    ]
+    kept = filter_sarif_findings(findings)
+    kept_types = {f.type for f in kept}
+    assert "CODE_SMELL" not in kept_types
+    assert kept_types == {"VULNERABILITY", "SECURITY_HOTSPOT", "BUG"}
+    assert {f.key for f in kept} == {"V1", "H1", "B1"}
+
+
+def test_filter_include_code_smells_keeps_everything() -> None:
+    findings = [
+        _finding("V1", "VULNERABILITY"),
+        _finding("C1", "CODE_SMELL"),
+        _finding("C2", "CODE_SMELL"),
+    ]
+    kept = filter_sarif_findings(findings, include_code_smells=True)
+    # Order preserved, nothing dropped when the operator opts into everything.
+    assert [f.key for f in kept] == ["V1", "C1", "C2"]
+
+
+def test_filter_drops_unknown_types_by_default() -> None:
+    # The whitelist is conservative: any non-security type (including a
+    # hypothetical future Sonar type) is dropped unless smells are opted in.
+    findings = [_finding("V1", "VULNERABILITY"), _finding("X1", "SOME_NEW_TYPE")]
+    assert [f.key for f in filter_sarif_findings(findings)] == ["V1"]
+
+
+def test_emit_sarif_drops_code_smell_rules_by_default(tmp_path: Path) -> None:
+    out = tmp_path / "sonar.sarif"
+    rc = main(argv=["--emit-sarif", str(out), "--fixture", str(_ISSUES_FIXTURE)])
+    assert rc == 0
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    rule_ids = {r["id"] for r in doc["runs"][0]["tool"]["driver"]["rules"]}
+    # The fixture's four CODE_SMELL rules must not reach code scanning.
+    for smell_rule in ("python:S3776", "python:S1192", "python:S1481", "python:S125"):
+        assert smell_rule not in rule_ids
+    # The VULNERABILITY and BUG rules must remain.
+    assert "python:S2068" in rule_ids  # VULNERABILITY
+    assert "python:S2589" in rule_ids  # BUG
+    fingerprints = {res["partialFingerprints"]["sonarFindingKey"] for res in doc["runs"][0]["results"]}
+    assert fingerprints == {"FINDING-BLOCKER-001", "FINDING-BUG-001"}
+
+
+def test_emit_sarif_keeps_hotspots_and_vulnerabilities(tmp_path: Path) -> None:
+    out = tmp_path / "sonar.sarif"
+    rc = main(argv=["--emit-sarif", str(out), "--fixture", str(_HOTSPOTS_FIXTURE)])
+    assert rc == 0
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    fingerprints = {res["partialFingerprints"]["sonarFindingKey"] for res in doc["runs"][0]["results"]}
+    # One VULNERABILITY + two SECURITY_HOTSPOT findings, all retained.
+    assert fingerprints == {"ISSUE-VULN-001", "HOTSPOT-HIGH-001", "HOTSPOT-LOW-001"}
+
+
+def test_emit_sarif_include_code_smells_flag_keeps_all(tmp_path: Path) -> None:
+    out = tmp_path / "sonar.sarif"
+    rc = main(
+        argv=[
+            "--emit-sarif",
+            str(out),
+            "--fixture",
+            str(_ISSUES_FIXTURE),
+            "--sarif-include-code-smells",
+        ]
+    )
+    assert rc == 0
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert len(doc["runs"][0]["results"]) == 6
+    rule_ids = {r["id"] for r in doc["runs"][0]["tool"]["driver"]["rules"]}
+    assert "python:S3776" in rule_ids  # a CODE_SMELL rule is retained on opt-in
+
+
+def test_emit_sarif_include_code_smells_is_deterministic(tmp_path: Path) -> None:
+    out1 = tmp_path / "a.sarif"
+    out2 = tmp_path / "b.sarif"
+    common = ["--fixture", str(_ISSUES_FIXTURE), "--sarif-include-code-smells"]
+    assert main(argv=["--emit-sarif", str(out1), *common]) == 0
+    assert main(argv=["--emit-sarif", str(out2), *common]) == 0
+    assert out1.read_bytes() == out2.read_bytes()

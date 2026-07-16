@@ -186,6 +186,38 @@ class TestRunCanaryTarget:
         assert any("--output-format" in failure for failure in outcome.failures)
         assert outcome.transcript  # the failing transcript rides into the issue
 
+    def test_help_advertising_no_required_tokens_is_skip_not_fail(self, tmp_path: Path) -> None:
+        """Regression for issue #2488: a --help that advertises none of the
+        contract's required tokens is a broken/redesigned probe, not drift.
+
+        The reported regression saw all six aider flags marked "missing" at
+        once and a misleading per-flag issue opened, even though the flags
+        were still present. A binary that answers --help but advertises none
+        of its declared surface must probe as ``skip`` (investigate) so no
+        regression issue is opened; only a *partial* miss is genuine drift.
+        """
+        bin_dir = tmp_path / "bin"
+        # A wholesale-redesigned help banner that advertises none of the six
+        # aider flags, exactly the shape that produced #2488.
+        stub = _write_stub_cli(
+            bin_dir,
+            "aider",
+            version="3.13",
+            help_text="aider 3.13 - run 'aider docs' for the new command surface.",
+        )
+        contracts = tmp_path / "contracts"
+        _write_contract(
+            contracts,
+            "aider",
+            ["--model", "--message", "--yes-always", "--auto-commits", "--map-tokens", "--no-auto-lint"],
+            binary=stub,
+        )
+        target = CanaryTarget(adapter="aider", binary="aider", model="gpt-5-mini")
+        outcome = run_canary_target(target, which=lambda _n: str(stub), contracts_dir=contracts)
+        assert outcome.verdict == "skip"
+        assert outcome.failures == ()
+        assert any("none of" in line for line in outcome.transcript)
+
 
 # ---------------------------------------------------------------------------
 # Receipts: canonical, content-addressed, tamper-evident

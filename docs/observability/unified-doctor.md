@@ -91,7 +91,16 @@ Two workflows ship alongside the command:
   06:00 UTC that writes today's snapshot to
   `docs/observability/snapshots/<YYYY-MM-DD>.json` and re-renders
   `docs/observability/trends.md` with the last 30 days as unicode
-  sparklines.
+  sparklines. After the render it runs `scripts/observability/gate.py`,
+  which diffs today's snapshot against yesterday's and reports
+  regressions by reading each row's `threshold_status` and computing the
+  numeric delta from the two files. It flags a status flip for the worse
+  (`ok -> warn`, `* -> fail`), a coverage drop past a small tolerance, a
+  new or increased security finding, and a backend that lost its
+  credentials. On a fail-severity regression the step pushes a Telegram
+  message (`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`); it is non-blocking,
+  so the snapshot pull request still opens and warn-level drift is
+  recorded in the run summary.
 
 ## Local watch mode
 
