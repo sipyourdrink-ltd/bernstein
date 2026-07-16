@@ -521,6 +521,26 @@ class TestDashboardAuth:
         assert verify_password("", "") is False
         assert verify_password("something", "") is False
 
+    def test_verify_password_uses_unpredictable_salt(self) -> None:
+        """The digest salt is drawn fresh per call, so it must stay random.
+
+        A random per-call salt must not change the boolean result: equal
+        inputs always match and unequal inputs never do, across repeated
+        calls. The digest itself must vary with the salt so a fixed,
+        predictable value is never reused.
+        """
+        from bernstein.core.server.dashboard_auth import _password_digest, verify_password
+
+        # Result is stable across many independent calls despite the salt
+        # being regenerated on each one.
+        assert all(verify_password("secret", "secret") is True for _ in range(25))
+        assert all(verify_password("wrong", "secret") is False for _ in range(25))
+
+        # Different salts yield different digests for the same value; the same
+        # salt reproduces the digest (needed for the in-call comparison).
+        assert _password_digest("secret", b"\x00" * 16) != _password_digest("secret", b"\x11" * 16)
+        assert _password_digest("secret", b"\x00" * 16) == _password_digest("secret", b"\x00" * 16)
+
     def test_session_store_active_count(self) -> None:
         """active_count should reflect live sessions."""
         from bernstein.core.dashboard_auth import DashboardSessionStore

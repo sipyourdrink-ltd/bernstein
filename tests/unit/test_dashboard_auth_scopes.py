@@ -308,6 +308,34 @@ class TestScopeEnforcement:
             assert login.status_code == 401
 
     @pytest.mark.anyio
+    async def test_session_cookie_is_hardened(self, sdd_env: SddEnv, tokens: dict[str, str]) -> None:
+        """The session cookie is HttpOnly and SameSite, never sent in the clear.
+
+        Over plain HTTP (the loopback dev bind) the cookie omits ``Secure`` so
+        the session still round-trips; behind a TLS-terminating proxy the
+        forwarded-proto header pins ``Secure`` so the session token never
+        travels in clear text.
+        """
+        async with _client_for(sdd_env) as client:
+            plain = await client.post("/dashboard/auth/login", json={"token": tokens["viewer"]})
+            assert plain.status_code == 200
+            cookie = plain.headers["set-cookie"]
+            assert "bernstein_dashboard_session=" in cookie
+            assert "httponly" in cookie.lower()
+            assert "samesite=lax" in cookie.lower()
+            assert "secure" not in cookie.lower()
+
+            secure_login = await client.post(
+                "/dashboard/auth/login",
+                json={"token": tokens["viewer"]},
+                headers={"X-Forwarded-Proto": "https"},
+            )
+            assert secure_login.status_code == 200
+            secure_cookie = secure_login.headers["set-cookie"]
+            assert "secure" in secure_cookie.lower()
+            assert "httponly" in secure_cookie.lower()
+
+    @pytest.mark.anyio
     async def test_versioned_dashboard_surface_enforced_too(self, sdd_env: SddEnv, tokens: dict[str, str]) -> None:
         async with _client_for(sdd_env) as client:
             ok = await client.get("/api/v1/dashboard/data", headers={"Authorization": f"Bearer {tokens['viewer']}"})

@@ -8,7 +8,7 @@ tags:
 
 # Screens
 
-Five routes. Source: `web/src/routes/`. Design reference: `.sdd/backlog/open/frontend/design_handoff_bernstein_phase1/README.md` §6.
+Seven routes. Source: `web/src/routes/`. Design reference: `.sdd/backlog/open/frontend/design_handoff_bernstein_phase1/README.md` §6.
 
 ## Screenshots
 
