@@ -340,6 +340,7 @@ nav:
       - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
       - Changelog: CHANGELOG.md
       - Release notes:
+          - v3.6.0: release-notes/v3.6.0.md
           - v3.5.0: release-notes/v3.5.0.md
           - v3.4.4: release-notes/v3.4.4.md
           - v3.4.3: release-notes/v3.4.3.md

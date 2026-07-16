@@ -2695,6 +2695,61 @@ class AgentSpawner:
                 type(exc).__name__,
             )
 
+    def _preflight_adapter_security_floor(self, adapter_name: str) -> None:
+        """Enforce the adapter security floor before a spawn (#2515).
+
+        The spawn boundary is the most privileged hand-off in the system: the
+        binary we exec receives the task context, the workspace, and the
+        worker's credential scope. For a tracked adapter this probes the
+        installed version, seals a chain-anchored preflight receipt for the
+        verdict (permit / refusal / warn-override), and refuses a below-floor
+        spawn by default so a known-unsafe upstream CLI can no longer receive
+        full task context. The receipt -- not the version check -- is the proof
+        artefact: a contiguous chain slice proves offline that no below-floor
+        adapter was spawned during a window.
+
+        Untracked adapters (no curated floor) are a no-op, so the common
+        claude / codex / gemini path pays nothing. The operator opt-out is
+        ``BERNSTEIN_ADAPTER_FLOOR_POLICY=warn`` (records a warn-override rather
+        than refusing).
+
+        Raises:
+            AdapterSecurityFloorRefusal: On a below-floor binary under the
+                default block policy. Deliberately not a ``SpawnError``, so the
+                per-provider failover loop never swallows it into an
+                alternate-provider retry -- a floor refusal is a hard stop.
+        """
+        from bernstein.adapters.security_floor import security_floor_for
+
+        if security_floor_for(adapter_name) is None:
+            return  # untracked adapter: no floor to enforce
+
+        from datetime import UTC, datetime
+
+        from bernstein.adapters.security_floor import (
+            VERDICT_WARN_OVERRIDE,
+            policy_from_env,
+            preflight_spawn_floor,
+        )
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        chain = AuditChainStore(self._workdir / ".sdd" / "audit")
+        verdict = preflight_spawn_floor(
+            adapter=adapter_name,
+            chain=chain,
+            generated_at=datetime.now(UTC).isoformat(),
+            policy=policy_from_env(),
+        )
+        if verdict.verdict == VERDICT_WARN_OVERRIDE:
+            logger.warning(
+                "Adapter %s %s is below its security floor %s [%s]; "
+                "BERNSTEIN_ADAPTER_FLOOR_POLICY=warn permitted the spawn (receipt anchored)",
+                adapter_name,
+                verdict.installed_version,
+                verdict.floor,
+                verdict.advisory_id,
+            )
+
     def _resolve_routing(
         self,
         tasks: list[Task],
@@ -3565,6 +3620,14 @@ class AgentSpawner:
                     # operator did not ask for, so this raises instead of
                     # falling through to provider failover.
                     ensure_sampling_params_supported(target_adapter, effective_mcp)
+
+                    # Security-floor spawn preflight (#2515): refuse a
+                    # below-floor adapter binary before it receives task
+                    # context, sealing a chain-anchored receipt for the
+                    # verdict. Placed outside the inner spawn try/except so a
+                    # refusal raises out of the spawn (hard stop) instead of
+                    # falling through to alternate-provider failover.
+                    self._preflight_adapter_security_floor(adapter_name)
 
                     # Per-attempt config so a failover to a different
                     # adapter never inherits another adapter's extras.

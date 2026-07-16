@@ -118,6 +118,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `devin_terminal.py`         | Devin for Terminal (Cognition) CLI adapter |
 | `droid.py`                  | Droid (Factory AI) CLI adapter |
 | `env_isolation.py`          | Environment variable isolation for spawned agents |
+| `floor_refresh.py`          | Adapter security-floor refresh pipeline with signed update receipts (#2515) |
 | `forge.py`                  | Forge CLI adapter |
 | `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
@@ -150,6 +151,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `registry.py`               | Adapter registry - look up CLI adapters by name |
 | `report.py`                 | Adapter conformance + capability report |
 | `rovo.py`                   | Atlassian Rovo Dev CLI adapter |
+| `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
 | `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |

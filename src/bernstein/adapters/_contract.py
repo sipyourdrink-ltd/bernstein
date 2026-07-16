@@ -80,6 +80,17 @@ class ContractSpec:
     #: kept singular for back-compat; this carries the complete set when the
     #: contract lists more than one.
     auth_secret_envs: tuple[str, ...] = ()
+    #: Minimum-safe upstream version this adapter may be spawned against, or
+    #: ``None`` when no floor is curated. Sourced at load time from
+    #: :data:`bernstein.adapters.advisories.ADAPTER_MIN_SAFE_VERSIONS` so the
+    #: advisory map stays the single source of truth (a floor bump is a
+    #: data-only edit there, never a contract-YAML edit). The spawn preflight
+    #: (:mod:`bernstein.adapters.security_floor`) enforces this floor and seals
+    #: a chain-anchored refusal receipt; the canary refuses to certify below
+    #: it. See issue #2515.
+    security_floor: str | None = None
+    #: Bernstein-local advisory id backing :attr:`security_floor`, or ``None``.
+    security_advisory_id: str | None = None
 
     @classmethod
     def load(cls, name: str, contracts_dir: Path | None = None) -> ContractSpec:
@@ -106,6 +117,16 @@ class ContractSpec:
             secret_envs = (str(raw_secret),)
         else:
             secret_envs = ()
+        # Security floor is sourced from the advisory map, not the contract
+        # YAML, so the floor lives in exactly one place and a bump stays a
+        # data-only edit there (issue #2515). Imported lazily to keep the
+        # contract loader importable without pulling the advisories module in
+        # environments that only parse YAML.
+        from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS
+
+        _advisory = ADAPTER_MIN_SAFE_VERSIONS.get(str(data.get("adapter", name)))
+        security_floor = _advisory.min_safe_version if _advisory is not None else None
+        security_advisory_id = _advisory.advisory_id if _advisory is not None else None
         return cls(
             adapter=str(data.get("adapter", name)),
             binary=str(data.get("binary", name)),
@@ -121,6 +142,8 @@ class ContractSpec:
             models_required_present=tuple(expected.get("required_present") or ()),
             session_id_flag=session_id_flag,
             auth_secret_envs=secret_envs,
+            security_floor=security_floor,
+            security_advisory_id=security_advisory_id,
         )
 
     def resolved_help_command(self) -> list[str]:

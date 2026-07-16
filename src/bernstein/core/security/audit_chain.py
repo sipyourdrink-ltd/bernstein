@@ -509,6 +509,36 @@ EVENT_RUN_SSH_TASK = "run.ssh_task"
 #: logged blocker. See :mod:`bernstein.core.communication.signal_actions`.
 EVENT_SIGNAL_GATE_PROJECTION = "signal.gate_projection"
 
+#: Issue #2515 -- emitted for every spawn-time adapter security-floor decision
+#: (permit, refusal, or explicit warn-only override). The event binds the
+#: probed adapter, the installed upstream version, the minimum-safe floor, the
+#: advisory id, the enforcement policy, the floor map's content hash, and the
+#: content hash of the sealed refusal receipt into the HMAC chain. Permits
+#: carry the verdict too, so a contiguous chain slice proves offline that no
+#: below-floor adapter spawn was permitted during a window -- and a mutated
+#: floor map is caught because the receipt pins the map's content hash. Strip
+#: the chain and the floor-map hash and a refusal degrades to a logged version
+#: check; with them the refusal is the tamper-evident proof artefact.
+EVENT_ADAPTER_SPAWN_PREFLIGHT = "adapter.spawn_preflight_receipt"
+
+#: Issue #2515 -- emitted by ``bernstein doctor`` when it snapshots the
+#: environment's adapter version posture. The event binds a content-addressed
+#: posture receipt (each tracked adapter's installed version, floor, advisory
+#: id, and floor verdict) and the floor map's content hash into the HMAC
+#: chain, so "only floor-satisfying binaries were spawnable in this
+#: environment during window X" is provable offline from a contiguous chain
+#: slice rather than living only in a console print that an operator may never
+#: run.
+EVENT_ADAPTER_VERSION_POSTURE = "adapter.version_posture"
+
+#: Issue #2515 -- emitted when the adapter security-floor map is refreshed from
+#: a machine-readable advisory feed. The event binds the old and new floor-map
+#: content hashes and the data-only diff into the HMAC chain, so a floor bump
+#: is an attested event: a reviewer can prove offline which floor map was in
+#: force when a spawn-preflight or version-posture receipt (which pin the same
+#: content hash) was recorded, before and after the bump.
+EVENT_ADAPTER_FLOOR_UPDATE = "adapter.floor_update_receipt"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -2732,6 +2762,159 @@ def record_adapter_canary_receipt(
     )
 
 
+def record_adapter_spawn_preflight_receipt(
+    *,
+    chain: AuditChainStore,
+    adapter: str,
+    binary: str,
+    installed_version: str | None,
+    floor: str | None,
+    advisory_id: str | None,
+    verdict: str,
+    blocked: bool,
+    policy: str,
+    floor_map_hash: str,
+    receipt_sha256: str,
+    actor: str = "spawner",
+) -> AuditEvent:
+    """Append an ``adapter.spawn_preflight_receipt`` event into *chain* (#2515).
+
+    Mirrors one spawn-time security-floor decision into the HMAC chain: the
+    probed adapter, the installed upstream version, the minimum-safe floor, the
+    advisory id, the enforcement policy, the floor map's content hash, and the
+    content hash of the sealed receipt. Permits carry the verdict too, so a
+    verifier holding a contiguous chain slice can prove offline that no
+    below-floor adapter spawn was permitted during a window -- a refusal-only
+    record would prove nothing about the windows in between. Because the
+    receipt pins the floor map's content hash, a floor map mutated after the
+    fact is caught at verification as a hash mismatch.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        adapter: Adapter registry key probed.
+        binary: Binary name the floor was probed from.
+        installed_version: Parsed upstream version, or ``None`` when unknown.
+        floor: The minimum-safe floor, or ``None`` when the adapter is
+            untracked.
+        advisory_id: Bernstein-local advisory id, or ``None`` when untracked.
+        verdict: ``permit`` / ``refuse`` / ``warn_override`` /
+            ``unknown_version``.
+        blocked: Whether the spawn was refused.
+        policy: Enforcement policy in force (``block`` / ``warn``).
+        floor_map_hash: Content hash of the floor map at decision time.
+        receipt_sha256: Content hash of the canonical receipt bytes.
+        actor: Recorded actor; defaults to ``"spawner"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADAPTER_SPAWN_PREFLIGHT,
+        actor=actor,
+        resource_type="adapter_spawn_preflight",
+        resource_id=adapter,
+        details={
+            "adapter": adapter,
+            "binary": binary,
+            "installed_version": installed_version,
+            "floor": floor,
+            "advisory_id": advisory_id,
+            "verdict": verdict,
+            "blocked": blocked,
+            "policy": policy,
+            "floor_map_hash": floor_map_hash,
+            "receipt_sha256": receipt_sha256,
+        },
+    )
+
+
+def record_adapter_version_posture_receipt(
+    *,
+    chain: AuditChainStore,
+    receipt_sha256: str,
+    floor_map_hash: str,
+    entries: list[dict[str, Any]],
+    actor: str = "doctor",
+) -> AuditEvent:
+    """Append an ``adapter.version_posture`` event into *chain* (#2515).
+
+    Mirrors one ``bernstein doctor`` version-posture snapshot into the HMAC
+    chain: the content hash of the sealed posture receipt, the floor map's
+    content hash, and a compact per-adapter verdict summary. Turning the
+    doctor's version posture from console text into a chain-anchored receipt
+    makes "only floor-satisfying binaries were spawnable in this environment
+    during window X" provable offline from a contiguous chain slice.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_sha256: Content hash of the canonical posture-receipt bytes.
+        floor_map_hash: Content hash of the floor map at snapshot time.
+        entries: Per-adapter posture rows (adapter, installed_version, floor,
+            advisory_id, verdict). Copied into the event details.
+        actor: Recorded actor; defaults to ``"doctor"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADAPTER_VERSION_POSTURE,
+        actor=actor,
+        resource_type="adapter_version_posture",
+        resource_id=receipt_sha256,
+        details={
+            "receipt_sha256": receipt_sha256,
+            "floor_map_hash": floor_map_hash,
+            "entries": [dict(entry) for entry in entries],
+        },
+    )
+
+
+def record_adapter_floor_update_receipt(
+    *,
+    chain: AuditChainStore,
+    receipt_sha256: str,
+    old_floor_map_hash: str,
+    new_floor_map_hash: str,
+    diff: dict[str, Any],
+    actor: str = "floor_refresh",
+) -> AuditEvent:
+    """Append an ``adapter.floor_update_receipt`` event into *chain* (#2515).
+
+    Mirrors one security-floor map refresh into the HMAC chain: the content
+    hash of the sealed update receipt, the old and new floor-map content
+    hashes, and the data-only diff. A floor bump becomes an attested event, so
+    a reviewer can prove offline which floor map was in force when a
+    spawn-preflight or version-posture receipt (which pin the same content
+    hash) was recorded.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_sha256: Content hash of the canonical update-receipt bytes.
+        old_floor_map_hash: Content hash of the floor map before the bump.
+        new_floor_map_hash: Content hash of the floor map after the bump.
+        diff: The data-only diff (added / removed / changed).
+        actor: Recorded actor; defaults to ``"floor_refresh"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ADAPTER_FLOOR_UPDATE,
+        actor=actor,
+        resource_type="adapter_floor_update",
+        resource_id=receipt_sha256,
+        details={
+            "receipt_sha256": receipt_sha256,
+            "old_floor_map_hash": old_floor_map_hash,
+            "new_floor_map_hash": new_floor_map_hash,
+            "diff": diff,
+        },
+    )
+
+
 def record_process_reap_receipt(
     *,
     chain: AuditChainStore,
@@ -3356,6 +3539,9 @@ __all__ = [
     "EVENT_A2A_MESSAGE_RECEIPT",
     "EVENT_ACTIVITY_RESULT",
     "EVENT_ADAPTER_CANARY_RECEIPT",
+    "EVENT_ADAPTER_FLOOR_UPDATE",
+    "EVENT_ADAPTER_SPAWN_PREFLIGHT",
+    "EVENT_ADAPTER_VERSION_POSTURE",
     "EVENT_CHECKPOINT_RETRY",
     "EVENT_COMPACTION_RECEIPT",
     "EVENT_COMPACTION_SENSITIVE_GATE",
@@ -3415,6 +3601,9 @@ __all__ = [
     "record_a2a_message_receipt",
     "record_activity_result",
     "record_adapter_canary_receipt",
+    "record_adapter_floor_update_receipt",
+    "record_adapter_spawn_preflight_receipt",
+    "record_adapter_version_posture_receipt",
     "record_checkpoint_retry",
     "record_cost_batch_route",
     "record_cost_dispatch_receipt",
