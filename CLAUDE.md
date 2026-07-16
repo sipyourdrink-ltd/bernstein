@@ -246,6 +246,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `ab_runner.py`            | A/B runner primitive - deterministic prompt-vs-prompt comparison |
 | `baseline.py`             | Baseline tracking for eval-gated evolution |
 | `calibration.py`          | Calibration log + Brier score for router and judge decisions |
+| `gate_receipt.py`         | Signed verdict receipts for statistical eval gating (#2520) |
 | `golden.py`               | Golden benchmark suite - curated tasks for eval |
 | `harness.py`              | Eval harness - multiplicative scoring, LLM judge, failure taxonomy |
 | `incident_synthesizer.py` | Convert dead-letter and post-mortem incidents into regression eval cases |
@@ -254,8 +255,10 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `pentest_consensus.py`    | Consensus aggregation for the multi-adapter pentest fan-out |
 | `pentest_runner.py`       | Driver that runs the ``security-pentest`` scenario end-to-end |
 | `pentest_scorer.py`       | Precision and recall scorer for security pentest eval scenario |
+| `promotion.py`            | Deterministic stage promotion and revocation for eval gating (#2520) |
 | `scenario_generator.py`   | Forward-looking synthetic scenario generator |
 | `scenario_runner.py`      | Scenario runner - execute YAML-defined eval scenarios against the live codebase |
+| `significance.py`         | Exact statistics for eval gate verdicts (#2520) |
 | `taxonomy.py`             | Failure taxonomy - classify every eval failure into a closed set |
 | `telemetry.py`            | Telemetry contract - strict schema for agent output metadata |
 | `vcr_fixture.py`          | VCR fixture pattern - dehydrate/hydrate deterministic test fixtures (T805) |
