@@ -41,7 +41,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
@@ -238,6 +238,12 @@ class EscalationReceipt:
         signature: Ed25519 detached signature over the canonical binding.
         journal_entry_hash: The escalation-spine entry hash anchoring the
             receipt.
+        extra_binding: Optional additive payload folded into the signed and
+            anchored binding. ``None`` (the default) preserves byte-identical
+            bindings for stall receipts; the intent-drift monitor (#2514)
+            populates it with ``{kind, capsule_hash, verdict_hash,
+            divergent_events}`` so one receipt shape covers both stalls and
+            drift.
     """
 
     run_id: str
@@ -256,6 +262,7 @@ class EscalationReceipt:
     signer_public_key_pem: str = ""
     signature: str = ""
     journal_entry_hash: str = ""
+    extra_binding: dict[str, Any] | None = None
 
     @property
     def receipt_id(self) -> str:
@@ -267,8 +274,13 @@ class EscalationReceipt:
         return hashlib.sha256(self.to_canonical_bytes()).hexdigest()[:32]
 
     def _binding(self) -> dict[str, Any]:
-        """Return the signed + anchored binding (no signature / anchor)."""
-        return {
+        """Return the signed + anchored binding (no signature / anchor).
+
+        ``extra_binding`` is included only when non-``None`` so a stall receipt
+        (the common case) produces byte-identical bindings to prior releases;
+        the key appears only for receipts that carry an additive payload.
+        """
+        binding: dict[str, Any] = {
             "v": ESCALATION_SCHEMA_VERSION,
             "run_id": self.run_id,
             "worker_id": self.worker_id,
@@ -284,6 +296,9 @@ class EscalationReceipt:
             "install_rev": self.install_rev,
             "timestamp": self.timestamp,
         }
+        if self.extra_binding is not None:
+            binding["extra_binding"] = self.extra_binding
+        return binding
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes (signed + spine-hashed)."""
@@ -301,6 +316,10 @@ class EscalationReceipt:
         row = json.loads(raw)
         fork_raw = row.get("fork_ref")
         fork_ref = ForkRef.from_dict(fork_raw) if isinstance(fork_raw, dict) else None
+        extra_raw = row.get("extra_binding")
+        extra_binding: dict[str, Any] | None = (
+            cast("dict[str, Any]", extra_raw) if isinstance(extra_raw, dict) else None
+        )
         return cls(
             run_id=str(row["run_id"]),
             worker_id=str(row["worker_id"]),
@@ -318,6 +337,7 @@ class EscalationReceipt:
             signer_public_key_pem=str(row.get("signer_public_key_pem", "")),
             signature=str(row.get("signature", "")),
             journal_entry_hash=str(row.get("journal_entry_hash", "")),
+            extra_binding=extra_binding,
         )
 
 
@@ -384,6 +404,7 @@ def assemble_escalation_receipt(
     window: int = DEFAULT_ESCALATION_WINDOW,
     install_rev: str = "",
     timestamp: int,
+    extra_binding: dict[str, Any] | None = None,
 ) -> EscalationReceipt:
     """Assemble a signed, journal-anchored escalation receipt for a stall.
 
@@ -411,6 +432,10 @@ def assemble_escalation_receipt(
             assemblies of the same journal prefix bind the same window.
         install_rev: Passive install fingerprint recorded for attribution.
         timestamp: Integer timestamp for the receipt (keyword-only).
+        extra_binding: Optional additive payload folded into the signed and
+            anchored binding. ``None`` keeps stall receipts byte-identical to
+            prior releases; the intent-drift monitor (#2514) supplies the
+            capsule hash, verdict hash, and divergent events here.
 
     Returns:
         The signed, anchored :class:`EscalationReceipt`.
@@ -452,6 +477,7 @@ def assemble_escalation_receipt(
         fork_ref=fork_ref,
         install_rev=install_rev,
         timestamp=timestamp,
+        extra_binding=extra_binding,
     )
     payload = unsigned.to_canonical_bytes()
     signature = sign_payload(payload, private_key_pem)
@@ -484,6 +510,7 @@ def assemble_escalation_receipt(
         signer_public_key_pem=public_key_pem,
         signature=signature,
         journal_entry_hash=anchor,
+        extra_binding=unsigned.extra_binding,
     )
     path = receipt_path(sdd_dir, anchored.receipt_id)
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -539,6 +539,26 @@ EVENT_ADAPTER_VERSION_POSTURE = "adapter.version_posture"
 #: content hash) was recorded, before and after the bump.
 EVENT_ADAPTER_FLOOR_UPDATE = "adapter.floor_update_receipt"
 
+#: Issue #2514 -- emitted at plan-approval time when the approved goal is
+#: compiled into an intent capsule and written to the chain. The event binds
+#: ``{task_id, plan_id, run_id, capsule_hash, goal_digest,
+#: allowed_action_classes_hash, expiry_ts}`` so a verifier can prove, from the
+#: chain alone, that a worker's run was governed by a capsule the operator
+#: signed off on -- and that the on-disk capsule bytes still hash to the
+#: chain-recorded ``capsule_hash`` (a tampered capsule diverges). Only hashes
+#: and identifiers are recorded -- never the goal text (bound by digest).
+EVENT_INTENT_CAPSULE = "intent.capsule"
+
+#: Issue #2514 -- emitted when the deterministic drift monitor detects an action
+#: class outside the approved capsule and emits a signed escalation receipt. The
+#: event mirrors ``{task_id, capsule_hash, verdict_hash, divergent_count,
+#: escalation_journal_entry_hash}`` into the chain so an operator can prove, from
+#: the chain alone, that a drift escalation was emitted against a named capsule
+#: with a given deterministic verdict. The divergent events themselves live in
+#: the run journal and the signed escalation receipt; this event records only
+#: their identity.
+EVENT_INTENT_DRIFT = "intent.drift"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1847,6 +1867,106 @@ def record_escalation_receipt(
             "window_size": window_size,
             "fork_snapshot_sha": fork_snapshot_sha,
             "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_intent_capsule(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    plan_id: str,
+    run_id: str,
+    capsule_hash: str,
+    goal_digest: str,
+    allowed_action_classes_hash: str,
+    expiry_ts: int,
+    actor: str = "intent_capsule",
+) -> AuditEvent:
+    """Append an ``intent.capsule`` event into *chain* (#2514).
+
+    Records the approved goal's intent capsule identity into the HMAC chain at
+    approval time so every subsequent journal step is attributable to one
+    approved capsule. Only hashes and identifiers are recorded -- never the goal
+    text (bound by ``goal_digest``). A verifier recomputes the on-disk capsule's
+    hash and checks it against ``capsule_hash`` here; a tampered capsule
+    diverges.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task the capsule governs.
+        plan_id: The approved plan the capsule compiled from.
+        run_id: The run whose journal the capsule is bound into.
+        capsule_hash: ``sha256:`` content hash of the canonical capsule bytes.
+        goal_digest: ``sha256:`` digest of the approved goal text.
+        allowed_action_classes_hash: Compact commit to the capsule's allow-list.
+        expiry_ts: Integer Unix timestamp after which the capsule is stale.
+        actor: Recorded actor; defaults to ``"intent_capsule"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_INTENT_CAPSULE,
+        actor=actor,
+        resource_type="intent_capsule",
+        resource_id=capsule_hash,
+        details={
+            "task_id": task_id,
+            "plan_id": plan_id,
+            "run_id": run_id,
+            "capsule_hash": capsule_hash,
+            "goal_digest": goal_digest,
+            "allowed_action_classes_hash": allowed_action_classes_hash,
+            "expiry_ts": expiry_ts,
+        },
+    )
+
+
+def record_intent_drift(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    capsule_hash: str,
+    verdict_hash: str,
+    divergent_count: int,
+    escalation_journal_entry_hash: str,
+    actor: str = "intent_drift",
+) -> AuditEvent:
+    """Append an ``intent.drift`` event into *chain* (#2514).
+
+    Mirrors a signed drift escalation's identity into the HMAC chain so an
+    operator can prove, from the chain alone, that a drift escalation was
+    emitted against a named capsule with a given deterministic verdict. The
+    divergent events live in the run journal and the escalation receipt; this
+    event records only their identity.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task whose run drifted.
+        capsule_hash: ``sha256:`` content hash of the violated capsule.
+        verdict_hash: The deterministic conformance verdict hash.
+        divergent_count: Number of divergent journal steps.
+        escalation_journal_entry_hash: The escalation-spine anchor of the signed
+            drift receipt.
+        actor: Recorded actor; defaults to ``"intent_drift"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_INTENT_DRIFT,
+        actor=actor,
+        resource_type="intent_drift",
+        resource_id=capsule_hash,
+        details={
+            "task_id": task_id,
+            "capsule_hash": capsule_hash,
+            "verdict_hash": verdict_hash,
+            "divergent_count": divergent_count,
+            "escalation_journal_entry_hash": escalation_journal_entry_hash,
         },
     )
 
@@ -3565,6 +3685,8 @@ __all__ = [
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
     "EVENT_GOVERNANCE_DECISION",
+    "EVENT_INTENT_CAPSULE",
+    "EVENT_INTENT_DRIFT",
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
     "EVENT_MCP_STATELESS_CALL",
@@ -3625,6 +3747,8 @@ __all__ = [
     "record_fork_snapshot",
     "record_gate_adjudication",
     "record_governance_decision",
+    "record_intent_capsule",
+    "record_intent_drift",
     "record_mandate_consent_receipt",
     "record_mandate_revocation",
     "record_mcp_stateless_call",
