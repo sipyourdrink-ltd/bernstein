@@ -50,17 +50,11 @@ look-back window (default 30 days) and runs the same classifier. Any
 PR with unresolved `must-address` findings is reported in a manifest;
 the workflow opens a consolidated follow-up PR
 (`fix(review): apply deferred review-bot findings`) carrying that
-manifest.
-
-Set `LANDING_REPO_PAT` for cross-repo writes; the workflow falls back
-to `GITHUB_TOKEN` if the PAT is absent.
+manifest. The workflow authenticates with `GITHUB_TOKEN`.
 
 ## Shepherd checklist
 
-The shepherd template that codifies the workflow for agents lives at
-`.sdd/_local/agent-prompts/shepherd-with-review.md` on the operator's
-local workspace. It is intentionally local-only so the acknowledgement
-strategy can evolve without churn against this repo. Shepherds:
+Shepherds:
 
 1. Watch CI to green.
 2. Fetch all CodeRabbit + Sourcery comments via the two `gh api`

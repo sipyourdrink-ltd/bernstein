@@ -50,7 +50,7 @@ set. `accept_inbound_task` rejects, with a distinct reason code, a card whose:
 ## Worktree isolation
 
 Each inbound peer task runs in a dedicated git worktree keyed by a session id
-derived from `task_uuid` (the f03 primitive). The worktree's isolation is
+derived from `task_uuid` (see `adapters/session_id.py`). The worktree's isolation is
 validated so its `.sdd` is a real per-worktree directory, not a symlink into the
 parent repo, so a peer cannot clobber another peer's state.
 

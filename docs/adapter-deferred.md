@@ -17,7 +17,6 @@ Verdicts are dated. Re-evaluate when the listed condition changes.
 - **SKIP** - structural reason this won't fit Bernstein's spawn model
   (web-only, in-IDE-only, gated behind a vendor account with no
   programmatic surface).
-- **PEER** - this is a peer of Bernstein, not an adapter target.
 
 ---
 
@@ -38,8 +37,7 @@ SAP BTP subaccount + entitlement. There is no free or community tier
 and no "log in with GitHub" path. SAP itself recommends the inverse
 integration (external agents calling Joule via SAP Cloud Connector +
 AI Hub), which belongs in a future MCP/skills ticket, not adapter
-code. Tracked in the internal backlog under
-`new-agent-adapters-sap-joule-and-others`.
+code.
 
 Re-evaluate when:
 
@@ -54,17 +52,16 @@ agents (Claude Code, Codex, Gemini CLI) reaching Joule that way is
 fundamentally an MCP/skills concern, not a CLIAdapter concern. When
 real demand surfaces, the venue is a new MCP catalog entry under
 `docs/integrations/` and a skill pack - not a new file under
-`src/bernstein/adapters/`. Cross-reference the same SAP Joule ticket
-above.
+`src/bernstein/adapters/`.
 
-## Tessl Framework - PEER (2026-05-06)
+## Tessl Framework - SKIP (2026-05-06)
 
-Tessl is a peer of Bernstein, not an adapter target. The `tessl` CLI
-exists, but under the hood it runs `claude-code`, `codex`, or
-`cursor` to do the actual work - it is a spec installer / agent
-harness wrapper. Wrapping it as a Bernstein adapter would mean we
-wrap a wrapper, and we'd inherit whatever process model Tessl uses
-to drive its underlying agent.
+The `tessl` CLI exists, but under the hood it runs `claude-code`,
+`codex`, or `cursor` to do the actual work - it is a spec installer /
+agent harness wrapper. Wrapping it as a Bernstein adapter would mean
+we wrap a wrapper: the adapter would inherit whatever process model
+Tessl uses to drive its underlying agent, which breaks the
+spawn-and-exit contract's assumption of a single observable process.
 
 If integration ever happens, the right venue is the planning layer:
 ingest a Tessl spec as input to a Bernstein plan, then let our own
@@ -90,16 +87,16 @@ TabbyML ships a true CLI agent that fits the spawn-and-exit model.
 ## Suna (Kortix) - DEFER (2026-05-06)
 
 Suna (Kortix, 14k+ stars, Apache 2.0) ships a `kortix` CLI with
-`start / stop / logs / status` subcommands, but it's a generalist
-agent platform - browser, files, web crawl - not a coding-focused
-CLI. The runtime is Docker-based, which is solvable, but the
-positioning overlaps almost entirely with `openhands`, which is
-already a Bernstein adapter.
+`start / stop / logs / status` subcommands - a service-manager
+surface, not a short-lived task process. It is also a generalist
+agent platform (browser, files, web crawl) rather than a
+coding-focused CLI, and the runtime is Docker-based. There is no
+single one-shot invocation whose stdout and exit code map onto task
+success or failure, which is what the spawn-and-exit adapter
+contract needs.
 
-Shipping a Suna adapter today would add another generalist option
-without giving users a coding-specific capability they don't already
-have. Re-evaluate when Suna positions itself for coding workflows
-specifically, or develops differentiation that OpenHands lacks.
+Re-evaluate when Suna ships a headless, coding-focused one-shot
+execution mode that fits the spawn-and-exit model.
 
 ## DeepSeek CLI - DEFER (2026-05-06)
 
@@ -110,12 +107,12 @@ to support means picking sides; users on a different fork would get
 broken behaviour, and we'd inherit maintenance risk for code that
 isn't ours.
 
-DeepSeek-V4 has very large reach in cost-sensitive and CN-heavy
-segments, so the demand is real - but the answer for now is to route
-DeepSeek models through the `openai_agents` runner (served natively
-via the DeepSeek API endpoint), `aider`, or `ollama`, all of which
-already work. Re-evaluate when DeepSeek ships an official CLI from the
-project itself.
+DeepSeek models are already reachable through the `openai_agents`
+runner (served natively via the DeepSeek API endpoint), `aider`, or
+`ollama`, all of which work today, so an adapter would not add a
+capability the spawn-and-exit contract does not already cover.
+Re-evaluate when DeepSeek ships an official CLI from the project
+itself.
 
 ## Phind / Pieces / Sweep - SKIP (2026-05-06)
 

@@ -69,8 +69,8 @@ supported set has pricing rows in `src/bernstein/core/cost/cost.py`:
 | `o4` | 3.00 | 12.00 | Reasoning tasks |
 
 Any other model works - Bernstein will fall back to the generic
-`_model_cost` default if pricing is missing, and SonarCloud's cost
-panels will flag the gap.
+`_model_cost` default if pricing is missing, and the model shows up
+as an unpriced row in cost reports.
 
 ---
 

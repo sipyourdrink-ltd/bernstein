@@ -113,7 +113,7 @@ Audit mode is controlled by:
 2. **Config file**: Set `audit_mode: true` in `bernstein.yaml`
 3. **Compliance preset**: `bernstein run --compliance development` (includes audit)
 
-The HMAC key is automatically generated on first use and stored in `.sdd/audit/.hmac_key`. Protect this file-it's required for verification.
+The HMAC key is automatically generated on first use. It is resolved from, in order: `BERNSTEIN_AUDIT_KEY_PATH`, then `$XDG_STATE_HOME/bernstein/audit.key`, then `~/.local/state/bernstein/audit.key`. The key lives deliberately outside `.sdd` so it is isolated from the log volume. Protect this file - it's required for verification. See ["Key management" in audit-log.md](audit-log.md#key-management).
 
 ## SOC 2 Evidence Export
 
@@ -136,7 +136,7 @@ The package includes:
 | File | Purpose |
 |------|---------|
 | `.sdd/audit/*.jsonl` | Daily audit log files |
-| `.sdd/audit/.hmac_key` | HMAC signing key |
+| `~/.local/state/bernstein/audit.key` (overridable via `BERNSTEIN_AUDIT_KEY_PATH` or `$XDG_STATE_HOME`) | HMAC signing key, kept outside `.sdd` (see [audit-log.md](audit-log.md#key-management)) |
 | `.sdd/audit/merkle/` | Merkle tree seal records |
 | `.sdd/audit/archive/` | Compressed old logs |
 | `.sdd/evidence/article12_<bundle_id>.zip` | Article 12 evidence bundle (deterministic zip with manifest, events, data catalog, clause map). |

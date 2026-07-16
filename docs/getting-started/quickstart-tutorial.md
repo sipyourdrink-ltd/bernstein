@@ -33,7 +33,7 @@ bernstein --version
 You should see something like:
 
 ```
-bernstein 2.16.1
+bernstein 3.5.0
 ```
 
 > **If you see "command not found"**: Make sure your tool bin directory is on `$PATH`.
@@ -247,10 +247,13 @@ Cost breakdown - last run
 Set a per-run budget limit in `bernstein.yaml`:
 
 ```yaml
-budget:
-  per_task_max_tokens: 100000
-  per_run_max_cost_usd: 5.00     # Hard stop if exceeded
+# Spending cap for the run. Accepts "$5", 5, or 5.0.
+budget: "$5"
 ```
+
+For a hard stop that refuses further agent spawns past the cap, configure a
+cost envelope with `hard_budget_usd` (see
+[CONFIG.md](../operations/CONFIG.md)).
 
 ---
 

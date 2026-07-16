@@ -48,8 +48,8 @@ bernstein config set lineage.strict true
 # Full chain for one artefact
 bernstein lineage chain src/payments/flow.py
 
-# Stats across the whole repo
-bernstein lineage stats
+# Walk the ancestry of one artefact
+bernstein lineage walk src/payments/flow.py
 
 # Active forks (none should exist on a clean main)
 bernstein lineage forks

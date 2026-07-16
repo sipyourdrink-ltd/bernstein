@@ -11,10 +11,9 @@ The harness lives in `src/bernstein/eval/yaml_runner.py`. The CLI surface is
 
 ## Why YAML
 
-Paid eval platforms ship the same affordances behind a $39 - $249 / seat / month
-paywall. Bernstein already had the primitives. The YAML wrapper is integration
+Bernstein already had the primitives. The YAML wrapper is integration
 glue: the spec is small enough to keep in git next to the prompts and large
-enough to reproduce a paid-tier eval suite end to end.
+enough to reproduce a full eval suite end to end, offline.
 
 ## TL;DR
 

@@ -66,8 +66,7 @@ function in a Unix-like environment:
 
 There is no built-in proxy entry. If you run behind a corporate proxy
 you probably want `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` -
-currently you have to add these as extras (see open question A4 in the
-spec).
+currently you have to add these as extras.
 
 ### Per-adapter extras
 
@@ -178,8 +177,9 @@ If a forbidden var leaks through, check:
 ### Unit-test pattern
 
 The shipped test suite (in `tests/unit/test_env_isolation.py` and the
-adapter-level Popen-spy tests) covers all 16 cases listed in the
-spec. The skeleton if you need to add an adapter:
+adapter-level Popen-spy tests) covers the base allowlist, secret
+exclusion, per-adapter extras, and per-adapter Popen pass-through
+cases. The skeleton if you need to add an adapter:
 
 ```python
 def test_my_adapter_filters_env(monkeypatch):

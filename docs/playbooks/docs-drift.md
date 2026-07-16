@@ -165,23 +165,7 @@ curl -sS https://pypistats.org/api/packages/bernstein/recent | jq .data
 
 ## Cross-repo
 
-The public website and several long-form pages live in
-`sipyourdrink-ltd/bernstein-landing`.
-These pages mirror or extend the bernstein docs; when bernstein docs change,
-the landing copy may need a follow-up edit.
-
-| Landing page | Mirrors / extends |
-|--------------|-------------------|
-| `app/cli-quickstart/page.tsx` | `README.md` install + first-run, `docs/getting-started/install.md`, `docs/getting-started/first-run.md` |
-| `app/docs/cli/page.tsx` | `README.md` operator-commands table, `docs/reference/cli/` |
-| `app/why-bernstein/page.tsx` | `README.md` "at a glance" + capabilities, `docs/whats-new.md` |
-| `app/compare/` | `docs/compare/` comparison memos |
-| Blog (`app/blog/`) | Long-form essays that may cite `docs/concepts/` or `docs/architecture/` |
-
-The CI drift gate dispatches a `docs-mirror-sync` workflow in bernstein-landing
-on every push to `main` (only if the `LANDING_REPO_PAT` secret is set). The
-landing-side workflow is responsible for opening its own follow-up PR with the
-mirrored content.
+The public website mirrors some docs pages.
 
 ## Adding a new doc
 

@@ -12,7 +12,7 @@ SOX, SOC 2 Type II, and the EU AI Act.
 * Format: append-only JSONL, one entry per line, RFC 8785 JCS canonical
   bytes.
 * The file is gitignored; operator-side WORM storage is out of scope of
-  this module (see the ticket's *Out of scope* section).
+  this module (see the *Out of scope* section below).
 
 ## Entry schema (`schema_version: 1`)
 

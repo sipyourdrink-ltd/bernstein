@@ -154,7 +154,7 @@ jobs:
       - name: Install Claude Code (or your preferred CLI agent)
         run: npm install -g @anthropic-ai/claude-code
         # Alternatively:
-        # run: pip install openai-codex
+        # run: npm install -g @openai/codex
 
       - name: Run plan
         run: |
@@ -177,7 +177,7 @@ jobs:
 
       - name: Post summary
         if: always()
-        run: bernstein report --format markdown >> $GITHUB_STEP_SUMMARY
+        run: bernstein report >> $GITHUB_STEP_SUMMARY
 ```
 
 ### Running Bernstein from a workflow
@@ -387,9 +387,11 @@ The included `docker-compose.yaml` runs a full cluster: task server, orchestrato
 ### Setup
 
 ```bash
-# Copy and edit the env file
-cp .env.example .env
-# Edit .env: set ANTHROPIC_API_KEY and BERNSTEIN_AUTH_TOKEN
+# Create the env file: set ANTHROPIC_API_KEY and BERNSTEIN_AUTH_TOKEN
+cat > .env <<'EOF'
+BERNSTEIN_AUTH_TOKEN=change-me
+ANTHROPIC_API_KEY=sk-ant-...
+EOF
 
 # Start the full stack
 docker compose up -d
@@ -779,7 +781,7 @@ server_url: http://bernstein.internal:8052
 
 ```bash
 # Submit tasks to the shared server without running a local orchestrator
-bernstein task add "Implement login page" --role frontend --priority 2
+bernstein add-task "Implement login page" --role frontend --priority 2
 bernstein status   # see what the shared server is running
 bernstein ps       # list active agents
 ```
@@ -862,7 +864,6 @@ sudo systemctl start bernstein@project-b
 | `BERNSTEIN_LOG_LEVEL` | `INFO` | Log verbosity (`DEBUG`/`INFO`/`WARNING`/`ERROR`) |
 | `BERNSTEIN_LOG_JSON` | `false` | Emit JSON log lines (for log aggregators) |
 | `BERNSTEIN_BUDGET` | - | Hard spending cap in USD |
-| `BERNSTEIN_TICK_INTERVAL` | `5` | Orchestrator tick interval in seconds |
 | `BERNSTEIN_SKIP_GATES` | - | Skip quality gates (requires `BERNSTEIN_SKIP_GATE_REASON`) |
 | `BERNSTEIN_NO_TUI` | - | Disable interactive TUI (useful in CI) |
 | `BERNSTEIN_QUIET` | - | Suppress all non-error output |
@@ -886,7 +887,7 @@ On `switch_traffic()`, the `.sdd/` symlink is atomically re-pointed at `.sdd-gre
 
 ```python
 from pathlib import Path
-from bernstein.core.blue_green import BlueGreenConfig, BlueGreenDeployment
+from bernstein.core.orchestration.blue_green import BlueGreenConfig, BlueGreenDeployment
 
 cfg = BlueGreenConfig(
     health_check_url="http://127.0.0.1:8052/status",
@@ -924,7 +925,7 @@ curl http://127.0.0.1:8053/status
 # 4. Switch traffic via the Python API or CLI
 python3 -c "
 from pathlib import Path
-from bernstein.core.blue_green import BlueGreenConfig, BlueGreenDeployment
+from bernstein.core.orchestration.blue_green import BlueGreenConfig, BlueGreenDeployment
 cfg = BlueGreenConfig(health_check_url='http://127.0.0.1:8053/status')
 BlueGreenDeployment(cfg, Path('.')).switch_traffic()
 "
@@ -1038,8 +1039,8 @@ lsof -ti:8052 | xargs kill -9
 Agents exit when they have no work or cannot authenticate. Check logs:
 
 ```bash
-bernstein logs -f                       # follow all agent output
-bernstein logs -a claude                # filter by agent name
+bernstein logs tail -f                  # follow all agent output
+bernstein logs tail -a claude           # filter by agent name
 tail -f .sdd/runtime/logs/*.log         # raw log files
 ```
 

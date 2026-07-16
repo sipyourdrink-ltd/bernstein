@@ -359,8 +359,8 @@ audit:
   archive_compressed: true
 ```
 
-Each entry in `.sdd/metrics/audit.jsonl` contains a chain hash linking it to the previous
-entry. Any insertion, deletion, or modification breaks the chain.
+Each entry in `.sdd/audit/<YYYY-MM-DD>.jsonl` (daily-rotated) contains a chain hash linking
+it to the previous entry. Any insertion, deletion, or modification breaks the chain.
 
 ### Verify audit log integrity
 

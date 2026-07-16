@@ -134,7 +134,7 @@ You see a red ALERT in `bernstein status`. What now?
 2. **Pull the recent unverified IDs.** From `bernstein status` or:
 
    ```bash
-   curl -s http://localhost:8080/status/ | jq '.verification_nudge.recent_unverified'
+   curl -s http://127.0.0.1:8052/status/ | jq '.verification_nudge.recent_unverified'
    ```
 
 3. **Spot-check one.** Pick a flagged task ID. Open its log summary

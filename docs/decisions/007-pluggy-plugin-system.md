@@ -120,7 +120,7 @@ def _safe_call(self, hook_name: str, **kwargs) -> None:
   that need to run before the default behavior.
 - **Entry point discovery.** A plugin distributed via pip just needs:
   ```toml
-  [project.entry-points."bernstein"]
+  [project.entry-points."bernstein.plugins"]
   my_plugin = "my_package:MyPlugin"
   ```
   Bernstein discovers and loads it automatically on startup.

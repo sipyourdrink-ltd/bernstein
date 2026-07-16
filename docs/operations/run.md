@@ -40,7 +40,6 @@ bernstein doctor                    # broader environment smoke test
 The capability gate uses
 `bernstein.core.agents.multimodal.is_multimodal_capable`; the
 inventory it consults is authoritative.
-(bot-ack: 3284182740 -- CodeRabbit minor.)
 
 ### Wire format
 

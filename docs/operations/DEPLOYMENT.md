@@ -17,8 +17,12 @@ This guide covers deploying Bernstein in cluster mode: Docker Compose for local/
 ### Quick start
 
 ```bash
-# 1. Copy and fill in your API keys
-cp .env.example .env
+# 1. Create .env with your auth token and API keys
+#    (full variable list in "Environment variables" below)
+cat > .env <<'EOF'
+BERNSTEIN_AUTH_TOKEN=change-me
+ANTHROPIC_API_KEY=sk-ant-...
+EOF
 $EDITOR .env
 
 # 2. Build the image and start the cluster

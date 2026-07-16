@@ -168,7 +168,7 @@ for the auditor.
 ## Expected log lines
 
 A well-configured EU-residency run emits (one per line) the following
-in `.sdd/audit/audit.jsonl`:
+in `.sdd/audit/<YYYY-MM-DD>.jsonl` (the log is daily-rotated):
 
 ```
 event=adapter.spawn adapter=ollama model=deepseek-v4-flash base_url=http://10.0.0.5:11434
@@ -185,15 +185,15 @@ event=adapter.spawn.aborted reason=RESIDENCY_VIOLATION
 ```
 
 The audit chain HMAC covers every line so a tampered log is
-detectable via `bernstein verify --memory-audit` and
+detectable via `bernstein audit verify` and
 `bernstein doctor airgap`.
 
 ## What to hand the auditor
 
 Three artefacts settle the Article-12 evidence story:
 
-1. **`.sdd/audit/audit.jsonl`** -- the residency-gate decisions for
-   the audit window, with the HMAC chain intact.
+1. **`.sdd/audit/<YYYY-MM-DD>.jsonl`** -- the residency-gate decisions
+   for the audit window (daily-rotated), with the HMAC chain intact.
 2. **`MANIFEST.customer.json`** in the deployed wheelhouse -- the
    customer countersignature plus the org cosign signature, proving
    the running code was both vendor-signed AND customer-signed.

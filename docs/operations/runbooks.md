@@ -93,7 +93,7 @@ An orchestration run is approaching or has exceeded its spending cap.
 **Runbook steps:**
 
 1. Check current spend: `GET /status` and inspect `cost_usd` in the response.
-2. Identify the highest-cost agents from `.sdd/metrics/cost_ledger.jsonl`.
+2. Identify the highest-cost agents from `.sdd/cost/ledger.jsonl`.
 3. Reduce parallelism: lower `max_agents` in `bernstein.yaml` to slow burn rate.
 4. Switch remaining tasks to cheaper models via `model_policy` overrides.
 5. If budget is already exhausted, stop the run: `bernstein stop`.

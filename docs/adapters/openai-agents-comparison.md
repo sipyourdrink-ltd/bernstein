@@ -17,7 +17,13 @@ explains when to prefer each one.
 | Mature MCP + Bernstein-native tooling | `claude` |
 | Cheapest reasonable reasoning, fast iteration | `codex` (o4-mini or gpt-5.4-mini) |
 | OpenAI Agents SDK v2 sandboxed execution with first-class tool-use | **`openai_agents`** |
-| Large-context reads (>1M tokens) | `gemini` (Gemini 3.1 Pro) |
+| Large-context reads (>1M tokens) | `gemini` (Gemini 3.1 Pro, API-key / enterprise lane) |
+
+> **Gemini lane split (June 2026).** The hosted backend behind the legacy
+> `gemini` binary's free / AI Pro / Ultra path was discontinued for
+> non-enterprise users. The `gemini` adapter covers the enterprise /
+> API-key lane only; consumer-lane operators should route through the
+> `agy` adapter instead - see [agy.md](agy.md).
 
 When both `codex` and `openai_agents` could work: pick `openai_agents`
 if you care about the SDK's sandbox providers (E2B, Modal, Docker) or
@@ -54,7 +60,7 @@ docker, E2B, Modal, Daytona, Cloudflare, Vercel, Runloop, Blaxel).
 |---------|----------|---------|----------|-----------------|
 | **Vendor** | Anthropic | OpenAI | Google | OpenAI |
 | **Transport** | Claude Code CLI | `codex` CLI | `gemini` CLI | `openai-agents` Python SDK |
-| **Extra install** | `brew install claude` | `npm install -g @openai/codex` | `npm install -g @google/generative-ai-cli` | `pip install 'bernstein[openai]'` |
+| **Extra install** | `npm install -g @anthropic-ai/claude-code` | `npm install -g @openai/codex` | `npm install -g @google/gemini-cli` | `pip install 'bernstein[openai]'` |
 | **Structured output** | JSON schema enforced | `--json` | `--output-format json` | JSONL event stream |
 | **MCP support** | First-class | No | No | Via runner manifest (Bernstein-managed servers) |
 | **Sandboxing** | CLI permission model | Full-auto only | CLI permission model | Pluggable: unix_local / docker / e2b / modal |

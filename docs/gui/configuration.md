@@ -39,7 +39,7 @@ localStorage.setItem("bernstein_token", "<value of BERNSTEIN_AUTH_TOKEN>")
 ## Theme
 
 - The SPA uses Tailwind 3 with shadcn/ui CSS variables. Light + dark are toggled by the `.dark` class on `<html>`.
-- Tokens are defined in `web/src/index.css` (Variant A - Decision-Grade Quiet Command). See `.sdd/backlog/open/frontend/design_handoff_bernstein_phase1/README.md` §3.
+- Tokens are defined in `web/src/index.css`.
 - The theme respects `prefers-color-scheme` on first load and persists the operator's explicit choice via `localStorage`.
 - `prefers-reduced-motion: reduce` disables non-essential transitions (motion spec in `web/src/lib/motion.ts`).
 

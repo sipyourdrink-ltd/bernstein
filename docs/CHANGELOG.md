@@ -152,6 +152,30 @@ All notable project changes are tracked here (code + docs).
 - Secrets broker for short-lived per-task tokens (#1605).
 - Bulk refurb auto-fix waves 1 + 2 across `src/` (#1558, #1582).
 
+### CI
+
+- **Bootstrap composite action for `astral-sh/setup-uv` (post-checkout).** Added `.github/actions/bootstrap/action.yml` wrapping `astral-sh/setup-uv` behind one pinned-SHA call. Inputs cover `python-version`, `enable-uv-cache`, `cache-key-suffix`, and a `setup-uv` toggle. The composite must be invoked AFTER `step-security/harden-runner` + `actions/checkout`, because a local composite action cannot resolve until the repository is checked out onto the runner. Each calling job inlines the harden-runner and checkout steps as before, then calls the composite for Python/uv setup. Net effect: pinned-SHA bumps for the uv setup now happen in one file instead of every job that runs uv.
+- **Install-path smoke matrix against the built wheel.** Added `install-smoke-pipx` (matrix: ubuntu-latest x macos-latest x Python 3.12 / 3.13, matching `requires-python = ">=3.12"`) and `install-smoke-uv` (leaner: ubuntu-latest + macos-latest, Python 3.12) jobs to `.github/workflows/ci.yml`. Both jobs install from the wheel produced by the `dist-size` job (never editable), then run `bernstein --version`, `bernstein --help`, and an `importlib.resources` probe against the pipx- or uv-managed interpreter to confirm `console_scripts`, entry-point loading, and `package-data` (MCP tool schemas, force-included default templates) survive the build. Wheel size is gated at 25 MB inside the smoke jobs (independent of the tighter 10 MB day-to-day ceiling enforced by `dist-size`). Both jobs are wired into the `CI gate` required-check rollup so a regression on the pipx or `uv tool install` path now blocks merge instead of surfacing through user reports. Closes the regression-coverage gap on the install path documented first in README.
+
+### Documentation
+
+- **Per-step CLI and model routing surfaced.** Added [`docs/workflows/per-step-routing.md`](workflows/per-step-routing.md) documenting the existing per-step `cli:` / `model:` / `effort:` plan fields, the surfaces that honour them, the surfaces that drop them, and a trace-based verification recipe. `templates/bernstein.yaml` now ships a commented-out per-stage override example that points at the new page. `templates/workflows/idea-to-pr.yaml` and `templates/workflows/refactor-with-tests.yaml` carry inline comments showing where operators most often want to pin different adapters or models and the plan-YAML lift to do it. The runtime support already existed (`plan_loader._parse_step` at `plan_loader.py:255-294`, `planner.py:86-96`); this PR closes the discoverability gap raised in discussion #962.
+
+## [2.2.0] - 2026-05-18
+
+### Security
+
+- **Strip invisible Unicode Tag codepoints from injected skills (spec 2026-05-17).** Public research (Feb 2026, Embrace the Red; Snyk skill-pack audit of 3,984 public files showing 36.82% with security flaws) demonstrated that invisible glyphs in the U+E0000-U+E007F Tag block are interpreted as instructions by Claude, Gemini, and Grok. Bernstein now strips every Cf-category, Tag-block, and interlinear-annotation codepoint from skill bodies before they are written into `.claude/skills/*.md` in agent worktrees. The new `bernstein.core.skills.sanitizer.strip_invisible_tags` function returns the cleaned body plus the count of stripped codepoints; the `SkillLoader` and `skills_injector` both invoke it at index time. A WARN log line plus a Prometheus counter `bernstein_skills_unicode_tags_stripped_total{source_name}` fire on every hit so operators can pinpoint a poisoned upstream source. Default ON; opt out with the hidden `--unsafe-allow-unicode-tags` CLI flag (or `BERNSTEIN_UNSAFE_ALLOW_UNICODE_TAGS=1`) only when reproducing an incident in a controlled environment.
+
+### Added - routing
+
+- **Per-task criterion profile (#1346).** Operators can now stamp a four-axis weight vector (`correctness`, `cost`, `latency`, `reversibility`) onto individual tasks to bias model selection.  Named presets (`safety-first`, `speed-first`, `balanced`, `cost-first`) ship in `templates/criterion_profiles/` and force-include into the wheel.  Inline dicts work too: `metadata['criterion_profile'] = {"correctness": 0.6, ...}`.  Surfaced via `bernstein add-task --criterion-profile <preset>`, `bernstein run --criterion-profile <preset>`, and `bernstein criterion-profile show <task_id> | list`.  Feature flag `BERNSTEIN_CRITERION_PROFILE=0` reverts to pre-existing routing.  Child tasks inherit the parent's profile unless explicitly overridden.
+
+### Changed - chat bridge
+
+- **Telegram driver simplified to a single long-poll path.** The `python-telegram-bot` v22 long-poll driver at `bernstein.core.chat.drivers.telegram` is the only Telegram driver. Configure a bot API token from `@BotFather` and a chat id; no external services. The earlier optional bridge-router architecture has been removed.
+- **Telegram notification sink simplified.** `TelegramSink` accepts a live `TelegramBridge` via `config["bridge"]` or a token string via `config["token"]` and routes through the standard long-poll path.
+
 ## [2.0.0] - Web UI
 
 Bernstein now ships a web interface. The major bump is signalling the new operator surface, not a breaking API change. v1.10.x configs, plans, adapters, audit chain, lineage, and CLI / TUI surfaces are unchanged.
@@ -180,34 +204,6 @@ Hand-curated release notes: [`docs/release-notes/v2.0.0.md`](release-notes/v2.0.
 ### Limitations (intentional)
 
 - A11y audit, dark / light theme toggle UI, mobile-responsive pass, Settings screen wiring, Fleet UI, front-end test suite, Playwright e2e - all open. See [#1262](https://github.com/sipyourdrink-ltd/bernstein/issues/1262) for contributor-welcome pointers.
-
-## Unreleased
-
-### CI
-
-- **Bootstrap composite action for `astral-sh/setup-uv` (post-checkout).** Added `.github/actions/bootstrap/action.yml` wrapping `astral-sh/setup-uv` behind one pinned-SHA call. Inputs cover `python-version`, `enable-uv-cache`, `cache-key-suffix`, and a `setup-uv` toggle. The composite must be invoked AFTER `step-security/harden-runner` + `actions/checkout`, because a local composite action cannot resolve until the repository is checked out onto the runner. Each calling job inlines the harden-runner and checkout steps as before, then calls the composite for Python/uv setup. Net effect: pinned-SHA bumps for the uv setup now happen in one file instead of every job that runs uv.
-- **Install-path smoke matrix against the built wheel.** Added `install-smoke-pipx` (matrix: ubuntu-latest x macos-latest x Python 3.12 / 3.13, matching `requires-python = ">=3.12"`) and `install-smoke-uv` (leaner: ubuntu-latest + macos-latest, Python 3.12) jobs to `.github/workflows/ci.yml`. Both jobs install from the wheel produced by the `dist-size` job (never editable), then run `bernstein --version`, `bernstein --help`, and an `importlib.resources` probe against the pipx- or uv-managed interpreter to confirm `console_scripts`, entry-point loading, and `package-data` (MCP tool schemas, force-included default templates) survive the build. Wheel size is gated at 25 MB inside the smoke jobs (independent of the tighter 10 MB day-to-day ceiling enforced by `dist-size`). Both jobs are wired into the `CI gate` required-check rollup so a regression on the pipx or `uv tool install` path now blocks merge instead of surfacing through user reports. Closes the regression-coverage gap on the install path documented first in README.
-
-### Security
-
-- **Strip invisible Unicode Tag codepoints from injected skills (spec 2026-05-17).** Public research (Feb 2026, Embrace the Red; Snyk skill-pack audit of 3,984 public files showing 36.82% with security flaws) demonstrated that invisible glyphs in the U+E0000-U+E007F Tag block are interpreted as instructions by Claude, Gemini, and Grok. Bernstein now strips every Cf-category, Tag-block, and interlinear-annotation codepoint from skill bodies before they are written into `.claude/skills/*.md` in agent worktrees. The new `bernstein.core.skills.sanitizer.strip_invisible_tags` function returns the cleaned body plus the count of stripped codepoints; the `SkillLoader` and `skills_injector` both invoke it at index time. A WARN log line plus a Prometheus counter `bernstein_skills_unicode_tags_stripped_total{source_name}` fire on every hit so operators can pinpoint a poisoned upstream source. Default ON; opt out with the hidden `--unsafe-allow-unicode-tags` CLI flag (or `BERNSTEIN_UNSAFE_ALLOW_UNICODE_TAGS=1`) only when reproducing an incident in a controlled environment.
-
-### Added - routing
-
-- **Per-task criterion profile (#1346).** Operators can now stamp a four-axis weight vector (`correctness`, `cost`, `latency`, `reversibility`) onto individual tasks to bias model selection.  Named presets (`safety-first`, `speed-first`, `balanced`, `cost-first`) ship in `templates/criterion_profiles/` and force-include into the wheel.  Inline dicts work too: `metadata['criterion_profile'] = {"correctness": 0.6, ...}`.  Surfaced via `bernstein add-task --criterion-profile <preset>`, `bernstein run --criterion-profile <preset>`, and `bernstein criterion-profile show <task_id> | list`.  Feature flag `BERNSTEIN_CRITERION_PROFILE=0` reverts to pre-existing routing.  Child tasks inherit the parent's profile unless explicitly overridden.
-
-### Changed - chat bridge
-
-- **Telegram driver simplified to a single long-poll path.** The `python-telegram-bot` v22 long-poll driver at `bernstein.core.chat.drivers.telegram` is the only Telegram driver. Configure a bot API token from `@BotFather` and a chat id; no external services. The earlier optional bridge-router architecture has been removed.
-- **Telegram notification sink simplified.** `TelegramSink` accepts a live `TelegramBridge` via `config["bridge"]` or a token string via `config["token"]` and routes through the standard long-poll path.
-
-### Repo hygiene
-
-- **Worktree-debris cleanup (2026-05-17).** Reaped 50 stale parent-level `bernstein-wt-*` worktrees plus `bernstein-audit-6e` (hireex/rebirth worktree on a bernstein-named path). Every branch tip was tag-rescued under `rescue/<branch>-20260517T152307Z` and pushed to origin before the worktree was force-removed and the local branch deleted. Three active-agent worktrees were preserved (`bernstein-wt-fix-determine-changes`, `bernstein-wt-fix-reviewer-prompts`, `bernstein-wt-syn-gitlab`). `git worktree list` is back to canonical: the main checkout plus the in-repo `.claude/worktrees/` registry.
-
-### Documentation
-
-- **Per-step CLI and model routing surfaced.** Added [`docs/workflows/per-step-routing.md`](workflows/per-step-routing.md) documenting the existing per-step `cli:` / `model:` / `effort:` plan fields, the surfaces that honour them, the surfaces that drop them, and a trace-based verification recipe. `templates/bernstein.yaml` now ships a commented-out per-stage override example that points at the new page. `templates/workflows/idea-to-pr.yaml` and `templates/workflows/refactor-with-tests.yaml` carry inline comments showing where operators most often want to pin different adapters or models and the plan-YAML lift to do it. The runtime support already existed (`plan_loader._parse_step` at `plan_loader.py:255-294`, `planner.py:86-96`); this PR closes the discoverability gap raised in discussion #962.
 
 ## [1.10.1] - 2026-05-07
 

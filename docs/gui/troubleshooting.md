@@ -96,7 +96,7 @@ Symptoms: navigation succeeds, page renders blank, no obvious error in the termi
 - The dark/light toggle flips the `.dark` class on `<html>`. Verify in DevTools Elements that `<html class="dark">` is present (or absent) when you click the toggle.
 - If the class flips but colors stay light, `web/src/index.css` was not loaded - confirm `<link rel="stylesheet" …>` resolves to `/ui/assets/index-*.css`.
 - If the page never honors `prefers-color-scheme`, check that the operator hasn't pinned a theme via `localStorage.theme` - clear it to fall back to system.
-- Token definitions: `web/src/index.css`. Source: `.sdd/backlog/open/frontend/design_handoff_bernstein_phase1/README.md` §3.
+- Token definitions: `web/src/index.css`.
 
 ## Sidebar Approvals badge stuck at zero
 

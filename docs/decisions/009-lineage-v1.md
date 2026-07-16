@@ -12,7 +12,7 @@
 
 ✅ **Solution shape.** Append-only content-addressed lineage log per artefact + Ed25519-signed entries + Sigstore-style transparency model. Compatible with A2A v1.0, MCP, EU AI Act Article 12.
 
-✅ **Wrappers that make it sell.** `bernstein compliance pack` (one-command Article 12 evidence bundle) + `bernstein-verify` (standalone auditor CLI, no Bernstein install needed) + 3 reference demos (fintech / healthcare / EU manufacturer).
+✅ **Operator surfaces.** `bernstein compliance pack` (one-command Article 12 evidence bundle) + `bernstein-verify` (standalone auditor CLI, no Bernstein install needed) + 3 reference demos (fintech / healthcare / EU manufacturer).
 
 ⏳ **Build mode.** 5 parallel worktree agents under one steward branch `feat/lineage-v1`. Wall-clock target: 3-4 days dispatch + integration.
 
@@ -260,7 +260,7 @@ MCP exposure is gated by `bernstein.lineage.mcp.enabled` config (default `false`
 
 ---
 
-## 8. Compliance pack (the killer feature for B2B)
+## 8. Compliance pack
 
 ### 8.1 Command
 
@@ -291,7 +291,7 @@ A compliance officer at a regulated company can:
 2. Run `bernstein-verify pack ./acme-compliance-2026-q2.zip` on their air-gapped laptop.
 3. Get a one-line PASS/FAIL plus a structured report mapped to Article 12 paragraph numbers.
 
-This is the **artifact** that closes a procurement loop. Without it, lineage is invisible to the buyer.
+The pack is the artifact that makes lineage independently checkable: without it, verification requires access to the producing repository.
 
 ### 8.4 Pack format versions and on-disk byte binding (#1871)
 
@@ -476,7 +476,7 @@ Steward writes `src/bernstein/core/lineage/entry.py` first (just the schema + JC
 
 ### 13.2 Phase 1 - parallel fan-out (A, B, C, D, E all simultaneously)
 
-Each agent gets a focused prompt + the schema file + this design doc. They run in parallel via `Agent` tool with `run_in_background: true`.
+Each agent gets a focused prompt + the schema file + this design doc. Agents are dispatched in parallel worktrees.
 
 ### 13.3 Phase 2 - Steward merge
 
@@ -492,36 +492,20 @@ PR runs full CI matrix (we already have it from bughunt). Once green: merge → 
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| EU AI Act deferred to Dec 2027 (Omnibus) | 0.40 | Drops compliance urgency by 12mo | Pitch SOC2 + ISO 42001 angles as fallback |
-| GitHub Agent HQ ships native lineage in Q3 2026 | 0.30 | Subsumed | Differentiate via local-first + multi-vendor + open format |
-| Sigstore-style is too complex to operate | 0.25 | Adoption stalls | The `compliance pack` is the simple surface; complexity hidden |
-| AAIF publishes competing standard | 0.20 | Our format is outlier | Use A2A v1.0 + RFC 7515 + RFC 8785 → already in the standards camp |
-| Performance regression: 10k writes too slow | 0.15 | UX issue | Perf tests in §12.5; batch fsync; async store flush |
-| Operator key rotation breaks chain | 0.15 | Audit-chain HMAC mismatches (we've seen this) | Document rotation procedure; ship `bernstein lineage rotate-hmac` helper |
-| Steward becomes single point of failure | 0.10 | Merges blocked | Multiple Steward agents allowed; policy allowlist |
+| EU AI Act Article 12 enforcement timeline shifts | Medium | Compliance-driven adoption arrives later | The evidence format is standards-based (RFC 7515/8785, SLSA-style manifest), so the same bundle serves SOC 2 and ISO 42001 audits |
+| Sigstore-style is too complex to operate | Medium | Adoption stalls | The `compliance pack` is the simple surface; complexity hidden |
+| Performance regression: 10k writes too slow | Low | UX issue | Perf tests in §12.5; batch fsync; async store flush |
+| Operator key rotation breaks chain | Low | Audit-chain HMAC mismatches (we've seen this) | Document rotation procedure; ship `bernstein lineage rotate-hmac` helper |
+| Steward becomes single point of failure | Low | Merges blocked | Multiple Steward agents allowed; policy allowlist |
 
 ---
 
-## 15. Success metrics (what tells us we won)
-
-### 15.1 Build-time
+## 15. Acceptance criteria
 
 - ✅ All tests pass (unit + property + mutation ≥75% + e2e + adversarial).
 - ✅ CI gate runs in <30s on typical PR.
 - ✅ Compliance pack for 10k entries generates in <10s.
 - ✅ bernstein-verify works in air-gap, no-bernstein-install scenario.
-
-### 15.2 Adoption (3-9 month horizon, per MPP scenario tree)
-
-- **S1 success indicator**: ≥1 design partner cites Article 12 evidence as procurement-unblocker. Target: 1 by end of Q3 2026.
-- **S2 success indicator**: ≥3 security blogs / Hacker News front page coverage citing the verify CLI. Target: 1 within 60 days of release.
-- **S3 fallback**: ≥1 OWASP / SLSA reference / talk submission accepted. Target: by end of 2026.
-
-### 15.3 Kill criteria
-
-If by end of Q3 2026:
-- No design partner conversation cites lineage as differentiator → reassess; pivot to cost-attribution feature.
-- Major platform ships equivalent → narrow to multi-vendor / on-prem niche.
 
 ---
 
@@ -536,12 +520,6 @@ If by end of Q3 2026:
 
 ## 17. References
 
-- `agentic_systems_v2.md` §3 Memory architecture (multi-agent shared memory unsolved problem)
-- `agentic_systems_v2.md` §f Enterprise governance (HMAC + signed audit pattern)
-- `agentic_systems_v2.md` Stage 0 §5 (HMAC audit envelope + signed Agent Card from day 1)
-- `software_development_v2.md` §2.4 (SLSA v1.0, Sigstore, SBOMs, signing)
-- `software_development_v2.md` §2.3 (fitness functions)
-- `software_development_v2.md` §3 phase 6 (property-based testing, mutation testing)
 - RFC 7515 JWS, RFC 7517 JWK, RFC 8785 JCS
 - A2A v1.0 Agent Card spec
 - Sigstore Rekor transparency log
