@@ -1,6 +1,6 @@
 ---
 title: Zero-cost playground
-description: Use bernstein run --idle plus the bernstein_playground sibling repo to develop the GUI without burning LLM tokens.
+description: Use bernstein run --idle plus a sibling fixture directory to develop the GUI without burning LLM tokens.
 tags:
   - gui
   - dev
@@ -18,10 +18,12 @@ The mock adapter (`src/bernstein/adapters/mock.py`) supports an **idle mode** th
 ## Layout
 
 ```
-~/IdeaProjects/personal_projects/
-├── bernstein/                  ← this repo (source)
-└── bernstein_playground/       ← sibling fixture repo (mock state lives here)
+<your workspace>/
+├── bernstein/             ← this repo (source checkout)
+└── bernstein-playground/   ← sibling fixture directory (mock state lives here)
 ```
+
+The fixture directory is any empty directory next to your checkout: `mkdir ../bernstein-playground` is enough. `bernstein init` inside it creates the runtime state on first run.
 
 The playground is a separate working tree so the mock orchestration writes to its own `.sdd/` and never pollutes the source repo's runtime state.
 
@@ -32,7 +34,7 @@ Two terminals.
 ### Terminal 1 - mock orchestration
 
 ```bash
-cd ~/IdeaProjects/personal_projects/bernstein_playground
+cd ../bernstein-playground
 bernstein run --idle
 ```
 
@@ -46,7 +48,7 @@ Effect:
 ### Terminal 2 - Vite dev server with HMR
 
 ```bash
-cd ~/IdeaProjects/personal_projects/bernstein/web
+cd <your checkout>/bernstein/web
 npm install        # first time
 npm run dev
 ```
