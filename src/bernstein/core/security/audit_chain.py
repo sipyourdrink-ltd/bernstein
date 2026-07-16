@@ -1461,6 +1461,47 @@ def record_mcp_stateless_call(
     )
 
 
+def reconstruct_mcp_call_order(*, chain: AuditChainStore, run_id: str) -> list[dict[str, Any]]:
+    """Rebuild a run's ordered MCP call sequence purely from chain entries.
+
+    With the protocol session stores deleted (issue #2506) the audit chain is
+    the only authority on MCP call ordering. The chain is verified first, so
+    a tampered ``mcp.stateless_call`` entry fails at exactly that entry (the
+    underlying verifier names the file and line); the surviving entries are
+    then projected into their recorded ``call_index`` order and the sequence
+    is checked for gaps and duplicates.
+
+    Args:
+        chain: The audit chain store holding the run's entries.
+        run_id: The run whose call ordering to reconstruct.
+
+    Returns:
+        The ordered list of ``mcp.stateless_call`` detail payloads for the
+        run (empty when the run recorded no MCP calls).
+
+    Raises:
+        ValueError: When chain verification fails (the message carries the
+            verifier's per-entry errors) or when the recorded ``call_index``
+            sequence has a gap or duplicate.
+    """
+    ok, errors = chain.verify()
+    if not ok:
+        msg = "audit chain verification failed: " + "; ".join(errors)
+        raise ValueError(msg)
+
+    details = [
+        event.details
+        for event in chain.query(event_type=EVENT_MCP_STATELESS_CALL)
+        if str(event.details.get("run_id", "")) == run_id
+    ]
+    ordered = sorted(details, key=lambda d: int(d.get("call_index", -1)))
+    indexes = [int(d.get("call_index", -1)) for d in ordered]
+    if indexes != list(range(len(indexes))):
+        msg = f"mcp.stateless_call ordering for run {run_id!r} is not contiguous: call_index sequence {indexes}"
+        raise ValueError(msg)
+    return ordered
+
+
 def record_subagent_delegation(
     *,
     chain: AuditChainStore,
@@ -3171,6 +3212,7 @@ __all__ = [
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
     "ThreadApprovalDetails",
+    "reconstruct_mcp_call_order",
     "record_a2a_message_receipt",
     "record_activity_result",
     "record_adapter_canary_receipt",

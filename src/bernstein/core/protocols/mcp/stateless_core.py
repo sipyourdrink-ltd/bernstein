@@ -53,21 +53,28 @@ import base64
 import binascii
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 __all__ = [
     "DEPRECATED_CAPABILITIES",
+    "DEPRECATION_DATE",
+    "LEGACY_SESSION_HEADER",
+    "REMOVAL_DATE",
     "SHIM_WINDOW_MONTHS",
     "CacheDirective",
     "CacheReference",
     "InputRequiredResult",
     "StatelessCallRecord",
+    "anchor_stateless_call",
     "build_request_meta",
     "compat_shim_active",
     "decode_request_state",
@@ -75,7 +82,10 @@ __all__ = [
     "derive_trace_id",
     "encode_request_state",
     "format_traceparent",
+    "legacy_session_header_value",
+    "months_since_deprecation",
     "record_mcp_call_in_journal",
+    "request_span_id",
     "resolve_sampling_in_orchestrator",
 ]
 
@@ -83,13 +93,28 @@ __all__ = [
 #: calls lives in the journal chain rather than a session store (AC4).
 JOURNAL_EVENT_MCP_CALL = "mcp.stateless_call"
 
-#: Capabilities deprecated by the stateless spec revision. Kept behind a
-#: compatibility shim so existing peers do not break during the window.
-DEPRECATED_CAPABILITIES: frozenset[str] = frozenset({"roots", "sampling", "logging"})
+#: Protocol features deprecated by the stateless spec revision. Roots,
+#: Sampling, and Logging are deprecated capabilities; ``sessions`` covers the
+#: removed protocol-session lifecycle (the ``Mcp-Session-Id`` round-trip).
+#: All of them are honoured only behind the compatibility shim.
+DEPRECATED_CAPABILITIES: frozenset[str] = frozenset({"roots", "sampling", "logging", "sessions"})
 
 #: Length of the backward-compatibility shim for deprecated capabilities.
 #: The spec deprecates them; we honour them for one year and then refuse.
 SHIM_WINDOW_MONTHS: int = 12
+
+#: The stateless spec revision that removes the ``initialize`` handshake and
+#: protocol sessions. Deprecated features are shimmed from this date.
+DEPRECATION_DATE: date = date(2026, 7, 28)
+
+#: Explicit removal date for shimmed features: ``SHIM_WINDOW_MONTHS`` after
+#: the deprecating revision. From this date the legacy surfaces are refused.
+REMOVAL_DATE: date = date(2027, 7, 28)
+
+#: Wire name of the removed protocol-session header. This module is the only
+#: sanctioned home for the token; transports import the constant so a
+#: repo-wide guard can assert no other MCP wire path names it.
+LEGACY_SESSION_HEADER: str = "mcp-session-id"
 
 #: W3C Trace Context version prefix and sampled-flag suffix. We always emit
 #: version ``00`` with the ``sampled`` flag set so a downstream collector
@@ -397,13 +422,40 @@ class CacheReference:
 def compat_shim_active(capability: str, *, months_since_deprecation: int) -> bool:
     """Whether the compatibility shim still honours a deprecated capability.
 
-    Roots, Sampling, and Logging are deprecated by the stateless spec but
-    kept working for a 12-month window. A capability that was never
-    deprecated is never shimmed.
+    Roots, Sampling, Logging, and protocol sessions are deprecated by the
+    stateless spec but kept working for a 12-month window ending at
+    :data:`REMOVAL_DATE`. A capability that was never deprecated is never
+    shimmed.
     """
     if capability not in DEPRECATED_CAPABILITIES:
         return False
     return months_since_deprecation < SHIM_WINDOW_MONTHS
+
+
+def months_since_deprecation(today: date | None = None) -> int:
+    """Return whole months elapsed since :data:`DEPRECATION_DATE` (min 0).
+
+    Feed the result into :func:`compat_shim_active` to evaluate the shim
+    window against wall-clock time. Days before a full month has elapsed do
+    not count, so the shim expires exactly at :data:`REMOVAL_DATE`.
+    """
+    current = today if today is not None else date.today()
+    months = (current.year - DEPRECATION_DATE.year) * 12 + (current.month - DEPRECATION_DATE.month)
+    if current.day < DEPRECATION_DATE.day:
+        months -= 1
+    return max(0, months)
+
+
+def legacy_session_header_value(headers: Mapping[str, str]) -> str | None:
+    """Return the legacy protocol-session header value, if a client sent one.
+
+    Case-insensitive lookup. The value is only ever inspected to decide the
+    shim response; it is never stored and never echoed back.
+    """
+    for name, value in headers.items():
+        if name.lower() == LEGACY_SESSION_HEADER:
+            return value
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -468,3 +520,140 @@ def record_mcp_call_in_journal(journal: EventJournal, record: StatelessCallRecor
     session-anchored (AC4).
     """
     journal.record(JOURNAL_EVENT_MCP_CALL, **record.to_journal_payload())
+
+
+# ---------------------------------------------------------------------------
+# Server-side call identity and anchoring (issue #2506)
+# ---------------------------------------------------------------------------
+
+
+def _params_without_meta(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``params`` with the ``_meta`` envelope removed."""
+    return {key: value for key, value in params.items() if key != "_meta"}
+
+
+def _meta_of(params: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return the ``_meta`` mapping of a request's params (empty if absent)."""
+    meta = params.get("_meta")
+    return meta if isinstance(meta, Mapping) else {}
+
+
+def _ids_from_traceparent(meta: Mapping[str, Any]) -> tuple[str, str]:
+    """Return ``(trace_id, span_id)`` parsed from ``_meta.traceparent``.
+
+    Returns empty strings when the header is absent or malformed, so the
+    caller can fall back to server-side content derivation.
+    """
+    parts = str(meta.get("traceparent", "")).split("-")
+    if len(parts) == 4 and parts[1] and parts[2]:
+        return parts[1], parts[2]
+    return "", ""
+
+
+def _call_index_from_baggage(meta: Mapping[str, Any]) -> int | None:
+    """Return the ordered call index carried in ``_meta.baggage``, if any."""
+    for item in str(meta.get("baggage", "")).split(","):
+        key, _, value = item.strip().partition("=")
+        if key == "mcp.call_index":
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
+
+
+def request_span_id(message: Mapping[str, Any]) -> str:
+    """Return the content-derived span id correlating a request/response pair.
+
+    Prefers the span id the client derived into ``_meta.traceparent``; a
+    request without one gets a deterministic projection of its own content
+    (method, params, JSON-RPC id). Either way the id is a pure function of
+    the request bytes, so any transport instance derives the same value and
+    per-request correlation needs no shared state (issue #2506, gateway
+    phase).
+    """
+    raw_params = message.get("params")
+    params: Mapping[str, Any] = raw_params if isinstance(raw_params, Mapping) else {}
+    _, span_id = _ids_from_traceparent(_meta_of(params))
+    if span_id:
+        return span_id
+    preimage = {
+        "id": message.get("id"),
+        "method": message.get("method"),
+        "params": _params_without_meta(params),
+    }
+    return _derive_hex(domain="mcp.request", fields=preimage, nbytes=8)
+
+
+def anchor_stateless_call(
+    *,
+    journal: EventJournal,
+    method: str,
+    params: Mapping[str, Any],
+    chain: AuditChainStore | None = None,
+    cache: CacheReference | None = None,
+) -> StatelessCallRecord:
+    """Anchor one served or proxied MCP call in the journal and audit chain.
+
+    Replaces the deleted session stores as the continuity mechanism: the
+    call becomes an ordered Merkle-chained journal row, and (when a chain is
+    wired in) an ``mcp.stateless_call`` audit event binding the
+    content-derived ids to the journal head. A verifier reconstructs the full
+    call ordering of a run from chain entries alone (issue #2506).
+
+    Identity resolution prefers the ids the client derived into ``_meta``;
+    a request without ``_meta`` gets server-side derivation from the call
+    content and the count of previously anchored calls, which is a projection
+    of chain state rather than session state.
+
+    Args:
+        journal: The run journal receiving the ordered entry.
+        method: The MCP method (e.g. ``tools/call``).
+        params: The request params (``_meta`` is consumed, not recorded).
+        chain: Optional audit chain store to anchor the call into.
+        cache: Optional cache-hit reference recorded with the call.
+
+    Returns:
+        The projected :class:`StatelessCallRecord`.
+    """
+    from bernstein.core.replay.journal import load_events
+    from bernstein.core.security.audit_chain import record_mcp_stateless_call
+
+    meta = _meta_of(params)
+    trace_id, span_id = _ids_from_traceparent(meta)
+    call_index = _call_index_from_baggage(meta)
+    if call_index is None:
+        call_index = sum(1 for row in load_events(journal.path) if row.get("event") == JOURNAL_EVENT_MCP_CALL)
+    if not span_id:
+        content_hash = hashlib.sha256(
+            json.dumps(
+                {"method": method, "params": _params_without_meta(params)},
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        run_root_hash = hashlib.sha256(journal.run_id.encode("utf-8")).hexdigest()
+        trace_id = derive_trace_id(run_root_hash=run_root_hash)
+        span_id = derive_span_id(params_content_hash=content_hash, call_index=call_index)
+
+    record = StatelessCallRecord(
+        method=method,
+        call_index=call_index,
+        trace_id=trace_id,
+        span_id=span_id,
+        cache=cache,
+    )
+    record_mcp_call_in_journal(journal, record)
+    if chain is not None:
+        record_mcp_stateless_call(
+            chain=chain,
+            run_id=journal.run_id,
+            method=method,
+            call_index=call_index,
+            trace_id=trace_id,
+            span_id=span_id,
+            journal_head=journal.head(),
+            cache_content_hash=cache.content_hash if cache is not None else "",
+        )
+    return record
