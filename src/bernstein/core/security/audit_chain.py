@@ -491,6 +491,24 @@ EVENT_TOURNAMENT_SELECTION = "tournament.selection"
 #: worktree across the ssh boundary (distinct worktree per task, none lost).
 EVENT_RUN_SSH_TASK = "run.ssh_task"
 
+#: Issue #2556 -- emitted whenever a typed ``blocker`` bulletin signal is
+#: materialized into a clearance gate, and again at each clearance / expiry
+#: transition. Posting a ``blocker`` deterministically projects a clearance
+#: task plus injected ``depends_on`` edges onto the open dependent tasks in the
+#: blocker's scope; the whole chain (blocker signal -> clearance task + injected
+#: edges -> resolution) is sealed as a receipt on the HMAC chain. The event
+#: records ``{blocker_content_hash, clearance_task_id, injected_edges,
+#: graph_delta_hash, scope_cell_id, deadline, last_state_hash,
+#: journal_entry_hash, blocker_entry_hash, resolution (pending/cleared/expired),
+#: resolver}``. ``graph_delta_hash`` is a pure function of the recorded detail
+#: fields, so a verifier recomputes it byte-identically from the chain entry
+#: alone; a resolution entry references the materialization entry hash via
+#: ``blocker_entry_hash``. The signal-to-gate map is a pure projection, so two
+#: operators replaying the same bulletin journal produce byte-identical gates --
+#: strip the deterministic scheduler and this chain and the gate collapses to a
+#: logged blocker. See :mod:`bernstein.core.communication.signal_actions`.
+EVENT_SIGNAL_GATE_PROJECTION = "signal.gate_projection"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -1631,6 +1649,116 @@ def record_schedule_fire_projection(
             "trigger_input_hash": trigger_input_hash,
             "recurrence": recurrence,
         },
+    )
+
+
+@dataclass(frozen=True)
+class SignalGateProjectionDetails:
+    """Structured payload for the ``signal.gate_projection`` event (#2556)."""
+
+    blocker_content_hash: str
+    clearance_task_id: str
+    injected_edges: tuple[str, ...]
+    graph_delta_hash: str
+    scope_cell_id: str
+    deadline: int
+    resolution: str
+    resolver: str
+    last_state_hash: str
+    journal_entry_hash: str
+    blocker_entry_hash: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "blocker_content_hash": self.blocker_content_hash,
+            "clearance_task_id": self.clearance_task_id,
+            "injected_edges": list(self.injected_edges),
+            "graph_delta_hash": self.graph_delta_hash,
+            "scope_cell_id": self.scope_cell_id,
+            "deadline": self.deadline,
+            "resolution": self.resolution,
+            "resolver": self.resolver,
+            "last_state_hash": self.last_state_hash,
+            "journal_entry_hash": self.journal_entry_hash,
+            "blocker_entry_hash": self.blocker_entry_hash,
+        }
+
+
+def record_signal_gate_projection(
+    *,
+    chain: AuditChainStore,
+    blocker_content_hash: str,
+    clearance_task_id: str,
+    injected_edges: list[str],
+    graph_delta_hash: str,
+    scope_cell_id: str,
+    deadline: int = 0,
+    resolution: str = "pending",
+    resolver: str = "",
+    last_state_hash: str = "genesis",
+    journal_entry_hash: str = "",
+    blocker_entry_hash: str = "",
+    actor: str = "clearance_gate",
+) -> AuditEvent:
+    """Append a ``signal.gate_projection`` event into *chain* (#2556).
+
+    A typed ``blocker`` bulletin signal is not a chat line but a deterministic
+    projection into the task graph: it materializes a clearance task plus
+    injected ``depends_on`` edges onto the open dependent tasks in the blocker's
+    scope, and the whole chain (blocker signal -> clearance task + injected edges
+    -> resolution) is sealed as a receipt here. ``resolution`` is ``pending`` for
+    the materialization entry and ``cleared`` / ``expired`` for a resolution
+    entry; a resolution entry references the materialization entry hash via
+    ``blocker_entry_hash``. ``graph_delta_hash`` is a pure function of the
+    recorded detail fields, so a verifier recomputes it byte-identically from the
+    chain entry alone -- strip the deterministic scheduler and this chain and the
+    gate collapses to a logged blocker.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        blocker_content_hash: ``sha256:`` digest over the blocker's stable
+            content fields (agent, content, scope).
+        clearance_task_id: The deterministic clearance-task id derived from the
+            blocker content hash and the ordered journal prefix.
+        injected_edges: The dependent task ids that received a ``depends_on``
+            edge onto the clearance task (canonical sorted order).
+        graph_delta_hash: The canonical task-graph delta hash the projection
+            produced (64 hex chars); recomputable from the recorded fields.
+        scope_cell_id: The blocker's cell scope the edges were injected into.
+        deadline: Deterministic expiry deadline (Unix seconds; 0 = no expiry).
+        resolution: ``pending`` (materialization) / ``cleared`` / ``expired``.
+        resolver: Identity that resolved the clearance (empty for pending).
+        last_state_hash: Prior gate-state anchor folded into this entry
+            (``genesis`` for the first projection of a clearance task).
+        journal_entry_hash: Lineage-spine entry hash the projection was sealed
+            into; empty when no lineage sealer is wired.
+        blocker_entry_hash: For a resolution entry, the HMAC of the
+            materialization entry it clears; empty for the materialization entry.
+        actor: Recorded actor; defaults to ``"clearance_gate"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    payload = SignalGateProjectionDetails(
+        blocker_content_hash=blocker_content_hash,
+        clearance_task_id=clearance_task_id,
+        injected_edges=tuple(injected_edges),
+        graph_delta_hash=graph_delta_hash,
+        scope_cell_id=scope_cell_id,
+        deadline=deadline,
+        resolution=resolution,
+        resolver=resolver,
+        last_state_hash=last_state_hash,
+        journal_entry_hash=journal_entry_hash,
+        blocker_entry_hash=blocker_entry_hash,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_SIGNAL_GATE_PROJECTION,
+        actor=actor or "clearance_gate",
+        resource_type="signal_gate_projection",
+        resource_id=clearance_task_id,
+        details=payload,
     )
 
 
@@ -3260,6 +3388,7 @@ __all__ = [
     "EVENT_RUN_LIFECYCLE",
     "EVENT_RUN_SSH_TASK",
     "EVENT_SCHEDULE_FIRE_PROJECTION",
+    "EVENT_SIGNAL_GATE_PROJECTION",
     "EVENT_SKILL_INSTALL_RECEIPT",
     "EVENT_SKILL_USAGE",
     "EVENT_SPEC_REQUIREMENT_SET",
@@ -3317,6 +3446,7 @@ __all__ = [
     "record_run_ssh_task",
     "record_schedule_fire_projection",
     "record_sensitive_gate",
+    "record_signal_gate_projection",
     "record_skill_install_receipt",
     "record_skill_usage",
     "record_spec_requirement_set",

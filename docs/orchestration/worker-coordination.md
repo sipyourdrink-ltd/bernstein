@@ -115,3 +115,58 @@ chain-verifiable instead of becoming an unaudited side conversation.
 address (for example an evidence-bundle hash). The consumer resolves the
 address through the store it already trusts; the mailbox never carries the
 artefact bytes themselves.
+
+## BLOCKER clearance gates
+
+The bulletin board ships a typed signal vocabulary
+(`alert | blocker | finding | status | dependency`). A posted `blocker`
+used to be inert: the multi-cell tick logged it and moved on, so dependent
+work kept getting claimed against an unresolved blocker and no attestable
+record showed which dependent tasks ran while the blocker was open.
+
+A per-signal action registry closes that gap. Its default action is
+`observe` (a no-op), so `alert` / `finding` / `status` / `dependency` are
+unchanged; only `blocker` carries the `materialize_clearance_gate` action.
+
+Posting a `blocker` deterministically projects a clearance gate into the
+task graph:
+
+```
+blocker signal -> clearance task + injected depends_on edges -> resolution
+```
+
+The projection is a pure function of `(ordered bulletin journal prefix,
+blocker content hash, scope)` onto a canonical `(clearance_task_id,
+injected_edge_set, graph_delta_hash)` (no wall-clock, no RNG), so two
+operators replaying the same journal produce byte-identical gates. The
+clearance task participates as an ordinary `depends_on` edge, so the
+dependency gate described above already withholds every open dependent task
+in the blocker's cell until the clearance reaches a terminal cleared state.
+
+Every projection and every resolution is sealed as a `signal.gate_projection`
+receipt on the HMAC audit chain, carrying `blocker_content_hash`,
+`clearance_task_id`, `injected_edges`, `graph_delta_hash`, `scope_cell_id`,
+`deadline`, `resolution` (`pending` / `cleared` / `expired`), `resolver`, and
+(for a resolution) the `blocker_entry_hash` of the materialization it clears.
+`graph_delta_hash` is a pure function of the recorded fields, so a verifier
+recomputes it byte-identically from the chain entry alone. Clearance expiry is
+a deterministic function of the recorded deadline and an explicit evaluation
+instant, never a wall-clock read at query time.
+
+The gate state is a projection of those chained rows, not mutable side-table
+state: strip the deterministic scheduler and the audit chain and the feature
+collapses back to a logged blocker.
+
+```python
+from bernstein.core.communication.signal_actions import ClearanceGateCoordinator
+
+coordinator = ClearanceGateCoordinator(bulletin=board, injector=injector, chain=chain)
+board.set_post_hook(coordinator.materialize)   # a posted blocker materializes a gate
+# ... later, when the blocker is fixed:
+coordinator.resolve(clearance_task_id, resolver="operator:alex")
+```
+
+`bernstein audit verify-gates` reconstructs, offline from the chain alone,
+that no dependent task was claimed between a blocker post and its clearance,
+and reports any violation with the offending task id and its claim position.
+The check also runs inside `bernstein audit verify`.
