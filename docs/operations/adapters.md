@@ -88,7 +88,7 @@ healthy install.
     }
   ],
   "summary": {
-    "total": 44,
+    "total": 46,
     "reachable": 10,
     "conform": 6,
     "fail": 0,

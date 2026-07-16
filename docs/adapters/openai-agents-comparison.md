@@ -1,11 +1,12 @@
 # `openai_agents` vs. `claude` / `codex` / `gemini`
 
-Bernstein ships 31 CLI agent adapters as of April 2026.  Four of them are
+Bernstein ships a broad roster of CLI agent adapters (run `bernstein
+integrations list` for the current set).  Four of them are
 general-purpose executors you might reach for on a typical plan.yaml
 step: `claude`, `codex`, `gemini`, and `openai_agents`.  This page
 explains when to prefer each one.
 
-*Last verified: 2026-04-19.*
+*Last verified: 2026-07-16.*
 
 ---
 

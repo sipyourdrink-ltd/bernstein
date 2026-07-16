@@ -19,7 +19,7 @@ graph TD
     TL["Task Lifecycle\n(claim, spawn, complete)"]
     AL["Agent Lifecycle\n(heartbeat, crash, reap)"]
     Spawner["Spawner\n(build prompt, select adapter,\nlaunch in git worktree)"]
-    Claude["Claude Adapter\n(and 44 more)"]
+    Claude["Claude Adapter\n(and many more)"]
     Codex["Codex Adapter"]
     Gemini["Gemini Adapter"]
     WT1["git worktree\n+ role prompt"]

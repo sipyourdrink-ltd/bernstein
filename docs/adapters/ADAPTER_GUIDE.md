@@ -1,9 +1,9 @@
 # Adapter Selection Guide
 
-Bernstein ships 45 CLI agent adapters in `src/bernstein/adapters/`
-(44 named adapters plus a `generic` catch-all), along with support
-modules (caching, conformance testing, environment isolation, plugin SDK,
-etc.).
+Bernstein ships adapters for the full roster of CLI coding agents in
+`src/bernstein/adapters/` (including a `generic` catch-all), along with
+support modules (caching, conformance testing, environment isolation,
+plugin SDK, etc.). Run `bernstein integrations list` for the current set.
 
 All CLI agent adapters implement the `CLIAdapter` interface (`adapters/base.py`):
 `spawn()`, process monitoring via PID, log capture to `.sdd/runtime/<session>.log`,
@@ -137,6 +137,17 @@ npm install -g @google/gemini-cli
 **Env vars:** `GOOGLE_API_KEY` or `GEMINI_API_KEY` (one required), `GOOGLE_CLOUD_PROJECT` (optional, Enterprise tier), `GOOGLE_APPLICATION_CREDENTIALS` (optional).
 
 **Best for:** Free tier users (generous free quota). Cost-effective for medium-complexity tasks. Good as a tertiary provider for rate-limit resilience.
+
+**Lane split:** the `gemini` key also resolves the `antigravity` binary; the same adapter discovers `antigravity` first on PATH and falls back to `gemini`. The `gemini`/`antigravity` keys cover the enterprise / API-key lane; consumer-lane operators should route through the separate `agy` adapter (see [agy.md](agy.md)).
+
+---
+
+### agy (Google Antigravity successor CLI)
+
+Successor CLI for the discontinued non-enterprise hosted Gemini backend. A
+separate registry entry from `gemini`/`antigravity`, which stay on the
+dual-binary enterprise / API-key lane. See [agy.md](agy.md) for the full
+split and configuration knobs.
 
 ---
 
@@ -428,7 +439,7 @@ npm install -g kilocode
 
 ---
 
-### cloudflare_agents (Cloudflare Agents SDK)
+### cloudflare (Cloudflare Agents SDK)
 
 **Install:**
 ```bash

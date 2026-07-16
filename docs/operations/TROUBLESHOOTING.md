@@ -43,7 +43,7 @@ cli: claude   # must match a registered name exactly
 ```
 
 **Resolution:**
-- Use one of the built-in names: `aider`, `amp`, `claude`, `codex`, `cody`, `continue`, `cursor`, `gemini`, `generic`, `goose`, `iac`, `kilo`, `kiro`, `mock`, `ollama`, `opencode`, `qwen`, `roo-code`, `tabby`.
+- Use a registered adapter name; run `bernstein integrations list` (one line per adapter) to see the built-in set.
 - For third-party adapters, ensure the package exposes a `bernstein.adapters` entry point and is installed in the same virtualenv.
 - For arbitrary CLIs, use `cli: generic` with `cli_command`, `prompt_flag`, and `model_flag` settings.
 

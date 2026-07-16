@@ -2,7 +2,7 @@
 
 This page describes practical compatibility boundaries for Bernstein integrations.
 
-Last updated: 2026-05-10
+Last updated: 2026-07-16
 
 ---
 
@@ -10,7 +10,7 @@ Last updated: 2026-05-10
 
 - Python: project targets Python 3.12+.
 - Task server/API: FastAPI-based local or remote server operation.
-- CLI adapters: 45 total (44 named adapters in `registry.py` plus the `generic` catch-all) in `src/bernstein/adapters/`, including the OpenAI Agents SDK v2 adapter (`openai_agents`), CLM gateway adapter (`clm`), Devin Terminal adapter (`devin_terminal`), JetBrains Junie (`junie`), AWS Q Developer (`q_dev`), and the DeepSeek V4 family routed through the `ollama` adapter.
+- CLI adapters: the full roster registered in `registry.py` (plus the `generic` catch-all) in `src/bernstein/adapters/`, including the OpenAI Agents SDK v2 adapter (`openai_agents`), CLM gateway adapter (`clm`), Devin Terminal adapter (`devin_terminal`), JetBrains Junie (`junie`), AWS Q Developer (`q_dev`), and the DeepSeek V4 family routed through the `ollama` adapter. Run `bernstein integrations list` for the current set.
 
 ### Supported CLI agent adapters
 
@@ -19,6 +19,8 @@ Last updated: 2026-05-10
 | `claude` | Anthropic | JSON schema enforced | Yes |
 | `codex` | OpenAI | JSON (`--json`) | No |
 | `gemini` | Google | JSON (`--output-format json`) | No |
+| `antigravity` | Google (alias of `gemini`, enterprise / API-key lane) | JSON (`--output-format json`) | No |
+| `agy` | Google (Antigravity successor CLI, consumer lane) | JSON (`--output-format json`) | No |
 | `openai_agents` | OpenAI (Agents SDK v2) | JSONL event stream | Yes (Bernstein-bridged) |
 | `clm` | Customer-side NIM / vLLM gateway | No | No |
 | `devin_terminal` | Cognition | No | No |
@@ -39,7 +41,7 @@ Last updated: 2026-05-10
 | `iac` | N/A (Terraform/Pulumi) | No | No |
 | `generic` | Any | Depends on CLI | No |
 
-The full 45-row matrix with cost tier, reasoning grade, and recommended use cases lives in [`ADAPTER_GUIDE.md`](ADAPTER_GUIDE.md).
+The detailed comparison matrix with cost tier, reasoning grade, and recommended use cases lives in [`ADAPTER_GUIDE.md`](ADAPTER_GUIDE.md).
 
 ### Support modules
 

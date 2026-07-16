@@ -13,7 +13,7 @@ Bernstein routes tasks to models by cost / quality bandit signals.
 Once the model is chosen, the same prompt and tool list go out
 regardless of who's at the other end. That throws away an obvious
 free win: tuning the interaction to the model's known personality.
-This module is the small abstraction shared across all 45 adapters
+This module is the small abstraction shared across all adapters
 that lets one prompt-build pipeline produce three different shapes.
 
 ## How to use it

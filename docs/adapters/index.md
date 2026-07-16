@@ -68,9 +68,9 @@ For air-gap or BYO-model scenarios.
 
 ### Other supported CLIs
 
-See `bernstein integrations list` for the full enumerated set. The
-registry currently surfaces ~40 adapters; this page lists categories
-rather than re-listing each entry so the index does not drift.
+See `bernstein integrations list` for the full enumerated set. This
+page lists categories rather than re-listing each entry so the index
+does not drift.
 
 ## Adding a new adapter
 
