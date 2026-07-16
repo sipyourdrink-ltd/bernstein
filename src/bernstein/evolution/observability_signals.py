@@ -22,12 +22,9 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 #: Default location of the daily snapshot corpus, relative to the repo root.
 DEFAULT_SNAPSHOTS_DIR = Path("docs/observability/snapshots")
