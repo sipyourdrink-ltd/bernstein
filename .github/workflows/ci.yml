@@ -1522,7 +1522,16 @@ jobs:
           name: coverage-report
           path: coverage.xml
           if-no-files-found: error
-          retention-days: 1
+          # The sonar-scan daily backstop pulls this artifact from the most
+          # recent *successful* main CI run. Under the cancel-in-progress
+          # merge cadence main can go several days without a new successful
+          # run, so retention must outlive that gap; at 1 day the artifact
+          # expires and the backstop degrades to its partial in-job coverage
+          # fallback, which reports a misleading main coverage figure
+          # (observed 81% -> 13.5% on 2026-07-14/15). The per-shard
+          # coverage-data-* artifacts above are consumed within the same run
+          # and keep 1-day retention.
+          retention-days: 14
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
