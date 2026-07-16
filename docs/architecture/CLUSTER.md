@@ -16,8 +16,8 @@ Central Bernstein server
 
 Core implementation paths:
 
-- `src/bernstein/cli/worker_cmd.py`
-- `src/bernstein/core/cluster.py`
+- `src/bernstein/cli/commands/worker_cmd.py`
+- `src/bernstein/core/protocols/cluster/cluster.py`
 - `src/bernstein/core/routes/tasks.py` (cluster endpoints)
 
 ---

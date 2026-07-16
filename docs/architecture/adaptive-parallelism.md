@@ -49,7 +49,7 @@ _effective_max = self._adaptive_parallelism.effective_max_agents()
 self._config.max_agents = _effective_max
 ```
 
-Source: `core/orchestration/orchestrator.py:608`, `:1326-1327`.
+Source: `core/orchestration/orchestrator.py`.
 
 The controller is purely additive - if you don't read its outputs,
 nothing changes about the orchestrator loop except that `max_agents`
@@ -64,21 +64,21 @@ Three live signals, one explicit override:
 1. **Task error rate** - `record_outcome(success: bool)` called by the
    orchestrator after every terminal task transition. The controller
    keeps a sliding window of `(timestamp, success)` outcomes
-   (`adaptive_parallelism.py:63-69`).
+   (`adaptive_parallelism.py`).
 2. **CPU load** - read on every tick. On Unix, `os.getloadavg()[1]`
    (5-minute load average, normalised by `os.cpu_count()`). On Windows,
    `psutil.cpu_percent()` if available, else `0.0` (the rule
    effectively disables itself there). Source: `_get_cpu_percent()` at
-   `adaptive_parallelism.py:88-113`.
+   `adaptive_parallelism.py`.
 3. **Time since startup** - used as a 120 s grace period during which
    CPU rules are skipped (boot-time spikes are normal).
 4. **SLO error-budget cap** - an external override. The SLO subsystem
    can call `set_slo_constraint(max_agents)` to pin the controller to a
    hard ceiling when the error budget is depleted; clearing the cap is
-   `set_slo_constraint(None)` (`adaptive_parallelism.py:115-128`).
+   `set_slo_constraint(None)` (`adaptive_parallelism.py`).
 
 Window size and thresholds are not magic numbers - they're declared
-once in `core/defaults.py:254-261` (`ParallelismDefaults`) and reused.
+once in `core/defaults.py` (`ParallelismDefaults`) and reused.
 
 ---
 
@@ -93,27 +93,27 @@ immediately so high-priority signals can't be cancelled by lower ones:
    120 s, halve `current_max` (floored at 1) and stash the prior value
    in `_pre_cpu_max` for restoration later. Reason logged:
    `"cpu_high (NN%)"`. Source: `_apply_cpu_overload_rule` at
-   `adaptive_parallelism.py:130-147`.
+   `adaptive_parallelism.py`.
 2. **High error rate.** If error rate over the window exceeds 20% and
    `current_max > 1`, decrement by one. Reason logged:
    `"error_rate_high (NN%)"`. Source: `_apply_high_error_rule` at
-   `adaptive_parallelism.py:149-162`.
+   `adaptive_parallelism.py`.
 3. **Sustained low error rate.** If error rate drops under 5% **and
    stays under 5% for 120 s** (the "sustain" window), increment by one
    up to the configured max. Reset the timer on every increment so each
    step requires another 120 s of clean burn-in. Source:
-   `_apply_low_error_rule` at `adaptive_parallelism.py:164-180`.
+   `_apply_low_error_rule` at `adaptive_parallelism.py`.
 4. **CPU recovery.** If CPU dropped back below the threshold and
    `_pre_cpu_max > current_max`, restore to the pre-spike level (capped
    at `configured_max`). Reason: `"cpu_recovered"`. Source:
-   `_apply_cpu_recovery_rule` at `adaptive_parallelism.py:182-188`.
+   `_apply_cpu_recovery_rule` at `adaptive_parallelism.py`.
 5. **SLO hard cap.** After all adaptive rules, the SLO constraint is
    enforced as a `min()` clamp - even if the controller wants more
-   agents, the SLO budget can deny it (`adaptive_parallelism.py:215-217`).
+   agents, the SLO budget can deny it (`adaptive_parallelism.py`).
 6. **Minimum floor.** Never drop below `max(1, configured_max // 2)`
    except via CPU overload (early-returned above) or the explicit SLO
    cap. Prevents the system from crawling at one or two agents when
-   five slots are available (`adaptive_parallelism.py:219-228`).
+   five slots are available (`adaptive_parallelism.py`).
 
 Each rule that fires writes a one-line `INFO`/`WARNING` log so the
 trail is easy to read after a run.
@@ -132,7 +132,7 @@ trail is easy to read after a run.
 | CPU pause threshold | `PARALLELISM.cpu_pause_threshold` | `300.0` (3 cores pinned) | `tuning.parallelism.cpu_pause_threshold` |
 | Window size | `PARALLELISM.window_s` | `600 s` | `tuning.parallelism.window_s` |
 
-Source: `core/defaults.py:254-261`. Tunable via the `tuning.parallelism`
+Source: `core/defaults.py`. Tunable via the `tuning.parallelism`
 config branch - leave them alone unless your workload is unusual.
 
 ---
@@ -149,7 +149,7 @@ Two surfaces:
 - **Metrics.** Each tick the orchestrator records a
   `PARALLELISM_LEVEL` gauge with labels `configured_max`, `error_rate`,
   `cpu_percent`, `reason`. This is the time-series dashboards plot
-  (`orchestrator.py:1326-1342`):
+  (`orchestrator.py`):
 
   ```python
   get_collector()._write_metric_point(
@@ -205,10 +205,10 @@ right call for almost every workload.
 | Concern | File |
 |---------|------|
 | Controller state machine | `src/bernstein/core/orchestration/adaptive_parallelism.py` |
-| Defaults | `src/bernstein/core/defaults.py:254-261` (`ParallelismDefaults`) |
-| Orchestrator integration | `src/bernstein/core/orchestration/orchestrator.py:92`, `:608`, `:1326-1342`, `:1461` |
-| SLO budget integration | `set_slo_constraint()` at `adaptive_parallelism.py:115-128` |
-| Status snapshot | `AdaptiveParallelismStatus` at `adaptive_parallelism.py:245-254` |
+| Defaults | `src/bernstein/core/defaults.py` (`ParallelismDefaults`) |
+| Orchestrator integration | `src/bernstein/core/orchestration/orchestrator.py` |
+| SLO budget integration | `set_slo_constraint()` at `adaptive_parallelism.py` |
+| Status snapshot | `AdaptiveParallelismStatus` at `adaptive_parallelism.py` |
 | Metric type | `MetricType.PARALLELISM_LEVEL` (consumed by `core/observability/`) |
 
 See also: [`warm-pool.md`](warm-pool.md) (sizing latency, not width);

@@ -84,7 +84,7 @@ the on-disk layout - every other consumer goes through `put()` /
 ```
 
 Sharded by the **first two hex characters** of the digest
-(`_shard_dir` at `cas_store.py:114-116`) so no single directory holds
+(`_shard_dir` at `cas_store.py`) so no single directory holds
 millions of files. With a uniform SHA-256 distribution that's 256
 possible shards - plenty of headroom.
 
@@ -99,10 +99,10 @@ Each blob has a JSON sidecar (`<digest>.meta.json`) containing the
 | `content_type` | string | MIME-style tag (`text/x-python`, `application/json`, ...). |
 | `metadata` | dict | Arbitrary user-supplied metadata. |
 
-Source: `CASEntry` at `cas_store.py:42-58`.
+Source: `CASEntry` at `cas_store.py`.
 
 `has(digest)` requires both blob and sidecar to exist
-(`cas_store.py:215-216`); a half-written entry is reported absent so
+(`cas_store.py`); a half-written entry is reported absent so
 recovery code can treat it as such.
 
 ---
@@ -110,7 +110,7 @@ recovery code can treat it as such.
 ## API
 
 `CASStore` is a thin class around the directory layout
-(`cas_store.py:87-300`):
+(`cas_store.py`):
 
 ```python
 from pathlib import Path
@@ -198,7 +198,7 @@ publishes the root as a single SHA-256 string. For CAS entries:
   construction).
 - The **internal nodes** combine children with a domain-separated
   hash: `sha256("merkle:" + left + ":" + right)`
-  (`merkle.py:_combine_hashes` at `merkle.py:56-58`).
+  (`merkle.py:_combine_hashes` at `merkle.py`).
 - The **root** signs the entire CAS state at a point in time. A single
   root hash proves the contents of every leaf without re-reading them.
 
@@ -231,10 +231,10 @@ the discrepancy.
 | Concern | File |
 |---------|------|
 | Store implementation (put/get/has/delete) | `src/bernstein/core/persistence/cas_store.py` |
-| `CASEntry` / `CASStats` data classes | `cas_store.py:42-79` |
-| `put_file` / `put_text` helpers | `cas_store.py:308-376` |
-| Digest validation (path-traversal guard) | `_HEX_RE`, `_validate_digest` at `cas_store.py:101-112` |
-| Shard layout | `_shard_dir`, `_blob_path`, `_meta_path` at `cas_store.py:114-124` |
-| Merkle leaf hashing | `src/bernstein/core/persistence/merkle.py:66-86` |
-| Merkle tree builder | `merkle.py:94-` |
+| `CASEntry` / `CASStats` data classes | `cas_store.py` |
+| `put_file` / `put_text` helpers | `cas_store.py` |
+| Digest validation (path-traversal guard) | `_HEX_RE`, `_validate_digest` at `cas_store.py` |
+| Shard layout | `_shard_dir`, `_blob_path`, `_meta_path` at `cas_store.py` |
+| Merkle leaf hashing | `src/bernstein/core/persistence/merkle.py` |
+| Merkle tree builder | `merkle.py` |
 | State-persistence overview | `docs/architecture/state-persistence.md` |

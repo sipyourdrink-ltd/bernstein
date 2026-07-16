@@ -60,7 +60,7 @@ user_id, scopes)`. Three issuers exist:
   `localStorage`. Device flow (`/auth/cli/device`, `/auth/cli/token`)
   issues the same token via polling for CLI-based logins
   (`routes/auth.py:324-372`).
-- **Agent identity** - `core/agent_identity.py` issues task-scoped JWTs
+- **Agent identity** - `core/security/agent_identity.py` issues task-scoped JWTs
   with claims `{session_id, user_id=identity_id, task_ids: [...],
   permissions: [...]}`. Stored in `.sdd/auth/identities/`.
 - **Cluster nodes** - `ClusterAuthenticator.issue_node_token(node_id)`
@@ -202,7 +202,7 @@ for. The identities surface lives at `core/routes/identities.py`.
 | `POST /identities/{id}/revoke`                | Revoke an agent identity. Body `{reason: "..."}`. Future requests with the identity's JWT fail.    | `routes/identities.py:91-103`         |
 | `GET /identities/{id}/audit`                  | Per-identity audit trail. Returns the identity's events from the audit store. `?limit=100` default. | `routes/identities.py:111-122`        |
 
-Backing store: `core/agent_identity.py` (`AgentIdentityStore`) under
+Backing store: `core/security/agent_identity.py` (`AgentIdentityStore`) under
 `.sdd/auth/`. The store is created lazily on first request
 (`routes/identities.py:17-27`). Credentials are stored hashed; the API
 strips them before responses (`:82`).
@@ -360,7 +360,7 @@ Compliance modules in code (`core/security/`):
 | JWT manager                        | `src/bernstein/core/security/jwt_tokens.py`                           |
 | OIDC / SAML / device flow routes   | `src/bernstein/core/routes/auth.py`                                   |
 | Agent identities API               | `src/bernstein/core/routes/identities.py`                             |
-| Agent identity store               | `src/bernstein/core/agent_identity.py`                                |
+| Agent identity store               | `src/bernstein/core/security/agent_identity.py`                                |
 | Audit log (HMAC chain)             | `src/bernstein/core/security/audit.py`                                |
 | Audit integrity verifier           | `src/bernstein/core/security/audit_integrity.py`                      |
 | Audit query / search routes        | `src/bernstein/core/routes/audit_log.py`                              |

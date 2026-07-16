@@ -20,33 +20,33 @@ observability surface. For the higher-level provider-policy controls
 
 ## System 1 - Intra-Claude tier escalation (CascadeRouter)
 
-`CascadeRouter` (`src/bernstein/core/routing/cascade_router.py:246`)
+`CascadeRouter` (`src/bernstein/core/routing/cascade_router.py`)
 selects the cheapest viable Claude tier for a task's first attempt and
 escalates only when post-hoc signals warrant it.
 
 ### When it runs
 
 The router is consulted when the chosen adapter is Claude-compatible
-(`router_applicable()` line 294 - checks the adapter name against the
+(`router_applicable()` - checks the adapter name against the
 `{claude, claude code, claude_code, claude-code}` set). For every other
 adapter the router is skipped - its arms (`sonnet`, `opus`) are
 Claude-specific.
 
 ### The tier ladder
 
-`CASCADE` is defined in `src/bernstein/core/cost/cost.py:119`:
+`CASCADE` is defined in `src/bernstein/core/cost/cost.py`:
 
 ```python
 CASCADE: list[str] = ["sonnet", "opus"]
 ```
 
-`_cascade_for_task()` (`cascade_router.py:681-700`) returns the same
+`_cascade_for_task()` (`cascade_router.py`) returns the same
 list for both standard and high-stakes paths today. Historical builds
-(and the docstring at `cascade_router.py:14`) included `haiku → sonnet
+(and the docstring at `cascade_router.py`) included `haiku → sonnet
 → opus` for standard tasks and `sonnet → opus` for high-stakes; the
 haiku tier was dropped after observing that on the Anthropic Max plan
 sonnet is unlimited and produces measurably better results
-(`cost.py:117-119`).
+(`cost.py`).
 
 A task is treated as high-stakes when **any** of:
 
@@ -55,11 +55,11 @@ A task is treated as high-stakes when **any** of:
 - `task.scope == Scope.LARGE`
 - `task.priority == 1` (highest)
 
-(See `cascade_router.py:579-583` and `_cascade_for_task` lines 693-699.)
+(See `cascade_router.py` and `_cascade_for_task`.)
 
 ### Initial selection
 
-`select(task)` (`cascade_router.py:330`) returns a `CascadeDecision`:
+`select(task)` (`cascade_router.py`) returns a `CascadeDecision`:
 
 ```python
 @dataclass
@@ -73,7 +73,7 @@ class CascadeDecision:
     chain_id: str        # opaque id; pass back to record_and_escalate()
 ```
 
-`_select_initial_model()` (`cascade_router.py:570-618`) decides:
+`_select_initial_model()` (`cascade_router.py`) decides:
 
 1. High-stakes role/complexity/scope/priority → start at `cascade[0]`
    (currently `sonnet`).
@@ -86,24 +86,22 @@ class CascadeDecision:
 
 ### Escalation triggers
 
-After the agent finishes, `record_and_escalate()` (`cascade_router.py:386`)
+After the agent finishes, `record_and_escalate()` (`cascade_router.py`)
 records the attempt and decides whether to retry on a higher tier.
-Triggers, evaluated in order by `_should_escalate()` (lines 639-673):
+Triggers, evaluated in order by `_should_escalate()`:
 
 1. **Hard task failure.** `attempt.success == False` with no other info
-   → escalate. (Line 655-657.)
+   → escalate.
 2. **Janitor verification failure.** `janitor_passed is False` → escalate.
-   (Line 660-661.)
 3. **Low-confidence output.** A regex over the last 2 000 chars of agent
-   output (`_LOW_CONFIDENCE_PATTERN` at lines 67-87) matches phrases like
+   output (`_LOW_CONFIDENCE_PATTERN`) matches phrases like
    "I'm not sure", "I cannot determine", "partial implementation", "left
-   as placeholder", "TODO: escalat...". `detect_low_confidence()` at
-   line 371. → escalate.
+   as placeholder", "TODO: escalat...". `detect_low_confidence()` → escalate.
 4. **Late explicit failure.** `attempt.success == False` even after
    janitor or output checks → escalate.
 
 If escalation fires and the chain is not already at the top of the
-cascade (`current_idx < len(cascade) - 1`, line 448-455), the router
+cascade (`current_idx < len(cascade) - 1`), the router
 returns a new `CascadeDecision` for the next tier. Otherwise the
 chain ends and the failure stands.
 
@@ -119,24 +117,23 @@ MIN_OBSERVATIONS = 5     # arms trusted only after this many samples
 QUALITY_THRESHOLD = 0.80 # min success_rate to consider an arm
 ```
 
-(`cost.py:40-42`.)
+(`cost.py`.)
 
-`record_and_escalate()` calls `_record_bandit()` (line 559) after every
+`record_and_escalate()` calls `_record_bandit()` after every
 attempt, so the bandit's view of each arm improves with use. The
 proactive-skip rule in `_select_initial_model()` reads
-`arm.success_rate` and `arm.observations` directly (lines 594-614).
+`arm.success_rate` and `arm.observations` directly.
 
-A new arm starts with a pessimistic `success_rate = 0.5` (`cost.py:139`)
+A new arm starts with a pessimistic `success_rate = 0.5` (`cost.py`)
 so a freshly added cheap model cannot greedily win selection on its
 first observation - it has to earn the trust through real successes.
 
 The bandit's persisted state is loaded lazily via `EpsilonGreedyBandit.load(metrics_dir)`
-(`cascade_router.py:553-554`) and saved on demand via `save_bandit()`
-(line 541-544).
+(`cascade_router.py`) and saved on demand via `save_bandit()`.
 
 ### Persistence - `cascade_chains.jsonl`
 
-`save_chain(chain_id, task, metrics_dir)` (`cascade_router.py:518-539`)
+`save_chain(chain_id, task, metrics_dir)` (`cascade_router.py`)
 appends one JSON line per completed chain to:
 
 ```text
@@ -170,7 +167,7 @@ Sample line (whitespace added for readability):
 ```
 
 Aggregate stats are computed on demand by
-`load_cascade_savings_summary(metrics_dir)` (`cascade_router.py:725-`):
+`load_cascade_savings_summary(metrics_dir)` (`cascade_router.py`):
 
 ```python
 {
@@ -186,21 +183,21 @@ Aggregate stats are computed on demand by
 
 ## System 2 - Cross-adapter failover (CascadeFallbackManager)
 
-`CascadeFallbackManager` (`src/bernstein/core/routing/cascade.py:108-`)
+`CascadeFallbackManager` (`src/bernstein/core/routing/cascade.py`)
 handles a different problem: the chosen provider is **unavailable** (rate
 limit, timeout, API error) and we need to redirect the task to a
 different provider entirely.
 
 ### Default cascade order
 
-`DEFAULT_CASCADE_ORDER` (`cascade.py:61`):
+`DEFAULT_CASCADE_ORDER` (`cascade.py`):
 
 ```python
 DEFAULT_CASCADE_ORDER: list[str] = ["opus", "sonnet", "codex", "gemini", "qwen"]
 ```
 
 Each entry resolves to a provider via `_MODEL_TO_PROVIDER`
-(`cascade.py:64-80`). When `find_fallback()` (line 287) is called, it
+(`cascade.py`). When `find_fallback()` is called, it
 walks this list starting **after** the current entry and returns the
 first viable agent.
 
@@ -208,7 +205,7 @@ first viable agent.
 
 Called by the orchestrator/spawner when an agent process raises
 rate-limit (HTTP 429), timeout, or generic API error
-(`cascade.py:11-13` lists the triggers). The `trigger` argument records
+(`cascade.py` lists the triggers). The `trigger` argument records
 which condition fired so metrics can split by cause.
 
 ### Capability floor
@@ -225,20 +222,20 @@ CAPABILITY_FLOOR: dict[Complexity, int] = {
 }
 ```
 
-(`cascade.py:44-48`.) Candidates below the floor are skipped
-(`_is_viable_candidate` at line 349-380).
+(`cascade.py`.) Candidates below the floor are skipped
+(`_is_viable_candidate`).
 
 ### Sticky fallback
 
 To prevent ping-pong between primary and fallback, once a fallback is
 selected it sticks for `_DEFAULT_STICKY_DURATION_S = 300.0` seconds
-(`cascade.py:83`). `find_fallback()` checks
-`get_sticky_fallback()` first (lines 311-331) and reuses it when the
+(`cascade.py`). `find_fallback()` checks
+`get_sticky_fallback()` first and reuses it when the
 window has not yet expired.
 
 ### Cascade chain inspection
 
-`find_fallback_chain(complexity, initial_provider)` (`cascade.py:503-526`)
+`find_fallback_chain(complexity, initial_provider)` (`cascade.py`)
 walks the entire cascade and returns the full sequence of fallback
 decisions that **would** be tried if each provider in turn were
 rate-limited. Useful for audit logs and debugging.
@@ -268,7 +265,7 @@ model_policy:
   prefer: anthropic
 ```
 
-### CLI flags (`src/bernstein/cli/main.py:482`)
+### CLI flags (`src/bernstein/cli/main.py`)
 
 | Flag | Effect |
 |------|--------|
@@ -291,7 +288,7 @@ jq '. | {role: .role, attempts: (.attempts | length), saved: .saved_vs_direct_op
 
 ### `/routing/bandit` HTTP endpoint
 
-Exposed by `core/routes/status_dashboard.py:905-920`:
+Exposed by `core/routes/status_dashboard.py`:
 
 ```text
 GET http://localhost:<port>/routing/bandit
@@ -324,9 +321,9 @@ Cascade chain a1b2c3d4...: escalating sonnet → opus
   (reason: low-confidence signal in output: 'partial implementation')
 ```
 
-(`cascade_router.py:462-468`.) Cross-adapter fallback logs at `INFO`
+(`cascade_router.py`.) Cross-adapter fallback logs at `INFO`
 when a provider is selected and at `WARNING` when the chain is
-exhausted (`cascade.py:436-440`).
+exhausted (`cascade.py`).
 
 ### Aggregate savings summary
 
@@ -365,21 +362,21 @@ availability**.
 | Concern | File | Symbol / line |
 |---------|------|---------------|
 | Cascade router selection | `src/bernstein/core/routing/cascade_router.py` | `CascadeRouter.select:330` |
-| Initial model picker | `src/bernstein/core/routing/cascade_router.py` | `_select_initial_model:570-618` |
-| Escalation decision | `src/bernstein/core/routing/cascade_router.py` | `record_and_escalate:386`, `_should_escalate:639-673` |
-| Low-confidence regex | `src/bernstein/core/routing/cascade_router.py` | `_LOW_CONFIDENCE_PATTERN:67-87`, `detect_low_confidence:371` |
-| Tier ladder | `src/bernstein/core/cost/cost.py` | `CASCADE:119` |
-| `_cascade_for_task` (high-stakes branch) | `src/bernstein/core/routing/cascade_router.py` | `_cascade_for_task:681-700` |
-| Bandit arm | `src/bernstein/core/cost/cost.py` | `EpsilonGreedyBandit`, constants `EPSILON/MIN_OBSERVATIONS/QUALITY_THRESHOLD:40-42` |
-| Proactive-skip rule | `src/bernstein/core/routing/cascade_router.py` | `_select_initial_model:594-614` |
-| Chain persistence | `src/bernstein/core/routing/cascade_router.py` | `save_chain:518`, `CHAIN_FILE:288` |
-| Aggregate savings | `src/bernstein/core/routing/cascade_router.py` | `load_cascade_savings_summary:725` |
-| Cross-adapter fallback | `src/bernstein/core/routing/cascade.py` | `CascadeFallbackManager`, `find_fallback:287-347` |
-| Default cascade order | `src/bernstein/core/routing/cascade.py` | `DEFAULT_CASCADE_ORDER:61` |
-| Capability floor | `src/bernstein/core/routing/cascade.py` | `CAPABILITY_FLOOR:44-48`, `_is_viable_candidate:349-380` |
-| Sticky fallback | `src/bernstein/core/routing/cascade.py` | `_DEFAULT_STICKY_DURATION_S:83`, `get_sticky_fallback:311-331` |
-| `/routing/bandit` endpoint | `src/bernstein/core/routes/status_dashboard.py` | `bandit_routing_stats:905` |
-| `--routing` CLI flag | `src/bernstein/cli/main.py` | `:482` |
+| Initial model picker | `src/bernstein/core/routing/cascade_router.py` | `_select_initial_model` |
+| Escalation decision | `src/bernstein/core/routing/cascade_router.py` | `record_and_escalate`, `_should_escalate` |
+| Low-confidence regex | `src/bernstein/core/routing/cascade_router.py` | `_LOW_CONFIDENCE_PATTERN`, `detect_low_confidence` |
+| Tier ladder | `src/bernstein/core/cost/cost.py` | `CASCADE` |
+| `_cascade_for_task` (high-stakes branch) | `src/bernstein/core/routing/cascade_router.py` | `_cascade_for_task` |
+| Bandit arm | `src/bernstein/core/cost/cost.py` | `EpsilonGreedyBandit`, constants `EPSILON/MIN_OBSERVATIONS/QUALITY_THRESHOLD` |
+| Proactive-skip rule | `src/bernstein/core/routing/cascade_router.py` | `_select_initial_model` |
+| Chain persistence | `src/bernstein/core/routing/cascade_router.py` | `save_chain`, `CHAIN_FILE` |
+| Aggregate savings | `src/bernstein/core/routing/cascade_router.py` | `load_cascade_savings_summary` |
+| Cross-adapter fallback | `src/bernstein/core/routing/cascade.py` | `CascadeFallbackManager`, `find_fallback` |
+| Default cascade order | `src/bernstein/core/routing/cascade.py` | `DEFAULT_CASCADE_ORDER` |
+| Capability floor | `src/bernstein/core/routing/cascade.py` | `CAPABILITY_FLOOR`, `_is_viable_candidate` |
+| Sticky fallback | `src/bernstein/core/routing/cascade.py` | `_DEFAULT_STICKY_DURATION_S`, `get_sticky_fallback` |
+| `/routing/bandit` endpoint | `src/bernstein/core/routes/status_dashboard.py` | `bandit_routing_stats` |
+| `--routing` CLI flag | `src/bernstein/cli/main.py` | - |
 
 ## Related
 

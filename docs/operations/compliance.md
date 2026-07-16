@@ -325,7 +325,7 @@ EU AI Act high-risk classification or a HIPAA covered entity.
   encryption, BAA report).
 - `core/security/hipaa.py:59` - `PHICategory` (45 CFR §164.514(b)
   identifier categories).
-- `core/eu_ai_act.py` - task-level risk assessment store consumed by
+- `core/security/eu_ai_act.py` - task-level risk assessment store consumed by
   `bernstein compliance eu-ai-act`.
 - `[security/AUDIT.md](../security/AUDIT.md)` - HMAC-chained audit log
   (SOC 2 evidence component).

@@ -99,7 +99,7 @@ Boundary: trigger infrastructure is real and usable, but project-specific rule l
 Implemented pieces:
 
 - Worker CLI: `src/bernstein/cli/commands/worker_cmd.py`
-- Cluster data model/policy: `src/bernstein/core/protocols/cluster.py`
+- Cluster data model/policy: `src/bernstein/core/protocols/cluster/`
 - Cluster API routes in `src/bernstein/core/routes/task_cluster.py` and `src/bernstein/core/routes/tasks.py`
 
 Boundary:

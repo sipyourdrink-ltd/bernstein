@@ -176,7 +176,7 @@ Two related but distinct gates.
 | `--validate-only` | off | Validate `--pipeline` schema and exit. No agents run. |
 | `--dry-run` | off | Print resolved pipeline; spawn nothing. |
 
-**`bernstein verify`** *(source: `cli/verify_cmd.py`)* runs the **quality pipeline** (lint / tests / type-check / custom gates) on a specific task's artefact. It's the same gate the janitor runs automatically; calling it manually is useful when you want to re-run gates after fixing something out-of-band. See [`architecture/quality-pipeline.md`](../../architecture/quality-pipeline.md) for what the gates do.
+**`bernstein verify`** *(source: `cli/commands/verify_cmd.py`)* runs the **quality pipeline** (lint / tests / type-check / custom gates) on a specific task's artefact. It's the same gate the janitor runs automatically; calling it manually is useful when you want to re-run gates after fixing something out-of-band. See [`architecture/quality-pipeline.md`](../../architecture/quality-pipeline.md) for what the gates do.
 
 ---
 

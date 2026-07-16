@@ -188,7 +188,7 @@ task specs - which you need anyway for any automated system to do useful work.
 ## The boundary is enforced in code
 
 The `Orchestrator` class has no import of any LLM client. Any LLM call must
-go through an explicitly named module (`orchestration/manager.py`, `orchestration/reviewer.py`,
+go through an explicitly named module (`orchestration/manager.py`, `quality/review_pipeline/`,
 `quality/cross_model_verifier.py`). When you read the orchestrator code, there are no
 surprise model calls. When you grep for LLM usage, you find exactly three
 files, each clearly named for its purpose.

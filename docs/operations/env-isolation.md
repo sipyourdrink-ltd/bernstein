@@ -213,8 +213,8 @@ fails loudly when a new adapter forgets the filter.
 |------------------------------------------------------------|--------------|
 | `src/bernstein/adapters/env_isolation.py`                  | `build_filtered_env()`, `_BASE_ALLOWLIST` |
 | `src/bernstein/adapters/claude.py` (and siblings)          | Per-adapter `extra_keys` list and Popen call site |
-| `src/bernstein/core/spawner.py`                            | Calls `adapter.spawn()` (Step 1 of the workflow) |
-| `src/bernstein/core/worker.py`                             | The wrapper that inherits the filtered env (Step 4) |
+| `src/bernstein/core/agents/spawner.py`                     | Calls `adapter.spawn()` (Step 1 of the workflow) |
+| `src/bernstein/core/orchestration/worker.py`               | The wrapper that inherits the filtered env (Step 4) |
 
 ---
 

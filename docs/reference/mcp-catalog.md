@@ -1,10 +1,10 @@
 # MCP Catalog
 
-The Bernstein MCP catalog is a community registry of installable [Model Context Protocol](https://modelcontextprotocol.io) servers. It shipped in **release 1.9** and lives at `bernstein mcp catalog` (registered as a subgroup of `bernstein mcp` in `cli/main.py:727-729`). Browse, search, install, upgrade, and uninstall MCP servers without hand-editing your client config.
+The Bernstein MCP catalog is a community registry of installable [Model Context Protocol](https://modelcontextprotocol.io) servers. It shipped in **release 1.9** and lives at `bernstein mcp catalog` (registered as a subgroup of `bernstein mcp` in `src/bernstein/cli/main.py`). Browse, search, install, upgrade, and uninstall MCP servers without hand-editing your client config.
 
 The catalog is **fetched** (network call), **validated** against [`reference/mcp-catalog-schema.json`](mcp-catalog-schema.json), **cached** locally, and every state-changing call is **audited** through Bernstein's HMAC-chained audit log.
 
-> Every flag below is cited as `cli/commands/mcp_catalog_cmd.py:<line>`.
+> Every flag below is cited as `src/bernstein/cli/commands/mcp_catalog_cmd.py:<line>`.
 
 ---
 
@@ -14,7 +14,7 @@ The catalog is **fetched** (network call), **validated** against [`reference/mcp
 - **Entry** - one record in the catalog. Has an `id` (slug), `version_pin` (semver), `install_command` (argv), `verified_by_bernstein` (bool), `signature` (optional), and `transports` (list of stdio / http / sse).
 - **Cache** - local JSON copy of the last-fetched catalog. Path resolved by `default_cache_path()`; overridable via `BERNSTEIN_MCP_CATALOG_CACHE_PATH`.
 - **User MCP config** - the file Bernstein writes installed servers into. Path resolved by `default_user_config_path()`; overridable via `BERNSTEIN_MCP_USER_CONFIG_PATH`. Edits are bracketed by a "bernstein-managed" block so manual entries elsewhere in the file are preserved.
-- **Audit log** - every fetch / install / upgrade / uninstall emits an HMAC-chained event under `.sdd/audit/`. Override directory via `BERNSTEIN_MCP_CATALOG_AUDIT_DIR` (`cli/commands/mcp_catalog_cmd.py:46-51`).
+- **Audit log** - every fetch / install / upgrade / uninstall emits an HMAC-chained event under `.sdd/audit/`. Override directory via `BERNSTEIN_MCP_CATALOG_AUDIT_DIR` (`src/bernstein/cli/commands/mcp_catalog_cmd.py`).
 - **Sandbox preview** - `install` and `upgrade` execute the entry's `install_command` in a sandbox **first**, capturing any file changes as a diff. Only after you confirm does Bernstein touch your real user config.
 
 ---
@@ -29,7 +29,7 @@ List every entry in the catalog.
 |---|---|---|
 | `--refresh` | off | Skip the freshness window; force a fresh fetch. |
 
-*(source: `cli/commands/mcp_catalog_cmd.py:135-163`)*
+*(source: `src/bernstein/cli/commands/mcp_catalog_cmd.py`)*
 
 The output is a Rich table with columns `ID`, `Name`, `Version`, `Verified`, `Transports`. The `Verified` column is `yes` if `verified_by_bernstein=true` in the catalog entry - i.e. Bernstein's trusted reviewers signed off on this manifest.
 
@@ -53,7 +53,7 @@ Search the catalog by ID, name, or description substring.
 | `QUERY` | required | Substring (case-insensitive) matched against `id`, `name`, `description`. |
 | `--refresh` | off | Skip the freshness window. |
 
-*(source: `cli/commands/mcp_catalog_cmd.py:166-181`)*
+*(source: `src/bernstein/cli/commands/mcp_catalog_cmd.py`)*
 
 ```bash
 bernstein mcp catalog search github
@@ -75,7 +75,7 @@ Show full details for a single entry.
 | `ENTRY_ID` | required | The slug from `browse`/`search`. |
 | `--refresh` | off | Skip the freshness window. |
 
-*(source: `cli/commands/mcp_catalog_cmd.py:184-202`)*
+*(source: `src/bernstein/cli/commands/mcp_catalog_cmd.py`)*
 
 Prints the entry's name, version pin, description, homepage, repository, transports, verification status, auto-upgrade flag, install command, and signature (if any).
 
@@ -93,7 +93,7 @@ Install an MCP server into your user MCP config.
 | `--yes` | off | Skip the confirmation prompt. |
 | `--refresh` | off | Skip the freshness window. |
 
-*(source: `cli/commands/mcp_catalog_cmd.py:205-243`)*
+*(source: `src/bernstein/cli/commands/mcp_catalog_cmd.py`)*
 
 **Flow:**
 
@@ -119,7 +119,7 @@ List every entry currently installed via the catalog.
 
 **Synopsis:** `bernstein mcp catalog list-installed`
 
-*(source: `cli/commands/mcp_catalog_cmd.py:246-276`)*
+*(source: `src/bernstein/cli/commands/mcp_catalog_cmd.py`)*
 
 Output columns: `ID`, `Pinned` (the installed version), `Installed at` (timestamp), `Last upgrade check`, `In catalog` (`yes` if still listed in the current catalog, `no` if it was removed upstream).
 
@@ -144,7 +144,7 @@ bernstein mcp catalog upgrade --all  [flags]
 | `--yes` | off | Skip confirmation prompts. |
 | `--refresh` | off | Skip the freshness window. |
 
-*(source: `cli/commands/mcp_catalog_cmd.py:279-309`)*
+*(source: `src/bernstein/cli/commands/mcp_catalog_cmd.py`)*
 
 For each upgrade, Bernstein:
 
@@ -168,7 +168,7 @@ Remove an entry from the bernstein-managed block of the user MCP config.
 
 **Synopsis:** `bernstein mcp catalog uninstall ENTRY_ID`
 
-*(source: `cli/commands/mcp_catalog_cmd.py:312-320`)*
+*(source: `src/bernstein/cli/commands/mcp_catalog_cmd.py`)*
 
 Errors with `<id> is not installed` if the entry was never installed via the catalog. Manually-added user MCP entries are **not** affected - Bernstein only edits its own bracketed block.
 
@@ -184,7 +184,7 @@ Show cache freshness, cadence settings, and installed-server count.
 
 **Synopsis:** `bernstein mcp catalog status`
 
-*(source: `cli/commands/mcp_catalog_cmd.py:323-334`)*
+*(source: `src/bernstein/cli/commands/mcp_catalog_cmd.py`)*
 
 Output keys:
 
@@ -229,7 +229,7 @@ Every field is required unless marked otherwise in the schema. `additionalProper
 
 ## Configuration & environment variables
 
-All five env vars come from `cli/commands/mcp_catalog_cmd.py:46-87`.
+All five env vars come from `src/bernstein/cli/commands/mcp_catalog_cmd.py`.
 
 | Env var | Default | Purpose |
 |---|---|---|
@@ -245,7 +245,7 @@ All five accept absolute or `~`-expanded paths (where applicable) and parse inte
 
 ## Trust model
 
-- **`verified_by_bernstein`** - A boolean on each entry. `true` means a Bernstein-trusted reviewer has audited the upstream server's source and signed off on the install command and version pin combination as of this catalog generation. `false` is **not** a "blocked" mark - it just means you have not had a third party vouch for the server. Unverified entries trigger a yellow warning before install (`cli/commands/mcp_catalog_cmd.py:221-226`).
+- **`verified_by_bernstein`** - A boolean on each entry. `true` means a Bernstein-trusted reviewer has audited the upstream server's source and signed off on the install command and version pin combination as of this catalog generation. `false` is **not** a "blocked" mark - it just means you have not had a third party vouch for the server. Unverified entries trigger a yellow warning before install (`src/bernstein/cli/commands/mcp_catalog_cmd.py`).
 - **`signature`** - Optional cryptographic signature over the entry. The schema permits any string; verification is delegated to the catalog service implementation in `core/protocols/mcp_catalog`.
 - **`additionalProperties: false`** at top level and per-entry - the catalog is rejected wholesale on unknown fields. This blocks silent capability drift.
 - **Sandbox preview** - Every install / upgrade runs the install command in a sandbox first. The host config is touched only after you confirm the diff. Failed previews abort without modifying state.

@@ -171,7 +171,7 @@ in a batch. Currently: group by role (same role type), then by code proximity
 
 ## Implementation
 
-The spawner (`core/spawner.py`) builds the spawn prompt with:
+The spawner (`core/agents/spawner.py`) builds the spawn prompt with:
 1. Role identity and system prompt from `templates/roles/<role>.md`
 2. Task list (1–3 tasks with full goal descriptions)
 3. Context file list (relevant code files for the task batch)

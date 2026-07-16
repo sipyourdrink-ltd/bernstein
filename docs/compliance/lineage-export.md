@@ -347,7 +347,7 @@ evidence.
 
 > Lineage records inherit whatever PII / PHI redaction the audit log
 > applies upstream; there is no extra redaction layer at lineage write
-> time. Confirm `core/security/pii_gating.py` is configured for your
+> time. Confirm `core/security/pii_output_gate.py` is configured for your
 > PHI categories before treating the export as PHI-safe.
 
 ---

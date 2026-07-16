@@ -22,7 +22,7 @@ child file, then append the parent ref under `flock(LOCK_EX)`.
 Source:
 
 - `src/bernstein/core/lineage/v2_store.py` - `LineageV2Store`
-- `src/bernstein/cli/commands/lineage_cmd.py:414+` - `lineage v2` group
+- the `lineage v2` group in `src/bernstein/cli/commands/lineage_cmd.py`
 
 v1 remains the default. v2 is **opt-in**.
 

@@ -98,21 +98,21 @@ Relevant code: `src/bernstein/core/routes/`
 - Path traversal: does `scope` or `goal` field sanitize `../` sequences?
 - Shell injection in `spawn_prompt` template expansion
 
-Relevant code: `src/bernstein/core/spawner.py`, `src/bernstein/core/spawn_prompt.py`
+Relevant code: `src/bernstein/core/agents/spawner.py`, `src/bernstein/core/agents/spawn_prompt.py`
 
 ### 3. Worktree isolation (High / Medium)
 
 - Does the `EnterWorktree` / `ExitWorktree` flow prevent escaping the assigned worktree?
 - Can one agent read another agent's worktree?
 
-Relevant code: `src/bernstein/core/orchestrator.py`
+Relevant code: `src/bernstein/core/orchestration/orchestrator.py`
 
 ### 4. Bulletin board (Medium)
 
 - Can a bulletin post cause XSS in the web dashboard?
 - Can a malicious agent post bulletins that influence other agents' behavior (prompt injection via bulletin)?
 
-Relevant code: `src/bernstein/core/bulletin.py`
+Relevant code: `src/bernstein/core/communication/bulletin.py`
 
 ### 5. Docker sandbox itself (Medium / Low)
 

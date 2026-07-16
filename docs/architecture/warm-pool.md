@@ -84,7 +84,7 @@ else:
     spawn_cwd = worktree_mgr.create(session_id)  # cold path
 ```
 
-Source: `core/agents/spawner_core.py:1591-1616`.
+Source: `core/agents/spawner_core.py`.
 
 On a miss, the spawner falls back to the cold path (`worktree_mgr.create`)
 and the agent eats the 5–15 s - but the cold path remains the safe
@@ -112,12 +112,12 @@ warm_pool:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `max_slots` | `3` | Hard cap on simultaneously-living slots. The pool silently rejects `add_slot` calls that would exceed this (`warm_pool.py:101-108`). |
-| `slot_ttl_seconds` | `300.0` | A `ready` slot older than this is moved to `expired` by `expire_stale()` so the worktree can be reaped (`warm_pool.py:170-197`). |
+| `max_slots` | `3` | Hard cap on simultaneously-living slots. The pool silently rejects `add_slot` calls that would exceed this (`warm_pool.py`). |
+| `slot_ttl_seconds` | `300.0` | A `ready` slot older than this is moved to `expired` by `expire_stale()` so the worktree can be reaped (`warm_pool.py`). |
 | `roles` | `[]` | Roles to pre-provision. The spawner only finds a hit if `claim_slot(role)` matches one of these. |
 
-Source: `WarmPoolConfig` at `warm_pool.py:54-66`; loader at
-`warm_pool.py:235-303`. Defaults are conservative - three slots covers
+Source: `WarmPoolConfig` at `warm_pool.py`; loader at
+`warm_pool.py`. Defaults are conservative - three slots covers
 most projects without doubling your worktree footprint.
 
 Rule of thumb: `max_slots ≈ peak concurrent spawns of one role`.
@@ -146,16 +146,16 @@ The transitions are the methods on `WarmPool`:
 
 - **`add_slot(slot)`** - append a freshly-built `PoolSlot` to the pool.
   Beyond `max_slots`, additions are silently ignored
-  (`warm_pool.py:93-116`).
+  (`warm_pool.py`).
 - **`claim_slot(role)`** - return the oldest `ready` slot matching
   `role`, marking it `claimed`. Returns `None` if no match exists; the
-  spawner falls back to the cold path (`warm_pool.py:118-148`).
+  spawner falls back to the cold path (`warm_pool.py`).
 - **`release_slot(slot_id)`** - mark a slot `expired` once the agent
   releases its worktree. Called from `Spawner._release_warm_pool_slot`
-  during agent reaping (`spawner_core.py:1038-1043`, `:1947`).
+  during agent reaping (`spawner_core.py`).
 - **`expire_stale(now=None)`** - sweep ready slots older than
   `slot_ttl_seconds` and move them to `expired`. Run periodically by the
-  spawner on its tick loop (`warm_pool.py:170-197`).
+  spawner on its tick loop (`warm_pool.py`).
 
 The pool itself never **creates** slots - that's the spawner / refiller
 agent's job. The pool just tracks state and serves claims FIFO. This
@@ -231,11 +231,11 @@ Re-enabling is just adding the config section back; no migration cost.
 | Concern | File |
 |---------|------|
 | Pool data structures + state machine | `src/bernstein/core/agents/warm_pool.py` |
-| YAML config loader | `src/bernstein/core/agents/warm_pool.py:235-303` (`load_warm_pool_config`) |
-| Spawner integration (claim) | `src/bernstein/core/agents/spawner_core.py:1591-1616` |
-| Spawner integration (release) | `src/bernstein/core/agents/spawner_core.py:1038-1043`, `:1947` |
+| YAML config loader | `src/bernstein/core/agents/warm_pool.py` (`load_warm_pool_config`) |
+| Spawner integration (claim) | `src/bernstein/core/agents/spawner_core.py` |
+| Spawner integration (release) | `src/bernstein/core/agents/spawner_core.py` |
 | Routing helper that picks model tier per slot | `src/bernstein/core/agents/spawner_warm_pool.py` |
-| Merge / reap path | `src/bernstein/core/agents/spawner_merge.py:125-...` |
+| Merge / reap path | `src/bernstein/core/agents/spawner_merge.py...` |
 
 See also: [`state-persistence.md`](state-persistence.md) for the
 `.sdd/worktrees/` layout each slot writes into;

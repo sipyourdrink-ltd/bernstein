@@ -24,7 +24,7 @@ worktree or leak secrets. Treat the hook as a privileged extension point.
 
 ## Hook signature
 
-Defined in `src/bernstein/plugins/hookspecs.py:546-566`:
+Defined in `src/bernstein/plugins/hookspecs.py`:
 
 ```python
 @hookspec
@@ -33,7 +33,7 @@ def provide_mcp_servers(self) -> list[dict[str, Any]] | None:
 ```
 
 A plugin that raises is logged and skipped - it does not crash
-collection (`plugins/manager.py:973-975`).
+collection (`plugins/manager.py`).
 
 ### Server-dict fields
 
@@ -57,28 +57,28 @@ Plugin loading (process startup)
    ├── PluginManager._safe_call("provide_mcp_servers", ...)
    │     iterates registered plugins
    │
-   └── PluginManager.collect_plugin_mcp_servers(registry)      [manager.py:955]
+   └── PluginManager.collect_plugin_mcp_servers(registry)      [manager.py]
          │
          └── for each plugin with provide_mcp_servers:
                raw_servers = plugin.provide_mcp_servers()
                for raw in raw_servers:
-                   entry = _mcp_entry_from_dict(raw)            [manager.py:70]
+                   entry = _mcp_entry_from_dict(raw)            [manager.py]
                    entries.append(entry)
-               registry.register_plugin_servers(plugin_name,    [mcp_registry.py:302]
+               registry.register_plugin_servers(plugin_name,    [mcp_registry.py]
                                                  entries)
                   ↑ sets entry.plugin_name → namespaced_name
                     becomes "<plugin>__<name>"
 
 Agent spawn (per task batch)
    │
-   ├── effective_mcp = base_mcp_config (from bernstein.yaml)    [spawner_core.py:1619]
+   ├── effective_mcp = base_mcp_config (from bernstein.yaml)    [spawner_core.py]
    │
-   ├── if mcp_registry is not None:                             [spawner_core.py:1620]
+   ├── if mcp_registry is not None:                             [spawner_core.py]
    │     effective_mcp = registry.resolve_for_tasks(tasks,
    │                                                base_config=effective_mcp)
    │     ↑ keywords + capabilities decide which servers attach
    │
-   └── if mcp_manager is not None:                              [spawner_core.py:1624]
+   └── if mcp_manager is not None:                              [spawner_core.py]
          effective_mcp = mcp_manager.build_mcp_config_for_task(
              task_mcp_servers=task.mcp_servers,
              base_config=effective_mcp,
@@ -86,7 +86,7 @@ Agent spawn (per task batch)
          ↑ task-requested servers (task.mcp_servers field) are
            layered on top of plugin and base config
 
-       validate_mcp_readiness(...)                              [spawner_core.py:1648]
+       validate_mcp_readiness(...)                              [spawner_core.py]
        spawn the agent with the merged mcpServers JSON
 ```
 
@@ -157,11 +157,11 @@ even when the operator did not list it in `task.mcp_servers`.
 - **Env-var hygiene.** List every secret your server consumes in
   `env_required`; the orchestrator copies only listed vars into the
   agent's env (`MCPServerEntry.to_mcp_config()` -
-  `core/protocols/mcp/mcp_registry.py:79-86`).
+  `core/protocols/mcp/mcp_registry.py`).
 - **Fail closed.** A raise in `provide_mcp_servers()` is logged and
-  skipped (`plugins/manager.py:973-975`). A server that does not start
+  skipped (`plugins/manager.py`). A server that does not start
   is caught by `validate_mcp_readiness()` at spawn
-  (`spawner_core.py:1646-1654`) - the spawn warns but does not crash.
+  (`spawner_core.py`) - the spawn warns but does not crash.
 - **Plugin policy gates registration.** Bernstein's enterprise plugin
   policy (`plugins_core.policy`) can deny-list your plugin; MCP injection
   requires a registered, allowed plugin - there is no side-channel.
@@ -174,7 +174,7 @@ even when the operator did not list it in `task.mcp_servers`.
 
 ### Unit test - namespacing
 
-`tests/unit/test_plugins.py:491-504` shows the established pattern:
+`tests/unit/test_plugins.py` shows the established pattern:
 
 ```python
 def test_plugin_servers_are_namespaced():
@@ -207,17 +207,17 @@ spawn-time write all line up.
 
 | Concern | File | Symbol / line |
 |---------|------|---------------|
-| Hook spec | `src/bernstein/plugins/hookspecs.py` | `provide_mcp_servers:546-566` |
-| Plugin-side dispatch | `src/bernstein/plugins/manager.py` | `collect_plugin_mcp_servers:955-975` |
-| Dict → entry conversion | `src/bernstein/plugins/manager.py` | `_mcp_entry_from_dict:70-82` |
-| Per-plugin registration & namespacing | `src/bernstein/plugins/manager.py` | `_register_plugin_mcp_servers:977-993` |
-| `MCPServerEntry` dataclass | `src/bernstein/core/protocols/mcp/mcp_registry.py` | `MCPServerEntry:27-105` |
-| `namespaced_name` property | `src/bernstein/core/protocols/mcp/mcp_registry.py` | `namespaced_name:53-63` |
-| `register_plugin_servers` | `src/bernstein/core/protocols/mcp/mcp_registry.py` | `:302-336` |
-| Per-task config build | `src/bernstein/core/protocols/mcp/mcp_registry.py` | `resolve_for_tasks:356-` |
-| Spawn-time merge & readiness probe | `src/bernstein/core/agents/spawner_core.py` | `:1618-1654` |
-| Orchestrator-side registry construction | `src/bernstein/core/orchestration/orchestrator.py` | `:4358-4364` |
-| Test suite | `tests/unit/test_plugins.py` | `_MCPServerPlugin:480-504`, collision test `:507-522`, error-isolation `:525-542` |
+| Hook spec | `src/bernstein/plugins/hookspecs.py` | `provide_mcp_servers` |
+| Plugin-side dispatch | `src/bernstein/plugins/manager.py` | `collect_plugin_mcp_servers` |
+| Dict → entry conversion | `src/bernstein/plugins/manager.py` | `_mcp_entry_from_dict` |
+| Per-plugin registration & namespacing | `src/bernstein/plugins/manager.py` | `_register_plugin_mcp_servers` |
+| `MCPServerEntry` dataclass | `src/bernstein/core/protocols/mcp/mcp_registry.py` | `MCPServerEntry` |
+| `namespaced_name` property | `src/bernstein/core/protocols/mcp/mcp_registry.py` | `namespaced_name` |
+| `register_plugin_servers` | `src/bernstein/core/protocols/mcp/mcp_registry.py` | - |
+| Per-task config build | `src/bernstein/core/protocols/mcp/mcp_registry.py` | `resolve_for_tasks` |
+| Spawn-time merge & readiness probe | `src/bernstein/core/agents/spawner_core.py` | - |
+| Orchestrator-side registry construction | `src/bernstein/core/orchestration/orchestrator.py` | - |
+| Test suite | `tests/unit/test_plugins.py` | `_MCPServerPlugin`, collision test -, error-isolation - |
 
 ## Related
 
