@@ -41,6 +41,14 @@ reconstructable offline rather than living only in a CI log.
 * A regression must repeat: **two consecutive failures with the same
   failure fingerprint** are required before the canary proposes an
   issue, so one upstream flake never pages anyone.
+* A `--help` that advertises **none** of a contract's required tokens (or
+  prints nothing) is classified as an **inconclusive `skip`, not a
+  `fail`** -- an installed CLI cannot legitimately drop its entire
+  required surface in one release, so this signals a broken, paginated,
+  or wholesale-redesigned `--help` (or a shim binary on `PATH`) that an
+  operator must investigate, rather than genuine per-flag drift. A
+  *partial* miss (at least one required token still present) remains a
+  real drift `fail`. The `skip` is independent of the process exit code.
 * Issues are **deduped on the failure fingerprint** (adapter + version +
   failure lines): the same regression never opens two issues, while a
   new upstream version failing fresh reports again.
