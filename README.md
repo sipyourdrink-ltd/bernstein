@@ -39,14 +39,14 @@ Bernstein is a deterministic Python scheduler that runs a crew of CLI coding age
 
 ### at a glance
 
-- **46 CLI agent adapters**: 43 third-party wrappers, 2 leaf-node delegators, plus a generic `--prompt` wrapper. Source of truth: the [supported agents](#supported-agents) table below.
+- **43 CLI agent adapters**, plus a generic `--prompt` wrapper for anything else. Source of truth: the [supported agents](#supported-agents) table below.
 - **HMAC-SHA256 audit chain** per [RFC 2104](https://datatracker.ietf.org/doc/html/rfc2104), one record per scheduling decision, tamper-evident. Operator guide: [docs/security/audit-log.md](docs/security/audit-log.md).
 - **Bearer-token task server** authenticates the manager and every worker. Per-session zero-trust JWT in `.sdd/runtime/agent_tokens/`, legacy `BERNSTEIN_AUTH_TOKEN` fallback, opt-out via `BERNSTEIN_AUTH_DISABLED=1`. Flow + diagnostics: [docs/security/manager-auth.md](docs/security/manager-auth.md).
 - **Signed agent cards** use detached JWS ([RFC 7515 §A.5](https://datatracker.ietf.org/doc/html/rfc7515#appendix-A.5)) over [RFC 8785 (JCS)](https://datatracker.ietf.org/doc/html/rfc8785) canonicalization, with [Ed25519 / EdDSA](https://datatracker.ietf.org/doc/html/rfc8037) keys. Code: [src/bernstein/core/security/agent_card_signer.py](src/bernstein/core/security/agent_card_signer.py).
 - **Per-artefact lineage** records every adapter file write, without per-adapter opt-in, as one Merkle-chained, HMAC-tagged entry in an always-on lineage spine (`.sdd/lineage/<run_id>/spine.jsonl`). The chain head hash is the run's artifact-provenance identity. CLI: `bernstein lineage verify <run_id>` (recompute the chain, distinct `NO ENTRIES` status for empty runs) and `bernstein lineage replay <run_id>`.
 - **Content credentials**: a C2PA 2.2 manifest for any produced artifact is a deterministic projection of that artifact's lineage-spine subtree, signed with the install-identity key so one attestation root covers both who ran it and what was produced. Stripping the spine makes the manifest unproducible, not merely unsigned. Watermark/fingerprint soft-binding layers are pluggable. CLI: `bernstein credential emit <artifact> --run-id <run_id>` and `bernstein credential verify <artifact>`.
 - **Tamper-evident memory**: every cross-session memory write is an append-only, HMAC-tagged chained record attributing a claim to an actor at a time (`entry_hash = H(prev, source_hash, actor, claim, model, timestamp, ...)`), stored per identity scope (user / agent / run / app) under `.sdd/memory/chain/<scope>/<namespace>.jsonl` and anchored to the lineage spine that produced it. Forgetting appends a signed tombstone rather than deleting, so the original stays provable. CLI: `bernstein memory verify --scope <s> --namespace <ns>` (proves a fact was written by the claimed actor and never edited), `bernstein memory why <fact> ...` (returns the originating run and step), and `bernstein memory forget <entry_hash> ...`.
-- **Always-on replay journal**: every run records into one Merkle-chained event journal (`.sdd/runs/<run_id>/journal.jsonl`) whose head hash is the run identity; no on/off flag, `BERNSTEIN_REPLAY_RETENTION` caps disk. Non-determinism surfaces as a hash mismatch: `bernstein replay <run_id> --verify` recomputes the head and reports the exact first divergent step, and `bernstein replay <run_id> --from-step N` rebuilds deterministic state. The journal head is sealed into the lineage spine so replay identity and artefact provenance share one root.
+- **Always-on replay journal**: every run records into one Merkle-chained event journal (`.sdd/runs/<run_id>/journal.jsonl`) whose head hash is the run identity; no on/off flag, `BERNSTEIN_REPLAY_RETENTION` caps disk. Non-determinism surfaces as a hash mismatch: `bernstein replay <run_id> --verify` recomputes the head and reports the exact first divergent step, and `bernstein replay <run_id> --from-step N` rebuilds deterministic state. The journal head is sealed into the lineage spine so replay identity and artefact provenance share one root. Provider-side context mutations (server-side compaction and similar opaque state) are recorded as content-addressed journal entries, so a change to what the model actually saw surfaces as divergence at the exact step instead of drifting silently; deterministic runs request suppression and fail loudly if a mutation arrives anyway.
 - **Compaction receipts**: every context compaction of a long-running worker is validated mechanically (code blocks and error text must survive) and recorded as an HMAC-chained receipt. CLI: `bernstein compaction log --task <id>`. Operator guide: [docs/operations/context-compaction.md](docs/operations/context-compaction.md).
 - **Deterministic scheduler**: zero LLM in the coordination loop. Plain Python decides who runs, where, with what budget. Replay yesterday's plan, get yesterday's task graph.
 - **Cost-aware scheduling (USD budgets, pools, batch and cache policies)**: USD ceilings per task / run / day are enforced before dispatch against a hash-pinned, config-overridable price table (no network lookup in the scheduling loop). Every budget decision is a pure function of `(price table, spend ledger, caps)`, so two operators with the same ledger reproduce byte-identical decisions; a halt is a sealed receipt naming the exact policy inputs (`price_table_hash`, `ledger_state_hash`, `policy_hash`) and the projected overrun, anchored in the lineage spine and mirrored into the audit chain (`cost.dispatch_receipt`). `bernstein cost policy verify <decision_hash>` recomputes the decision from the stored bytes and re-checks the spine anchor offline; a forged admit or zeroed overrun fails like a tampered chain entry. Usage is attributed to named pools (`api`, `subscription`) with independent caps, and `bernstein cost policy preflight` surfaces pool exhaustion before a run starts rather than mid-run. Batch dispatch and cache-window fan-out (one warm-up call primes a shared prompt prefix for M cache-hitting workers) are gated on a declared adapter capability map -- refused, never faked, on an adapter without the surface, and cache windows default off. `bernstein doctor` flags a stale price table.
@@ -82,7 +82,7 @@ Apache 2.0, solo maintained. Live stats: [bernstein.run](https://bernstein.run).
 ```bash
 pipx install bernstein
 bernstein init
-bernstein run -g "fix the failing test in tests/test_foo.py"
+bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
 See installed integrations: `bernstein integrations list --installed`.
@@ -116,7 +116,7 @@ If you nodded at two of those bullets, this fits.
 
 ## how it compares
 
-Closest neighbours in this category live in [docs/compare/README.md](docs/compare/README.md). What Bernstein does well is the auditability surface: HMAC-chained audit, signed agent cards, per-artefact lineage, air-gap deploy profile, plus the widest CLI adapter coverage.
+What Bernstein does well is the auditability surface: HMAC-chained audit, signed agent cards, per-artefact lineage, air-gap deploy profile, plus broad CLI adapter coverage.
 
 ---
 
@@ -178,7 +178,7 @@ Stock workflows shipping in the wheel: `idea-to-pr`, `refactor-with-tests`, `sec
 
 Bernstein auto-discovers installed CLI agents. Mix them in the same run. Cheap local models for boilerplate, heavier cloud models for architecture.
 
-46 CLI agent adapters: 43 third-party wrappers, 2 leaf-node delegators, plus a generic wrapper for anything with `--prompt`.
+43 CLI agent adapters, plus a generic wrapper for anything with `--prompt`.
 
 | Agent | Models | Install |
 |-------|--------|---------|
@@ -259,7 +259,7 @@ bernstein gui serve --dev         # expects `npm run dev` on :5173
 bernstein gui serve --minimal     # skip the full /api/v1/* surface
 ```
 
-The Vite bundle is committed under `src/bernstein/gui/static/`, so wheel installs work without a Node toolchain. Surface tour + per-task drawer: [docs/web-ui.md](docs/web-ui.md).
+The Vite bundle is committed under `src/bernstein/gui/static/`, so wheel installs work without a Node toolchain. Surface tour + per-task drawer: [docs/gui/screens.md](docs/gui/screens.md).
 
 The dashboard requires a credential: on a loopback bind an operator token is issued and printed at startup; a non-loopback bind refuses to start until one is configured. Issue read-only (`viewer`) or read-write (`operator`) tokens with `bernstein auth dashboard-token issue --principal <name> --scope viewer`; every grant and write authorization is a signed governance record (`bernstein governance verify dashboard-auth`).
 
@@ -286,7 +286,7 @@ bernstein cloud run plan.yaml  # execute a plan on Cloudflare
 
 ## capabilities
 
-Bernstein ships parallel execution + worktree isolation + a janitor that gates merges on tests/lint/types, signed lineage records, MCP server mode, an HMAC-SHA256 audit chain, and 45 CLI adapters out of the box. Pluggable sandbox backends (worktree, Docker, [E2B](https://e2b.dev), [Modal](https://modal.com)), pluggable artifact sinks (local, S3, GCS, Azure Blob, R2), progressive-disclosure skill packs, and a [lethal-trifecta capability gate](docs/security/lethal-trifecta.md) round it out.
+Bernstein ships parallel execution + worktree isolation + a janitor that gates merges on tests/lint/types, signed lineage records, MCP server mode, an HMAC-SHA256 audit chain, and 43 CLI adapters out of the box. Pluggable sandbox backends (worktree, Docker, [E2B](https://e2b.dev), [Modal](https://modal.com)), pluggable artifact sinks (local, S3, GCS, Azure Blob, R2), progressive-disclosure skill packs, and a [lethal-trifecta capability gate](docs/security/lethal-trifecta.md) round it out.
 
 Full feature matrix: [docs/reference/FEATURE_MATRIX.md](docs/reference/FEATURE_MATRIX.md). Recent features: [docs/whats-new.md](docs/whats-new.md).
 
@@ -335,7 +335,7 @@ If you need real semantic retrieval (vector DB, neural embeddings), wire it your
 | **Homebrew** | `brew tap chernistry/tap && brew install bernstein` |
 | **Fedora / RHEL** | `sudo dnf copr enable alexchernysh/bernstein && sudo dnf install bernstein` |
 | **npm** (wrapper) | `npx bernstein-orchestrator` |
-| **Docker (GHCR)** | `docker run --rm -v "$PWD:/work" -w /work -e ANTHROPIC_API_KEY ghcr.io/sipyourdrink-ltd/bernstein:latest run -g "fix tests/test_foo.py"` |
+| **Docker (GHCR)** | `docker run --rm -v "$PWD:/work" -w /work -e ANTHROPIC_API_KEY ghcr.io/sipyourdrink-ltd/bernstein:latest -g "fix tests/test_foo.py"` |
 
 The one-liner scripts check for Python 3.12+, bootstrap pipx when it's missing, fix PATH for the current session, and install (or upgrade) `bernstein`. Script sources: [install.sh](scripts/install.sh) &middot; [install.ps1](scripts/install.ps1).
 
@@ -405,7 +405,5 @@ Machine-readable metadata lives in [CITATION.cff](CITATION.cff) (CFF 1.2.0); Git
 ---
 
 [Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
-
-Translations available in 11 languages: see [docs/i18n/](docs/i18n/).
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->
