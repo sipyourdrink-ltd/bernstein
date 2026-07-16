@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from bernstein.evolution.aggregator import MetricsCollector
+    from bernstein.evolution.observability_signals import ObservabilityRegression
 
 
 class UpgradeCategory(Enum):
@@ -41,6 +42,46 @@ class ImprovementOpportunity:
     risk_level: Literal["low", "medium", "high"]
     affected_components: list[str] = field(default_factory=list[str])
     estimated_cost_impact_usd: float = 0.0
+
+
+_SEVERITY_RISK: dict[str, Literal["low", "medium", "high"]] = {
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+}
+
+
+def _regression_to_opportunity(reg: ObservabilityRegression) -> ImprovementOpportunity:
+    """Map an observability regression to an ``ImprovementOpportunity``."""
+
+    if reg.kind == "coverage":
+        prev_txt = "n/a" if reg.prev is None else f"{reg.prev:.1f}%"
+        return ImprovementOpportunity(
+            category=UpgradeCategory.POLICY_UPDATE,
+            title="Restore test coverage",
+            description=(
+                f"Sonar coverage fell {reg.delta:+.1f} points ({prev_txt} -> {reg.curr:.1f}%) "
+                "between the two most recent observability snapshots."
+            ),
+            expected_improvement="Return coverage to its prior level and lower regression risk",
+            confidence=0.75,
+            risk_level="medium",
+            affected_components=[reg.backend],
+        )
+
+    prev_txt = "n/a" if reg.prev is None else f"{reg.prev:g}"
+    return ImprovementOpportunity(
+        category=UpgradeCategory.POLICY_UPDATE,
+        title=f"Resolve {reg.backend} {reg.metric} increase",
+        description=(
+            f"{reg.backend} {reg.metric} rose {reg.delta:+g} ({prev_txt} -> {reg.curr:g}) "
+            "between the two most recent observability snapshots."
+        ),
+        expected_improvement=f"Clear the new {reg.metric} finding(s)",
+        confidence=0.9 if reg.severity == "high" else 0.7,
+        risk_level=_SEVERITY_RISK.get(reg.severity, "medium"),
+        affected_components=[reg.backend],
+    )
 
 
 @dataclass
@@ -237,10 +278,16 @@ class OpportunityDetector:
         collector: MetricsCollector,
         failure_analyzer: FailureAnalyzer | None = None,
         analysis_dir: Path | None = None,
+        observability_snapshots_dir: Path | None = None,
     ) -> None:
         self.collector = collector
         self.failure_analyzer = failure_analyzer
         self._analysis_dir = analysis_dir
+        # When set, the detector reads the daily observe snapshot corpus and
+        # emits opportunities for external security / coverage regressions.
+        # Left None (the default) it is a no-op, so callers that only care
+        # about internal cost / task metrics are unaffected.
+        self._observability_snapshots_dir = observability_snapshots_dir
 
     def identify_opportunities(self) -> list[ImprovementOpportunity]:
         """Identify improvement opportunities from recent metrics."""
@@ -285,10 +332,38 @@ class OpportunityDetector:
         # Check for failure-driven opportunities
         opportunities.extend(self.identify_failure_opportunities())
 
+        # Check for external repo-health regressions (security / coverage).
+        opportunities.extend(self.identify_observability_opportunities())
+
         if self._analysis_dir is not None:
             self._write_opportunities(opportunities)
 
         return opportunities
+
+    def identify_observability_opportunities(self) -> list[ImprovementOpportunity]:
+        """Emit opportunities for security / coverage regressions in snapshots.
+
+        Reads the two most recent ``bernstein doctor observe`` snapshots and
+        turns each security or coverage regression into an
+        ``ImprovementOpportunity``. This feeds external repo-health signals
+        into the self-improvement loop, which otherwise sees only internal
+        cost and task metrics.
+
+        Guarded: returns an empty list when no snapshots directory is
+        configured, the directory is missing, or fewer than two snapshots
+        exist. Never raises.
+        """
+
+        if self._observability_snapshots_dir is None:
+            return []
+        try:
+            from bernstein.evolution.observability_signals import detect_regressions
+
+            regressions = detect_regressions(self._observability_snapshots_dir)
+        except Exception:
+            logger.exception("observability regression scan failed")
+            return []
+        return [_regression_to_opportunity(reg) for reg in regressions]
 
     def _write_opportunities(self, opportunities: list[ImprovementOpportunity]) -> None:
         """Write detected opportunities to .sdd/analysis/opportunities.json."""
