@@ -52,11 +52,11 @@ jobs:
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
-          BERNSTEIN_GLITCHTIP_TOKEN: ${{ secrets.BERNSTEIN_GLITCHTIP_TOKEN }}
+          BERNSTEIN_GLITCHTIP_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
           BERNSTEIN_GLITCHTIP_BASE_URL: ${{ vars.BERNSTEIN_GLITCHTIP_BASE_URL }}
           BERNSTEIN_GLITCHTIP_ORG: ${{ vars.BERNSTEIN_GLITCHTIP_ORG }}
-          DTRACK_URL: ${{ vars.DTRACK_URL }}
-          DTRACK_TOKEN: ${{ secrets.DTRACK_TOKEN }}
+          DTRACK_URL: ${{ secrets.DT_API_URL }}
+          DTRACK_TOKEN: ${{ secrets.DT_API_KEY }}
           DTRACK_PROJECT: ${{ vars.DTRACK_PROJECT }}
         run: |
           set -euo pipefail
@@ -72,6 +72,49 @@ jobs:
             --snapshots-dir docs/observability/snapshots \
             --out docs/observability/trends.md \
             --days 30
+
+      - name: Detect metric regressions and alert
+        # Non-blocking: the snapshot PR still opens on a regression. The gate
+        # diffs today's snapshot against yesterday's and pages Telegram only
+        # on a fail-severity regression (new critical/high vuln, a metric that
+        # crossed its fail threshold). Warn-level drift (coverage slip, a
+        # backend that lost its credentials) is recorded in the run summary.
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -uo pipefail
+          mkdir -p .ci/observability
+          uv run python scripts/observability/gate.py \
+            --snapshots docs/observability/snapshots \
+            --out .ci/observability/regressions.json \
+            --summary-out "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+
+          if [ ! -s .ci/observability/regressions.json ]; then
+            echo "No regressions recorded."
+            exit 0
+          fi
+          FAILS=$(jq '[.[] | select(.severity == "fail")] | length' .ci/observability/regressions.json)
+          if [ "${FAILS:-0}" -eq 0 ]; then
+            echo "No fail-severity regression; not paging."
+            exit 0
+          fi
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram not configured; skipping push."
+            exit 0
+          fi
+          DETAIL=$(jq -r '[.[] | select(.severity == "fail") | "\(.backend) \(.metric): \(.reason)"] | join("\n")' \
+            .ci/observability/regressions.json)
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
+          TEXT="observability regression (${FAILS} fail-severity)
+          ${DETAIL}
+          ${RUN_URL}"
+          BODY=$(jq -n --arg chat "${TELEGRAM_CHAT_ID}" --arg text "${TEXT}" '{chat_id: $chat, text: $text}')
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "${BODY}" \
+            || echo "Telegram notification failed"
 
       - name: Open PR with snapshot + trends
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
