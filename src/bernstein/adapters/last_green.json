@@ -8,38 +8,38 @@
     },
     "claude": {
       "binary": "claude",
-      "receipt_sha256": "37cea2efa036e4561eb06ce0e950388fb9b481696ecf58b89d5a5062a9ca0a38",
-      "recorded_at": "2026-07-15T07:06:07Z",
-      "version": "2.1.210"
+      "receipt_sha256": "fcb628c6d5cfe3959469cfca0bcc50abfa69179d68b3e63bd5fd8732808e44a2",
+      "recorded_at": "2026-07-16T07:15:42Z",
+      "version": "2.1.211"
     },
     "codex": {
       "binary": "codex",
-      "receipt_sha256": "87c2a59ebe5100d4b7a0ab0399040cee7be032bc816c6ccd7a07a76820a5eb0d",
-      "recorded_at": "2026-07-15T07:06:07Z",
-      "version": "0.144.4"
+      "receipt_sha256": "4ebfa46835ee22ba0156ef55f2013a7ef20c7267b4b67c010134dba9d3f1474b",
+      "recorded_at": "2026-07-16T07:15:42Z",
+      "version": "0.144.5"
     },
     "copilot": {
       "binary": "copilot",
-      "receipt_sha256": "2904dccc4f1a6d592dbb0abbe634675612a038dbba0e3b47d47b0be2a6be69bd",
-      "recorded_at": "2026-07-15T07:06:07Z",
-      "version": "1.0.70"
+      "receipt_sha256": "8de866fed30e879f3f00ec760e243cfbc03d8f3ece3f8438750cf22034fd0eab",
+      "recorded_at": "2026-07-16T07:15:42Z",
+      "version": "1.0.71"
     },
     "gemini": {
       "binary": "gemini",
-      "receipt_sha256": "30cf9f1de4f0b7ca150705e7b5bbd61bdab8a8c41902c3bc3e4841a4e72126d8",
-      "recorded_at": "2026-07-15T07:06:07Z",
+      "receipt_sha256": "8f9f583d0134aa7a7faf19dd92bac066e49edb97e15e3938df8fd34c112fd52e",
+      "recorded_at": "2026-07-16T07:15:42Z",
       "version": "0.50.0"
     },
     "opencode": {
       "binary": "opencode",
-      "receipt_sha256": "fa08d595d1c18398b79b8e39e01abf098994dfd50916285e4c90e343c25712e1",
-      "recorded_at": "2026-07-15T07:06:07Z",
-      "version": "1.18.1"
+      "receipt_sha256": "f109eda8a6c3c6409a4b18fe513f025c656f8b049658e748326c68ff00f3b096",
+      "recorded_at": "2026-07-16T07:15:42Z",
+      "version": "1.18.2"
     },
     "qwen": {
       "binary": "qwen",
-      "receipt_sha256": "601b5de924def1e3586946344784290cc918774c2c1358e8b0b0d8b179753c95",
-      "recorded_at": "2026-07-15T07:06:07Z",
+      "receipt_sha256": "4fdb96aaba964b700c334b42dc1e0cbc28e191149682ae80e5d0d5ba3a51e40b",
+      "recorded_at": "2026-07-16T07:15:42Z",
       "version": "0.19.10"
     }
   },
