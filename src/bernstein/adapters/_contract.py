@@ -262,6 +262,49 @@ def _capability_failures(spec: ContractSpec, help_text: str) -> list[str]:
     return failures
 
 
+#: Minimum number of required tokens below which the "every required token
+#: missing" signal cannot be told apart from ordinary single-flag drift. A
+#: one-token contract that loses its one token is genuine drift, not a broken
+#: probe, so the classification below only applies at two or more tokens.
+_BROKEN_PROBE_MIN_REQUIRED = 2
+
+
+def probe_failure_reason(spec: ContractSpec, help_text: str) -> str | None:
+    """Classify ``help_text`` as a broken/degraded probe rather than drift.
+
+    Returns a short reason phrase when the captured ``--help`` output looks
+    like a probe or upstream runtime failure -- the CLI crashed before
+    emitting help, paginated it away, was redesigned/renamed wholesale, or a
+    shim binary is shadowing ``PATH`` -- and ``None`` when the output is real
+    help text that should drive normal flag matching.
+
+    Signals, in order:
+
+    * **No output.** An installed binary whose ``--help`` prints nothing is
+      broken, not drifted.
+    * **Every required token absent at once.** A working binary cannot
+      legitimately drop its *entire* declared required surface in one
+      release; when all of ``>= _BROKEN_PROBE_MIN_REQUIRED`` required tokens
+      vanish together the likelier cause is a broken or wholesale-redesigned
+      ``--help``. Reporting each token as "missing" would page an operator
+      with a misleading per-flag "every flag removed" finding (issue #2488).
+
+    A single-token contract is exempt from the second signal: losing its one
+    token is indistinguishable from ordinary drift, so it stays drift. This
+    is independent of the process exit code -- some CLIs emit a redesigned or
+    paginated help and still exit 0.
+    """
+    total_required = len(spec.required_flags) + len(spec.required_subcommands)
+    if total_required == 0:
+        return None
+    if not _strip_ansi(help_text).strip():
+        return "no output"
+    failures = _capability_failures(spec, help_text)
+    if len(failures) == total_required and total_required >= _BROKEN_PROBE_MIN_REQUIRED:
+        return "no required tokens advertised"
+    return None
+
+
 def _model_failures(spec: ContractSpec, models_text: str) -> list[str]:
     """List required models missing from the CLI's model-list output."""
     failures: list[str] = []
@@ -316,33 +359,34 @@ def check_contract(spec: ContractSpec) -> ContractResult:
         result.skipped_reason = help_text.strip()
         return result
 
-    # Guard: a non-zero help exit that fails to advertise the required
-    # contract surface is a CLI runtime failure, not contract drift.
+    # Guard: a help exit that fails to advertise the required contract
+    # surface is a CLI runtime/probe failure, not contract drift.
     # Reporting every required flag as "missing" against an empty (or
     # truncated) haystack produces misleading drift issues (one failure
     # line per required flag) when the real problem is a broken --help.
-    # Cover two patterns seen in real CI:
+    # Covers the patterns seen in real CI:
     #   * help_text empty (CLI crashed before emitting anything).
     #   * help_text non-empty but ALL required flags missing (CLI emitted
-    #     a stub or error preamble and bailed before the flag section).
-    # Surface the runtime failure on a dedicated field so the CLI can
-    # exit with a "checker error" status rather than a drift status; the
-    # workflow distinguishes the two and only treats real drift as
-    # contract regression.
+    #     a stub or error preamble, or a redesigned/paginated help, and
+    #     advertised none of the required tokens).
+    # This is independent of the exit code: some CLIs ship a redesigned or
+    # paginated --help that still exits 0, so gating on a non-zero exit
+    # would miss exactly the regression that opened issue #2488. Surface
+    # the runtime failure on a dedicated field so the CLI can exit with a
+    # "checker error" status rather than a drift status; the workflow
+    # distinguishes the two and only treats real drift as contract
+    # regression.
     stripped_help = _strip_ansi(help_text).strip()
-    raw_failures = _capability_failures(spec, help_text)
-    total_required = len(spec.required_flags) + len(spec.required_subcommands)
-    all_required_missing = total_required > 0 and len(raw_failures) == total_required
-    if rc != 0 and (not stripped_help or all_required_missing):
+    probe_reason = probe_failure_reason(spec, help_text)
+    if probe_reason is not None:
         snippet = stripped_help[:300] or "<no output>"
-        reason = "no output" if not stripped_help else "no required tokens advertised"
         result.runtime_failure = (
-            f"`{' '.join(spec.resolved_help_command())}` exited {rc} with {reason}; "
+            f"`{' '.join(spec.resolved_help_command())}` exited {rc} with {probe_reason}; "
             f"upstream CLI runtime failure, not contract drift: {snippet}"
         )
         return result
 
-    result.capability_failures = raw_failures
+    result.capability_failures = _capability_failures(spec, help_text)
 
     # 2. Optional model-presence check.
     if spec.models_required_present and spec.models_command:

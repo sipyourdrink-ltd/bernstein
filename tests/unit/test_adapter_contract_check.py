@@ -474,6 +474,82 @@ def test_check_contract_help_nonzero_with_output_still_checks_flags(
     assert result.capability_failures == []
 
 
+def test_check_contract_help_zero_exit_all_flags_missing_is_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A *zero* exit whose output lacks ALL required tokens is still a runtime
+    failure, not drift.
+
+    Regression for issue #2488: some CLIs ship a redesigned or paginated
+    --help that advertises none of the required flags yet still exits 0.
+    Gating the broken-probe guard on a non-zero exit misclassified that as
+    six-flag drift and paged an operator with a misleading "every flag
+    removed" finding. The guard now fires regardless of exit code once every
+    required token is absent.
+    """
+    spec = _contract.ContractSpec(
+        adapter="redesigned",
+        binary="redesigned",
+        install_method="",
+        install_spec="",
+        auth_required_for_help=False,
+        auth_required_for_models=False,
+        auth_secret_env="",
+        required_flags=("--alpha", "--beta", "--gamma"),
+        required_subcommands=(),
+        help_command=(),
+        models_command=(),
+        models_required_present=(),
+    )
+    monkeypatch.setattr(_contract.shutil, "which", lambda _name: "/fake/bin/redesigned")
+    monkeypatch.setattr(
+        _contract,
+        "_run_capture",
+        _make_run_capture({("redesigned", "--help"): (0, "redesigned 3.13 - see docs for the new surface.\n")}),
+    )
+    result = _contract.check_contract(spec)
+    assert result.passed is False
+    assert result.capability_failures == []
+    assert "runtime failure" in result.runtime_failure
+    assert "no required tokens advertised" in result.runtime_failure
+
+
+def test_check_contract_help_zero_exit_partial_miss_is_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A zero exit with *some* required tokens present is genuine drift.
+
+    The broken-probe guard must only swallow a wholesale surface loss; a
+    partial miss (at least one required token still advertised) is a real
+    contract regression and must keep reporting per-flag drift.
+    """
+    spec = _contract.ContractSpec(
+        adapter="partial",
+        binary="partial",
+        install_method="",
+        install_spec="",
+        auth_required_for_help=False,
+        auth_required_for_models=False,
+        auth_secret_env="",
+        required_flags=("--alpha", "--beta", "--gamma"),
+        required_subcommands=(),
+        help_command=(),
+        models_command=(),
+        models_required_present=(),
+    )
+    monkeypatch.setattr(_contract.shutil, "which", lambda _name: "/fake/bin/partial")
+    monkeypatch.setattr(
+        _contract,
+        "_run_capture",
+        _make_run_capture({("partial", "--help"): (0, "usage: partial [--alpha A] [--beta B]\n")}),
+    )
+    result = _contract.check_contract(spec)
+    assert result.passed is False
+    assert result.runtime_failure == ""
+    assert len(result.capability_failures) == 1
+    assert "--gamma" in result.capability_failures[0]
+
+
 def test_check_contract_binary_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = _contract.ContractSpec(
         adapter="ghost",

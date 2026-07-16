@@ -30,16 +30,20 @@ SARIF mode
 ----------
 
     python scripts/sweep_sonar_findings.py --emit-sarif sonar.sarif \\
-        [--fixture path/to/issues.json]
+        [--fixture path/to/issues.json] [--sarif-include-code-smells]
 
-``--emit-sarif PATH`` reuses the same Sonar client to fetch *all*
-findings (issues of every type plus security hotspots) and writes them
-as a SARIF 2.1.0 document at ``PATH``. This is the path that feeds
-GitHub code scanning (the Security tab), so vulnerability detail stays
-visible to maintainers rather than public issue readers. In SARIF mode
-the script never writes backlog tickets and never opens GitHub issues.
-Output is deterministic (rules and results are sorted on stable keys)
-so an unchanged finding set produces byte-identical SARIF on re-run.
+``--emit-sarif PATH`` reuses the same Sonar client to fetch findings and
+writes them as a SARIF 2.1.0 document at ``PATH``. This is the path that
+feeds GitHub code scanning (the Security tab), so vulnerability detail
+stays visible to maintainers rather than public issue readers. The
+export is scoped to security- and reliability-relevant findings
+(VULNERABILITY, SECURITY_HOTSPOT, BUG) by default so the Security tab is
+not diluted by pure-maintainability CODE_SMELL findings (those remain in
+the SonarQube dashboard); pass ``--sarif-include-code-smells`` to emit
+the full set. In SARIF mode the script never writes backlog tickets and
+never opens GitHub issues. Output is deterministic (rules and results
+are sorted on stable keys) so an unchanged finding set produces
+byte-identical SARIF on re-run.
 
 Exit codes
 ----------
@@ -1246,6 +1250,40 @@ def maybe_create_gh_issue(
 SARIF_SCHEMA_URI = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
 SARIF_VERSION = "2.1.0"
 
+# Sonar finding types that carry security or reliability signal and so
+# belong in the GitHub Security tab (which code scanning powers):
+# VULNERABILITY and SECURITY_HOTSPOT are security; BUG is reliability.
+# The remaining Sonar type, CODE_SMELL, is pure maintainability -- it
+# stays in the SonarQube dashboard rather than the Security tab. The
+# SARIF export is scoped to this set by default; ``--sarif-include-code-
+# smells`` (``filter_sarif_findings(..., include_code_smells=True)``)
+# widens it to everything when an operator wants the full surface. The
+# whitelist is deliberate: an unrecognised type is dropped rather than
+# leaked into the Security tab.
+SARIF_CODE_SCANNING_TYPES: frozenset[str] = frozenset({"VULNERABILITY", "SECURITY_HOTSPOT", "BUG"})
+
+
+def filter_sarif_findings(
+    findings: Iterable[Finding],
+    *,
+    include_code_smells: bool = False,
+) -> list[Finding]:
+    """Scope findings to the security- and reliability-relevant set.
+
+    Code scanning powers the GitHub Security tab, so by default only
+    findings whose type is in :data:`SARIF_CODE_SCANNING_TYPES`
+    (VULNERABILITY, SECURITY_HOTSPOT, BUG) are exported. Pure-
+    maintainability CODE_SMELL findings are dropped here; they remain
+    visible in the SonarQube dashboard, which is their proper home.
+    Pass ``include_code_smells=True`` to keep the full finding set.
+
+    Order is preserved so the downstream SARIF sort stays deterministic.
+    """
+    if include_code_smells:
+        return list(findings)
+    return [f for f in findings if f.type in SARIF_CODE_SCANNING_TYPES]
+
+
 # GitHub reads ``security-severity`` (a 0-10 string) to bucket a finding
 # into critical/high/medium/low in the Security tab. Map Sonar's issue
 # severities and hotspot probability bands onto that scale.
@@ -1440,13 +1478,25 @@ def run_emit_sarif(args: argparse.Namespace) -> int:
             return 1
         host = config.host
 
+    # Scope the upload to security-/reliability-relevant findings before
+    # building the document. This is an export-policy decision kept out of
+    # the pure builder (``build_sarif``), so the builder stays a faithful
+    # projection of whatever findings it is handed.
+    total_findings = len(findings)
+    include_smells = getattr(args, "sarif_include_code_smells", False)
+    findings = filter_sarif_findings(findings, include_code_smells=include_smells)
+    dropped = total_findings - len(findings)
+
     sarif = build_sarif(findings, host=host)
     if out_path.parent and not out_path.parent.exists():
         out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(sarif, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     n_rules = len(sarif["runs"][0]["tool"]["driver"]["rules"])
     n_results = len(sarif["runs"][0]["results"])
-    print(f"sonar-sarif: findings={len(findings)} rules={n_rules} results={n_results} out={out_path}")
+    print(
+        f"sonar-sarif: findings={len(findings)} (dropped {dropped} maintainability) "
+        f"rules={n_rules} results={n_results} out={out_path}"
+    )
     return 0
 
 
@@ -1638,9 +1688,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="PATH",
         help=(
-            "Write all findings (issues of every type plus security "
-            "hotspots) as a SARIF 2.1.0 document at PATH instead of "
-            "emitting backlog tickets. Feeds GitHub code scanning."
+            "Write findings as a SARIF 2.1.0 document at PATH instead of "
+            "emitting backlog tickets. Feeds GitHub code scanning. By "
+            "default the export is scoped to security- and reliability-"
+            "relevant findings (VULNERABILITY, SECURITY_HOTSPOT, BUG); see "
+            "--sarif-include-code-smells."
+        ),
+    )
+    p.add_argument(
+        "--sarif-include-code-smells",
+        action="store_true",
+        help=(
+            "In --emit-sarif mode, keep pure-maintainability CODE_SMELL "
+            "findings in the SARIF export. Off by default so the GitHub "
+            "Security tab is not polluted by maintainability smells; those "
+            "stay visible in the SonarQube dashboard."
         ),
     )
     return p.parse_args(argv)
