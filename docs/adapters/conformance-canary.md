@@ -41,6 +41,14 @@ reconstructable offline rather than living only in a CI log.
 * A regression must repeat: **two consecutive failures with the same
   failure fingerprint** are required before the canary proposes an
   issue, so one upstream flake never pages anyone.
+* A `--help` that advertises **none** of a contract's required tokens (or
+  prints nothing) is classified as an **inconclusive `skip`, not a
+  `fail`** -- an installed CLI cannot legitimately drop its entire
+  required surface in one release, so this signals a broken, paginated,
+  or wholesale-redesigned `--help` (or a shim binary on `PATH`) that an
+  operator must investigate, rather than genuine per-flag drift. A
+  *partial* miss (at least one required token still present) remains a
+  real drift `fail`. The `skip` is independent of the process exit code.
 * Issues are **deduped on the failure fingerprint** (adapter + version +
   failure lines): the same regression never opens two issues, while a
   new upstream version failing fresh reports again.
@@ -61,12 +69,12 @@ one upstream regression away from failing without warning.
 | Adapter | Binary | Last-green version | Verified | Receipt |
 |---|---|---|---|---|
 | agy | `agy` | 1.0.0 | 2026-07-11T05:57:23Z | `006fb946868d` |
-| claude | `claude` | 2.1.207 | 2026-07-12T07:25:34Z | `70a4b6117ee6` |
-| codex | `codex` | 0.144.1 | 2026-07-12T07:25:34Z | `36acf8934592` |
-| copilot | `copilot` | 1.0.70 | 2026-07-12T07:25:34Z | `cbd54fc3ee80` |
-| gemini | `gemini` | 0.50.0 | 2026-07-12T07:25:34Z | `7c0241cda25c` |
-| opencode | `opencode` | 1.17.18 | 2026-07-12T07:25:34Z | `b0bc5dcef54e` |
-| qwen | `qwen` | 0.19.9 | 2026-07-12T07:25:34Z | `4cecea6a3c6a` |
+| claude | `claude` | 2.1.210 | 2026-07-15T07:06:07Z | `37cea2efa036` |
+| codex | `codex` | 0.144.4 | 2026-07-15T07:06:07Z | `87c2a59ebe51` |
+| copilot | `copilot` | 1.0.70 | 2026-07-15T07:06:07Z | `2904dccc4f1a` |
+| gemini | `gemini` | 0.50.0 | 2026-07-15T07:06:07Z | `30cf9f1de4f0` |
+| opencode | `opencode` | 1.18.1 | 2026-07-15T07:06:07Z | `fa08d595d1c1` |
+| qwen | `qwen` | 0.19.10 | 2026-07-15T07:06:07Z | `601b5de924de` |
 <!-- last-green:end -->
 
 ## Operator knobs
