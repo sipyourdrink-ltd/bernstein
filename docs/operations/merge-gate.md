@@ -73,9 +73,9 @@ gh api -X PUT "repos/sipyourdrink-ltd/bernstein/branches/main/merge_queue" \
 
 After enabling, `gh pr merge --auto` will route the PR into the merge queue instead of merging immediately. CI then runs against the combined branch GitHub computes for the queued merge group, and the `merge_group:` trigger added to `.github/workflows/ci.yml` makes the existing CI suite respond to that event.
 
-### 3. Expand the required-check list
+### 3. Require the `CI gate` aggregator
 
-Set every layer of the gate stack plus the existing CI jobs as required checks. The set below covers the four holes documented in the TL;DR.
+Do not enumerate individual CI job names in `required_status_checks.contexts`. The literal job names drift (the type-check context is `Type check report`, and the test matrix reports sharded contexts such as `Test (ubuntu-latest, Python 3.13, shard 1)`), and a context that never reports wedges every merge on `main`. The `ci-gate` job in `ci.yml` (context `CI gate`) already rolls up every upstream job result with conditional allowed-skips, so it is the single context to require - the same recommendation as [merge-queue.md](merge-queue.md).
 
 ```bash
 gh api -X PATCH "repos/sipyourdrink-ltd/bernstein/branches/main/protection" \
@@ -83,22 +83,15 @@ gh api -X PATCH "repos/sipyourdrink-ltd/bernstein/branches/main/protection" \
   -f required_status_checks.strict=true \
   -F required_status_checks.contexts[]='CI gate' \
   -F required_status_checks.contexts[]='review-bot-ack' \
-  -F required_status_checks.contexts[]='Repo hygiene' \
-  -F required_status_checks.contexts[]='docs-drift / Run drift check' \
-  -F required_status_checks.contexts[]='Lint' \
-  -F required_status_checks.contexts[]='Type check' \
-  -F required_status_checks.contexts[]='Workflow lint' \
-  -F required_status_checks.contexts[]='Lineage Gate' \
-  -F required_status_checks.contexts[]='Test (ubuntu-latest, Python 3.12)' \
-  -F required_status_checks.contexts[]='Test (ubuntu-latest, Python 3.13)' \
-  -F required_status_checks.contexts[]='Test (windows-latest, Python 3.13)' \
-  -F required_status_checks.contexts[]='Test (macos-latest, Python 3.13)' \
-  -F required_status_checks.contexts[]='Bandit (security)' \
-  -F required_status_checks.contexts[]='pip-audit (deps)' \
   -F required_status_checks.contexts[]='main-red-guard'
 ```
 
-Note that `pre-merge-autosync` is intentionally NOT in the required-check list. The job runs to amend the PR; if the amend fails (e.g. branch-protection rejects the push) we want the next push to retry rather than blocking the merge.
+Notes:
+
+- `CI gate` covers `Repo hygiene`, `Lint`, `Type check report`, `Workflow lint`, `Lineage Gate`, `Bandit (security)`, `pip-audit (deps)`, the full sharded test matrix, and the rest of the `ci.yml` jobs it declares in `needs:`.
+- `review-bot-ack` and `main-red-guard` run on `pull_request` only. They belong in the legacy branch-protection list above (queue entry), never in the merge-queue ruleset, which must require `CI gate` only; a PR-only check on the ruleset makes the queue wait forever.
+- `docs-drift / Run drift check` is path-filtered (it does not report on PRs that touch no docs-relevant paths), so it must not be a blanket required check; its main-branch failure mode is the post-merge gate described in the TL;DR.
+- `pre-merge-autosync` is intentionally NOT required. The job runs to amend the PR; if the amend fails (e.g. branch-protection rejects the push) we want the next push to retry rather than blocking the merge.
 
 ### 4. Verify the layers work end to end
 
@@ -150,12 +143,12 @@ still FOLLOW a green streak on a real Windows runner, not precede it.
 1. Edit `.github/windows-lane-baseline.json` and set `"established": true`.
    No workflow edit is required - the gate reads this file at run time.
 
-2. Confirm the Windows contexts are already in the required-check list
-   (they are listed in section 3 above:
-   `Test (windows-latest, Python 3.13)`). If the shard fan-out changed the
-   context name, update section 3 to match the literal job name GitHub
-   reports, or branch protection will wait forever on a context that never
-   arrives.
+2. Confirm the Windows test result reaches branch protection. The Windows
+   matrix cells are `needs:` inputs of the `ci-gate` roll-up, so with the
+   `CI gate` context required (section 3 above) a blocked Windows lane
+   fails the gate; no literal `Test (windows-latest, ...)` context needs
+   to be (or should be) in the required-check list, since shard fan-out
+   changes would silently rename it.
 
 3. Land the baseline flip on main via the normal PR flow and watch one full
    Windows lane run go green as a *blocking* check.

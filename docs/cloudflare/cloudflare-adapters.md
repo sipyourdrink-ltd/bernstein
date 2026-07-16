@@ -39,8 +39,10 @@ Spawns agents via a Cloudflare Workers backend using `npx wrangler dev` locally.
 ### Configuration in bernstein.yaml
 
 ```yaml
-cli: cloudflare_agents
+cli: cloudflare
 ```
+
+The registry key is `cloudflare` (see `bernstein.adapters.registry`); the module name `cloudflare_agents` is not a registered key.
 
 ### Spawn parameters
 

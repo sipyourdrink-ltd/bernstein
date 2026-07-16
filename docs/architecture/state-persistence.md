@@ -38,8 +38,9 @@ each run) is intentional:
 | `.sdd/config/mcp_servers.yaml` | MCP server auto-discovery catalog | durable - config |
 
 Rule of thumb: anything under `.sdd/runtime/` other than `wal/` is
-disposable. Anything under `.sdd/backlog/`, `.sdd/wal/`, `.sdd/metrics/`,
-`.sdd/cas/` or `.sdd/audit/` is needed to reconstruct state.
+disposable. Anything under `.sdd/backlog/`, `.sdd/runtime/wal/`,
+`.sdd/metrics/`, `.sdd/cas/` or `.sdd/audit/` is needed to reconstruct
+state.
 
 The repo's `.gitignore` excludes the volatile pieces; the durable pieces
 can be checked in or shipped to remote storage.

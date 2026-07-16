@@ -222,7 +222,7 @@ Failures we do not claim to handle:
 
 | Knob | Default | Effect |
 |---|---|---|
-| `security.lethal_trifecta_enforcement` | `enforce` | `enforce` denies and audits; `warn` audits only; `off` audits only and allows. |
+| `security.lethal_trifecta_enforcement` | `enforce` | `enforce` refuses the spawn and emits a signed refusal audit event; `warn` allows and records the warning; `off` allows. In every mode the capability evaluation still runs and its triggered set lands in the per-spawn manifest under `.sdd/runtime/spawn_capabilities/`. |
 | `templates/capabilities/*.yaml` | bundled for stock adapters, MCP tools, surfaces | Capability declarations. |
 | Default for unknown tools | all three (`PRIVATE_DATA`, `UNTRUSTED_INPUT`, `EXTERNAL_COMM`) | Fail-closed. |
 

@@ -13,20 +13,25 @@ The MCP remote transport exposes Bernstein's MCP server over HTTP using the stre
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `host` | `str` | `"0.0.0.0"` | Bind host |
+| `host` | `str` | `"127.0.0.1"` | Bind host (loopback by default) |
 | `port` | `int` | `8053` | Bind port |
 | `path` | `str` | `"/mcp"` | URL path for MCP endpoint |
-| `auth_type` | `str` | `"none"` | Authentication: `"none"`, `"bearer"`, or `"oauth"` |
-| `auth_token` | `str` | `""` | Bearer token (when `auth_type="bearer"`) |
-| `cors_origins` | `list[str]` | `["*"]` | CORS allowed origins |
-| `max_sessions` | `int` | `100` | Maximum concurrent MCP sessions |
-| `session_timeout_seconds` | `int` | `3600` | Session expiry (1 hour) |
+| `auth_type` | `str` | `"bearer"` | Authentication: `"none"`, `"bearer"`, or `"oauth"` |
+| `auth_token` | `str` | `""` | Bearer token; when empty it is read from `BERNSTEIN_MCP_TOKEN` (or `BERNSTEIN_MCP_AUTH_TOKEN`) |
+| `cors_origins` | `list[str]` | `["http://localhost:*"]` | CORS allowed origins |
+
+The config is safe by default: it binds to loopback and expects a bearer
+token. Construction raises `RemoteMCPConfigError` for any combination that
+would expose the JSON-RPC surface without authentication - `auth_type="none"`
+on a non-loopback host, or `auth_type="bearer"` with no token on a
+non-loopback host. There is no session store, so there are no session
+capacity or timeout fields (see "Stateless operation" below).
 
 ---
 
 ## Available tools
 
-The remote transport exposes these MCP tools (same as the local MCP server):
+The remote transport exposes exactly these MCP tools:
 
 | Tool | Description | Required args |
 |------|-------------|---------------|
@@ -48,10 +53,11 @@ The remote transport exposes these MCP tools (same as the local MCP server):
 ```python
 from bernstein.mcp.remote_transport import RemoteMCPConfig, run_remote
 
-# Start with defaults (binds to 0.0.0.0:8053)
+# Start with defaults (binds to 127.0.0.1:8053; token from BERNSTEIN_MCP_TOKEN)
 run_remote()
 
-# Custom configuration
+# Custom configuration. A non-loopback bind requires a bearer token,
+# either passed explicitly or via BERNSTEIN_MCP_TOKEN.
 run_remote(
     server_url="http://127.0.0.1:8052",  # Bernstein task server
     host="0.0.0.0",
@@ -67,11 +73,11 @@ For deployment with any ASGI server (uvicorn, hypercorn, Cloudflare Python worke
 from bernstein.mcp.remote_transport import RemoteMCPConfig, create_asgi_app
 
 config = RemoteMCPConfig(
+    host="0.0.0.0",
     port=8053,
     auth_type="bearer",
     auth_token="my-secret-token",
     cors_origins=["https://myapp.example.com"],
-    max_sessions=50,
 )
 
 app = create_asgi_app(
@@ -93,25 +99,36 @@ The transport implements the MCP streamable HTTP transport spec:
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/mcp` | JSON-RPC 2.0 request/notification (single or batch) |
-| GET | `/mcp` | SSE stream endpoint (stub, returns 501) |
-| DELETE | `/mcp` | Close an MCP session |
+| GET | `/mcp` | Server-initiated SSE stream (stub, returns 501; use POST plus `notifications/cancelled`) |
+| DELETE | `/mcp` | Legacy session close; acknowledged as a no-op during the compat window, 405 afterwards |
 | OPTIONS | `/mcp` | CORS preflight |
 
 ### Headers
 
 | Header | Direction | Description |
 |--------|-----------|-------------|
-| `mcp-session-id` | Both | Session identifier (returned on first POST, send on subsequent requests) |
 | `Authorization` | Request | `Bearer <token>` when `auth_type="bearer"` |
 | `Content-Type` | Both | `application/json` |
+| `mcp-session-id` | Request (legacy) | Removed by the stateless spec revision; accepted and ignored until 2027-07-28, then refused with 400. Never returned in responses. |
 
-### Session lifecycle
+### Stateless operation
 
-1. First POST creates a new session and returns `mcp-session-id` in the response headers.
-2. Subsequent requests include the session ID header to maintain state.
-3. DELETE with the session ID closes the session.
-4. Sessions expire after `session_timeout_seconds` (default 1 hour) of inactivity.
-5. Expired sessions are pruned automatically on each request.
+The 2026-07-28 MCP spec revision removed protocol sessions, and the
+transport implements the stateless model (#2506):
+
+1. There is no server-side session store. Every request is served from its
+   body plus the per-request `_meta` field alone, so any transport instance
+   can serve any request with no shared memory.
+2. Cross-call continuity is anchored in the run journal and the HMAC audit
+   chain, not in a session: when a journal and audit chain are wired in,
+   every served `tools/call` is recorded as an ordered
+   `mcp.stateless_call` entry with content-derived ids.
+3. A legacy client that still sends the removed `mcp-session-id` header is
+   served normally, with the header ignored, until 2027-07-28. After that
+   date a request carrying the header is refused with HTTP 400.
+4. `DELETE /mcp` (the removed session-close lifecycle) is acknowledged as a
+   no-op (`200 {"status":"ok"}`) during the same window; there is nothing
+   to close. After the window it returns 405.
 
 ---
 
@@ -127,22 +144,25 @@ The transport implements the MCP streamable HTTP transport spec:
 
 ### Example request
 
+Every request is self-contained; no session header is exchanged.
+
 ```bash
-# Initialize session
+# Initialize (returns server info and capabilities)
 curl -X POST http://localhost:8053/mcp \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BERNSTEIN_MCP_TOKEN" \
   -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
 
-# List tools (include session ID from previous response)
+# List tools
 curl -X POST http://localhost:8053/mcp \
   -H "Content-Type: application/json" \
-  -H "mcp-session-id: SESSION_ID" \
+  -H "Authorization: Bearer $BERNSTEIN_MCP_TOKEN" \
   -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}'
 
 # Run a task
 curl -X POST http://localhost:8053/mcp \
   -H "Content-Type: application/json" \
-  -H "mcp-session-id: SESSION_ID" \
+  -H "Authorization: Bearer $BERNSTEIN_MCP_TOKEN" \
   -d '{
     "jsonrpc":"2.0",
     "method":"tools/call",
@@ -160,17 +180,20 @@ curl -X POST http://localhost:8053/mcp \
 
 | Mode | Config | Behavior |
 |------|--------|----------|
-| `none` | `auth_type="none"` | No authentication (default, for local development) |
-| `bearer` | `auth_type="bearer"`, `auth_token="secret"` | Validates `Authorization: Bearer secret` header |
+| `bearer` | `auth_type="bearer"` (default), token from `auth_token=` or `BERNSTEIN_MCP_TOKEN` | Validates the `Authorization: Bearer <token>` header |
+| `none` | `auth_type="none"` | No authentication; only accepted on a loopback host |
 
-!!! warning "Production deployment"
-    Always use `auth_type="bearer"` with a strong token when exposing the MCP server over the network. The `"none"` mode is only safe for local development.
+!!! warning "Non-loopback binds require a token"
+    `RemoteMCPConfig` refuses to start (`RemoteMCPConfigError`) when the
+    host is not loopback and either `auth_type="none"` or the bearer token
+    is empty. Set `BERNSTEIN_MCP_TOKEN` (or pass `auth_token=`) before
+    binding to a public interface.
 
 ---
 
 ## CORS configuration
 
-By default, all origins are allowed (`["*"]`). For production, restrict to your application domains:
+By default only localhost origins are allowed (`["http://localhost:*"]`). For production, set your application domains:
 
 ```python
 config = RemoteMCPConfig(
@@ -180,7 +203,9 @@ config = RemoteMCPConfig(
 )
 ```
 
-CORS headers exposed: `mcp-session-id`.
+The legacy `mcp-session-id` header stays preflight-allowed during the
+compat window so older browser clients can still send it (the transport
+ignores it); no response header exposes it.
 
 ---
 
@@ -195,7 +220,6 @@ from bernstein.mcp.remote_transport import RemoteMCPConfig, create_asgi_app
 config = RemoteMCPConfig(
     auth_type="bearer",
     auth_token="YOUR_SECRET",
-    max_sessions=100,
 )
 
 app = create_asgi_app(

@@ -22,15 +22,9 @@ The right `max_agents` value depends on your provider's rate limits, not just yo
 
 ### Claude (Anthropic)
 
-| Subscription tier | Rate limit (approx.) | Recommended `max_agents` | Notes |
-|---|---|---|---|
-| **Free** | 50 req/day, ~5 req/min | 1 | Serial only; limited to experimentation |
-| **Plus** | 1,000 req/day, ~50 req/min | 2–3 | Light workloads; expect throttling on bursts |
-| **Pro** | 5,000 req/day, ~100 req/min | 4–6 | Default sweet spot; handles medium projects |
-| **Enterprise / Tier 2+** | Custom SLA | 8–16 | Negotiate limits with your Anthropic account team |
-| **Unlimited / Bedrock** | No hard cap | 16–32 | Limit by hardware and cost budget only |
+Rate limits vary by plan and change over time; consult your provider console (for Anthropic, the usage and limits pages) for your actual quota rather than any published table. As a rule of thumb: start at `max_agents: 1` on trial or entry-level tiers, 4-6 on a standard paid API tier, and 8+ only on enterprise or Bedrock-style deployments where the cap is hardware and cost budget.
 
-> **Tip:** Check your actual quota with `bernstein status --provider` or via the Anthropic console. Bernstein reads `X-RateLimit-*` headers and backs off automatically, but it cannot predict limits - set `max_agents` below your burst ceiling.
+> **Tip:** `bernstein status` shows a provider/quota table once the orchestrator has recorded provider snapshots. Bernstein reads `X-RateLimit-*` headers and backs off automatically, but it cannot predict limits - set `max_agents` below your burst ceiling.
 
 ### OpenAI / Gemini / Others
 
@@ -407,13 +401,17 @@ curl http://127.0.0.1:8052/status | jq '.metrics'
 
 ### Prometheus
 
+The task server exposes `GET /metrics` in Prometheus exposition format on its own port (default 8052); there is no separate metrics config block. Point your Prometheus scraper (which itself typically listens on 9090) at the task server:
+
 ```yaml
-prometheus:
-  enabled: true
-  port: 9090
+# prometheus.yml (scraper config, not bernstein.yaml)
+scrape_configs:
+  - job_name: bernstein
+    static_configs:
+      - targets: ["localhost:8052"]
 ```
 
-Metrics at `http://localhost:9090/metrics` in Prometheus exposition format. Grafana dashboards are included in `deploy/grafana/`.
+Metrics at `http://localhost:8052/metrics`. A ready-made scrape config lives in `deploy/prometheus/`, and Grafana dashboards are included in `deploy/grafana/`.
 
 ### CPU profiling
 

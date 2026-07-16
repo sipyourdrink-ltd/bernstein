@@ -160,7 +160,7 @@ All magic numbers live in `src/bernstein/core/defaults.py` as typed dataclasses.
 ```yaml
 tuning:
   orchestrator:
-    tick_interval_s: 5.0
+    tick_interval_s: 5.0    # default 3.0 (ORCHESTRATOR.tick_interval_s in core/defaults.py)
     drain_timeout_s: 120.0
     stale_claim_timeout_s: 1800.0
     stalled_manager_threshold_s: 300.0

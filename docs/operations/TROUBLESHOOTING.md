@@ -425,15 +425,15 @@ The `bernstein stop` command cleans these up, but hard kills (SIGKILL, power los
 
 ## 17. JSONL State File Corruption
 
-**Symptom:** Task server fails to start with a JSON parse error. `backlog.jsonl` or `tasks.jsonl` contains incomplete lines.
+**Symptom:** Task server fails to start with a JSON parse error. A JSONL state file (for example `.sdd/metrics/tasks.jsonl`) contains incomplete lines, or the shared JSON backlog `.sdd/runtime/task-backlog.json` fails to parse.
 
-**Cause:** The in-memory task store persists to JSONL via append writes. If the process is killed mid-write, the last line may be truncated.
+**Cause:** JSONL state files are persisted via append writes. If the process is killed mid-write, the last line may be truncated.
 
 **Diagnosis:**
 ```bash
 python3 -c "
 import json
-for i, line in enumerate(open('.sdd/backlog.jsonl'), 1):
+for i, line in enumerate(open('.sdd/metrics/tasks.jsonl'), 1):
     try: json.loads(line)
     except: print(f'Bad line {i}: {line[:80]!r}')
 "
@@ -582,7 +582,8 @@ find . -name "*<basename-without-extension>*"
 |------|---------|
 | `.sdd/runtime/<session>.log` | Per-agent stdout/stderr |
 | `.sdd/runtime/pids/<session>.json` | PID metadata for `bernstein ps` |
-| `.sdd/backlog.jsonl` | Persistent task backlog |
+| `.sdd/backlog/{open,claimed,closed}/` | YAML task specs (persistent backlog tree) |
+| `.sdd/runtime/task-backlog.json` | Shared JSON backlog for external workers (`bernstein backlog claim`) |
 | `.sdd/runtime/cost_report.json` | Run cost tracking |
 | `.sdd/runtime/access.jsonl` | HTTP request log (rotated at 10 MiB, 1 backup retained) |
 | `.sdd/runtime/server.log` | Task server logs |

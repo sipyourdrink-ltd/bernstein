@@ -1221,9 +1221,9 @@ See [`reference/mcp-catalog.md`](mcp-catalog.md) for the full reference.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--transport {stdio\|http}` | stdio | ACP transport. |
-| `--port N` | 8054 | HTTP port. |
-| `--host HOST` | 127.0.0.1 | Bind host. |
+| `--stdio/--no-stdio` | `--stdio` | Serve over POSIX stdio (line-delimited JSON-RPC), the IDE embedding transport. |
+| `--http HOST:PORT` | off | Serve over HTTP on HOST:PORT (e.g. `:8062` or `127.0.0.1:8062`). Overrides `--stdio` when both are supplied. |
+| `--server-url URL` | `http://localhost:8052` | URL of the running Bernstein task server. |
 
 #### `bernstein fingerprint`
 

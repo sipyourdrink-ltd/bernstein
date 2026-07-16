@@ -88,7 +88,7 @@ print(decision.reason)
 
 | Knob | Default | Controls |
 |---|--:|---|
-| `security.lethal_trifecta_enforcement` | `enforce` | `enforce` (deny + audit), `warn` (audit only), `off`. |
+| `security.lethal_trifecta_enforcement` | `enforce` | `enforce` (refuse spawn + signed refusal audit event), `warn` (allow, warning recorded), `off` (allow). Every mode still records the evaluated chain in the per-spawn manifest under `.sdd/runtime/spawn_capabilities/`. |
 | `templates/capabilities/*.yaml` | three files: `adapters.yaml` (19 adapters), `mcp_tools.yaml`, `surfaces.yaml` | Capability declarations. |
 | Default for unknown tools | `frozenset(Capability)` (all three) | Fail-closed. |
 

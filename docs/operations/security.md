@@ -29,9 +29,8 @@ operator with a verifiable email address must register the project.
    answers are mechanical.
 4. Copy the assigned project ID (a numeric string) from the project
    page URL.
-5. Replace `<PROJECT_ID>` in `README.md` (look for the
-   `TODO(operator): register at bestpractices.dev` marker).
-6. Tick the CII checkbox in #1482 and link the README change.
+5. Add the bestpractices.dev badge with the assigned project ID to
+   `README.md` (alongside the existing badges at the top of the file).
 
 ### Self-assessment cross-walk
 
@@ -50,16 +49,15 @@ existing artefacts in this repository.
 | Documented secure development knowledge for at least one committer | `docs/operations/security-and-identity.md`; CONTRIBUTING checklist. |
 | Public bug tracker | GitHub Issues. |
 | Test suite invocable with a documented command | `pytest`; `README.md` "Build & test" block. |
-| Static analysis (SAST) in CI | CodeQL (`.github/workflows/codeql.yml`), Bandit (`.github/workflows/bandit-scan.yml`), Semgrep (`.github/workflows/semgrep.yml`). |
+| Static analysis (SAST) in CI | CodeQL (`.github/workflows/codeql.yml`); Bandit and Semgrep jobs in `.github/workflows/ci.yml`; `.github/workflows/static-analysis-extended.yml`. |
 | Dynamic analysis / fuzzing | Hypothesis property tests in `tests/`; ClusterFuzzLite at `.clusterfuzzlite/` + `.github/workflows/cifuzz-pr.yml`. |
 | Dependency vulnerability scanning | Dependabot, OSV via Scorecard, `.github/workflows/dependency-review.yml`. |
 | Cryptographic primitives are well-known | HMAC-SHA256, Ed25519/EdDSA, JWS detached. See module map in `CLAUDE.md` under `src/bernstein/core/security/`. |
 
 ### Re-evaluation cadence
 
-Re-run Scorecard after replacing `<PROJECT_ID>` to confirm the
-CIIBestPracticesID signal flips from 0 to a positive score. Update
-#1482 with the new score.
+Re-run Scorecard after the badge lands in `README.md` to confirm the
+CIIBestPracticesID signal flips from 0 to a positive score.
 
 ## Fuzzing harness (OSSF-recognized)
 

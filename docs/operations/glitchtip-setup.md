@@ -55,8 +55,8 @@ do.
 
    * GitHub Actions: `Settings -> Secrets and variables -> Actions ->
      New repository secret`, name `BERNSTEIN_TELEMETRY_DSN`. The
-     `bernstein-deploy.yml` workflow passes it through to the deploy
-     target.
+     consuming workflows are `bernstein-ci-fix.yml`, `eval-nightly.yml`,
+     and `auto-heal.yml` (see the table below).
    * systemd: drop into the unit's `EnvironmentFile=` or via
      `Environment=BERNSTEIN_TELEMETRY_DSN=...`.
    * Container: pass via `--env BERNSTEIN_TELEMETRY_DSN=...` or compose

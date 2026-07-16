@@ -174,24 +174,32 @@ falls back to `default` with a warning.
 
 ## Worked example
 
-You run an agent in `auto` mode. Your `rules.yaml` says:
+You run an agent in `auto` mode. Your `.bernstein/rules.yaml` says
+(rules live in a flat list under the `permission_rules:` key; `id` and
+`action` are required, and a rule without them is skipped):
 
 ```yaml
-- match:
+# .bernstein/rules.yaml
+permission_rules:
+  - id: deny-rm-root
+    action: deny
+    severity: critical
     tool: Bash
-    command: "rm -rf /"
-  action: deny
-  severity: critical
-- match:
+    command: "rm -rf /*"
+  - id: ask-rm-recursive
+    action: ask
+    severity: high
     tool: Bash
     command: "rm -rf *"
-  action: ask
-  severity: high
-- match:
+  - id: ask-write
+    action: ask
+    severity: low
     tool: Write
-  action: ask
-  severity: low
 ```
+
+See [security-hardening.md](../security/security-hardening.md) for the
+full field reference (`id`, `action`, `severity`, `tool`, `command`,
+`path`, `description`).
 
 The agent calls:
 
