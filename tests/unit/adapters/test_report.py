@@ -430,6 +430,62 @@ def test_check_adapter_subcommand_present_yields_ok(contracts_tmp: Path) -> None
     assert v.verdict == CONFORMANCE_OK
 
 
+def test_check_adapter_all_flags_missing_yields_skip_not_fail(contracts_tmp: Path) -> None:
+    """Help advertising none of the required tokens is a probe failure (skip).
+
+    Regression for issue #2488: an installed binary whose --help advertised
+    none of the six aider flags was misreported as six-flag contract drift
+    (one "missing flag" line per flag), paging an operator even though the
+    flags were all still present. An adapter cannot legitimately drop its
+    entire required surface at once, so this is a broken/redesigned probe and
+    must record ``skip`` (investigate), never ``fail`` (drift).
+    """
+    _write_contract(contracts_tmp, "stub", flags=("--model", "--message", "--yes-always"))
+    # A redesigned help banner that advertises none of the required flags.
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="Stub 3.13 - see `stub docs` for usage.\n", stderr=""
+    )
+    with patch.object(report_mod.subprocess, "run", return_value=completed):
+        v = check_adapter_in_process("stub", binary_resolved="/usr/bin/stub", contracts_dir=contracts_tmp)
+    assert v.verdict == CONFORMANCE_SKIP
+    assert "none of" in v.detail
+    assert "3 required tokens" in v.detail
+
+
+def test_check_adapter_empty_help_yields_skip(contracts_tmp: Path) -> None:
+    """An installed binary whose --help prints nothing is a probe failure."""
+    _write_contract(contracts_tmp, "stub", flags=("--model", "--message"))
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with patch.object(report_mod.subprocess, "run", return_value=completed):
+        v = check_adapter_in_process("stub", binary_resolved="/usr/bin/stub", contracts_dir=contracts_tmp)
+    assert v.verdict == CONFORMANCE_SKIP
+    assert "no output" in v.detail
+
+
+def test_check_adapter_partial_miss_still_fails(contracts_tmp: Path) -> None:
+    """A partial miss (some tokens present) is genuine drift and stays ``fail``."""
+    _write_contract(contracts_tmp, "stub", flags=("--model", "--message", "--yes-always"))
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="usage: stub [--model M] [--message X]\n", stderr=""
+    )
+    with patch.object(report_mod.subprocess, "run", return_value=completed):
+        v = check_adapter_in_process("stub", binary_resolved="/usr/bin/stub", contracts_dir=contracts_tmp)
+    assert v.verdict == CONFORMANCE_FAIL
+    assert "--yes-always" in v.detail
+
+
+def test_check_adapter_single_flag_missing_stays_fail(contracts_tmp: Path) -> None:
+    """A one-token contract losing its token is ordinary drift, not a probe
+    failure: it cannot be told apart from a wholesale surface loss, so the
+    broken-probe classification is deliberately not applied at one token."""
+    _write_contract(contracts_tmp, "stub", flags=("--model",))
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="usage: stub [--other X]\n", stderr="")
+    with patch.object(report_mod.subprocess, "run", return_value=completed):
+        v = check_adapter_in_process("stub", binary_resolved="/usr/bin/stub", contracts_dir=contracts_tmp)
+    assert v.verdict == CONFORMANCE_FAIL
+    assert "--model" in v.detail
+
+
 # ---------------------------------------------------------------------------
 # build_report
 # ---------------------------------------------------------------------------

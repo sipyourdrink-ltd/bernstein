@@ -1,0 +1,142 @@
+"""Unit tests for evolution observability signals and detector wiring.
+
+Covers ``src/bernstein/evolution/observability_signals.py`` and the
+``OpportunityDetector.identify_observability_opportunities`` wiring:
+
+- ``coverage_delta_fraction`` returns a signed fraction (pt / 100) and a
+  ``0.0`` fallback when a snapshot or coverage row is missing,
+- ``detect_regressions`` flags a coverage drop and a security increase but
+  stays quiet on a flat / improved / single-snapshot corpus,
+- ``OpportunityDetector`` only emits observability opportunities when a
+  snapshots directory is configured (opt-in; default stays a no-op).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+from bernstein.evolution import observability_signals as sig
+from bernstein.evolution.detector import OpportunityDetector
+
+
+def _metric(name: str, numeric: float, status: str) -> dict[str, Any]:
+    return {"name": name, "value": str(numeric), "numeric": numeric, "threshold": "0", "threshold_status": status}
+
+
+def _backend(name: str, status: str, metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"backend": name, "status": status, "detail": "", "error": None, "metrics": metrics}
+
+
+def _write(dir_: Path, day: str, *backends: dict[str, Any]) -> None:
+    dir_.mkdir(parents=True, exist_ok=True)
+    (dir_ / f"{day}.json").write_text(json.dumps({"summary": {}, "backends": list(backends)}), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# coverage_delta_fraction
+# --------------------------------------------------------------------------
+
+
+def test_coverage_delta_is_signed_fraction(tmp_path: Path) -> None:
+    _write(tmp_path, "2026-07-10", _backend("sonar", "ok", [_metric("coverage_pct", 82.0, "ok")]))
+    _write(tmp_path, "2026-07-11", _backend("sonar", "warn", [_metric("coverage_pct", 80.6, "ok")]))
+
+    delta = sig.coverage_delta_fraction(tmp_path)
+
+    assert abs(delta - (-0.014)) < 1e-9
+
+
+def test_coverage_delta_zero_when_missing(tmp_path: Path) -> None:
+    _write(tmp_path, "2026-07-11", _backend("sonar", "ok", [_metric("coverage_pct", 80.6, "ok")]))
+
+    # Only one snapshot -> no delta.
+    assert sig.coverage_delta_fraction(tmp_path) == 0.0
+    # Absent directory -> no delta.
+    assert sig.coverage_delta_fraction(tmp_path / "nope") == 0.0
+
+
+# --------------------------------------------------------------------------
+# detect_regressions
+# --------------------------------------------------------------------------
+
+
+def test_detect_regressions_flags_coverage_drop(tmp_path: Path) -> None:
+    _write(tmp_path, "2026-07-10", _backend("sonar", "ok", [_metric("coverage_pct", 82.0, "ok")]))
+    _write(tmp_path, "2026-07-11", _backend("sonar", "warn", [_metric("coverage_pct", 80.5, "ok")]))
+
+    regs = sig.detect_regressions(tmp_path)
+
+    assert len(regs) == 1
+    assert regs[0].kind == "coverage"
+    assert regs[0].delta < 0
+
+
+def test_detect_regressions_flags_security_increase(tmp_path: Path) -> None:
+    _write(tmp_path, "2026-07-10", _backend("dt", "ok", [_metric("high_vulns", 0.0, "ok")]))
+    _write(tmp_path, "2026-07-11", _backend("dt", "warn", [_metric("high_vulns", 2.0, "warn")]))
+
+    regs = sig.detect_regressions(tmp_path)
+
+    assert len(regs) == 1
+    assert regs[0].kind == "security"
+    assert regs[0].backend == "dt"
+    assert regs[0].severity == "high"
+    assert regs[0].delta == 2.0
+
+
+def test_detect_regressions_quiet_on_flat_and_improved(tmp_path: Path) -> None:
+    _write(tmp_path, "2026-07-10", _backend("sonar", "ok", [_metric("coverage_pct", 80.0, "ok")]))
+    _write(tmp_path, "2026-07-11", _backend("sonar", "ok", [_metric("coverage_pct", 83.0, "ok")]))
+
+    assert sig.detect_regressions(tmp_path) == []
+
+
+def test_detect_regressions_skips_first_observation(tmp_path: Path) -> None:
+    # dt only appears in the newer snapshot -> first observation, not a regression.
+    _write(tmp_path, "2026-07-10", _backend("sonar", "ok", [_metric("coverage_pct", 80.0, "ok")]))
+    _write(tmp_path, "2026-07-11", _backend("dt", "warn", [_metric("high_vulns", 3.0, "warn")]))
+
+    assert sig.detect_regressions(tmp_path) == []
+
+
+def test_detect_regressions_empty_without_two_snapshots(tmp_path: Path) -> None:
+    _write(tmp_path, "2026-07-11", _backend("dt", "fail", [_metric("critical_vulns", 5.0, "fail")]))
+
+    assert sig.detect_regressions(tmp_path) == []
+
+
+# --------------------------------------------------------------------------
+# OpportunityDetector wiring (opt-in)
+# --------------------------------------------------------------------------
+
+
+def _collector_stub() -> MagicMock:
+    collector = MagicMock()
+    collector.get_recent_cost_metrics.return_value = []
+    collector.get_recent_task_metrics.return_value = []
+    return collector
+
+
+def test_detector_no_op_without_snapshots_dir() -> None:
+    detector = OpportunityDetector(_collector_stub())
+
+    assert detector.identify_observability_opportunities() == []
+
+
+def test_detector_emits_opportunity_for_regression(tmp_path: Path) -> None:
+    _write(tmp_path, "2026-07-10", _backend("dt", "ok", [_metric("critical_vulns", 0.0, "ok")]))
+    _write(tmp_path, "2026-07-11", _backend("dt", "fail", [_metric("critical_vulns", 2.0, "fail")]))
+
+    detector = OpportunityDetector(_collector_stub(), observability_snapshots_dir=tmp_path)
+    opps = detector.identify_observability_opportunities()
+
+    assert len(opps) == 1
+    assert opps[0].affected_components == ["dt"]
+    assert opps[0].risk_level == "high"
+    assert "critical_vulns" in opps[0].title
+
+    # It also flows through the umbrella identify_opportunities().
+    assert any("critical_vulns" in o.title for o in detector.identify_opportunities())

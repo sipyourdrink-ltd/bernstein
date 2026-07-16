@@ -208,31 +208,32 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 
 ### `src/bernstein/evolution/` - self-evolution engine
 
-| File                   | Purpose |
-|------------------------|---------|
-| `_shared.py`           | Shared constants, data classes, and helpers for the evolution loop modules |
-| `aggregator.py`        | Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses |
-| `applicator.py`        | Change applicator - execute upgrades via file modification |
-| `benchmark.py`         | Tiered benchmark runner for evolution validation |
-| `circuit.py`           | CircuitBreaker - halt evolution when safety conditions are violated |
-| `creative.py`          | Creative evolution pipeline - visionary → analyst → production gate |
-| `cycle_helpers.py`     | Evolution cycle helper logic - community, creative, and GitHub sync |
-| `cycle_runner.py`      | Evolution cycle execution engine |
-| `data_collector.py`    | Metric record types and file-based metrics collection for the evolution system |
-| `detector.py`          | Opportunity detection from aggregated metrics |
-| `gate.py`              | ApprovalGate and EvalGate - risk-stratified routing for evolution proposals |
-| `governance.py`        | Adaptive governance for the evolution system |
-| `invariants.py`        | InvariantsGuard - hash-lock safety-critical files |
-| `loop.py`              | Autoresearch evolution loop - continuous self-improvement via experiment cycles |
-| `oscillation_guard.py` | Oscillation guard for prompt-evolution proposals |
-| `predicted_delta.py`   | Predicted-delta gate for prompt-evolution proposals |
-| `proposal_scorer.py`   | Proposal risk scoring and routing classification |
-| `proposals.py`         | Upgrade proposal generation |
-| `report.py`            | Evolution observability - history table and static report generation |
-| `report_generator.py`  | Analysis result types, statistical helpers, and Goodhart's Law defenses |
-| `risk.py`              | Strategic Risk Score (SRS) computation for evolution proposals |
-| `sandbox.py`           | SandboxValidator - isolated testing of evolution proposals |
-| `types.py`             | Shared types for the evolution system |
+| File                       | Purpose |
+|----------------------------|---------|
+| `_shared.py`               | Shared constants, data classes, and helpers for the evolution loop modules |
+| `aggregator.py`            | Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses |
+| `applicator.py`            | Change applicator - execute upgrades via file modification |
+| `benchmark.py`             | Tiered benchmark runner for evolution validation |
+| `circuit.py`               | CircuitBreaker - halt evolution when safety conditions are violated |
+| `creative.py`              | Creative evolution pipeline - visionary → analyst → production gate |
+| `cycle_helpers.py`         | Evolution cycle helper logic - community, creative, and GitHub sync |
+| `cycle_runner.py`          | Evolution cycle execution engine |
+| `data_collector.py`        | Metric record types and file-based metrics collection for the evolution system |
+| `detector.py`              | Opportunity detection from aggregated metrics |
+| `gate.py`                  | ApprovalGate and EvalGate - risk-stratified routing for evolution proposals |
+| `governance.py`            | Adaptive governance for the evolution system |
+| `invariants.py`            | InvariantsGuard - hash-lock safety-critical files |
+| `loop.py`                  | Autoresearch evolution loop - continuous self-improvement via experiment cycles |
+| `observability_signals.py` | Read ``bernstein doctor observe`` snapshots into evolution signals |
+| `oscillation_guard.py`     | Oscillation guard for prompt-evolution proposals |
+| `predicted_delta.py`       | Predicted-delta gate for prompt-evolution proposals |
+| `proposal_scorer.py`       | Proposal risk scoring and routing classification |
+| `proposals.py`             | Upgrade proposal generation |
+| `report.py`                | Evolution observability - history table and static report generation |
+| `report_generator.py`      | Analysis result types, statistical helpers, and Goodhart's Law defenses |
+| `risk.py`                  | Strategic Risk Score (SRS) computation for evolution proposals |
+| `sandbox.py`               | SandboxValidator - isolated testing of evolution proposals |
+| `types.py`                 | Shared types for the evolution system |
 
 ### `src/bernstein/eval/` - evaluation harness
 
