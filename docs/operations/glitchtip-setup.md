@@ -4,10 +4,11 @@ Audience: operators wiring Bernstein into a GlitchTip (or any
 Sentry-protocol-compatible) error sink and confirming events flow end to
 end.
 
-Companion to [`observability.md`](./observability.md), which documents the
-broader telemetry contract.  This doc focuses on the operator-facing
-mechanics: project provisioning, DSN distribution, runtime export, and
-event verification.
+This doc is the canonical operator guide for the error-telemetry DSN
+flow: project provisioning, DSN distribution, runtime export, and event
+verification. The env-var resolution and side-channel transport are
+documented in [`side-channel.md`](../observability/side-channel.md);
+SBOM upload is covered in [`observability.md`](./observability.md).
 
 ## TL;DR
 
