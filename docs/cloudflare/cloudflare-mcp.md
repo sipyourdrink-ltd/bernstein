@@ -3,7 +3,9 @@
 **Module:** `bernstein.mcp.remote_transport`
 **Class:** `StreamableHTTPTransport`
 
-The MCP remote transport exposes Bernstein's MCP server over HTTP using the streamable HTTP transport spec. This allows remote MCP clients (Claude Desktop, other agents, CI systems) to interact with a Bernstein instance over the network -- including deployment on Cloudflare Workers via a Python worker.
+The MCP remote transport exposes Bernstein's MCP server over HTTP using the streamable HTTP transport spec. This lets remote MCP clients (Claude Desktop, other agents, CI systems) interact with a Bernstein instance over the network -- including deployment on Cloudflare Workers via a Python worker.
+
+> This page covers configuring and deploying the streamable HTTP transport as a standalone ASGI app. For the MCP protocol surface itself -- transports, the stateless serving model, auth (bearer and OAuth-2 PKCE), JSON-RPC methods, the cost-meter envelope, cancellation, and worked `curl` examples -- see [Bernstein MCP server](../mcp/server.md). That surface is identical across every deployment and is documented once there.
 
 ---
 
@@ -20,12 +22,7 @@ The MCP remote transport exposes Bernstein's MCP server over HTTP using the stre
 | `auth_token` | `str` | `""` | Bearer token; when empty it is read from `BERNSTEIN_MCP_TOKEN` (or `BERNSTEIN_MCP_AUTH_TOKEN`) |
 | `cors_origins` | `list[str]` | `["http://localhost:*"]` | CORS allowed origins |
 
-The config is safe by default: it binds to loopback and expects a bearer
-token. Construction raises `RemoteMCPConfigError` for any combination that
-would expose the JSON-RPC surface without authentication - `auth_type="none"`
-on a non-loopback host, or `auth_type="bearer"` with no token on a
-non-loopback host. There is no session store, so there are no session
-capacity or timeout fields (see "Stateless operation" below).
+The config is safe by default: it binds to loopback and expects a bearer token. Construction raises `RemoteMCPConfigError` for any combination that would expose the JSON-RPC surface without authentication -- `auth_type="none"` on a non-loopback host, or `auth_type="bearer"` with no token on a non-loopback host. There is no session store, so there are no session capacity or timeout fields; see [Stateless serving](../mcp/server.md#stateless-serving).
 
 ---
 
@@ -90,104 +87,7 @@ import uvicorn
 uvicorn.run(app, host="0.0.0.0", port=8053)
 ```
 
----
-
-## HTTP protocol
-
-The transport implements the MCP streamable HTTP transport spec:
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/mcp` | JSON-RPC 2.0 request/notification (single or batch) |
-| GET | `/mcp` | Server-initiated SSE stream (stub, returns 501; use POST plus `notifications/cancelled`) |
-| DELETE | `/mcp` | Legacy session close; acknowledged as a no-op during the compat window, 405 afterwards |
-| OPTIONS | `/mcp` | CORS preflight |
-
-### Headers
-
-| Header | Direction | Description |
-|--------|-----------|-------------|
-| `Authorization` | Request | `Bearer <token>` when `auth_type="bearer"` |
-| `Content-Type` | Both | `application/json` |
-| `mcp-session-id` | Request (legacy) | Removed by the stateless spec revision; accepted and ignored until 2027-07-28, then refused with 400. Never returned in responses. |
-
-### Stateless operation
-
-The 2026-07-28 MCP spec revision removed protocol sessions, and the
-transport implements the stateless model (#2506):
-
-1. There is no server-side session store. Every request is served from its
-   body plus the per-request `_meta` field alone, so any transport instance
-   can serve any request with no shared memory.
-2. Cross-call continuity is anchored in the run journal and the HMAC audit
-   chain, not in a session: when a journal and audit chain are wired in,
-   every served `tools/call` is recorded as an ordered
-   `mcp.stateless_call` entry with content-derived ids.
-3. A legacy client that still sends the removed `mcp-session-id` header is
-   served normally, with the header ignored, until 2027-07-28. After that
-   date a request carrying the header is refused with HTTP 400.
-4. `DELETE /mcp` (the removed session-close lifecycle) is acknowledged as a
-   no-op (`200 {"status":"ok"}`) during the same window; there is nothing
-   to close. After the window it returns 405.
-
----
-
-## JSON-RPC methods
-
-| Method | Description |
-|--------|-------------|
-| `initialize` | Return server info and capabilities |
-| `tools/list` | List available Bernstein tools |
-| `tools/call` | Execute a tool by name |
-| `ping` | Liveness check |
-| `notifications/initialized` | Client notification (no-op) |
-
-### Example request
-
-Every request is self-contained; no session header is exchanged.
-
-```bash
-# Initialize (returns server info and capabilities)
-curl -X POST http://localhost:8053/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $BERNSTEIN_MCP_TOKEN" \
-  -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
-
-# List tools
-curl -X POST http://localhost:8053/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $BERNSTEIN_MCP_TOKEN" \
-  -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}'
-
-# Run a task
-curl -X POST http://localhost:8053/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $BERNSTEIN_MCP_TOKEN" \
-  -d '{
-    "jsonrpc":"2.0",
-    "method":"tools/call",
-    "params":{
-      "name":"bernstein_run",
-      "arguments":{"goal":"Add input validation","role":"backend"}
-    },
-    "id":3
-  }'
-```
-
----
-
-## Authentication
-
-| Mode | Config | Behavior |
-|------|--------|----------|
-| `bearer` | `auth_type="bearer"` (default), token from `auth_token=` or `BERNSTEIN_MCP_TOKEN` | Validates the `Authorization: Bearer <token>` header |
-| `none` | `auth_type="none"` | No authentication; only accepted on a loopback host |
-
-!!! warning "Non-loopback binds require a token"
-    `RemoteMCPConfig` refuses to start (`RemoteMCPConfigError`) when the
-    host is not loopback and either `auth_type="none"` or the bearer token
-    is empty. Set `BERNSTEIN_MCP_TOKEN` (or pass `auth_token=`) before
-    binding to a public interface.
+The app serves the single `/mcp` endpoint (JSON-RPC 2.0 over POST, plus CORS preflight). Authenticate with `Authorization: Bearer <token>`; the full request/response protocol is in [Bernstein MCP server](../mcp/server.md).
 
 ---
 
@@ -203,9 +103,7 @@ config = RemoteMCPConfig(
 )
 ```
 
-The legacy `mcp-session-id` header stays preflight-allowed during the
-compat window so older browser clients can still send it (the transport
-ignores it); no response header exposes it.
+The legacy `mcp-session-id` header stays preflight-allowed during the compat window so older browser clients can still send it (the transport ignores it); no response header exposes it.
 
 ---
 
@@ -228,4 +126,4 @@ app = create_asgi_app(
 )
 ```
 
-This lets MCP clients connect to your Bernstein instance from anywhere with Cloudflare's global edge network handling TLS and routing.
+This lets MCP clients connect to your Bernstein instance from anywhere, with Cloudflare's global edge network handling TLS and routing.
