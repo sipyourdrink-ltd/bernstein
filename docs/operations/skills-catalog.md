@@ -88,8 +88,10 @@ neither self-referential nor sensitive to operator-side flags.
 ## Audit chain integration
 
 Every install / upgrade / uninstall appends an HMAC-chained event under
-`.sdd/audit/`, reusing
-[`bernstein.core.security.audit.AuditLog`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/security/audit.py):
+`.sdd/audit/`, reusing the same
+[`AuditLog`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/security/audit.py)
+chain documented in [audit-log.md](../security/audit-log.md) (chain
+construction, verification, recovery). The catalog-specific event types:
 
 | Event type                 | Payload fields                                                                                                |
 |----------------------------|---------------------------------------------------------------------------------------------------------------|

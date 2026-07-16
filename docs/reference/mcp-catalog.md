@@ -249,7 +249,7 @@ All five accept absolute or `~`-expanded paths (where applicable) and parse inte
 - **`signature`** - Optional cryptographic signature over the entry. The schema permits any string; verification is delegated to the catalog service implementation in `core/protocols/mcp_catalog`.
 - **`additionalProperties: false`** at top level and per-entry - the catalog is rejected wholesale on unknown fields. This blocks silent capability drift.
 - **Sandbox preview** - Every install / upgrade runs the install command in a sandbox first. The host config is touched only after you confirm the diff. Failed previews abort without modifying state.
-- **HMAC-chained audit** - Every fetch, install, upgrade, and uninstall is recorded to `.sdd/audit/` with a chained HMAC, making after-the-fact tampering detectable.
+- **HMAC-chained audit** - Every fetch, install, upgrade, and uninstall is recorded to `.sdd/audit/` with a chained HMAC, making after-the-fact tampering detectable. The chain construction, verification, and recovery are documented once in [audit-log.md](../security/audit-log.md).
 - **Bernstein-managed block** - Edits to the user MCP config are bracketed; Bernstein only owns its own block. Manually-added user entries elsewhere in the file are preserved.
 
 There is no allow-list on which catalogs can be loaded; the catalog source URL is configured by the runtime, not by the user. If you operate in a high-trust environment, point the cache at an internally-mirrored catalog and treat the public catalog as untrusted by setting `BERNSTEIN_MCP_CATALOG_CACHE_PATH` and disabling auto-refresh.
