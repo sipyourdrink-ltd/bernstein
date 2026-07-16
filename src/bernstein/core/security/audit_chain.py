@@ -559,6 +559,32 @@ EVENT_INTENT_CAPSULE = "intent.capsule"
 #: their identity.
 EVENT_INTENT_DRIFT = "intent.drift"
 
+#: Issue #2520 -- emitted once per statistical eval gate verdict. The verdict
+#: (significant_improvement / non_inferior / insufficient_evidence /
+#: significant_regression) is a pure function of the paired 2x2 discordance
+#: table, alpha, the non-inferiority margin, and the minimum n; this event
+#: mirrors the sealed verdict receipt's identity into the HMAC chain by
+#: recording ``{receipt_hash, verdict, suite_content_hash,
+#: baseline_result_set_hash, candidate_result_set_hash, n_per_arm, effect,
+#: interval_low, interval_high, alpha, min_n_satisfied, journal_entry_hash}``.
+#: A verifier holding the same result sets recomputes the verdict and the
+#: receipt hash byte-identically, so a promotion decision names exactly the
+#: evidence it stood on. Only hashes, the verdict, and the rounded statistics
+#: are recorded -- never task prompts or agent output.
+EVENT_EVAL_GATE_VERDICT = "eval.gate_verdict"
+
+#: Issue #2520 -- emitted when a significant_regression verdict at canary or
+#: default rolls a candidate configuration back. The revocation receipt names
+#: the content hashes of the verdict receipts it revokes and the stage the
+#: deterministic promotion projection reverts to; this event mirrors that
+#: linkage into the HMAC chain by recording ``{receipt_hash,
+#: candidate_config_id, revoked_receipt_hashes, reverts_to_stage,
+#: reverts_to_config_id, trigger_receipt_hash, journal_entry_hash}``. A
+#: verifier folding the receipt chain offline reproduces the identical
+#: rollback, so a regression postmortem links the exact receipt that admitted
+#: the change to the receipt that revoked it.
+EVENT_EVAL_GATE_REVOCATION = "eval.gate_revocation"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -3663,6 +3689,143 @@ def record_cost_batch_route(
     )
 
 
+def record_eval_gate_verdict(
+    *,
+    chain: AuditChainStore,
+    receipt_hash: str,
+    verdict: str,
+    suite_content_hash: str,
+    baseline_result_set_hash: str,
+    candidate_result_set_hash: str,
+    candidate_config_id: str,
+    n_per_arm: int,
+    effect: float,
+    interval_low: float,
+    interval_high: float,
+    alpha: float,
+    min_n_satisfied: bool,
+    journal_entry_hash: str = "",
+    actor: str = "eval_gate",
+) -> AuditEvent:
+    """Append an ``eval.gate_verdict`` event into *chain* (#2520).
+
+    Mirrors one sealed statistical eval verdict receipt into the HMAC chain so
+    an operator can prove, from the chain alone, that a promotion decision stood
+    on a named body of statistical evidence: the paired suite it ran over, the
+    two result sets it compared, the effect and its interval, and whether the
+    minimum n per arm was met. The verdict is a pure function of that evidence,
+    so a verifier holding the same result sets recomputes both the verdict and
+    the ``receipt_hash`` byte-identically. Only hashes, the verdict, and the
+    rounded statistics are recorded -- never task prompts or agent output.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_hash: Content hash pinning the whole verdict receipt (its
+            identity).
+        verdict: One of ``significant_improvement`` / ``non_inferior`` /
+            ``insufficient_evidence`` / ``significant_regression``.
+        suite_content_hash: Order-invariant hash over the suite's task ids.
+        baseline_result_set_hash: Order-invariant hash over the baseline arm's
+            per-task pass/fail outcomes.
+        candidate_result_set_hash: Order-invariant hash over the candidate arm's
+            per-task pass/fail outcomes.
+        candidate_config_id: Identifier of the candidate configuration under
+            evaluation.
+        n_per_arm: Paired sample size (equal per arm).
+        effect: Candidate pass rate minus baseline pass rate (rounded).
+        interval_low: Lower bound of the interval on the paired difference.
+        interval_high: Upper bound of the interval on the paired difference.
+        alpha: Significance level the verdict was decided at.
+        min_n_satisfied: Whether the minimum n per arm was met.
+        journal_entry_hash: Lineage-spine entry hash anchoring the sealed
+            receipt bytes; a verifier holding the spine can recompute it.
+        actor: Recorded actor; defaults to ``"eval_gate"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_EVAL_GATE_VERDICT,
+        actor=actor,
+        resource_type="eval_gate_verdict",
+        resource_id=receipt_hash,
+        details={
+            "receipt_hash": receipt_hash,
+            "verdict": verdict,
+            "suite_content_hash": suite_content_hash,
+            "baseline_result_set_hash": baseline_result_set_hash,
+            "candidate_result_set_hash": candidate_result_set_hash,
+            "candidate_config_id": candidate_config_id,
+            "n_per_arm": n_per_arm,
+            "effect": effect,
+            "interval_low": interval_low,
+            "interval_high": interval_high,
+            "alpha": alpha,
+            "min_n_satisfied": min_n_satisfied,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_eval_gate_revocation(
+    *,
+    chain: AuditChainStore,
+    receipt_hash: str,
+    candidate_config_id: str,
+    revoked_receipt_hashes: list[str],
+    reverts_to_stage: str,
+    reverts_to_config_id: str,
+    trigger_receipt_hash: str,
+    journal_entry_hash: str = "",
+    actor: str = "eval_gate",
+) -> AuditEvent:
+    """Append an ``eval.gate_revocation`` event into *chain* (#2520).
+
+    Mirrors a sealed revocation receipt into the HMAC chain when a
+    significant_regression verdict rolls a candidate configuration back. The
+    event names the verdict receipts the rollback revokes, the verdict receipt
+    that triggered it, and the stage the deterministic promotion projection
+    reverts to. A verifier folding the receipt chain offline reproduces the
+    identical rollback, so a regression postmortem links the exact receipt that
+    admitted the change to the receipt that revoked it.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        receipt_hash: Content hash pinning the revocation receipt.
+        candidate_config_id: The configuration being rolled back.
+        revoked_receipt_hashes: Content hashes of the verdict receipts this
+            revocation invalidates (the promoting receipts).
+        reverts_to_stage: The stage the projection reverts to.
+        reverts_to_config_id: The configuration that serves the reverted stage
+            (the prior default).
+        trigger_receipt_hash: The verdict receipt hash whose
+            significant_regression verdict triggered the rollback.
+        journal_entry_hash: Lineage-spine entry hash anchoring the sealed
+            receipt bytes.
+        actor: Recorded actor; defaults to ``"eval_gate"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_EVAL_GATE_REVOCATION,
+        actor=actor,
+        resource_type="eval_gate_revocation",
+        resource_id=receipt_hash,
+        details={
+            "receipt_hash": receipt_hash,
+            "candidate_config_id": candidate_config_id,
+            "revoked_receipt_hashes": list(revoked_receipt_hashes),
+            "reverts_to_stage": reverts_to_stage,
+            "reverts_to_config_id": reverts_to_config_id,
+            "trigger_receipt_hash": trigger_receipt_hash,
+            "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -3681,6 +3844,8 @@ __all__ = [
     "EVENT_ENDPOINT_CERTIFICATION",
     "EVENT_ESCALATION_RECEIPT",
     "EVENT_EVAL_AB_COMPARISON",
+    "EVENT_EVAL_GATE_REVOCATION",
+    "EVENT_EVAL_GATE_VERDICT",
     "EVENT_EVIDENCE_BUNDLE",
     "EVENT_FORK_SNAPSHOT",
     "EVENT_GATE_ADJUDICATION",
@@ -3743,6 +3908,8 @@ __all__ = [
     "record_endpoint_certification",
     "record_escalation_receipt",
     "record_eval_ab_comparison",
+    "record_eval_gate_revocation",
+    "record_eval_gate_verdict",
     "record_evidence_bundle",
     "record_fork_snapshot",
     "record_gate_adjudication",

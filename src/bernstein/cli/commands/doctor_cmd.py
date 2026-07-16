@@ -623,6 +623,46 @@ def check_knob_matrix_advisory() -> dict[str, Any]:
     }
 
 
+def check_eval_gate_min_n_advisory(workdir: Path | None = None) -> dict[str, Any]:
+    """Warn when a stored eval gate decision was taken below the minimum n (#2520).
+
+    A verdict receipt records whether the minimum n per arm was met. A gate
+    decision taken below that floor is statistically underpowered, so any such
+    receipt in ``.sdd/eval/gate`` is surfaced here as an advisory (never
+    blocking): it flags promotions that may have stood on too few tasks to
+    survive a re-run.
+    """
+    import json as _json
+
+    root = workdir if workdir is not None else Path()
+    gate_dir = root / ".sdd" / "eval" / "gate"
+    underpowered = 0
+    scanned = 0
+    if gate_dir.is_dir():
+        for path in gate_dir.glob("sha256:*.json"):
+            try:
+                raw = _json.loads(path.read_text(encoding="utf-8"))
+                evidence = raw["evidence"]
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            scanned += 1
+            if evidence.get("min_n_satisfied") is False:
+                underpowered += 1
+    if underpowered:
+        return {
+            "name": "Eval gate power",
+            "status": _CHECK_WARN,
+            "detail": f"{underpowered}/{scanned} verdict receipt(s) decided below the minimum n per arm",
+            "fix": "Re-run the gate with a larger suite (raise n per arm) before promoting on those verdicts",
+        }
+    return {
+        "name": "Eval gate power",
+        "status": _CHECK_PASS,
+        "detail": f"{scanned} verdict receipt(s) met the minimum n per arm" if scanned else "no verdict receipts",
+        "fix": "",
+    }
+
+
 def run_all_checks() -> list[dict[str, Any]]:
     """Run all health checks and return results."""
     checks: list[dict[str, Any]] = []
@@ -632,6 +672,7 @@ def run_all_checks() -> list[dict[str, Any]]:
     checks.extend(check_canary_last_green())
     checks.append(check_price_table_advisory())
     checks.append(check_knob_matrix_advisory())
+    checks.append(check_eval_gate_min_n_advisory())
     checks.extend(check_api_keys())
     checks.extend(
         (

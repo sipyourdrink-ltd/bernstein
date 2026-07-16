@@ -588,6 +588,22 @@ def _add_check(checks: list[dict[str, Any]], name: str, ok: bool, detail: str, f
     checks.append({"name": name, "ok": ok, "detail": detail, "fix": fix, "fix_id": fix_id})
 
 
+def _doctor_check_eval_gate_power(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Advisory: flag statistical eval gate decisions taken below the minimum n (#2520).
+
+    Non-blocking. A verdict receipt records whether the minimum n per arm was
+    met; any stored receipt decided below that floor is surfaced so an operator
+    knows a promotion may have stood on too few tasks to survive a re-run.
+    """
+    from bernstein.cli.commands.doctor_cmd import check_eval_gate_min_n_advisory
+
+    advisory = check_eval_gate_min_n_advisory(workdir)
+    detail = advisory["detail"]
+    fix = advisory.get("fix", "")
+    # Advisory only: never fail the run, but keep the underpowered note visible.
+    _add_check(checks, advisory["name"], True, detail, fix)
+
+
 def _doctor_check_python(checks: list[dict[str, Any]]) -> bool:
     """Check Python version. Returns True if version is adequate."""
     major, minor = sys.version_info.major, sys.version_info.minor
@@ -1067,6 +1083,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     _doctor_check_commit_attribution(checks, workdir)
     _doctor_check_compliance(checks, workdir)
     _doctor_check_schedule_supervisor(checks, workdir)
+    _doctor_check_eval_gate_power(checks, workdir)
 
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)

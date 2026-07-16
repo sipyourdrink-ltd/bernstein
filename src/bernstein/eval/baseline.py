@@ -14,7 +14,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
+
+    from bernstein.eval.gate_receipt import VerdictReceipt
 
 logger = logging.getLogger(__name__)
 
@@ -119,3 +122,54 @@ def compute_config_hash(state_dir: Path) -> str:
             except OSError:
                 continue
     return hasher.hexdigest()[:12]
+
+
+def promote_baseline_from_receipt(
+    state_dir: Path,
+    receipt: VerdictReceipt,
+    *,
+    score: float | None = None,
+    components: Mapping[str, float] | None = None,
+    config_hash: str | None = None,
+) -> bool:
+    """Advance the eval baseline only on a ``significant_improvement`` receipt (#2520).
+
+    The legacy ratchet advanced whenever a point estimate cleared a threshold,
+    so the baseline ratcheted on the same noise the gate did. Here the ratchet
+    is gated on the statistical verdict: it advances iff the verdict receipt's
+    verdict is ``significant_improvement`` -- a candidate that is merely
+    non-inferior or indistinguishable never moves the baseline.
+
+    Args:
+        state_dir: Path to the ``.sdd`` directory.
+        receipt: The sealed verdict receipt authorising (or refusing) the ratchet.
+        score: New baseline score; defaults to the candidate pass rate the
+            receipt measured.
+        components: Optional per-dimension scores to persist.
+        config_hash: Optional config fingerprint; defaults to the current config.
+
+    Returns:
+        ``True`` when the baseline was advanced, ``False`` when the verdict did
+        not authorise it.
+    """
+    from bernstein.eval.significance import Verdict
+
+    if receipt.verdict is not Verdict.SIGNIFICANT_IMPROVEMENT:
+        logger.info(
+            "Eval baseline ratchet held: verdict %r does not authorise promotion (receipt %s)",
+            receipt.verdict.value,
+            receipt.receipt_hash,
+        )
+        return False
+
+    new_baseline = EvalBaseline(
+        score=receipt.evidence.cand_rate if score is None else score,
+        components=dict(components or {}),
+        config_hash=config_hash if config_hash is not None else compute_config_hash(state_dir),
+    )
+    save_baseline(state_dir, new_baseline)
+    logger.info(
+        "Eval baseline promoted from significant_improvement receipt %s",
+        receipt.receipt_hash,
+    )
+    return True
