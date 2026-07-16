@@ -16,8 +16,8 @@ callable.
 | Tier | Budget | Tools advertised | Use when |
 |------|--------|------------------|----------|
 | `core` | smallest | `bernstein_health`, `bernstein_run`, `bernstein_status`, `bernstein_tasks`, `bernstein_task_handle` | Cost-sensitive runs or small-context adapters; you only need to start and observe a run. |
-| `standard` (default) | medium | core plus `bernstein_cost`, `bernstein_stop`, `bernstein_approve`, `bernstein_create_subtask`, `load_skill` | The typical session: mutation, approval, and skill loading. |
-| `all` | largest | standard plus the scenario bridge (`bernstein_scenarios`, `bernstein_scenario`, `bernstein_scenario_status`) and `verify_chain` | Power-user sessions that drive scenario libraries or audit lineage. |
+| `standard` (default) | medium | core plus `bernstein_cost`, `bernstein_stop`, `bernstein_approve`, `bernstein_create_subtask`, `load_skill` | The typical run: mutation, approval, and skill loading. |
+| `all` | largest | standard plus the scenario bridge (`bernstein_scenarios`, `bernstein_scenario`, `bernstein_scenario_status`) and `verify_chain` | Power-user setups that drive scenario libraries or audit lineage. |
 
 The exact membership is declared once in
 `src/bernstein/core/protocols/mcp/tool_tiers.py` (`TOOL_TIERS`). Adding a new
@@ -28,7 +28,7 @@ registry to keep in sync.
 
 Resolution order, first match wins:
 
-1. `--mcp-tier <tier>` session flag on `bernstein mcp`.
+1. `--mcp-tier <tier>` flag on `bernstein mcp` (applies to that server process).
 2. `BERNSTEIN_MCP_TOOL_TIER` environment variable.
 3. The `standard` default.
 
@@ -36,7 +36,7 @@ Resolution order, first match wins:
 # Run the MCP server with the smallest tool surface.
 bernstein mcp --mcp-tier core
 
-# Or set it once for the session via the environment.
+# Or set it once for the shell via the environment.
 export BERNSTEIN_MCP_TOOL_TIER=core
 bernstein mcp
 ```

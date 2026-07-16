@@ -285,7 +285,7 @@ jobs:
           persist-credentials: false
       # zizmor cache-poisoning: explicit no-cache on tag-triggered npm publish
       # so a transitive lockfile bump can't be cached and re-served.
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6 # zizmor: ignore[cache-poisoning]
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6 # zizmor: ignore[cache-poisoning]
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
