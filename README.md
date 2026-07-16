@@ -156,7 +156,7 @@ $ bernstein -g "Add JWT auth"
 
 ### YAML workflow manifests (optional)
 
-When `bernstein run -g "<goal>"` is too coarse-grained, `bernstein workflow` runs a declarative DAG of agent / command / loop nodes. Manifests are plain YAML, validated up-front, dispatched through the same `AgentSpawner` the rest of Bernstein uses.
+When `bernstein -g "<goal>"` is too coarse-grained, `bernstein workflow` runs a declarative DAG of agent / command / loop nodes. Manifests are plain YAML, validated up-front, dispatched through the same `AgentSpawner` the rest of Bernstein uses.
 
 ```bash
 bernstein workflow list                          # bundled + user-installed
