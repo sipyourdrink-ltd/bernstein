@@ -232,19 +232,17 @@ function consults `_should_escalate()` (`:639-673`) in this order:
 4. **Explicit failure flag** - `attempt.success=False` after the above
    checks (`:670-671`).
 
-If any trigger fires, the cascade list (`_cascade_for_task()`,
-`:681-700`) is consulted: standard tasks step `haiku → sonnet → opus`;
-high-stakes tasks (role in `manager`/`architect`/`security`, complexity
-high, scope large, priority 1) skip haiku and step `sonnet → opus`. When
-the current model is already at the top, escalation gives up
-(`:448-455`).
+If any trigger fires, the cascade list (`_cascade_for_task()`) is
+consulted: tasks step `sonnet → opus`. The earlier `haiku` tier was
+retired, so standard and high-stakes tasks now share the same chain.
+When the current model is already at the top, escalation gives up.
 
 The bandit (`EpsilonGreedyBandit` from `core/cost/cost.py`) is updated on
-every observation (`cascade_router.py:559-568`). On the next call to
+every observation (`cascade_router.py`). On the next call to
 `select()` for a fresh task, the router proactively skips a tier when
 `observations >= MIN_OBSERVATIONS` and `success_rate < QUALITY_THRESHOLD`
-(`:594-614`) - i.e. the bandit learns "haiku never works for role=qa,
-start at sonnet."
+- i.e. the bandit learns "sonnet rarely works for role=qa, start at
+opus."
 
 Chain reports persist to `.sdd/metrics/cascade_chains.jsonl`
 (`save_chain()`, `:518-539`). Each line lists every attempt with

@@ -99,7 +99,7 @@ Source pointers (read these if you need to debug from code):
 - **Format**: HS256 JWT signed with the secret from `.sdd/auth/jwt_secret`
   (auto-generated on first run; persisted across restarts).
 - **Claims**: `sub=session_id`, `role`, `task_ids=[…]`, `iat`, `exp`, `jti`.
-- **Expiry**: 4 h for task-scoped tokens (240 s LIST default 14400 s); 24 h
+- **Expiry**: 4 h for task-scoped tokens (default 14400 s); 24 h
   for unrestricted (manager / orchestrator) tokens.
 - **Revocation**: deleted from disk and revoked in `AgentIdentityStore` when
   the agent is reaped.

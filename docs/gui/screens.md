@@ -65,7 +65,7 @@ Seven routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 
 ## Audit (`/ui/audit`)
 
-- **Source:** `web/src/routes/Audit.tsx` (when present; otherwise scaffolded).
+- **Source:** `web/src/routes/Audit.tsx`.
 - **Layout:** single column, full-width.
 - **Chain status banner:** 4-col card grid - chain status (verified), head (#ID + truncated hash), Sigstore anchor (rekor entry), rotated (age + chunk).
 - **Filters bar:** search · actor · action · time, separated by hairline dividers, mono uppercase labels above each value, "Reset" ghost button on right.
@@ -76,7 +76,7 @@ Seven routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 
 ## Costs (`/ui/costs`)
 
-- **Source:** `web/src/routes/Costs.tsx` (when present; otherwise scaffolded).
+- **Source:** `web/src/routes/Costs.tsx`.
 - **Layout:** single column, fluid grid.
 - **Top KPI row:** 4 cards (`1fr 1fr 1fr 1.4fr`) - today · 7 d · projected month · daily-budget gauge with 5 px progress bar.
 - **24 h sparkline:** recharts `<BarChart>`, 8 px bars / 2 px gap, last bar full accent. Dashed gridlines at 25 / 50 / 75 %. Mono x-axis labels (`−24h / −18h / −12h / −6h / now`).

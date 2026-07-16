@@ -1,6 +1,6 @@
 # Code Review Process
 
-Last reviewed: 2026-05-18.
+Last reviewed: 2026-07-16.
 
 This document describes how changes land in Bernstein. It exists so the OpenSSF
 Scorecard, regulated buyers, and new contributors can all read the same answer
@@ -36,7 +36,7 @@ can merge:
 
 - CI (`.github/workflows/ci.yml`)
 - CodeQL (`.github/workflows/codeql.yml`)
-- SonarCloud quality gate
+- SonarQube quality gate (self-hosted; `sonar-scan.yml` `workflow_run` on CI)
 - Architecture contracts (`lint-imports`)
 - Type checks (`pyright src/`)
 

@@ -2,7 +2,7 @@
 
 Bernstein exposes a task-server HTTP API on `http://127.0.0.1:8052` by default. The full OpenAPI 3.1 specification is available at `/openapi.json` when the server is running.
 
-This page is the canonical hand-maintained reference. It covers ~216 HTTP/WebSocket endpoints across 58 route files, plus 13 MCP tools. Endpoints requiring authentication are marked with `Y` in the **Auth** column.
+This page is the canonical hand-maintained reference. It covers ~216 HTTP/WebSocket endpoints across the FastAPI route modules under `src/bernstein/core/routes/`, plus 13 MCP tools. Endpoints requiring authentication are marked with `Y` in the **Auth** column.
 
 ## Generating the spec
 

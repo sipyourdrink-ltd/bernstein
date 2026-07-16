@@ -204,7 +204,7 @@ The same number is persisted to `.sdd/runs/<run-id>/summary.json`
 (`routing_savings_usd`) for `bernstein recap` and downstream dashboards.
 
 **Baseline anchor.** The comparison model is **Opus** - the most
-expensive tier in the default cascade (`haiku → sonnet → opus`). Picking
+expensive tier in the default cascade (`sonnet → opus`). Picking
 the top of the cascade gives an intentionally generous "what if I had
 just used the smartest model for everything" number; the buyer-facing
 question the card is built to answer.

@@ -43,6 +43,7 @@ For session monitoring commands (`live`, `dashboard`, `status`, `ps`, `cost`, `d
 | `bernstein run --retry-budget SPEC` | Criterion-aware retry budget. See [docs/operations/retry-budget.md](retry-budget.md). |
 | `bernstein identity show` / `decode` / `verify` / `disable` | Operator-side helpers for the install-rev fingerprint embedded in shared yaml/trace/role-prompt artefacts. |
 | `bernstein security role-adapter-policy` | Inspects and edits the per-role adapter allow-list (deny-list enforcement at spawn time). |
+| `bernstein run-lookup NAME` | Resolve a memorable run name back to its run UUID; exits non-zero when the name is malformed or unknown. Example: `bernstein run-lookup brave-otter-1234`. |
 
 ## Monitoring
 
@@ -72,5 +73,3 @@ bernstein skills show <name>  # print a skill body with its references
 bernstein fingerprint build --corpus-dir ~/oss-corpus  # build local similarity index
 bernstein fingerprint check src/foo.py                 # check generated code against the index
 ```
-
-| `bernstein run-lookup NAME` | Resolve a memorable run name back to its run UUID. Exits non-zero when the name is malformed or no known run id renders to it. Example: `bernstein run-lookup brave-otter-1234`. |

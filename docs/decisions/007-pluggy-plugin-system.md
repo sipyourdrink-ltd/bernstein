@@ -170,6 +170,12 @@ class BernsteinSpec:
         """Called when a quality gate (lint, tests, type-check) fails."""
 ```
 
+> **Note.** The hook names and signatures above illustrate the original ADR
+> and have since evolved (for example `on_task_claimed` and `on_agent_died`
+> no longer exist, and task-scoped hooks now take `str`-based `task_id` /
+> `role` arguments rather than `Task` objects). Treat
+> `src/bernstein/plugins/hookspecs.py` as the live contract.
+
 ---
 
 ## Consequences

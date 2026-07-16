@@ -1,6 +1,6 @@
 # CLI Reference
 
-Bernstein ships **174 CLI commands** registered in `cli/main.py`. This page is the single-source reference for every flag on every visible command. For driving Bernstein from a script, also read [`cli/task-lifecycle.md`](cli/task-lifecycle.md) and [`cli/replay.md`](cli/replay.md).
+Bernstein ships a large surface of CLI commands registered in `cli/main.py`. This page is the single-source reference for every flag on every visible command. For driving Bernstein from a script, also read [`cli/task-lifecycle.md`](cli/task-lifecycle.md) and [`cli/replay.md`](cli/replay.md).
 
 > **Find a command fast:** `Ctrl-F` for the command name. Every entry below cites its source as `cli/<file>:<line>`.
 > **Get rich help in the terminal:** `bernstein --help` (root rich-formatted help) and `bernstein help-all` (the same, exhaustive). Per-command help: `bernstein <command> --help` works on every visible command and group.
@@ -48,7 +48,7 @@ Any global flag may also be set via `bernstein.yaml` (e.g. `budget: 5.00`); the 
 
 ## Commands by category
 
-The 174 commands are organised below by purpose, not alphabetically. Use the table inside each category for quick lookup; the longer per-command entries follow for the highest-traffic commands.
+The commands are organised below by purpose, not alphabetically. Use the table inside each category for quick lookup; the longer per-command entries follow for the highest-traffic commands.
 
 ### Conventions
 

@@ -21,15 +21,15 @@ This page is the **user-facing** reference. For the design rationale see
 
 ### Enable lineage
 
-Lineage is on by default in 1.10.9+. To confirm:
+Lineage is on by default (since 1.10.9). To confirm:
 
 ```bash
 bernstein config get lineage.enabled
 # true
 ```
 
-To run in soft-fail mode (lineage failures warn but don't block writes) for
-the first release window, the default is:
+By default `lineage.strict` is `false`, so lineage failures warn but don't
+block writes:
 
 ```bash
 bernstein config get lineage.strict

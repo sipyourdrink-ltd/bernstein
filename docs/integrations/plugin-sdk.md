@@ -75,7 +75,9 @@ Rules:
 
 ## Available hooks
 
-All hooks are defined in `src/bernstein/plugins/hookspecs.py`.
+The table below covers the most commonly used hooks. It is a curated
+subset; the full set (40+ hooks) is defined in
+`src/bernstein/plugins/hookspecs.py`, which is the canonical contract.
 
 | Hook | When fired | Parameters |
 |------|-----------|------------|

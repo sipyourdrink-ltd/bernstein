@@ -18,7 +18,7 @@ Core implementation paths:
 
 - `src/bernstein/cli/commands/worker_cmd.py`
 - `src/bernstein/core/protocols/cluster/cluster.py`
-- `src/bernstein/core/routes/tasks.py` (cluster endpoints)
+- `src/bernstein/core/routes/task_cluster.py` (cluster endpoints)
 
 ---
 
@@ -27,10 +27,10 @@ Core implementation paths:
 ### 1) Start a central server reachable from workers
 
 ```bash
-bernstein conduct --remote --goal "Build feature X"
+bernstein run --remote --goal "Build feature X"
 ```
 
-The `conduct` command (alias for `run`) supports `--remote` which binds the server to `0.0.0.0` for cluster access. The `--remote` flag is not available on the standard `bernstein run` command.
+The `run` command (also exposed as the hidden alias `conduct` - both dispatch the same function) supports `--remote`, which binds the server to `0.0.0.0` for cluster access.
 
 ### 2) Start workers
 
@@ -57,6 +57,9 @@ Implemented endpoints:
 - `POST /cluster/nodes/{node_id}/heartbeat`
 - `DELETE /cluster/nodes/{node_id}`
 - `GET /cluster/nodes`
+- `POST /cluster/nodes/{node_id}/cordon`
+- `POST /cluster/nodes/{node_id}/uncordon`
+- `POST /cluster/nodes/{node_id}/drain`
 - `GET /cluster/status`
 - `POST /cluster/steal`
 

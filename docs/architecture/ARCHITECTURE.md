@@ -56,7 +56,7 @@ Runtime state (`.sdd/runtime/`) is ephemeral - PIDs, logs, signals. Never commit
 
 ## Package structure
 
-Since v1.6, `core/` is organized into 55 sub-packages rather than flat files. Top-level modules like `core/server.py` and `core/orchestrator.py` still exist but are **thin re-export shims** - the real implementation lives in the corresponding sub-package. This keeps import paths stable while allowing each subsystem to grow independently.
+Since v1.6, `core/` is organized into ~60 sub-packages rather than flat files. Top-level modules like `core/server.py` and `core/orchestrator.py` still exist but are **thin re-export shims** - the real implementation lives in the corresponding sub-package. This keeps import paths stable while allowing each subsystem to grow independently.
 
 | Sub-package | Responsibility |
 |-------------|----------------|
@@ -83,7 +83,7 @@ Since v1.6, `core/` is organized into 55 sub-packages rather than flat files. To
 | `core/tokens/` | Token monitor, context compression, prompt caching |
 | `core/trigger_sources/` | GitHub, GitLab, Slack, Discord, file watch, webhook triggers |
 
-A few standalone files remain at `core/` top level: `defaults.py` (all configurable constants), `credential_scoping.py`, and `streaming_merge.py`.
+A few standalone files remain at `core/` top level: `defaults.py` (all configurable constants), `credential_scoping.py`, `streaming_merge.py`, `compat_redirect_ledger.py`, `dataclass_helpers.py`, and `instrumentation.py`.
 
 ---
 
@@ -206,7 +206,7 @@ Tracks per-agent token consumption in real time. Detects runaway token growth an
 
 ---
 
-## Sandbox, storage, and skills (1.9.x)
+## Sandbox, storage, and skills
 
 Three pluggable subsystems landed in the 1.9 series. Each has its own
 dedicated architecture page:
@@ -291,7 +291,7 @@ The cloud bridges implement the same `RuntimeBridge` interface as local executio
 - **[Getting Started](../getting-started/install.md)** - install, init, run, monitor
 - **[Feature Matrix](../reference/FEATURE_MATRIX.md)** - shipped vs. partial vs. roadmap
 - **[Benchmarks](../benchmarks/BENCHMARKS.md)** - performance baseline and methodology
-- **[Sandbox backends](sandbox.md)** - pluggable `SandboxBackend` protocol (1.9.x)
-- **[Artifact storage sinks](storage.md)** - cloud `.sdd/` persistence (1.9.x)
-- **[Skills](skills.md)** - progressive-disclosure capability packs (1.9.x)
-- **[What's New](../whats-new.md)** - 1.8.x → 1.9.x user-facing changes
+- **[Sandbox backends](sandbox.md)** - pluggable `SandboxBackend` protocol
+- **[Artifact storage sinks](storage.md)** - cloud `.sdd/` persistence
+- **[Skills](skills.md)** - progressive-disclosure capability packs
+- **[What's New](../whats-new.md)** - recent user-facing changes

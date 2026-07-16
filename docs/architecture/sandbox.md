@@ -11,7 +11,7 @@ This document covers:
 
 - The `SandboxBackend` / `SandboxSession` protocol and the
   `WorkspaceManifest` / `SandboxCapability` value objects
-- The four first-party backends (`worktree`, `docker`, `e2b`, `modal`)
+- The eight first-party backends (`worktree`, `docker`, `e2b`, `modal`, `daytona`, `blaxel`, `runloop`, `vercel`)
 - The `bernstein.sandbox_backends` entry-point group for third-party
   backends
 
@@ -108,7 +108,7 @@ work.
   `docker` provides cgroup + namespace isolation but shares the
   kernel; `e2b` runs in a fresh Firecracker microVM per session;
   `modal` runs in dedicated serverless containers.
-- **Capabilities.** Only `e2b` and `modal` support snapshot/resume;
+- **Capabilities.** `e2b`, `modal`, `daytona`, `runloop`, and `vercel` support snapshot/resume (as does the local `worktree`);
   only `modal` exposes GPU today.
 - **Supported exec semantics.** All four backends handle argv-based
   exec with exit-code, stdout, and stderr capture.
@@ -161,8 +161,8 @@ Third-party backends must:
 
 - `SandboxBackend` / `SandboxSession` / `SandboxCapability` /
   `WorkspaceManifest` live in `src/bernstein/core/sandbox/`.
-- Four first-party backends ship (worktree & docker in core; e2b &
-  modal as optional extras).
+- Eight first-party backends ship (worktree & docker in core; e2b,
+  modal, daytona, blaxel, runloop, and vercel as optional extras).
 - `AgentSpawner` accepts an optional `sandbox_session` parameter; when
   `None` it falls back to the direct-worktree path.
 - `bernstein agents sandbox-backends` lists installed backends.

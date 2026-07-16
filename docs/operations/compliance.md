@@ -36,9 +36,9 @@ compliance` group:
 | **PCI-DSS**      | Policy library                                                       | Shipped                               |
 | **NIST 800-53**  | Policy library                                                       | Shipped                               |
 
-The five framework values accepted by the policy commands are exactly
+The four framework values accepted by the policy commands are exactly
 the members of `ComplianceFramework`
-(`core/security/compliance_policies.py:54`): `soc2`, `iso27001`,
+(`core/security/compliance_policies.py`): `soc2`, `iso27001`,
 `pci_dss`, `nist_800_53`. (HIPAA is enforced by `compliance: hipaa` in
 `bernstein.yaml` rather than by the policy library.)
 

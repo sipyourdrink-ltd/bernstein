@@ -82,7 +82,7 @@ alias).
 | `title` | string | - | Short title. **Required** unless `goal` is set. |
 | `goal` | string | - | Legacy alias for `title`. |
 | `description` | string | `title` | Detailed instructions injected into the agent prompt. |
-| `role` | enum | `backend` | Specialist role; one of `analyst, architect, backend, ci-fixer, data, devops, docs, frontend, manager, ml-engineer, prompt-engineer, qa, resolver, retrieval, reviewer, security, visionary, vp` (`plan_schema.py:20-39`). |
+| `role` | enum | `backend` | Specialist role; one of `adversary, analyst, architect, backend, ci-fixer, data, devops, docs, frontend, manager, ml-engineer, prompt-engineer, qa, resolver, retrieval, reviewer, security, visionary, vp` (`plan_schema.py`). |
 | `priority` | int 1-5 | `2` | 1 = highest, 5 = lowest. Affects orchestrator ordering when multiple steps are ready. |
 | `scope` | enum | `medium` | `small` (<30min), `medium` (30-90min), `large` (90min+). Influences cost/model picks. |
 | `complexity` | enum | `medium` | `low`, `medium`, `high`. Drives router/cascade tier choice. |
@@ -149,7 +149,7 @@ Common errors:
 | `stages[2]: missing required field 'name'` | Every stage must have a unique `name:`. |
 | `stages[2].steps: must contain at least one step` | Empty stages aren't allowed. |
 | `stages[2].steps[0]: step must have a 'title' or 'goal' field` | Add `title:` (preferred) or `goal:`. |
-| `stages[2].steps[0].role: invalid value 'devsecops'` | Use one of the 18 known roles. |
+| `stages[2].steps[0].role: invalid value 'devsecops'` | Use one of the 19 known roles. |
 | `Plan file must be a YAML mapping` | Top-level must be a dict, not a list. |
 | `Cycle detected: a -> b -> a` | Break the dependency chain. |
 

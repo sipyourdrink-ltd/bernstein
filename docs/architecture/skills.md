@@ -199,7 +199,7 @@ Dead skills (zero loads in 30 days) become candidates for deprecation.
 
 ## Migration status
 
-All 17 roles migrated to skill packs:
+17 of 19 roles have skill packs; `data` and `adversary` fall back to legacy/stub resolution:
 
 | role              | references                                                  | notes                          |
 | ----------------- | ----------------------------------------------------------- | ------------------------------ |
@@ -220,6 +220,8 @@ All 17 roles migrated to skill packs:
 | ``analyst``       | -                                                           | body is the scoring rubric     |
 | ``resolver``      | -                                                           | single-purpose skill           |
 | ``ci-fixer``      | -                                                           | single-purpose skill           |
+| ``data``          | -                                                           | legacy/stub resolution         |
+| ``adversary``     | -                                                           | legacy/stub resolution         |
 
 Legacy ``templates/roles/<role>/system_prompt.md`` files remain on disk
 for backwards compat.

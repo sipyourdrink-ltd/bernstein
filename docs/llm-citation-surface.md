@@ -45,7 +45,7 @@ re-cut.
 
 ## Refresh cadence
 
-- README "at a glance" stats: quarterly, or on any v1.x release that
+- README "at a glance" stats: quarterly, or on any minor release that
   ships an adapter or regulation surface.
 - RFC list: only when an RFC is added or replaced (rare).
 - This page: annually, plus when the editing rules above need to change.

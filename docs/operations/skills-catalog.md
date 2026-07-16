@@ -12,6 +12,7 @@ prove what bytes landed in `.bernstein/skills/`.
 ```
 bernstein skills catalog browse
 bernstein skills catalog list
+bernstein skills catalog list-installed
 bernstein skills catalog search <query>
 bernstein skills catalog info <id>
 bernstein skills catalog install <id> [--allow-unverified] [--refresh] [--scope project|user]
