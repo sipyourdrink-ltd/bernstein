@@ -7,7 +7,7 @@ scheduling decision.
 
 Highlights:
 
-* 43 CLI agent adapters in v1.10.1 (40 third-party + 2 leaf-node + 1 generic).
+* 40+ CLI agent adapters (run ``bernstein integrations list`` for the current set).
 * HMAC-SHA256 chained audit log per RFC 2104; key sits outside the audit
   volume; ``bernstein audit verify`` validates integrity.
 * Detached JWS (RFC 7515 §A.5) over JCS-canonicalized (RFC 8785) agent

@@ -3,7 +3,7 @@
 > Forward-deployed engineering, with a coding swarm that fits in your `.sdd/`.
 >
 > Bernstein is an open-source multi-agent orchestration platform for AI coding
-> agents. Deterministic scheduling, 41 CLI adapters, pluggable sandbox backends,
+> agents. Deterministic scheduling, 40+ CLI adapters, pluggable sandbox backends,
 > cloud artifact storage sinks, progressive-disclosure skill packs, zero vendor
 > lock-in. Apache 2.0 licensed.
 
@@ -19,7 +19,7 @@ itself is deterministic Python - zero LLM tokens on scheduling. Every run is
 reproducible. Every step is logged and replayable.
 
 - Pure Python orchestration. No LLM in the coordination loop.
-- 41 CLI agent adapters. Mix Claude Code, Codex, Gemini CLI, Aider, Cursor,
+- 40+ CLI agent adapters. Mix Claude Code, Codex, Gemini CLI, Aider, Cursor,
   and more in the same run.
 - Git worktree isolation per agent. Main branch stays clean.
 - Janitor verification: tests, lint, types, PII gating.
@@ -32,7 +32,7 @@ Bernstein is built for the forward-deployed engineering pattern:
 parachute onto a client repo and stand up an AI engineering crew in
 minutes. State lives in `.sdd/` - no server to provision. Per-agent
 credential scoping keeps your keys out of the client's environment.
-The 41-adapter spread means the swarm runs on whichever CLI agent
+The multi-adapter spread means the swarm runs on whichever CLI agent
 the client already trusts (Claude Code, Codex, Gemini CLI, Aider,
 and more). Every step is an HMAC-signed audit record, replayable
 for client compliance review.

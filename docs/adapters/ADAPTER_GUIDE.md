@@ -751,7 +751,7 @@ Use these when you have an existing workflow built on Composio or ralphex and wa
 
 ## Support Modules
 
-In addition to the 44 CLI agent adapters above, the adapter package includes
+In addition to the CLI agent adapters above, the adapter package includes
 support modules that provide cross-cutting infrastructure:
 
 | Module | Purpose |
