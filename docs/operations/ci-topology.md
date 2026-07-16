@@ -28,7 +28,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/cluster-e2e.yml | cluster-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/code-review-bots-ci.yml | Code review bots (CLI lane) | pull_request | {"cancel-in-progress": "true", "group": "code-review-bots-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/codeql.yml | CodeQL Security Analysis | pull_request, push, schedule | {"cancel-in-progress": "true", "group": "codeql-${{ github.ref }}"} | 1 |
+| .github/workflows/codeql.yml | CodeQL Security Analysis | pull_request, push, schedule | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "codeql-${{ github.ref }}"} | 1 |
 | .github/workflows/contract-drift-autofix.yml | Contract Drift Autofix | pull_request | {"cancel-in-progress": "true", "group": "contract-drift-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/coverage-ratchet-weekly.yml | Coverage ratchet (weekly floor bump) | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "coverage-ratchet-weekly"} | 1 |
 | .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | push | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
@@ -195,7 +195,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/dependabot-auto-merge.yml | workflow: {"contents": "read"}<br>auto-merge: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependency-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | - |
 | .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>docs-data-freshness: {"contents": "read", "issues": "write"}<br>drift-check: {"contents": "read", "pull-requests": "write"} | - |
-| .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_GLITCHTIP_TOKEN, DTRACK_TOKEN, GITHUB_TOKEN, SONAR_TOKEN |
+| .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | DT_API_KEY, DT_API_URL, GITHUB_TOKEN, GLITCHTIP_API_TOKEN, SONAR_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED, GLITCHTIP_DSN |
 | .github/workflows/flake-quarantine.yml | workflow: {"contents": "read"}<br>detect-and-quarantine: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/glitchtip-ingester.yml | workflow: {"contents": "read"}<br>ingest: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, GLITCHTIP_API_TOKEN |
