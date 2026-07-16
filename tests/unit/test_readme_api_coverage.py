@@ -278,6 +278,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "webhook",
         # Typed activity boundary: verify any-modality activity crossings (issue #2311)
         "activity",
+        # Bot-added: drift autofix (regen_contract_drift.py)
+        "intent",
     }
 )
 
