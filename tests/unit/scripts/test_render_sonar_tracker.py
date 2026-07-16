@@ -248,6 +248,72 @@ def test_body_renders_security_hotspots_without_vendor_message(tracker: ModuleTy
     ]
 
 
+def test_md_inline_escapes_pipe_and_backtick(tracker: ModuleType) -> None:
+    # A pipe would break the surrounding table column; a backtick would
+    # terminate a code span. Both are neutralised.
+    assert tracker._md_inline("a|b") == "a\\|b"
+    assert tracker._md_inline("we`ird") == "we'ird"
+    assert tracker._md_inline("py:S1|`x`") == "py:S1\\|'x'"
+
+
+def test_finding_line_escapes_pipe_and_backtick_in_rule_and_path(tracker: ModuleType) -> None:
+    # Craft a rule key and component path carrying markdown-hostile bytes.
+    snapshot = _snapshot(
+        tracker,
+        [
+            _issue(
+                "b1",
+                severity="BLOCKER",
+                rule="python:S20|68",
+                component="bernstein:src/we`ird|path.py",
+            )
+        ],
+    )
+    body = tracker.render_body(snapshot)
+    # The trailing JSON summary legitimately carries raw values (they are
+    # JSON-escaped, not markdown), so scope the check to the markdown part.
+    markdown = body.split("```json")[0]
+    # Inside a backtick code span the raw pipe/backtick must not survive
+    # (they would terminate the span / break a table); the escaped forms
+    # appear instead. safe_why prose in the list item may still mention
+    # the rule key in plain text, which is harmless outside a span/table.
+    assert "`python:S20\\|68`" in markdown
+    assert "`python:S20|68`" not in markdown
+    assert "`src/we'ird\\|path.py:10`" in markdown
+    assert "`src/we`ird|path.py:10`" not in markdown
+
+
+def test_quality_gate_condition_escapes_metric_key(tracker: ModuleType) -> None:
+    condition = tracker.QualityGateCondition(
+        metric_key="new_cov|erage",
+        status="ERROR",
+        comparator="LT",
+        error_threshold="80",
+        actual_value="71.2",
+    )
+    snapshot = _snapshot(tracker, [], quality_gate_conditions=[condition])
+    markdown = tracker.render_body(snapshot).split("```json")[0]
+    assert "| `new_cov\\|erage` |" in markdown
+    assert "new_cov|erage" not in markdown
+
+
+def test_hotspot_escapes_rule_key_and_location(tracker: ModuleType) -> None:
+    hotspot = tracker.SecurityHotspot(
+        key="HS-1",
+        rule_key="python:S50|42",
+        component="bernstein:src/we`ird.py",
+        line=7,
+        status="TO_REVIEW",
+        security_category="command-injection",
+        vulnerability_probability="HIGH",
+    )
+    snapshot = _snapshot(tracker, [], security_hotspots=[hotspot])
+    markdown = tracker.render_body(snapshot).split("```json")[0]
+    assert "python:S50\\|42" in markdown
+    assert "S50|42" not in markdown
+    assert "src/we'ird.py:7" in markdown
+
+
 def test_blocker_and_critical_rendered_as_checkboxes_with_permalink(tracker: ModuleType) -> None:
     snapshot = _snapshot(tracker, [_issue("b1", severity="BLOCKER", rule="python:S2068")])
     body = tracker.render_body(snapshot)

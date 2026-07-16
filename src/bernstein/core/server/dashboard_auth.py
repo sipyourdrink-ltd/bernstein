@@ -207,20 +207,21 @@ def _get_dashboard_password() -> str:
     return os.environ.get("BERNSTEIN_DASHBOARD_PASSWORD", "")
 
 
-# Both digests below are recomputed per comparison and never stored, so a
-# per-value random salt would serve no purpose; the fixed salt is domain
-# separation only. The KDF gives compare_digest fixed-length inputs and
-# makes each online guess computationally expensive.
-_PASSWORD_KDF_SALT = b"bernstein-dashboard-password-v1"
+# Both digests below are recomputed per comparison and never stored. Only a
+# single call needs to agree on a salt for the comparison to be meaningful,
+# so a fresh random salt is drawn per call: every digest stays unpredictable
+# while the KDF still gives compare_digest fixed-length inputs and makes each
+# online guess computationally expensive.
 _PASSWORD_KDF_ITERATIONS = 210_000
+_PASSWORD_KDF_SALT_BYTES = 16
 
 
-def _password_digest(value: str) -> bytes:
+def _password_digest(value: str, salt: bytes) -> bytes:
     """Fixed-length PBKDF2 digest used for constant-time comparison."""
     return hashlib.pbkdf2_hmac(
         "sha256",
         value.encode("utf-8"),
-        _PASSWORD_KDF_SALT,
+        salt,
         _PASSWORD_KDF_ITERATIONS,
     )
 
@@ -229,7 +230,8 @@ def verify_password(provided: str, expected: str) -> bool:
     """Constant-time password comparison."""
     if not expected:
         return False
-    return hmac.compare_digest(_password_digest(provided), _password_digest(expected))
+    salt = secrets.token_bytes(_PASSWORD_KDF_SALT_BYTES)
+    return hmac.compare_digest(_password_digest(provided, salt), _password_digest(expected, salt))
 
 
 @dataclass

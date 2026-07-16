@@ -5,10 +5,10 @@ name: Hotfix R-counter
 # parent chain) the root cause was not actually fixed; surface that on
 # the original feature PR for human attention.
 #
-# Borrowed-from: epidemiology. R = secondary cases / primary case.
-# Applied to hotfix chains: a feature merge produces a hotfix; that
-# hotfix should produce zero further hotfixes. If it does, the original
-# feature PR is the right place to investigate, not the latest patch.
+# The counter is the number of consecutive hotfixes on the same parent
+# chain: a feature merge may need one hotfix, but that hotfix should
+# produce zero further hotfixes. If it does, the original feature PR is
+# the right place to investigate, not the latest patch.
 #
 # State is persisted under .sdd/runtime/ which is gitignored; the
 # workflow only uses the GitHub API for cross-run state.
@@ -210,7 +210,7 @@ jobs:
             printf -- '- `%s`: %s\n' "${HEAD_SHA:0:7}" "${HEAD_MSG}"
             printf '%s' "${CHAIN_DETAILS}"
             printf '\n### Suggested next step\n\n'
-            printf 'Investigate the change that introduced the regression rather than landing another patch on top. Borrowed-from: epidemiology -- if R > 1, isolate the source, do not treat downstream cases in isolation.\n\n'
+            printf 'Investigate the change that introduced the regression rather than landing another patch on top: when the chain count is above one, fix the original source instead of patching each follow-on failure separately.\n\n'
             printf '_Posted automatically by `hotfix-r-tracker.yml`._\n'
           } > "${BODY_FILE}"
 

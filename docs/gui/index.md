@@ -14,7 +14,7 @@ Browser-based operator surface for live Bernstein runs. Mounted on the same Fast
 ## What it is
 
 - Vite + React 18 + Tailwind 3 + shadcn/ui SPA. Source in `web/`. Built bundle ships in the wheel under `src/bernstein/gui/static/`.
-- Five routes: Tasks, Agents, Approvals, Audit, Costs. One nav item each, no settings page.
+- Seven routes: Tasks, Agents, Approvals, Audit, Costs, Fleet, Settings. One nav item each.
 - Reads from `GET /api/v1/*` and the central SSE stream `GET /api/v1/events`. Uses TanStack Query 5 for caching and `setQueryData` to hydrate from SSE.
 - Auth via `Authorization: Bearer ${localStorage.bernstein_token}`. Token comes from `BERNSTEIN_AUTH_TOKEN` (auto-generated on server launch if unset).
 
