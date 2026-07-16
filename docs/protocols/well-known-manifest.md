@@ -8,7 +8,7 @@ Bernstein's task server publishes a small set of unauthenticated discovery endpo
 | `GET /.well-known/agent.json/keys` | JWKS for verifying the agent-card signatures. | [a2a.md](../architecture/a2a.md#how-a-verifier-consumes-the-card) |
 | `GET /llms.txt` | Markdown summary of the same public surface for LLM consumers. | [a2a.md](../architecture/a2a.md#endpoints-summary) |
 | `GET /.well-known/http-message-signatures-directory` | JWKS for verifying the RFC 9421 HTTP Message Signatures on Bernstein's outbound agent-facing requests (install-identity keypair). | `src/bernstein/core/routes/well_known.py` |
-| `.well-known/security.txt` | Security contact and disclosure policy (RFC 9116), served from the repo/site root. | [SECURITY.md](../../SECURITY.md) |
+| `.well-known/security.txt` | Security contact and disclosure policy (RFC 9116), served from the repo/site root. | [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) |
 
 All task-server endpoints above are unauthenticated and listed in the auth-middleware public-path allowlist; they expose only the public surface (no task data, no secrets).
 
