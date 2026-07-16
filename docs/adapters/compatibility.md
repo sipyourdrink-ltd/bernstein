@@ -45,18 +45,7 @@ The detailed comparison matrix with cost tier, reasoning grade, and recommended 
 
 ### Support modules
 
-| Module | Purpose |
-|--------|---------|
-| `caching_adapter` | Prompt prefix deduplication and response reuse |
-| `claude_agents` | Subagent definitions for Claude Code `--agents` flag |
-| `claude_exit_codes` | Exit code to lifecycle enum mapping |
-| `claude_stream_parser` | Stream-JSON event parsing |
-| `conformance` | Golden-transcript replay and adapter conformance testing |
-| `env_isolation` | Environment variable filtering for credential safety |
-| `manager` | Internal ManagerAgent spawner |
-| `plugin_sdk` | Third-party adapter plugin base classes |
-| `registry` | Adapter discovery and registration |
-| `skills_injector` | Per-task Claude Code skill injection |
+The adapter package also ships cross-cutting support modules (caching, conformance testing, environment isolation, plugin SDK, registry, skill injection, and more). The canonical table lives in [`ADAPTER_GUIDE.md`](ADAPTER_GUIDE.md#support-modules).
 
 Compatibility details can vary by adapter version and local toolchain.
 
