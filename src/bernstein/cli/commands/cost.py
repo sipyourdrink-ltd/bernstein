@@ -1568,6 +1568,102 @@ def cost_policy_preflight_cmd(
     console.print("[green]All capped pools within budget.[/green]")
 
 
+@cost_policy_group.command("knobs")
+@click.option(
+    "--config",
+    "config_path",
+    type=str,
+    default="bernstein.yaml",
+    show_default=True,
+    help="Path to bernstein.yaml holding an optional ``cost_policy.knobs`` override.",
+)
+@click.option(
+    "--model",
+    "model_filter",
+    type=str,
+    default=None,
+    help="Show only the row whose key matches this model (longest-key match).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def cost_policy_knobs_cmd(config_path: str, model_filter: str | None, as_json: bool) -> None:
+    """Show the pinned dispatch knob matrix and its content hash (issue #2519).
+
+    The matrix declares, per model, the supported reasoning-effort levels, the
+    processing lanes (interactive / priority / batch) with their USD rate
+    multipliers, and the cache strategies (none / reuse / warm-up) with their
+    token economics. Its ``sha256`` content hash is what every sealed dispatch
+    knob selection names, so an operator can confirm which knob economics a run
+    resolved against. Reports the matrix staleness advisory alongside.
+    """
+    from datetime import UTC, datetime
+
+    from bernstein.core.cost.scheduling.knob_matrix import (
+        DEFAULT_KNOB_MATRIX,
+        knob_matrix_staleness,
+        load_knob_matrix,
+    )
+
+    policy = _read_cost_policy_from_yaml(Path(config_path))
+    knobs_cfg = policy.get("knobs") if isinstance(policy.get("knobs"), dict) else {}
+    models_cfg = knobs_cfg.get("models") if isinstance(knobs_cfg.get("models"), dict) else {}
+    if models_cfg:
+        matrix = load_knob_matrix(
+            models_cfg,
+            as_of=(knobs_cfg.get("as_of") or None),
+            revision=int(knobs_cfg.get("revision", 0) or 0),
+        )
+    else:
+        matrix = DEFAULT_KNOB_MATRIX
+    now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+    staleness = knob_matrix_staleness(matrix, now_iso=now_iso)
+
+    models = matrix.models
+    if model_filter:
+        knobs = matrix.knobs_for(model_filter)
+        models = {model_filter: knobs} if knobs is not None else {}
+
+    if as_json or is_json():
+        print_json(
+            {
+                "matrix_hash": matrix.content_hash(),
+                "as_of": matrix.as_of,
+                "revision": matrix.revision,
+                "models": {name: knobs.to_dict() for name, knobs in models.items() if knobs is not None},
+                "stale": staleness.stale,
+                "message": staleness.message,
+            }
+        )
+        return
+
+    console.print(f"[bold]Dispatch knob matrix[/bold] {matrix.content_hash()}")
+    console.print(f"[dim]as_of={matrix.as_of} revision={matrix.revision}[/dim]")
+    if not models:
+        console.print(f"[yellow]No matrix row matches model {model_filter!r}.[/yellow]")
+        return
+
+    from rich.table import Table
+
+    table = Table(header_style="bold cyan")
+    table.add_column("Model", no_wrap=True)
+    table.add_column("Effort levels")
+    table.add_column("Lanes (multiplier)")
+    table.add_column("Cache strategies")
+    for name in sorted(models):
+        knobs = models[name]
+        if knobs is None:
+            continue
+        lanes = ", ".join(f"{lane}={mult:g}" for lane, mult in sorted(knobs.lanes.items()))
+        table.add_row(
+            name,
+            ", ".join(knobs.effort_levels),
+            lanes,
+            ", ".join(sorted(knobs.cache_strategies)),
+        )
+    console.print(table)
+    if staleness.stale:
+        console.print(f"[yellow]knob matrix advisory:[/yellow] {staleness.message}")
+
+
 @cost_policy_group.command("verify")
 @click.argument("decision_hash", type=str)
 @click.option(

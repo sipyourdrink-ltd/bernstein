@@ -27,10 +27,16 @@ the orchestrator sealed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.cost.scheduling.knob_matrix import (
+    DEFAULT_KNOB_MATRIX,
+    KnobMatrix,
+    load_knob_matrix,
+    resolve_knob_selection,
+)
 from bernstein.core.cost.scheduling.policy import (
     CostCaps,
     DispatchCandidate,
@@ -116,6 +122,52 @@ def resolve_price_table(cost_policy: Any | None) -> PriceTable:
     )
 
 
+def _knob_models(knobs: Any) -> dict[str, dict[str, Any]]:
+    """Flatten a config ``knobs.models`` block into plain knob rows."""
+    raw = getattr(knobs, "models", None)
+    if not raw:
+        return {}
+    rows: dict[str, dict[str, Any]] = {}
+    for key, entry in raw.items():
+        if hasattr(entry, "model_dump"):
+            row = entry.model_dump()
+        elif isinstance(entry, dict):
+            row = dict(entry)
+        else:
+            row = {
+                "effort_levels": getattr(entry, "effort_levels", None),
+                "default_effort": getattr(entry, "default_effort", None),
+                "lanes": getattr(entry, "lanes", None),
+                "cache_strategies": getattr(entry, "cache_strategies", None),
+            }
+        rows[str(key)] = row
+    return rows
+
+
+def resolve_knob_matrix(cost_policy: Any | None) -> KnobMatrix:
+    """Resolve the hash-pinned dispatch knob matrix (#2519).
+
+    Config ``cost_policy.knobs`` overrides the shipped defaults (same contract
+    as :func:`~bernstein.core.cost.scheduling.knob_matrix.load_knob_matrix`); an
+    absent knobs block yields :data:`DEFAULT_KNOB_MATRIX` unchanged. The matrix
+    is never probed -- its :meth:`KnobMatrix.content_hash` is what the sealed
+    knob selection names in every decision.
+    """
+    if cost_policy is None:
+        return DEFAULT_KNOB_MATRIX
+    knobs = getattr(cost_policy, "knobs", None)
+    if knobs is None:
+        return DEFAULT_KNOB_MATRIX
+    models = _knob_models(knobs)
+    if not models:
+        return DEFAULT_KNOB_MATRIX
+    return load_knob_matrix(
+        models,
+        as_of=(getattr(knobs, "as_of", "") or None),
+        revision=int(getattr(knobs, "revision", 0) or 0),
+    )
+
+
 def build_dispatch_candidates(
     batches: Iterable[Any],
     *,
@@ -123,6 +175,7 @@ def build_dispatch_candidates(
     run_id: str,
     day_key: str,
     pool: str = "",
+    knob_matrix: KnobMatrix | None = None,
 ) -> list[DispatchCandidate]:
     """Build one :class:`DispatchCandidate` per about-to-spawn batch.
 
@@ -131,13 +184,24 @@ def build_dispatch_candidates(
     it never manufactures spend). The candidate is attributed to the batch's
     lead task for the per-task dimension. Empty batches are skipped.
 
+    When *knob_matrix* is supplied, each candidate's per-call knobs (effort,
+    lane, cache strategy) are resolved deterministically and sealed onto the
+    candidate, and the projected cost is multiplied by the resolved lane
+    multiplier -- so admit and halt decisions account for the lane and effort
+    actually chosen (#2519). The sealed selection folds into the decision hash
+    downstream. With no matrix the behaviour is byte-identical to the pre-#2519
+    contract (multiplier ``1.0``, no knob selection).
+
     Args:
         batches: Role-grouped batches of Task-like objects (each item is
-            iterable and indexable, exposing ``id`` and optional ``model``).
+            iterable and indexable, exposing ``id`` and optional ``model`` /
+            ``adapter`` / ``effort`` / ``is_batch`` / ``cache_strategy``).
         cost_estimates: ``task_id -> estimated_cost_usd`` from the tick.
         run_id: The active run id (attributed to every candidate).
         day_key: UTC ``YYYY-MM-DD`` bucket for the day dimension.
         pool: Optional quota pool attributed to the candidates.
+        knob_matrix: The pinned knob matrix to resolve per-call knobs against,
+            or ``None`` to keep the pre-#2519 projection unchanged.
 
     Returns:
         Candidates in the batches' dispatch order.
@@ -149,16 +213,26 @@ def build_dispatch_candidates(
             continue
         lead = tasks[0]
         projected = sum(float(cost_estimates.get(getattr(task, "id", ""), 0.0)) for task in tasks)
-        candidates.append(
-            DispatchCandidate(
-                task_id=str(getattr(lead, "id", "")),
-                run_id=run_id,
-                model=str(getattr(lead, "model", "") or ""),
-                projected_cost_usd=projected,
-                day_key=day_key,
-                pool=pool,
-            )
+        candidate = DispatchCandidate(
+            task_id=str(getattr(lead, "id", "")),
+            run_id=run_id,
+            model=str(getattr(lead, "model", "") or ""),
+            projected_cost_usd=projected,
+            day_key=day_key,
+            pool=pool,
+            adapter=str(getattr(lead, "adapter", "") or ""),
+            requested_effort=str(getattr(lead, "effort", "") or ""),
+            batch_eligible=bool(getattr(lead, "is_batch", False)),
+            requested_cache=str(getattr(lead, "cache_strategy", "") or ""),
         )
+        if knob_matrix is not None:
+            selection = resolve_knob_selection(candidate=candidate, matrix=knob_matrix)
+            candidate = replace(
+                candidate,
+                projected_cost_usd=projected * selection.rate_multiplier,
+                knob_selection=selection,
+            )
+        candidates.append(candidate)
     return candidates
 
 
@@ -259,5 +333,6 @@ __all__ = [
     "build_dispatch_candidates",
     "evaluate_run_dispatch",
     "resolve_cost_caps",
+    "resolve_knob_matrix",
     "resolve_price_table",
 ]

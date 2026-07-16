@@ -491,6 +491,29 @@ def check_price_table_advisory() -> dict[str, Any]:
     }
 
 
+def check_knob_matrix_advisory() -> dict[str, Any]:
+    """Warn when the shipped dispatch knob matrix is stale (issue #2519).
+
+    The knob matrix pins the effort, lane, and cache economics every dispatch
+    fingerprint seals; its lane / cache multipliers drift with provider pricing,
+    so a matrix older than the staleness window is a signal to refresh
+    ``cost_policy.knobs`` (or the shipped defaults). Advisory only -- non-blocking.
+    """
+    from datetime import UTC, datetime
+
+    from bernstein.core.cost.scheduling.knob_matrix import DEFAULT_KNOB_MATRIX, knob_matrix_staleness
+
+    advisory = knob_matrix_staleness(DEFAULT_KNOB_MATRIX, now_iso=datetime.now(tz=UTC).strftime("%Y-%m-%d"))
+    return {
+        "name": "Cost knob matrix",
+        "status": _CHECK_WARN if advisory.stale else _CHECK_PASS,
+        "detail": advisory.message,
+        "fix": "Refresh cost_policy.knobs in bernstein.yaml or update the shipped knob matrix"
+        if advisory.stale
+        else "",
+    }
+
+
 def run_all_checks() -> list[dict[str, Any]]:
     """Run all health checks and return results."""
     checks: list[dict[str, Any]] = []
@@ -499,6 +522,7 @@ def run_all_checks() -> list[dict[str, Any]]:
     checks.extend(check_adapter_advisories())
     checks.extend(check_canary_last_green())
     checks.append(check_price_table_advisory())
+    checks.append(check_knob_matrix_advisory())
     checks.extend(check_api_keys())
     checks.extend(
         (

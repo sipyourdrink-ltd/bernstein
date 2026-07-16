@@ -1136,6 +1136,7 @@ class Orchestrator:
             build_dispatch_candidates,
             evaluate_run_dispatch,
             resolve_cost_caps,
+            resolve_knob_matrix,
             resolve_price_table,
         )
 
@@ -1147,12 +1148,15 @@ class Orchestrator:
 
         now_ts = time.time()
         day_key = datetime.now(UTC).strftime("%Y-%m-%d")
-        price_table = resolve_price_table(getattr(self._config, "cost_policy", None))
+        cost_policy = getattr(self._config, "cost_policy", None)
+        price_table = resolve_price_table(cost_policy)
+        knob_matrix = resolve_knob_matrix(cost_policy)
         candidates = build_dispatch_candidates(
             batches,
             cost_estimates=cost_estimates,
             run_id=self._run_id,
             day_key=day_key,
+            knob_matrix=knob_matrix,
         )
         entries = SpendLedger.load_entries(self._spend_ledger.path)
         outcome = evaluate_run_dispatch(

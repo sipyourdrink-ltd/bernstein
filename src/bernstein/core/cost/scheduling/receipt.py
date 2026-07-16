@@ -171,6 +171,7 @@ def build_dispatch_receipt(
             ledger_state_hash=decision.ledger_state_hash,
             policy_hash=decision.policy_hash,
             journal_entry_hash=anchor,
+            knob_selection_hash=(decision.knob_selection.selection_hash if decision.knob_selection is not None else ""),
         )
     return sealed
 
@@ -199,6 +200,26 @@ class DispatchVerifyResult:
     receipt: DispatchReceipt | None
 
 
+def _verify_knob_selection(decision: DispatchDecision) -> str | None:
+    """Return a named failure reason for a tampered knob field, else ``None``.
+
+    The sealed :class:`~bernstein.core.cost.scheduling.policy.KnobSelection`
+    carries a per-field digest, so a receipt whose stored effort / lane / cache
+    strategy / multiplier no longer matches its sealed digest fails with the
+    exact knob field named -- an ordinary scheduler logs knobs, it does not make
+    each one falsification-evident.
+    """
+    selection = decision.knob_selection
+    if selection is None:
+        return None
+    tampered_field = selection.first_field_digest_mismatch()
+    if tampered_field is not None:
+        return f"dispatch knob field {tampered_field!r} does not match its sealed digest (tampered)"
+    if not selection.verify_self_hash():
+        return "knob selection_hash does not recompute from the sealed knob fields (tampered)"
+    return None
+
+
 def verify_dispatch_receipt(
     *,
     workdir: Path,
@@ -220,6 +241,9 @@ def verify_dispatch_receipt(
     decision = receipt.decision
     if decision.decision_hash != decision_hash:
         return DispatchVerifyResult(ok=False, reason="receipt decision_hash does not match request", receipt=receipt)
+    knob_failure = _verify_knob_selection(decision)
+    if knob_failure is not None:
+        return DispatchVerifyResult(ok=False, reason=knob_failure, receipt=receipt)
     if not decision.verify_self_hash():
         return DispatchVerifyResult(
             ok=False, reason="decision_hash does not recompute from the receipt body (tampered)", receipt=receipt

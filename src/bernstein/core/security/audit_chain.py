@@ -2849,6 +2849,7 @@ def record_cost_dispatch_receipt(
     ledger_state_hash: str,
     policy_hash: str,
     journal_entry_hash: str,
+    knob_selection_hash: str = "",
     actor: str = "cost_policy",
 ) -> AuditEvent:
     """Append a ``cost.dispatch_receipt`` event into *chain* (#2354).
@@ -2878,29 +2879,37 @@ def record_cost_dispatch_receipt(
         policy_hash: Content hash of the caps the decision enforced.
         journal_entry_hash: Lineage-spine entry hash anchoring the sealed
             decision bytes; a verifier holding the spine can recompute it.
+        knob_selection_hash: Content hash of the sealed dispatch knob selection
+            (effort, lane, cache strategy, multiplier). Recorded only when a
+            knob matrix resolved the dispatch, so a verifier can pin the exact
+            knob configuration the decision used (#2519). Empty when no matrix
+            was consulted (back-compat).
         actor: Recorded actor; defaults to ``"cost_policy"``.
 
     Returns:
         The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
         its details payload.
     """
+    details: dict[str, Any] = {
+        "decision_hash": decision_hash,
+        "run_id": run_id,
+        "task_id": task_id,
+        "admit": admit,
+        "breached_dimension": breached_dimension,
+        "projected_overrun_usd": round(projected_overrun_usd, 6),
+        "price_table_hash": price_table_hash,
+        "ledger_state_hash": ledger_state_hash,
+        "policy_hash": policy_hash,
+        "journal_entry_hash": journal_entry_hash,
+    }
+    if knob_selection_hash:
+        details["knob_selection_hash"] = knob_selection_hash
     return chain.log_with_prev_digest(
         event_type=EVENT_COST_DISPATCH_RECEIPT,
         actor=actor,
         resource_type="cost_dispatch_receipt",
         resource_id=decision_hash,
-        details={
-            "decision_hash": decision_hash,
-            "run_id": run_id,
-            "task_id": task_id,
-            "admit": admit,
-            "breached_dimension": breached_dimension,
-            "projected_overrun_usd": round(projected_overrun_usd, 6),
-            "price_table_hash": price_table_hash,
-            "ledger_state_hash": ledger_state_hash,
-            "policy_hash": policy_hash,
-            "journal_entry_hash": journal_entry_hash,
-        },
+        details=details,
     )
 
 
