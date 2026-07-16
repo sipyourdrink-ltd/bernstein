@@ -519,6 +519,18 @@ def _severity_sort_key(severity: str) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _md_inline(value: str) -> str:
+    """Escape a value interpolated into a markdown table cell or code span.
+
+    Sonar-supplied strings (rule keys, component paths, metric keys) flow
+    into the public tracker issue. A stray ``|`` breaks the surrounding
+    table column and a backtick terminates the code span, so escape the
+    pipe and neutralise interior backticks. The tracker is world-readable,
+    so this keeps a hostile rule key or path from corrupting the layout.
+    """
+    return value.replace("`", "'").replace("|", "\\|")
+
+
 def _issue_permalink(host: str, project_key: str, issue_key: str) -> str:
     """Build the deep link to a single issue in the Sonar UI."""
     return f"{host}/project/issues?issueStatuses=OPEN,CONFIRMED&id={project_key}&open={issue_key}"
@@ -532,7 +544,7 @@ def _finding_line(finding: Finding, host: str, project_key: str, *, checkbox: bo
         location = f"{location}:{finding.line}"
     link = _issue_permalink(host, project_key, finding.key)
     box = "- [ ] " if checkbox else "- "
-    return f"{box}rule `{finding.rule}`: {desc} `{location}` ([view]({link}))"
+    return f"{box}rule `{_md_inline(finding.rule)}`: {desc} `{_md_inline(location)}` ([view]({link}))"
 
 
 def _coverage_text(coverage: float | None) -> str:
@@ -643,7 +655,7 @@ def _quality_gate_conditions_section(conditions: Sequence[QualityGateCondition])
     for condition in conditions:
         lines.append(
             "| "
-            f"`{condition.metric_key}` | "
+            f"`{_md_inline(condition.metric_key)}` | "
             f"{condition.status} | "
             f"{_condition_text(condition.actual_value)} | "
             f"{_condition_text(condition.comparator)} | "
@@ -677,11 +689,11 @@ def _security_hotspots_section(hotspots: Sequence[SecurityHotspot], host: str, p
         link = _hotspot_permalink(host, project_key, hotspot.key)
         lines.append(
             "| "
-            f"`{hotspot.rule_key}` | "
+            f"`{_md_inline(hotspot.rule_key)}` | "
             f"{hotspot.status} | "
             f"{_condition_text(hotspot.security_category)} | "
             f"{_condition_text(hotspot.vulnerability_probability)} | "
-            f"`{location}` ([view]({link})) |"
+            f"`{_md_inline(location)}` ([view]({link})) |"
         )
     if remainder > 0:
         lines.append(f"| n/a | n/a | n/a | n/a | {remainder} more, see Sonar |")

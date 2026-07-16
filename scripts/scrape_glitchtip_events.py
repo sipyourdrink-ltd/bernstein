@@ -54,6 +54,7 @@ import logging
 import os
 import re
 import sys
+import urllib.parse
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -191,6 +192,24 @@ def _parse_link_header(value: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _same_host(candidate: str, base_url: str) -> bool:
+    """Return True when ``candidate`` targets the configured host over HTTP(S).
+
+    The pagination ``next`` URL is server-supplied and is followed with
+    the Bearer token attached. Pinning it to the configured base-URL host
+    stops a hostile or compromised server from redirecting the cursor at
+    an attacker-controlled endpoint and exfiltrating the token (SSRF).
+    """
+    try:
+        parsed = urllib.parse.urlparse(candidate)
+        base = urllib.parse.urlparse(base_url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    return bool(parsed.netloc) and parsed.netloc.lower() == base.netloc.lower()
+
+
 def list_unresolved_issues(
     base_url: str,
     token: str,
@@ -221,7 +240,14 @@ def list_unresolved_issues(
         for raw in payload:
             if isinstance(raw, dict):
                 issues.append(raw)
-        url = _parse_link_header(headers.get("link", ""))
+        next_url = _parse_link_header(headers.get("link", ""))
+        # Only follow the next cursor when it points back at the
+        # configured host. A next link to any other host is dropped so the
+        # Bearer token is never sent off-host (SSRF guard).
+        if next_url and not _same_host(next_url, base_url):
+            logger.warning("dropping cross-host pagination link; stopping pagination")
+            next_url = None
+        url = next_url
     return issues
 
 
