@@ -7,9 +7,9 @@ name: Trunk Andon Gate
 # CI pipeline and so flipping the toggle does not invalidate cached
 # ci.yml jobs across in-flight PRs.
 #
-# Borrowed-from: Toyota Andon cord. The trunk pulls the cord; new work
-# pauses until cleared. The `hotfix-cleared` label is the explicit
-# "this is the cord-clearing fix, let it through" override.
+# While the trunk is flagged unstable, new work pauses until it
+# recovers. The `hotfix-cleared` label is the explicit "this PR is the
+# fix that clears the trunk, let it through" override.
 
 on:
   pull_request:

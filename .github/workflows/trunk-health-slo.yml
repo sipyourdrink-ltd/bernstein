@@ -6,9 +6,11 @@ name: Trunk Health SLO
 # variable to hold merges on every PR until the trunk recovers, unless
 # the PR carries the `hotfix-cleared` label.
 #
-# Borrowed-from: SPC (statistical process control) + Toyota Andon.
-# When the line goes red, stop new work from being committed until the
-# stop signal clears, except for the fix that clears it.
+# The toggle exists so a red trunk stops new merges from piling on top
+# of an already-broken main: while the red rate is over threshold the
+# gate holds PRs, and only the fix that clears the trunk is let through
+# (via the `hotfix-cleared` label). This keeps regressions from
+# compounding before main is green again.
 #
 # Threshold defaults to 5%. Override per-run via workflow_dispatch.
 
