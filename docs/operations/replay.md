@@ -148,6 +148,22 @@ These add to the existing event-type registry without modifying any
 prior entries. The audit-slice extractor picks them up via the standard
 `event_type=` filter.
 
+## Provider-side context mutations
+
+Provider-side context rewrites (compaction boundaries and similar opaque
+state markers surfaced in provider responses) are chained into the run
+journal as content-addressed `provider_state_mutation` entries, so the
+journal head commits to every observed rewrite before anything builds on
+it. In deterministic modes an arriving mutation is recorded flagged and
+`bernstein replay <run-id> --verify` fails closed; `bernstein replay diff`
+attributes a mutation-driven divergence with the `provider_state_mutation`
+reason code, the mutation kind, and the exact step index. Each adapter's
+ability to observe mutations at all is recorded per run as a
+`provider_state_capability` entry (`observed` or `declared-blind`), and
+each chained mutation is mirrored into the HMAC audit chain as a
+`provider.state_mutation` event. Full behaviour table:
+[deterministic-replay.md](deterministic-replay.md#provider-side-context-mutations).
+
 ## Backward compatibility
 
 - `bernstein git undo <snapshot_id>` works unchanged.

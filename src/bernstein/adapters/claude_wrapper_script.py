@@ -15,6 +15,8 @@ so golden-replay tests from pass unchanged.
 
 from __future__ import annotations
 
+from bernstein.adapters.claude_stream_parser import PROVIDER_MUTATION_SUBTYPES
+
 # Prelude: shared across every wrapper invocation regardless of which
 # sidecar/heartbeat/completion features are enabled.  The wrapper reads
 # NDJSON one line at a time, extracts printable text for the adapter log,
@@ -104,6 +106,32 @@ def _build_heartbeat_touch(heartbeat_path: str) -> str:
     )
 
 
+def _build_mutation_sidecar(mutation_path: str) -> str:
+    """Return the provider-state mutation sidecar block for *mutation_path*.
+
+    Issue #2507: provider-side context mutations (compaction boundaries and
+    similar opaque state markers) arrive as stream-json ``system`` events
+    that the human-readable log conversion would otherwise drop. Each such
+    signal is appended to a per-session JSONL sidecar in observation order
+    so the orchestrator can chain it into the run's replay journal as a
+    content-addressed ``provider_state_mutation`` entry. Writing is
+    best-effort: a sidecar failure must never break the stream conversion.
+    """
+    if not mutation_path:
+        return ""
+    subtypes = tuple(sorted(PROVIDER_MUTATION_SUBTYPES))
+    return (
+        "    # Provider-side context mutation signal -> per-session sidecar\n"
+        f"    if msg.get('type', '') == 'system' and msg.get('subtype', '') in {subtypes!r}:\n"
+        "        try:\n"
+        "            _mrec = json.dumps({'kind': msg.get('subtype', ''), 'detail': msg})\n"
+        f"            with open({mutation_path!r}, 'a') as _mf:\n"
+        "                _mf.write(_mrec + '\\n')\n"
+        "        except OSError:\n"
+        "            pass\n"
+    )
+
+
 def _build_completion_write(completion_path: str) -> str:
     """Return the completion-marker writer block for *completion_path*.
 
@@ -130,6 +158,7 @@ def build_wrapper_script(
     tokens_path: str = "",
     heartbeat_path: str = "",
     completion_path: str = "",
+    mutation_path: str = "",
 ) -> str:
     """Return the stream-json → human-readable log converter script.
 
@@ -149,6 +178,10 @@ def build_wrapper_script(
         completion_path: Absolute path to the completion marker file.  Written
             when a ``result`` event is parsed, signalling the orchestrator that
             the agent finished its work and can be reaped immediately.
+        mutation_path: Absolute path to the provider-state mutation sidecar
+            (issue #2507).  Every stream-json ``system`` event whose subtype
+            signals a provider-side context mutation is appended here in
+            observation order; empty disables the sidecar.
     """
     # ``session_id`` is accepted but not referenced in the emitted source
     # today.  Kept in the signature so the adapter call-site and tests
@@ -158,8 +191,9 @@ def build_wrapper_script(
     token_writer = _build_token_writer(tokens_path)
     heartbeat_touch = _build_heartbeat_touch(heartbeat_path)
     completion_write = _build_completion_write(completion_path)
+    mutation_sidecar = _build_mutation_sidecar(mutation_path)
 
-    return _WRAPPER_PRELUDE + heartbeat_touch + _WRAPPER_DISPATCH + completion_write + token_writer
+    return _WRAPPER_PRELUDE + heartbeat_touch + mutation_sidecar + _WRAPPER_DISPATCH + completion_write + token_writer
 
 
 __all__ = ["build_wrapper_script"]

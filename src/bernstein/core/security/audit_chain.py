@@ -278,6 +278,19 @@ EVENT_ACTIVITY_RESULT = "activity.result"
 #: bytes themselves.
 EVENT_EVIDENCE_BUNDLE = "evidence.bundle"
 
+#: Issue #2507 -- emitted whenever an observed provider-side context mutation
+#: (compaction boundary or similar opaque state marker surfaced in provider
+#: responses) is chained into the run's replay journal. The event mirrors the
+#: mutation's content address ``H(kind, before_digest, after_digest,
+#: step_index)`` plus the journal head after the entry was chained, so an
+#: operator can prove, from the chain alone, that a server-side context
+#: rewrite was pinned into the run identity before anything built on the
+#: mutated state -- or that a flagged mutation arrived in deterministic mode
+#: and the run fails verification closed. Only the kind, the content address,
+#: the step index, the flag, and the journal anchor are recorded -- never the
+#: mutated context itself.
+EVENT_PROVIDER_STATE_MUTATION = "provider.state_mutation"
+
 #: Issue #2358 -- emitted whenever a run's durable work ledger is anchored
 #: to its dedicated git ref (``refs/bernstein/work-ledger/<run-id>``). The
 #: hash-chained ledger is the resumable task-graph state; this event mirrors
@@ -1461,6 +1474,47 @@ def record_mcp_stateless_call(
     )
 
 
+def reconstruct_mcp_call_order(*, chain: AuditChainStore, run_id: str) -> list[dict[str, Any]]:
+    """Rebuild a run's ordered MCP call sequence purely from chain entries.
+
+    With the protocol session stores deleted (issue #2506) the audit chain is
+    the only authority on MCP call ordering. The chain is verified first, so
+    a tampered ``mcp.stateless_call`` entry fails at exactly that entry (the
+    underlying verifier names the file and line); the surviving entries are
+    then projected into their recorded ``call_index`` order and the sequence
+    is checked for gaps and duplicates.
+
+    Args:
+        chain: The audit chain store holding the run's entries.
+        run_id: The run whose call ordering to reconstruct.
+
+    Returns:
+        The ordered list of ``mcp.stateless_call`` detail payloads for the
+        run (empty when the run recorded no MCP calls).
+
+    Raises:
+        ValueError: When chain verification fails (the message carries the
+            verifier's per-entry errors) or when the recorded ``call_index``
+            sequence has a gap or duplicate.
+    """
+    ok, errors = chain.verify()
+    if not ok:
+        msg = "audit chain verification failed: " + "; ".join(errors)
+        raise ValueError(msg)
+
+    details = [
+        event.details
+        for event in chain.query(event_type=EVENT_MCP_STATELESS_CALL)
+        if str(event.details.get("run_id", "")) == run_id
+    ]
+    ordered = sorted(details, key=lambda d: int(d.get("call_index", -1)))
+    indexes = [int(d.get("call_index", -1)) for d in ordered]
+    if indexes != list(range(len(indexes))):
+        msg = f"mcp.stateless_call ordering for run {run_id!r} is not contiguous: call_index sequence {indexes}"
+        raise ValueError(msg)
+    return ordered
+
+
 def record_subagent_delegation(
     *,
     chain: AuditChainStore,
@@ -1916,6 +1970,62 @@ def record_evidence_bundle(
             "item_count": item_count,
             "gate_passed": gate_passed,
             "journal_entry_hash": journal_entry_hash,
+        },
+    )
+
+
+def record_provider_state_mutation(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    agent_id: str,
+    mutation_kind: str,
+    content_address: str,
+    step_index: int,
+    flagged: bool,
+    journal_head: str,
+    actor: str = "provider_state",
+) -> AuditEvent:
+    """Append a ``provider.state_mutation`` event into *chain* (#2507).
+
+    Mirrors an observed provider-side context mutation's identity into the
+    HMAC-chained audit log after the mutation was chained into the run's
+    replay journal. Only the mutation kind, its content address, the step
+    index, the deterministic-mode flag, and the journal head anchor are
+    recorded -- never the mutated context. A verifier holding the run journal
+    can confirm the mutation entry is chain-attested and that a flagged
+    mutation fails replay verification closed.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        run_id: The run whose journal recorded the mutation.
+        agent_id: The agent session the mutation was observed for.
+        mutation_kind: Provider-reported mutation kind (for example
+            ``compact_boundary``).
+        content_address: ``H(kind, before_digest, after_digest, step_index)``
+            of the chained journal entry.
+        step_index: 0-based position within the session's signal order.
+        flagged: Whether the mutation arrived in deterministic mode.
+        journal_head: The run journal head after the entry was chained.
+        actor: Recorded actor; defaults to ``"provider_state"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded
+        in its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_PROVIDER_STATE_MUTATION,
+        actor=actor,
+        resource_type="provider_state_mutation",
+        resource_id=content_address,
+        details={
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "mutation_kind": mutation_kind,
+            "content_address": content_address,
+            "step_index": step_index,
+            "flagged": flagged,
+            "journal_head": journal_head,
         },
     )
 
@@ -3143,6 +3253,7 @@ __all__ = [
     "EVENT_PLUGIN_INSTALL_RECEIPT",
     "EVENT_PLUGIN_UPDATE_RECEIPT",
     "EVENT_PROCESS_REAP_RECEIPT",
+    "EVENT_PROVIDER_STATE_MUTATION",
     "EVENT_REVIEW_BOARD_ACTION",
     "EVENT_REVIEW_RECEIPT",
     "EVENT_ROUTING_FAILOVER_RECEIPT",
@@ -3171,6 +3282,7 @@ __all__ = [
     "MultimodalAttachDetails",
     "SkillInstallReceiptDetails",
     "ThreadApprovalDetails",
+    "reconstruct_mcp_call_order",
     "record_a2a_message_receipt",
     "record_activity_result",
     "record_adapter_canary_receipt",
@@ -3197,6 +3309,7 @@ __all__ = [
     "record_plugin_install_receipt",
     "record_plugin_update_receipt",
     "record_process_reap_receipt",
+    "record_provider_state_mutation",
     "record_review_board_action",
     "record_review_receipt",
     "record_routing_failover_receipt",

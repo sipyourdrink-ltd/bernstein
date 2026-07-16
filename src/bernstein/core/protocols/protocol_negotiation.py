@@ -22,7 +22,7 @@ GitHub: #693
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 logger = logging.getLogger(__name__)
@@ -133,11 +133,50 @@ _SUPPORTED_VERSIONS: dict[str, list[ProtocolVersion]] = {
 }
 
 
-def get_supported_versions(protocol: str) -> list[ProtocolVersion]:
+def _gate_deprecated_mcp_capabilities(
+    versions: list[ProtocolVersion],
+    months: int,
+) -> list[ProtocolVersion]:
+    """Filter deprecated MCP capabilities through the compat shim.
+
+    The stateless MCP spec revision deprecates Roots, Sampling, and Logging;
+    they stay advertised only while the compatibility shim is active and
+    drop off the advertised set at its removal date. Non-MCP protocols and
+    non-deprecated capabilities pass through untouched.
+    """
+    from bernstein.core.protocols.mcp.stateless_core import DEPRECATED_CAPABILITIES, compat_shim_active
+
+    gated: list[ProtocolVersion] = []
+    for version in versions:
+        kept = frozenset(
+            capability
+            for capability in version.capabilities
+            if capability not in DEPRECATED_CAPABILITIES
+            or compat_shim_active(capability, months_since_deprecation=months)
+        )
+        if kept == version.capabilities:
+            gated.append(version)
+        else:
+            gated.append(replace(version, capabilities=kept))
+    return gated
+
+
+def get_supported_versions(
+    protocol: str,
+    *,
+    months_since_deprecation: int | None = None,
+) -> list[ProtocolVersion]:
     """Return the locally supported versions for a protocol.
+
+    MCP capability sets are gated through the stateless-core compat shim:
+    deprecated capabilities (Roots, Sampling, Logging) are advertised only
+    while the shim window is open and disappear at its removal date.
 
     Args:
         protocol: Protocol name (mcp, a2a, or acp).
+        months_since_deprecation: Shim clock override for the MCP gate.
+            Defaults to the wall-clock months elapsed since the deprecating
+            spec revision.
 
     Returns:
         List of supported ``ProtocolVersion`` objects, ordered oldest-first.
@@ -148,7 +187,16 @@ def get_supported_versions(protocol: str) -> list[ProtocolVersion]:
     key = protocol.lower()
     if key not in _SUPPORTED_VERSIONS:
         raise ValueError(f"Unknown protocol {protocol!r}; expected one of {sorted(_SUPPORTED_VERSIONS)}")
-    return _SUPPORTED_VERSIONS[key].copy()
+    versions = _SUPPORTED_VERSIONS[key].copy()
+    if key != ProtocolName.MCP:
+        return versions
+
+    from bernstein.core.protocols.mcp import stateless_core
+
+    months = (
+        months_since_deprecation if months_since_deprecation is not None else stateless_core.months_since_deprecation()
+    )
+    return _gate_deprecated_mcp_capabilities(versions, months)
 
 
 def version_is_compatible(local: ProtocolVersion, remote: ProtocolVersion) -> bool:

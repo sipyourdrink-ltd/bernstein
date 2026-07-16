@@ -37,6 +37,20 @@ _EVENT_ASSISTANT = "assistant"
 _EVENT_RESULT = "result"
 _EVENT_SYSTEM = "system"
 
+#: ``system`` subtypes that signal a provider-side context mutation: the
+#: context the model works from was rewritten between calls (compaction
+#: boundaries, context edits, and similar opaque state markers). Issue
+#: #2507: each such signal must be surfaced so the replay journal can
+#: chain it as a content-addressed ``provider_state_mutation`` entry.
+PROVIDER_MUTATION_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "compact_boundary",
+        "microcompact_boundary",
+        "context_compaction",
+        "context_edit",
+    }
+)
+
 
 # Shared cast-type constants to avoid string duplication (Sonar S1192).
 _CAST_DICT_STR_ANY = "dict[str, Any]"
@@ -56,6 +70,7 @@ class StreamEventType(StrEnum):
     RESULT = "result"
     ERROR = "error"
     SYSTEM = "system"
+    PROVIDER_STATE_MUTATION = "provider_state_mutation"
 
 
 @dataclass(frozen=True)
@@ -88,12 +103,15 @@ class StreamParserState:
         duration_ms: Duration from the result event.
         subtype: Result subtype (success, error_max_turns, etc.).
         errors: Any error messages encountered.
+        provider_mutations: Provider-side context mutation signals in
+            stream order, each ``{"kind": str, "detail": dict}``.
     """
 
     text_blocks: list[str] = field(default_factory=list[str])
     tool_uses: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     tool_results: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     thinking_blocks: list[str] = field(default_factory=list[str])
+    provider_mutations: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     result: dict[str, Any] | None = None
     total_cost_usd: float = 0.0
     num_turns: int = 0
@@ -356,10 +374,20 @@ class ClaudeStreamParser:
             msg: Parsed JSON dict with type="system".
 
         Returns:
-            A system event.
+            A system event, or a provider-state-mutation event when the
+            subtype signals a provider-side context rewrite (issue #2507).
         """
         message = str(msg.get("message", ""))
         subtype = str(msg.get("subtype", ""))
+
+        if subtype in PROVIDER_MUTATION_SUBTYPES:
+            signal: dict[str, Any] = {"kind": subtype, "detail": dict(msg)}
+            self.state.provider_mutations.append(signal)
+            return StreamEvent(
+                event_type=StreamEventType.PROVIDER_STATE_MUTATION,
+                data=signal,
+                raw=msg,
+            )
 
         if subtype == "error" or "error" in message.lower():
             self.state.errors.append(message)

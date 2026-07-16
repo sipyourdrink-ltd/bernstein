@@ -53,6 +53,18 @@ from bernstein.core.replay.journal import (
     seal_journal_into_spine,
     verify_journal,
 )
+from bernstein.core.replay.provider_state import (
+    CAPABILITY_DECLARED_BLIND,
+    CAPABILITY_OBSERVED,
+    MUTATION_CAPABILITY_EVENT,
+    PROVIDER_STATE_MUTATION_EVENT,
+    ProviderStateMutation,
+    ProviderStateVerifyResult,
+    record_agent_mutations,
+    record_mutation_capability,
+    record_provider_state_mutation,
+    verify_provider_state,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -86,8 +98,12 @@ def record_run(sdd_dir: Path, conversation_id: str, adapter_name: str, run_id: s
 
 
 __all__ = [
+    "CAPABILITY_DECLARED_BLIND",
+    "CAPABILITY_OBSERVED",
     "EVENTS_FILENAME",
     "JOURNAL_FILENAME",
+    "MUTATION_CAPABILITY_EVENT",
+    "PROVIDER_STATE_MUTATION_EVENT",
     "RECORD_ENV_VAR",
     "RETENTION_ENV_VAR",
     "DivergenceResult",
@@ -96,6 +112,8 @@ __all__ = [
     "ForkResult",
     "GatewayMode",
     "JournalVerifyResult",
+    "ProviderStateMutation",
+    "ProviderStateVerifyResult",
     "ReplayGateway",
     "ReplayMissError",
     "diff_event_logs",
@@ -104,8 +122,12 @@ __all__ = [
     "load_events",
     "locate_run",
     "rebuild_state",
+    "record_agent_mutations",
+    "record_mutation_capability",
+    "record_provider_state_mutation",
     "record_run",
     "record_snapshot_event",
     "seal_journal_into_spine",
     "verify_journal",
+    "verify_provider_state",
 ]

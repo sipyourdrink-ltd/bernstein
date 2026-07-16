@@ -1933,6 +1933,11 @@ def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
     On an intact journal, reports byte-identity. When a step diverges,
     writes a ``divergence_report.json`` artifact listing ``(step_index,
     expected_hash, actual_hash)`` and exits non-zero (issue #2293, AC2).
+
+    Flagged provider-side mutation entries (a mutation that arrived in
+    deterministic mode despite suppression being requested) fail
+    verification closed even when the chain itself is intact
+    (issue #2507).
     """
     from bernstein.core.replay.journal import verify_journal
 
@@ -1944,6 +1949,7 @@ def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
 
     result = verify_journal(journal_path)
     if result.ok:
+        _fail_on_flagged_provider_mutations(run_id=run_id, journal_path=journal_path, as_json=as_json)
         if as_json:
             console.print_json(json.dumps({"run_id": run_id, "verified": True, "count": result.count}))
         else:
@@ -1961,6 +1967,53 @@ def _replay_verify_journal(*, run_id: str, sdd_dir: str, as_json: bool) -> None:
     report_path = journal_path.parent / "divergence_report.json"
     with contextlib.suppress(OSError):
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    _print_verify_divergence(run_id=run_id, result=result, report=report, report_path=report_path, as_json=as_json)
+
+
+def _fail_on_flagged_provider_mutations(*, run_id: str, journal_path: Path, as_json: bool) -> None:
+    """Exit non-zero when the journal holds flagged mutation entries (#2507).
+
+    A flagged ``provider_state_mutation`` entry records a provider-side
+    context rewrite that arrived in deterministic mode after suppression
+    was requested. The chain is intact (the mutation was pinned before
+    anything built on it), but the run is not the deterministic run the
+    operator asked for, so verification fails closed instead of silently
+    accepting it.
+    """
+    from bernstein.core.replay.provider_state import verify_provider_state
+
+    state = verify_provider_state(journal_path)
+    if state.ok:
+        return
+    payload = {
+        "run_id": run_id,
+        "verified": False,
+        "reason_code": "provider_state_mutation",
+        "flagged_steps": state.flagged_indices,
+        "errors": state.errors,
+    }
+    if as_json:
+        console.print_json(json.dumps(payload))
+    else:
+        console.print(
+            f"[red]PROVIDER STATE[/red] run [bold]{run_id}[/bold] recorded "
+            f"{len(state.flagged_indices)} flagged provider-side mutation(s) in deterministic mode"
+        )
+        for err in state.errors:
+            console.print(f"[dim]{err}[/dim]")
+    raise SystemExit(1)
+
+
+def _print_verify_divergence(
+    *,
+    run_id: str,
+    result: Any,
+    report: dict[str, Any],
+    report_path: Path,
+    as_json: bool,
+) -> None:
+    """Render the chain-divergence outcome and exit non-zero."""
 
     if as_json:
         console.print_json(json.dumps(report))
@@ -2271,6 +2324,8 @@ def _replay_diff_dispatch(
             "diverged": result.diverged,
             "index": result.index,
             "reason": result.reason,
+            "reason_code": result.reason_code,
+            "mutation_kind": result.mutation_kind,
             "a_event": result.a_event,
             "b_event": result.b_event,
         }

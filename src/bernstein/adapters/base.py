@@ -37,6 +37,22 @@ DEFAULT_TIMEOUT_SECONDS: int = 1800
 # Grace period between SIGTERM and SIGKILL (seconds).
 _SIGTERM_GRACE_SECONDS: int = 30
 
+# ---------------------------------------------------------------------------
+# Mutation-observability capability (issue #2507)
+# ---------------------------------------------------------------------------
+# Values mirror bernstein.core.replay.provider_state.CAPABILITY_* and are
+# duplicated here (rather than imported) so the adapter layer stays free of
+# replay-journal imports at module load time.
+
+#: The adapter surfaces provider-side context-mutation signals (compaction
+#: boundaries and similar opaque state markers) from its stream output.
+MUTATION_OBSERVABILITY_OBSERVED = "observed"
+
+#: The adapter has no observation surface for provider-side context
+#: mutations. Recorded per run in the replay journal so an absence of
+#: mutation entries stays distinguishable from an inability to see them.
+MUTATION_OBSERVABILITY_DECLARED_BLIND = "declared-blind"
+
 
 class SpawnError(RuntimeError):
     """Raised when an adapter process exits too early to be treated as spawned."""
@@ -826,6 +842,41 @@ class CLIAdapter(ABC):
             back to a fresh spawn.
         """
         return None
+
+    #: Mutation-observability capability of this adapter (issue #2507).
+    #: Declared-blind by default; adapters whose stream output surfaces
+    #: provider-side context-mutation signals set
+    #: :data:`MUTATION_OBSERVABILITY_OBSERVED` and override
+    #: :meth:`observed_provider_mutations`. The declaration is recorded
+    #: per run in the replay journal, so an absence of mutation entries
+    #: is distinguishable from an inability to see them.
+    provider_mutation_observability: str = MUTATION_OBSERVABILITY_DECLARED_BLIND
+
+    def observed_provider_mutations(self, workdir: Path, session_id: str) -> list[dict[str, Any]]:
+        """Return provider-side context-mutation signals observed for a session.
+
+        Optional capability declared by
+        :attr:`provider_mutation_observability`. Adapters that can parse
+        mutation signals (compaction boundaries, context edits, stored-state
+        references) out of their stream output override this method and
+        return the signals in observation order, each as
+        ``{"kind": str, "detail": dict}``. The orchestrator chains every
+        returned signal into the run's replay journal as a content-addressed
+        ``provider_state_mutation`` entry.
+
+        The default returns an empty list: a declared-blind adapter has no
+        observation surface, and that inability is itself recorded per run.
+
+        Args:
+            workdir: Agent working directory (root of ``.sdd``).
+            session_id: The Bernstein session id the agent ran under.
+
+        Returns:
+            Observed mutation signals in stream order (empty when none were
+            observed or the adapter cannot observe them).
+        """
+        del workdir, session_id
+        return []
 
     def stream_signal_parser(self, line: str) -> object | None:
         """Map one line of adapter stdout to a canonical stream signal.

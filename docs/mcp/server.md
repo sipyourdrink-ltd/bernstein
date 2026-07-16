@@ -13,11 +13,38 @@ client at the server. For the per-tier tool catalogue see
 |-----------|---------|----------|
 | stdio (default) | `bernstein mcp` | Local IDE integration. |
 | SSE | `bernstein mcp --transport http` | Remote/web integration. |
-| Streamable HTTP | served on `/mcp` | Remote integration with session management and cancellation. |
+| Streamable HTTP | served on `/mcp` | Stateless remote integration with cancellation. |
 
 The streamable HTTP transport binds to loopback by default. Binding to a
 public interface requires a bearer token (see Auth) and is otherwise refused
 at startup.
+
+## Stateless serving
+
+The stateless MCP spec revision (2026-07-28) removes protocol sessions, and
+the transports removed them with it: no server-side session store exists.
+Every request is served from its body plus the per-request `_meta` alone, so
+consecutive requests may land on different transport instances with no shared
+memory and produce identical results. The SSE gateway correlates each
+response to its request by the content-derived span id (the
+`X-Bernstein-Span-Id` response header and the SSE event `id` line) instead of
+per-session queues.
+
+Cross-call continuity is anchored in the run journal and the audit chain
+instead of a session: when a run journal is wired in, every served or proxied
+`tools/call` becomes an ordered `mcp.stateless_call` journal row and (with an
+audit chain) a chain entry binding the call's content-derived trace and span
+ids to the journal head. `bernstein audit verify` reconstructs the full MCP
+call ordering of a run purely from those chain entries; tampering with any
+single entry fails verification at exactly that entry.
+
+Legacy clients that still send the removed `Mcp-Session-Id` header keep
+working during a bounded compatibility window: the header is accepted and
+ignored (never stored, never echoed back), and a legacy `DELETE`
+session-close request is acknowledged as a no-op. The window closes twelve
+months after the deprecating spec revision (2027-07-28); after that the
+header and the `DELETE` lifecycle are refused with an error naming the
+removal date.
 
 ## Auth
 

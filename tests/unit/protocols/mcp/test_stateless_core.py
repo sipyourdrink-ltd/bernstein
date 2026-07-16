@@ -224,7 +224,10 @@ class TestCacheReference:
 
 class TestCompatShim:
     def test_deprecated_capabilities_named(self) -> None:
-        assert frozenset({"roots", "sampling", "logging"}) == DEPRECATED_CAPABILITIES
+        # ``sessions`` joined the set with the wire-path migration (#2506):
+        # the protocol-session lifecycle is shimmed alongside the deprecated
+        # capabilities and removed at the same date.
+        assert frozenset({"roots", "sampling", "logging", "sessions"}) == DEPRECATED_CAPABILITIES
 
     def test_shim_active_within_window(self) -> None:
         assert compat_shim_active("sampling", months_since_deprecation=6)

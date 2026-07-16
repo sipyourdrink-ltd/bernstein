@@ -400,5 +400,9 @@ strict: false
 # Internal working notes live under docs/_internal/ and are not part of the
 # published documentation set. Excluding them keeps them out of the built
 # site and out of strict link validation.
+# Setting exclude_docs replaces the MkDocs defaults, so restate them
+# (dotfiles, /templates/) alongside the _internal guard.
 exclude_docs: |
+  .*
+  /templates/
   _internal/
