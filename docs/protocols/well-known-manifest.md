@@ -1,82 +1,34 @@
-# Static service manifest (`.well-known/agent.json` + `llms.txt`)
+# `.well-known` service catalog
 
-Bernstein's task server publishes two machine-readable manifests so
-external agents (Claude Code, Codex, third-party orchestrators) can
-discover its endpoints, auth scheme, and task-orchestration
-capabilities without hand configuration.
+Bernstein's task server publishes a small set of unauthenticated discovery endpoints so external agents and scanners can find the orchestrator's public surface without hand configuration. This page is the index; the agent-card contract itself is documented in [A2A v1.0 - signed agent cards](../architecture/a2a.md).
 
-| URL | Format | Purpose |
+| Path | Purpose | Reference |
 |---|---|---|
-| `GET /.well-known/agent.json` | A2A-compliant JSON | Structured agent card with auth, endpoints, version |
-| `GET /llms.txt` | markdown | Human + LLM-friendly summary of the same |
+| `GET /.well-known/agent.json` | A2A v1.0 signed agent card (JCS-canonical body, detached Ed25519 JWS). | [a2a.md](../architecture/a2a.md) |
+| `GET /.well-known/agent.json/keys` | JWKS for verifying the agent-card signatures. | [a2a.md](../architecture/a2a.md#how-a-verifier-consumes-the-card) |
+| `GET /llms.txt` | Markdown summary of the same public surface for LLM consumers. | [a2a.md](../architecture/a2a.md#endpoints-summary) |
+| `GET /.well-known/http-message-signatures-directory` | JWKS for verifying the RFC 9421 HTTP Message Signatures on Bernstein's outbound agent-facing requests (install-identity keypair). | `src/bernstein/core/routes/well_known.py` |
+| `.well-known/security.txt` | Security contact and disclosure policy (RFC 9116), served from the repo/site root. | [SECURITY.md](../../SECURITY.md) |
 
-Both endpoints are unauthenticated and listed in the auth-middleware
-whitelist; they expose the public surface only.
-
-## Why it exists
-
-Before this, an external agent talking to Bernstein had to be
-hand-configured: someone had to know "task server is on 8052,
-endpoints are POST /tasks, etc." Serving a static manifest closes the
-loop and makes Bernstein a first-class platform other agents can
-discover.
+All task-server endpoints above are unauthenticated and listed in the auth-middleware public-path allowlist; they expose only the public surface (no task data, no secrets).
 
 ## How to use it
 
-Hit either endpoint:
-
 ```bash
 curl http://127.0.0.1:8052/.well-known/agent.json
+curl http://127.0.0.1:8052/.well-known/agent.json/keys
 curl http://127.0.0.1:8052/llms.txt
 ```
 
-Sample `agent.json` (truncated):
-
-```json
-{
-  "schema_version": "0.1.0",
-  "name": "bernstein-task-server",
-  "version": "1.9.4",
-  "auth": {
-    "scheme": "bearer",
-    "token_endpoint": null
-  },
-  "endpoints": {
-    "tasks_create":   "POST /tasks",
-    "tasks_list":     "GET /tasks",
-    "tasks_complete": "POST /tasks/{id}/complete",
-    "bulletin_post":  "POST /bulletin",
-    "bulletin_read":  "GET /bulletin"
-  }
-}
-```
-
-`llms.txt` is the same information rendered as markdown for an LLM to
-parse, plus a short prose description.
-
-The contents are rendered from the templates `templates/well_known/agent.json.j2`
-and `templates/well_known/llms.txt.j2` against the running server's
-version + endpoint list at startup.
-
-## Configuration
-
-There are no user-facing knobs. The endpoints are always served and
-always public. To customise the manifest content, edit the Jinja
-templates under `templates/well_known/` and rebuild.
+The agent card is A2A v1.0: a JCS-canonical (RFC 8785) JSON body signed with a per-installation Ed25519 key (RFC 8037) as a detached JWS (RFC 7515), verifiable from the JWKS at the same prefix. For the card fields, signing flow, verifier loop, key rotation, and configuration knobs (`BERNSTEIN_PUBLIC_BASE_URL`, `BERNSTEIN_AGENT_CARD_KEY_DIR`, `BERNSTEIN_RESOURCE_INDICATOR`), see [A2A v1.0 - signed agent cards](../architecture/a2a.md).
 
 ## Limitations
 
-- One global manifest per server.
-- Plugin / adapter manifests are **not** aggregated - only the
-  task-server's own surface is published.
-- The manifest is static at boot. Endpoints added by hot-loaded
-  plugins after startup do not appear until restart.
-- The endpoints live on the local task server; there is no central
-  registry of running Bernstein instances.
+- One global manifest per server; the task server publishes only its own surface, not aggregated plugin or adapter manifests.
+- There is no central registry of running Bernstein instances; each server serves its own `.well-known` surface on its own host.
 
 ## Related
 
-- Source: `src/bernstein/core/routes/well_known.py`
-- Templates: `templates/well_known/`
-- Auth middleware: `src/bernstein/core/security/auth_middleware.py`
-- A2A schema: parsed by `claude_agent_card.py`
+- [A2A v1.0 - signed agent cards](../architecture/a2a.md) - the agent-card contract, signing, and verification.
+- [Persistent agent-card keystore](../security/keystore.md) - key storage and rotation.
+- Source: `src/bernstein/core/routes/well_known.py`.
