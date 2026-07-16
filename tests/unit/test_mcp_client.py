@@ -224,7 +224,9 @@ class TestMCPClientSession:
         assert len(session.tools) == 1
         assert session.tools[0].name == "echo"
         assert session.tools[0].server_name == "test-server"
-        assert session._mcp_session_id == "sess-abc"
+        # The legacy session header the mock server sent is ignored: the
+        # client keeps no protocol session state (issue #2506).
+        assert not hasattr(session, "_mcp_session_id")
 
     @pytest.mark.asyncio
     async def test_list_tools(self, basic_config: RemoteServerConfig) -> None:
