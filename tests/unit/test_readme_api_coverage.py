@@ -278,6 +278,8 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "webhook",
         # Typed activity boundary: verify any-modality activity crossings (issue #2311)
         "activity",
+        # Bot-added: drift autofix (regen_contract_drift.py)
+        "intent",
     }
 )
 
@@ -372,7 +374,7 @@ def test_readme_has_three_line_install_block() -> None:
     required_lines = (
         "pipx install bernstein",
         "bernstein init",
-        'bernstein run -g "fix the failing test in tests/test_foo.py"',
+        'bernstein -g "fix the failing test in tests/test_foo.py"',
     )
     missing = [line for line in required_lines if line not in readme]
     if missing:

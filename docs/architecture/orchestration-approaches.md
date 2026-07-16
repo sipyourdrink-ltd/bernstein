@@ -37,21 +37,7 @@ graph TD
     class A1,A2,A3 agent
 ```
 
-**What goes wrong at scale:**
-
-```mermaid
-graph TD
-    PA["LLM Manager Agent\nfalls asleep →\nall queues drain"]
-    A1["Worker A\n283 bulletin messages\n0 code commits\n138 idle hunger messages"]
-    A2["Worker B\n2 real commits / 40 claimed\nconfused its own work\nwith others' after hours of drift"]
-    Phantom["5 phantom agents\n(spawned without identity)\n200+ noise messages\n0 useful output"]
-    Fail["Result: 737 tasks / 47 hours\n~3 of 12 agents did real work"]
-
-    PA --> A1 & A2 & Phantom --> Fail
-
-    classDef bad fill:#f94144,stroke:#c1121f,color:#fff
-    class PA,A1,A2,Phantom,Fail bad
-```
+**What goes wrong at scale:** the LLM manager stalls and every queue drains behind it, workers spin on idle "hunger" signals instead of committing code, and phantom agents spawned without identity flood the bus with noise. This failure mode is documented with measured numbers (agent counts, bulletin volume, useful-work ratio) in [Why Deterministic Orchestration](../architecture/WHY_DETERMINISTIC.md#why-this-matters-the-rag_challenge-evidence).
 
 ---
 
@@ -100,28 +86,7 @@ graph TD
 
 ## Task state machine (deterministic FSM)
 
-The task lifecycle is a state machine implemented in Python. Every transition has
-a defined trigger. There are no judgment calls.
-
-```mermaid
-stateDiagram-v2
-    [*] --> PLANNED: plan loaded
-    PLANNED --> OPEN: stage deps satisfied
-    OPEN --> CLAIMED: agent calls claim_next()
-    CLAIMED --> IN_PROGRESS: agent begins execution
-    IN_PROGRESS --> DONE: agent reports completion
-    DONE --> CLOSED: janitor verification passed + merged
-    IN_PROGRESS --> ORPHANED: heartbeat timeout / crash
-    ORPHANED --> OPEN: retry (max_retries default=3)
-    CLAIMED --> OPEN: claim expired (agent died before starting)
-    IN_PROGRESS --> FAILED: max retries exceeded
-    OPEN --> BLOCKED: blocking dependency added
-    BLOCKED --> OPEN: blocker resolved
-    OPEN --> CANCELLED: explicit cancellation
-    DONE --> OPEN: janitor rejected (signals failed)
-    IN_PROGRESS --> WAITING_FOR_SUBTASKS: auto-decomposed
-    WAITING_FOR_SUBTASKS --> IN_PROGRESS: subtasks CLOSED
-```
+The task lifecycle is a state machine implemented in Python: every transition has a defined trigger, and there are no judgment calls. The canonical state diagram and the exhaustive transition table live in [Lifecycle State Machines](../architecture/LIFECYCLE.md#task-state-diagram); this page links to it rather than carrying a second copy that can drift.
 
 ---
 
@@ -183,36 +148,13 @@ sequenceDiagram
 
 ## Token cost model
 
-### LLM-based orchestration
+The coordination cost is the sharpest structural difference.
 
-```
-Per scheduling tick:
-  Manager context  ≈ 5,000–20,000 tokens (grows with task count and agent count)
-  Manager response ≈ 500–2,000 tokens
+**LLM-based** - every scheduling tick pays for the manager's context and response (roughly 5,000-20,000 tokens in, 500-2,000 out, growing with task and agent count), and idle agents burn more tokens polling and signalling. The manager's reasoning is pure coordination overhead: it produces no code.
 
-Per agent per idle hour:
-  Hunger polling   ≈ 500–5,000 tokens (spinning, spam, status checks)
-  Worst-case agent observed: ~50,000 tokens on idle signaling, 0 code commits
+**Deterministic** - the orchestrator spends zero tokens on scheduling (a tick is sub-millisecond Python). The only tokens a Bernstein run spends are on task execution: a one-time system prompt per spawn (~1,500-3,000 tokens), amortised to ~500-1,000 tokens per task across a 3-task batch.
 
-For 737 tasks over 47 hours, 12 agents:
-  Coordination overhead: tens of millions of tokens
-  Useful work ratio:      ~3/12 agents = 25%
-```
-
-### Deterministic orchestration
-
-```
-Per scheduling tick:
-  Orchestrator CPU ≈ <1ms, 0 tokens
-
-Per agent spawn:
-  System prompt    ≈ 1,500–3,000 tokens (one-time per batch)
-  Amortized (3 tasks/batch) ≈ 500–1,000 tokens per task
-
-For 737 tasks over 47 hours, 12 agents:
-  Coordination overhead: 0 tokens
-  Useful work ratio:      ~100% (agents only run when they have work)
-```
+For the measured overhead of a real 12-agent LLM-orchestrated run (tens of millions of coordination tokens, roughly a 25% useful-work ratio), see [Why Deterministic Orchestration](../architecture/WHY_DETERMINISTIC.md#2-token-cost-of-coordination).
 
 ---
 

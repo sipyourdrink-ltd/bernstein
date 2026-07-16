@@ -30,6 +30,7 @@ from bernstein.core.orchestration.orchestrator import TickResult, group_by_role
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.communication.signal_actions import ClearanceGateCoordinator
     from bernstein.core.spawner import AgentSpawner
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,7 @@ class MultiCellOrchestrator:
         workdir: Path,
         bulletin: BulletinBoard | None = None,
         client: httpx.Client | None = None,
+        clearance_coordinator: ClearanceGateCoordinator | None = None,
     ) -> None:
         self._config = config
         self._spawner = spawner
@@ -179,6 +181,12 @@ class MultiCellOrchestrator:
         self._cells: dict[str, Cell] = {}
         self._running = False
         self._last_bulletin_ts: float = 0.0
+        # Optional clearance-gate coordinator (#2556). When wired, a posted
+        # ``blocker`` is not merely logged: it is deterministically projected
+        # into a clearance task plus injected ``depends_on`` edges, sealed as a
+        # ``signal.gate_projection`` receipt on the audit chain. When ``None``,
+        # blockers stay observe-only (logged), preserving legacy behaviour.
+        self._clearance_coordinator = clearance_coordinator
 
     @property
     def cells(self) -> dict[str, Cell]:
@@ -239,6 +247,21 @@ class MultiCellOrchestrator:
                 blocker.cell_id or "global",
                 blocker.content,
             )
+            # Materialize the blocker into an audit-anchored clearance gate when
+            # a coordinator is wired: the projection creates a clearance task
+            # plus injected ``depends_on`` edges so dependent work is withheld
+            # until the clearance is terminal, instead of merely being logged.
+            if self._clearance_coordinator is not None:
+                try:
+                    spec = self._clearance_coordinator.materialize(blocker)
+                    if spec is not None:
+                        result.vp_actions.append(
+                            f"clearance gate {spec.clearance_task_id} materialized "
+                            f"({len(spec.injected_edges)} edge(s), cell={blocker.cell_id or 'global'})"
+                        )
+                except Exception as exc:
+                    logger.error("clearance gate materialization failed: %s", exc)
+                    result.errors.append(f"clearance_gate: {exc}")
 
         # 2. For each cell: run cell-level tick
         for cell_id, cell in self._cells.items():

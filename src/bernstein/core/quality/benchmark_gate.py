@@ -155,6 +155,54 @@ class BenchmarkGate:
             current_metrics=current,
         )
 
+    def evaluate_significance(
+        self,
+        *,
+        baseline_outcomes: dict[str, bool],
+        current_outcomes: dict[str, bool],
+        alpha: float | None = None,
+        non_inferiority_margin: float | None = None,
+        min_n: int | None = None,
+    ) -> object:
+        """Optional significance mode: gate on a statistical verdict (#2520).
+
+        The default :meth:`evaluate` compares point estimates against a single
+        baseline with a percentage threshold, so a re-run can flip a pass/fail.
+        This optional mode instead classifies paired per-benchmark pass/fail
+        outcomes (for example "within the regression threshold") with the exact
+        paired test in :mod:`bernstein.eval.significance`, so a merge cannot pass
+        on statistical noise: an effect below the minimum n per arm refuses a
+        promoting verdict with an explicit machine-readable reason.
+
+        Args:
+            baseline_outcomes: Per-benchmark pass/fail under the base ref.
+            current_outcomes: Per-benchmark pass/fail under the current run; must
+                cover the identical benchmark set.
+            alpha: Significance level (defaults to the module default).
+            non_inferiority_margin: Non-inferiority margin (defaults applied).
+            min_n: Minimum n per arm (defaults applied).
+
+        Returns:
+            A :class:`bernstein.eval.significance.SignificanceResult`.
+        """
+        from bernstein.eval.significance import (
+            DEFAULT_ALPHA,
+            DEFAULT_MIN_N,
+            DEFAULT_NON_INFERIORITY_MARGIN,
+            PairedTable,
+            classify,
+        )
+
+        table = PairedTable.from_outcomes(baseline_outcomes, current_outcomes)
+        return classify(
+            table,
+            alpha=DEFAULT_ALPHA if alpha is None else alpha,
+            non_inferiority_margin=(
+                DEFAULT_NON_INFERIORITY_MARGIN if non_inferiority_margin is None else non_inferiority_margin
+            ),
+            min_n=DEFAULT_MIN_N if min_n is None else min_n,
+        )
+
     def promote_candidate(self) -> bool:
         """Promote the current successful benchmark candidate into the baseline cache."""
         candidate_path = self._candidate_path()

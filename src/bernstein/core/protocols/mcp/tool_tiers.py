@@ -62,6 +62,8 @@ TOOL_TIERS: Final[dict[str, ToolTier]] = {
     "bernstein_stop": "standard",
     "bernstein_approve": "standard",
     "bernstein_create_subtask": "standard",
+    "bernstein_claim": "standard",
+    "bernstein_update": "standard",
     "load_skill": "standard",
     # all - power-user surface: the scenario bridge and lineage verifier.
     "bernstein_scenarios": "all",

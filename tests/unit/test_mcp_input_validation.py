@@ -435,6 +435,8 @@ def test_registry_loads_every_shipped_schema() -> None:
         "bernstein_stop",
         "bernstein_approve",
         "bernstein_create_subtask",
+        "bernstein_claim",
+        "bernstein_update",
         "load_skill",
         "bernstein_scenarios",
         "bernstein_scenario",

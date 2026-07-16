@@ -1031,6 +1031,125 @@ class TaskStore:
 
         return task
 
+    # -- clearance-gate wiring (#2556) --------------------------------------
+    # A ``blocker`` bulletin signal materializes a clearance task with a
+    # deterministic id (derived from the blocker content hash) plus injected
+    # ``depends_on`` edges onto the open dependent tasks in scope. The clearance
+    # task participates as an ordinary dependency edge, so ``claim_next`` and the
+    # ``list_tasks(status="open")`` exclusion already withhold dependent work
+    # until the gate is terminal. These additive helpers let the deterministic
+    # projection create a task at a chosen id and inject the edges without going
+    # through the id-generating ``create`` path.
+
+    async def create_gate_task(
+        self,
+        *,
+        clearance_task_id: str,
+        title: str,
+        role: str,
+        cell_id: str | None = None,
+        priority: int = 1,
+        tenant_id: str = "default",
+    ) -> Task:
+        """Create a clearance task with a caller-supplied deterministic id.
+
+        Args:
+            clearance_task_id: The projected clearance-task id (``clearance-…``).
+            title: Human-readable gate title.
+            role: Role lane the clearance task belongs to (kept distinct from
+                worker roles so workers never claim the gate itself).
+            cell_id: Cell scope the gate belongs to.
+            priority: Task priority (defaults to 1 so the gate surfaces first).
+            tenant_id: Tenant scope.
+
+        Returns:
+            The created clearance :class:`Task`.
+
+        Raises:
+            ValueError: If a task with ``clearance_task_id`` already exists.
+        """
+        task = Task(
+            id=clearance_task_id,
+            title=title,
+            description=f"Clearance gate for a bulletin blocker in cell {cell_id or 'global'}.",
+            role=role,
+            priority=priority,
+            status=TaskStatus.OPEN,
+            cell_id=cell_id,
+            tenant_id=normalize_tenant_id(tenant_id),
+        )
+        async with self._lock:
+            if clearance_task_id in self._tasks:
+                raise ValueError(f"clearance task already exists: {clearance_task_id}")
+            self._tasks[task.id] = task
+            self._index_add(task)
+            self._parent_index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+        return task
+
+    async def inject_dependency(self, task_id: str, depends_on_id: str) -> Task:
+        """Inject a ``depends_on`` edge onto an existing non-terminal task.
+
+        The edge is idempotent (a repeated injection is a no-op) and the target
+        dependency must already exist so the dependency gate can resolve it. The
+        task's version is bumped and the change is persisted.
+
+        Args:
+            task_id: The dependent task receiving the edge.
+            depends_on_id: The clearance (or other) task it must now wait on.
+
+        Returns:
+            The updated dependent :class:`Task`.
+
+        Raises:
+            KeyError: If either task id is unknown.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if depends_on_id not in self._tasks:
+                raise KeyError(depends_on_id)
+            if depends_on_id not in task.depends_on:
+                task.depends_on = [*task.depends_on, depends_on_id]
+                task.version += 1
+                await self._append_jsonl(self._task_to_record(task))
+        return task
+
+    async def resolve_gate_task(self, clearance_task_id: str, *, resolution: str = "cleared") -> Task:
+        """Mark a clearance task terminal so its dependents are released.
+
+        Transitions the gate ``OPEN -> CLAIMED -> DONE`` (both legal steps) so
+        the terminal ``DONE`` status satisfies the dependency gate and dependent
+        work becomes claimable again. ``resolution`` is recorded in the result
+        summary for the archive trail.
+
+        Args:
+            clearance_task_id: The clearance task to resolve.
+            resolution: ``cleared`` or ``expired`` (recorded in the summary).
+
+        Returns:
+            The resolved clearance :class:`Task`.
+
+        Raises:
+            KeyError: If ``clearance_task_id`` is unknown.
+        """
+        async with self._lock:
+            task = self._tasks.get(clearance_task_id)
+            if task is None:
+                raise KeyError(clearance_task_id)
+            if task.status not in (TaskStatus.DONE, TaskStatus.CLOSED):
+                self._index_remove(task)
+                if task.status == TaskStatus.OPEN:
+                    transition_task(task, TaskStatus.CLAIMED, actor="clearance_gate", reason="gate resolve")
+                transition_task(task, TaskStatus.DONE, actor="clearance_gate", reason=f"gate {resolution}")
+                task.result_summary = f"clearance {resolution}"
+                task.completed_at = time.time()
+                task.version += 1
+                self._index_add(task)
+                await self._append_jsonl(self._task_to_record(task))
+        return task
+
     async def create_batch(
         self,
         requests: list[TaskCreateRequest],

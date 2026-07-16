@@ -17,6 +17,7 @@ import base64
 import binascii
 import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -24,6 +25,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _b64url(data: bytes) -> str:
@@ -62,6 +66,44 @@ def generate_keypair() -> tuple[str, str]:
         .decode("ascii")
     )
     return priv_pem, pub_pem
+
+
+def load_or_create_signing_identity(
+    identity_dir: Path,
+    *,
+    private_name: str,
+    public_name: str,
+) -> tuple[str, str]:
+    """Load, or on first use create, a persisted Ed25519 signing identity.
+
+    The keypair is stored under ``identity_dir`` in two PEM files. The
+    private key is written atomically with ``0o600`` before it is exposed, so
+    a concurrent reader never sees a partially written key. Key files are
+    read verbatim, so a PEM without a trailing newline round-trips unchanged.
+
+    Args:
+        identity_dir: Directory holding the install's signing keys.
+        private_name: File name for the private PEM (e.g. ``claim_signing.pem``).
+        public_name: File name for the public PEM (e.g. ``claim_signing.pub``).
+
+    Returns:
+        ``(private_key_pem, public_key_pem)``.
+    """
+    private_path = identity_dir / private_name
+    public_path = identity_dir / public_name
+    if private_path.is_file() and public_path.is_file():
+        return (
+            private_path.read_text(encoding="ascii"),
+            public_path.read_text(encoding="ascii"),
+        )
+    identity_dir.mkdir(parents=True, exist_ok=True)
+    private_pem, public_pem = generate_keypair()
+    tmp_priv = private_path.with_suffix(private_path.suffix + ".tmp")
+    tmp_priv.write_text(private_pem, encoding="ascii")
+    tmp_priv.chmod(0o600)
+    tmp_priv.replace(private_path)
+    public_path.write_text(public_pem, encoding="ascii")
+    return private_pem, public_pem
 
 
 def sign_detached(payload: bytes, private_key_pem: str, *, kid: str) -> str:

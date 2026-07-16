@@ -3,7 +3,7 @@
 > Forward-deployed engineering, with a coding swarm that fits in your `.sdd/`.
 >
 > Bernstein is an open-source multi-agent orchestration platform for AI coding agents.
-> Deterministic scheduling, 45 CLI adapters, pluggable sandbox backends, cloud artifact
+> Deterministic scheduling, 40+ CLI adapters, pluggable sandbox backends, cloud artifact
 > storage sinks, progressive-disclosure skill packs, zero vendor lock-in. Apache 2.0 licensed.
 
 ## Forward-deployed engineering use case
@@ -16,7 +16,7 @@ running on whichever CLI agents the client already trusts.
 ## Core Documentation
 - [Getting Started](https://bernstein.readthedocs.io/getting-started/install/): Install, configure, run first orchestration in 60 seconds
 - [Architecture & Concepts](https://bernstein.readthedocs.io/architecture/ARCHITECTURE/): Task server, agent spawner, janitor verification, worktree isolation
-- [Adapter Reference](https://bernstein.readthedocs.io/adapters/): 45 supported agents - Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Devin Terminal, CLM gateway, and more
+- [Adapter Reference](https://bernstein.readthedocs.io/adapters/): 40+ supported agents - Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Devin Terminal, CLM gateway, and more
 - [API Reference](https://bernstein.readthedocs.io/reference/openapi-reference/): 120+ REST endpoints for tasks, agents, cost tracking, quality gates
 
 ## Guides

@@ -18,6 +18,9 @@ Public surface:
 * :mod:`.batch` -- capability-gated batch routing (AC3).
 * :mod:`.cache_window` -- capability-gated, default-off cache-window fan-out
   (AC4).
+* :mod:`.knob_matrix` -- versioned, content-addressed dispatch knob matrix
+  (effort, processing lane, cache strategy) plus a pure resolver whose sealed
+  selection folds into the decision fingerprint (#2519).
 """
 
 from bernstein.core.cost.scheduling.batch import (
@@ -51,7 +54,28 @@ from bernstein.core.cost.scheduling.dispatch_gate import (
     resolve_cost_caps as resolve_cost_caps,
 )
 from bernstein.core.cost.scheduling.dispatch_gate import (
+    resolve_knob_matrix as resolve_knob_matrix,
+)
+from bernstein.core.cost.scheduling.dispatch_gate import (
     resolve_price_table as resolve_price_table,
+)
+from bernstein.core.cost.scheduling.knob_matrix import (
+    DEFAULT_KNOB_MATRIX as DEFAULT_KNOB_MATRIX,
+)
+from bernstein.core.cost.scheduling.knob_matrix import (
+    KnobMatrix as KnobMatrix,
+)
+from bernstein.core.cost.scheduling.knob_matrix import (
+    ModelKnobs as ModelKnobs,
+)
+from bernstein.core.cost.scheduling.knob_matrix import (
+    knob_matrix_staleness as knob_matrix_staleness,
+)
+from bernstein.core.cost.scheduling.knob_matrix import (
+    load_knob_matrix as load_knob_matrix,
+)
+from bernstein.core.cost.scheduling.knob_matrix import (
+    resolve_knob_selection as resolve_knob_selection,
 )
 from bernstein.core.cost.scheduling.policy import (
     CostCaps as CostCaps,
@@ -61,6 +85,9 @@ from bernstein.core.cost.scheduling.policy import (
 )
 from bernstein.core.cost.scheduling.policy import (
     DispatchDecision as DispatchDecision,
+)
+from bernstein.core.cost.scheduling.policy import (
+    KnobSelection as KnobSelection,
 )
 from bernstein.core.cost.scheduling.policy import (
     LedgerSpend as LedgerSpend,

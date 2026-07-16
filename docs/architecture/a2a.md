@@ -178,9 +178,9 @@ All three live in `AUTH_PUBLIC_PATHS` so any network caller can read
 them without provisioning a token. They expose only the public surface;
 no task data, no secrets.
 
-For the wider `.well-known` catalog (including the MCP tools manifest
-and the agents-md cross-CLI sync surface), see
-[the `.well-known` service manifest](../protocols/well-known-manifest.md).
+For the full index of `.well-known` discovery paths (agent card, JWKS,
+`llms.txt`, and the HTTP Message Signatures directory), see
+[the `.well-known` service catalog](../protocols/well-known-manifest.md).
 
 ---
 
@@ -222,7 +222,7 @@ race.
 ## Related
 
 - Persistent keystore semantics: [security/keystore.md](../security/keystore.md).
-- `.well-known` service manifest catalog:
+- `.well-known` service catalog (index of discovery paths):
   [protocols/well-known-manifest.md](../protocols/well-known-manifest.md).
 - Operator security runbook:
   [operations/security-and-identity.md](../operations/security-and-identity.md).

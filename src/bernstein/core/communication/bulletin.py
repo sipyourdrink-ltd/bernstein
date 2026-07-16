@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import threading
 import time
 import uuid
@@ -21,7 +22,10 @@ from enum import Enum
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 MessageType = Literal["alert", "blocker", "finding", "status", "dependency"]
 
@@ -439,6 +443,24 @@ class BulletinBoard:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _status_notifications: list[AgentStatusNotification] = field(default_factory=list)
     _activity_summaries: dict[str, AgentActivitySummary] = field(default_factory=dict)
+    # Optional per-type action hook (#2556). When set via ``set_post_hook``, it
+    # is invoked with each stored message after the append + lock release, so a
+    # typed signal (e.g. ``blocker``) can drive deterministic scheduler state.
+    # Default ``None`` keeps existing observe-only behaviour unchanged.
+    _post_hook: Callable[[BulletinMessage], None] | None = field(default=None, repr=False)
+
+    def set_post_hook(self, hook: Callable[[BulletinMessage], None] | None) -> None:
+        """Register (or clear) a per-message action hook invoked after ``post``.
+
+        The hook receives every stored message (timestamp filled in) and may
+        dispatch a typed-signal action such as materializing a clearance gate.
+        A hook exception is swallowed so a faulty action layer never breaks the
+        append-only board.
+
+        Args:
+            hook: Callable invoked with each stored message, or ``None`` to clear.
+        """
+        self._post_hook = hook
 
     def post(self, msg: BulletinMessage) -> BulletinMessage:
         """Append a message to the board.
@@ -461,7 +483,22 @@ class BulletinBoard:
             )
         with self._lock:
             self._messages.append(msg)
+        hook = self._post_hook
+        if hook is not None:
+            try:
+                hook(msg)
+            except Exception:
+                logger.exception("bulletin post hook failed for %s signal from %s", msg.type, msg.agent_id)
         return msg
+
+    def snapshot(self) -> list[BulletinMessage]:
+        """Return an ordered copy of every message currently on the board.
+
+        Used by the clearance-gate coordinator to derive the ordered journal
+        prefix a blocker projection is computed against (#2556).
+        """
+        with self._lock:
+            return list(self._messages)
 
     def read_since(self, ts: float) -> list[BulletinMessage]:
         """Return all messages with timestamp strictly greater than *ts*.

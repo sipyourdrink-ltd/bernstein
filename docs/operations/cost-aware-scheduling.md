@@ -179,6 +179,65 @@ siblings spawn, so each sibling hits the warm cache inside the TTL instead of
 racing to write it. The observed warm-up and cache-hit counts are recorded on
 the round outcome.
 
+## Dispatch knob matrix
+
+The price table is keyed by model name, but the per-call knobs that actually
+move the price of an identical task are the reasoning **effort** level, the
+processing **lane** (interactive / priority / batch, each with its own USD rate
+multiplier), and the prompt-cache **strategy** (none / reuse / warm-up). The
+**knob matrix** pins those, model by model, as a versioned, content-addressed
+map -- its `sha256` content hash pins exactly which knob economics a dispatch
+resolved against. Its defaults derive from the same sources the rest of the
+layer uses: the cache economics come from the price rows (a model that prices
+cache reads offers `reuse`; one that prices cache writes offers `warm_up`), and
+the lanes exist because the adapter contract declares a batch surface.
+
+Inspect the pinned matrix and its hash:
+
+```bash
+bernstein cost policy knobs                 # full matrix + content hash
+bernstein cost policy knobs --model opus    # one row
+```
+
+Operators override the shipped defaults without a code change, exactly like the
+price table:
+
+```yaml
+cost_policy:
+  knobs:
+    as_of: "2026-07-01"
+    revision: 2
+    models:
+      opus:
+        effort_levels: ["low", "high"]
+        default_effort: "low"
+        lanes: { interactive: 1.0, batch: 0.5 }
+```
+
+For each dispatch a **pure resolver** (no clock, filesystem, or network) turns
+the candidate plus the pinned matrix into a sealed **knob selection**: the
+resolved effort, lane, cache strategy, and rate multiplier, each carrying its
+own digest. The selection's content hash **folds into the `decision_hash`**, so
+two operators with identical state provably dispatch identically (byte-identical
+fingerprint) and a knob change surfaces as fingerprint divergence rather than an
+unexplained cost delta. The candidate projection applies the resolved lane
+multiplier, so admit and halt decisions account for the lane and effort actually
+chosen.
+
+The halt receipt seals the selection alongside `price_table_hash`,
+`ledger_state_hash`, and `policy_hash`. `bernstein cost policy verify` re-derives
+it offline: mutating any single knob field (effort, lane, cache strategy, or
+multiplier) fails verification with the mismatching field **named**, because the
+selection is falsification-evident per field, not merely logged. A model absent
+from the matrix resolves to an explicit default carrying `resolved=false` and a
+machine-readable reason with multiplier `1.0`, so the admit/halt outcome is
+unchanged for unpriced models -- never a silent fallback.
+
+The resolved selection is also recorded as a Merkle-chained event in the run
+journal, so replaying a run with a different knob assignment is reported as
+divergence at the exact step index. `bernstein doctor` carries a non-blocking
+advisory when the shipped matrix is stale.
+
 ## Determinism and verifiability
 
 The whole layer is a deterministic projection. The decision reads no clock, no

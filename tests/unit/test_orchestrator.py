@@ -5053,21 +5053,48 @@ class TestProcessCompletedTasksParallel:
         )
         orch = _build_orchestrator(tmp_path, transport)
 
+        # Record the [start, end) interval of every verify call. Proving
+        # parallelism by total wall-clock is unreliable on a loaded CI runner
+        # (shard-level oversubscription can serialize threads and inflate the
+        # elapsed time past the serial baseline). Instead assert the calls
+        # OVERLAP: with a real thread pool every call starts before the first
+        # one returns, so the peak number of concurrently-open intervals must
+        # exceed one. That signal is immune to absolute scheduler slowness.
+        import threading
+
+        lock = threading.Lock()
+        intervals: list[tuple[float, float]] = []
+
         def slow_verify(task: object, workdir: object) -> tuple[bool, list[str]]:
+            begin = time.monotonic()
             time.sleep(SLEEP)
+            with lock:
+                intervals.append((begin, time.monotonic()))
             return True, []
 
         with patch("bernstein.core.tasks.task_lifecycle.verify_task", side_effect=slow_verify):
             tick_result = TickResult()
-            start = time.monotonic()
             orch._process_completed_tasks([Task.from_dict(d) for d in task_dicts], tick_result)
-            elapsed = time.monotonic() - start
 
         # All tasks verified successfully
         assert len(tick_result.verified) == N
         assert tick_result.verification_failures == []
-        # Parallel: total wall time should be much less than N * SLEEP
-        assert elapsed < SLEEP * N * 0.75, f"Expected parallel execution (<{SLEEP * N * 0.75:.2f}s), got {elapsed:.2f}s"
+        assert len(intervals) == N
+
+        # Peak concurrency: sweep the interval endpoints and count how many
+        # calls were open at once. Serial execution peaks at 1; a working
+        # thread pool peaks at >= 2 (here up to N).
+        events: list[tuple[float, int]] = []
+        for begin, end in intervals:
+            events.append((begin, 1))
+            events.append((end, -1))
+        events.sort()
+        open_now = 0
+        peak = 0
+        for _ts, delta in events:
+            open_now += delta
+            peak = max(peak, open_now)
+        assert peak >= 2, f"Expected concurrent verification (peak >= 2), got peak={peak}"
 
 
 class TestComputeTotalSpentCache:

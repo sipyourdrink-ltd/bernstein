@@ -141,3 +141,40 @@ def test_verify_roundtrip_and_tamper(tmp_path: Path, monkeypatch: pytest.MonkeyP
     bad = runner.invoke(cost_cmd, ["policy", "verify", decision.decision_hash, "--workdir", str(workdir), "--json"])
     assert bad.exit_code == 1, bad.output
     assert json.loads(bad.output)["ok"] is False
+
+
+def test_knobs_shows_pinned_matrix_and_hash(tmp_path: Path) -> None:
+    # No config -> shipped default matrix; JSON carries the content hash and rows.
+    runner = CliRunner()
+    result = runner.invoke(cost_cmd, ["policy", "knobs", "--config", str(tmp_path / "absent.yaml"), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["matrix_hash"].startswith("sha256:")
+    assert "opus" in payload["models"]
+    assert "stale" in payload
+
+
+def test_knobs_config_override_changes_hash(tmp_path: Path) -> None:
+    import yaml
+
+    config = tmp_path / "bernstein.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "goal": "x",
+                "cost_policy": {
+                    "knobs": {
+                        "revision": 2,
+                        "models": {"opus": {"effort_levels": ["low", "high"], "default_effort": "low"}},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    default = runner.invoke(cost_cmd, ["policy", "knobs", "--config", str(tmp_path / "absent.yaml"), "--json"])
+    overridden = runner.invoke(cost_cmd, ["policy", "knobs", "--config", str(config), "--model", "opus", "--json"])
+    assert overridden.exit_code == 0, overridden.output
+    assert json.loads(overridden.output)["matrix_hash"] != json.loads(default.output)["matrix_hash"]
+    assert json.loads(overridden.output)["models"]["opus"]["effort_levels"] == ["low", "high"]

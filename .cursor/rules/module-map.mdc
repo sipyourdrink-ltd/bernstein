@@ -81,6 +81,7 @@ alwaysApply: false
 | File                        | Purpose |
 |-----------------------------|---------|
 | `_contract.py`              | Adapter contract loader and capability checker |
+| `acp_channel.py`            | Adapter-side binding for the ACP event channel (#2522) |
 | `advisories.py`             | Adapter minimum-safe-version advisories (supply-chain posture) |
 | `agy.py`                    | Antigravity CLI (``agy``) adapter |
 | `aichat.py`                 | AIChat CLI adapter |
@@ -117,6 +118,7 @@ alwaysApply: false
 | `devin_terminal.py`         | Devin for Terminal (Cognition) CLI adapter |
 | `droid.py`                  | Droid (Factory AI) CLI adapter |
 | `env_isolation.py`          | Environment variable isolation for spawned agents |
+| `floor_refresh.py`          | Adapter security-floor refresh pipeline with signed update receipts (#2515) |
 | `forge.py`                  | Forge CLI adapter |
 | `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
 | `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
@@ -149,6 +151,7 @@ alwaysApply: false
 | `registry.py`               | Adapter registry - look up CLI adapters by name |
 | `report.py`                 | Adapter conformance + capability report |
 | `rovo.py`                   | Atlassian Rovo Dev CLI adapter |
+| `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
 | `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
 | `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
 | `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
@@ -242,6 +245,7 @@ alwaysApply: false
 | `ab_runner.py`            | A/B runner primitive - deterministic prompt-vs-prompt comparison |
 | `baseline.py`             | Baseline tracking for eval-gated evolution |
 | `calibration.py`          | Calibration log + Brier score for router and judge decisions |
+| `gate_receipt.py`         | Signed verdict receipts for statistical eval gating (#2520) |
 | `golden.py`               | Golden benchmark suite - curated tasks for eval |
 | `harness.py`              | Eval harness - multiplicative scoring, LLM judge, failure taxonomy |
 | `incident_synthesizer.py` | Convert dead-letter and post-mortem incidents into regression eval cases |
@@ -250,8 +254,10 @@ alwaysApply: false
 | `pentest_consensus.py`    | Consensus aggregation for the multi-adapter pentest fan-out |
 | `pentest_runner.py`       | Driver that runs the ``security-pentest`` scenario end-to-end |
 | `pentest_scorer.py`       | Precision and recall scorer for security pentest eval scenario |
+| `promotion.py`            | Deterministic stage promotion and revocation for eval gating (#2520) |
 | `scenario_generator.py`   | Forward-looking synthetic scenario generator |
 | `scenario_runner.py`      | Scenario runner - execute YAML-defined eval scenarios against the live codebase |
+| `significance.py`         | Exact statistics for eval gate verdicts (#2520) |
 | `taxonomy.py`             | Failure taxonomy - classify every eval failure into a closed set |
 | `telemetry.py`            | Telemetry contract - strict schema for agent output metadata |
 | `vcr_fixture.py`          | VCR fixture pattern - dehydrate/hydrate deterministic test fixtures (T805) |

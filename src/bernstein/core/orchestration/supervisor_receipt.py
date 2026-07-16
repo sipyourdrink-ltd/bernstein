@@ -118,6 +118,11 @@ class StallReason(StrEnum):
     #: the progress-watch liveness probe.
     NO_PROGRESS = "no_progress"
 
+    #: Issue #2514 -- the deterministic intent-drift monitor observed an action
+    #: class outside the approved intent capsule. Additive; ``recommend_action``
+    #: falls through to ``INSPECT`` for it, so no existing decision changes.
+    INTENT_DRIFT = "intent_drift"
+
     #: Fallback when an upstream detector produces a structured reason
     #: the supervisor does not know about. Carries the original token
     #: in ``details["raw_reason"]`` so a verifier can still inspect it.

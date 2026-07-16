@@ -1771,4 +1771,264 @@ def calibration_report(
 
 
 # ---------------------------------------------------------------------------
+# eval gate - statistical eval gating: signed verdict receipts, deterministic
+# stage promotion, offline verification (#2520)
+# ---------------------------------------------------------------------------
+
+
+def _load_result_set(path: str) -> dict[str, bool]:
+    """Load a per-task pass/fail JSON object from ``path``."""
+    import json as _json
+
+    raw = _json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        msg = f"result set {path} must be a JSON object mapping task id -> bool"
+        raise click.UsageError(msg)
+    outcomes: dict[str, bool] = {}
+    for task_id, passed in raw.items():
+        if not isinstance(passed, bool):
+            msg = f"result set {path}: task {task_id!r} must map to a JSON boolean"
+            raise click.UsageError(msg)
+        outcomes[str(task_id)] = passed
+    return outcomes
+
+
+@eval_group.command("gate")
+@click.option(
+    "--baseline",
+    "baseline_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON object mapping task id -> bool for the baseline arm.",
+)
+@click.option(
+    "--candidate",
+    "candidate_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON object mapping task id -> bool for the candidate arm.",
+)
+@click.option("--candidate-id", "candidate_id", default="candidate", show_default=True, help="Candidate config id.")
+@click.option("--baseline-id", "baseline_id", default="baseline", show_default=True, help="Baseline config id.")
+@click.option(
+    "--workdir",
+    "workdir",
+    type=click.Path(file_okay=False),
+    default=".",
+    show_default=True,
+    help="Project root holding .sdd/eval/gate receipts and .sdd/lineage.",
+)
+@click.option(
+    "--audit-dir",
+    "audit_dir",
+    type=click.Path(file_okay=False),
+    default=".sdd/audit",
+    show_default=True,
+    help="Audit chain directory the verdict is mirrored into.",
+)
+@click.option("--alpha", "alpha", type=float, default=None, help="Significance level (default 0.05).")
+@click.option("--margin", "margin", type=float, default=None, help="Non-inferiority margin (default 0.05).")
+@click.option("--min-n", "min_n", type=int, default=None, help="Minimum n per arm (default 12).")
+@click.option("--timestamp", "timestamp", type=int, default=0, show_default=True, help="Stable receipt timestamp.")
+@click.option("--no-audit", "no_audit", is_flag=True, default=False, help="Do not mirror into the audit chain.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def eval_gate_cmd(
+    baseline_path: str,
+    candidate_path: str,
+    candidate_id: str,
+    baseline_id: str,
+    workdir: str,
+    audit_dir: str,
+    alpha: float | None,
+    margin: float | None,
+    min_n: int | None,
+    timestamp: int,
+    no_audit: bool,
+    as_json: bool,
+) -> None:
+    """Emit a signed verdict receipt for two paired result sets (#2520).
+
+    The verdict is a pure function of the paired 2x2 discordance table, so the
+    same two result sets in any ingestion order produce a byte-identical
+    receipt. A gate invoked below the minimum n per arm refuses a promoting
+    verdict with an explicit machine-readable reason.
+
+    \b
+      bernstein eval gate --baseline base.json --candidate cand.json
+      bernstein eval gate --baseline base.json --candidate cand.json --min-n 20
+    """
+    import json as _json
+
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.eval.gate_receipt import build_verdict_receipt
+    from bernstein.eval.significance import (
+        DEFAULT_ALPHA,
+        DEFAULT_MIN_N,
+        DEFAULT_NON_INFERIORITY_MARGIN,
+    )
+
+    baseline_outcomes = _load_result_set(baseline_path)
+    candidate_outcomes = _load_result_set(candidate_path)
+
+    root = Path(workdir)
+    chain = None if no_audit else AuditChainStore(Path(audit_dir))
+    try:
+        receipt = build_verdict_receipt(
+            baseline_outcomes=baseline_outcomes,
+            candidate_outcomes=candidate_outcomes,
+            candidate_config_id=candidate_id,
+            baseline_config_id=baseline_id,
+            workdir=root,
+            lineage_root=root / ".sdd" / "lineage",
+            hmac_key=load_or_create_audit_key(),
+            timestamp=timestamp,
+            alpha=DEFAULT_ALPHA if alpha is None else alpha,
+            non_inferiority_margin=DEFAULT_NON_INFERIORITY_MARGIN if margin is None else margin,
+            min_n=DEFAULT_MIN_N if min_n is None else min_n,
+            chain=chain,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    evidence = receipt.evidence
+    if as_json:
+        click.echo(_json.dumps(receipt.to_dict(), indent=2, sort_keys=True))
+        return
+
+    console.print(f"[bold]Verdict:[/bold] {receipt.verdict.value}  [dim]({evidence.reason})[/dim]")
+    console.print(f"  receipt_hash: {receipt.receipt_hash}")
+    console.print(
+        f"  n/arm: {evidence.n_candidate}  effect: {evidence.effect:+.4f}  "
+        f"interval: [{evidence.interval_low:+.4f}, {evidence.interval_high:+.4f}]"
+    )
+    console.print(
+        f"  base_rate: {evidence.base_rate:.4f}  cand_rate: {evidence.cand_rate:.4f}  "
+        f"alpha: {evidence.alpha}  min_n_satisfied: {evidence.min_n_satisfied}"
+    )
+    if not evidence.min_n_satisfied:
+        console.print(
+            f"  [yellow]below minimum n[/yellow] ({evidence.n_candidate} < {evidence.min_n}): "
+            "a promoting verdict is refused."
+        )
+
+
+@eval_group.command("promotions")
+@click.option(
+    "--workdir",
+    "workdir",
+    type=click.Path(file_okay=False),
+    default=".",
+    show_default=True,
+    help="Project root holding .sdd/eval/gate receipts.",
+)
+@click.option("--candidate-id", "candidate_id", default=None, help="Filter to one candidate config id.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def eval_promotions_cmd(workdir: str, candidate_id: str | None, as_json: bool) -> None:
+    """Project the promotion stage history from the verdict receipt chain (#2520).
+
+    The stage assignment at every prefix of the chain is recomputed from the
+    receipts alone, with no auxiliary state file: the receipt chain IS the
+    assignment.
+
+    \b
+      bernstein eval promotions
+      bernstein eval promotions --candidate-id my-template --json
+    """
+    import json as _json
+
+    from bernstein.eval.gate_receipt import read_verdict_receipt
+    from bernstein.eval.promotion import project, steps_from_receipts
+
+    gate_dir = Path(workdir) / ".sdd" / "eval" / "gate"
+    receipts = []
+    if gate_dir.is_dir():
+        for path in gate_dir.glob("sha256:*.json"):
+            receipt = read_verdict_receipt(Path(workdir), path.stem)
+            if receipt is None:
+                continue
+            if candidate_id is not None and receipt.candidate_config_id != candidate_id:
+                continue
+            receipts.append(receipt)
+
+    receipts.sort(key=lambda r: (r.timestamp, r.receipt_hash))
+    projection = project(steps_from_receipts(receipts))
+
+    if as_json:
+        click.echo(
+            _json.dumps(
+                {
+                    "final_stage": projection.final_stage.value,
+                    "default_config_id": projection.default_config_id,
+                    "stage_at_prefix": [s.value for s in projection.stage_at_prefix],
+                    "revocations": [r.to_dict() for r in projection.revocations],
+                    "receipts": [r.receipt_hash for r in receipts],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    if not receipts:
+        console.print("[yellow]No verdict receipts found under .sdd/eval/gate.[/yellow]")
+        return
+
+    console.print(f"[bold]Promotion projection[/bold]: {len(receipts)} verdict receipt(s)")
+    for index, (receipt, stage) in enumerate(zip(receipts, projection.stage_at_prefix, strict=True)):
+        console.print(f"  {index}: {receipt.verdict.value:24s} -> {stage.value}  [dim]{receipt.receipt_hash}[/dim]")
+    console.print(f"\n[bold]Final stage:[/bold] {projection.final_stage.value}")
+    console.print(f"[bold]Default config:[/bold] {projection.default_config_id}")
+    for revocation in projection.revocations:
+        console.print(
+            f"  [red]rollback[/red] at step {revocation.step_index}: "
+            f"revoked {len(revocation.revoked_receipt_hashes)} receipt(s), "
+            f"reverts to {revocation.reverts_to_stage}"
+        )
+
+
+@eval_group.command("gate-verify")
+@click.argument("receipt_hash")
+@click.option(
+    "--workdir",
+    "workdir",
+    type=click.Path(file_okay=False),
+    default=".",
+    show_default=True,
+    help="Project root holding .sdd/eval/gate receipts and .sdd/lineage.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def eval_gate_verify_cmd(receipt_hash: str, workdir: str, as_json: bool) -> None:
+    """Verify a verdict receipt offline against the lineage spine (#2520).
+
+    Re-derives the receipt hash from the stored body and re-derives the verdict
+    from the embedded evidence, so a receipt whose evidence does not entail its
+    verdict fails even when its hashes are internally consistent.
+
+    \b
+      bernstein eval gate-verify sha256:<hash>
+    """
+    import json as _json
+
+    from bernstein.core.security.audit import load_or_create_audit_key
+    from bernstein.eval.gate_receipt import verify_verdict_receipt
+
+    root = Path(workdir)
+    result = verify_verdict_receipt(
+        workdir=root,
+        lineage_root=root / ".sdd" / "lineage",
+        hmac_key=load_or_create_audit_key(),
+        receipt_hash=receipt_hash,
+    )
+    if as_json:
+        click.echo(_json.dumps({"ok": result.ok, "reason": result.reason, "receipt_hash": receipt_hash}))
+        raise SystemExit(0 if result.ok else 1)
+    if result.ok:
+        console.print(f"[green]Verdict receipt verified:[/green] {receipt_hash}")
+        return
+    console.print(f"[red]Verdict receipt verification failed:[/red] {result.reason}")
+    raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
 # workspace - multi-repo workspace management

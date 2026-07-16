@@ -588,6 +588,22 @@ def _add_check(checks: list[dict[str, Any]], name: str, ok: bool, detail: str, f
     checks.append({"name": name, "ok": ok, "detail": detail, "fix": fix, "fix_id": fix_id})
 
 
+def _doctor_check_eval_gate_power(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Advisory: flag statistical eval gate decisions taken below the minimum n (#2520).
+
+    Non-blocking. A verdict receipt records whether the minimum n per arm was
+    met; any stored receipt decided below that floor is surfaced so an operator
+    knows a promotion may have stood on too few tasks to survive a re-run.
+    """
+    from bernstein.cli.commands.doctor_cmd import check_eval_gate_min_n_advisory
+
+    advisory = check_eval_gate_min_n_advisory(workdir)
+    detail = advisory["detail"]
+    fix = advisory.get("fix", "")
+    # Advisory only: never fail the run, but keep the underpowered note visible.
+    _add_check(checks, advisory["name"], True, detail, fix)
+
+
 def _doctor_check_python(checks: list[dict[str, Any]]) -> bool:
     """Check Python version. Returns True if version is adequate."""
     major, minor = sys.version_info.major, sys.version_info.minor
@@ -641,6 +657,41 @@ def _doctor_check_last_green(checks: list[dict[str, Any]]) -> None:
             f"WARNING: {row['detail']}" if warn else row["detail"],
             row["fix"],
         )
+
+
+def _doctor_check_version_posture(checks: list[dict[str, Any]], workdir: Path) -> None:
+    """Seal the adapter version posture into a chain-anchored receipt (#2515).
+
+    The advisory rows above are advisory-only console text. This turns the
+    version posture into a signed, content-addressed receipt mirrored into the
+    HMAC audit chain, so "only floor-satisfying binaries were spawnable in this
+    environment during window X" is provable offline from a contiguous chain
+    slice. The row surfaced here is a projection of that sealed receipt (its
+    content hash and a compact verdict tally); it never fails the doctor run.
+    """
+    from bernstein.cli.commands.doctor_cmd import emit_version_posture_receipt
+
+    try:
+        sealed = emit_version_posture_receipt(workdir)
+    except Exception:  # posture is advisory: never break the doctor run
+        return
+    entries = sealed["entries"]
+    if not entries:
+        return  # no tracked adapter installed: nothing to attest
+    below = sum(1 for e in entries if e["verdict"] == "below_floor")
+    unknown = sum(1 for e in entries if e["verdict"] == "unknown_version")
+    anchored = "chain-anchored" if sealed["anchored"] else "unanchored (audit write failed)"
+    detail = (
+        f"{len(entries)} tracked adapter(s), {below} below floor, {unknown} unknown; "
+        f"receipt sha256:{sealed['receipt_sha256'][:12]} ({anchored})"
+    )
+    _add_check(
+        checks,
+        "Adapter version posture",
+        below == 0,
+        detail,
+        "Upgrade below-floor adapters; the receipt records the posture regardless" if below else "",
+    )
 
 
 def _doctor_check_auth(checks: list[dict[str, Any]]) -> bool:
@@ -1005,6 +1056,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     py_ok = _doctor_check_python(checks)
     any_adapter = _doctor_check_adapters(checks)
     _doctor_check_last_green(checks)
+    _doctor_check_version_posture(checks, workdir)
     any_key = _doctor_check_auth(checks)
     _doctor_check_port(checks)
     _doctor_check_workspace(checks, workdir)
@@ -1031,6 +1083,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     _doctor_check_commit_attribution(checks, workdir)
     _doctor_check_compliance(checks, workdir)
     _doctor_check_schedule_supervisor(checks, workdir)
+    _doctor_check_eval_gate_power(checks, workdir)
 
     if auto_fix:
         _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)

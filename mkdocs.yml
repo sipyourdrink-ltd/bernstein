@@ -295,6 +295,7 @@ nav:
       - Provider availability & failover: operations/provider-availability.md
       - Spending mandates: operations/spending-mandates.md
       - Stall escalation receipts: operations/stall-escalation.md
+      - Intent capsules: operations/intent-capsules.md
       - Checkpointed retries: operations/checkpointed-retries.md
       - Audited webhook node: operations/webhook-node.md
       - Chat bridges (Slack/Discord/Telegram): operations/chat-bridges.md
@@ -340,6 +341,7 @@ nav:
       - Dependency resolver: architecture/DEPENDENCY_RESOLVER.md
       - Changelog: CHANGELOG.md
       - Release notes:
+          - v3.6.0: release-notes/v3.6.0.md
           - v3.5.0: release-notes/v3.5.0.md
           - v3.4.4: release-notes/v3.4.4.md
           - v3.4.3: release-notes/v3.4.3.md

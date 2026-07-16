@@ -404,6 +404,52 @@ def verify_journal(path: Path) -> JournalVerifyResult:
     return JournalVerifyResult(ok=True, count=len(events))
 
 
+#: Event type recorded for a resolved dispatch knob selection (#2519). Folding
+#: the selection into the Merkle chain means replaying a run with a different
+#: knob assignment surfaces as hash divergence at a precise step index rather
+#: than an unexplained cost delta.
+DISPATCH_KNOB_SELECTION_EVENT = "dispatch_knob_selection"
+
+
+def record_dispatch_knob_selection(
+    journal: EventJournal,
+    *,
+    task_id: str,
+    run_id: str,
+    selection_hash: str,
+    effort: str,
+    lane: str,
+    cache_strategy: str,
+    rate_multiplier: float,
+    resolved: bool,
+    reason: str,
+) -> None:
+    """Append a resolved dispatch knob selection to the run journal (#2519).
+
+    Recorded as a Merkle-chained event so the journal head covers the effort,
+    lane, and cache strategy a dispatch executed with. Two operators who resolve
+    identical knobs chain to the same head; a forced knob change during replay
+    is reported by :meth:`EventJournal.verify` as divergence at the exact step
+    index, not passed off with a different cost.
+
+    The parameters are primitives (never the cost-layer ``KnobSelection`` type)
+    so this replay module keeps no dependency on the cost package -- the caller
+    projects its sealed selection onto these fields.
+    """
+    journal.record(
+        DISPATCH_KNOB_SELECTION_EVENT,
+        task_id=task_id,
+        knob_run_id=run_id,
+        selection_hash=selection_hash,
+        effort=effort,
+        lane=lane,
+        cache_strategy=cache_strategy,
+        rate_multiplier=round(rate_multiplier, 6),
+        resolved=resolved,
+        reason=reason,
+    )
+
+
 def seal_journal_into_spine(
     journal: EventJournal,
     *,
@@ -500,6 +546,7 @@ def rebuild_state(path: Path, *, from_step: int) -> dict[str, Any]:
 
 
 __all__ = [
+    "DISPATCH_KNOB_SELECTION_EVENT",
     "JOURNAL_FILENAME",
     "RETENTION_ENV_VAR",
     "EventJournal",
@@ -507,6 +554,7 @@ __all__ = [
     "compute_event_hash",
     "load_events",
     "rebuild_state",
+    "record_dispatch_knob_selection",
     "seal_journal_into_spine",
     "verify_journal",
 ]

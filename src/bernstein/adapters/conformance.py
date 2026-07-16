@@ -281,6 +281,59 @@ def check_terminal_signal(stdout_lines: list[str], *, run_id: str) -> MissingTer
 
 
 # ---------------------------------------------------------------------------
+# ACP lifecycle conformance (event-schema fixtures)
+# ---------------------------------------------------------------------------
+#
+# For adapters that declare EventChannel.ACP, lifecycle conformance is an
+# event-schema fixture - a recorded sequence of JSON-RPC frames - rather than
+# a pinned stdout golden transcript. The frames are replayed through the same
+# schema-validated, content-addressed client transport an ACP adapter uses at
+# runtime, so the fixture proves the exact ingress path the adapter relies on
+# and shrinks the conformance surface: no text transcript the upstream CLI
+# never promised to keep stable.
+
+
+def load_acp_event_fixture(path: Path) -> list[bytes]:
+    """Load an ACP lifecycle fixture as a list of raw JSON-RPC frame lines.
+
+    Args:
+        path: Path to a ``*.jsonl`` fixture, one JSON-RPC frame per line.
+
+    Returns:
+        The non-empty lines as UTF-8 bytes (trailing newline included), ready
+        to feed to :func:`bernstein.core.protocols.acp.client.drive_acp_lifecycle`.
+    """
+    lines: list[bytes] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if raw.strip():
+            lines.append((raw + "\n").encode("utf-8"))
+    return lines
+
+
+def replay_acp_event_fixture(path: Path, *, sdd_dir: Path) -> Any:
+    """Replay an ACP lifecycle fixture through the content-addressed transport.
+
+    Validates every frame at the schema boundary and journals each event
+    content-addressed into a fresh run journal under *sdd_dir*, then returns
+    the lifecycle result. A malformed frame raises ``ACPSchemaError`` (the
+    conformance failure mode for an ACP adapter), mirroring runtime ingress.
+
+    Args:
+        path: Path to a ``*.jsonl`` event-schema fixture.
+        sdd_dir: Directory to anchor the throwaway run journal under.
+
+    Returns:
+        A :class:`bernstein.core.protocols.acp.client.AcpLifecycleResult`.
+    """
+    from bernstein.core.protocols.acp.client import ACPEventJournalSink, drive_acp_lifecycle
+    from bernstein.core.replay.journal import EventJournal
+
+    journal = EventJournal(f"acp-conf-{path.stem}", sdd_dir)
+    sink = ACPEventJournalSink(journal)
+    return drive_acp_lifecycle(load_acp_event_fixture(path), sink)
+
+
+# ---------------------------------------------------------------------------
 # Transcript loader
 # ---------------------------------------------------------------------------
 

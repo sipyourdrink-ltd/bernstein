@@ -150,11 +150,20 @@ class CanaryOutcome:
         model: Model pinned for the probe.
         goal: The pinned goal text.
         installed_version: Parsed ``--version`` token, or ``None``.
-        verdict: ``"pass"`` / ``"fail"`` / ``"skip"``.
-        failures: Conformance failure lines (empty unless ``fail``).
+        verdict: ``"pass"`` / ``"fail"`` / ``"skip"`` / ``"refuse"``. A
+            ``refuse`` verdict marks a below-security-floor version the canary
+            declines to certify (see :data:`refused_below_floor`); it never
+            enters the last-green projection and is not an upstream-regression
+            signal.
+        failures: Conformance failure lines (empty unless ``fail`` /
+            ``refuse``).
         transcript: Human-readable probe transcript; rides into the
             regression issue so the finding is reproducible from the
             issue alone.
+        security_floor: The adapter's minimum-safe floor when tracked, else
+            ``None``. Recorded so the last-green guard can reject a below-floor
+            version regardless of the conformance verdict.
+        refused_below_floor: Whether this outcome is a below-floor refusal.
     """
 
     adapter: str
@@ -165,6 +174,8 @@ class CanaryOutcome:
     verdict: str
     failures: tuple[str, ...] = ()
     transcript: tuple[str, ...] = ()
+    security_floor: str | None = None
+    refused_below_floor: bool = False
 
 
 @dataclass(frozen=True)
@@ -195,6 +206,9 @@ class MatrixRunResult:
     Attributes:
         outcomes: Per-target outcomes in matrix order.
         regressions: Adapter names whose verdict was ``fail``.
+        refusals: Adapter names refused for a below-security-floor version
+            (#2515). Distinct from ``regressions``: a refusal is an
+            operator-environment issue, not an upstream conformance break.
         issues_to_open: Threshold-crossing, deduped issue payloads
             (``{"title": ..., "body": ...}``) the workflow should open.
         receipt_paths: Receipt files written this run.
@@ -202,6 +216,7 @@ class MatrixRunResult:
 
     outcomes: list[CanaryOutcome] = field(default_factory=list)
     regressions: list[str] = field(default_factory=list)
+    refusals: list[str] = field(default_factory=list)
     issues_to_open: list[dict[str, str]] = field(default_factory=list)
     receipt_paths: list[Path] = field(default_factory=list)
 
@@ -289,6 +304,34 @@ def run_canary_target(
 
     installed_version = probe_binary_version(binary_resolved)
     transcript.append(f"{target.binary} --version: {installed_version or 'unknown'}")
+
+    # Security floor gate (#2515): a below-floor upstream version is never
+    # certified, regardless of its --help conformance. We refuse before the
+    # conformance probe so a known-unsafe binary is not exercised at all, and
+    # the refusal receipt (built from this outcome) references the advisory.
+    from bernstein.adapters.advisories import check_adapter_version
+
+    floor_hit = check_adapter_version(target.adapter, installed_version)
+    if floor_hit is not None:
+        transcript.append(
+            f"security floor: {installed_version} below {floor_hit.min_safe_version} "
+            f"[{floor_hit.advisory_id}]: refusing certification"
+        )
+        return CanaryOutcome(
+            adapter=target.adapter,
+            binary=target.binary,
+            model=target.model,
+            goal=target.goal,
+            installed_version=installed_version,
+            verdict="refuse",
+            failures=(
+                f"{installed_version} below security floor {floor_hit.min_safe_version} "
+                f"[{floor_hit.advisory_id}]: {floor_hit.note}",
+            ),
+            transcript=tuple(transcript),
+            security_floor=floor_hit.min_safe_version,
+            refused_below_floor=True,
+        )
 
     from bernstein.adapters.report import check_adapter_in_process
 
@@ -459,7 +502,12 @@ def apply_canary_outcome(
         mutated.
     """
     new_state = {name: entry.copy() for name, entry in state.items()}
-    if outcome.verdict == "skip":
+    if outcome.verdict in ("skip", "refuse"):
+        # ``skip``: an uninstalled binary is not evidence either way.
+        # ``refuse`` (#2515): a below-floor version is an operator-environment
+        # issue, not an upstream regression, so it never counts toward the
+        # issue-opening threshold. The refusal is still sealed as a receipt by
+        # ``run_matrix``; it just does not page anyone as a conformance break.
         return new_state, False
 
     entry = new_state.setdefault(
@@ -586,14 +634,28 @@ def update_last_green(
     """Fold a passing outcome into the last-green projection.
 
     Only a ``pass`` verdict with a known version updates the projection;
-    failures and skips never touch it, so the table always names the
-    newest version a receipt actually attested.
+    failures, skips, and below-floor refusals never touch it, so the table
+    always names the newest version a receipt actually attested.
+
+    A below-floor version can never enter the projection even if a caller
+    somehow presents it as a ``pass`` (#2515): the last-green table is the
+    input to the doctor advisory and the ``bernstein doctor`` version-posture
+    surface, so a below-floor row there would silently bless a known-unsafe
+    version. The guard is a pure function of the advisory floor map, so the
+    property "no last-green row references a below-floor version" holds by
+    construction.
 
     Returns:
         A new mapping; the input is not mutated.
     """
     new_entries = entries.copy()
     if outcome.verdict != "pass" or not outcome.installed_version:
+        return new_entries
+
+    from bernstein.adapters.advisories import check_adapter_version
+
+    if check_adapter_version(outcome.adapter, outcome.installed_version) is not None:
+        # Below its security floor: refuse to advance last-green onto it.
         return new_entries
     new_entries[outcome.adapter] = LastGreenEntry(
         adapter=outcome.adapter,
@@ -723,6 +785,8 @@ def run_matrix(
         state, should_open = apply_canary_outcome(state, outcome)
         if outcome.verdict == "fail":
             result.regressions.append(outcome.adapter)
+        if outcome.refused_below_floor:
+            result.refusals.append(outcome.adapter)
         if should_open:
             result.issues_to_open.append(
                 {

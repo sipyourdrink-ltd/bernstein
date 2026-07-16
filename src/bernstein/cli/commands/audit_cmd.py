@@ -15,6 +15,7 @@ Commands:
   bernstein audit verify --hmac-only Verify HMAC chain only.
   bernstein audit verify --merkle-only  Verify Merkle tree only.
   bernstein audit verify-hmac        Verify HMAC chain across all audit files.
+  bernstein audit verify-gates       Verify clearance-gate integrity offline.
   bernstein audit export             Export a signed Article 12 evidence pack.
   bernstein audit pack               Build a SOC 2 evidence checklist.
   bernstein audit capabilities       Print lethal-trifecta capability matrix.
@@ -212,6 +213,11 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # chain entry (#2353). Orthogonal to both HMAC chain and Merkle seal.
     all_passed = _verify_tournament_receipts() and all_passed
 
+    # Clearance gates are a further integrity pillar: a dependent task claimed
+    # while its blocker gate was still open, or a tampered graph_delta_hash,
+    # must fail verify (#2556). Orthogonal to both HMAC chain and Merkle seal.
+    all_passed = _verify_clearance_gates() and all_passed
+
     console.print()
     raise SystemExit(0 if all_passed else 1)
 
@@ -345,6 +351,65 @@ def _verify_tournament_receipts() -> bool:
         task = result.receipt.task_id if result.receipt is not None else "?"
         console.print(f"  [red]![/red] task {task}: {result.reason}")
     return False
+
+
+def _verify_clearance_gates() -> bool:
+    """Verify clearance-gate integrity from the audit chain. Returns True if valid.
+
+    Reconstructs, from the ``signal.gate_projection`` chain entries alone, that
+    (a) every recorded ``graph_delta_hash`` recomputes byte-identically from the
+    projection's recorded inputs, and (b) no ``task.claim_receipt`` granted a
+    scoped dependent while its clearance gate was still open (#2556, AC4). When
+    no gates were recorded the check is a silent no-op.
+    """
+    from bernstein.core.communication.signal_actions import verify_clearance_gates
+    from bernstein.core.security.audit import AuditLog
+
+    events = AuditLog(AUDIT_DIR).query()
+    result = verify_clearance_gates(events)
+    if result.gate_count == 0:
+        return True  # no clearance gates recorded; nothing to verify
+
+    console.print()
+    if result.ok:
+        console.print(
+            Panel("[bold green]Clearance Gate Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+        table.add_column("Value")
+        table.add_row("Gates", str(result.gate_count))
+        console.print(table)
+        return True
+
+    console.print(Panel("[bold red]Clearance Gate Verification FAILED[/bold red]", border_style="red", expand=False))
+    for task_id, claim_index in result.violations:
+        console.print(f"  [red]![/red] dependent {task_id} claimed at chain index {claim_index} during an open gate")
+    for err in result.errors:
+        console.print(f"  [red]![/red] {err}")
+    return False
+
+
+@audit_group.command("verify-gates")
+def verify_gates_cmd() -> None:
+    """Verify clearance-gate integrity offline from the audit chain (#2556).
+
+    \b
+    Replays every ``signal.gate_projection`` entry and proves, from the chain
+    alone, that:
+      * each recorded graph_delta_hash recomputes byte-identically, and
+      * no dependent task was claimed between a blocker post and its clearance.
+
+    Reports any violation with the offending task id and its claim chain
+    position. Exits non-zero on any violation or hash mismatch.
+    """
+    if not AUDIT_DIR.is_dir():
+        console.print(f"[red]Audit directory not found:[/red] {AUDIT_DIR}")
+        raise SystemExit(1)
+
+    passed = _verify_clearance_gates()
+    console.print()
+    raise SystemExit(0 if passed else 1)
 
 
 @audit_group.command("verify-hmac")

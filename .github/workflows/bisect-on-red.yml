@@ -91,18 +91,47 @@ jobs:
         run: |
           set -euo pipefail
 
-          # List the last 5 merge commits on main reachable from
-          # HEAD_SHA. `--first-parent` keeps us on the main spine and
-          # avoids walking inside feature branches.
-          mapfile -t CANDIDATES < <(
-            git log --first-parent --merges -n 5 --format='%H' "${HEAD_SHA}" 2>/dev/null \
-              || git log --first-parent -n 5 --format='%H' "${HEAD_SHA}"
-          )
+          # The regression window is the first-parent commits between the
+          # last sha CI passed on (exclusive) and HEAD_SHA (inclusive).
+          # Blaming anything outside this window is a false positive: a
+          # large historical commit must never be re-accused for an
+          # unrelated later red. This repository squash-merges, so most PRs
+          # land as regular commits, not merge commits; walking `--merges`
+          # kept re-surfacing the few true merge commits (the source of the
+          # old recurring misfire), so we walk first-parent commits and
+          # bound them by the last green baseline instead.
+          LAST_GREEN=$(gh api \
+            "repos/${REPO}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || echo "")
+
+          CANDIDATES=()
+          if [ -n "${LAST_GREEN}" ] \
+            && git merge-base --is-ancestor "${LAST_GREEN}" "${HEAD_SHA}" 2>/dev/null; then
+            mapfile -t CANDIDATES < <(
+              git log --first-parent --format='%H' "${LAST_GREEN}..${HEAD_SHA}"
+            )
+          fi
+
+          # No resolvable green baseline: inspect only the single most
+          # recent first-parent commit, never a stale multi-commit window.
+          if [ "${#CANDIDATES[@]}" -eq 0 ]; then
+            mapfile -t CANDIDATES < <(
+              git log --first-parent -n 1 --format='%H' "${HEAD_SHA}"
+            )
+          fi
+
+          # Cap the window so a long red streak cannot accuse a big batch
+          # of commits at once.
+          if [ "${#CANDIDATES[@]}" -gt 10 ]; then
+            CANDIDATES=("${CANDIDATES[@]:0:10}")
+          fi
 
           if [ "${#CANDIDATES[@]}" -eq 0 ]; then
-            echo "::warning::No candidate merges found. Nothing to bisect."
+            echo "::warning::No candidate commits in the regression window. Nothing to bisect."
             exit 0
           fi
+
+          echo "Regression window: ${#CANDIDATES[@]} commit(s) since last green ${LAST_GREEN:0:7}"
 
           # Heuristic ranking: score each candidate by the number of
           # files it touched. Largest-diff candidates are inspected
@@ -152,7 +181,7 @@ jobs:
           BODY_FILE=$(mktemp)
           {
             printf '## Bisect-on-red triage\n\n'
-            printf 'The CI workflow failed on `%s`. Walking the last 5 first-parent merges on main, this PR (`%s`) is the highest-impact candidate (touched %s files).\n\n' \
+            printf 'The CI workflow failed on `%s`. Among the commits since the last green CI run on main, this PR (`%s`) is the highest-impact candidate (touched %s files).\n\n' \
               "${HEAD_SHA:0:7}" "${BEST_SHA:0:7}" "${BEST_SCORE}"
             printf -- '- **Failing job(s):** %s\n' "${FAILED_JOBS}"
             printf -- '- **Failing run:** %s\n' "${RUN_URL}"
@@ -160,6 +189,18 @@ jobs:
             printf 'Auto-applied label: `regression`. This is a heuristic ranking (files-touched), not a confirmed bisect. Run `git bisect` locally to confirm before reverting.\n\n'
             printf '_Posted automatically by `bisect-on-red.yml`._\n'
           } > "${BODY_FILE}"
+
+          # Dedup: never post twice for the same failing run, and never
+          # re-accuse a PR that already carries a bisect comment for this
+          # run. Prevents the recurring-comment spam on a repeatedly
+          # re-surfaced suspect.
+          ALREADY=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"${RUN_URL}\"))] | length" \
+            2>/dev/null || echo "0")
+          if [ "${ALREADY}" != "0" ]; then
+            echo "::notice::PR #${PR_NUMBER} already annotated for this run. Skipping."
+            exit 0
+          fi
 
           gh pr comment "${PR_NUMBER}" --repo "${REPO}" --body-file "${BODY_FILE}" \
             || echo "::warning::failed to comment on PR #${PR_NUMBER}"

@@ -56,6 +56,20 @@ if _legacy_path.exists():
         ACPRun = _legacy_module.ACPRun
         ACPRunStatus = _legacy_module.ACPRunStatus
 
+from bernstein.core.protocols.acp.client import (  # noqa: E402 - legacy shim runs first
+    ACP_EVENT_TYPE,
+    AcpDivergence,
+    ACPEvent,
+    ACPEventJournalSink,
+    AcpLifecycleResult,
+    canonical_frame_bytes,
+    compare_acp_journals,
+    drive_acp_lifecycle,
+    frame_content_hash,
+    is_terminal_frame,
+    parse_inbound_frame,
+    replay_acp_content_hashes,
+)
 from bernstein.core.protocols.acp.handlers import (  # noqa: E402 - legacy shim runs first
     ACPHandlerRegistry,
     ACPRequestContext,
@@ -90,6 +104,9 @@ from bernstein.core.protocols.acp.transport import (  # noqa: E402
 )
 
 __all__ = [
+    "ACP_EVENT_TYPE",
+    "ACPEvent",
+    "ACPEventJournalSink",
     "ACPHandler",
     "ACPHandlerRegistry",
     "ACPRequestContext",
@@ -99,6 +116,8 @@ __all__ = [
     "ACPServer",
     "ACPSession",
     "ACPSessionStore",
+    "AcpDivergence",
+    "AcpLifecycleResult",
     "AdapterDescriptor",
     "HttpAcpTransport",
     "JsonRpcFraming",
@@ -110,7 +129,14 @@ __all__ = [
     "acp_active_sessions",
     "acp_messages_total",
     "build_default_server",
+    "canonical_frame_bytes",
+    "compare_acp_journals",
+    "drive_acp_lifecycle",
+    "frame_content_hash",
+    "is_terminal_frame",
+    "parse_inbound_frame",
     "record_acp_message",
+    "replay_acp_content_hashes",
     "validate_request",
     "validate_response",
 ]

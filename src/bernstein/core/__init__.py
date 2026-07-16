@@ -483,6 +483,7 @@ _REDIRECT_MAP: dict[str, str] = {
     # checkpoint.PartialState) is the operator-visible progress slice.
     "session_continuity": "bernstein.core.persistence.session_continuity",
     "shutdown_sequence": "bernstein.core.orchestration.shutdown_sequence",
+    "signal_actions": "bernstein.core.communication.signal_actions",
     "signals": "bernstein.core.communication.signals",
     "sigstore_attestation": "bernstein.core.security.sigstore_attestation",
     "skill_badges": "bernstein.core.plugins_core.skill_badges",

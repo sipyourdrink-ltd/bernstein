@@ -1137,6 +1137,10 @@ cli.add_command(review_receipt_group, "review-receipt")
 from bernstein.cli.commands.escalation_cmd import escalation_group  # noqa: E402
 
 cli.add_command(escalation_group, "escalation")
+# Intent capsules with deterministic drift verification (#2514).
+from bernstein.cli.commands.intent_cmd import intent_group  # noqa: E402
+
+cli.add_command(intent_group, "intent")
 # Signed maker-checker / judge-panel gate adjudications (#2294).
 from bernstein.cli.commands.gate_cmd import gate_group  # noqa: E402
 

@@ -218,6 +218,69 @@ The ingested `traceparent` is carried as the lineage entry's `step_id`
 cross-link; a verifier holding the lineage spine reads the host trace off the
 artefact's provenance row.
 
+## Running the pull-worker loop over MCP
+
+An MCP-native worker drives its own claim, update, complete loop over MCP
+alone, with no second integration path (no CLI, no raw HTTP). Every step
+returns an object that verifies offline against the same audit chain
+`bernstein audit verify` walks: strip the chain and the signatures and the
+loop loses its meaning, not merely its log.
+
+1. **Claim** with `bernstein_claim`. The tool drives the dependency-gated
+   claim path: a task is offered only when every id in its `depends_on` is
+   present in `completed_ids`. Instead of a mutable task projection it returns
+   a signed **claim receipt** the worker holds:
+
+   ```json
+   {
+     "taskId": "t-42",
+     "granted": true,
+     "claimerCardFingerprint": "sha256:<claimer card>",
+     "backlogHead": "sha256:<digest of the backlog snapshot>",
+     "filterDigest": "sha256:<digest of the claim filter>",
+     "chainHead": "<audit-chain head the claim event recorded>",
+     "specRevision": "2026-07-28",
+     "receiptHash": "<content-addressed digest of this receipt>",
+     "signature": "<Ed25519 signature over the receipt hash>",
+     "signerPublicKeyPem": "<PEM public half>",
+     "pollToken": "<opaque base64; carries only the receipt identity>"
+   }
+   ```
+
+   A filter that matches no eligible task returns a signed **refusal receipt**
+   (`"granted": false`, empty `taskId`) - a claim attempt is never a silent
+   skip. Wall-clock is excluded from the pre-image, so replaying the same
+   backlog snapshot, claimer, and filter produces a byte-identical
+   `receiptHash`.
+
+2. **Report progress** with `bernstein_update`, as many times as needed. Each
+   update is DLP-redacted, HMAC-chained onto the worker mailbox journal,
+   Ed25519-signed, and mirrored to the audit chain (`task.mailbox_message`)
+   before returning. The result IS the signed journal entry (`seq`,
+   `prev_entry_hash`, `entry_hash`, `signature`, `body_hash`), not a bare
+   status string.
+
+3. **Complete** with `bernstein_approve` (the existing completion verb).
+
+Every claim and every update appears as an audit-chain entry
+(`task.claim_receipt` and `task.mailbox_message`), and no new audit event type
+is introduced. The claim receipt verifies offline - no network, no running
+server - by reprojecting the backlog head from the on-disk backlog and
+checking the embedded chain head:
+
+```bash
+bernstein backlog verify-claim --receipt receipt.json \
+  --backlog .sdd/runtime/task-backlog.json --audit-dir .sdd/audit
+```
+
+The offline verifier
+`bernstein.core.protocols.mcp.claim_receipt.verify_claim_receipt` performs the
+same check in-process. Because ownership disputes and progress questions are
+settled by replay against the chain rather than by trust, the task lifecycle
+surface over MCP is complete and uniformly provable: create, query, claim,
+update, complete, cancel, each returning an artifact that verifies against the
+chain.
+
 ## Worked example: pointing a host at the server
 
 1. Start the server over the streamable HTTP transport on loopback:

@@ -26,10 +26,17 @@ from __future__ import annotations
 import json
 import logging
 import time
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.eval.gate_receipt import VerdictReceipt
 
 from bernstein.evolution.oscillation_guard import (
     OscillationGuard,
@@ -511,13 +518,65 @@ class EvalGateResult:
         }
 
 
+@dataclass
+class EvalGateReceiptResult:
+    """Result of the receipt-consuming (statistical) eval gate path (#2520).
+
+    Unlike :class:`EvalGateResult` this decision is not a point-threshold
+    compare: it carries the sealed verdict receipt and the deterministic
+    promotion projection over the receipt chain. ``accepted`` is ``True`` only
+    for a promoting verdict; ``promoted`` reflects whether the baseline ratchet
+    advanced, which happens only on a ``significant_improvement`` receipt.
+
+    Attributes:
+        verdict: The statistical verdict string.
+        accepted: Whether the verdict promotes (improvement or non-inferior).
+        promoted: Whether the baseline ratchet advanced on this verdict.
+        stage: The candidate's projected promotion stage after this verdict.
+        receipt_hash: Content hash of the sealed verdict receipt.
+        revocation_receipt_hash: Content hash of the revocation receipt when a
+            rollback fired, else ``None``.
+        reason: The receipt's machine-readable reason code.
+    """
+
+    verdict: str
+    accepted: bool
+    promoted: bool
+    stage: str
+    receipt_hash: str
+    revocation_receipt_hash: str | None
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for JSONL logging."""
+        return {
+            "verdict": self.verdict,
+            "accepted": self.accepted,
+            "promoted": self.promoted,
+            "stage": self.stage,
+            "receipt_hash": self.receipt_hash,
+            "revocation_receipt_hash": self.revocation_receipt_hash,
+            "reason": self.reason,
+        }
+
+
 class EvalGate:
     """Gates evolution proposals on eval harness scores.
 
-    After a proposal passes sandbox testing, the eval gate runs the eval
-    harness at an appropriate tier and compares against the stored baseline.
+    Two decision paths are available:
 
-    Decision logic:
+    * The receipt-consuming statistical path (:meth:`evaluate_paired`, #2520) is
+      the recommended path: it compares two paired result sets, seals a signed
+      verdict receipt carrying the significance evidence, and promotes a
+      candidate as a deterministic projection of the receipt chain.
+    * The legacy point-threshold path (:meth:`evaluate`) compares a single
+      candidate score against the baseline with a fixed tolerance. It is kept
+      behind the ``legacy_point_threshold`` compatibility flag and is
+      **deprecated**: at suite sizes of a handful of tasks its accept/reject is
+      frequently noise a re-run can flip, and it records no evidence a later
+      regression can be traced to.
+
+    Legacy decision logic:
     - L0 proposals: skip eval entirely (tests-only validation is sufficient)
     - L1 proposals: run smoke eval (~5 tasks, ~$0.50)
     - L2 proposals: run standard eval (~15 tasks, ~$2.00)
@@ -531,6 +590,9 @@ class EvalGate:
         state_dir: Path to the .sdd directory for baseline persistence.
         regression_tolerance: Override the default regression tolerance.
         promotion_threshold: Override the default promotion threshold.
+        legacy_point_threshold: When ``True`` (the default, for backward
+            compatibility) :meth:`evaluate` uses the deprecated point-threshold
+            path. New callers should prefer :meth:`evaluate_paired`.
     """
 
     def __init__(
@@ -539,13 +601,109 @@ class EvalGate:
         state_dir: Path,
         regression_tolerance: float = EVAL_REGRESSION_TOLERANCE,
         promotion_threshold: float = EVAL_PROMOTION_THRESHOLD,
+        *,
+        legacy_point_threshold: bool = True,
     ) -> None:
         self._harness = eval_harness
         self._state_dir = state_dir
         self._regression_tolerance = regression_tolerance
         self._promotion_threshold = promotion_threshold
+        self._legacy_point_threshold = legacy_point_threshold
         self._trajectory_path = state_dir / "metrics" / "eval_trajectory.jsonl"
         self._trajectory_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def evaluate_paired(
+        self,
+        *,
+        baseline_outcomes: Mapping[str, bool],
+        candidate_outcomes: Mapping[str, bool],
+        hmac_key: bytes,
+        timestamp: int,
+        candidate_config_id: str = "candidate",
+        baseline_config_id: str = "baseline",
+        prior_receipts: Sequence[VerdictReceipt] = (),
+        audit_chain: AuditChainStore | None = None,
+        ratchet_baseline: bool = True,
+    ) -> EvalGateReceiptResult:
+        """Gate on a signed verdict receipt over two paired result sets (#2520).
+
+        Seals a verdict receipt carrying the significance evidence, projects the
+        candidate's promotion stage as a deterministic fold over
+        ``prior_receipts`` plus this verdict, ratchets the baseline only on a
+        ``significant_improvement`` verdict, and (on a rollback) seals a
+        revocation receipt. Strip the receipts and this degrades to the legacy
+        threshold compare.
+
+        Args:
+            baseline_outcomes: Per-task pass/fail under the incumbent baseline.
+            candidate_outcomes: Per-task pass/fail under the candidate; must
+                cover the identical task set.
+            hmac_key: HMAC key sealing the lineage spine and receipts.
+            timestamp: Stable integer timestamp anchored into the receipts.
+            candidate_config_id: Identifier of the candidate configuration.
+            baseline_config_id: Identifier of the incumbent baseline.
+            prior_receipts: The candidate's prior verdict receipts, in order.
+            audit_chain: Optional audit chain the receipts are mirrored into.
+            ratchet_baseline: Whether to advance the baseline on a
+                ``significant_improvement`` verdict.
+
+        Returns:
+            An :class:`EvalGateReceiptResult` naming the sealed receipt, the
+            projected stage, and any revocation receipt.
+        """
+        from bernstein.eval.baseline import promote_baseline_from_receipt
+        from bernstein.eval.gate_receipt import build_verdict_receipt
+        from bernstein.eval.promotion import (
+            build_revocation_receipt,
+            project,
+            steps_from_receipts,
+        )
+        from bernstein.eval.significance import PROMOTING_VERDICTS
+
+        lineage_root = self._state_dir / "lineage"
+        receipt = build_verdict_receipt(
+            baseline_outcomes=baseline_outcomes,
+            candidate_outcomes=candidate_outcomes,
+            candidate_config_id=candidate_config_id,
+            baseline_config_id=baseline_config_id,
+            workdir=self._state_dir.parent,
+            lineage_root=lineage_root,
+            hmac_key=hmac_key,
+            timestamp=timestamp,
+            chain=audit_chain,
+        )
+
+        steps = steps_from_receipts([*prior_receipts, receipt])
+        projection = project(steps)
+
+        revocation_receipt_hash: str | None = None
+        for revocation in projection.revocations:
+            if revocation.trigger_receipt_hash != receipt.receipt_hash:
+                continue
+            revocation_receipt = build_revocation_receipt(
+                revocation=revocation,
+                workdir=self._state_dir.parent,
+                lineage_root=lineage_root,
+                hmac_key=hmac_key,
+                timestamp=timestamp,
+                chain=audit_chain,
+            )
+            revocation_receipt_hash = revocation_receipt.receipt_hash
+
+        promoted = False
+        if ratchet_baseline:
+            promoted = promote_baseline_from_receipt(self._state_dir, receipt)
+
+        accepted = receipt.verdict in PROMOTING_VERDICTS
+        return EvalGateReceiptResult(
+            verdict=receipt.verdict.value,
+            accepted=accepted,
+            promoted=promoted,
+            stage=projection.final_stage.value,
+            receipt_hash=receipt.receipt_hash,
+            revocation_receipt_hash=revocation_receipt_hash,
+            reason=receipt.evidence.reason,
+        )
 
     def evaluate(
         self,
@@ -553,7 +711,14 @@ class EvalGate:
         risk_level: RiskLevel,
         sandbox_dir: Path | None = None,
     ) -> EvalGateResult:
-        """Evaluate a proposal against the eval baseline.
+        """Evaluate a proposal against the eval baseline (legacy, deprecated).
+
+        This is the point-threshold path (#2520 deprecates it): a single
+        candidate score is compared against the baseline with a fixed
+        tolerance. At small suite sizes the verdict is frequently noise and
+        records no evidence a later regression can be traced to. Prefer
+        :meth:`evaluate_paired`, which seals a signed verdict receipt carrying
+        the significance evidence.
 
         Args:
             proposal: The upgrade proposal being evaluated.
@@ -563,6 +728,13 @@ class EvalGate:
         Returns:
             EvalGateResult with accept/reject decision.
         """
+        if self._legacy_point_threshold:
+            warnings.warn(
+                "EvalGate.evaluate uses the deprecated point-threshold path; "
+                "prefer EvalGate.evaluate_paired for statistically gated promotion (#2520).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         eval_tier = _EVAL_TIER_FOR_RISK.get(risk_level)
 
         # L0 and L3 skip eval.
