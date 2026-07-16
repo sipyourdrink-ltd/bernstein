@@ -39,8 +39,10 @@ concurrency:
   group: glitchtip-insights
   cancel-in-progress: false
 
+# The API token is scoped to the single fetch step that needs it rather
+# than exposed at workflow/job level, so no other step inherits the
+# secret in its environment. Base URL, org, and label are non-secret.
 env:
-  GLITCHTIP_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
   GLITCHTIP_BASE_URL: ${{ github.event.inputs.base_url || vars.GLITCHTIP_BASE_URL }}
   GLITCHTIP_ORG: ${{ github.event.inputs.org_slug || 'bernstein' }}
   GLITCHTIP_LABEL: glitchtip-alert
@@ -70,6 +72,8 @@ jobs:
       - name: Fetch fatal-level issues (last 24h)
         if: steps.check_token.outputs.skip == 'false'
         id: fetch
+        env:
+          GLITCHTIP_API_TOKEN: ${{ secrets.GLITCHTIP_API_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p .glitchtip-sweep
@@ -105,12 +109,47 @@ jobs:
           import os
           import subprocess
           import sys
+          import urllib.parse
           from pathlib import Path
 
           LABEL = os.environ["GLITCHTIP_LABEL"]
           REPO = os.environ["REPO"]
           BASE_URL = os.environ["GLITCHTIP_BASE_URL"].rstrip("/")
           ORG = os.environ["GLITCHTIP_ORG"]
+
+          # Server-supplied strings (issue title, level, permalink) are
+          # untrusted: they land in world-readable GitHub issues. Neutralise
+          # anything that could @-mention a user/team, break out of a
+          # markdown code span, or smuggle a link to an unexpected host.
+          def _neutralize_mentions(text: str) -> str:
+              # Replace @ with the fullwidth variant so GitHub cannot linkify
+              # a user or team mention from server-controlled text.
+              return text.replace("@", "＠")
+
+          def _sanitize_title(text: str) -> str:
+              # Collapse whitespace/newlines and defang mentions. GitHub
+              # titles are plain text, but a title copied into a comment or
+              # body would otherwise mention; keep it inert either way.
+              return _neutralize_mentions(" ".join(text.split()))
+
+          def _code_span(value: str) -> str:
+              # Safe to interpolate inside a `...` span: strip backticks so
+              # the value cannot terminate the span, and defang mentions.
+              return _neutralize_mentions(str(value).replace("`", "'"))
+
+          def _safe_permalink(permalink: str) -> str | None:
+              # Only embed a clickable link when its host matches the
+              # configured GlitchTip host; drop it otherwise.
+              try:
+                  parsed = urllib.parse.urlparse(permalink)
+                  base = urllib.parse.urlparse(BASE_URL)
+              except ValueError:
+                  return None
+              if parsed.scheme not in ("http", "https"):
+                  return None
+              if parsed.netloc and base.netloc and parsed.netloc.lower() == base.netloc.lower():
+                  return permalink
+              return None
 
           def gh(*args: str, capture: bool = False) -> str:
               proc = subprocess.run(
@@ -165,17 +204,27 @@ jobs:
               short_id = str(issue.get("shortId", ""))
               if not short_id:
                   continue
-              title = f"[{short_id}] {issue.get('title', '')[:120]}"
+              # short_id is used as the dedup key (parsed back out of the
+              # title prefix on the next run), so keep it raw in the prefix
+              # and sanitise only the free-form title text after it.
+              safe_title = _sanitize_title(str(issue.get("title", "")))[:120]
+              title = f"[{short_id}] {safe_title}"
               first_seen = issue.get("firstSeen", "?")
               count = issue.get("count", "?")
               permalink = issue.get("permalink") or f"{BASE_URL}/{ORG}/issues/{short_id}"
+              safe_link = _safe_permalink(permalink)
+              link_line = (
+                  f"- Link: {safe_link}"
+                  if safe_link
+                  else "- Link: (withheld: permalink host did not match the configured GlitchTip host)"
+              )
               body = (
                   f"Auto-opened by `.github/workflows/glitchtip-insights.yml`.\n\n"
-                  f"- GlitchTip id: `{short_id}`\n"
-                  f"- Level: `{issue.get('level', '?')}`\n"
-                  f"- First seen: `{first_seen}`\n"
-                  f"- Event count (24h): `{count}`\n"
-                  f"- Link: {permalink}\n\n"
+                  f"- GlitchTip id: `{_code_span(short_id)}`\n"
+                  f"- Level: `{_code_span(issue.get('level', '?'))}`\n"
+                  f"- First seen: `{_code_span(first_seen)}`\n"
+                  f"- Event count (24h): `{_code_span(count)}`\n"
+                  f"{link_line}\n\n"
                   f"This issue auto-closes when the matching GlitchTip issue moves to resolved."
               )
               if short_id in existing:
@@ -211,11 +260,3 @@ jobs:
                       check=True, capture_output=True,
                   )
           PY
-
-      - name: Upload sweep artefacts
-        if: steps.check_token.outputs.skip == 'false'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: glitchtip-sweep
-          path: .glitchtip-sweep/
-          retention-days: 14

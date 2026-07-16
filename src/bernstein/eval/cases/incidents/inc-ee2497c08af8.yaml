@@ -1,0 +1,20 @@
+id: inc-ee2497c08af8
+severity: P1
+source_incident: "glitchtip-issue:4"
+owner: orchestrator
+created_at: 1783846151.180
+expected_outcome: "Agent must complete the task without hitting the previously-recorded failure mode. (root cause: runtime_exception)"
+tags:
+  - env_production
+  - glitchtip
+  - regression
+  - runtime_error
+  - runtimeerror
+prompt: |
+  Reproduce and resolve the runtime exception reported by GlitchTip issue 4.
+  Project: bernstein
+  Exception: RuntimeError: max_retries_exhausted: agent failed to apply patch [ci-verify-20260521155756-26237379837]
+  Top in-app frame: <stdin>
+  Environment: production
+  Release: 2.6.0
+  Event count: 1

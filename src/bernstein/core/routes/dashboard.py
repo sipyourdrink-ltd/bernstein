@@ -29,6 +29,21 @@ def _runtime_dir(request: Request) -> Path:
     return request.app.state.runtime_dir  # type: ignore[no-any-return]
 
 
+def _cookie_secure(request: Request) -> bool:
+    """Whether the session cookie should carry the ``Secure`` flag.
+
+    ``Secure`` is set whenever the request arrived over TLS so the session
+    cookie is never returned in clear text on an HTTPS deployment. A plain
+    HTTP bind (the common loopback dev case) keeps working because a
+    ``Secure`` cookie would never be sent back over HTTP; the forwarded-proto
+    header lets the flag follow through a TLS-terminating proxy.
+    """
+    if request.url.scheme == "https":
+        return True
+    forwarded = request.headers.get("x-forwarded-proto", "")
+    return forwarded.split(",", 1)[0].strip().lower() == "https"
+
+
 def _auth_state(request: Request) -> DashboardAuthState:
     """Fetch the shared dashboard auth state (created in ``create_app``)."""
     state = getattr(request.app.state, "dashboard_auth_state", None)
@@ -113,7 +128,13 @@ async def dashboard_auth_login(request: Request) -> JSONResponse:
             "scope": scope,
         }
     )
-    response.set_cookie(SESSION_COOKIE, session_token, httponly=True, samesite="lax")
+    response.set_cookie(
+        SESSION_COOKIE,
+        session_token,
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(request),
+    )
     return response
 
 
@@ -128,7 +149,7 @@ async def dashboard_auth_logout(request: Request) -> JSONResponse:
     if auth_header.startswith("Bearer "):
         state.session_store.revoke_session(auth_header[7:])
     response = JSONResponse({"message": "Logged out"})
-    response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="lax", secure=_cookie_secure(request))
     return response
 
 

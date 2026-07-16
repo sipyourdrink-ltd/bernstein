@@ -750,7 +750,10 @@ def _build_prompt_from_glitchtip(incident: GlitchTipIncident) -> str:
             head = f"{head}: {value}"
         parts.append(f"Exception: {head}")
     if incident.top_frame_path:
-        frame = incident.top_frame_path
+        # Prefer a project-relative frame path: an absolute home/root path
+        # would embed the OS username into the committed public YAML.
+        # ``_redact`` is the backstop for anything that slips through.
+        frame = _scrub_path_prefix(incident.top_frame_path)
         if incident.top_frame_line > 0:
             frame = f"{frame}:{incident.top_frame_line}"
         parts.append(f"Top in-app frame: {frame}")
@@ -887,7 +890,13 @@ def _redact(text: str) -> str | None:
     on the obvious patterns (emails, AWS keys, etc.) by replacing the
     matching span with ``***``. If anything still trips the scanner on
     the redacted text we drop the case entirely.
+
+    Filesystem path prefixes that embed an OS username (``/Users/<user>/``,
+    ``/home/<user>/``, ``/root/<user>/``, ``C:\\Users\\<user>\\``) are
+    scrubbed unconditionally: they leak the username into committed public
+    YAML and never trip the secret scanner on their own.
     """
+    text = _scrub_path_prefix(text)
     findings = scan_text(text)
     redacted = text
     if findings:
@@ -896,6 +905,21 @@ def _redact(text: str) -> str | None:
         if scan_text(redacted):
             return None
     return redacted
+
+
+# Filesystem path prefixes that embed an OS username. Scrubbed to
+# ``<path>/`` so committed public eval YAML never leaks a
+# ``/Users/<user>``-style path. Matched anywhere in the text (not anchored)
+# because frame paths appear mid-line, e.g. ``Top in-app frame: /Users/...``.
+_PATH_PREFIX_RE: re.Pattern[str] = re.compile(
+    r"/(?:Users|home|root)/[^/\s]+/|[A-Za-z]:\\Users\\[^\\/\s]+\\",
+    re.IGNORECASE,
+)
+
+
+def _scrub_path_prefix(text: str) -> str:
+    """Replace any home/root filesystem path prefix with ``<path>/``."""
+    return _PATH_PREFIX_RE.sub("<path>/", text)
 
 
 # Conservative redaction patterns covering the high-confidence rules in

@@ -6,9 +6,9 @@ name: Bisect on Red
 # job name and the offending sha. Applies a `regression` label so the
 # PR author is auto-triaged.
 #
-# Borrowed-from: `git bisect` + epidemiological contact tracing. On
-# first red, walk the recent-merge timeline and pin the introducing
-# commit before the on-call has to manually `git bisect`.
+# On first red, walk the recent-merge timeline and pin the most likely
+# introducing commit before the on-call has to run `git bisect` by
+# hand.
 #
 # This is the cheap, log-only flavor: we do not re-run the failing job
 # against intermediate commits (that would burn N runner-minutes per
@@ -158,7 +158,7 @@ jobs:
             printf -- '- **Failing run:** %s\n' "${RUN_URL}"
             printf -- '- **Suspect commit:** `%s`\n\n' "${BEST_SHA}"
             printf 'Auto-applied label: `regression`. This is a heuristic ranking (files-touched), not a confirmed bisect. Run `git bisect` locally to confirm before reverting.\n\n'
-            printf '_Posted automatically by `bisect-on-red.yml`. Borrowed-from: git bisect + contact tracing._\n'
+            printf '_Posted automatically by `bisect-on-red.yml`._\n'
           } > "${BODY_FILE}"
 
           gh pr comment "${PR_NUMBER}" --repo "${REPO}" --body-file "${BODY_FILE}" \
