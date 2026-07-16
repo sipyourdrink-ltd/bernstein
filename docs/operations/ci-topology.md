@@ -195,7 +195,7 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/dependabot-auto-merge.yml | workflow: {"contents": "read"}<br>auto-merge: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependency-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | - |
 | .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>docs-data-freshness: {"contents": "read", "issues": "write"}<br>drift-check: {"contents": "read", "pull-requests": "write"} | - |
-| .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_GLITCHTIP_TOKEN, DTRACK_TOKEN, GITHUB_TOKEN, SONAR_TOKEN |
+| .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | DT_API_KEY, DT_API_URL, GITHUB_TOKEN, GLITCHTIP_API_TOKEN, SONAR_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID |
 | .github/workflows/eval-nightly.yml | workflow: {"contents": "read"} | EVAL_ENABLED, GLITCHTIP_DSN |
 | .github/workflows/flake-quarantine.yml | workflow: {"contents": "read"}<br>detect-and-quarantine: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/glitchtip-ingester.yml | workflow: {"contents": "read"}<br>ingest: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN, GLITCHTIP_API_TOKEN |
@@ -266,7 +266,6 @@ This report lists the workflow graph surfaces reviewers need to inspect when CI 
 | .github/workflows/docs-drift.yml | drift-check: upload docs-drift-report |
 | .github/workflows/eval-nightly.yml | bench: upload eval-nightly-${{ github.run_id }}<br>smoke: upload eval-nightly-smoke |
 | .github/workflows/flake-quarantine.yml | detect-and-quarantine: upload xflaky-reports |
-| .github/workflows/glitchtip-insights.yml | sweep: upload glitchtip-sweep |
 | .github/workflows/license-compliance.yml | license-check: upload license-report |
 | .github/workflows/mutation-fixed.yml | mutate: upload mutation-${{ matrix.module }}<br>summary: download - |
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: upload nightly-bandit-results<br>mutmut-full: upload nightly-mutmut-results |
