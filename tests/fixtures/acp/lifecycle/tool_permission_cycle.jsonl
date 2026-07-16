@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-04-01","agentCapabilities":{}}}
+{"jsonrpc":"2.0","method":"streamUpdate","params":{"sessionId":"s-tools","delta":{"text":"planning edits"}}}
+{"jsonrpc":"2.0","id":7,"method":"requestPermission","params":{"sessionId":"s-tools","promptId":"p-1","toolName":"write_file"}}
+{"jsonrpc":"2.0","method":"streamUpdate","params":{"sessionId":"s-tools","delta":{"text":"writing file"}}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}

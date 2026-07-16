@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-04-01","agentCapabilities":{}}}
+{"jsonrpc":"2.0","method":"streamUpdate","params":{"sessionId":"s-simple","delta":{"text":"reading the task"}}}
+{"jsonrpc":"2.0","method":"streamUpdate","params":{"sessionId":"s-simple","delta":{"text":"applying the patch"}}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}

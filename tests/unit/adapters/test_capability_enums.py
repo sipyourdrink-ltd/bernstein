@@ -77,6 +77,7 @@ def test_dangerous_mode_strategy_parses_from_wire_value(raw: str, expected: Dang
         ("stream-json", EventChannel.STREAM_JSON),
         ("text-signals", EventChannel.TEXT_SIGNALS),
         ("hooks", EventChannel.HOOKS),
+        ("acp", EventChannel.ACP),
         ("poll-pty", EventChannel.POLL_PTY),
         ("none", EventChannel.NONE),
     ],
@@ -137,8 +138,13 @@ def test_stream_json_adapters_declared() -> None:
 
 
 def test_text_signal_default_for_plain_adapters() -> None:
-    for name in ("aider", "goose", "opencode"):
+    for name in ("aider", "droid", "opencode"):
         assert strategy_for(name).event_channel is EventChannel.TEXT_SIGNALS
+
+
+def test_acp_channel_adapters_declared() -> None:
+    for name in ("kilo", "goose"):
+        assert strategy_for(name).event_channel is EventChannel.ACP
 
 
 def test_every_registry_adapter_has_a_declaration() -> None:

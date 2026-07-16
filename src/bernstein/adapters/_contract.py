@@ -509,6 +509,10 @@ class EventChannel(StrEnum):
     TEXT_SIGNALS = "text-signals"
     #: Upstream fires hooks/callbacks Bernstein registers against.
     HOOKS = "hooks"
+    #: Upstream speaks the Agent Client Protocol; Bernstein consumes typed
+    #: JSON-RPC lifecycle events over the stdio client transport and journals
+    #: each event content-addressed. No stdout text parser at all.
+    ACP = "acp"
     #: No structured channel; Bernstein polls a PTY/log for liveness.
     POLL_PTY = "poll-pty"
     #: No event channel at all (process-exit detection only).
@@ -632,12 +636,18 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "droid": AdapterStrategy(),
     "forge": AdapterStrategy(),
     "generic": AdapterStrategy(),
-    "goose": AdapterStrategy(),
+    # Goose speaks ACP natively; Bernstein consumes its lifecycle over the
+    # JSON-RPC client transport and journals each event content-addressed,
+    # so its stdout lifecycle parser is bypassed.
+    "goose": AdapterStrategy(event_channel=EventChannel.ACP),
     "gptme": AdapterStrategy(),
     "hermes": AdapterStrategy(),
     "iac": AdapterStrategy(),
     "junie": AdapterStrategy(),
-    "kilo": AdapterStrategy(),
+    # Kilo documents native ACP support; it declares the ACP event channel so
+    # lifecycle events arrive as schema-validated JSON-RPC frames rather than
+    # a bespoke stdout parser.
+    "kilo": AdapterStrategy(event_channel=EventChannel.ACP),
     "kiro": AdapterStrategy(),
     "mistral": AdapterStrategy(),
     "mock": AdapterStrategy(),

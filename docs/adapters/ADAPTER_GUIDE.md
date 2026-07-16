@@ -756,6 +756,7 @@ support modules that provide cross-cutting infrastructure:
 
 | Module | Purpose |
 |--------|---------|
+| `acp_channel` | Binds an ACP-speaking CLI's JSON-RPC lifecycle onto the content-addressed event journal (no stdout parser) |
 | `caching_adapter` | Prompt prefix deduplication and response reuse wrapper |
 | `claude_agents` | Per-task Claude Code subagent definitions for `--agents` flag |
 | `claude_exit_codes` | Maps Claude Code exit codes to Bernstein lifecycle enums |
@@ -766,6 +767,54 @@ support modules that provide cross-cutting infrastructure:
 | `plugin_sdk` | Base classes and utilities for third-party adapter plugins |
 | `registry` | Adapter discovery and registration (entry-point and runtime) |
 | `skills_injector` | Injects per-task Claude Code skills into worktrees before spawn |
+
+---
+
+## Declaring ACP as the event channel
+
+Most adapters read lifecycle signals from stdout: either the newline-delimited
+JSON of a stream-json CLI (`EventChannel.STREAM_JSON`) or the canonical
+`BERNSTEIN:<KIND>` text grammar (`EventChannel.TEXT_SIGNALS`). Both are bespoke
+parsing paths, and when an upstream CLI changes its output format the parser
+drifts. For a CLI that can speak the Agent Client Protocol, that failure class
+is avoidable: declare `EventChannel.ACP` and the adapter consumes typed
+JSON-RPC lifecycle events over the client transport with no text parser at all.
+
+**How to declare it.** Add an `EventChannel.ACP` row for the adapter in
+`STRATEGY_MATRIX` (`src/bernstein/adapters/_contract.py`):
+
+```python
+"my_agent": AdapterStrategy(event_channel=EventChannel.ACP),
+```
+
+`kilo` and `goose`, whose upstream CLIs expose ACP, ship on this channel.
+
+**What the channel does.** The upstream CLI is spawned as an ACP subprocess
+speaking line-delimited JSON-RPC. Every inbound frame is validated at the
+schema boundary (`validate_request` / `validate_response`) and journaled
+content-addressed into the run's Merkle-chained `EventJournal`: each event row
+carries the SHA-256 of its canonical bytes. The lifecycle is driven from the
+structured `stopReason` in the prompt response, never from stdout text, so an
+upstream output-format change cannot drift it.
+
+Because every event is content-addressed:
+
+- Replaying a recorded ACP session yields byte-identical journal payload
+  hashes, so the run's replay identity covers the agent's output.
+- A mutated recorded event surfaces as a hash divergence naming the exact step
+  (`compare_acp_journals`), rather than a silent drift a re-parse would miss.
+
+**Conformance.** For an ACP adapter, lifecycle conformance is an event-schema
+fixture (a recorded JSON-RPC frame sequence under
+`tests/fixtures/acp/lifecycle/*.jsonl`) replayed through the same validated,
+content-addressed transport the adapter uses at runtime, replacing the pinned
+stdout golden transcript. See `replay_acp_event_fixture` in
+`bernstein.adapters.conformance`.
+
+The helper surface lives in `bernstein.adapters.acp_channel`
+(`run_acp_channel`, `adapter_speaks_acp`) and the transport core in
+`bernstein.core.protocols.acp.client`. The client-side ACP role is documented
+next to `acp serve` in [interop/acp.md](../interop/acp.md).
 
 ---
 
