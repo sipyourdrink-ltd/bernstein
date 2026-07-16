@@ -6,14 +6,13 @@ import ast
 import inspect
 import json
 import textwrap
-import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from bernstein.core.protocols.mcp.stateless_core import LEGACY_SESSION_HEADER, REMOVAL_DATE
 from bernstein.mcp import remote_transport as remote_transport_module
 from bernstein.mcp.remote_transport import (
-    MCPSession,
     RemoteMCPConfig,
     RemoteMCPConfigError,
     StreamableHTTPTransport,
@@ -113,8 +112,6 @@ class TestRemoteMCPConfig:
         assert cfg.auth_type == "bearer"
         assert cfg.auth_token == ""
         assert cfg.cors_origins == ["http://localhost:*"]
-        assert cfg.max_sessions == 100
-        assert cfg.session_timeout_seconds == 3600
 
     def test_frozen(self, _clear_token_env: None) -> None:
         cfg = RemoteMCPConfig()
@@ -146,24 +143,6 @@ class TestRemoteMCPConfig:
         # is already on-box and the attack surface is equivalent to stdio.
         cfg = RemoteMCPConfig(host="127.0.0.1", auth_type="none")
         assert cfg.host == "127.0.0.1"
-
-
-# ---------------------------------------------------------------------------
-# MCPSession tests
-# ---------------------------------------------------------------------------
-
-
-class TestMCPSession:
-    def test_creation(self) -> None:
-        session = MCPSession(session_id="test-123")
-        assert session.session_id == "test-123"
-        assert session.tools_listed is False
-        assert isinstance(session.created_at, float)
-
-    def test_mutable(self) -> None:
-        session = MCPSession(session_id="test-123")
-        session.tools_listed = True
-        assert session.tools_listed is True
 
 
 # ---------------------------------------------------------------------------
@@ -238,52 +217,35 @@ class TestHTTPAuthEnforcement:
 
 
 # ---------------------------------------------------------------------------
-# Session management tests
+# Stateless serving tests (issue #2506)
 # ---------------------------------------------------------------------------
 
 
-class TestSessionManagement:
+class TestStatelessServing:
     @pytest.mark.anyio
-    async def test_creates_new_session(self, transport: StreamableHTTPTransport) -> None:
-        session = await transport._get_or_create_session(None)
-        assert session.session_id in transport._sessions
-
-    @pytest.mark.anyio
-    async def test_reuses_existing_session(self, transport: StreamableHTTPTransport) -> None:
-        s1 = await transport._get_or_create_session(None)
-        s2 = await transport._get_or_create_session(s1.session_id)
-        assert s1.session_id == s2.session_id
-
-    @pytest.mark.anyio
-    async def test_creates_new_if_id_unknown(self, transport: StreamableHTTPTransport) -> None:
-        s = await transport._get_or_create_session("nonexistent-id")
-        assert s.session_id != "nonexistent-id"
-
-    @pytest.mark.anyio
-    async def test_max_sessions_enforced(self, _clear_token_env: None) -> None:
-        cfg = RemoteMCPConfig(host="127.0.0.1", auth_type="none", max_sessions=2)
-        t = StreamableHTTPTransport(config=cfg)
-        await t._get_or_create_session(None)
-        await t._get_or_create_session(None)
-        with pytest.raises(ValueError, match="Max sessions"):
-            await t._get_or_create_session(None)
-
-    @pytest.mark.anyio
-    async def test_expired_sessions_pruned(self, _clear_token_env: None) -> None:
-        cfg = RemoteMCPConfig(
-            host="127.0.0.1",
-            auth_type="none",
-            max_sessions=1,
-            session_timeout_seconds=0,
+    async def test_no_state_is_retained_between_requests(self, transport: StreamableHTTPTransport) -> None:
+        """The transport instance carries no per-client attribute that a
+        request could populate: the same request is served identically on a
+        fresh instance."""
+        body = _jsonrpc_request("ping")
+        first = await transport.handle_request("POST", "/mcp", {}, body)
+        fresh = StreamableHTTPTransport(
+            config=RemoteMCPConfig(host="127.0.0.1", path="/mcp", auth_type="none"),
+            server_url="https://test:8052",
         )
-        t = StreamableHTTPTransport(config=cfg)
-        s1 = await t._get_or_create_session(None)
-        # Force expiry by backdating.
-        s1.last_active = time.time() - 10
-        # Should prune s1 and create a new one.
-        s2 = await t._get_or_create_session(None)
-        assert s2.session_id != s1.session_id
-        assert len(t._sessions) == 1
+        second = await fresh.handle_request("POST", "/mcp", {}, body)
+        assert first == second
+
+    @pytest.mark.anyio
+    async def test_legacy_session_header_is_ignored_not_echoed(self, transport: StreamableHTTPTransport) -> None:
+        status, headers, _ = await transport.handle_request(
+            "POST",
+            "/mcp",
+            {LEGACY_SESSION_HEADER: "sess-legacy"},
+            _jsonrpc_request("ping"),
+        )
+        assert status == 200
+        assert LEGACY_SESSION_HEADER not in {k.lower() for k in headers}
 
 
 # ---------------------------------------------------------------------------
@@ -314,26 +276,21 @@ class TestHTTPRouting:
         assert status == 501
 
     @pytest.mark.anyio
-    async def test_delete_unknown_session_returns_404(self, transport: StreamableHTTPTransport) -> None:
-        status, _, _ = await transport.handle_request("DELETE", "/mcp", {"mcp-session-id": "no-such"}, b"")
-        assert status == 404
+    async def test_legacy_delete_is_a_shim_noop(self, transport: StreamableHTTPTransport) -> None:
+        """There is no session to close; the legacy lifecycle is acknowledged
+        as a no-op while the compat shim is active (issue #2506)."""
+        status, _, _ = await transport.handle_request("DELETE", "/mcp", {LEGACY_SESSION_HEADER: "no-such"}, b"")
+        assert status == 200
 
     @pytest.mark.anyio
-    async def test_delete_existing_session(self, transport: StreamableHTTPTransport) -> None:
-        # Create a session first.
-        status, headers, _body = await transport.handle_request(
-            "POST",
-            "/mcp",
-            {},
-            _jsonrpc_request("initialize", {"clientInfo": {"name": "test"}}),
+    async def test_legacy_delete_refused_after_shim_window(self, config: RemoteMCPConfig) -> None:
+        expired = StreamableHTTPTransport(
+            config=config,
+            server_url="https://test:8052",
+            today=lambda: REMOVAL_DATE,
         )
-        assert status == 200
-        sid = headers["mcp-session-id"]
-
-        # Delete it.
-        status, _, _ = await transport.handle_request("DELETE", "/mcp", {"mcp-session-id": sid}, b"")
-        assert status == 200
-        assert sid not in transport._sessions
+        status, _, _ = await expired.handle_request("DELETE", "/mcp", {}, b"")
+        assert status == 405
 
 
 # ---------------------------------------------------------------------------
@@ -423,10 +380,11 @@ class TestMCPMethods:
         assert data["result"] == {}
 
     @pytest.mark.anyio
-    async def test_session_id_returned(self, transport: StreamableHTTPTransport) -> None:
+    async def test_no_session_header_returned(self, transport: StreamableHTTPTransport) -> None:
+        """The transport never mints a protocol session id (issue #2506)."""
         body = _jsonrpc_request("ping")
         _, headers, _ = await transport.handle_request("POST", "/mcp", {}, body)
-        assert "mcp-session-id" in headers
+        assert LEGACY_SESSION_HEADER not in {k.lower() for k in headers}
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +470,10 @@ class TestCORSHeaders:
         cfg = RemoteMCPConfig()
         headers = _cors_headers(cfg)
         assert headers["access-control-allow-origin"] == "http://localhost:*"
-        assert "mcp-session-id" in headers["access-control-expose-headers"]
+        # The legacy header stays preflight-allowed for the compat window,
+        # but no response carries it, so nothing is exposed (issue #2506).
+        assert LEGACY_SESSION_HEADER in headers["access-control-allow-headers"]
+        assert "access-control-expose-headers" not in headers
 
     def test_custom_origins(self, _clear_token_env: None) -> None:
         cfg = RemoteMCPConfig(cors_origins=["https://example.com"])

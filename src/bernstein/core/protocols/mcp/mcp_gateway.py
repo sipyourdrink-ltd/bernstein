@@ -9,6 +9,13 @@ Architecture:
 - ToolMetrics: per-tool call/latency/error tracking
 - create_gateway_sse_app: FastAPI SSE server for MCP SSE transport
 
+The SSE app is stateless (issue #2506): responses are correlated to their
+requests by the content-derived span id (from the request ``_meta`` when
+present, otherwise a deterministic projection of the request content), so
+any gateway instance can serve any request with no per-client state. When a
+run journal / audit chain is wired in, every proxied call is anchored as an
+``mcp.stateless_call`` chain entry.
+
 WAL decision_type: "mcp_tool_call"
 WAL inputs:  {method, server_name, tool_name, arguments, request_id}
 WAL output:  {result, error, latency_ms}
@@ -17,16 +24,20 @@ WAL output:  {result, error, latency_ms}
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from bernstein.core.protocols.mcp.stateless_core import anchor_stateless_call, request_span_id
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.wal import WALWriter
 
 
@@ -159,11 +170,15 @@ class MCPGateway:
         replay: GatewayReplay | None = None,
         *,
         server_name: str = "unknown",
+        journal: EventJournal | None = None,
+        audit_chain: AuditChainStore | None = None,
     ) -> None:
         self._upstream_cmd = upstream_cmd
         self._wal_writer = wal_writer
         self._replay = replay
         self._server_name = server_name.strip() or "unknown"
+        self._journal = journal
+        self._audit_chain = audit_chain
         self._metrics: dict[str, ToolMetrics] = {}
         self._proc: asyncio.subprocess.Process | None = None
         self._pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
@@ -310,8 +325,28 @@ class MCPGateway:
 
         latency_ms = (time.monotonic() - t0) * 1000.0
         self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
+        self._anchor_proxied_call(method, params)
 
         return response
+
+    def _anchor_proxied_call(self, method: str, params: dict[str, Any]) -> None:
+        """Anchor a proxied call into the run journal and audit chain.
+
+        Mirrors the WAL record with a chain-anchored continuity record
+        (issue #2506): the call's content-derived ids bind to the journal
+        head, so a verifier reconstructs the proxied call ordering from
+        chain entries alone. Anchoring failures never take the proxy down:
+        a missing anchor is visible to a verifier as a call-index gap.
+        """
+        if self._journal is None:
+            return
+        with contextlib.suppress(Exception):
+            anchor_stateless_call(
+                journal=self._journal,
+                method=method,
+                params=params,
+                chain=self._audit_chain,
+            )
 
     # ------------------------------------------------------------------
     # Transport runners
@@ -359,10 +394,22 @@ class MCPGateway:
 def create_gateway_sse_app(gateway: MCPGateway, *, run_id: str) -> Any:
     """Create a FastAPI SSE app that proxies MCP over HTTP.
 
-    Implements a minimal MCP SSE transport:
-    - ``GET /sse``     - opens SSE stream; sends session endpoint URL as first event
-    - ``POST /message`` - accepts JSON-RPC, forwards through gateway, pushes
-                         response back via SSE
+    Implements a minimal, stateless MCP SSE transport (issue #2506):
+
+    - ``GET /sse``     - opens an SSE stream; the first event names the POST
+                         endpoint (no per-client token in the URL).
+    - ``POST /message`` - accepts JSON-RPC, forwards through the gateway,
+                          and returns the response in the POST body. The
+                          response is correlated to its request by the
+                          content-derived span id (``X-Bernstein-Span-Id``
+                          header and the SSE event ``id`` line), so a client
+                          holding several requests in flight matches each
+                          response without any server-held state.
+
+    Every response is also fanned out to the open SSE streams tagged with
+    its span id, keeping SSE-consuming hosts working. Because correlation is
+    a pure function of the request content, consecutive requests may be
+    served by different app instances with no shared memory.
 
     Args:
         gateway: Configured MCPGateway (already started).
@@ -378,19 +425,18 @@ def create_gateway_sse_app(gateway: MCPGateway, *, run_id: str) -> Any:
     app.state.gateway = gateway
     app.state.run_id = run_id
 
-    # Per-session SSE queues: session_id → asyncio.Queue
-    _sessions: dict[str, asyncio.Queue[str | None]] = {}
+    # Open SSE consumer queues. This is fan-out plumbing for live streams on
+    # this instance, not continuity state: correlation lives in the span id.
+    _streams: set[asyncio.Queue[tuple[str, str] | None]] = set()
 
-    @app.get("/sse")
-    def sse_endpoint(request: Request) -> StreamingResponse:  # type: ignore[misc]
-        """Open an SSE stream and receive an endpoint URL for sending requests."""
-        session_id = uuid.uuid4().hex
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
-        _sessions[session_id] = queue
+    def sse_endpoint(request: Any) -> Any:
+        """Open an SSE stream; responses arrive tagged with their span id."""
+        queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
+        _streams.add(queue)
 
         async def _event_stream() -> Any:
-            # MCP SSE spec: first event tells client where to POST
-            yield f"event: endpoint\ndata: /message?sessionId={session_id}\n\n"
+            # MCP SSE spec: first event tells client where to POST.
+            yield "event: endpoint\ndata: /message\n\n"
             try:
                 while True:
                     if await request.is_disconnected():
@@ -402,9 +448,10 @@ def create_gateway_sse_app(gateway: MCPGateway, *, run_id: str) -> Any:
                         continue
                     if item is None:
                         break
-                    yield f"data: {item}\n\n"
+                    span_id, payload = item
+                    yield f"id: {span_id}\ndata: {payload}\n\n"
             finally:
-                _sessions.pop(session_id, None)
+                _streams.discard(queue)
 
         return StreamingResponse(
             _event_stream(),
@@ -415,22 +462,35 @@ def create_gateway_sse_app(gateway: MCPGateway, *, run_id: str) -> Any:
             },
         )
 
-    @app.post("/message")
-    async def message_endpoint(request: Request) -> JSONResponse:  # type: ignore[misc]
-        """Accept a JSON-RPC request and push the response to the SSE stream."""
-        session_id = request.query_params.get("sessionId", "")
+    async def message_endpoint(request: Any) -> Any:
+        """Serve a JSON-RPC request, correlated by content-derived span id."""
         body: dict[str, Any] = await request.json()
+        span_id = request_span_id(body)
 
         response = await gateway.handle_jsonrpc(body)
 
-        if response is not None and session_id in _sessions:
-            await _sessions[session_id].put(json.dumps(response, separators=(",", ":")))
+        if response is None:
+            # Notification: acknowledged, nothing to correlate.
+            return JSONResponse({"status": "accepted"}, headers={"X-Bernstein-Span-Id": span_id})
 
-        return JSONResponse({"status": "accepted"})
+        payload = json.dumps(response, separators=(",", ":"))
+        for queue in list(_streams):
+            await queue.put((span_id, payload))
+        return JSONResponse(response, headers={"X-Bernstein-Span-Id": span_id})
+
+    # ``from __future__ import annotations`` stringifies the endpoint
+    # annotations and FastAPI resolves them against module globals, where the
+    # lazily imported fastapi names do not exist. Bind real annotation
+    # objects so the Request parameter is injected rather than treated as a
+    # required query field.
+    sse_endpoint.__annotations__ = {"request": Request, "return": StreamingResponse}
+    message_endpoint.__annotations__ = {"request": Request, "return": JSONResponse}
+    app.get("/sse")(sse_endpoint)
+    app.post("/message")(message_endpoint)
 
     @app.get("/gateway/metrics")
-    def metrics_endpoint(request: Request) -> JSONResponse:  # type: ignore[misc]
-        """Return current per-tool metrics for this gateway session."""
+    def metrics_endpoint() -> Any:
+        """Return current per-tool metrics for this gateway process."""
         return JSONResponse(
             {
                 "run_id": run_id,

@@ -2,6 +2,15 @@
 
 Implements the MCP streamable HTTP transport spec for remote deployment.
 Can be used with any ASGI server (uvicorn, Cloudflare Workers via Python worker).
+
+Stateless serving (issue #2506): the transport keeps no per-client session
+store. Every request is served from its body plus ``_meta`` alone, so any
+transport instance can serve any request with no shared memory. Cross-call
+continuity is anchored in the run journal and the audit chain (see
+``anchor_stateless_call``), not in a session. A legacy client that still
+sends the removed protocol-session header is accepted as a no-op behind the
+compat shim until the shim's removal date, and never receives a session
+header back.
 """
 
 from __future__ import annotations
@@ -11,18 +20,28 @@ import hmac
 import json
 import logging
 import os
-import time
-import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
+from bernstein.core.protocols.mcp.stateless_core import (
+    LEGACY_SESSION_HEADER,
+    REMOVAL_DATE,
+    anchor_stateless_call,
+    compat_shim_active,
+    legacy_session_header_value,
+    months_since_deprecation,
+)
 from bernstein.mcp.streaming import InFlightRegistry, cancelled_envelope
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import date
+
+    from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +117,6 @@ class RemoteMCPConfig:
     auth_type: str = "bearer"  # "none", "bearer", "oauth"
     auth_token: str = ""
     cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:*"])
-    max_sessions: int = 100
-    session_timeout_seconds: int = 3600
 
     def __post_init__(self) -> None:
         """Enforce safe-by-default policy and pick up env-provided tokens."""
@@ -128,17 +145,6 @@ class RemoteMCPConfig:
                 "a public interface."
             )
             raise RemoteMCPConfigError(msg)
-
-
-@dataclass
-class MCPSession:
-    """Per-client MCP session state."""
-
-    session_id: str
-    created_at: float = field(default_factory=time.time)
-    last_active: float = field(default_factory=time.time)
-    tools_listed: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 def _jsonrpc_error(
@@ -303,21 +309,44 @@ _PROMPT_DEFS: list[dict[str, Any]] = [
 class StreamableHTTPTransport:
     """MCP streamable HTTP transport implementation.
 
-    Handles the HTTP request/response cycle for MCP messages using
-    the streamable HTTP transport spec (POST for requests, GET for SSE
-    streams, DELETE to close sessions).
+    Handles the HTTP request/response cycle for MCP messages using the
+    streamable HTTP transport spec (POST for requests). No session store
+    exists: every request is served from its body plus ``_meta`` alone, and
+    served calls are anchored into the run journal / audit chain when those
+    are wired in (issue #2506).
+
+    Args:
+        config: Transport configuration.
+        server_url: Bernstein task server URL tool calls proxy to.
+        journal: Optional run journal; every served ``tools/call`` becomes an
+            ordered ``mcp.stateless_call`` journal entry.
+        audit_chain: Optional audit chain store; requires ``journal``. Every
+            served ``tools/call`` is anchored as an ``mcp.stateless_call``
+            chain entry binding its content-derived ids to the journal head.
+        today: Clock override for the legacy-session compat shim window
+            (tests pin it; production uses the current date).
     """
 
     def __init__(
         self,
         config: RemoteMCPConfig,
         server_url: str = _DEFAULT_SERVER_URL,
+        *,
+        journal: EventJournal | None = None,
+        audit_chain: AuditChainStore | None = None,
+        today: Callable[[], date] | None = None,
     ) -> None:
         self._config = config
         self._server_url = server_url
-        self._sessions: dict[str, MCPSession] = {}
-        self._lock = asyncio.Lock()
+        self._journal = journal
+        self._audit_chain = audit_chain
+        self._today = today
         self._inflight = InFlightRegistry()
+
+    def _legacy_session_shim_active(self) -> bool:
+        """Whether the legacy protocol-session shim still accepts the header."""
+        today = self._today() if self._today is not None else None
+        return compat_shim_active("sessions", months_since_deprecation=months_since_deprecation(today))
 
     # -- public API ----------------------------------------------------------
 
@@ -358,16 +387,29 @@ class StreamableHTTPTransport:
                 b'{"error":"unauthorized"}',
             )
 
+        # Legacy protocol-session shim: the removed header is accepted (and
+        # ignored) for a bounded window, then refused with the removal date.
+        if legacy_session_header_value(headers) is not None and not self._legacy_session_shim_active():
+            message = (
+                "protocol sessions were removed by the stateless MCP spec revision; "
+                f"the {LEGACY_SESSION_HEADER} compatibility window ended on {REMOVAL_DATE.isoformat()}"
+            )
+            return (
+                400,
+                {"content-type": _CONTENT_TYPE_JSON},
+                json.dumps({"error": message}).encode(),
+            )
+
         if method == "POST":
-            return await self._handle_post(headers, body)
+            return await self._handle_post(body)
         if method == "GET":
-            return self._handle_get(headers)
+            return self._handle_get()
         if method == "DELETE":
-            return await self._handle_delete(headers)
+            return self._handle_delete()
 
         return (
             405,
-            {"content-type": _CONTENT_TYPE_JSON, "allow": "GET, POST, DELETE"},
+            {"content-type": _CONTENT_TYPE_JSON, "allow": "GET, POST, OPTIONS"},
             b'{"error":"method not allowed"}',
         )
 
@@ -375,22 +417,20 @@ class StreamableHTTPTransport:
 
     async def _handle_post(
         self,
-        headers: dict[str, str],
         body: bytes,
     ) -> tuple[int, dict[str, str], bytes]:
-        """Handle POST: JSON-RPC request/notification."""
+        """Handle POST: JSON-RPC request/notification.
+
+        The request is served from its body alone; no session is looked up
+        or created, and no session header is returned.
+        """
         try:
             message = json.loads(body)
         except (json.JSONDecodeError, UnicodeDecodeError):
             err = _jsonrpc_error(_PARSE_ERROR, "Parse error")
             return (400, {"content-type": _CONTENT_TYPE_JSON}, json.dumps(err).encode())
 
-        session_id = headers.get("mcp-session-id")
-        session = await self._get_or_create_session(session_id)
-        resp_headers: dict[str, str] = {
-            "content-type": _CONTENT_TYPE_JSON,
-            "mcp-session-id": session.session_id,
-        }
+        resp_headers: dict[str, str] = {"content-type": _CONTENT_TYPE_JSON}
 
         # Batch support.
         if isinstance(message, list):
@@ -399,7 +439,7 @@ class StreamableHTTPTransport:
                 if not isinstance(msg, dict):
                     result = _jsonrpc_error(_INVALID_REQUEST, "Invalid request")
                 else:
-                    result = await self._handle_jsonrpc(session, cast("dict[str, Any]", msg))
+                    result = await self._handle_jsonrpc(cast("dict[str, Any]", msg))
                 if result is not None:
                     results.append(result)
             if not results:
@@ -411,16 +451,13 @@ class StreamableHTTPTransport:
             return (200, resp_headers, json.dumps(err).encode())
 
         message_dict = cast("dict[str, Any]", message)
-        result = await self._handle_jsonrpc(session, message_dict)
+        result = await self._handle_jsonrpc(message_dict)
         if result is None:
             # Notification - no response.
             return (204, resp_headers, b"")
         return (200, resp_headers, json.dumps(result).encode())
 
-    def _handle_get(
-        self,
-        headers: dict[str, str],
-    ) -> tuple[int, dict[str, str], bytes]:
+    def _handle_get(self) -> tuple[int, dict[str, str], bytes]:
         """Handle GET: server-initiated SSE stream endpoint (stub - 501).
 
         Client-to-server streaming, cancellation, and partial-result
@@ -428,54 +465,42 @@ class StreamableHTTPTransport:
         ``notifications/cancelled``). A server-initiated SSE push channel is
         not implemented, so GET still returns 501 with a pointer to POST.
         """
-        session_id = headers.get("mcp-session-id")
-        if session_id and session_id not in self._sessions:
-            return (
-                404,
-                {"content-type": _CONTENT_TYPE_JSON},
-                b'{"error":"session not found"}',
-            )
-        # Server-initiated SSE not implemented; cancellation is over POST.
         return (
             501,
             {"content-type": _CONTENT_TYPE_JSON},
             b'{"error":"server-initiated SSE not implemented - use POST and notifications/cancelled"}',
         )
 
-    async def _handle_delete(
-        self,
-        headers: dict[str, str],
-    ) -> tuple[int, dict[str, str], bytes]:
-        """Handle DELETE: close session."""
-        session_id = headers.get("mcp-session-id")
-        if not session_id or session_id not in self._sessions:
-            return (
-                404,
-                {"content-type": _CONTENT_TYPE_JSON},
-                b'{"error":"session not found"}',
-            )
-        async with self._lock:
-            del self._sessions[session_id]
-        return (200, {"content-type": _CONTENT_TYPE_JSON}, b'{"status":"session closed"}')
+    def _handle_delete(self) -> tuple[int, dict[str, str], bytes]:
+        """Handle DELETE: the removed session-close lifecycle.
+
+        While the compat shim is active a legacy close request is
+        acknowledged as a no-op (there is nothing to close); afterwards the
+        method is gone. The shim-expiry path for a request that still
+        carries the legacy header is handled in :meth:`handle_request`.
+        """
+        if self._legacy_session_shim_active():
+            return (200, {"content-type": _CONTENT_TYPE_JSON}, b'{"status":"ok"}')
+        return (
+            405,
+            {"content-type": _CONTENT_TYPE_JSON, "allow": "GET, POST, OPTIONS"},
+            b'{"error":"method not allowed"}',
+        )
 
     # -- JSON-RPC dispatch ---------------------------------------------------
 
     async def _handle_jsonrpc(
         self,
-        session: MCPSession,
         message: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Process a single JSON-RPC message.
+        """Process a single JSON-RPC message from its body alone.
 
         Args:
-            session: Current MCP session.
             message: Parsed JSON-RPC message.
 
         Returns:
             JSON-RPC response dict, or None for notifications.
         """
-        session.last_active = time.time()
-
         if message.get("jsonrpc") != "2.0":
             return _jsonrpc_error(_INVALID_REQUEST, "Invalid JSON-RPC version")
 
@@ -494,11 +519,11 @@ class StreamableHTTPTransport:
 
         try:
             # tools/call needs its JSON-RPC id so the call can be tracked for
-            # cancellation; other handlers take only (session, params).
+            # cancellation; other handlers take only (params).
             if method == "tools/call":
-                result = await self._method_tools_call(session, params, req_id)
+                result = await self._method_tools_call(params, req_id)
             else:
-                result = await handler(session, params)
+                result = await handler(params)
         except Exception as exc:
             logger.exception("Error handling method %s", method)
             if is_notification:
@@ -508,6 +533,27 @@ class StreamableHTTPTransport:
         if is_notification:
             return None
         return _jsonrpc_result(result, req_id)
+
+    def _anchor_served_call(self, method: str, params: dict[str, Any]) -> None:
+        """Anchor a served call into the run journal and audit chain.
+
+        The journal row and chain entry replace the deleted session store as
+        the continuity record: ordering reconstructs from chain entries
+        alone (issue #2506). Anchoring failures are logged, not raised, so a
+        full audit volume cannot take request serving down; the gap is still
+        visible to a verifier as a missing call index.
+        """
+        if self._journal is None:
+            return
+        try:
+            anchor_stateless_call(
+                journal=self._journal,
+                method=method,
+                params=params,
+                chain=self._audit_chain,
+            )
+        except Exception:
+            logger.exception("Failed to anchor mcp.stateless_call for %s", method)
 
     def _get_method_handler(self, method: str | None) -> Any:
         """Look up handler for a JSON-RPC method name."""
@@ -527,19 +573,20 @@ class StreamableHTTPTransport:
 
     async def _method_initialize(
         self,
-        session: MCPSession,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle 'initialize' - return server info and capabilities.
 
-        Alongside the static spec ``capabilities`` object, the result carries
-        a runtime ``capabilityCard`` describing the live transports, auth
-        modes, active tool tier, and cost-meter state so a client can decide
-        how to connect without trial and error.
+        Retained for clients that still send the legacy handshake; the
+        result carries no session identity. Alongside the static spec
+        ``capabilities`` object, the result carries a runtime
+        ``capabilityCard`` describing the live transports, auth modes,
+        active tool tier, and cost-meter state so a client can decide how to
+        connect without trial and error.
         """
         from bernstein.mcp.capability import build_capability_card
 
-        session.metadata["client_info"] = params.get("clientInfo", {})
+        _ = params
         return {
             "protocolVersion": "2025-03-26",
             "serverInfo": _SERVER_INFO,
@@ -549,16 +596,14 @@ class StreamableHTTPTransport:
 
     async def _method_tools_list(
         self,
-        session: MCPSession,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle 'tools/list' - return available tools."""
-        session.tools_listed = True
+        _ = params
         return {"tools": _TOOL_DEFS}
 
     async def _method_tools_call(
         self,
-        session: MCPSession,
         params: dict[str, Any],
         req_id: int | str | None = None,
     ) -> dict[str, Any]:
@@ -573,11 +618,16 @@ class StreamableHTTPTransport:
         (latency, cost, trace id, status) so the remote transport emits the
         same observable shape as the stdio/SSE server. The envelope is a no-op
         when the meter is disabled via ``BERNSTEIN_MCP_COST_METER``.
+
+        When a journal / audit chain is wired in, the served call is
+        anchored as an ``mcp.stateless_call`` entry before execution, so the
+        chain records the call even if the tool itself fails (issue #2506).
         """
         from bernstein.mcp.cost_meter import measure_call, wrap_envelope
 
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
+        self._anchor_served_call("tools/call", params)
 
         # Untracked calls (no id) still execute, just without cancel support.
         call = await self._inflight.register(req_id, tool_name) if req_id is not None else None
@@ -631,7 +681,6 @@ class StreamableHTTPTransport:
 
     async def _method_prompts_list(
         self,
-        session: MCPSession,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle 'prompts/list' - return the built-in prompt catalogue.
@@ -640,17 +689,16 @@ class StreamableHTTPTransport:
         picker. The catalogue is the same one the FastMCP server registers,
         kept in sync via ``_PROMPT_DEFS`` on this transport.
         """
+        _ = params
         return {"prompts": _PROMPT_DEFS}
 
     async def _method_prompts_get(
         self,
-        session: MCPSession,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle 'prompts/get' - render a named prompt with arguments.
 
         Args:
-            session: Current MCP session.
             params: JSON-RPC params carrying ``name`` and optional ``arguments``.
 
         Returns:
@@ -718,7 +766,6 @@ class StreamableHTTPTransport:
 
     async def _method_cancelled(
         self,
-        session: MCPSession,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle 'notifications/cancelled' - stop an in-flight tool call.
@@ -736,18 +783,18 @@ class StreamableHTTPTransport:
 
     async def _method_ping(
         self,
-        session: MCPSession,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle 'ping' - return empty result."""
+        _ = params
         return {}
 
     async def _method_noop(
         self,
-        session: MCPSession,
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle notifications that need no response."""
+        _ = params
         return {}
 
     # -- Tool execution (proxies to Bernstein task server) --------------------
@@ -942,59 +989,33 @@ class StreamableHTTPTransport:
         # Unknown auth type - deny.
         return False
 
-    # -- Session management --------------------------------------------------
-
-    async def _get_or_create_session(self, session_id: str | None) -> MCPSession:
-        """Get existing session or create new one.
-
-        Args:
-            session_id: Existing session ID from headers, or None.
-
-        Returns:
-            Active MCPSession.
-
-        Raises:
-            ValueError: If max sessions exceeded.
-        """
-        async with self._lock:
-            # Prune expired sessions.
-            now = time.time()
-            expired = [
-                sid for sid, s in self._sessions.items() if now - s.last_active > self._config.session_timeout_seconds
-            ]
-            for sid in expired:
-                del self._sessions[sid]
-
-            if session_id and session_id in self._sessions:
-                session = self._sessions[session_id]
-                session.last_active = now
-                return session
-
-            if len(self._sessions) >= self._config.max_sessions:
-                msg = "Max sessions exceeded"
-                raise ValueError(msg)
-
-            new_id = str(uuid.uuid4())
-            session = MCPSession(session_id=new_id)
-            self._sessions[new_id] = session
-            return session
-
 
 def create_asgi_app(
     server_url: str = _DEFAULT_SERVER_URL,
     config: RemoteMCPConfig | None = None,
+    *,
+    journal: EventJournal | None = None,
+    audit_chain: AuditChainStore | None = None,
 ) -> Any:
     """Create ASGI application wrapping Bernstein MCP server with streamable HTTP transport.
 
     Args:
         server_url: Bernstein task server URL.
         config: Transport configuration. Uses defaults if None.
+        journal: Optional run journal; served ``tools/call`` requests become
+            ordered ``mcp.stateless_call`` journal entries.
+        audit_chain: Optional audit chain store anchoring every served call.
 
     Returns:
         ASGI application callable.
     """
     cfg = config or RemoteMCPConfig()
-    transport = StreamableHTTPTransport(config=cfg, server_url=server_url)
+    transport = StreamableHTTPTransport(
+        config=cfg,
+        server_url=server_url,
+        journal=journal,
+        audit_chain=audit_chain,
+    )
 
     async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
         """ASGI application entry point."""
@@ -1037,13 +1058,18 @@ def create_asgi_app(
 
 
 def _cors_headers(config: RemoteMCPConfig) -> dict[str, str]:
-    """Build CORS response headers."""
+    """Build CORS response headers.
+
+    The legacy protocol-session header stays preflight-allowed so browsers
+    running older clients can still send it during the compat window (the
+    transport ignores it); it is never exposed because no response carries
+    it.
+    """
     origin = ", ".join(config.cors_origins)
     return {
         "access-control-allow-origin": origin,
         "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-        "access-control-allow-headers": "content-type, authorization, mcp-session-id",
-        "access-control-expose-headers": "mcp-session-id",
+        "access-control-allow-headers": f"content-type, authorization, {LEGACY_SESSION_HEADER}",
     }
 
 
