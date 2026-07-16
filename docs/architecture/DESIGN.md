@@ -303,4 +303,4 @@ transition table and events reference.
 
 - This file is not a roadmap backlog.
 - This file is not a generated protocol matrix.
-- This file is not a per-command CLI reference (see `GETTING_STARTED.md` and `bernstein --help`).
+- This file is not a per-command CLI reference (see [`getting-started/install.md`](../getting-started/install.md) and `bernstein --help`).

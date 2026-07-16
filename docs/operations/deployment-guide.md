@@ -953,7 +953,7 @@ print(status.healthy)        # True / False
 3. Install the new version: `pip install --upgrade bernstein`
 4. Start: `bernstein run`
 
-State format is forward-compatible between minor versions. For major version upgrades, check `docs/migrations/migration-guides.md` for breaking changes.
+State format is forward-compatible between minor versions. For major version upgrades, check [`operations/migrations.md`](migrations.md) for breaking changes.
 
 To roll back: `pip install bernstein==<previous-version>` and restore `.sdd.backup/`.
 

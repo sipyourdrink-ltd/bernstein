@@ -1,7 +1,7 @@
 # Adapter contracts
 
 Bernstein wraps upstream coding-agent CLIs through a per-CLI adapter
-under [`src/bernstein/adapters/`](../../src/bernstein/adapters/). Each
+under [`src/bernstein/adapters/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/src/bernstein/adapters/). Each
 adapter passes a small set of flags / subcommands that the upstream CLI
 must keep advertising. When a release drops or renames one of those
 flags the adapter breaks silently - the spawn still runs but emits
@@ -135,7 +135,7 @@ the listed model IDs are still served.
 * **Not a full integration test.** The check confirms the surface the
   adapter relies on still exists. It does not verify the CLI actually
   produces correct output - that is the job of the adapter unit
-  suite under [`tests/unit/adapters/`](../../tests/unit/adapters/).
+  suite under [`tests/unit/adapters/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/tests/unit/adapters/).
 * **Not auto-fixable.** When drift is detected the workflow opens a
   tracking issue; an operator updates the adapter (or the contract)
   in a follow-up PR.

@@ -214,7 +214,7 @@ If you need actual tenant isolation:
   and the bulk-action surface (see `security/security-hardening.md`).
 
 For request-time permission enforcement inside a single project, see
-`architecture/permission-modes.md` once published.
+[`architecture/permission-modes.md`](../architecture/permission-modes.md).
 
 ---
 

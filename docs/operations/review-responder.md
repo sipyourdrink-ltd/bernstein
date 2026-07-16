@@ -11,10 +11,9 @@ The CLI lives in `cli/commands/review_responder_cmd.py:46`
 (`@click.group("review-responder")`). Heavy logic lives in
 `core/review_responder/` (10 files). The CLI is intentionally thin -
 it just glues click flags to the responder primitives and prints a
-status summary (`review_responder_cmd.py:1-16`).
+status summary (`review_responder_cmd.py`).
 
-A sibling daemon - [`operations/autofix.md`](autofix.md) once
-published - handles the "CI failed, retry" path. The two are designed
+A sibling daemon - [`operations/autofix.md`](autofix.md) - handles the "CI failed, retry" path. The two are designed
 to compose: autofix repairs the PR, review-responder closes out the
 remaining review comments.
 
@@ -239,7 +238,7 @@ have already been processed (that is the dedup queue's job).
 The review responder handles the "review comments left on a PR" half
 of the maintenance loop. The complementary half - "CI failed on the
 PR, retry the failure" - lives in the
-[autofix daemon](autofix.md) (when published; sources:
+[autofix daemon](autofix.md) (sources:
 `core/autofix/`, `cli/commands/autofix_cmd.py`).
 
 A typical setup runs both:

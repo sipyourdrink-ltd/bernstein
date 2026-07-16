@@ -238,7 +238,7 @@ Configure HIPAA mode end-to-end by combining:
 - Environment-variable isolation
   (`operations/env-isolation.md`) so PHI never leaks via inherited
   shell state.
-- Credential vault (`operations/secrets.md` once published) for any
+- Credential vault (see [`operations/secrets.md`](secrets.md)) for any
   PHI-bearing credentials.
 
 For provider-side data residency - "PHI never leaves Anthropic", "no

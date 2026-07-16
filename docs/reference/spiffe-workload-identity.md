@@ -70,7 +70,7 @@ recomputed hash no longer matches the receipt.
 ## mTLS on the task server
 
 An `X509Svid` projects onto the existing cluster
-[`TLSConfig`](../../src/bernstein/core/protocols/cluster/cluster_tls.py), so
+[`TLSConfig`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/protocols/cluster/cluster_tls.py), so
 SPIRE SVIDs drive the same mutual-TLS enforcement the task server already uses
 (uvicorn `--ssl-*`). `svid_tls_config` writes the SVID to disk with an
 owner-only (`0o600`) private key and returns a ready `TLSConfig` whose
