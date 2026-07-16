@@ -13,7 +13,8 @@ of on the public issue tracker.
 | Workflow | `.github/workflows/sonar-code-scanning.yml` (daily cron + manual dispatch) |
 | Upload | `github/codeql-action/upload-sarif` with `category: sonarqube` |
 | Output | SARIF 2.1.0 uploaded to the Security tab; no files committed |
-| Covers | issues of every type (BUG, VULNERABILITY, CODE_SMELL) and security hotspots |
+| Covers | security- and reliability-relevant findings (VULNERABILITY, SECURITY_HOTSPOT, BUG) by default; pure-maintainability CODE_SMELL findings stay in the SonarQube dashboard |
+| Opt-in | `--sarif-include-code-smells` emits every type, including CODE_SMELL |
 
 ## Env vars
 
@@ -32,17 +33,26 @@ variables and `SONAR_TOKEN` from a repository secret.
 1. The emitter reuses the same Sonar client the sweeper uses: it pages
    `/api/issues/search` for issues of every type and severity and
    `/api/hotspots/search` for security hotspots.
-2. Each finding becomes a SARIF result. The Sonar component key has its
-   project prefix stripped (`bernstein:src/...` -> `src/...`) so the
+2. The finding set is scoped to the Security tab's remit before the
+   document is built: only security- and reliability-relevant types
+   (VULNERABILITY, SECURITY_HOTSPOT, BUG) are kept. Pure-maintainability
+   CODE_SMELL findings are dropped so the Security tab is not diluted;
+   they remain visible in the SonarQube dashboard, which is their home.
+   This matters because code-scanning dismissals persist by fingerprint,
+   and a smell's fingerprint shifts when surrounding code moves, so a
+   dismissed smell would otherwise reappear as a fresh alert. Pass
+   `--sarif-include-code-smells` to export the full set.
+4. Each kept finding becomes a SARIF result. The Sonar component key has
+   its project prefix stripped (`bernstein:src/...` -> `src/...`) so the
    `artifactLocation.uri` is repo-relative and code scanning can anchor
    it to a line.
-3. Each unique rule becomes a SARIF `rules[]` entry with a `helpUri`
+5. Each unique rule becomes a SARIF `rules[]` entry with a `helpUri`
    back to the Sonar rule page. Vulnerabilities and hotspots also carry a
    `security-severity` property (a 0-10 value mapped from the Sonar
    severity or hotspot probability) so GitHub buckets them correctly.
-4. Every result carries `partialFingerprints.sonarFindingKey` (the Sonar
+6. Every result carries `partialFingerprints.sonarFindingKey` (the Sonar
    issue key) so code scanning dedup is stable across runs.
-5. The output is deterministic: rules and results are sorted on stable
+7. The output is deterministic: rules and results are sorted on stable
    keys, so an unchanged finding set produces byte-identical SARIF.
 
 The workflow uploads the SARIF via `github/codeql-action/upload-sarif`
@@ -61,6 +71,12 @@ SONAR_HOST_URL=... SONAR_TOKEN=... \
 uv run python scripts/sweep_sonar_findings.py \
   --emit-sarif sonar.sarif \
   --fixture tests/unit/sweep/fixtures/issues_search.json
+
+# Include pure-maintainability CODE_SMELL findings too (full surface).
+uv run python scripts/sweep_sonar_findings.py \
+  --emit-sarif sonar.sarif \
+  --fixture tests/unit/sweep/fixtures/issues_search.json \
+  --sarif-include-code-smells
 
 # Inspect the result.
 python -c "import json; d=json.load(open('sonar.sarif')); \
@@ -87,7 +103,9 @@ uv run pytest tests/unit/sweep/ -q
 
 The suite covers the SARIF emitter (required 2.1.0 structure, project-key
 prefix stripping, the VULNERABILITY -> error + `security-severity`
-mapping, security-hotspot handling, and byte-for-byte determinism) plus
+mapping, security-hotspot handling, the default security scope that drops
+CODE_SMELL findings while keeping VULNERABILITY/SECURITY_HOTSPOT/BUG, the
+`--sarif-include-code-smells` opt-in, and byte-for-byte determinism) plus
 the local backlog sweep (de-dup, idempotent double-run, severity filter,
 per-day cap, the rule-family blurb guard, exclusive-create emission, and
 the HTTP retry on 5xx/429).
