@@ -596,6 +596,13 @@ class Orchestrator:
         # gate.
         self._recorder = EventJournal(run_id=run_id, sdd_dir=workdir / ".sdd")
 
+        # Providers whose mutation-observability capability has been
+        # recorded into the journal this run (issue #2507). One
+        # ``provider_state_capability`` entry per provider per run keeps an
+        # absence of mutation entries distinguishable from an inability to
+        # observe them.
+        self._mutation_capability_recorded: set[str] = set()
+
         # Replay gateway: captures LLM + tool dispatch responses into
         # .sdd/runs/{run_id}/events.jsonl so a run can be re-executed
         # against recorded fixtures. This is the fixture-replay engine, a
@@ -4774,6 +4781,7 @@ class Orchestrator:
             session = self._agents.get(session_id)
             if session is None:
                 continue
+            self._record_mutation_capability_once(session)
             self._recorder.record(
                 "agent_spawned",
                 agent_id=session.id,
@@ -4809,10 +4817,69 @@ class Orchestrator:
             self._recorder.record("task_verification_failed", task_id=task_id, failed_signals=failed_signals)
 
         for agent_id in result.reaped:
+            self._record_provider_mutations_for(agent_id)
             self._recorder.record("agent_reaped", agent_id=agent_id)
 
         for task_id in result.retried:
             self._recorder.record("task_retried", task_id=task_id)
+
+    def _record_mutation_capability_once(self, session: AgentSession) -> None:
+        """Record a provider's mutation-observability capability once per run.
+
+        Issue #2507: the adapter contract declares whether provider-side
+        context mutations are observable at all. Recording the declaration
+        into the journal keeps an absence of mutation entries
+        distinguishable from an inability to see them. Failures are logged
+        and swallowed: capability recording must never break a spawn tick.
+        """
+        key = (session.provider or "").strip() or "default"
+        if key in self._mutation_capability_recorded:
+            return
+        self._mutation_capability_recorded.add(key)
+        try:
+            from bernstein.core.replay.provider_state import (
+                capability_for_provider,
+                record_mutation_capability,
+            )
+
+            model = session.model_config.model if session.model_config else ""
+            adapter_name, capability = capability_for_provider(session.provider, model)
+            record_mutation_capability(self._recorder, adapter=adapter_name, capability=capability)
+        except Exception as exc:
+            logger.warning("provider-state: capability recording failed: %s", type(exc).__name__)
+
+    def _record_provider_mutations_for(self, agent_id: str) -> None:
+        """Chain a reaped agent's observed provider-side mutations (issue #2507).
+
+        Reads the mutation signals the adapter observed for the session and
+        chains each one into the run journal as a content-addressed
+        ``provider_state_mutation`` entry, before the ``agent_reaped`` event,
+        so nothing downstream builds on unrecorded state. In deterministic
+        modes the entries are flagged and replay verification fails closed.
+        Failures are logged and swallowed: recording must never break a tick.
+        """
+        session = self._agents.get(agent_id)
+        if session is None:
+            return
+        try:
+            from bernstein.adapters.registry import adapter_name_for_provider, get_adapter
+            from bernstein.core.replay.provider_state import record_agent_mutations
+
+            model = session.model_config.model if session.model_config else ""
+            adapter_name = adapter_name_for_provider(session.provider, model)
+            if not adapter_name:
+                return
+            adapter = get_adapter(adapter_name)
+            signals = adapter.observed_provider_mutations(self._workdir, session.id)
+            if not signals:
+                return
+            record_agent_mutations(self._recorder, signals, agent_id=agent_id)
+        except Exception as exc:
+            logger.warning(
+                "provider-state: mutation recording failed for agent %s: %s",
+                agent_id,
+                type(exc).__name__,
+            )
 
     def _log_summary(self, result: TickResult) -> None:
         """Write a one-line summary and agent state snapshot each tick."""

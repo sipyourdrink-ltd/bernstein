@@ -25,7 +25,13 @@ from collections.abc import Mapping  # noqa: TC003 - runtime use in ClassVar ann
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.base import (
+    DEFAULT_TIMEOUT_SECONDS,
+    MUTATION_OBSERVABILITY_OBSERVED,
+    CLIAdapter,
+    SpawnResult,
+    build_worker_cmd,
+)
 from bernstein.adapters.claude_agents import build_agents_json
 
 # Re-export helpers that were inlined here before split them
@@ -288,6 +294,13 @@ class ClaudeCodeAdapter(CLIAdapter):
     # :mod:`bernstein.core.orchestration.commit_completion`.
     supports_session_continuation = True
 
+    # Provider-side context mutations (compaction boundaries and similar
+    # opaque state markers) surface as stream-json ``system`` events; the
+    # wrapper persists each one to a per-session sidecar (issue #2507).
+    # The declaration is recorded per run in the replay journal, so an
+    # absence of mutation entries is distinguishable from blindness.
+    provider_mutation_observability = MUTATION_OBSERVABILITY_OBSERVED
+
     # Track Popen objects for reliable is_alive() via poll()
     _procs: ClassVar[dict[int, subprocess.Popen[bytes]]] = {}
     _wrapper_pids: ClassVar[dict[int, int]] = {}  # claude_pid → wrapper_pid
@@ -525,6 +538,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         tokens_path: str = "",
         heartbeat_path: str = "",
         completion_path: str = "",
+        mutation_path: str = "",
     ) -> str:
         """Return the stream-json → human-readable log converter script.
 
@@ -539,13 +553,63 @@ class ClaudeCodeAdapter(CLIAdapter):
             tokens_path: Absolute path to the ``.tokens`` sidecar file.
             heartbeat_path: Absolute path to the heartbeat file (touched on each event).
             completion_path: Absolute path to the completion marker file.
+            mutation_path: Absolute path to the provider-state mutation
+                sidecar (issue #2507); empty disables it.
         """
         return build_wrapper_script(
             session_id=session_id,
             tokens_path=tokens_path,
             heartbeat_path=heartbeat_path,
             completion_path=completion_path,
+            mutation_path=mutation_path,
         )
+
+    @staticmethod
+    def _mutation_sidecar_path(workdir: Path, session_id: str) -> Path:
+        """Return the per-session provider-state mutation sidecar path."""
+        return workdir / ".sdd" / "runtime" / "provider_state" / f"{session_id}.jsonl"
+
+    def observed_provider_mutations(self, workdir: Path, session_id: str) -> list[dict[str, Any]]:
+        """Return the provider-side mutation signals persisted for a session.
+
+        Reads the per-session sidecar the wrapper script appends to
+        (issue #2507). Each row is ``{"kind": str, "detail": dict}`` in
+        stream observation order; malformed rows are skipped so a partial
+        trailing write cannot wedge the reader.
+
+        Args:
+            workdir: Agent working directory (root of ``.sdd``).
+            session_id: The Bernstein session id the agent ran under.
+
+        Returns:
+            Observed mutation signals in stream order.
+        """
+        path = self._mutation_sidecar_path(workdir, session_id)
+        signals: list[dict[str, Any]] = []
+        if not path.exists():
+            return signals
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return signals
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict) or not row.get("kind"):
+                continue
+            detail = row.get("detail")
+            signals.append(
+                {
+                    "kind": str(row["kind"]),
+                    "detail": detail if isinstance(detail, dict) else {},
+                }
+            )
+        return signals
 
     @staticmethod
     def _record_compaction_state(workdir: Path, session_id: str, *, compaction_disabled: bool) -> None:
@@ -579,6 +643,13 @@ class ClaudeCodeAdapter(CLIAdapter):
                 # this deterministic/replay run. It records the policy we
                 # applied, not a proof the provider honoured it.
                 "compaction_enabled": not compaction_disabled,
+                # Provider-side coverage (issue #2507): this adapter observes
+                # provider-side mutation signals and persists each one to the
+                # per-session sidecar, from which the orchestrator chains
+                # content-addressed ``provider_state_mutation`` entries into
+                # the replay journal. Folded into the same fingerprint path
+                # so the observation policy is part of the run identity.
+                "mutation_observability": MUTATION_OBSERVABILITY_OBSERVED,
             }
             state_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         except OSError as exc:  # pragma: no cover - best-effort, never blocks spawn
@@ -851,11 +922,18 @@ class ClaudeCodeAdapter(CLIAdapter):
         completed_dir = workdir / ".sdd" / "runtime" / "completed"
         completed_dir.mkdir(parents=True, exist_ok=True)
         completion_path = completed_dir / session_id
+        # Provider-state mutation sidecar (issue #2507): the wrapper appends
+        # every provider-side context-mutation signal here in observation
+        # order so the orchestrator can chain each one into the replay
+        # journal as a content-addressed entry.
+        mutation_path = self._mutation_sidecar_path(workdir, session_id)
+        mutation_path.parent.mkdir(parents=True, exist_ok=True)
         wrapper = self._wrapper_script(
             session_id=session_id,
             tokens_path=str(tokens_path),
             heartbeat_path=str(heartbeat_path),
             completion_path=str(completion_path),
+            mutation_path=str(mutation_path),
         )
         # Allow operator-set ANTHROPIC_BETA through so we can extend it
         # rather than overwrite. Filter is empty-safe when the env var

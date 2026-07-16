@@ -126,6 +126,42 @@ one root.
 > entry timestamp. This section covers the `journal.jsonl` chain, the one
 > surfaced in run metadata and the `bernstein replay` header.
 
+## Provider-side context mutations
+
+Deterministic replay assumes context-as-sent equals context-as-consumed. The
+client half is defended by the compaction policy recorded in the step
+fingerprint (`apply_compaction_policy` in `src/bernstein/adapters/claude.py`),
+but providers also mutate model context server-side: compaction and similar
+opaque state carried between calls. Every observable mutation signal is
+therefore chained into `journal.jsonl` as a first-class entry
+(`src/bernstein/core/replay/provider_state.py`).
+
+| Item | Behaviour |
+|---|---|
+| Journal entry | `provider_state_mutation`, content-addressed over `(kind, before_digest, after_digest, step_index)` |
+| Load-bearing | The entry participates in the Merkle chain: removing or editing it breaks `--verify` at exactly its index |
+| Deterministic modes | Suppression is requested at spawn (`DISABLE_AUTO_COMPACT`); a mutation that still arrives is recorded **flagged** and `bernstein replay <run-id> --verify` exits non-zero (fail-closed) |
+| Live runs | Mutations are permitted but pinned: each is recorded before execution continues, so the journal head commits to it |
+| Divergence attribution | `bernstein replay diff A B` reports reason code `provider_state_mutation` with the mutation kind and the exact step index when the first mismatching event is a mutation entry |
+| Capability record | One `provider_state_capability` entry per provider per run: `observed` or `declared-blind` |
+| Audit mirror | Each chained mutation is mirrored into the HMAC audit chain as a `provider.state_mutation` event anchored to the journal head |
+
+The capability record is what keeps an empty run interpretable: an adapter
+that cannot observe mutations (`declared-blind`) produces no mutation entries,
+and the journal says so explicitly, so an absence of entries is
+distinguishable from an inability to see them. The claude adapter observes
+mutation signals (`compact_boundary` and related stream-json `system`
+subtypes) through its wrapper, which appends each one to
+`.sdd/runtime/provider_state/<session_id>.jsonl` in observation order; the
+orchestrator chains them into the run journal when the agent is reaped.
+
+The digests are content addresses of the provider-reported metadata, which is
+the only observable surface for a server-side rewrite: `before_digest` covers
+the fields the provider labelled as pre-mutation state (`pre_*` / `before_*`),
+`after_digest` covers the full reported payload. A journal head therefore
+certifies either what the model consumed or the precise point where
+visibility ends.
+
 ## Live thread stream
 
 The TUI and web UI render the run as a live SSE stream that is a hash-anchored
