@@ -388,6 +388,11 @@ def run_cmd(
         raise SystemExit(2) from exc
 
     # --- parse + validate operator params -----------------------------------
+    # Bound before the try so the refusal handler always has a value: a syntax
+    # error from ``parse_param_overrides`` (missing ``=``, empty / duplicate
+    # key) raises before ``overrides`` would be assigned, and the handler reads
+    # it while sealing the refusal receipt.
+    overrides: dict[str, str] = {}
     try:
         overrides = parse_param_overrides(params)
         resolved = spec.resolve_params(overrides)

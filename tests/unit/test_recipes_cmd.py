@@ -358,6 +358,26 @@ def test_cli_run_missing_required_exits_1(isolated_workdir: Path) -> None:
     assert "version" in result.output
 
 
+@pytest.mark.parametrize("bad_param", ["no-equals-here", "dup=1", "=empty-key"])
+def test_cli_run_malformed_param_syntax_exits_1(isolated_workdir: Path, bad_param: str) -> None:
+    """A ``--param`` syntax error (no ``=`` / empty / duplicate key) exits 1 cleanly.
+
+    Regression: the refusal handler reads ``overrides`` while sealing a receipt,
+    but a ``parse_param_overrides`` syntax error raises before ``overrides`` is
+    assigned. The handler must still land on a clean operator-input exit (1) with
+    the "Invalid --param" message, never an ``UnboundLocalError``.
+    """
+    _ = isolated_workdir
+    runner = CliRunner()
+    args = ["run", "bump-dependency", "--param", bad_param]
+    if bad_param == "dup=1":
+        args += ["--param", "dup=2"]
+    result = runner.invoke(recipes_group, args)
+    assert result.exit_code == 1, result.output
+    assert "Invalid --param" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
 def test_cli_run_unknown_recipe_exits_2(isolated_workdir: Path) -> None:
     """A bad recipe name produces the manifest-error exit code (2)."""
     _ = isolated_workdir
