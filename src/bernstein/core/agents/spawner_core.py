@@ -125,6 +125,7 @@ if TYPE_CHECKING:
     from bernstein.core.knowledge.task_graph import TaskGraph
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
+    from bernstein.core.memory.trust_policy import MemoryTrustPolicy
     from bernstein.core.resource_limits import ResourceLimits
     from bernstein.core.routing.provider_availability import ChainElement, ProbeResult
     from bernstein.core.sandbox.backend import SandboxBackend, SandboxSession
@@ -748,16 +749,40 @@ def _render_batch_prompt(task: Task) -> str:
     return "\n".join(lines)
 
 
-def _load_persistent_memory(sdd_dir: Path, lesson_tags: list[str]) -> str:
-    """Load persistent memory from SQLite store."""
+_PERSISTENT_MEMORY_LIMIT = 10
+# Over-fetch candidates before applying the trust policy so filtering out
+# untrusted rows doesn't starve the final result below the intended limit.
+_PERSISTENT_MEMORY_CANDIDATE_LIMIT = 40
+
+
+def _load_persistent_memory(
+    sdd_dir: Path,
+    lesson_tags: list[str],
+    *,
+    trust_policy: MemoryTrustPolicy | None = None,
+) -> str:
+    """Load persistent memory from SQLite store, replaying only trusted rows.
+
+    Enforces :class:`~bernstein.core.memory.trust_policy.MemoryTrustPolicy`
+    (default: :func:`~bernstein.core.memory.trust_policy.active_trust_policy`)
+    before any row reaches the prompt. This is the enforcement point for the
+    cross-adapter memory-poisoning invariant documented in
+    ``docs/operations/memory.md``: a row written under one adapter's (or no)
+    provenance must not steer a different adapter's spawned agent by
+    default. ``trust_policy`` lets callers (and tests) override the
+    env-derived default explicitly.
+    """
     db_path = sdd_dir / "memory" / "memory.db"
     if not db_path.exists():
         return ""
     try:
         from bernstein.core.memory.sqlite_store import SQLiteMemoryStore
+        from bernstein.core.memory.trust_policy import active_trust_policy
 
         store = SQLiteMemoryStore(db_path)
-        memories = store.get_relevant(lesson_tags, limit=10)
+        policy = trust_policy if trust_policy is not None else active_trust_policy()
+        candidates = store.get_relevant(lesson_tags, limit=_PERSISTENT_MEMORY_CANDIDATE_LIMIT)
+        memories = policy.filter_entries(candidates)[:_PERSISTENT_MEMORY_LIMIT]
         if not memories:
             return ""
         lines = ["## Persistent Memory\nRelevant conventions and architectural decisions:"]
