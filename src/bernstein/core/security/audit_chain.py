@@ -692,6 +692,27 @@ EVENT_CONTEXT_CAPSULE = "context.capsule"
 #: never goal text or task payloads.
 EVENT_MISSION_PHASE_RECEIPT = "mission.phase_receipt"
 
+#: Durable task suspension receipts (#2552). A park is made durable by two
+#: chained receipts plus their journal rows: ``task.suspend_receipt`` binds the
+#: suspend journal row's Merkle head (the suspension's identity), the parked
+#: workspace hash, and the envelope balance at park time *before any effect
+#: runs*; ``task.resume_receipt`` binds the suspend receipt it continued from,
+#: the effective continuation mode, and the new workspace hash. The receipt
+#: pair is the continuity proof: a verifier holding a copied chain confirms the
+#: resumed run continued from exactly the parked workspace hash, or reads the
+#: recorded fork/cold downgrade with its reason. Only identifiers, hashes,
+#: modes, and spend are recorded -- never prompt content or session state.
+EVENT_TASK_SUSPENDED = "task.suspend_receipt"
+EVENT_TASK_RESUMED = "task.resume_receipt"
+
+#: Infrastructure-release receipt for a durable suspension (#2552). Every seat
+#: return, sandbox teardown, process reap, and envelope-headroom release hangs
+#: off the suspend receipt hash: the release row records which resource was
+#: freed and the ``suspend_receipt_hash`` it references. A release effect with
+#: no matching receipt is rejected upstream (fail closed) -- without the chain
+#: there is no suspension, only a dead process.
+EVENT_TASK_RESOURCE_RELEASE = "task.suspend_resource_release"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore
@@ -3522,6 +3543,195 @@ def record_process_reap_receipt(
     )
 
 
+def record_task_suspension(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    suspend_event_hash: str,
+    journal_index: int,
+    adapter: str,
+    workspace_hash: str,
+    envelope: str,
+    reserved_usd: float,
+    spent_usd: float,
+    released_usd: float,
+    wake_condition: str = "",
+    actor: str = "suspension",
+) -> AuditEvent:
+    """Append a ``task.suspend_receipt`` event into *chain* (#2552).
+
+    Binds the suspend journal row's Merkle head -- the suspension's identity --
+    into the HMAC chain *before any infrastructure release runs*. The receipt's
+    own HMAC (``AuditEvent.hmac``) is the value each release effect references,
+    so seat return, sandbox teardown, process reap, and envelope-headroom
+    release all hang off a receipt that already exists on the chain. Only
+    identifiers, hashes, and the envelope balance are recorded -- never prompt
+    content or provider session state.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task being parked.
+        suspend_event_hash: Merkle hash of the suspend row in the task's event
+            journal (the suspension's identity).
+        journal_index: 0-based journal index of that row.
+        adapter: Registry name of the adapter that owned the parked session.
+        workspace_hash: Content hash of the worktree at park time.
+        envelope: Quota envelope whose headroom is being released.
+        reserved_usd: Envelope headroom reserved for the task at park time.
+        spent_usd: Recorded spend against the reservation at park time.
+        released_usd: Headroom released back to the pool
+            (``max(reserved - spent, 0)``).
+        wake_condition: Optional wake gate (``"approval"`` for
+            ``--until approval``); empty for an operator-driven resume.
+        actor: Recorded actor; defaults to ``"suspension"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload; its ``hmac`` is the suspend receipt hash.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TASK_SUSPENDED,
+        actor=actor,
+        resource_type="task_suspension",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "suspend_event_hash": suspend_event_hash,
+            "journal_index": journal_index,
+            "adapter": adapter,
+            "workspace_hash": workspace_hash,
+            "envelope": envelope,
+            "reserved_usd": round(reserved_usd, 6),
+            "spent_usd": round(spent_usd, 6),
+            "released_usd": round(released_usd, 6),
+            "wake_condition": wake_condition,
+        },
+    )
+
+
+def record_task_resource_release(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    resource: str,
+    suspend_receipt_hash: str,
+    detail: dict[str, Any] | None = None,
+    actor: str = "suspension",
+) -> AuditEvent:
+    """Append a ``task.suspend_resource_release`` event into *chain* (#2552).
+
+    One release row per freed resource (``seat`` / ``sandbox`` / ``process`` /
+    ``budget``). Every row references the ``suspend_receipt_hash`` the release
+    hangs off; the caller refuses to emit the row (and to run the physical
+    effect) when that hash is missing, so a release with no matching receipt
+    never reaches the chain -- fail closed.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The parked task whose resource was freed.
+        resource: Resource kind (``"seat"`` / ``"sandbox"`` / ``"process"`` /
+            ``"budget"``).
+        suspend_receipt_hash: HMAC of the ``task.suspend_receipt`` this release
+            references (never empty).
+        detail: Optional resource-specific detail (e.g. released USD, sandbox
+            backend). Recorded verbatim.
+        actor: Recorded actor; defaults to ``"suspension"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    payload: dict[str, Any] = {
+        "task_id": task_id,
+        "resource": resource,
+        "suspend_receipt_hash": suspend_receipt_hash,
+    }
+    if detail:
+        payload["detail"] = detail
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TASK_RESOURCE_RELEASE,
+        actor=actor,
+        resource_type="task_resource_release",
+        resource_id=task_id,
+        details=payload,
+    )
+
+
+def record_task_resume(
+    *,
+    chain: AuditChainStore,
+    task_id: str,
+    suspend_receipt_hash: str,
+    suspend_event_hash: str,
+    resume_event_hash: str,
+    journal_index: int,
+    effective_mode: str,
+    requested_mode: str,
+    workspace_match: bool,
+    new_workspace_hash: str,
+    downgrade_reason: str,
+    decision_hash: str,
+    approval_ref: str = "",
+    actor: str = "suspension",
+) -> AuditEvent:
+    """Append a ``task.resume_receipt`` event into *chain* (#2552).
+
+    Closes the continuity proof: the resume receipt binds the suspend receipt
+    it continued from, the suspend row hash, the effective continuation mode,
+    and the new workspace hash. A verifier holding a copied chain confirms the
+    resumed run continued from exactly the parked workspace hash (``warm``),
+    or reads the recorded ``fork`` / ``cold`` downgrade with its reason. When
+    the park was gated ``--until approval`` the approval decision digest is
+    bound here so the approval record and the resume receipt reference each
+    other.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        task_id: The task being resumed.
+        suspend_receipt_hash: HMAC of the ``task.suspend_receipt`` this resume
+            continued from.
+        suspend_event_hash: Merkle hash of the suspend journal row.
+        resume_event_hash: Merkle hash of the resume journal row.
+        journal_index: 0-based journal index of the resume row.
+        effective_mode: Effective continuation mode (``warm`` / ``fork`` /
+            ``cold``).
+        requested_mode: The mode the operator requested.
+        workspace_match: Whether the live workspace hash matched the parked
+            hash at resume time.
+        new_workspace_hash: Content hash of the re-materialized worktree.
+        downgrade_reason: Why a non-cold request became fork/cold; empty when
+            the request was honored warm.
+        decision_hash: SHA-256 of the canonical resume decision projection.
+        approval_ref: Digest of the approval decision for an
+            ``--until approval`` park; empty otherwise.
+        actor: Recorded actor; defaults to ``"suspension"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded in
+        its details payload.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TASK_RESUMED,
+        actor=actor,
+        resource_type="task_resume",
+        resource_id=task_id,
+        details={
+            "task_id": task_id,
+            "suspend_receipt_hash": suspend_receipt_hash,
+            "suspend_event_hash": suspend_event_hash,
+            "resume_event_hash": resume_event_hash,
+            "journal_index": journal_index,
+            "effective_mode": effective_mode,
+            "requested_mode": requested_mode,
+            "workspace_match": workspace_match,
+            "new_workspace_hash": new_workspace_hash,
+            "downgrade_reason": downgrade_reason,
+            "decision_hash": decision_hash,
+            "approval_ref": approval_ref,
+        },
+    )
+
+
 def record_dashboard_token_grant(
     *,
     chain: AuditChainStore,
@@ -4969,6 +5179,9 @@ __all__ = [
     "EVENT_SUBAGENT_DELEGATION",
     "EVENT_TASK_CLAIM_RECEIPT",
     "EVENT_TASK_MAILBOX_MESSAGE",
+    "EVENT_TASK_RESOURCE_RELEASE",
+    "EVENT_TASK_RESUMED",
+    "EVENT_TASK_SUSPENDED",
     "EVENT_TEMPLATE_COMPRESSION_RECEIPT",
     "EVENT_TEMPLATE_COMPRESSION_RESTORE",
     "EVENT_THREAD_APPROVAL",
@@ -5053,6 +5266,9 @@ __all__ = [
     "record_taint_decision",
     "record_task_claim_receipt",
     "record_task_mailbox_message",
+    "record_task_resource_release",
+    "record_task_resume",
+    "record_task_suspension",
     "record_thread_approval",
     "record_tournament_selection",
     "record_webhook_node_receipt",

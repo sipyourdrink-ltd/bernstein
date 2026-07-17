@@ -182,6 +182,7 @@ class TaskStatus(Enum):
     WAITING_FOR_SUBTASKS = "waiting_for_subtasks"
     CANCELLED = "cancelled"
     ORPHANED = "orphaned"  # Agent crashed mid-task; pending crash recovery
+    SUSPENDED = "suspended"  # Operator-parked mid-session; infra released, resumable from an attested receipt (#2552)
     PENDING_APPROVAL = "pending_approval"  # Completed; awaiting human approval before taking effect
     ABANDONED = "abandoned"  # Agent voluntarily abandoned with a structured reason (#1350)
     BLOCKED_BY_ABANDON = "blocked_by_abandon"  # Downstream task waiting on an abandoned dependency (#1350)

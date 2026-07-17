@@ -301,6 +301,95 @@ def envelope_threshold_reached(
     )
 
 
+# ---------------------------------------------------------------------------
+# Envelope headroom release (issue #2552)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BudgetHeadroomReleaseEvent:
+    """Unspent envelope headroom returned to the pool when a task parks (#2552).
+
+    Emitted as a chained budget event when a durable suspension releases a
+    task's reservation: the released amount is ``reserved_usd`` minus the spend
+    recorded against the reservation at park time, clamped at zero. On a capped
+    pool this headroom becomes immediately dispatchable to a queued task, so an
+    overnight park stops blocking the pool. The event references the suspend
+    receipt it hangs off; a release with no receipt is refused upstream.
+
+    Attributes:
+        envelope: Envelope whose headroom is released.
+        reserved_usd: Reservation held for the task at park time.
+        spent_usd: Spend recorded against the reservation at park time.
+        released_usd: ``max(reserved_usd - spent_usd, 0.0)``.
+        suspend_receipt_hash: HMAC of the ``task.suspend_receipt`` this
+            release references (never empty for a persisted release).
+        timestamp: Unix timestamp of the release.
+    """
+
+    envelope: str
+    reserved_usd: float
+    spent_usd: float
+    released_usd: float
+    suspend_receipt_hash: str
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-safe dict."""
+        return {
+            "envelope": self.envelope,
+            "reserved_usd": round(self.reserved_usd, 6),
+            "spent_usd": round(self.spent_usd, 6),
+            "released_usd": round(self.released_usd, 6),
+            "suspend_receipt_hash": self.suspend_receipt_hash,
+            "timestamp": self.timestamp,
+        }
+
+
+def compute_released_headroom(reserved_usd: float, spent_usd: float) -> float:
+    """Return the headroom a park returns to the pool: ``reserved - spent``.
+
+    Clamped at zero so an over-spent reservation never releases a negative
+    amount. This is the single source of truth for the release figure that
+    the suspend receipt, the chained budget event, and the CLI all quote.
+    """
+    return max(reserved_usd - spent_usd, 0.0)
+
+
+def build_headroom_release_event(
+    *,
+    envelope: str,
+    reserved_usd: float,
+    spent_usd: float,
+    suspend_receipt_hash: str,
+    now: float | None = None,
+) -> BudgetHeadroomReleaseEvent:
+    """Build the :class:`BudgetHeadroomReleaseEvent` for a durable park (#2552).
+
+    Args:
+        envelope: Envelope whose headroom is released.
+        reserved_usd: Reservation held for the task at park time.
+        spent_usd: Spend recorded against the reservation at park time.
+        suspend_receipt_hash: HMAC of the suspend receipt this release
+            references. Must be non-empty; a release with no receipt is a
+            fail-closed error and is refused here.
+        now: Optional injected timestamp for deterministic tests.
+
+    Raises:
+        ValueError: ``suspend_receipt_hash`` is empty (fail closed).
+    """
+    if not suspend_receipt_hash:
+        raise ValueError("headroom release requires a suspend_receipt_hash (fail closed)")
+    return BudgetHeadroomReleaseEvent(
+        envelope=envelope,
+        reserved_usd=reserved_usd,
+        spent_usd=spent_usd,
+        released_usd=compute_released_headroom(reserved_usd, spent_usd),
+        suspend_receipt_hash=suspend_receipt_hash,
+        timestamp=time.time() if now is None else now,
+    )
+
+
 def apply_policy(
     policy: BudgetPolicy,
     percentage_used: float,
