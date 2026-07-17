@@ -10,8 +10,8 @@ from bernstein.core.server.sse_events import SSEEvent, SSEEventType
 
 
 class TestSSEEventType:
-    def test_has_15_members(self) -> None:
-        assert len(SSEEventType) == 15
+    def test_has_17_members(self) -> None:
+        assert len(SSEEventType) == 17
 
     def test_event_type_values_are_dotted(self) -> None:
         for member in SSEEventType:
@@ -26,6 +26,8 @@ class TestSSEEventType:
             "TASK_COMPLETED",
             "TASK_FAILED",
             "TASK_RETRIED",
+            "TASK_ARTIFACT",
+            "TASK_PROGRESS",
             "AGENT_SPAWNED",
             "AGENT_EXITED",
             "GATE_RESULT",
