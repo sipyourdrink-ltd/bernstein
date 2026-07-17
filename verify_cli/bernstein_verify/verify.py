@@ -54,6 +54,16 @@ _PACK_FORMAT_BYTE_BINDING = 2
 #: so it is verified under the original re-canonicalise rule.
 _PACK_FORMAT_LEGACY = 1
 
+# Regulator-mapped pack kinds (issue #2517). An absent ``kind`` is the
+# Article 12 bundle (verified by the legacy path below); these three kinds are
+# projections of the chain that also carry a member-integrity + substrate-
+# recomputation contract enforced by ``_verify_regulator_pack``.
+_KIND_ARTICLE12 = "article-12"
+_KIND_RETENTION = "retention"
+_KIND_INCIDENT = "incident"
+_KIND_OVERSIGHT = "oversight"
+_REGULATOR_KINDS = frozenset({_KIND_RETENTION, _KIND_INCIDENT, _KIND_OVERSIGHT})
+
 
 # ---------- RFC 8785 JCS ----------
 
@@ -258,6 +268,26 @@ def _pack_format_version(zf: zipfile.ZipFile) -> int:
     return _PACK_FORMAT_LEGACY
 
 
+def _read_manifest(zf: zipfile.ZipFile) -> dict[str, Any] | None:
+    """Return the parsed ``pack-manifest.json`` dict, or None if absent/bad."""
+    raw = _read_text_member(zf, _MANIFEST_NAME)
+    if raw is None:
+        return None
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
+def _pack_kind(manifest: dict[str, Any] | None) -> str:
+    """Return the pack ``kind``; an absent/invalid field is the Article 12 bundle."""
+    if manifest is None:
+        return _KIND_ARTICLE12
+    value = manifest.get("kind", _KIND_ARTICLE12)
+    return value if isinstance(value, str) else _KIND_ARTICLE12
+
+
 def _split_jsonl_bytes(raw_bytes: bytes) -> list[bytes]:
     """Strictly split the log's raw bytes on ``b"\\n"`` only.
 
@@ -368,77 +398,26 @@ def verify_pack(zip_path: Path | str) -> VerifyResult:
         return VerifyResult(ok=False, errors=[f"not a valid zip archive: {path}"])
 
     with zf:
+        manifest = _read_manifest(zf)
         pack_format = _pack_format_version(zf)
+        kind = _pack_kind(manifest)
 
-        if pack_format >= _PACK_FORMAT_BYTE_BINDING:
-            log_bytes = _read_bytes_member(zf, _LOG_NAME)
-            if log_bytes is None:
-                return VerifyResult(ok=False, errors=[f"missing {_LOG_NAME} in pack"])
-            entries, parse_errors = _parse_log_v2(log_bytes)
-        else:
-            log_raw = _read_text_member(zf, _LOG_NAME)
-            if log_raw is None:
-                return VerifyResult(ok=False, errors=[f"missing {_LOG_NAME} in pack"])
-            entries, parse_errors = _parse_log_v1(log_raw)
+        if kind in _REGULATOR_KINDS:
+            return _verify_regulator_pack(zf, manifest, kind=kind, pack_format=pack_format)
+
+        entries, parse_errors = _parse_lineage_log(zf, pack_format)
+        if entries is None:
+            return VerifyResult(ok=False, errors=parse_errors)
 
         result_errors: list[str] = list(parse_errors)
-
         chain_ok, chain_errors = walk_chain(entries)
         result_errors.extend(chain_errors)
 
-        # Pre-load agent cards (one per agent_id).
-        cards: dict[str, dict[str, Any]] = {}
-        for info in zf.infolist():
-            # Defence-in-depth: ignore zip-slip paths. We never write
-            # files anyway, but skip suspicious names so we don't try to
-            # parse `../../etc/passwd` as a card.
-            if ".." in Path(info.filename).parts:
-                continue
-            if not info.filename.startswith(_CARD_DIR) or info.filename.endswith("/"):
-                continue
-            card_raw = _read_text_member(zf, info.filename)
-            if card_raw is None:
-                continue
-            try:
-                card = json.loads(card_raw)
-            except json.JSONDecodeError:
-                result_errors.append(f"{info.filename}: invalid JSON")
-                continue
-            aid = card.get("agent_id")
-            if isinstance(aid, str):
-                cards[aid] = card
+        cards, card_errors = _load_agent_cards(zf)
+        result_errors.extend(card_errors)
 
-        # Per-entry signature verification.
-        sig_failures = 0
-        for e in entries:
-            entry_hash = _entry_hash(e)
-            agent_id = e.get("agent_id", "")
-            expected_kid = e.get("agent_card_kid", "")
-            card = cards.get(agent_id)
-            if card is None:
-                result_errors.append(f"entry {entry_hash}: no Agent Card for {agent_id}")
-                sig_failures += 1
-                continue
-            if card.get("kid") != expected_kid:
-                result_errors.append(
-                    f"entry {entry_hash}: kid mismatch (card={card.get('kid')!r}, "
-                    f"entry={expected_kid!r})"
-                )
-                sig_failures += 1
-                continue
-            sig_member = f"{_SIG_DIR}{entry_hash}.jws"
-            jws = _read_text_member(zf, sig_member)
-            if jws is None:
-                result_errors.append(f"entry {entry_hash}: missing signature {sig_member}")
-                sig_failures += 1
-                continue
-            payload = jcs_canonicalise(e)
-            pub_pem = card.get("public_key_pem", "")
-            if not isinstance(pub_pem, str) or not verify_jws_detached(
-                payload, jws, pub_pem, expected_kid=expected_kid
-            ):
-                result_errors.append(f"entry {entry_hash}: signature verification failed")
-                sig_failures += 1
+        sig_failures, sig_errors = _verify_entry_signatures(zf, entries, cards)
+        result_errors.extend(sig_errors)
 
         stats = {
             "entries": len(entries),
@@ -449,3 +428,364 @@ def verify_pack(zip_path: Path | str) -> VerifyResult:
         }
         ok = not parse_errors and chain_ok and sig_failures == 0
         return VerifyResult(ok=ok, errors=result_errors, stats=stats)
+
+
+# ---------- shared lineage-log verification helpers ----------
+
+
+def _parse_lineage_log(
+    zf: zipfile.ZipFile, pack_format: int
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Parse ``lineage-log.jsonl`` under the format-appropriate rule.
+
+    Returns ``(None, [error])`` when the log member is absent so the caller
+    can short-circuit; otherwise ``(entries, parse_errors)``.
+    """
+    if pack_format >= _PACK_FORMAT_BYTE_BINDING:
+        log_bytes = _read_bytes_member(zf, _LOG_NAME)
+        if log_bytes is None:
+            return None, [f"missing {_LOG_NAME} in pack"]
+        return _parse_log_v2(log_bytes)
+    log_raw = _read_text_member(zf, _LOG_NAME)
+    if log_raw is None:
+        return None, [f"missing {_LOG_NAME} in pack"]
+    return _parse_log_v1(log_raw)
+
+
+def _load_agent_cards(zf: zipfile.ZipFile) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Pre-load Agent Cards keyed by agent_id, skipping zip-slip paths."""
+    cards: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    for info in zf.infolist():
+        if ".." in Path(info.filename).parts:
+            continue
+        if not info.filename.startswith(_CARD_DIR) or info.filename.endswith("/"):
+            continue
+        card_raw = _read_text_member(zf, info.filename)
+        if card_raw is None:
+            continue
+        try:
+            card = json.loads(card_raw)
+        except json.JSONDecodeError:
+            errors.append(f"{info.filename}: invalid JSON")
+            continue
+        aid = card.get("agent_id")
+        if isinstance(aid, str):
+            cards[aid] = card
+    return cards, errors
+
+
+def _verify_entry_signatures(
+    zf: zipfile.ZipFile,
+    entries: list[dict[str, Any]],
+    cards: dict[str, dict[str, Any]],
+) -> tuple[int, list[str]]:
+    """Verify the detached JWS of every entry against its Agent Card."""
+    errors: list[str] = []
+    sig_failures = 0
+    for e in entries:
+        entry_hash = _entry_hash(e)
+        agent_id = e.get("agent_id", "")
+        expected_kid = e.get("agent_card_kid", "")
+        card = cards.get(agent_id)
+        if card is None:
+            errors.append(f"entry {entry_hash}: no Agent Card for {agent_id}")
+            sig_failures += 1
+            continue
+        if card.get("kid") != expected_kid:
+            errors.append(
+                f"entry {entry_hash}: kid mismatch (card={card.get('kid')!r}, "
+                f"entry={expected_kid!r})"
+            )
+            sig_failures += 1
+            continue
+        sig_member = f"{_SIG_DIR}{entry_hash}.jws"
+        jws = _read_text_member(zf, sig_member)
+        if jws is None:
+            errors.append(f"entry {entry_hash}: missing signature {sig_member}")
+            sig_failures += 1
+            continue
+        payload = jcs_canonicalise(e)
+        pub_pem = card.get("public_key_pem", "")
+        if not isinstance(pub_pem, str) or not verify_jws_detached(
+            payload, jws, pub_pem, expected_kid=expected_kid
+        ):
+            errors.append(f"entry {entry_hash}: signature verification failed")
+            sig_failures += 1
+    return sig_failures, errors
+
+
+# ===========================================================================
+# Regulator-mapped pack verification (kind = retention / incident / oversight)
+#
+# Each kind is a projection of the chain, not a new log. Verification recomputes
+# the facts from the substrate the pack carries: the signed lineage log (with its
+# boundary head hashes) for retention, the prev_hmac-chained audit slice plus the
+# declared evidence-gap list for incident, and the content-addressed displayed-
+# versus-executed binding of every approval receipt for oversight. On top of that
+# every member is bound by sha256 to the signed manifest, so a one-byte tamper in
+# any member (including a rendered PDF) is rejected by hash mismatch naming the
+# member. Strip the substrate and there is nothing left to recompute.
+# ===========================================================================
+
+
+def _sha256_hex(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _canonical_any(obj: Any) -> bytes:
+    """Canonical JSON bytes for any JSON value (matches the pack builder)."""
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
+
+
+def _verify_manifest_anchor(manifest: dict[str, Any]) -> list[str]:
+    """Confirm ``output_hash`` self-anchors the canonical manifest body."""
+    output_hash = manifest.get("output_hash")
+    if not isinstance(output_hash, str):
+        return [f"{_MANIFEST_NAME}: missing output_hash"]
+    body = {k: v for k, v in manifest.items() if k != "output_hash"}
+    recomputed = _sha256_hex(_canonical_any(body))
+    if recomputed != output_hash:
+        return [
+            f"{_MANIFEST_NAME}: output_hash mismatch (expected {output_hash}, got {recomputed})"
+        ]
+    return []
+
+
+def _verify_member_integrity(zf: zipfile.ZipFile, manifest: dict[str, Any]) -> list[str]:
+    """Recompute the sha256 of every member listed in ``input_hashes``.
+
+    Names the offending member on any mismatch or absence so an auditor can
+    point at the exact file - including a rendered PDF - that was altered.
+    """
+    input_hashes = manifest.get("input_hashes")
+    if not isinstance(input_hashes, dict):
+        return [f"{_MANIFEST_NAME}: input_hashes missing or malformed"]
+    present = set(zf.namelist())
+    errors: list[str] = []
+    for name, expected in sorted(input_hashes.items()):
+        if name not in present:
+            errors.append(f"{name}: member listed in input_hashes is missing from the pack")
+            continue
+        data = _read_bytes_member(zf, name)
+        if data is None:
+            errors.append(f"{name}: member unreadable")
+            continue
+        actual = _sha256_hex(data)
+        if actual != expected:
+            errors.append(f"{name}: content hash mismatch (expected {expected}, got {actual})")
+    return errors
+
+
+def _parse_canonical_jsonl(raw_bytes: bytes, name: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Split ``name`` on ``b"\\n"`` and require every record be byte-canonical."""
+    events: list[dict[str, Any]] = []
+    errors: list[str] = []
+    if raw_bytes and not raw_bytes.endswith(b"\n"):
+        errors.append(f"{name}: missing trailing newline")
+    for lineno, raw_line in enumerate(_split_jsonl_bytes(raw_bytes), start=1):
+        if raw_line == b"":
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            errors.append(f"{name}:{lineno}: invalid JSON ({exc.msg})")
+            continue
+        if not isinstance(obj, dict):
+            errors.append(f"{name}:{lineno}: not a JSON object")
+            continue
+        if _canonical_any(obj) != raw_line:
+            errors.append(f"{name}:{lineno}: non-canonical line bytes")
+            continue
+        events.append(obj)
+    return events, errors
+
+
+def _verify_prev_hmac_chain(events: list[dict[str, Any]], name: str) -> list[str]:
+    """Confirm the slice is contiguous: each ``prev_hmac`` chains to its predecessor."""
+    errors: list[str] = []
+    prev_hmac: str | None = None
+    for idx, event in enumerate(events):
+        cur_prev = str(event.get("prev_hmac", ""))
+        cur_hmac = str(event.get("hmac", ""))
+        if prev_hmac is not None and cur_prev != prev_hmac:
+            errors.append(f"{name}: prev_hmac chain break at index {idx}")
+        prev_hmac = cur_hmac
+    return errors
+
+
+def _verify_retention(
+    zf: zipfile.ZipFile,
+    manifest: dict[str, Any],
+    pack_format: int,
+    errors: list[str],
+    stats: dict[str, Any],
+) -> None:
+    """Re-verify the embedded signed log and recompute the boundary head hashes."""
+    entries, parse_errors = _parse_lineage_log(zf, pack_format)
+    errors.extend(parse_errors)
+    if entries is None:
+        return
+    chain_ok, chain_errors = walk_chain(entries)
+    errors.extend(chain_errors)
+    cards, card_errors = _load_agent_cards(zf)
+    errors.extend(card_errors)
+    sig_failures, sig_errors = _verify_entry_signatures(zf, entries, cards)
+    errors.extend(sig_errors)
+    stats.update(entries=len(entries), chain_ok=chain_ok, signature_failures=sig_failures)
+
+    evidence_raw = _read_bytes_member(zf, "retention-evidence.json")
+    if evidence_raw is None:
+        errors.append("retention-evidence.json: missing")
+        return
+    try:
+        evidence = json.loads(evidence_raw)
+    except json.JSONDecodeError:
+        errors.append("retention-evidence.json: invalid JSON")
+        return
+
+    ordered = sorted(entries, key=lambda e: (e.get("ts_ns", 0), _entry_hash(e)))
+    first = _entry_hash(ordered[0]) if ordered else None
+    last = _entry_hash(ordered[-1]) if ordered else None
+    boundary = evidence.get("boundary", {}) if isinstance(evidence, dict) else {}
+    if boundary.get("first_entry_hash") != first:
+        errors.append("retention-evidence.json: first_entry_hash does not match the embedded log")
+    if boundary.get("last_entry_hash") != last:
+        errors.append("retention-evidence.json: last_entry_hash does not match the embedded log")
+    if evidence.get("entry_count") != len(entries):
+        errors.append("retention-evidence.json: entry_count does not match the embedded log")
+
+    m_boundary = manifest.get("boundary", {})
+    if isinstance(m_boundary, dict) and (
+        m_boundary.get("first_entry_hash") != first or m_boundary.get("last_entry_hash") != last
+    ):
+        errors.append(f"{_MANIFEST_NAME}: boundary head hashes do not match the embedded log")
+    stats["coverage_gaps"] = len(
+        evidence.get("coverage_gaps", []) if isinstance(evidence, dict) else []
+    )
+
+
+def _verify_oversight(
+    zf: zipfile.ZipFile, manifest: dict[str, Any], errors: list[str], stats: dict[str, Any]
+) -> None:
+    """Recompute the displayed-versus-executed binding of every approval receipt."""
+    evidence_raw = _read_bytes_member(zf, "oversight-evidence.json")
+    ev_by_id: dict[str, dict[str, Any]] = {}
+    if evidence_raw is None:
+        errors.append("oversight-evidence.json: missing")
+    else:
+        try:
+            evidence = json.loads(evidence_raw)
+            if isinstance(evidence, dict):
+                for row in evidence.get("receipts", []):
+                    if isinstance(row, dict):
+                        ev_by_id[str(row.get("receipt_id"))] = row
+        except json.JSONDecodeError:
+            errors.append("oversight-evidence.json: invalid JSON")
+
+    receipt_count = 0
+    binding_failures = 0
+    for info in zf.infolist():
+        name = info.filename
+        if ".." in Path(name).parts or not name.startswith("receipts/") or name.endswith("/"):
+            continue
+        raw = _read_bytes_member(zf, name)
+        if raw is None:
+            continue
+        try:
+            receipt = json.loads(raw)
+        except json.JSONDecodeError:
+            errors.append(f"{name}: invalid JSON")
+            binding_failures += 1
+            continue
+        receipt_count += 1
+        displayed_hash = _sha256_hex(_canonical_any(receipt.get("displayed")))
+        executed_hash = _sha256_hex(_canonical_any(receipt.get("executed")))
+        if displayed_hash != receipt.get("displayed_hash"):
+            errors.append(f"{name}: displayed_hash does not match the displayed payload")
+            binding_failures += 1
+        if executed_hash != receipt.get("executed_hash"):
+            errors.append(f"{name}: executed_hash does not match the executed payload")
+            binding_failures += 1
+        row = ev_by_id.get(str(receipt.get("receipt_id")))
+        if row is None:
+            errors.append(f"{name}: receipt is not present in oversight-evidence.json")
+            binding_failures += 1
+        else:
+            expected_binding = receipt.get("displayed_hash") == receipt.get("executed_hash")
+            if (
+                row.get("displayed_hash") != receipt.get("displayed_hash")
+                or row.get("executed_hash") != receipt.get("executed_hash")
+                or row.get("binding_ok") != expected_binding
+            ):
+                errors.append(f"{name}: oversight-evidence row is inconsistent with the receipt")
+                binding_failures += 1
+    stats.update(receipts=receipt_count, binding_failures=binding_failures)
+
+
+def _verify_incident(
+    zf: zipfile.ZipFile, manifest: dict[str, Any], errors: list[str], stats: dict[str, Any]
+) -> None:
+    """Re-walk the audit slice and surface the declared evidence-gap list."""
+    slice_bytes = _read_bytes_member(zf, "audit-slice.jsonl")
+    if slice_bytes is None:
+        errors.append("audit-slice.jsonl: missing")
+    else:
+        events, slice_errors = _parse_canonical_jsonl(slice_bytes, "audit-slice.jsonl")
+        errors.extend(slice_errors)
+        errors.extend(_verify_prev_hmac_chain(events, "audit-slice.jsonl"))
+        stats["audit_events"] = len(events)
+
+    gaps_list: list[Any] = []
+    gaps_raw = _read_bytes_member(zf, "gaps.json")
+    if gaps_raw is None:
+        errors.append("gaps.json: missing")
+    else:
+        try:
+            gaps_doc = json.loads(gaps_raw)
+            if isinstance(gaps_doc, dict):
+                gaps_list = list(gaps_doc.get("gaps", []))
+        except json.JSONDecodeError:
+            errors.append("gaps.json: invalid JSON")
+
+    stats["gaps"] = gaps_list
+    stats["gap_count"] = len(gaps_list)
+    m_gap_count = manifest.get("gap_count")
+    if (
+        isinstance(m_gap_count, int)
+        and not isinstance(m_gap_count, bool)
+        and m_gap_count != len(gaps_list)
+    ):
+        errors.append(
+            f"gaps.json: gap_count {len(gaps_list)} disagrees with manifest gap_count {m_gap_count}"
+        )
+
+
+def _verify_regulator_pack(
+    zf: zipfile.ZipFile,
+    manifest: dict[str, Any] | None,
+    *,
+    kind: str,
+    pack_format: int,
+) -> VerifyResult:
+    """Verify a retention / incident / oversight pack as a chain projection."""
+    stats: dict[str, Any] = {"kind": kind, "pack_format_version": pack_format}
+    if manifest is None:
+        return VerifyResult(
+            ok=False, errors=[f"{_MANIFEST_NAME}: missing or unparseable"], stats=stats
+        )
+
+    errors: list[str] = []
+    errors.extend(_verify_manifest_anchor(manifest))
+    errors.extend(_verify_member_integrity(zf, manifest))
+
+    if kind == _KIND_RETENTION:
+        _verify_retention(zf, manifest, pack_format, errors, stats)
+    elif kind == _KIND_OVERSIGHT:
+        _verify_oversight(zf, manifest, errors, stats)
+    elif kind == _KIND_INCIDENT:
+        _verify_incident(zf, manifest, errors, stats)
+
+    return VerifyResult(ok=not errors, errors=errors, stats=stats)

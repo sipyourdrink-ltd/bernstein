@@ -263,6 +263,7 @@ nav:
       - Env isolation: operations/env-isolation.md
       - Compliance: operations/compliance.md
       - EU AI Act Article 12 evidence pack: compliance/eu-ai-act-article-12-bundle.md
+      - Regulator-mapped compliance packs: compliance/regulator-mapped-packs.md
       - FINOS AIGF mapping: compliance/finos-aigf-mapping.md
       - Regulator-class lineage: compliance/regulatory-lineage.md
       - Regulatory lineage export (operator guide): compliance/lineage-export.md

@@ -14,13 +14,18 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import click
 
 from bernstein.compliance.eu_ai_act import ComplianceEngine, bernstein_descriptor
-from bernstein.core.compliance.pack import build_pack
+from bernstein.core.compliance.pack import (
+    build_incident_pack,
+    build_oversight_pack,
+    build_pack,
+    build_retention_pack,
+)
 from bernstein.core.compliance_policies import (
     ALL_POLICIES,
     ComplianceFramework,
@@ -451,7 +456,14 @@ def export_rego(framework: str, output_dir: Path | None, workdir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# `bernstein compliance pack` - EU AI Act Article 12 evidence bundle
+# `bernstein compliance pack` - regulator-mapped evidence packs
+#
+# ``pack`` is a group. With no subcommand (or a leading option) it defaults to
+# ``article-12`` so the legacy ``bernstein compliance pack --since ...`` call
+# keeps working; ``retention`` / ``incident`` / ``oversight`` add the packs
+# mapped to Article 12(3), Article 73, and Article 14 respectively. Each pack
+# is a deterministic projection of the chain, sealed with the operator key and
+# offline-verifiable with ``python -m bernstein_verify pack``.
 # ---------------------------------------------------------------------------
 
 
@@ -462,16 +474,75 @@ def _parse_iso_date(value: str) -> datetime:
         raise click.BadParameter(f"expected YYYY-MM-DD, got {value!r}") from exc
 
 
-@compliance_group.command("pack")
+def _window_dates(since: str, until: str) -> tuple[date, date]:
+    since_date = _parse_iso_date(since).date()
+    until_date = _parse_iso_date(until).date()
+    if since_date > until_date:
+        raise click.BadParameter("--since must be <= --until")
+    return since_date, until_date
+
+
+def _require_operator_key(operator_key: Path | None, workdir: Path) -> Path:
+    resolved_key = operator_key or (workdir / ".sdd" / "keys" / "operator.key")
+    if not resolved_key.exists():
+        raise click.ClickException(
+            f"Operator signing key not found at {resolved_key}.\n"
+            "Generate one with `openssl genpkey -algorithm Ed25519 -out "
+            f"{resolved_key}` or pass --operator-key <path>.",
+        )
+    return resolved_key
+
+
+def _load_json(path: Path) -> object:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_jsonl(path: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            records.append(json.loads(line))
+    return records
+
+
+class _DefaultSubcommandGroup(click.Group):
+    """A group that routes to a default subcommand when the first token is not
+    a known subcommand, so ``pack --since ...`` still reaches ``article-12``."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self._default_cmd = kwargs.pop("default_cmd", None)
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        default = self._default_cmd
+        if isinstance(default, str):
+            if not args:
+                args = [default]
+            elif args[0] not in self.commands and args[0] not in ("--help", "-h"):
+                args = [default, *args]
+        return super().parse_args(ctx, args)
+
+
+@compliance_group.group("pack", cls=_DefaultSubcommandGroup, default_cmd="article-12")
+def pack_group() -> None:
+    """Assemble regulator-mapped evidence packs from the audit chain.
+
+    Subcommands (each offline-verifiable with `python -m bernstein_verify pack`):
+
+    \b
+      article-12  record-keeping bundle (default; Article 12).
+      retention   chain-continuity evidence for a window (Article 12(3)).
+      incident    serious-incident report from a run (Article 73).
+      oversight   human-oversight evidence from receipts (Article 14).
+    """
+
+
+@pack_group.command("article-12")
 @click.option("--since", required=True, help="Window start date (YYYY-MM-DD, inclusive).")
 @click.option("--until", required=True, help="Window end date (YYYY-MM-DD, inclusive).")
 @click.option("--org", required=True, help="Organisation name (printed on the cover page).")
-@click.option(
-    "--output",
-    required=True,
-    type=click.Path(path_type=Path),
-    help="Destination .zip path.",
-)
+@click.option("--output", required=True, type=click.Path(path_type=Path), help="Destination .zip path.")
 @click.option(
     "--workdir",
     default=".",
@@ -497,7 +568,7 @@ def _parse_iso_date(value: str) -> datetime:
     type=click.Path(path_type=Path),
     help=("Path to PEM PKCS#8 Ed25519 operator key for manifest signing (default: <workdir>/.sdd/keys/operator.key)."),
 )
-def pack(
+def pack_article12(
     since: str,
     until: str,
     org: str,
@@ -513,21 +584,10 @@ def pack(
     readable PDF + machine-readable CSV + raw JSONL + per-entry signatures
     + Agent Cards, and emits an operator-signed SLSA-style manifest.
     """
-    since_date = _parse_iso_date(since).date()
-    until_date = _parse_iso_date(until).date()
-    if since_date > until_date:
-        raise click.BadParameter("--since must be <= --until")
-
+    since_date, until_date = _window_dates(since, until)
     resolved_lineage = lineage_dir or (workdir / ".sdd" / "lineage")
     resolved_cards = agent_cards_dir or (workdir / ".sdd" / "agents")
-    resolved_key = operator_key or (workdir / ".sdd" / "keys" / "operator.key")
-
-    if not resolved_key.exists():
-        raise click.ClickException(
-            f"Operator signing key not found at {resolved_key}.\n"
-            "Generate one with `openssl genpkey -algorithm Ed25519 -out "
-            f"{resolved_key}` or pass --operator-key <path>.",
-        )
+    resolved_key = _require_operator_key(operator_key, workdir)
 
     out_path = build_pack(
         since=since_date,
@@ -539,3 +599,190 @@ def pack(
         operator_key_path=resolved_key,
     )
     click.echo(f"Compliance pack written to: {out_path}")
+
+
+@pack_group.command("retention")
+@click.option("--since", required=True, help="Window start date (YYYY-MM-DD, inclusive).")
+@click.option("--until", required=True, help="Window end date (YYYY-MM-DD, inclusive).")
+@click.option("--org", required=True, help="Organisation name (printed on the cover page).")
+@click.option("--output", required=True, type=click.Path(path_type=Path), help="Destination .zip path.")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Project root (used to locate .sdd/lineage and .sdd/agents).",
+)
+@click.option("--lineage-dir", default=None, type=click.Path(path_type=Path), help="Override lineage directory.")
+@click.option(
+    "--agent-cards-dir", default=None, type=click.Path(path_type=Path), help="Override Agent Cards directory."
+)
+@click.option("--operator-key", default=None, type=click.Path(path_type=Path), help="Override operator signing key.")
+def pack_retention(
+    since: str,
+    until: str,
+    org: str,
+    output: Path,
+    workdir: Path,
+    lineage_dir: Path | None,
+    agent_cards_dir: Path | None,
+    operator_key: Path | None,
+) -> None:
+    """Build a chain-continuity (retention) evidence pack for the window.
+
+    Records the boundary head hashes, entry count, detected coverage gaps,
+    and retention parameters, embedding the signed lineage log so an auditor
+    recomputes the boundary head hashes from the actual signed entries.
+    """
+    since_date, until_date = _window_dates(since, until)
+    resolved_lineage = lineage_dir or (workdir / ".sdd" / "lineage")
+    resolved_cards = agent_cards_dir or (workdir / ".sdd" / "agents")
+    resolved_key = _require_operator_key(operator_key, workdir)
+
+    out_path = build_retention_pack(
+        since=since_date,
+        until=until_date,
+        org=org,
+        lineage_dir=resolved_lineage,
+        agent_cards_dir=resolved_cards,
+        output_path=output,
+        operator_key_path=resolved_key,
+    )
+    click.echo(f"Retention pack written to: {out_path}")
+
+
+@pack_group.command("oversight")
+@click.option("--since", required=True, help="Window start date (YYYY-MM-DD, inclusive).")
+@click.option("--until", required=True, help="Window end date (YYYY-MM-DD, inclusive).")
+@click.option("--org", required=True, help="Organisation name (printed on the cover page).")
+@click.option("--output", required=True, type=click.Path(path_type=Path), help="Destination .zip path.")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Project root (used to locate resolved approvals).",
+)
+@click.option(
+    "--approvals",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="JSONL/JSON of resolved approvals (default: <workdir>/.sdd/approvals/resolved.jsonl).",
+)
+@click.option("--operator-key", default=None, type=click.Path(path_type=Path), help="Override operator signing key.")
+def pack_oversight(
+    since: str,
+    until: str,
+    org: str,
+    output: Path,
+    workdir: Path,
+    approvals: Path | None,
+    operator_key: Path | None,
+) -> None:
+    """Build a human-oversight (Article 14) evidence pack from approval receipts.
+
+    Every in-window approval becomes a receipt carrying the attested
+    displayed-versus-executed binding, so an auditor recomputes the binding
+    offline decision by decision.
+    """
+    since_date, until_date = _window_dates(since, until)
+    resolved_key = _require_operator_key(operator_key, workdir)
+    approvals_path = approvals or (workdir / ".sdd" / "approvals" / "resolved.jsonl")
+
+    records: list[dict[str, object]] = []
+    if approvals_path.exists():
+        if approvals_path.suffix == ".jsonl":
+            records = _load_jsonl(approvals_path)
+        else:
+            data = _load_json(approvals_path)
+            if isinstance(data, list):
+                records = data
+            elif isinstance(data, dict):
+                records = list(data.get("approvals", []))
+
+    out_path = build_oversight_pack(
+        since=since_date,
+        until=until_date,
+        org=org,
+        approvals=records,
+        output_path=output,
+        operator_key_path=resolved_key,
+    )
+    click.echo(f"Oversight pack written to: {out_path} ({len(records)} candidate approvals)")
+
+
+@pack_group.command("incident")
+@click.option("--run", required=True, help="Run identifier of the incident.")
+@click.option("--org", required=True, help="Organisation name (printed on the cover page).")
+@click.option("--output", required=True, type=click.Path(path_type=Path), help="Destination .zip path.")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Project root (used to locate the incident, evidence, and approval stores).",
+)
+@click.option(
+    "--incident-dir",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Override incident directory (default: <workdir>/.sdd/incidents/<run>).",
+)
+@click.option("--operator-key", default=None, type=click.Path(path_type=Path), help="Override operator signing key.")
+def pack_incident(
+    run: str,
+    org: str,
+    output: Path,
+    workdir: Path,
+    incident_dir: Path | None,
+    operator_key: Path | None,
+) -> None:
+    """Build a serious-incident (Article 73) report pack for a run.
+
+    Joins the incident timeline with the prev_hmac-chained audit slice and the
+    referenced evidence bundles and approval receipts. A referenced artefact
+    missing from the store is recorded as an explicit gap - the pack never
+    fabricates completeness.
+    """
+    resolved_key = _require_operator_key(operator_key, workdir)
+    idir = incident_dir or (workdir / ".sdd" / "incidents" / run)
+
+    timeline_path = idir / "timeline.json"
+    if timeline_path.exists():
+        timeline = _load_json(timeline_path)
+        if not isinstance(timeline, dict):
+            raise click.ClickException(f"{timeline_path}: expected a JSON object")
+    else:
+        timeline = {"run_id": run, "events": [], "involved_agents": [], "artifacts": []}
+
+    slice_path = idir / "audit-slice.jsonl"
+    audit_events = _load_jsonl(slice_path) if slice_path.exists() else []
+
+    evidence_bundles: dict[str, bytes] = {}
+    receipts: dict[str, bytes] = {}
+    gaps: list[dict[str, str]] = []
+    for ref in timeline.get("evidence_bundle_refs", []):
+        candidate = workdir / ".sdd" / "evidence" / f"{ref}.json"
+        if candidate.exists():
+            evidence_bundles[f"{ref}.json"] = candidate.read_bytes()
+        else:
+            gaps.append({"kind": "evidence_bundle", "ref": str(ref), "reason": "missing_from_store"})
+    for ref in timeline.get("receipt_refs", []):
+        candidate = workdir / ".sdd" / "approvals" / f"{ref}.json"
+        if candidate.exists():
+            receipts[f"{ref}.json"] = candidate.read_bytes()
+        else:
+            gaps.append({"kind": "receipt", "ref": str(ref), "reason": "missing_from_store"})
+
+    out_path = build_incident_pack(
+        run_id=run,
+        org=org,
+        timeline=timeline,
+        audit_events=audit_events,
+        evidence_bundles=evidence_bundles,
+        receipts=receipts,
+        gaps=gaps,
+        output_path=output,
+        operator_key_path=resolved_key,
+    )
+    click.echo(f"Incident pack written to: {out_path} ({len(gaps)} evidence gap(s))")
