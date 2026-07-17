@@ -84,7 +84,18 @@ def test_post_returns_chained_message_with_expected_fields(tmp_path: Path) -> No
 
 def test_all_declared_kinds_accepted(tmp_path: Path) -> None:
     mailbox = _mailbox(tmp_path)
-    assert set(MESSAGE_KINDS) == {"finding", "artefact_ref", "question"}
+    # Worker-to-worker coordination kinds plus the operator-outbound steering
+    # kinds (#2508). The vocabulary stays closed; unknown kinds are rejected.
+    assert set(MESSAGE_KINDS) == {
+        "finding",
+        "artefact_ref",
+        "question",
+        "steer.pause",
+        "steer.resume",
+        "steer.guidance",
+        "steer.redirect",
+        "steer.abort",
+    }
     for i, kind in enumerate(MESSAGE_KINDS):
         msg = mailbox.post(task_id="t", sender="a", kind=kind, body=f"payload-{i}")
         assert msg.kind == kind

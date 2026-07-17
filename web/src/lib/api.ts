@@ -150,3 +150,43 @@ export const apiPut = <T = unknown>(path: string, body?: unknown, init?: Request
   api<T>(path, { ...init, method: 'PUT', body: body !== undefined ? JSON.stringify(body) : undefined });
 export const apiDelete = <T = unknown>(path: string, init?: RequestInit) =>
   api<T>(path, { ...init, method: 'DELETE' });
+
+// ── Fleet steering (#2508) ──────────────────────────────────────────────────
+// Operator-outbound mid-task control. Every action is a receipt first and an
+// effect second: the server binds the command into the audit chain before the
+// effect runs and returns the receipt the delivered effect references. Mirrors
+// `TaskSteerPost` / `TaskSteerResponse` in
+// `src/bernstein/core/server/server_models.py`.
+
+export type SteerKind = 'pause' | 'resume' | 'guidance' | 'redirect' | 'abort';
+
+export interface SteerCommand {
+  kind: SteerKind;
+  principal?: string;
+  guidance?: string;
+  redirect_target?: string;
+  reason?: string;
+  session_id?: string;
+  adapter?: string;
+  worktree?: string;
+  displayed_payload_hash?: string | null;
+}
+
+export interface SteerReceipt {
+  kind: string;
+  task_id: string;
+  principal: string;
+  scope: string;
+  payload_hash: string;
+  receipt_hash: string;
+  timestamp: number;
+  mailbox_seq: number;
+  mailbox_entry_hash: string;
+  checkpoint_event_hash: string;
+  abort_signal_written: boolean;
+}
+
+/** Steer one running worker; resolves to the signed receipt. */
+export function steerTask(taskId: string, command: SteerCommand): Promise<SteerReceipt> {
+  return apiPost<SteerReceipt>(`/tasks/${encodeURIComponent(taskId)}/steer`, command);
+}

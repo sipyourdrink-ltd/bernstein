@@ -480,6 +480,49 @@ class TaskMessageResponse(BaseModel):
     signer_public_key_pem: str
 
 
+class TaskSteerPost(BaseModel):
+    """Body for POST /tasks/{task_id}/steer (#2508).
+
+    An operator steering command: pause, resume, guidance, redirect, or
+    abort. Free-text fields are capped so the mailbox delivery envelope
+    always fits the mailbox body cap. ``displayed_payload_hash`` is the hash
+    the confirmation UI computed over what it showed the operator; when
+    supplied the server rejects the action if it differs from the executed
+    command, so the receipt binds exactly the confirmed payload.
+    """
+
+    kind: str = Field(min_length=1, max_length=64)
+    principal: str = Field(default="", max_length=_MAX_SHORT_STR_LEN)
+    guidance: str = Field(default="", max_length=2048)
+    redirect_target: str = Field(default="", max_length=2048)
+    reason: str = Field(default="", max_length=2048)
+    session_id: str = Field(default="", max_length=_MAX_SHORT_STR_LEN)
+    adapter: str = Field(default="", max_length=_MAX_SHORT_STR_LEN)
+    worktree: str = Field(default="", max_length=_MAX_PATH_LEN)
+    displayed_payload_hash: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+
+
+class TaskSteerResponse(BaseModel):
+    """The receipt a steering action produced (#2508).
+
+    The response IS the receipt: the chain-anchored ``receipt_hash`` the
+    delivered effect references, the ``payload_hash`` it binds, and the
+    mailbox journal position the effect was delivered at.
+    """
+
+    kind: str
+    task_id: str
+    principal: str
+    scope: str
+    payload_hash: str
+    receipt_hash: str
+    timestamp: float
+    mailbox_seq: int
+    mailbox_entry_hash: str
+    checkpoint_event_hash: str = ""
+    abort_signal_written: bool = False
+
+
 class BatchCreateRequest(BaseModel):
     """Body for POST /tasks/batch."""
 

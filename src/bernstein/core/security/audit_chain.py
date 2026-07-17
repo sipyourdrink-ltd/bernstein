@@ -4000,6 +4000,78 @@ def record_provenance_quarantine(
     )
 
 
+#: Issue #2508 -- emitted for every fleet steering action (pause / resume /
+#: guidance / redirect / abort) before its effect executes. The signed,
+#: principal-named receipt binds the exact command payload the operator
+#: confirmed (``payload_hash``), the target task, and the authorising scope
+#: to a fixed chain position. The delivered effect references this event's
+#: chain HMAC, so an effect with no matching receipt is rejected and a
+#: mutated payload breaks verification at exactly this position -- a
+#: tampered intervention is distinguishable from a steered one. The guidance
+#: or redirect text itself never enters the chain (only its hash); it rides
+#: the mailbox journal under DLP redaction. This constant is additive and
+#: must never be reordered or removed.
+EVENT_STEERING_RECEIPT = "steering.receipt"
+
+
+def record_steering_receipt(
+    *,
+    chain: AuditChainStore,
+    kind: str,
+    task_id: str,
+    principal: str,
+    scope: str,
+    payload_hash: str,
+    actor: str = "fleet_steering",
+) -> AuditEvent:
+    """Append a ``steering.receipt`` event into *chain* (#2508).
+
+    A fleet steering action (pause / resume / guidance / redirect / abort)
+    is a receipt first and an effect second: the operator's exact command is
+    bound into the HMAC chain here, before any effect executes, and the
+    delivered effect references this receipt's chain HMAC. The effect is
+    rejected when no matching receipt precedes it, so an operator
+    intervention can never touch a worker without leaving a signed,
+    position-fixed record. Mutating the recorded payload after the fact
+    breaks the chain HMAC at exactly this position, so a tampered
+    intervention is distinguishable from a legitimately steered one.
+
+    Only the command's shape is recorded: the steering kind, the target
+    task, the acting principal, the authorising scope, and the
+    ``payload_hash`` -- the ``sha256:`` digest of the exact command payload
+    the operator confirmed. The guidance or redirect text itself is never
+    stored in the chain; it rides the mailbox journal under DLP redaction.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        kind: One of ``pause`` / ``resume`` / ``guidance`` / ``redirect`` /
+            ``abort``.
+        task_id: The steered task.
+        principal: The acting operator (seat attribution).
+        scope: The authorising token scope the action was granted under.
+        payload_hash: ``sha256:`` digest of the confirmed command payload;
+            binds the receipt to the exact text shown in the confirmation UI.
+        actor: Recorded actor; defaults to ``"fleet_steering"``.
+
+    Returns:
+        The recorded :class:`AuditEvent`; its ``hmac`` is the receipt
+        identity the delivered effect references.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_STEERING_RECEIPT,
+        actor=actor,
+        resource_type="steering_command",
+        resource_id=task_id,
+        details={
+            "kind": kind,
+            "task_id": task_id,
+            "principal": principal,
+            "scope": scope,
+            "payload_hash": payload_hash,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -4052,6 +4124,7 @@ __all__ = [
     "EVENT_SKILL_VERIFICATION_REFUSAL",
     "EVENT_SPEC_REQUIREMENT_SET",
     "EVENT_SPIFFE_SVID_BINDING",
+    "EVENT_STEERING_RECEIPT",
     "EVENT_SUBAGENT_DELEGATION",
     "EVENT_TASK_CLAIM_RECEIPT",
     "EVENT_TASK_MAILBOX_MESSAGE",
@@ -4120,6 +4193,7 @@ __all__ = [
     "record_skill_verification_refusal",
     "record_spec_requirement_set",
     "record_spiffe_svid_binding",
+    "record_steering_receipt",
     "record_subagent_delegation",
     "record_taint_decision",
     "record_task_claim_receipt",
