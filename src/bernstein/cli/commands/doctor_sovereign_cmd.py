@@ -55,11 +55,15 @@ def _simulated_sovereign_env() -> Iterator[bool]:
     prior_sovereign = os.environ.get(ENV_SOVEREIGN_MODE)
     activated = False
     if (prior_sovereign or "").strip().lower() not in {"1", "true", "sovereign"}:
+        # A real ``bernstein run --profile sovereign`` always installs the
+        # airgap deny-all baseline, so the simulation overrides BOTH the profile
+        # mode and the network policy unconditionally (not only when unset) --
+        # otherwise a stale ``BERNSTEIN_NETWORK_POLICY`` from a prior session
+        # would make the deny-all check report a state the real run would not
+        # produce. The caller's values are restored in the ``finally`` block.
         os.environ[ENV_SOVEREIGN_MODE] = "1"
-        if (prior_profile or "").strip().lower() != PROFILE_AIRGAP:
-            os.environ[ENV_PROFILE_MODE] = PROFILE_AIRGAP
-        if prior_policy is None:
-            os.environ[ENV_NETWORK_POLICY] = "none"
+        os.environ[ENV_PROFILE_MODE] = PROFILE_AIRGAP
+        os.environ[ENV_NETWORK_POLICY] = "none"
         activated = True
     try:
         yield activated

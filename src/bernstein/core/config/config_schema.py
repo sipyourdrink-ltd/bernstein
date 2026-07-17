@@ -338,6 +338,16 @@ class SovereignProfileSchema(BaseModel):
         default=True,
         description="When true, a residency region outside the pinned set halts the run.",
     )
+    allowed_egress: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Egress allow-list under --profile sovereign, as host / host:port / CIDR tokens "
+            "(e.g. a self-hosted EU model server on 10.0.0.5:11434). Empty means deny-all. "
+            "Declared here (not via --allow-network) so the runtime policy and the signed "
+            "posture attestation are sourced from the same config and cannot diverge. Every "
+            "entry must resolve to a self-hosted / EU-region destination."
+        ),
+    )
 
 
 class SessionSchema(BaseModel):

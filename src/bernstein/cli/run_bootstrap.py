@@ -403,6 +403,38 @@ def _install_network_policy(
         install_runtime_socket_guard()
 
 
+def _install_profile_network_policy(*, run_profile: str | None, allow_network: tuple[str, ...], workdir: Path) -> None:
+    """Install the egress policy, sourcing sovereign egress from config (#2518).
+
+    Under ``--profile sovereign`` the egress allow-list comes from
+    ``bernstein.yaml`` (``sovereign.allowed_egress``), not ``--allow-network``,
+    so the runtime network policy and the signed posture attestation are
+    computed from the same config and cannot diverge (a deny-all attestation
+    can never coexist with a runtime that quietly allows a destination).
+    Everything else keeps the existing ``--allow-network`` behaviour.
+
+    Raises:
+        click.UsageError: When ``--allow-network`` is combined with
+            ``--profile sovereign``.
+    """
+    if (run_profile or "").strip().lower() == "sovereign":
+        from bernstein.core.security.deployment_profile import (
+            load_config_snapshot,
+            sovereign_egress_allowlist,
+        )
+
+        if allow_network:
+            raise click.UsageError(
+                "--allow-network is not accepted under --profile sovereign. Declare egress "
+                "destinations in bernstein.yaml under sovereign.allowed_egress so the runtime "
+                "network policy and the signed posture attestation stay in sync."
+            )
+        egress = sovereign_egress_allowlist(load_config_snapshot(workdir))
+        _install_network_policy(run_profile=run_profile, allow_network=egress)
+    else:
+        _install_network_policy(run_profile=run_profile, allow_network=allow_network)
+
+
 def _activate_sovereign_profile(*, run_profile: str | None, workdir: Path) -> None:
     """Attest the sovereign residency posture at run start (issue #2518).
 
@@ -1591,7 +1623,7 @@ def _run_impl(
         max_blast_radius=max_blast_radius,
     )
 
-    _install_network_policy(run_profile=run_profile, allow_network=allow_network)
+    _install_profile_network_policy(run_profile=run_profile, allow_network=allow_network, workdir=Path.cwd())
     _activate_sovereign_profile(run_profile=run_profile, workdir=Path.cwd())
 
     _configure_quality_gate_bypass(

@@ -42,7 +42,7 @@ from bernstein.core.security.network_policy import ENV_SOVEREIGN_MODE
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.security.deployment_profile import EffectivePolicy
+    from bernstein.core.security.deployment_profile import DriftEvaluation, EffectivePolicy
 
 
 @dataclass(frozen=True)
@@ -169,9 +169,8 @@ def check_endpoints_certified(policy: EffectivePolicy, workdir: Path) -> Check:
     )
 
 
-def check_posture_attested(workdir: Path, policy: EffectivePolicy) -> Check:
+def check_posture_attested(policy: EffectivePolicy, evaluation: DriftEvaluation) -> Check:
     """Verify the posture is attested and the live posture has not drifted."""
-    evaluation = evaluate_posture_drift(workdir=workdir, config_snapshot=load_config_snapshot(workdir))
     if not evaluation.attested_hash:
         return Check(
             name="posture attested (no drift)",
@@ -214,7 +213,7 @@ def run_sovereign_checks(workdir: Path | None = None) -> SovereignReport:
         check_catalog_offline(policy),
         check_residency_strict_eu(policy),
         check_endpoints_certified(policy, cwd),
-        check_posture_attested(cwd, policy),
+        check_posture_attested(policy, evaluation),
         check_audit_chain_hmac(cwd),
     ]
     return SovereignReport.from_checks(

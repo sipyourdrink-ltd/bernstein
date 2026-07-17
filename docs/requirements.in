@@ -1,0 +1,19 @@
+# Documentation toolchain source (MkDocs Material site published to Read the
+# Docs). This file holds only the directly-declared docs dependencies; the
+# consumed `docs/requirements.txt` is a fully hash-pinned resolution of this
+# set. Regenerate after any change here with:
+#
+#   uv run --python 3.13 --with pip-tools -- \
+#     pip-compile --generate-hashes --output-file docs/requirements.txt \
+#     docs/requirements.in
+#
+# The `imaging` extra pulls cairosvg/pillow for the Material `social` card
+# plugin (mkdocs.yml); the matching native libs (libcairo, ...) are installed
+# by `.readthedocs.yaml::build.apt_packages`.
+mkdocs>=1.6.1,<2
+mkdocs-material[imaging]>=9.7.6,<10
+mkdocs-minify-plugin>=0.8,<1
+# Cap below 1.2.3: that release added a runtime dependency on `properdocs`
+# (a third-party fork of mkdocs 1.x). We build against upstream `mkdocs`
+# only, so pin to the newest 1.2.x that depends solely on mkdocs (1.2.2).
+mkdocs-redirects>=1.2,<1.2.3

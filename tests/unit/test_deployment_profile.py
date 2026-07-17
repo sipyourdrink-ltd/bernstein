@@ -71,6 +71,7 @@ def test_effective_policy_pins_profile_constants(tmp_path: Path) -> None:
     policy = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(tmp_path))
     doc = policy.to_canonical_document()
     assert doc["network_egress"] == "deny-all"
+    assert doc["egress_allowlist"] == []
     assert doc["catalog_mode"] == "offline"
     assert doc["compliance_pack"] == "regulated"
     assert doc["storage_backend"] == "memory"
@@ -256,6 +257,30 @@ def test_config_edit_after_attestation_drifts_and_names_key(tmp_path: Path) -> N
     assert result.attestation_count == 1
 
 
+def test_non_certified_endpoint_refuses_without_hash_drift(tmp_path: Path) -> None:
+    """AC4: a gated endpoint with no receipt refuses even when the hash is unchanged."""
+    # A gated role points at a local endpoint (host-compliant) but has no
+    # certification receipt on disk. The posture hash reflects only the config,
+    # so it does not "drift", yet the spawn gate must still refuse.
+    _write_config(
+        tmp_path,
+        "goal: x\nrole_model_policy:\n  developer:\n    base_url: http://10.0.0.5:11434/v1\n    model: m\n",
+    )
+    policy = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(tmp_path))
+    build_posture_attestation(workdir=tmp_path, policy=policy, timestamp=1, chain=AuditChainStore(_audit_dir(tmp_path)))
+    ev = evaluate_posture_drift(workdir=tmp_path, config_snapshot=load_config_snapshot(tmp_path))
+    assert ev.drifted is False  # config unchanged -> hash matches
+    assert ev.should_refuse is True  # but a gated endpoint lacks certification
+    assert any("certification" in v for v in ev.violations)
+
+    # The violation-only refusal record signs + anchors + re-verifies.
+    record, _ = record_and_sign_drift(
+        workdir=tmp_path, evaluation=ev, timestamp=2, chain=AuditChainStore(_audit_dir(tmp_path))
+    )
+    assert record["violations"]
+    assert verify_sovereign_attestations(_audit_dir(tmp_path)).ok is True
+
+
 def test_drift_record_is_anchored_in_chain(tmp_path: Path) -> None:
     _write_config(tmp_path, _CLEAN_CONFIG)
     policy = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(tmp_path))
@@ -343,6 +368,7 @@ def test_effective_policy_document_round_trips() -> None:
         profile="sovereign",
         schema_version=1,
         network_egress="deny-all",
+        egress_allowlist=(),
         catalog_mode="offline",
         compliance_pack="regulated",
         storage_backend="memory",
@@ -353,3 +379,45 @@ def test_effective_policy_document_round_trips() -> None:
     )
     doc = policy.to_canonical_document()
     assert json.loads(json.dumps(doc)) == doc
+
+
+# ---------------------------------------------------------------------------
+# Egress allow-list truthfulness (deny-all attestation must match runtime)
+# ---------------------------------------------------------------------------
+
+
+def test_deny_all_egress_by_default(tmp_path: Path) -> None:
+    _write_config(tmp_path, _CLEAN_CONFIG)
+    policy = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(tmp_path))
+    doc = policy.to_canonical_document()
+    assert doc["network_egress"] == "deny-all"
+    assert doc["egress_allowlist"] == []
+
+
+def test_local_egress_allowlist_is_compliant_and_attested(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path,
+        "goal: x\nsovereign:\n  enabled: true\n  allowed_egress: ['10.0.0.5:11434', 'vllm.internal:8000']\n",
+    )
+    policy = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(tmp_path))
+    doc = policy.to_canonical_document()
+    assert doc["network_egress"] == "allow-list"
+    assert doc["egress_allowlist"] == ["10.0.0.5:11434", "vllm.internal:8000"]
+    assert policy.violations() == []
+
+
+def test_public_egress_allowlist_is_a_violation(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path,
+        "goal: x\nsovereign:\n  enabled: true\n  allowed_egress: ['api.openai.com:443']\n",
+    )
+    policy = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(tmp_path))
+    assert any("egress" in p for p in policy.violations())
+
+
+def test_egress_allowlist_changes_posture_hash(tmp_path: Path) -> None:
+    _write_config(tmp_path, _CLEAN_CONFIG)
+    base = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(tmp_path)).posture_hash()
+    _write_config(tmp_path, "goal: x\nsovereign:\n  enabled: true\n  allowed_egress: ['10.0.0.5:11434']\n")
+    changed = resolve_effective_policy(SOVEREIGN_PROFILE, load_config_snapshot(tmp_path)).posture_hash()
+    assert base != changed

@@ -85,9 +85,18 @@ sovereign:
   enabled: true
   regions: [eu-central, eu-west]
   enforce_strict: true
+  # Egress is deny-all by default. To reach a self-hosted EU model server,
+  # list it here (host / host:port / CIDR) -- NOT via --allow-network -- so the
+  # runtime network policy and the signed attestation come from the same config
+  # and cannot diverge. Every entry must be self-hosted or EU-region.
+  allowed_egress: ["10.0.0.5:11434"]
 storage:
   backend: memory        # local sink only; a remote backend is drift
 ```
+
+Under `--profile sovereign`, `--allow-network` is rejected: egress is declared
+in config so a deny-all attestation can never coexist with a runtime that
+quietly allows a destination.
 
 Verify the posture at any time:
 
