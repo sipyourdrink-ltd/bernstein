@@ -17,6 +17,7 @@ import {
   Settings as SettingsIcon,
   ShieldCheck,
   Sun,
+  Target,
   User,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -33,6 +34,7 @@ const NAV = [
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, key: 'approvals' as const },
   { to: '/audit', label: 'Audit', icon: ScrollText, key: 'audit' as const },
   { to: '/costs', label: 'Costs', icon: DollarSign, key: 'costs' as const },
+  { to: '/missions', label: 'Missions', icon: Target, key: 'missions' as const },
   { to: '/fleet', label: 'Fleet', icon: Network, key: 'fleet' as const },
   { to: '/settings', label: 'Settings', icon: SettingsIcon, key: 'settings' as const },
 ] as const;

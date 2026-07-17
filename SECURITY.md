@@ -20,7 +20,7 @@ Open a private advisory so triage and the fix stay in one place:
 
 ---
 
-## Bug Bounty Program
+## Coordinated Disclosure
 
 ### Scope
 
@@ -44,20 +44,24 @@ Open a private advisory so triage and the fix stay in one place:
 - Vulnerabilities in dependencies where no Bernstein-specific exploit path exists
 - Reports that require physical access to the machine
 
-### Severity and Rewards
+### Severity and recognition
 
-| Severity | CVSS | Examples | Reward range |
-|----------|------|---------|--------------|
-| Critical | 9.0–10.0 | RCE on task server, container escape, token forgery enabling full takeover | $1 000 – $5 000 |
-| High | 7.0–8.9 | Privilege escalation, unauthenticated task injection, path traversal outside workspace | $250 – $1 000 |
-| Medium | 4.0–6.9 | Auth bypass for low-privilege endpoints, info disclosure of agent tokens, SSRF | $100 – $250 |
-| Low | 0.1–3.9 | Minor info disclosure, non-exploitable misconfigurations | $25 – $100 |
+Bernstein is a solo, non-commercial, volunteer-run open-source project with no funding behind it, so it does not run a paid bug-bounty program and cannot offer monetary rewards. Reports are still very welcome and are taken seriously.
 
-Rewards are paid in USD. Minimum payout threshold: $25.
+Confirmed reports are classified by severity (CVSS) to prioritize the fix:
 
-Duplicate reports receive no reward. First valid reporter wins.
+| Severity | CVSS | Examples |
+|----------|------|----------|
+| Critical | 9.0-10.0 | RCE on task server, container escape, token forgery enabling full takeover |
+| High | 7.0-8.9 | Privilege escalation, unauthenticated task injection, path traversal outside workspace |
+| Medium | 4.0-6.9 | Auth bypass for low-privilege endpoints, info disclosure of agent tokens, SSRF |
+| Low | 0.1-3.9 | Minor info disclosure, non-exploitable misconfigurations |
 
-### Response SLAs
+Recognition for a valid, first-reported issue: you are credited by name (or a handle or link you choose) in the release notes of the release that ships the fix, and in the fix itself. Duplicate reports are credited to the first valid reporter.
+
+### Response targets (best effort)
+
+These are best-effort targets for a single maintainer, not contractual guarantees; if a fix will take longer, we say so.
 
 | Milestone | Target |
 |-----------|--------|

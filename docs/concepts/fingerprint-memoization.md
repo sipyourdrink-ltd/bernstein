@@ -76,7 +76,18 @@ Metrics exposed on `/metrics`:
 - The decorator does not replace `semantic_cache.py` - that's a
   vector cache for semantic-similarity lookup, a different concern.
 
+## Cache policy engine
+
+The `MemoStore` here is the single backing store the [cache policy
+engine](cache-policy.md) composes over. A task that declares a `cache_policy`
+gets a key composed from an ordered ingredient recipe (mandatory model version,
+adapter version, base worktree commit, and tool schema hash, plus declared
+optional ingredients), a pure drift-based freshness verdict over repo state, and
+transitive eviction over `served_from` lineage edges - all on top of this same
+content-addressed store.
+
 ## Related
 
 - Source: `src/bernstein/core/persistence/fingerprint.py`
+- Policy engine: `src/bernstein/core/persistence/cache_policy.py`
 - PR #995

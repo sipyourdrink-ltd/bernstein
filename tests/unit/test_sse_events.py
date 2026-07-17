@@ -10,8 +10,8 @@ from bernstein.core.server.sse_events import SSEEvent, SSEEventType
 
 
 class TestSSEEventType:
-    def test_has_14_members(self) -> None:
-        assert len(SSEEventType) == 14
+    def test_has_15_members(self) -> None:
+        assert len(SSEEventType) == 15
 
     def test_event_type_values_are_dotted(self) -> None:
         for member in SSEEventType:
@@ -34,10 +34,19 @@ class TestSSEEventType:
             "MERGE_COMPLETED",
             "RUN_STARTED",
             "RUN_COMPLETED",
+            "MISSION_UPDATED",
             "HEARTBEAT",
         }
         actual = {m.name for m in SSEEventType}
         assert expected == actual
+
+    def test_mission_updated_factory(self) -> None:
+        evt = SSEEvent.mission_updated("m-1", status_hash="abc", overall="active")
+        assert evt.event == SSEEventType.MISSION_UPDATED
+        assert evt.data["mission_id"] == "m-1"
+        assert evt.data["status_hash"] == "abc"
+        assert evt.data["overall"] == "active"
+        assert json.loads(evt.to_sse().split("data: ", 1)[1].split("\n", 1)[0])["mission_id"] == "m-1"
 
 
 class TestSSEEvent:

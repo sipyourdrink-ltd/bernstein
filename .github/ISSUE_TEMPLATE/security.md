@@ -14,13 +14,12 @@ assignees: []
 
 ## How to report a vulnerability
 
-1. **HackerOne (preferred):** https://hackerone.com/bernstein
-2. **Email:** forte@bernstein.run (PGP key at `/.well-known/security-pgp.asc`)
-3. **GitHub private vulnerability reporting:** the "Report a vulnerability"
+1. **Email (preferred):** forte@bernstein.run (PGP key at `/.well-known/security-pgp.asc`)
+2. **GitHub private vulnerability reporting:** the "Report a vulnerability"
    button on the [Security tab](https://github.com/sipyourdrink-ltd/bernstein/security/advisories/new).
 
-Initial triage acknowledgement: within 72 hours. SLA matrix and the bug
-bounty scope live in [`SECURITY.md`](../../SECURITY.md).
+Initial triage acknowledgement: within 72 hours. SLA matrix and the
+disclosure scope live in [`SECURITY.md`](../../SECURITY.md).
 
 ## If you opened this issue anyway
 

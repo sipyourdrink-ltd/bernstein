@@ -190,3 +190,79 @@ export interface SteerReceipt {
 export function steerTask(taskId: string, command: SteerCommand): Promise<SteerReceipt> {
   return apiPost<SteerReceipt>(`/tasks/${encodeURIComponent(taskId)}/steer`, command);
 }
+
+// ── Mission timeline (#2510) ────────────────────────────────────────────────
+// Outcome-level view over a multi-day mission. The server folds the mission's
+// work-ledger chain on every request; the client renders whatever the fold
+// returns. Every element carries the receipt / evidence handle it was derived
+// from, and `ledger_verified === false` flips the screen to an unverified
+// banner. Mirrors `MissionProjection.to_dict()` /
+// `MissionStatus.to_dict()` in
+// `src/bernstein/core/orchestration/missions.py` and the routes in
+// `src/bernstein/core/routes/missions.py`.
+
+export type PhaseState =
+  | 'pending'
+  | 'active'
+  | 'passed'
+  | 'halted'
+  | 'unverified';
+
+export type MissionOverall =
+  | 'pending'
+  | 'active'
+  | 'complete'
+  | 'halted'
+  | 'unverified';
+
+export interface MissionPhaseStatus {
+  phase_id: string;
+  name: string;
+  state: PhaseState | string;
+  gate: string[];
+  gate_passed: boolean;
+  evidence_bundle_hashes: string[];
+  envelope: string;
+  budget_usd: number;
+  spend_usd: number;
+  receipt_hash: string;
+  ledger_seq: number;
+}
+
+export interface MissionStatus {
+  schema_version: number;
+  mission_id: string;
+  goal_digest: string;
+  spec_hash: string;
+  phases: MissionPhaseStatus[];
+  active_phase: string;
+  overall: MissionOverall | string;
+}
+
+export interface MissionProjection {
+  mission_id: string;
+  status: MissionStatus;
+  mission_status_hash: string;
+  ledger_head: string;
+  ledger_verified: boolean;
+  evidence_verified: boolean;
+  entry_count: number;
+}
+
+/** List mission ids that have a ledger to project, newest first. */
+export async function listMissions(): Promise<string[]> {
+  const body = await apiGet<{ missions: string[] }>('/missions');
+  return body.missions ?? [];
+}
+
+/** Fetch the projection receipt (canonical status + status hash) for a mission. */
+export function getMission(missionId: string): Promise<MissionProjection> {
+  return apiGet<MissionProjection>(`/missions/${encodeURIComponent(missionId)}`);
+}
+
+/** Build the provenance link for a phase gate's evidence bundle. */
+export function missionEvidenceUrl(missionId: string, taskId: string): string {
+  return buildUrl(
+    `/missions/${encodeURIComponent(missionId)}/evidence/${encodeURIComponent(taskId)}`,
+  );
+}
