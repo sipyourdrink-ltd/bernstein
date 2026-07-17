@@ -53,6 +53,7 @@ modules =
     bernstein.adapters.codex
     bernstein.adapters.cody
     bernstein.adapters.composio
+    bernstein.adapters.computer_use
     bernstein.adapters.continue_dev
     bernstein.adapters.copilot
     bernstein.adapters.cursor
