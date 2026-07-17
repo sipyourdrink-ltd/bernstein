@@ -290,6 +290,9 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "context",
         # Bot-added: drift autofix (regen_contract_drift.py)
         "task",
+        # Named sandbox pools: chain-projected manifests, governed overrides,
+        # and signed worker enrolment (issue #2547)
+        "pool",
     }
 )
 

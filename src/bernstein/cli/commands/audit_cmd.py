@@ -230,8 +230,36 @@ def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
     # verify. Orthogonal to both HMAC chain and Merkle seal.
     all_passed = _verify_approval_cards() and all_passed
 
+    # Named sandbox pools are a further integrity pillar: a tampered pool body
+    # (its content-addressed hash no longer recomputes) or a forged placement
+    # receipt (a widened effective manifest, a swapped backend) must fail verify
+    # exactly like a tampered chain entry (#2547). Orthogonal to both the HMAC
+    # chain and the Merkle seal.
+    all_passed = _verify_pool_receipts() and all_passed
+
     console.print()
     raise SystemExit(0 if all_passed else 1)
+
+
+def _verify_pool_receipts() -> bool:
+    """Verify active pool bodies and placement receipts. Returns True if valid.
+
+    Content-addressed pool bodies and sealed placement receipts recompute their
+    own hashes offline; a mutated body or a forged placement fails here with the
+    pool or placement named. When no pools are configured this is a silent
+    no-op (AC: regression -- nothing changes without pools).
+    """
+    from bernstein.cli.commands.pool_cmd import verify_pools
+
+    ok, errors = verify_pools(Path.cwd())
+    console.print()
+    if ok:
+        console.print(Panel("[bold green]Pool Verification Passed[/bold green]", border_style="green", expand=False))
+        return True
+    console.print(Panel("[bold red]Pool Verification FAILED[/bold red]", border_style="red", expand=False))
+    for err in errors:
+        console.print(f"  [red]![/red] {err}")
+    return False
 
 
 def _verify_grant_chains() -> bool:

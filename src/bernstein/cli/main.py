@@ -70,6 +70,7 @@ from bernstein.cli.commands.fleet_cmd import fleet_group
 from bernstein.cli.commands.fork_cmd import fork_cmd
 from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
+from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
 from bernstein.cli.commands.role_adapter_policy_cmd import security_group as _role_adapter_security_group
 from bernstein.cli.commands.run_names_cmd import run_lookup_cmd
@@ -914,6 +915,7 @@ cli.add_command(_thread_cmd, "thread")
 cli.add_command(github_group)
 cli.add_command(graph_group, "graph")
 cli.add_command(policy_group, "policy")
+cli.add_command(pool_group, "pool")
 cli.add_command(_role_adapter_security_group, "security")
 cli.add_command(mcp_server, "mcp")
 # Wire the release-1.9 community catalog as a subgroup of `bernstein mcp`.
