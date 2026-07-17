@@ -17,6 +17,7 @@ Bernstein is named after Leonard Bernstein, the American conductor and composer.
 | `defaults.py`               | Centralized default values for the Bernstein orchestrator |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
 | `streaming_merge.py`        | Streaming task results for long-running agents (incremental merge) |
+| `admission/`                | Named resource pools with lease-backed admission (#2544) |
 | `agents/`                   | agents sub-package |
 | `approval/`                 | Interactive tool-call approval (op-002) |
 | `autofix/`                  | Bernstein autofix daemon - auto-repair CI failures on Bernstein PRs |
