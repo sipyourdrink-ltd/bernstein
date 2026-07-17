@@ -142,11 +142,25 @@ class CapabilityRegistry:
             source="default",
         )
 
-    def evaluate_chain(self, tools: Sequence[str]) -> ChainDecision:
+    def evaluate_chain(
+        self,
+        tools: Sequence[str],
+        *,
+        operand_trust: Sequence[object] | None = None,
+    ) -> ChainDecision:
         """Evaluate a tool chain for the lethal trifecta.
 
         Args:
             tools: Tools that will run on a single execution path.
+            operand_trust: Optional trust classes of the *data operands* the
+                chain acts on, propagated through the lineage graph (issue
+                #2513). When any operand is untrusted (a
+                :class:`~bernstein.core.lineage.provenance.TrustClass` at or
+                below the untrusted threshold) or ``None`` (provenance could
+                not be resolved -> fail closed), the chain carries
+                ``UNTRUSTED_INPUT`` by *data*, even when no static tool tag
+                does. Omitting this argument preserves the pre-#2513 behaviour
+                exactly.
 
         Returns:
             A :class:`ChainDecision`.  In ``OFF`` mode the chain is always
@@ -165,6 +179,13 @@ class CapabilityRegistry:
             for cap in entry.capabilities:
                 triggered.add(cap)
                 offending[cap].append(tool)
+
+        # Data-carried taint: an untrusted operand contributes UNTRUSTED_INPUT
+        # to the union regardless of which tool last touched the bytes. This
+        # closes the data-flow laundering path the static tags leave open.
+        if operand_trust is not None and _any_untrusted(operand_trust):
+            triggered.add(Capability.UNTRUSTED_INPUT)
+            offending[Capability.UNTRUSTED_INPUT].append("(tainted operand)")
 
         triggered_frozen = frozenset(triggered)
         full_trifecta = triggered_frozen >= _ALL_CAPABILITIES
@@ -244,6 +265,29 @@ class CapabilityRegistry:
                 return cls.from_directory(local, mode=mode)
         bundled = _BUNDLED_TEMPLATES_DIR / "capabilities"
         return cls.from_directory(bundled, mode=mode)
+
+
+def _any_untrusted(operand_trust: Sequence[object]) -> bool:
+    """Return True when any operand is untrusted or has unresolved provenance.
+
+    ``None`` operands mean provenance could not be resolved and fail closed to
+    untrusted. A :class:`~bernstein.core.lineage.provenance.TrustClass` operand
+    is untrusted when it is at or below the untrusted threshold. Any other
+    object type is treated conservatively as untrusted so a caller cannot widen
+    the gate by passing an unexpected value.
+    """
+    from bernstein.core.lineage.provenance import TrustClass, is_untrusted
+
+    for operand in operand_trust:
+        if operand is None:
+            return True
+        if isinstance(operand, TrustClass):
+            if is_untrusted(operand):
+                return True
+            continue
+        # Unknown operand shape -> fail closed.
+        return True
+    return False
 
 
 def _coerce_capabilities(values: Iterable[object]) -> frozenset[Capability]:

@@ -1,0 +1,53 @@
+# Source-to-trust-class map for tool-result provenance (issue #2513).
+#
+# Reviewed data, following the same convention as surfaces.yaml. Each row maps
+# a source/tool name to the trust class its results carry when they enter
+# worker context. The effective trust of a derived artefact is the minimum
+# trust class over its lineage closure; an unlisted source fails closed to the
+# lowest class (public).
+#
+# Trust classes, most to least trusted:
+#   operator > workspace > first_party > third_party > public
+#
+# third_party and public are the outsider-writable classes: their results are
+# tainted and cannot reach an egress sink without an explicit decision.
+sources:
+  # --- Operator-authored input ------------------------------------------
+  - name: operator.prompt
+    trust_class: operator
+  - name: operator.attachment
+    trust_class: operator
+
+  # --- Workspace / first-party repository state -------------------------
+  - name: fs.read
+    trust_class: workspace
+  - name: git.read
+    trust_class: workspace
+  - name: repo.file
+    trust_class: workspace
+
+  # --- Web research and browser activity (outsider-writable) ------------
+  - name: web.fetch
+    trust_class: public
+  - name: web.search
+    trust_class: public
+  - name: browser.activity
+    trust_class: public
+
+  # --- Tracker issue / PR bodies feeding the issue-to-PR pipeline -------
+  - name: github.fetch_issue
+    trust_class: third_party
+  - name: github.fetch_pr
+    trust_class: third_party
+  - name: github.fetch_comment
+    trust_class: third_party
+  - name: gitlab.fetch_issue
+    trust_class: third_party
+  - name: tracker.issue_body
+    trust_class: third_party
+
+  # --- Third-party MCP servers proxied through the gateway --------------
+  - name: mcp.gateway_result
+    trust_class: third_party
+  - name: mcp.third_party
+    trust_class: third_party

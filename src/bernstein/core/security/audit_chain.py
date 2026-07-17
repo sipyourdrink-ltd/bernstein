@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 from bernstein.core.security.audit import (
@@ -593,6 +594,20 @@ EVENT_EVAL_GATE_VERDICT = "eval.gate_verdict"
 #: rollback, so a regression postmortem links the exact receipt that admitted
 #: the change to the receipt that revoked it.
 EVENT_EVAL_GATE_REVOCATION = "eval.gate_revocation"
+
+#: Issue #2513 -- emitted whenever an egress-relevant decision consults the
+#: propagated taint of an artefact. Records ``{target, trust, tainted,
+#: decision, closure_size, trust_records}`` so a verifier folding the chain
+#: offline reconstructs exactly which artefact's provenance drove the egress
+#: verdict and to which lineage records the taint traced.
+EVENT_PROVENANCE_TAINT_DECISION = "provenance.taint_decision"
+
+#: Issue #2513 -- emitted whenever an untrusted payload is passed through the
+#: quarantined structural parser before anything from it reaches worker
+#: context. Records ``{source_content_hash, extracted_fields,
+#: withheld_fields}`` so the extraction edge (structured fields kept, free
+#: text withheld) is itself anchored into the chain.
+EVENT_PROVENANCE_QUARANTINE = "provenance.quarantine"
 
 
 # ---------------------------------------------------------------------------
@@ -3904,6 +3919,87 @@ def record_eval_gate_revocation(
     )
 
 
+def record_taint_decision(
+    *,
+    chain: AuditChainStore,
+    target: str,
+    trust: str,
+    tainted: bool,
+    decision: str,
+    actor: str,
+    closure_size: int = 0,
+    trust_records: Sequence[str] = (),
+) -> AuditEvent:
+    """Append a ``provenance.taint_decision`` event into *chain* (issue #2513).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        target: Entry hash / artefact whose propagated taint was consulted.
+        trust: Effective trust class (``operator`` ... ``public``).
+        tainted: Whether ``target`` was judged untrusted-origin.
+        decision: The egress-relevant decision taken (e.g. ``deny``, ``ask``,
+            ``approve``).
+        actor: The subsystem or agent that made the decision.
+        closure_size: Number of lineage entries in the projected closure.
+        trust_records: Entry hashes of the signed provenance records the
+            verdict projected from.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_PROVENANCE_TAINT_DECISION,
+        actor=actor,
+        resource_type="provenance_taint",
+        resource_id=target,
+        details={
+            "target": target,
+            "trust": trust,
+            "tainted": tainted,
+            "decision": decision,
+            "closure_size": closure_size,
+            "trust_records": list(trust_records),
+        },
+    )
+
+
+def record_provenance_quarantine(
+    *,
+    chain: AuditChainStore,
+    source_content_hash: str,
+    extracted_fields: Sequence[str],
+    withheld_fields: Sequence[str],
+    actor: str,
+) -> AuditEvent:
+    """Append a ``provenance.quarantine`` event into *chain* (issue #2513).
+
+    Anchors a quarantined structural extraction: which fields were kept and
+    which free-text fields were withheld, tied to the source payload's content
+    hash so the extraction edge is reconstructable offline.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        source_content_hash: ``sha256:<hex>`` of the raw untrusted payload.
+        extracted_fields: Names of the schema-validated fields emitted.
+        withheld_fields: Names of the free-text fields withheld from context.
+        actor: The ingestion point that ran the quarantine.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_PROVENANCE_QUARANTINE,
+        actor=actor,
+        resource_type="provenance_quarantine",
+        resource_id=source_content_hash,
+        details={
+            "source_content_hash": source_content_hash,
+            "extracted_fields": list(extracted_fields),
+            "withheld_fields": list(withheld_fields),
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -3941,6 +4037,8 @@ __all__ = [
     "EVENT_PLUGIN_INSTALL_RECEIPT",
     "EVENT_PLUGIN_UPDATE_RECEIPT",
     "EVENT_PROCESS_REAP_RECEIPT",
+    "EVENT_PROVENANCE_QUARANTINE",
+    "EVENT_PROVENANCE_TAINT_DECISION",
     "EVENT_PROVIDER_STATE_MUTATION",
     "EVENT_REVIEW_BOARD_ACTION",
     "EVENT_REVIEW_RECEIPT",
@@ -4007,6 +4105,7 @@ __all__ = [
     "record_plugin_install_receipt",
     "record_plugin_update_receipt",
     "record_process_reap_receipt",
+    "record_provenance_quarantine",
     "record_provider_state_mutation",
     "record_review_board_action",
     "record_review_receipt",
@@ -4022,6 +4121,7 @@ __all__ = [
     "record_spec_requirement_set",
     "record_spiffe_svid_binding",
     "record_subagent_delegation",
+    "record_taint_decision",
     "record_task_claim_receipt",
     "record_task_mailbox_message",
     "record_thread_approval",

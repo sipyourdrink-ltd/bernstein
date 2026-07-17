@@ -383,6 +383,9 @@ artifacts = [
 # Lethal-trifecta capability matrix declarations.  Bundled so the
 # default-deny check can find tags right after pip install.
 "templates/capabilities" = "bernstein/_default_templates/capabilities"
+# Provenance trust-class source map (issue #2513). Bundled so tool-result
+# taint classification resolves right after pip install.
+"templates/provenance" = "bernstein/_default_templates/provenance"
 # Stock YAML workflow manifests (#1108) shipped with the wheel so
 # `bernstein workflow list` / `... run <name>` resolve immediately
 # without requiring a source checkout.

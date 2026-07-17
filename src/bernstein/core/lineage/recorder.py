@@ -92,6 +92,8 @@ class LineageRecorder:
         tool_call_id: str,
         span_id: str,
         artefact_kind: str = "file",
+        trust_class: str | None = None,
+        extra_parents: list[str] | None = None,
     ) -> str:
         """Record a single artefact write. Returns the entry hash.
 
@@ -105,6 +107,13 @@ class LineageRecorder:
             span_id: OTel span hex; used both in the entry body and as the
                 child span's parent context when telemetry is enabled.
             artefact_kind: One of ``ARTEFACT_KINDS``; defaults to ``file``.
+            trust_class: Optional provenance trust class (issue #2513). Set on
+                tool-result records so the signed entry itself carries the
+                label; taint propagation is a projection over these entries.
+            extra_parents: Optional additional ``parent_hashes`` to record on
+                top of the artefact's own tip. This is the cross-artefact
+                lineage edge that anchors a derived artefact (or a quarantine
+                extraction) back to the tainted source it was produced from.
 
         Raises:
             ValueError: When ``artefact_path`` is absolute or contains a
@@ -121,6 +130,13 @@ class LineageRecorder:
         # explicit multi-parent ``record_merge`` call (out of scope for v1
         # core).
         parent_hashes: list[str] = list(tips.get("open", []))[:1]
+        # Cross-artefact edges (provenance/quarantine lineage) are appended
+        # after the tip parent, preserving order and dropping duplicates so
+        # the same source is never named twice.
+        if extra_parents:
+            for ph in extra_parents:
+                if ph not in parent_hashes:
+                    parent_hashes.append(ph)
 
         ts_ns = time.time_ns()
 
@@ -143,6 +159,7 @@ class LineageRecorder:
             span_id=span_id,
             ts_ns=ts_ns,
             operator_hmac="",
+            trust_class=trust_class,
         )
         operator_hmac = compute_operator_hmac(unsigned_entry, self._hmac_key)
 
@@ -158,6 +175,7 @@ class LineageRecorder:
             span_id=span_id,
             ts_ns=ts_ns,
             operator_hmac=operator_hmac,
+            trust_class=trust_class,
         )
 
         # Sign the JCS-canonical entry bytes. The auditor verifies the same

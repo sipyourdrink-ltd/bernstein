@@ -351,6 +351,9 @@ def _entry_from_dict(payload: dict[str, object]) -> LineageEntry:
         span_id=str(payload["span_id"]),
         ts_ns=int(payload["ts_ns"]),  # type: ignore[arg-type]
         operator_hmac=str(payload["operator_hmac"]),
+        # Additive (issue #2513): absent on pre-feature entries -> None, which
+        # canonicalises back to the exact bytes read, so entry_hash round-trips.
+        trust_class=(None if payload.get("trust_class") is None else str(payload["trust_class"])),
     )
 
 

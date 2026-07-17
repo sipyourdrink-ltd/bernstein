@@ -23,7 +23,10 @@ import os
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from bernstein.core.lineage.provenance import TrustClass
 
 
 class Decision(StrEnum):
@@ -649,7 +652,36 @@ def _match_allow(cmd: str) -> str | None:
     return None
 
 
-def classify_command(cmd: str) -> ApprovalResult:
+def _downgrade_for_taint(
+    result: ApprovalResult,
+    derived_trust: TrustClass | None,
+) -> ApprovalResult:
+    """Downgrade an APPROVE to ASK when the command derives from taint.
+
+    A command whose text derives from an untrusted-origin artefact (its
+    lineage closure bottoms out at ``third_party`` or ``public``) is never
+    auto-approved: the structural gate closes the direct path, and this closes
+    the data-flow laundering path. DENY and ASK are left untouched -- taint can
+    only tighten a decision, never loosen it. Trusted derivations and the
+    default ``None`` leave the decision exactly as computed.
+    """
+    if derived_trust is None or result.decision is not Decision.APPROVE:
+        return result
+    # Local import keeps the auto-approve hot path free of a lineage import
+    # unless a caller actually threads provenance through.
+    from bernstein.core.lineage.provenance import is_untrusted
+
+    if not is_untrusted(derived_trust):
+        return result
+    return ApprovalResult(
+        Decision.ASK,
+        f"Command text derives from an untrusted-origin artefact "
+        f"(trust={derived_trust.value}); escalating to human review",
+        matched_pattern="provenance:untrusted_derivation",
+    )
+
+
+def classify_command(cmd: str, *, derived_trust: TrustClass | None = None) -> ApprovalResult:
     """Classify a (potentially compound) bash command.
 
     Applies :func:`normalize_command` first to defeat encoding tricks,
@@ -665,10 +697,18 @@ def classify_command(cmd: str) -> ApprovalResult:
 
     Args:
         cmd: Raw shell command string (may include ``&&``, ``||``, etc.).
+        derived_trust: Optional propagated trust class of the artefact the
+            command text derives from (issue #2513). When it is untrusted an
+            APPROVE is downgraded to ASK; DENY and ASK are unaffected.
 
     Returns:
         :class:`ApprovalResult` with the worst-case decision.
     """
+    return _downgrade_for_taint(_classify_command_base(cmd), derived_trust)
+
+
+def _classify_command_base(cmd: str) -> ApprovalResult:
+    """Pattern-only classification (no provenance)."""
     # Detect base64-decode pipe patterns on the raw command before normalization
     if _BASE64_PIPE_RE.search(cmd):
         return ApprovalResult(
@@ -714,7 +754,12 @@ def classify_command(cmd: str) -> ApprovalResult:
     return ApprovalResult(Decision.APPROVE, f"All {len(sub_commands)} sub-command(s) matched allow list")
 
 
-def classify_tool_call(tool_name: str, tool_input: dict[str, object]) -> ApprovalResult:
+def classify_tool_call(
+    tool_name: str,
+    tool_input: dict[str, object],
+    *,
+    derived_trust: TrustClass | None = None,
+) -> ApprovalResult:
     """Classify any tool call by name and input.
 
     For ``Bash`` (or ``bash``) tools, delegates to :func:`classify_command`.
@@ -725,16 +770,22 @@ def classify_tool_call(tool_name: str, tool_input: dict[str, object]) -> Approva
     Args:
         tool_name: Name of the tool being called (e.g. ``"Bash"``, ``"Edit"``).
         tool_input: Tool input dict.  For bash tools, must contain ``"command"``.
+        derived_trust: Optional propagated trust class of the artefact the tool
+            call derives from (issue #2513). An untrusted derivation downgrades
+            an APPROVE to ASK; DENY and ASK are unaffected.
 
     Returns:
         :class:`ApprovalResult` with the decision.
     """
     if tool_name.lower() in ("bash", "shell"):
         cmd = str(tool_input.get("command", ""))
-        return classify_command(cmd)
+        return classify_command(cmd, derived_trust=derived_trust)
 
     if tool_name in _SAFE_TOOLS:
-        return ApprovalResult(Decision.APPROVE, f"Tool {tool_name!r} is in the safe-tools allow list")
+        return _downgrade_for_taint(
+            ApprovalResult(Decision.APPROVE, f"Tool {tool_name!r} is in the safe-tools allow list"),
+            derived_trust,
+        )
 
     if tool_name in _DANGEROUS_TOOLS:
         return ApprovalResult(Decision.DENY, f"Tool {tool_name!r} is in the dangerous-tools deny list")

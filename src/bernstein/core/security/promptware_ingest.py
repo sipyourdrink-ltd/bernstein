@@ -34,8 +34,10 @@ if TYPE_CHECKING:
 __all__ = [
     "PROMPTWARE_LIFECYCLE_EVENT",
     "PromptwareIngestResult",
+    "QuarantinedIngestResult",
     "build_lifecycle_payload",
     "get_default_detector",
+    "quarantine_untrusted_payload",
     "scan_tool_output",
 ]
 
@@ -194,6 +196,85 @@ def scan_tool_output(
         emitted_warn=emitted_warn,
         emitted_abort_event=emitted_abort_event,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class QuarantinedIngestResult:
+    """Result of quarantining an untrusted payload on the ingest path.
+
+    Attributes:
+        extract: The schema-validated structural extraction. Only these
+            fields are safe to place into worker prompt context; free text is
+            withheld and represented by a content hash.
+        scan: The promptware scan of the *raw* payload. The scan runs for
+            detection and alerting, but its input never reaches context -- the
+            raw bytes are quarantined behind the structural extractor.
+    """
+
+    extract: object
+    scan: PromptwareIngestResult
+
+
+def quarantine_untrusted_payload(
+    payload: object,
+    schema: object,
+    *,
+    adapter: str | None = None,
+    tool: str | None = None,
+    task: str | None = None,
+    session_id: str | None = None,
+    source_url: str | None = None,
+    detector: PromptwareDetector | None = None,
+    hook_registry: HookRegistry | None = None,
+    env: dict[str, str] | None = None,
+    force: bool = False,
+) -> QuarantinedIngestResult:
+    """Quarantine an untrusted payload before anything reaches worker context.
+
+    The raw payload is scanned for promptware (detection only) and, in the
+    same call, passed through the quarantined structural parser so only
+    schema-validated fields survive. The instruction-bearing free text inside
+    the payload is never returned for context injection; callers place
+    ``result.extract.fields`` into context and anchor a lineage edge from that
+    extraction back to the tainted source via ``result.extract.source_content_hash``.
+
+    Args:
+        payload: The untrusted structured payload (or a raw string body).
+        schema: Field name -> ``FieldSpec`` mapping for the structural parser.
+        adapter, tool, task, session_id, source_url, detector, hook_registry,
+        env, force: Forwarded to :func:`scan_tool_output`.
+
+    Returns:
+        A :class:`QuarantinedIngestResult`.
+    """
+    # Local import keeps the ingest module importable in trimmed CLI subsets
+    # that strip the structural parser.
+    from bernstein.core.security.quarantined_parser import extract_structured
+
+    extract = extract_structured(payload, schema)  # type: ignore[arg-type]
+
+    # Scan the raw payload text for promptware (detection). This is the only
+    # place the raw bytes are read; they are never handed onward to context.
+    if isinstance(payload, str):
+        raw_text = payload
+    else:
+        import json as _json
+
+        raw_text = _json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+
+    scan = scan_tool_output(
+        raw_text,
+        adapter=adapter,
+        tool=tool,
+        task=task,
+        session_id=session_id,
+        source_url=source_url,
+        detector=detector,
+        hook_registry=hook_registry,
+        env=env,
+        force=force,
+    )
+    return QuarantinedIngestResult(extract=extract, scan=scan)
 
 
 def _dispatch_abort_event(

@@ -14,7 +14,14 @@ from dataclasses import asdict, dataclass
 
 LINEAGE_ENTRY_VERSION = 1
 
-ARTEFACT_KINDS: frozenset[str] = frozenset({"file", "sdd-runtime", "mcp-result", "config"})
+ARTEFACT_KINDS: frozenset[str] = frozenset({"file", "sdd-runtime", "mcp-result", "config", "tool-result"})
+
+#: Provenance trust classes recordable on an entry (issue #2513). ``None`` on
+#: an entry means "no trust class recorded" and is dropped from the canonical
+#: form so pre-feature entries keep byte-identical wire bytes. Taint projection
+#: treats absence as the lowest trust class (fail closed) -- see
+#: :mod:`bernstein.core.lineage.provenance`.
+TRUST_CLASSES: frozenset[str] = frozenset({"operator", "workspace", "first_party", "third_party", "public"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +43,10 @@ class LineageEntry:
     span_id: str
     ts_ns: int
     operator_hmac: str
+    # Additive, optional (issue #2513). ``None`` is dropped from the canonical
+    # bytes so every historical entry keeps its exact wire form, signature and
+    # HMAC. A tool-result provenance record sets this to one of TRUST_CLASSES.
+    trust_class: str | None = None
 
     def __post_init__(self) -> None:
         if self.v != LINEAGE_ENTRY_VERSION:
@@ -47,6 +58,25 @@ class LineageEntry:
         for p in self.parent_hashes:
             if not p.startswith("sha256:"):
                 raise ValueError(f"parent_hash must start with 'sha256:', got {p!r}")
+        if self.trust_class is not None and self.trust_class not in TRUST_CLASSES:
+            raise ValueError(f"unknown trust_class: {self.trust_class!r}")
+
+
+def _canonical_body(entry: LineageEntry) -> dict[str, object]:
+    """Return the entry as a plain dict ready for JCS canonicalisation.
+
+    The optional ``trust_class`` field is dropped when ``None`` so that an
+    entry that carries no trust class canonicalises byte-for-byte identically
+    to the pre-issue-#2513 schema. This keeps every historical signature,
+    HMAC and golden snapshot valid while letting provenance records add the
+    field additively. Both :func:`canonicalise` and
+    :func:`compute_operator_hmac` route through here so the two paths can
+    never diverge on the drop rule (see ADR-009 §5.2).
+    """
+    body = asdict(entry)
+    if body.get("trust_class") is None:
+        body.pop("trust_class", None)
+    return body
 
 
 def canonicalise(entry: LineageEntry) -> bytes:
@@ -58,7 +88,7 @@ def canonicalise(entry: LineageEntry) -> bytes:
     8785 around ES6 number formatting and recursive ordering don't apply.
     """
     return json.dumps(
-        asdict(entry),
+        _canonical_body(entry),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -82,7 +112,7 @@ def compute_operator_hmac(entry: LineageEntry, key: bytes) -> str:
     the CI gate when the operator secret is supplied. Any divergence between
     the two paths would silently invalidate every entry - see ADR-009 §5.2.
     """
-    body = asdict(entry)
+    body = _canonical_body(entry)
     body["operator_hmac"] = ""
     canonical = json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return _hmac.new(key, canonical, hashlib.sha256).hexdigest()

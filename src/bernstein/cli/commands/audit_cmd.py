@@ -1348,6 +1348,91 @@ def capabilities_cmd(workdir: str) -> None:
     raise SystemExit(1)
 
 
+@audit_group.command("taint")
+@click.argument("artefact")
+@click.option(
+    "--log",
+    "log_path",
+    default=".sdd/lineage/log.jsonl",
+    show_default=True,
+    help="Path to the lineage log.jsonl.",
+)
+@click.option(
+    "--cards",
+    "cards_dir",
+    default=".sdd/agents",
+    show_default=True,
+    help="Directory of <agent-id>/card.json Agent Cards.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the verdict as JSON.")
+def taint_cmd(artefact: str, log_path: str, cards_dir: str, as_json: bool) -> None:
+    """Recompute the propagated-taint verdict for ARTEFACT, offline.
+
+    ARTEFACT is a lineage entry hash (``sha256:...``) or a repo-relative
+    artefact path. The verdict is a pure function of the signed lineage log:
+    two independent verifiers holding the same log recompute a byte-identical
+    result with no live process. The lineage gate runs first, so a mutated
+    provenance record or a reparented edge surfaces as a verification failure.
+
+    Exit code: ``0`` when the artefact is trusted, ``1`` when tainted, ``2``
+    when verification fails (a tampered or unverifiable log).
+    """
+    import json as _json
+    import os
+
+    from bernstein.core.lineage.provenance import TaintVerificationError, verify_taint
+
+    secret_raw = os.environ.get("BERNSTEIN_LINEAGE_OP_SECRET")
+    operator_secret = secret_raw.encode("utf-8") if secret_raw else None
+
+    try:
+        verdict = verify_taint(
+            Path(log_path),
+            Path(cards_dir),
+            artefact,
+            operator_secret=operator_secret,
+        )
+    except TaintVerificationError as exc:
+        if as_json:
+            console.print(_json.dumps({"error": "verification_failed", "failures": exc.failures}))
+        else:
+            console.print("[bold red]Taint verification FAILED[/bold red] (lineage gate broke):")
+            for failure in exc.failures[:10]:
+                console.print(f"  [red]![/red] {failure}")
+        raise SystemExit(2) from exc
+
+    payload = {
+        "target": verdict.target,
+        "trust": verdict.trust.value,
+        "tainted": verdict.tainted,
+        "resolved": verdict.resolved,
+        "closure_size": len(verdict.closure),
+        "trust_records": [eh for eh, _ in verdict.trust_records],
+    }
+
+    if as_json:
+        console.print(_json.dumps(payload, sort_keys=True))
+    else:
+        colour = "red" if verdict.tainted else "green"
+        console.print()
+        console.print(
+            Panel(
+                f"[bold]{verdict.target}[/bold]\n"
+                f"effective trust: [bold {colour}]{verdict.trust.value}[/bold {colour}]\n"
+                f"tainted: [bold {colour}]{verdict.tainted}[/bold {colour}]  "
+                f"resolved: {verdict.resolved}  closure: {len(verdict.closure)} entries",
+                title="Provenance taint verdict",
+                border_style=colour,
+                expand=False,
+            )
+        )
+        if not verdict.resolved:
+            console.print("[yellow]No provenance found: fail-closed to lowest trust.[/yellow]")
+        console.print()
+
+    raise SystemExit(1 if verdict.tainted else 0)
+
+
 @audit_group.command("slice")
 @click.option(
     "--from",
