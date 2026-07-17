@@ -38,14 +38,24 @@ jobs:
           comment-summary-in-pr: on-failure
           # Accepted OSS-permissive licenses. Keep in sync with
           # .github/workflows/license-compliance.yml.
+          # MIT-0 (MIT No Attribution) and PSF-2.0 are permissive members of
+          # the already-accepted MIT / Python license families. Both are
+          # already shipped in the distributed wheel via runtime dependencies
+          # (cffi -> MIT-0, reached through cryptography; defusedxml -> PSF-2.0,
+          # a direct dependency) and both already pass license-compliance.yml,
+          # so the allow-list was simply incomplete. Pinning the docs toolchain
+          # (docs/requirements.txt) surfaces these same packages with resolved
+          # versions on that manifest, which is what makes the omission visible.
           allow-licenses: >-
             Apache-2.0,
             MIT,
+            MIT-0,
             BSD-2-Clause,
             BSD-3-Clause,
             ISC,
             MPL-2.0,
             Python-2.0,
+            PSF-2.0,
             Unlicense,
             CC0-1.0
           # Specific dependencies exempted from the license allow-list.
