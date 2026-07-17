@@ -192,14 +192,6 @@ class FleetVariableStore:
             raise KeyError(name)
         return self.resolve(prior["value_hash"])
 
-    def get_hash(self, name: str) -> str:
-        """Return the current value hash of *name*."""
-        index = self._load_index()
-        prior = index.get(name)
-        if prior is None:
-            raise KeyError(name)
-        return str(prior["value_hash"])
-
     def resolve(self, value_hash: str) -> Any:
         """Resolve a value from its content hash (replay path, never live).
 
